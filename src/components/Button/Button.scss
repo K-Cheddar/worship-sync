@@ -1,0 +1,17 @@
+@tailwind components;
+
+.cta {
+  @apply bg-green-600 hover:bg-green-800 active:bg-green-900 text-white;
+}
+
+.primary {
+  @apply bg-black hover:bg-gray-800 active:bg-gray-700 text-white;
+}
+
+.secondary {
+  @apply bg-white hover:bg-gray-200 active:bg-gray-300 text-black;
+}
+
+.tertiary {
+  @apply bg-transparent hover:bg-slate-500 active:bg-slate-400 text-white;
+}

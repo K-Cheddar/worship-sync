@@ -1,25 +1,26 @@
-import React from 'react';
-import logo from './logo.svg';
 import './App.css';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Home from './pages/Home';
+import Controller from './pages/Controller';
+import Presentation from './pages/Presentation';
+import Monitor from './pages/Monitor';
+import Overlays from './pages/Overlays';
+import { Provider } from 'react-redux';
+import store from './store/store';
 
 function App() {
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.tsx</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <Provider store={store}>
+      <Router>
+        <Routes>
+          <Route path="/" element={<Home/>} />
+          <Route path="/controller" element={<Controller/>} />
+          <Route path="/presentation" element={<Presentation/>} />
+          <Route path="/monitor" element={<Monitor/>} />
+          <Route path="/overlays" element={<Overlays/>} />
+        </Routes>
+      </Router>
+    </Provider>
   );
 }
 

@@ -1,0 +1,8 @@
+.service-items-container {
+  // Parent minus, EditorPanel, minus divider 
+  max-height: calc(100% - 15rem - 2px);
+}
+
+.service-items-list {
+  scrollbar-width: thin;
+}
