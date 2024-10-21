@@ -15,7 +15,7 @@ const ServiceItems = () => {
 
   return (
     <div className="flex flex-col service-items-container">
-      <h3 className="font-bold text-center h-12 text-xl py-2 border-t-2 border-b-2 border-black">Service Items</h3>
+      <h3 className="font-bold text-center h-12 text-xl py-2 border-t-2 border-b-2 border-slate-500">Service Items</h3>
       <ul className="overflow-y-auto overflow-x-visible flex-1 service-items-list">
         {serviceItems.map((item) => {
           return (

@@ -17,12 +17,12 @@ const Controller = () => {
   return (
     <div className="bg-slate-700 h-screen flex flex-col text-white">
       <Toolbar />
-      <div className="flex flex-1 controller-main">
-        <Resizable className="flex flex-col" enable={resizableDirections}>
+      <div className="flex flex-1 controller-main gap-2">
+        <Resizable className="flex flex-col border-r-2 border-slate-500" enable={resizableDirections}>
           <EditorButtons/>
           <ServiceItems/>
         </Resizable>
-        <Resizable className="flex flex-col" enable={resizableDirections}>
+        <Resizable className="flex flex-col pt-2" enable={resizableDirections}>
           <SlideEditor/>
           <ItemSlides/>
         </Resizable>

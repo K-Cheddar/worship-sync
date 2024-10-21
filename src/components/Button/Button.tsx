@@ -13,7 +13,8 @@ export interface ButtonProps extends ComponentPropsWithoutRef<"button"> {
     wrap?: boolean,
     iconPosition?: 'left' | 'right',
     gap?: string,
-    isSelected?: boolean
+    isSelected?: boolean,
+    truncate?: boolean
 }
 
 const Button = ({ 
@@ -25,9 +26,10 @@ const Button = ({
   variant = 'primary', 
   wrap = false, 
   iconPosition = 'left',
-   gap = "1", 
-   isSelected = false,
-   ...rest
+  gap = "gap-1", 
+  isSelected = false,
+  truncate = false,
+  ...rest
   } : ButtonProps) => {
   const fallbackRef = useRef(null);
   const buttonRef = ref || fallbackRef;
@@ -35,12 +37,12 @@ const Button = ({
   return (
     <button 
       className={cn(
-        `font-semibold rounded-sm flex items-center ${gap}`, 
+        `font-semibold rounded-sm flex items-center max-w-full ${gap}`, 
         children && "py-2 px-4",
         !children && "p-1",
         !isSelected && variant,
-        wrap ? "whitespace-normal" : "whitespace-nowrap",
-        wrap && "text-left",
+        wrap ? "whitespace-normal text-left break-all" : "whitespace-nowrap",
+        truncate && "truncate",
         className,
       )}
       ref={buttonRef} 
