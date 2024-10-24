@@ -18,6 +18,12 @@ const Menu = ({ TriggeringButton, menuItems, ...rest } : MenuProps) => {
   const [menuLeft, setMenuLeft] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null)
 
+  const menuItemsWIds = useMemo(() => {
+    return menuItems.map((item, index) => {
+      return { ...item, id: generateRandomId() }
+    })
+  }, [ menuItems])
+
   const triggeringButton = cloneElement(TriggeringButton, {onClick: () => setShow((val) => !val), id: buttonId })
 
   useEffect(() => {
@@ -68,9 +74,9 @@ const Menu = ({ TriggeringButton, menuItems, ...rest } : MenuProps) => {
         } as React.CSSProperties}
         {...rest}
       >
-      {menuItems.map(({onClick, text, to}) => {
+      {menuItemsWIds.map(({ onClick, text, to, id }) => {
         return (
-          <MenuItem onClick={onClick} to={to}>
+          <MenuItem key={id} onClick={onClick} to={to}>
             {text}
           </MenuItem>
         )

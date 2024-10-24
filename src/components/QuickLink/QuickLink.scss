@@ -1,0 +1,16 @@
+.quick-link {
+  @apply w-fit flex flex-col hover:bg-slate-500 cursor-pointer rounded;
+
+  &:hover {
+    @apply bg-slate-500;
+
+    button {
+      @apply opacity-85;
+    }
+  }
+
+  button {
+    width: 3rem;
+    height: calc(3rem * 9 / 16);
+  }
+}

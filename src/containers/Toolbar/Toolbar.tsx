@@ -1,6 +1,5 @@
 import ItemEditTools from "./ToolbarElements/ItemEditTools";
 import Menu from "./ToolbarElements/Menu";
-import QuickLinks from "./ToolbarElements/QuickLinks";
 import Services from "./ToolbarElements/Services";
 import SlideEditTools from "./ToolbarElements/SlideEditTools";
 import Undo from "./ToolbarElements/Undo";
@@ -15,7 +14,7 @@ const Section = ({ children, last } : SectionProps) => {
   return (
     <section className={
       cn(
-        "p-2 flex gap-1 items-center", 
+        "px-2 py-0 flex gap-1 items-center", 
         !last && "border-r-2 border-slate-500",
         last && "ml-auto"
       )
@@ -23,10 +22,10 @@ const Section = ({ children, last } : SectionProps) => {
   )
 }
 
-const Toolbar = () => {
+const Toolbar = ({ className } : { className: string }) => {
     
   return (
-    <div className="flex border-b-2 border-slate-500 h-20">
+    <div className={className}>
       <Section>
         <Menu/>
         <Undo/>
@@ -39,9 +38,6 @@ const Toolbar = () => {
       </Section>
       <Section>
         <ItemEditTools/>
-      </Section>
-      <Section>
-        <QuickLinks/>
       </Section>
       <Section last>
         <UserSection/>

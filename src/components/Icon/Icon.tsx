@@ -1,45 +1,40 @@
 import cn from 'classnames';
-import { FunctionComponent, useEffect, useRef } from 'react';
+import { FunctionComponent, useMemo } from 'react';
 import './Icon.scss';
 
 type IconProps = {
   svg: FunctionComponent<React.SVGProps<SVGSVGElement>>,
-  width?: 'sm' | 'md' | 'lg' | 'xl' | string,
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | string,
   className?: string,
   alt?: string,
   color?: string
 }
 
-const Icon = ({ svg: SVG, width, className, color, alt } : IconProps) => {
+const Icon = ({ svg: SVG, size = 'md', className, color, alt } : IconProps) => {
 
-  const size = useRef('');
-  
-  useEffect(() => {
-    switch(width) {
+  const width = useMemo(() => {
+    switch(size) {
+      case 'xs':
+        return 'w-2';
       case 'sm':
-        size.current = 'w-2';
-        break;
+        return 'w-3';
       case 'md':
-        size.current = 'w-3';
-        break;
+        return 'w-4';
       case 'lg':
-        size.current = 'w-4';
-        break;
+        return 'w-5';
       case 'xl':
-        size.current = 'w-5';
-        break;
+        return 'w-6';
       default:
-        size.current = '';
-        break;
+        return '';
     }
-  },[width])
+  },[size])
 
   return (
     <span 
-      className={cn('icon', className, size)} 
+      className={cn('icon', className)} 
       style={{ '--icon-color': color ? color : undefined } as React.CSSProperties}
     >
-      <SVG />
+      <SVG className={width} />
     </span>
   )
 }

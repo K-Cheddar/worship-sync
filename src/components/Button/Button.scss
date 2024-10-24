@@ -15,3 +15,7 @@
 .tertiary {
   @apply bg-transparent hover:bg-slate-500 active:bg-slate-400 text-white;
 }
+
+.button-wrap {
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,8 @@
+.display-window {
+  width: var(--slide-editor-width);
+  height: var(--slide-editor-height);
+
+  font-family: Verdana;
+
+  @apply relative;
+}

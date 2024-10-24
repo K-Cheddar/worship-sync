@@ -19,7 +19,7 @@ const Select = ({ options, value, onChange, label, labelProps, ...rest }: Select
     <span>
       <label className={cn('p-1 font-semibold', labelProps?.className)} {...labelRest}>{label}:</label>
       <select
-        className="rounded px-4 py-1 cursor-pointer select text-black"
+        className="rounded px-2 py-1 cursor-pointer select text-black"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         {...rest}

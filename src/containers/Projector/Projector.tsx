@@ -4,13 +4,13 @@ import { useState } from "react";
 import { dummyLinks } from "./dummyLinks";
 
 
-const Overlay = () => {
+const Projector = () => {
   const [isTransmitting, setIsTransmitting] = useState(false);
 
   return (
-    <Presentation name="Overlay" boxes={_boxes} isTransmitting={isTransmitting} setIsTransmitting={setIsTransmitting} quickLinks={dummyLinks} />
+    <Presentation name="Projector" boxes={_boxes} isTransmitting={isTransmitting} setIsTransmitting={setIsTransmitting} quickLinks={dummyLinks} />
   )
 
 }
 
-export default Overlay;
+export default Projector;

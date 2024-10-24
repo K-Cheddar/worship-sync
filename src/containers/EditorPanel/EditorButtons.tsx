@@ -37,12 +37,14 @@ const buttons: ButtonType[] = [
 const EditorButtons = () => {
   const [selected, setSelected] = useState("");
   return (
-    <div className="flex flex-col h-60" >
+    <div className="flex flex-col h-48" >
         {buttons.map(({ title, type }, index) => {
+          const id = `editor-button-${title}`;
           return (
             <LeftPanelButton
+              key={id}
               title={title}
-              id={`editor-button-${title}`}
+              id={id}
               selectedItem={selected}
               handleClick={setSelected}
               type={type}

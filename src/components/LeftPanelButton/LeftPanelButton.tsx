@@ -1,6 +1,6 @@
-import Button, { ButtonProps } from "../Button/Button"
+import Button from "../Button/Button"
 import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
-import { ReactElement } from "react";
+import { FunctionComponent, MouseEvent } from "react";
 import cn from "classnames";
 import { borderColorMap, iconColorMap, svgMap, } from "../../utils/itemTypeMaps";
 
@@ -11,28 +11,39 @@ type LeftPanelButtonProps = {
   handleClick: (itemId: string) => void,
   title: string,
   type: string,
-  actions?: ReactElement<ButtonProps>[],
+  actions?: { action: (event: MouseEvent<HTMLButtonElement>) => void, svg: FunctionComponent<{}>, id: string }[]
 }
 
 const LeftPanelButton = ({ selectedItem, id, handleClick, title, type, actions } : LeftPanelButtonProps) => {
   const isSelected = selectedItem === id;
   
   return (
-    <span className={cn("flex", isSelected && 'bg-gray-900')}>
+    <li 
+      className={cn(
+        "flex", 
+        actions && !isSelected && "hover:bg-gray-500 active:bg-gray-400", 
+        isSelected && 'bg-gray-900')
+      }>
       <Button 
-        variant="tertiary" 
-        className={`w-full border-l-4 ${borderColorMap.get(type)}`}
+        variant={actions ? "none" : "tertiary"} 
+        className={`w-full text-sm border-l-4 ${borderColorMap.get(type)}`}
         onClick={() => handleClick(id)} 
         wrap
         svg={svgMap.get(type) || UnknownSVG}
         gap="gap-3"
         color={iconColorMap.get(type)}
         isSelected={isSelected}
+        iconSize="md"
+        padding="py-1 px-2"
       >
         <p className="font-semibold">{title}</p>
       </Button>
-      {actions && actions.map((action) => action)}
-    </span>
+      {actions && actions.map((action) => {
+        return (
+          <Button svg={action.svg} key={action.id} onClick={action.action} variant="tertiary"/>
+        )
+      })}
+    </li>
   )
 }
 
