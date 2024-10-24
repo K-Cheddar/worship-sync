@@ -1,10 +1,12 @@
 import { configureStore } from '@reduxjs/toolkit'
 import userReducer from './userSlice'
+import { itemSlice } from './itemSlice';
 import undoable from 'redux-undo';
 
 const store = configureStore({
   reducer: {
-    user: undoable(userReducer)
+    user: undoable(userReducer),
+    item: itemSlice.reducer
   },
 })
 

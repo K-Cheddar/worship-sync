@@ -1,4 +1,3 @@
-import { _boxes } from "../SlideEditor/dummyBoxes";
 import Presentation from "../../components/Presentation/Presentation";
 import { useState } from "react";
 import { dummyLinks } from "./dummyLinks";
@@ -8,7 +7,7 @@ const Overlay = () => {
   const [isTransmitting, setIsTransmitting] = useState(false);
 
   return (
-    <Presentation name="Overlay" boxes={_boxes} isTransmitting={isTransmitting} setIsTransmitting={setIsTransmitting} quickLinks={dummyLinks} />
+    <Presentation name="Overlay" boxes={[]} isTransmitting={isTransmitting} setIsTransmitting={setIsTransmitting} quickLinks={dummyLinks} />
   )
 
 }

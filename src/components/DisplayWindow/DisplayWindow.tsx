@@ -1,23 +1,28 @@
+import { useRef } from "react";
 import { Box } from "../../types";
 import './DisplayWindow.scss';
 
 type DisplayWindowProps = {
   boxes: Box[]
-  onChange?: ({ currentBox, value } : { currentBox: Box, value: string}) => void
+  onChange?: ({ index, value } : { index: number, value: string}) => void
   width: number
 }
 
 const DisplayWindow = ({ boxes, onChange, width } : DisplayWindowProps) => {
 
+  const containerRef = useRef<HTMLUListElement | null>(null);
+
   const aspectRatio = 16 / 9;
-  const height = width / aspectRatio;
   const fontAdjustment = 42 / width;
+
+  console.log({boxes})
 
   return (
     <ul 
       className="display-window" 
+      ref={containerRef}
       style={{
-      '--slide-editor-height': `${height}vw`,
+      '--slide-editor-height': `${width / aspectRatio}vw`,
       '--slide-editor-width': `${width}vw`,
       } as React.CSSProperties}
     >
@@ -28,34 +33,35 @@ const DisplayWindow = ({ boxes, onChange, width } : DisplayWindowProps) => {
       const textStyles = {
         textShadow: `${tSS}vw ${tSS}vw ${tSS}vw #000, ${tSS}vw ${tSS}vw ${tSS}vw #000`,
         WebkitTextStroke: `${fOS}vw #000`,
-        textAlign: box.align
+        textAlign: box.align || 'center'
       }
       return (
         <li 
           key={box.id} 
           className="absolute leading-tight"
           style={{
-            width: `calc(${box.width}% - ${box.marginLeft + box.marginRight}%)`,
+            width: `calc(${box.width}% - ${box.sideMargin ? box.sideMargin * 2 : 0}%)`,
             // % margin is calculated based on the width so we get the percentage of top and bottom margin, then multiply by the width of the container
-            height: `calc(${box.height}% - (${width}vw * (${box.marginTop} + ${box.marginBottom}) / 100) )`, 
+            height: `calc(${box.height}% - (${width}vw * (${box.topMargin || 0} + ${box.topMargin || 0}) / 100) )`, 
             pointerEvents: box.isLocked ? 'none' : 'all',
             fontSize: `${fontSizeValue}vw`,
-            marginTop: `${box.marginTop}%`,
-            marginBottom: `${box.marginBottom}%`,
-            marginLeft: `${box.marginLeft}%`,
-            marginRight: `${box.marginRight}%`
+            marginTop: `${box.topMargin}%`,
+            marginBottom: `${box.topMargin}%`,
+            marginLeft: `${box.sideMargin}%`,
+            marginRight: `${box.sideMargin}%`
           }}
         >
-          {box.image && <img className="h-full w-full" src={box.image} alt={box.text || box.label}/> }
+          {box.background && <img className="h-full w-full absolute" src={box.background} alt={box.words || box.label}/> }
           {typeof onChange !== 'function' && (
-            <p className="h-full w-full bg-transparent whitespace-pre-line" style={textStyles}>{box.text}</p>
+            <p className="h-full w-full bg-transparent whitespace-pre-line absolute" style={textStyles}>{box.words}</p>
           )}
           {typeof onChange === 'function' && (
             <textarea 
-              className="h-full w-full bg-transparent" 
-              value={box.text} 
+              className="h-full w-full bg-transparent absolute resize-none" 
+              value={box.words} 
               style={textStyles}
-              onChange={(e) => onChange({currentBox: box, value: e.target.value})}
+              onChange={(e) => onChange({index, value: e.target.value})}
+              
             />)}
         </li>
       )

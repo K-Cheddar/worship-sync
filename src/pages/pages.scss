@@ -1,3 +1,5 @@
 .controller-main {
-  max-height: calc(100% - 2.5rem)
+  max-height: calc(100% - 2.5rem);
+
+  @apply flex flex-1 max-md:flex-col;
 }

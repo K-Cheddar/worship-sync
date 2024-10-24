@@ -1,11 +1,11 @@
 @tailwind components;
 
 .cta {
-  @apply bg-green-600 hover:bg-green-800 active:bg-green-900 text-white;
+  @apply bg-green-600 hover:bg-green-700 active:bg-green-800 text-white;
 }
 
 .primary {
-  @apply bg-black hover:bg-gray-800 active:bg-gray-700 text-white;
+  @apply bg-black hover:bg-gray-900 active:bg-gray-800 text-white;
 }
 
 .secondary {

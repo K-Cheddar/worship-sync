@@ -23,7 +23,7 @@ const Input = ({
     <div className={`${className} input-container`}>
       <label className={`text-sm font-semibold ${hideLabel ? 'sr-only' : ''}`}>{label}:</label>
       <input
-        className="w-full rounded px-2 py-1 cursor-pointer select text-black"
+        className="w-full rounded px-2 py-1 text-black"
         type={type}
         value={value}
         onChange={(e) => {
