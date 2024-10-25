@@ -6,16 +6,14 @@ import { borderColorMap, iconColorMap, svgMap, } from "../../utils/itemTypeMaps"
 
 
 type LeftPanelButtonProps = {
-  selectedItem: string,
-  id: string,
-  handleClick: (itemId: string) => void,
+  isSelected: boolean,
+  handleClick: (item: any) => void,
   title: string,
   type: string,
   actions?: { action: (event: MouseEvent<HTMLButtonElement>) => void, svg: FunctionComponent<{}>, id: string }[]
 }
 
-const LeftPanelButton = ({ selectedItem, id, handleClick, title, type, actions } : LeftPanelButtonProps) => {
-  const isSelected = selectedItem === id;
+const LeftPanelButton = ({ isSelected, handleClick, title, type, actions } : LeftPanelButtonProps) => {
   
   return (
     <li 
@@ -27,7 +25,7 @@ const LeftPanelButton = ({ selectedItem, id, handleClick, title, type, actions }
       <Button 
         variant={actions ? "none" : "tertiary"} 
         className={`w-full text-sm border-l-4 ${borderColorMap.get(type)}`}
-        onClick={() => handleClick(id)} 
+        onClick={handleClick} 
         wrap
         svg={svgMap.get(type) || UnknownSVG}
         gap="gap-3"

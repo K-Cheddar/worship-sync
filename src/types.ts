@@ -33,13 +33,12 @@ export type Box = {
   transparent?: boolean,
   topMargin?: number,
   sideMargin?: number,
-  slideIndex?: number
+  slideIndex?: number,
 }
 
 export type ItemSlide = {
   type: string,
   id?: string,
-  name?: string,
   boxes: Box[],
 }
 
@@ -48,3 +47,51 @@ export type QuickLinkType = {
   url?: string
   id: string
 }
+
+export type UpdateItemState = {
+  name: string,
+  type: string,
+  id: string,
+  selectedArrangement: number,
+  shouldSkipTitle: boolean,
+  arrangements: Arrangment[],
+}
+
+export type DBItem = Omit<UpdateItemState, 'songOrder' | 'arrangements'> & {
+  arrangements: {
+    name: string,
+    formattedLyrics: FormattedLyrics[],
+    songOrder: string[],
+    slides: ItemSlide[]
+  }[]
+}
+
+export type Arrangment = {
+  name: string,
+  formattedLyrics: FormattedLyrics[],
+  songOrder: SongOrder[],
+  slides: ItemSlide[]
+}
+
+export type FormattedLyrics = {
+  type: string,
+  name: string,
+  words: string,
+  slideSpan: number,
+  id?: string
+}
+
+export type SongOrder = {
+  id: string,
+  name: string
+}
+
+export type Presentation = {
+  type: string,
+  name: string,
+  slide: ItemSlide | null,
+  time?: number,
+  displayType?: DisplayType,
+}
+
+export type DisplayType = 'projector' | 'monitor' | 'overlay' | 'editor' | 'slide'

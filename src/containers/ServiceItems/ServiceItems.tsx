@@ -5,14 +5,27 @@ import './ServiceItems.scss';
 import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import { ServiceItem } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
+import { setActiveItem } from "../../store/itemSlice";
+import { getItemInfo } from "../../utils/getItemInfo";
+import { useDispatch } from "../../hooks";
 
 const actions = [
   {action: () => {}, svg: DeleteSVG, id: generateRandomId()}
 ]
 
+const serviceItems : ServiceItem[] = dummyItems;
+
 const ServiceItems = () => {
-  const serviceItems : ServiceItem[] = dummyItems;
-  const [selectedItem, setSelectedItem] = useState('');
+  const dispatch = useDispatch();
+  const [selectedItem, setSelectedItem] = useState<ServiceItem>({id: '', title: '', type: ''});
+
+  
+  const selectItem = async (item : ServiceItem) => {
+    setSelectedItem(item);
+    const _item = await getItemInfo(item);
+    dispatch(setActiveItem(_item));
+    console.log(_item, item)
+  }
 
   return (
     <>
@@ -23,9 +36,8 @@ const ServiceItems = () => {
             <LeftPanelButton
               key={item.id}
               title={item.title}
-              id={item.id}
-              selectedItem={selectedItem}
-              handleClick={setSelectedItem}
+              isSelected={item.id === selectedItem.id}
+              handleClick={() => selectItem(item)}
               type={item.type}
               actions={actions}
             />

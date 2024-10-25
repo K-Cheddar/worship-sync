@@ -1,34 +1,33 @@
 import Button from '../../components/Button/Button'
 import { ReactComponent as LockSVG } from "../../assets/icons/lock.svg";
 import { ReactComponent as UnlockSVG } from "../../assets/icons/unlock.svg";
-import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
 import { ReactComponent as ExpandSVG } from '../../assets/icons/expand.svg';
 import { ReactComponent as CollapseSVG } from '../../assets/icons/collapse.svg';
 import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import Input from "../../components/Input/Input";
 import './ItemEditor.scss'
-import { useState } from 'react';
-import { borderColorMap, iconColorMap, svgMap } from '../../utils/itemTypeMaps';
-import Icon from '../../components/Icon/Icon';
+import { useEffect, useState } from 'react';
+import { borderColorMap } from '../../utils/itemTypeMaps';
 import DisplayWindow from '../../components/DisplayWindow/DisplayWindow';
 import { useDispatch, useSelector } from '../../hooks';
 import { toggleEditMode } from '../../store/itemSlice';
 import { setName, updateBoxes } from "../../store/itemSlice";
 
 
-const item = {
-  name: "There's a welcome here",
-  type: 'song',
-}
 
 const SlideEditor = () => {
   const { name, type, arrangements, selectedArrangement, selectedSlide } = useSelector(state => state.item);
   const [showEditor, setShowEditor] = useState(true);
   const [isEditingName, setIsEditingName] = useState(false)
-  const [localName, setLocalName] = useState(name)
+  const [localName, setLocalName] = useState(name);
+  const arrangement = arrangements[selectedArrangement];
 
   const dispatch = useDispatch();
+
+  useEffect(() => {
+    setLocalName(name);
+  }, [name])
 
 
   const saveName = () => {
@@ -36,16 +35,22 @@ const SlideEditor = () => {
     dispatch(setName(localName))
   }
 
-  const boxes = arrangements[selectedArrangement].slides[selectedSlide].boxes;
-
-  // console.log({boxes})
+  const boxes = arrangement?.slides[selectedSlide]?.boxes || [];
 
   const nameClasses = "text-base font-semibold w-fit max-w-15 truncate"
+
+  if (name === '' && type === '') {
+    return (
+      <div>
+        <h2 className="text-2xl text-center mt-4 font-bold">No Item Selected</h2>
+      </div>
+    )
+  }
 
   return (
     <div>
       <section className="flex justify-end w-full pr-2 bg-slate-900 h-8 mb-1 gap-1">
-        <span className={`flex mr-auto px-2 items-center gap-2 border-l-4 w-fit ${borderColorMap.get(item.type)}`}>
+        <span className={`flex mr-auto px-2 items-center gap-2 border-l-4 w-fit ${borderColorMap.get(type)}`}>
           <Button
             variant="tertiary" 
             className="mr-2" 
@@ -88,9 +93,12 @@ const SlideEditor = () => {
             })}
           </section>
           <DisplayWindow 
+            showBorder
             boxes={boxes}
             onChange={({ index, value }) => dispatch(updateBoxes(boxes.map((b, i) => i === index ? {...b, words: value} : b)))} 
-            width={42} />
+            width={42} 
+            displayType="editor"  
+          />
        </div> 
       )}
     </div>

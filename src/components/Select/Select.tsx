@@ -6,18 +6,19 @@ import cn from "classnames"
 
 type SelectProps = {
   options: Option[]
+  className?: string
   value: string
   onChange: (value: string) => void
-  label: string,
+  label?: string,
   labelProps?: ComponentPropsWithoutRef<'label'>
 }
 
-const Select = ({ options, value, onChange, label, labelProps, ...rest }: SelectProps) => {
+const Select = ({ options, value, onChange, label, labelProps, className, ...rest }: SelectProps) => {
   const {className: labelClassName, ...labelRest} = labelProps || {};
 
   return (
-    <span>
-      <label className={cn('p-1 font-semibold', labelProps?.className)} {...labelRest}>{label}:</label>
+    <span className={className}>
+      {label && <label className={cn('p-1 font-semibold', labelProps?.className)} {...labelRest}>{label}:</label>}
       <select
         className="rounded px-2 py-1 cursor-pointer select text-black"
         value={value}

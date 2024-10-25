@@ -1,25 +1,28 @@
 import { useRef } from "react";
-import { Box } from "../../types";
+import { Box, DisplayType } from "../../types";
 import './DisplayWindow.scss';
 
 type DisplayWindowProps = {
   boxes: Box[]
   onChange?: ({ index, value } : { index: number, value: string}) => void
-  width: number
+  width: number,
+  showBorder?: boolean,
+  displayType?: DisplayType
 }
 
-const DisplayWindow = ({ boxes, onChange, width } : DisplayWindowProps) => {
+const DisplayWindow = ({ boxes, onChange, width, showBorder = false, displayType } : DisplayWindowProps) => {
 
   const containerRef = useRef<HTMLUListElement | null>(null);
 
   const aspectRatio = 16 / 9;
   const fontAdjustment = 42 / width;
 
-  console.log({boxes})
+  const showBackground = displayType === 'projector' || displayType === 'slide' || displayType === 'editor';
+  const isOverlay = displayType === 'overlay';
 
   return (
     <ul 
-      className="display-window" 
+      className={`display-window ${showBorder ? 'border border-gray-500' : ''}`}
       ref={containerRef}
       style={{
       '--slide-editor-height': `${width / aspectRatio}vw`,
@@ -27,7 +30,10 @@ const DisplayWindow = ({ boxes, onChange, width } : DisplayWindowProps) => {
       } as React.CSSProperties}
     >
     {boxes.map((box, index) => {
-      const fontSizeValue = box.fontSize ? box.fontSize / fontAdjustment : 1;
+      const bFontSize = isOverlay ? 1 : box.fontSize;
+      const bWords = box.words || '';
+      const words = isOverlay ? bWords.trim() : bWords;
+      const fontSizeValue = bFontSize ? bFontSize / fontAdjustment : 1;
       const tSS = fontSizeValue / (width > 20 ? 32 : 10) ; // text shadow size
       const fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size
       const textStyles = {
@@ -51,14 +57,21 @@ const DisplayWindow = ({ boxes, onChange, width } : DisplayWindowProps) => {
             marginRight: `${box.sideMargin}%`
           }}
         >
-          {box.background && <img className="h-full w-full absolute" src={box.background} alt={box.words || box.label}/> }
+          {displayType === 'monitor' && box.background && <div className="h-full w-full absolute bg-black"/>}
+          {showBackground && box.background && <img className="h-full w-full absolute" src={box.background} alt={box.label}/> }
+          {isOverlay && box.background && <div className="h-full w-full absolute bg-transparent"/>}
           {typeof onChange !== 'function' && (
-            <p className="h-full w-full bg-transparent whitespace-pre-line absolute" style={textStyles}>{box.words}</p>
+            <p 
+              className={`w-full bg-transparent whitespace-pre-line absolute ${isOverlay ? 'h-fit bottom-0 text-center' : 'h-full'}`}
+              style={textStyles}
+            >
+              {words}
+            </p>
           )}
           {typeof onChange === 'function' && (
             <textarea 
-              className="h-full w-full bg-transparent absolute resize-none" 
-              value={box.words} 
+              className="h-full w-full bg-transparent absolute resize-none overflow-hidden" 
+              value={words} 
               style={textStyles}
               onChange={(e) => onChange({index, value: e.target.value})}
               

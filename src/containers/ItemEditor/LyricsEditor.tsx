@@ -1,41 +1,45 @@
 import { useSelector, useDispatch } from "../../hooks";
 import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
 import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
 import Button from "../../components/Button/Button";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { setName, toggleEditMode, updateSongOrder, increaseFormattedLyrics, decreaseFormattedLyrics, updateFormattedLyrics } from "../../store/itemSlice";
 import Input from "../../components/Input/Input";
-import { slideColorMap } from "../../utils/slideColorMap";
 
 import TextArea from "../../components/TextArea/TextArea";
 import './ItemEditor.scss'
-import generateRandomId from "../../utils/generateRandomId";
-
-const sizeMap : Map<number, string> = new Map([
-  [5, 'grid-cols-5'],
-  [4, 'grid-cols-4'],
-  [3, 'grid-cols-3'],
-])
+import FormattedLyrics from "./FormattedLyrics";
+import SongSections from "./SongSections";
+import { FormattedLyrics as FormattedLyricsType, SongOrder } from "../../types";
+import { sectionTypes } from "../../utils/slideColorMap";
 
 const LyricsEditor = () => {
-  const { isEditMode, name, songOrder, arrangements, selectedArrangement, formattedLyricsPerRow } = useSelector(state => state.item);
+  const { isEditMode, name, arrangements, selectedArrangement } = useSelector(state => state.item);
   const [isEditingName, setIsEditingName] = useState(false)
   const [localName, setLocalName] = useState(name)
-  const [unformattedLyrics, setUnformattedLyrics] = useState('')
-
+  const [unformattedLyrics, setUnformattedLyrics] = useState('');
+  const [formattedLyrics, setFormattedLyrics] = useState<FormattedLyricsType[]>([]);
+  const [songOrder, setSongOrder] = useState<SongOrder[]>([]);
+  const [arrangementName, setArrangementName] = useState('');
   const dispatch = useDispatch();
 
-  const formattedLyricsWIds = useMemo( () => arrangements[selectedArrangement].formattedLyrics.map((lyric) => ({
-    id: generateRandomId(),
-    lyric
-  })), [arrangements, selectedArrangement])
+  useEffect(() => {
+    const arrangement = arrangements[selectedArrangement];
+    setFormattedLyrics(arrangement?.formattedLyrics || []);
+    setSongOrder(arrangement?.songOrder || []);
+    setArrangementName(arrangement?.name || 'Master');
+  }, [arrangements, selectedArrangement] )
 
-  const songOrderWIds = useMemo( () => songOrder.map((section) => ({
-    id: generateRandomId(),
-    section
-  })), [songOrder])
+  
+  const { availableSections, currentSections } = useMemo(() => {
+    const sections = formattedLyrics.map(({ name }) => name)
+    return {
+      availableSections: Array.from( new Set([...sectionTypes, ...sections])).map((section) => ({ label: section, value: section })),
+      currentSections: sections.map((section) => ({ label: section, value: section })),
+    }
+  }, [formattedLyrics])
+  
 
   if (!isEditMode) {
     return <div className="w-0 h-0 absolute"/>
@@ -44,69 +48,37 @@ const LyricsEditor = () => {
   const onClose = () => {
     dispatch(toggleEditMode())
   }
-  
+
+  const save = () => {
+    dispatch(setName(localName))
+    dispatch(toggleEditMode())
+    dispatch(updateSongOrder(songOrder))
+    dispatch(updateFormattedLyrics(formattedLyrics))
+  }
+
   return (
     <div className="lyrics-editor">
-      <div className="flex bg-slate-900 px-2">
+      <div className="flex bg-slate-900 px-2 h-8">
         <Button variant="tertiary" svg={ZoomOutSVG} onClick={() => dispatch(increaseFormattedLyrics())}/>
         <Button variant="tertiary" svg={ZoomInSVG} onClick={() => dispatch(decreaseFormattedLyrics())}/>
         <Button variant="tertiary" className="ml-auto" svg={CloseSVG} onClick={() => onClose()}/>
       </div>
-      <div className="flex flex-1">
-        <div className="p-4 w-fit">
+      <div className="lyrics-editor-middle">
+        <div className="pl-4 pt-4 w-fit">
           <TextArea className="w-40 h-60" label="Paste Lyrics Here" value={unformattedLyrics} onChange={(val) => setUnformattedLyrics(val)} />
           <Button className="text-sm mt-1 mx-auto">Format Lyrics</Button>
         </div>
-        <section>
-          <h2 className="text-lg mb-2 text-center font-semibold">{arrangements[selectedArrangement].name}</h2>
-          <ul className={`grid gap-2 ${sizeMap.get(formattedLyricsPerRow)}`}>
-            {formattedLyricsWIds.map(({ id, lyric: {type, name, words }}, index) => (
-              <li key={id} className="text-sm px-2">
-                <div className="flex h-4">
-                  <p className={`flex-1 text-center rounded-t-md font-semibold text-sm ${slideColorMap.get(type)}`}>{name}</p>
-                  <Button
-                    className="" 
-                    variant="tertiary"
-                    color="#dc2626"
-                    svg={DeleteSVG}
-                    onClick={() => {
-                      const copiedFormattedLyrics = [...arrangements[selectedArrangement].formattedLyrics];
-                      copiedFormattedLyrics.splice(index, 1);
-                      dispatch(updateFormattedLyrics(copiedFormattedLyrics))
-                    }}
-                  />
-                </div>
-                <TextArea hideLabel className="h-56" value={words} onChange={(val) => setUnformattedLyrics(val)}/>
-
-              </li>
-            ))}
-          </ul>
+        <section className="flex-1">
+          <h2 className="text-2xl mb-2 text-center font-semibold">{arrangementName}</h2>
+          <FormattedLyrics formattedLyrics={formattedLyrics} setFormattedLyrics={setFormattedLyrics} availableSections={availableSections}/>
         </section>
-        <section className="ml-auto mr-4">
-          <h2 className="text-lg mb-2 text-center font-semibold">Song Order</h2>
-          <ul className="flex flex-col gap-2">
-            {songOrderWIds.map(({ id, section }, index) => (
-              <li key={id} className="text-sm flex items-center px-2 bg-black rounded-lg hover:bg-gray-800 cursor-pointer">
-                <p className="pr-1 text-base">{section}</p>
-                <Button  
-                  className="ml-auto" 
-                  variant="tertiary"
-                  color="#dc2626"
-                  svg={DeleteSVG}
-                  onClick={() => {
-                    const copiedSongOrder = [...songOrder];
-                    copiedSongOrder.splice(index, 1);
-                    dispatch(updateSongOrder(copiedSongOrder))
-                  }}
-                />
-              </li>
-            ))}
-          </ul>
+        <section className="mr-4 flex flex-col">
+          <SongSections songOrder={songOrder} setSongOrder={setSongOrder} currentSections={currentSections}/>
         </section>
       </div>
-      <div className="flex justify-end p-4">
+      <div className="flex justify-end h-8 mb-2 mr-2">
         <Button variant="secondary" className="text-base" onClick={() => onClose()}>Cancel</Button>
-        <Button variant="cta" className="text-base ml-2">Save Changes</Button>
+        <Button variant="cta" className="text-base ml-2" onClick={() => save()}>Save Changes</Button>
       </div>
     </div>
   )
