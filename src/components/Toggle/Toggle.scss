@@ -1,6 +1,6 @@
 .toggle-container {
 
-  @apply w-8 h-4 border rounded-2xl relative border-gray-300;
+  @apply w-8 h-4 border rounded-2xl relative border-gray-300 flex;
 
   :focus-within, &:focus-visible, &:focus {
     @apply outline-1 outline-slate-200;

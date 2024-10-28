@@ -5,7 +5,7 @@ import { ReactComponent as TimerSVG } from "../assets/icons/timer.svg";
 import { ReactComponent as ImageSVG } from "../assets/icons/image.svg";
 import { ReactComponent as AnnouncementSVG } from "../assets/icons/news.svg";
 import { ReactComponent as AllItemsSVG } from "../assets/icons/view-list.svg";
-import { ReactComponent as OverlaysSVG } from "../assets/icons/overlays.svg";
+import { ReactComponent as PeopleSVG } from "../assets/icons/people.svg";
 import { FunctionComponent } from "react";
 
 export const svgMap : Map<string, FunctionComponent> = new Map([
@@ -16,7 +16,7 @@ export const svgMap : Map<string, FunctionComponent> = new Map([
   ["timer", TimerSVG],
   ["announcement", AnnouncementSVG],
   ["all", AllItemsSVG],
-  ["overlay", OverlaysSVG],
+  ["participants", PeopleSVG],
 ])
 
 export const borderColorMap : Map<string, string> = new Map([
@@ -27,7 +27,7 @@ export const borderColorMap : Map<string, string> = new Map([
   ["timer", "border-pink-500"],
   ["announcement", "border-yellow-500"],
   ["all", "border-lime-200"],
-  ["overlay", "border-red-500"],
+  ["participants", "border-red-500"],
 ])
 
 export const iconColorMap : Map<string, string> = new Map([
@@ -38,5 +38,5 @@ export const iconColorMap : Map<string, string> = new Map([
   ["timer", "#ec4899"],
   ["announcement", "#eab308"],
   ["all", "#d9f99d"],
-  ["overlay", "#ef4444"],
+  ["participants", "#ef4444"],
 ])

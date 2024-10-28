@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import Toggle from "../../components/Toggle/Toggle"
 import { useDispatch, useSelector } from "../../hooks"
-import { setTransmitToAll, toggleMonitorTransmitting, toggleOverlayTransmitting, toggleProjectorTransmitting } from "../../store/presentationSlice"
+import { setTransmitToAll, toggleMonitorTransmitting, toggleStreamTransmitting, toggleProjectorTransmitting } from "../../store/presentationSlice"
 import Presentation from "../../components/Presentation/Presentation"
 import { dummyMonitorLinks, dummyOverlayLinks, dunmmyProjectorLinks } from "./dummyLinks"
 
@@ -9,17 +9,17 @@ const TransmitHandler = ({ className } : { className: string}) => {
   const { 
     isMonitorTransmitting, 
     isProjectorTransmitting, 
-    isOverlayTransmitting,
+    isStreamTransmitting,
     projectorInfo,
     monitorInfo,
-    overlayInfo
+    streamInfo
   } = useSelector((state) => state.presentation)
   const [isTransmitting, setIsTransmitting] = useState(false);
   const dispatch = useDispatch();
 
   useEffect(() => {
-    setIsTransmitting(isMonitorTransmitting && isProjectorTransmitting && isOverlayTransmitting)
-  }, [isMonitorTransmitting, isProjectorTransmitting, isOverlayTransmitting])
+    setIsTransmitting(isMonitorTransmitting && isProjectorTransmitting && isStreamTransmitting)
+  }, [isMonitorTransmitting, isProjectorTransmitting, isStreamTransmitting])
 
   const handleSetTransmitting = () => {
     setIsTransmitting(!isTransmitting)
@@ -46,10 +46,10 @@ const TransmitHandler = ({ className } : { className: string}) => {
           quickLinks={dummyMonitorLinks} 
         />
         <Presentation 
-          name="Overlay" 
-          info={overlayInfo}
-          isTransmitting={isOverlayTransmitting} 
-          toggleIsTransmitting={() => dispatch(toggleOverlayTransmitting())} 
+          name="Stream" 
+          info={streamInfo}
+          isTransmitting={isStreamTransmitting} 
+          toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())} 
           quickLinks={dummyOverlayLinks} 
         />
     </section>

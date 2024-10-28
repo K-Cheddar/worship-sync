@@ -1,27 +1,27 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { Presentation } from '../types';
+import { OverlayInfo, Presentation } from '../types';
 
 
 type PresentationState = {
   isProjectorTransmitting: boolean,
   isMonitorTransmitting: boolean,
-  isOverlayTransmitting: boolean,
+  isStreamTransmitting: boolean,
   projectorInfo: Presentation,
   monitorInfo: Presentation,
-  overlayInfo: Presentation
+  streamInfo: Presentation
 }
 
 const initialState: PresentationState = {
   isProjectorTransmitting: false,
   isMonitorTransmitting: false,
-  isOverlayTransmitting: false,
+  isStreamTransmitting: false,
   projectorInfo: { type: '', name: '', slide: null },
   monitorInfo: { type: '', name: '', slide: null }, 
-  overlayInfo: { type: '', name: '', slide: null }
+  streamInfo: { type: '', name: '', slide: null }
 }
 
 export const presentationSlice = createSlice({
-  name: 'user',
+  name: 'presentation',
   initialState,
   reducers: {
     updatePresentation: (state, action : PayloadAction<Presentation>) => {
@@ -33,9 +33,9 @@ export const presentationSlice = createSlice({
         state.monitorInfo = {...action.payload}
         state.monitorInfo.displayType = 'monitor'
       }
-      if (state.isOverlayTransmitting) {
-        state.overlayInfo = {...action.payload}
-        state.overlayInfo.displayType = 'overlay'
+      if (state.isStreamTransmitting) {
+        state.streamInfo = {...action.payload}
+        state.streamInfo.displayType = 'stream'
       }
     },
     toggleProjectorTransmitting: (state) => {
@@ -44,13 +44,19 @@ export const presentationSlice = createSlice({
     toggleMonitorTransmitting: (state) => {
       state.isMonitorTransmitting = !state.isMonitorTransmitting
     },
-    toggleOverlayTransmitting: (state) => {
-      state.isOverlayTransmitting = !state.isOverlayTransmitting
+    toggleStreamTransmitting: (state) => {
+      state.isStreamTransmitting = !state.isStreamTransmitting
     },
     setTransmitToAll: (state, action : PayloadAction<boolean>) => {
       state.isProjectorTransmitting = action.payload;
       state.isMonitorTransmitting = action.payload;
-      state.isOverlayTransmitting = action.payload;
+      state.isStreamTransmitting = action.payload;
+    },
+    updateOverlayInfo: (state, action : PayloadAction<OverlayInfo>) => {
+      if (state.isStreamTransmitting) {
+        console.log(action.payload, 'streamInfo', state.streamInfo)
+        state.streamInfo.overlayInfo = {...action.payload}
+      }
     }
   }
 });
@@ -59,8 +65,9 @@ export const {
   updatePresentation, 
   toggleProjectorTransmitting,
   toggleMonitorTransmitting,
-  toggleOverlayTransmitting,
-  setTransmitToAll
+  toggleStreamTransmitting,
+  setTransmitToAll,
+  updateOverlayInfo
 } = presentationSlice.actions;
 
 export default presentationSlice.reducer;

@@ -28,7 +28,7 @@ const initialState: ItemState = {
 }
 
 export const itemSlice = createSlice({
-  name: 'user',
+  name: 'item',
   initialState,
   reducers: {
     setActiveItem: (state, action : PayloadAction<UpdateItemState>) => {
@@ -71,6 +71,24 @@ export const itemSlice = createSlice({
     },
     updateFormattedLyrics: (state, action : PayloadAction<FormattedLyrics[]>) => {
       state.arrangements[state.selectedArrangement].formattedLyrics = [...action.payload];
+    },
+    updateAllSlideBackgrounds: (state, action : PayloadAction<string>) => {
+      const allSlides = state.arrangements[state.selectedArrangement].slides;
+      const updatedSlides = allSlides.map((slide) => {
+        return {...slide, 
+          boxes: [...slide.boxes.map((box, index) => {
+            if (index === 0) {
+              return {...box, background: action.payload}
+            }
+            return box;
+        }
+        )]
+        }
+      });
+      state.arrangements[state.selectedArrangement].slides = [...updatedSlides];
+    },
+    updateSlideBackground: (state, action : PayloadAction<string>) => {
+      state.arrangements[state.selectedArrangement].slides[state.selectedSlide].boxes[0].background = action.payload;
     }
   }
 });
@@ -87,7 +105,9 @@ export const {
   increaseFormattedLyrics,
   decreaseFormattedLyrics,
   updateFormattedLyrics,
-  setActiveItem
+  setActiveItem,
+  updateAllSlideBackgrounds,
+  updateSlideBackground
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

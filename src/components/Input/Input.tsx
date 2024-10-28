@@ -5,9 +5,10 @@ type InputProps = {
   type?: string
   value: string | number
   label?: string
-  hideLabel?: boolean,
+  hideLabel?: boolean
   onChange: (value: string | number | Date) => void
-
+  lableClassName?: string,
+  labelFontSize?: string
 }
 
 const Input = ({ 
@@ -16,12 +17,14 @@ const Input = ({
   value, onChange, 
   label, 
   hideLabel = false, 
+  lableClassName,
+  labelFontSize = 'text-sm',
   ...rest
 } : InputProps) => {
 
   return (
     <div className={`${className} input-container`}>
-      <label className={`text-sm font-semibold ${hideLabel ? 'sr-only' : ''}`}>{label}:</label>
+      <label className={`${labelFontSize} font-semibold ${hideLabel ? 'sr-only' : ''} ${lableClassName}`}>{label}:</label>
       <input
         className="w-full rounded px-2 py-1 text-black"
         type={type}

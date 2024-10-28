@@ -9,7 +9,7 @@ const Welcome = () => {
               <Link to="/controller">Controller</Link>
               <Link to="/monitor">Monitor</Link>
               <Link to="/presentation">Presentation</Link>
-              <Link to="/overlays">Overlays</Link>
+              <Link to="/stream">Stream</Link>
             </section>
 
         </main>

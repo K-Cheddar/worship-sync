@@ -4,7 +4,7 @@ import Home from './pages/Home';
 import Controller from './pages/Controller';
 import Presentation from './pages/Presentation';
 import Monitor from './pages/Monitor';
-import Overlays from './pages/Overlays';
+import Stream from './pages/Stream';
 import { Provider } from 'react-redux';
 import store from './store/store';
 
@@ -17,7 +17,7 @@ function App() {
           <Route path="/controller" element={<Controller/>} />
           <Route path="/presentation" element={<Presentation/>} />
           <Route path="/monitor" element={<Monitor/>} />
-          <Route path="/overlays" element={<Overlays/>} />
+          <Route path="/stream" element={<Stream/>} />
         </Routes>
       </Router>
     </Provider>

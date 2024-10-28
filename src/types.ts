@@ -92,6 +92,23 @@ export type Presentation = {
   slide: ItemSlide | null,
   time?: number,
   displayType?: DisplayType,
+  overlayInfo?: OverlayInfo
 }
 
-export type DisplayType = 'projector' | 'monitor' | 'overlay' | 'editor' | 'slide'
+export type OverlayInfo = {
+  name?: string,
+  title?: string,
+  event?: string
+}
+
+export type DisplayType = 'projector' | 'monitor' | 'stream' | 'editor' | 'slide'
+
+export type MiddleSection = 'bible-panel' | 'songs-panel' | 'participants-panel' | 'service-item'
+
+export type ParticipantType = {
+  name: string,
+  title: string,
+  event: string,
+  id: string,
+  showDelete: boolean
+}

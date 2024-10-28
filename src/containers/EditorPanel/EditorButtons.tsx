@@ -1,9 +1,10 @@
-import {  useState } from "react";
 import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
+import { MiddleSection } from "../../types";
 
 type ButtonType = {
   type: string,
   title: string,
+  section: MiddleSection
   action?: Function
 }
 
@@ -11,41 +12,31 @@ const buttons: ButtonType[] = [
   {
     type: 'bible',
     title: 'Bible',
+    section: 'bible-panel'
   },
   {
     type: 'song',
     title: 'Songs',
+    section: 'songs-panel'
   },
   {
-    type: 'announcement',
-    title: 'Announcements',
-  },
-  {
-    type: 'timer',
-    title: 'Timers',
-  },
-  {
-    type: 'all',
-    title: 'All Items',
-  },
-  {
-    type: 'overlay',
-    title: 'Overlays',
+    type: 'participants',
+    title: 'Participants',
+    section: 'participants-panel'
   }
 ]
 
-const EditorButtons = () => {
-  const [selected, setSelected] = useState<ButtonType>({type: '', title: ''});
+const EditorButtons = ({ setMiddleSection, middleSection }: { setMiddleSection: Function, middleSection: MiddleSection}) => {
   return (
     <div className="flex flex-col h-fit" >
-        {buttons.map(({ title, type }) => {
+        {buttons.map(({ title, type, section }) => {
           const id = `editor-button-${title}`;
           return (
             <LeftPanelButton
               key={id}
               title={title}
-              isSelected={selected.type === type}
-              handleClick={setSelected}
+              isSelected={middleSection === section}
+              handleClick={() => setMiddleSection(section)}
               type={type}
             />
           )

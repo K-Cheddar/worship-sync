@@ -3,12 +3,14 @@ import userReducer from './userSlice'
 import { itemSlice } from './itemSlice';
 import undoable from 'redux-undo';
 import { presentationSlice } from './presentationSlice';
+import { participantsSlice } from './participantsSlice';
 
 const store = configureStore({
   reducer: {
     user: undoable(userReducer),
     item: itemSlice.reducer,
-    presentation: presentationSlice.reducer
+    presentation: presentationSlice.reducer,
+    participants: participantsSlice.reducer
   },
 })
 

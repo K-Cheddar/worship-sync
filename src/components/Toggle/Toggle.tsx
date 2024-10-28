@@ -12,7 +12,7 @@ type ToggleProps = {
 const Toggle = ( { label, value, onChange, className } : ToggleProps) => {
 
   return (
-    <div className={`flex gap-1 ${className}`}>
+    <div className={`flex gap-1 items-center h-4 ${className ? className : ''}`}>
       <label className="text-sm font-semibold">{label}:</label>
       <div className={`${value ? 'on' : 'off'} toggle-container`}>
         <input

@@ -15,7 +15,7 @@ const actions = [
 
 const serviceItems : ServiceItem[] = dummyItems;
 
-const ServiceItems = () => {
+const ServiceItems = ({ setMiddleSection }: { setMiddleSection: Function }) => {
   const dispatch = useDispatch();
   const [selectedItem, setSelectedItem] = useState<ServiceItem>({id: '', title: '', type: ''});
 
@@ -37,7 +37,10 @@ const ServiceItems = () => {
               key={item.id}
               title={item.title}
               isSelected={item.id === selectedItem.id}
-              handleClick={() => selectItem(item)}
+              handleClick={() => {
+                selectItem(item)
+                setMiddleSection('service-item')
+              }}
               type={item.type}
               actions={actions}
             />

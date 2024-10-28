@@ -1,12 +1,11 @@
-import React, { ComponentPropsWithoutRef, FunctionComponent, ReactNode, RefObject, useRef } from "react";
+import React, { ComponentPropsWithoutRef, forwardRef, FunctionComponent, ReactNode, RefObject, useRef } from "react";
 import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
 import Icon from "../Icon/Icon";
 import cn from "classnames";
 import './Button.scss'
 
-export interface ButtonProps extends ComponentPropsWithoutRef<"button"> {
+export type ButtonProps = Omit<React.HTMLProps<HTMLButtonElement>, 'wrap'> & {
     children?: ReactNode,
-    ref?: RefObject<HTMLButtonElement>,
     svg?: FunctionComponent<React.SVGProps<SVGSVGElement>>,
     variant?: 'primary' | 'secondary' | 'tertiary' | 'cta' | 'none',
     className?: string,
@@ -18,11 +17,11 @@ export interface ButtonProps extends ComponentPropsWithoutRef<"button"> {
     truncate?: boolean,
     padding?: string,
     iconSize?: string,
+    type?: 'button' | 'submit' | 'reset' | undefined
 }
 
-const Button = ({ 
+const Button = forwardRef<HTMLButtonElement, ButtonProps>(({
   children, 
-  ref, 
   svg, 
   className, 
   color, 
@@ -34,8 +33,9 @@ const Button = ({
   isSelected = false,
   truncate = false,
   iconSize = 'md',
+  type="button",
   ...rest
-  } : ButtonProps) => {
+  }, ref) => {
   const fallbackRef = useRef(null);
   const buttonRef = ref || fallbackRef;
 
@@ -44,7 +44,7 @@ const Button = ({
   return (
     <button 
       className={cn(
-        `font-semibold rounded-sm flex items-center max-w-full ${gap}`, 
+        `font-semibold rounded-md flex items-center max-w-full disabled:opacity-65 disabled:pointer-events-none ${gap}`, 
         children && padding,
         !children && "p-1",
         !isSelected && variant,
@@ -52,16 +52,16 @@ const Button = ({
         truncate && "truncate",
         className,
       )}
+      type={type}
       ref={buttonRef} 
       {...rest}
     >
       {svg && iconPosition === 'left' && iconWProps}
       {children}
-      {svg && iconPosition === 'right' && iconWProps }
+      {svg && iconPosition === 'right' && iconWProps}
     </button>
   )
 
-}
-
+})
 
 export default Button

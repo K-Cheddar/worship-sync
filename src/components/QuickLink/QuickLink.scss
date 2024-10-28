@@ -1,5 +1,5 @@
 .quick-link {
-  @apply w-fit flex flex-col hover:bg-slate-500 cursor-pointer rounded;
+  @apply flex flex-col hover:bg-slate-500 cursor-pointer rounded items-center p-1 w-[3vw];
 
   &:hover {
     @apply bg-slate-500;
@@ -10,7 +10,7 @@
   }
 
   button {
-    width: 3rem;
+    width: 100%;
     height: calc(3rem * 9 / 16);
   }
 }

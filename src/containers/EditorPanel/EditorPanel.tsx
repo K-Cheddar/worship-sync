@@ -3,7 +3,6 @@ import Songs from "./EditorSections/Songs"
 import AllItems from "./EditorSections/AllItems"
 import Announcements from "./EditorSections/Announcements"
 import Timers from "./EditorSections/Timers"
-import Overlays from "./EditorSections/Overlays"
 
 const EditorPanel = () => {
   return (
@@ -13,7 +12,6 @@ const EditorPanel = () => {
       <AllItems/>
       <Announcements/>
       <Timers/>
-      <Overlays/>
     </div>
   )
 }

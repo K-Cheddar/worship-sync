@@ -1,8 +1,5 @@
 @tailwind components;
 
 .menu {
-  @apply absolute bg-slate-700 z-10 w-fit rounded;
-  
-  top: calc(var(--menu-top) + 4px);
-  left: var(--menu-left);
+  @apply bg-slate-700 z-10 w-fit rounded;
 }
