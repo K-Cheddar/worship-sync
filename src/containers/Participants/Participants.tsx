@@ -85,47 +85,49 @@ const Participants = () => {
             </Button>
         </section>
         <div className="flex flex-col items-center gap-4 flex-1">
-          <div>
-            <h2 className="bg-slate-900 text-center font-semibold text-base">Preview</h2>
-            <DisplayWindow showBorder width={25} overlayInfo={{name: localName, title: localTitle, event: localEvent}}/>
-          </div>
           {id && (
-            <section className="flex flex-col gap-2 bg-slate-800 p-2 rounded-md min-w-1/2">
-              <Input 
-                className="text-sm flex gap-2 items-center" 
-                lableClassName="w-10"
-                label="Name" 
-                value={localName} 
-                onChange={(val) => setLocalName(val as string)} 
-              />
-              <Input 
-                className="text-sm flex gap-2 items-center" 
-                lableClassName="w-10"
-                label="Title" 
-                value={localTitle} 
-                onChange={(val) => setLocalTitle(val as string)} 
-              />
-              <Input 
-                className="text-sm flex gap-2 items-center" 
-                lableClassName="w-10"
-                label="Event" 
-                value={localEvent} 
-                onChange={(val) => setLocalEvent(val as string)} 
-              />
-              <span className="flex gap-1 items-center">
-                <Toggle
-                  label="Show Delete"
-                  value={localShowDelete}
-                  onChange={(val) => setLocalShowDelete(val)}
-                />
-                <Button 
-                  className="text-sm h-7 w-fit ml-auto"
-                  onClick={() => dispatch(updateParticipant({ id, name: localName, title: localTitle, event: localEvent, showDelete: localShowDelete }))}
-                  >
-                    Update Participant
-                </Button>
-              </span>
-            </section>
+            <>
+              <div>
+                <h2 className="bg-slate-900 text-center font-semibold text-base">Preview</h2>
+                <DisplayWindow showBorder width={25} overlayInfo={{name: localName, title: localTitle, event: localEvent}}/>
+              </div>
+                <section className="flex flex-col gap-2 bg-slate-800 p-2 rounded-md min-w-1/2">
+                  <Input 
+                    className="text-sm flex gap-2 items-center" 
+                    lableClassName="w-10"
+                    label="Name" 
+                    value={localName} 
+                    onChange={(val) => setLocalName(val as string)} 
+                  />
+                  <Input 
+                    className="text-sm flex gap-2 items-center" 
+                    lableClassName="w-10"
+                    label="Title" 
+                    value={localTitle} 
+                    onChange={(val) => setLocalTitle(val as string)} 
+                  />
+                  <Input 
+                    className="text-sm flex gap-2 items-center" 
+                    lableClassName="w-10"
+                    label="Event" 
+                    value={localEvent} 
+                    onChange={(val) => setLocalEvent(val as string)} 
+                  />
+                  <span className="flex gap-1 items-center">
+                    <Toggle
+                      label="Show Delete"
+                      value={localShowDelete}
+                      onChange={(val) => setLocalShowDelete(val)}
+                    />
+                    <Button 
+                      className="text-sm h-7 w-fit ml-auto"
+                      onClick={() => dispatch(updateParticipant({ id, name: localName, title: localTitle, event: localEvent, showDelete: localShowDelete }))}
+                      >
+                        Update Participant
+                    </Button>
+                  </span>
+                </section>
+            </>
           )}
         </div>
       </div>

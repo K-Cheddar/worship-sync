@@ -6,6 +6,9 @@ type PresentationState = {
   isProjectorTransmitting: boolean,
   isMonitorTransmitting: boolean,
   isStreamTransmitting: boolean,
+  prevProjectorInfo: Presentation,
+  prevMonitorInfo: Presentation,
+  prevStreamInfo: Presentation,
   projectorInfo: Presentation,
   monitorInfo: Presentation,
   streamInfo: Presentation
@@ -15,9 +18,12 @@ const initialState: PresentationState = {
   isProjectorTransmitting: false,
   isMonitorTransmitting: false,
   isStreamTransmitting: false,
-  projectorInfo: { type: '', name: '', slide: null },
-  monitorInfo: { type: '', name: '', slide: null }, 
-  streamInfo: { type: '', name: '', slide: null }
+  prevProjectorInfo: { type: '', name: '', slide: null, displayType: 'projector' },
+  prevMonitorInfo: { type: '', name: '', slide: null, displayType: 'monitor' },
+  prevStreamInfo: { type: '', name: '', slide: null, displayType: 'stream' },
+  projectorInfo: { type: '', name: '', slide: null, displayType: 'projector' },
+  monitorInfo: { type: '', name: '', slide: null, displayType: 'monitor' }, 
+  streamInfo: { type: '', name: '', slide: null, displayType: 'stream' }
 }
 
 export const presentationSlice = createSlice({
@@ -26,16 +32,34 @@ export const presentationSlice = createSlice({
   reducers: {
     updatePresentation: (state, action : PayloadAction<Presentation>) => {
       if (state.isProjectorTransmitting) {
-        state.projectorInfo = {...action.payload}
-        state.projectorInfo.displayType = 'projector'
+        // set previous info for cross animation
+        state.prevProjectorInfo.slide = state.projectorInfo.slide
+        state.prevProjectorInfo.name = state.projectorInfo.name
+        state.prevProjectorInfo.type = state.projectorInfo.type
+
+        state.projectorInfo.slide = action.payload.slide
+        state.projectorInfo.name = action.payload.name
+        state.projectorInfo.type = action.payload.type
       }
       if (state.isMonitorTransmitting) {
-        state.monitorInfo = {...action.payload}
-        state.monitorInfo.displayType = 'monitor'
+        // set previous info for cross animation
+        state.prevMonitorInfo.slide = state.monitorInfo.slide
+        state.prevMonitorInfo.name = state.monitorInfo.name
+        state.prevMonitorInfo.type = state.monitorInfo.type
+
+        state.monitorInfo.slide = action.payload.slide
+        state.monitorInfo.name = action.payload.name
+        state.monitorInfo.type = action.payload.type
       }
       if (state.isStreamTransmitting) {
-        state.streamInfo = {...action.payload}
-        state.streamInfo.displayType = 'stream'
+        // set previous info for cross animation
+        state.prevStreamInfo.slide = state.streamInfo.slide
+        state.prevStreamInfo.name = state.streamInfo.name
+        state.prevStreamInfo.type = state.streamInfo.type
+
+        state.streamInfo.slide = action.payload.slide
+        state.streamInfo.name = action.payload.name
+        state.streamInfo.type = action.payload.type
       }
     },
     toggleProjectorTransmitting: (state) => {
@@ -54,7 +78,8 @@ export const presentationSlice = createSlice({
     },
     updateOverlayInfo: (state, action : PayloadAction<OverlayInfo>) => {
       if (state.isStreamTransmitting) {
-        console.log(action.payload, 'streamInfo', state.streamInfo)
+        // set previous info for cross animation
+        state.prevStreamInfo.overlayInfo = state.streamInfo.overlayInfo
         state.streamInfo.overlayInfo = {...action.payload}
       }
     }

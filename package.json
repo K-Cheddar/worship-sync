@@ -4,6 +4,7 @@
   "private": true,
   "dependencies": {
     "@floating-ui/react": "^0.26.25",
+    "@gsap/react": "^2.1.1",
     "@reduxjs/toolkit": "^2.3.0",
     "@syncfusion/ej2-react-richtexteditor": "^27.1.52",
     "@testing-library/jest-dom": "^5.17.0",
@@ -15,6 +16,7 @@
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
     "classnames": "^2.5.1",
+    "gsap": "^3.12.5",
     "node-sass": "^7.0.3",
     "re-resizable": "^6.10.0",
     "react": "^18.3.1",

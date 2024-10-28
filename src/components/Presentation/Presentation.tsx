@@ -5,20 +5,29 @@ import {  Presentation as PresentationType, QuickLinkType } from "../../types";
 
 type PresentationProps = {
   name: string
-  info: PresentationType
+  info: PresentationType,
+  prevInfo: PresentationType,
   isTransmitting: boolean
   toggleIsTransmitting: () => void
   quickLinks: QuickLinkType[],
   showBorder?: boolean
 }
 
-const Presentation = ({ name, info, isTransmitting, toggleIsTransmitting, quickLinks, showBorder = true} : PresentationProps) => {
+const Presentation = ({ name, prevInfo, info, isTransmitting, toggleIsTransmitting, quickLinks, showBorder = true} : PresentationProps) => {
 
   return (
     <div className="flex gap-2">
       <section className="w-fit">
         <h2 className="bg-slate-900 text-center font-semibold text-base">{name}</h2>
-        <DisplayWindow boxes={info.slide?.boxes || []} width={14} showBorder={showBorder} displayType={info.displayType} overlayInfo={info.overlayInfo}/> 
+        <DisplayWindow 
+          boxes={info.slide?.boxes || []} 
+          prevBoxes={prevInfo.slide?.boxes || []}
+          width={14}
+          showBorder={showBorder}
+          displayType={info.displayType}
+          overlayInfo={info.overlayInfo}
+          prevOverlayInfo={prevInfo.overlayInfo}
+        /> 
       </section>
       <section className="gap-2 flex flex-col pt-2">
         <Toggle label="Transmitting" value={isTransmitting} onChange={toggleIsTransmitting}/>

@@ -10,6 +10,9 @@ const TransmitHandler = ({ className } : { className: string}) => {
     isMonitorTransmitting, 
     isProjectorTransmitting, 
     isStreamTransmitting,
+    prevProjectorInfo,
+    prevMonitorInfo,
+    prevStreamInfo,
     projectorInfo,
     monitorInfo,
     streamInfo
@@ -33,6 +36,7 @@ const TransmitHandler = ({ className } : { className: string}) => {
       </div>
         <Presentation 
           name="Projector" 
+          prevInfo={prevProjectorInfo}
           info={projectorInfo}
           isTransmitting={isProjectorTransmitting} 
           toggleIsTransmitting={() => dispatch(toggleProjectorTransmitting())} 
@@ -40,6 +44,7 @@ const TransmitHandler = ({ className } : { className: string}) => {
         />
         <Presentation 
           name="Monitor" 
+          prevInfo={prevMonitorInfo}
           info={monitorInfo}
           isTransmitting={isMonitorTransmitting} 
           toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())} 
@@ -47,6 +52,7 @@ const TransmitHandler = ({ className } : { className: string}) => {
         />
         <Presentation 
           name="Stream" 
+          prevInfo={prevStreamInfo}
           info={streamInfo}
           isTransmitting={isStreamTransmitting} 
           toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())} 

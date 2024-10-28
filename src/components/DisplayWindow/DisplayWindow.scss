@@ -4,7 +4,7 @@
 
   font-family: Verdana;
 
-  @apply relative;
+  @apply relative overflow-hidden;
 }
 
 .overlay-info-container {
@@ -16,7 +16,6 @@
   max-width: 70%;
 
   bottom: 5%;
-  left: 2.5%;
 }
 
 .overlay-info-name {
