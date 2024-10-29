@@ -4,7 +4,7 @@
 
   font-family: Verdana;
 
-  @apply relative overflow-hidden;
+  @apply relative overflow-hidden text-white;
 }
 
 .overlay-info-container {
@@ -12,9 +12,7 @@
 
   border-left: var(--overlay-info-border-width) solid green;
   padding: 0 2.5% 1% 2.5%;
-
   max-width: 70%;
-
   bottom: 5%;
 }
 
@@ -29,4 +27,12 @@
 
 .overlay-info-event {
   font-size: var(--overlay-info-event-size);
+}
+
+.display-box-background { 
+  @apply h-full w-full absolute;
+}
+
+.display-box-text {
+  @apply w-full bg-transparent whitespace-pre-line absolute;
 }

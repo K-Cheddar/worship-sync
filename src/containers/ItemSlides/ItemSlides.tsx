@@ -43,7 +43,6 @@ const ItemSlides = () => {
       </div>    
       <ul className={`item-slides-container ${sizeMap.get(size)?.cols}`}>
         {slides.map((slide, index) => {
-          console.log('name', slide)
           return (
             <li 
               key={slide.id}

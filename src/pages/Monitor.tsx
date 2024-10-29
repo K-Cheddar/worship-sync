@@ -1,6 +1,11 @@
+import { useSelector } from "../hooks";
+import Presentation from "../containers/PresentationPage";
+
 const Monitor = () => {
+  const { monitorInfo, prevMonitorInfo } = useSelector((state) => state.presentation)
+ 
   return (
-    <div>Monitor</div>
+    <Presentation displayInfo={monitorInfo} prevDisplayInfo={prevMonitorInfo}/>
   )
 }
 

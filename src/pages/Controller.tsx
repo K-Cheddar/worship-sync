@@ -1,5 +1,5 @@
 import { Resizable } from "re-resizable";
-import EditorButtons from "../containers/EditorPanel/EditorButtons";
+import EditorButtons from "../containers/PanelButtons/PanelButtons";
 import ItemSlides from "../containers/ItemSlides/ItemSlides";
 import Media from "../containers/Media/Media";
 import ServiceItems from "../containers/ServiceItems/ServiceItems";
@@ -9,14 +9,32 @@ import TransmitHandler from "../containers/TransmitHandler/TransmitHandler";
 
 import './pages.scss'
 import LyricsEditor from "../containers/ItemEditor/LyricsEditor";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MiddleSection } from "../types";
 import Participants from "../containers/Participants/Participants";
+import Bible from "../containers/Bible/Bible";
+import { useDispatch } from "../hooks";
+import { updateAllItemsList } from "../store/allItems";
+import Songs from "../containers/Songs/Songs";
 
 const resizableDirections = { top:false, right:false, bottom:false, left:false, topRight:false, bottomRight:false, bottomLeft:false, topLeft:false }
 
 const Controller = () => {
   const [middleSection, setMiddleSection] = useState<MiddleSection>('service-item')
+  const dispatch = useDispatch();
+
+  useEffect(() => {
+
+    const getAllItems = async () => {
+      const response = await fetch('http://localhost:3000/dummyDB/allItems.json');
+      const data = await response.json();
+      dispatch(updateAllItemsList(data));
+    }
+
+    getAllItems()
+
+  }, [dispatch])
+
   return (
     <div className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none">
       <Toolbar className="flex border-b-2 border-slate-500 h-10 text-sm" />
@@ -34,6 +52,8 @@ const Controller = () => {
             </>
           )}
           {middleSection === 'participants-panel' && <Participants/>}
+          {middleSection === 'bible-panel' && <Bible/>}
+          {middleSection === 'songs-panel' && <Songs/>}
         </Resizable>
         <Resizable defaultSize={{ width: "30%" }} className="flex flex-col" enable={{...resizableDirections}}>
           <TransmitHandler className="flex flex-col mt-2 gap-4 w-fit items-center h-fit bg-slate-800 p-4 rounded-lg mx-auto"/>

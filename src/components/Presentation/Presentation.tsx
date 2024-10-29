@@ -27,17 +27,19 @@ const Presentation = ({ name, prevInfo, info, isTransmitting, toggleIsTransmitti
           displayType={info.displayType}
           overlayInfo={info.overlayInfo}
           prevOverlayInfo={prevInfo.overlayInfo}
+          time={info.time}
+          prevTime={prevInfo.time}
+          shouldAnimate
         /> 
       </section>
       <section className="gap-2 flex flex-col pt-2">
         <Toggle label="Transmitting" value={isTransmitting} onChange={toggleIsTransmitting}/>
         <section className="grid grid-cols-2">
-          {quickLinks.map((link) => <QuickLink {...link} key={link.id}/>)}
+          {quickLinks.map((link) => <QuickLink displayType={info.displayType} {...link} key={link.id}/>)}
         </section>
       </section>
     </div>
   )
-
 }
 
 export default Presentation;

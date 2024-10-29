@@ -1,32 +1,27 @@
 import { QuickLinkType } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 
-export const dummyMonitorLinks: QuickLinkType[] = [
+export const monitorLinks: QuickLinkType[] = [
   {
     title: 'Clear',
-    id: generateRandomId()
-  },
-  {
-    title: "5 minutes",
-    id: generateRandomId()
+    id: generateRandomId(),
+    action: 'clear'
   }
 ]
 
-export const dummyOverlayLinks: QuickLinkType[] = [
+export const streamLinks: QuickLinkType[] = [
   {
     title: 'Clear',
-    id: generateRandomId()
-  },
-  {
-    title: "Decision Card",
-    id: generateRandomId()
+    id: generateRandomId(),
+    action: 'clear'
   }
 ]
 
-export const dunmmyProjectorLinks: QuickLinkType[] = [
+export const projectorLinks: QuickLinkType[] = [
   {
     title: 'Clear',
-    id: generateRandomId()
+    id: generateRandomId(),
+    action: 'clear'
   },
   {
     title: "Farewell",

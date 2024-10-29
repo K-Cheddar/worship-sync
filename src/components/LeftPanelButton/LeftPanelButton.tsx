@@ -10,10 +10,11 @@ type LeftPanelButtonProps = {
   handleClick: (item: any) => void,
   title: string,
   type: string,
-  actions?: { action: (event: MouseEvent<HTMLButtonElement>) => void, svg: FunctionComponent<{}>, id: string }[]
+  id: string,
+  actions?: { action: (itemId: string) => void, svg: FunctionComponent<{}>, id: string }[]
 }
 
-const LeftPanelButton = ({ isSelected, handleClick, title, type, actions } : LeftPanelButtonProps) => {
+const LeftPanelButton = ({ isSelected, handleClick, title, type, actions, id } : LeftPanelButtonProps) => {
   
   return (
     <li 
@@ -38,7 +39,7 @@ const LeftPanelButton = ({ isSelected, handleClick, title, type, actions } : Lef
       </Button>
       {actions && actions.map((action) => {
         return (
-          <Button svg={action.svg} key={action.id} onClick={action.action} variant="tertiary"/>
+          <Button svg={action.svg} key={action.id} onClick={ () => action.action(id)} variant="tertiary"/>
         )
       })}
     </li>

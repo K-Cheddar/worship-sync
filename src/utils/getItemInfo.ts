@@ -65,9 +65,9 @@ export const getItemInfo = async (item : ServiceItem) => {
 
 
 
-  _item.name = item.title
+  _item.name = item.name
   _item.type = item.type
-  _item.id = item.id
+  _item.id = item._id
   _item.arrangements = updatedArrangements;
   return _item
 }

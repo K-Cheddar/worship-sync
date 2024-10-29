@@ -1,9 +1,21 @@
+import { ImgHTMLAttributes } from "react"
 import generateRandomId from "../../utils/generateRandomId"
 
 type Image = {
   id: string,
   src: string
 }
+
+// Possible future type
+
+// type Image = {
+//   id: string,
+//   name: string,
+//   type?: string,
+//   category?: string,
+//   image: ImgHTMLAttributes<HTMLImageElement>,
+// }
+
 
 export const dummyMedia: Image[] = [
   {

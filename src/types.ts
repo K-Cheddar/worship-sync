@@ -4,9 +4,11 @@ export type Option = {
 }
 
 export type ServiceItem = {
-  title: string;
-  type: 'song' | 'video' | 'image' | 'bible' | 'timer' | 'announcement' | string ;
-  id: string;
+  name: string,
+  "_id": string,
+  background?: string,
+  nameColor?: string,
+  type: 'song' | 'video' | 'image' | 'bible' | 'timer' | 'announcement' | string
 }
 
 export type MenuItemType = {
@@ -45,7 +47,9 @@ export type ItemSlide = {
 export type QuickLinkType = {
   title: string
   url?: string
-  id: string
+  id: string,
+  action?: 'clear'
+  displayType?: DisplayType
 }
 
 export type UpdateItemState = {
@@ -112,3 +116,26 @@ export type ParticipantType = {
   id: string,
   showDelete: boolean
 }
+
+export type verseType = {
+  name: string,
+  text: string,
+  index: number
+}
+
+export type chapterType = {
+  name: string,
+  verses: verseType[],
+  index: number
+}
+
+export type bookType = {
+  name: string,
+  chapters: chapterType[],
+  index: number
+}
+
+export type bibleType = {
+  books: bookType[]
+}
+

@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { dummyItems } from "./dummyItems";
+import { useEffect, useMemo, useState } from "react";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import './ServiceItems.scss';
 import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
@@ -7,25 +6,32 @@ import { ServiceItem } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { setActiveItem } from "../../store/itemSlice";
 import { getItemInfo } from "../../utils/getItemInfo";
-import { useDispatch } from "../../hooks";
+import { useDispatch, useSelector } from "../../hooks";
+import { removeItemFromList, updateItemList } from "../../store/itemList";
+import { mockItemList } from "../../store/mockItemList";
 
-const actions = [
-  {action: () => {}, svg: DeleteSVG, id: generateRandomId()}
-]
 
-const serviceItems : ServiceItem[] = dummyItems;
 
 const ServiceItems = ({ setMiddleSection }: { setMiddleSection: Function }) => {
   const dispatch = useDispatch();
-  const [selectedItem, setSelectedItem] = useState<ServiceItem>({id: '', title: '', type: ''});
+  const [selectedItem, setSelectedItem] = useState<ServiceItem>({"_id": '', name: '', type: ''});
+  const { list : serviceItems} = useSelector(state => state.itemList);
 
-  
+  const actions = useMemo(() => {
+    return ([
+      { action: (itemId : string) =>  dispatch(removeItemFromList(itemId)), svg: DeleteSVG, id: generateRandomId()}
+    ])
+  }, [dispatch])
+
   const selectItem = async (item : ServiceItem) => {
     setSelectedItem(item);
     const _item = await getItemInfo(item);
     dispatch(setActiveItem(_item));
-    console.log(_item, item)
   }
+
+  useEffect(() => {
+    dispatch(updateItemList(mockItemList))
+  }, [dispatch])
 
   return (
     <>
@@ -34,15 +40,16 @@ const ServiceItems = ({ setMiddleSection }: { setMiddleSection: Function }) => {
         {serviceItems.map((item) => {
           return (
             <LeftPanelButton
-              key={item.id}
-              title={item.title}
-              isSelected={item.id === selectedItem.id}
+              key={item["_id"]}
+              title={item.name}
+              isSelected={item['_id'] === selectedItem["_id"]}
               handleClick={() => {
                 selectItem(item)
                 setMiddleSection('service-item')
               }}
               type={item.type}
               actions={actions}
+              id={item["_id"]}
             />
           )
         })}

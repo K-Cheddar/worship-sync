@@ -4,7 +4,7 @@ import gsap from 'gsap';
 import { useGSAP } from '@gsap/react'; // <-- import the hook from our React package
 import Home from './pages/Home';
 import Controller from './pages/Controller';
-import Presentation from './pages/Presentation';
+import Presentation from './pages/Projector';
 import Monitor from './pages/Monitor';
 import Stream from './pages/Stream';
 import { Provider } from 'react-redux';

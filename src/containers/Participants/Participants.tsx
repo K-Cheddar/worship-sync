@@ -89,7 +89,12 @@ const Participants = () => {
             <>
               <div>
                 <h2 className="bg-slate-900 text-center font-semibold text-base">Preview</h2>
-                <DisplayWindow showBorder width={25} overlayInfo={{name: localName, title: localTitle, event: localEvent}}/>
+                <DisplayWindow 
+                  showBorder 
+                  width={25} 
+                  overlayInfo={{name: localName, title: localTitle, event: localEvent }}
+                  displayType="stream"
+                />
               </div>
                 <section className="flex flex-col gap-2 bg-slate-800 p-2 rounded-md min-w-1/2">
                   <Input 

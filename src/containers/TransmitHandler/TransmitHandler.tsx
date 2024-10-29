@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react"
 import Toggle from "../../components/Toggle/Toggle"
 import { useDispatch, useSelector } from "../../hooks"
-import { setTransmitToAll, toggleMonitorTransmitting, toggleStreamTransmitting, toggleProjectorTransmitting } from "../../store/presentationSlice"
+import { setTransmitToAll, toggleMonitorTransmitting, toggleStreamTransmitting, toggleProjectorTransmitting, clearAll } from "../../store/presentationSlice"
 import Presentation from "../../components/Presentation/Presentation"
-import { dummyMonitorLinks, dummyOverlayLinks, dunmmyProjectorLinks } from "./dummyLinks"
+import { monitorLinks, projectorLinks, streamLinks } from "./dummyLinks"
+import Button from "../../components/Button/Button"
 
 const TransmitHandler = ({ className } : { className: string}) => {
   const { 
@@ -31,7 +32,9 @@ const TransmitHandler = ({ className } : { className: string}) => {
 
   return (
     <section className={className}>
-      <div className="w-full flex justify-center">
+      <div className="w-full flex justify-center items-center gap-4">
+        <Button onClick={() => dispatch(clearAll())} className="text-sm" padding="py-1 px-2">Clear All</Button>
+        <hr className="border-r border-slate-400 h-full"/>
         <Toggle label="Transmitting to all" value={isTransmitting} onChange={handleSetTransmitting}/>
       </div>
         <Presentation 
@@ -40,7 +43,7 @@ const TransmitHandler = ({ className } : { className: string}) => {
           info={projectorInfo}
           isTransmitting={isProjectorTransmitting} 
           toggleIsTransmitting={() => dispatch(toggleProjectorTransmitting())} 
-          quickLinks={dunmmyProjectorLinks} 
+          quickLinks={projectorLinks} 
         />
         <Presentation 
           name="Monitor" 
@@ -48,7 +51,7 @@ const TransmitHandler = ({ className } : { className: string}) => {
           info={monitorInfo}
           isTransmitting={isMonitorTransmitting} 
           toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())} 
-          quickLinks={dummyMonitorLinks} 
+          quickLinks={monitorLinks} 
         />
         <Presentation 
           name="Stream" 
@@ -56,7 +59,7 @@ const TransmitHandler = ({ className } : { className: string}) => {
           info={streamInfo}
           isTransmitting={isStreamTransmitting} 
           toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())} 
-          quickLinks={dummyOverlayLinks} 
+          quickLinks={streamLinks} 
         />
     </section>
   )

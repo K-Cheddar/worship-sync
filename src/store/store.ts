@@ -4,13 +4,19 @@ import { itemSlice } from './itemSlice';
 import undoable from 'redux-undo';
 import { presentationSlice } from './presentationSlice';
 import { participantsSlice } from './participantsSlice';
+import { bibleSlice } from './bibleSlice';
+import { itemListSlice } from './itemList';
+import { allItemsSlice } from './allItems';
 
 const store = configureStore({
   reducer: {
     user: undoable(userReducer),
     item: itemSlice.reducer,
     presentation: presentationSlice.reducer,
-    participants: participantsSlice.reducer
+    participants: participantsSlice.reducer,
+    bible: bibleSlice.reducer,
+    itemList: itemListSlice.reducer,
+    allItems: allItemsSlice.reducer
   },
 })
 
