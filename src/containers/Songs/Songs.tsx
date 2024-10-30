@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "../../hooks";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import Button from "../../components/Button/Button";
@@ -9,13 +9,16 @@ import { addItemToItemList } from "../../store/itemList";
 const Songs = () => {
   const { list } = useSelector((state) => state.allItems);
   const dispatch = useDispatch();
+  const loader = useRef(null);
 
   const songList = useMemo(() => {
     return list.filter((item) => item.type === "song");
   }, [list]);
 
   const [filteredList, setFilteredList] = useState(songList);
+  const [numShownItems, setNumShownItems] = useState(20);
   const [searchValue, setSearchValue] = useState("");
+  const isFullListLoaded = filteredList.length <= numShownItems;
 
   useEffect(() => {
     setFilteredList(
@@ -24,6 +27,22 @@ const Songs = () => {
       )
     );
   }, [searchValue, songList]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        setNumShownItems((prev) => prev + 20);
+      }
+    });
+
+    if (loader.current) {
+      observer.observe(loader.current);
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   return (
     <div className="px-2 py-4 h-full">
@@ -37,7 +56,7 @@ const Songs = () => {
         />
       </div>
       <ul className="song-list">
-        {filteredList.map((song, index) => {
+        {filteredList.slice(0, numShownItems).map((song, index) => {
           const isEven = index % 2 === 0;
           const bg = isEven ? "bg-slate-800" : "bg-slate-600";
           return (
@@ -59,6 +78,14 @@ const Songs = () => {
             </li>
           );
         })}
+        <li
+          className={`w-full text-sm text-center py-1 rounded-md ${
+            isFullListLoaded ? "bg-transparent" : "bg-black"
+          }`}
+          ref={loader}
+        >
+          {!isFullListLoaded && "Loading..."}
+        </li>
       </ul>
     </div>
   );

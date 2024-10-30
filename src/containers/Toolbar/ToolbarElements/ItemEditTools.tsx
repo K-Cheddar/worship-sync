@@ -4,12 +4,14 @@ import Toggle from "../../../components/Toggle/Toggle";
 const ItemEditTools = () => {
   const [skipTitle, setSkipTitlte] = useState(false);
   return (
-    <div>
-      <div className="flex gap-1 items-center">
-        <Toggle label="Skip Title" value={skipTitle} onChange={(val) => setSkipTitlte(val) } />
-      </div>
+    <div className="flex gap-1 items-center">
+      <Toggle
+        label="Skip Title"
+        value={skipTitle}
+        onChange={(val) => setSkipTitlte(val)}
+      />
     </div>
-  )
-}
+  );
+};
 
 export default ItemEditTools;

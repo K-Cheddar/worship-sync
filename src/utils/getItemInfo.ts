@@ -1,34 +1,17 @@
-import { mockArrangement } from "../store/mockArrangement";
-import {
-  Arrangment,
-  DBItem,
-  ServiceItem,
-  SongOrder,
-  UpdateItemState,
-} from "../types";
+import { DBItem, SongOrder, UpdateItemState } from "../types";
 import generateRandomId from "./generateRandomId";
 
-const mockItem: DBItem = {
-  name: "There's a welcome here",
-  type: "song",
-  id: generateRandomId(),
-  selectedArrangement: 0,
-  shouldSkipTitle: false,
-  arrangements: mockArrangement,
-};
-
-export const getItemInfo = async (item: ServiceItem) => {
-  const retrievedItem = mockItem;
+export const formatItemInfo = async (item: DBItem) => {
   const _item: UpdateItemState = {
-    name: "",
-    type: "",
-    id: "",
-    selectedArrangement: retrievedItem.selectedArrangement,
-    shouldSkipTitle: retrievedItem.shouldSkipTitle,
+    name: item.name,
+    type: item.type,
+    id: item.id,
+    selectedArrangement: item.selectedArrangement,
+    shouldSkipTitle: item.shouldSkipTitle,
     arrangements: [],
   };
 
-  const updatedArrangements = retrievedItem.arrangements.map((arrangement) => {
+  const updatedArrangements = item.arrangements.map((arrangement) => {
     let { formattedLyrics, slides, songOrder } = { ...arrangement };
 
     if (!formattedLyrics[0].id) {
@@ -65,16 +48,13 @@ export const getItemInfo = async (item: ServiceItem) => {
     }
 
     return {
-      name: retrievedItem.arrangements[retrievedItem.selectedArrangement].name,
+      name: item.arrangements[item.selectedArrangement].name,
       formattedLyrics,
       songOrder: songOrderWIds,
       slides,
     };
   });
 
-  _item.name = item.name;
-  _item.type = item.type;
-  _item.id = item._id;
   _item.arrangements = updatedArrangements;
   return _item;
 };

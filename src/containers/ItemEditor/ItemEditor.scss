@@ -21,6 +21,7 @@
 
 .song-sections {
   // max-height: calc(100% - 1rem);
+  height: 100%;
   scrollbar-width: thin;
 
   @apply flex flex-col gap-2 overflow-y-auto;
@@ -28,8 +29,8 @@
 
 .lyrics-editor-middle {
   // Subtracting top and bottom sections and bottom margin and gap
-  max-height: calc(
-    100% - 2rem - 3.5rem - clamp(0.25rem, 0.5vw, 0.5rem) -
+  height: calc(
+    100% - 2rem - 4rem - clamp(0.25rem, 0.5vw, 0.5rem) -
       clamp(0.25rem, 0.5vw, 0.5rem)
   );
 
