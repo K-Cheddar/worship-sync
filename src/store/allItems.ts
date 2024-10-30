@@ -1,27 +1,34 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { ServiceItem } from '../types';
+import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import { ServiceItem } from "../types";
 
 type AllItems = {
-  list: ServiceItem[]
-}
+  list: ServiceItem[];
+};
 
 const initialState: AllItems = {
-  list: []
-}
+  list: [],
+};
 
 export const allItemsSlice = createSlice({
-  name: 'allItems',
+  name: "allItems",
   initialState,
   reducers: {
-    updateAllItemsList: (state, action : PayloadAction<ServiceItem[]>) => {
-      state.list = action.payload
+    updateAllItemsList: (state, action: PayloadAction<ServiceItem[]>) => {
+      state.list = action.payload;
     },
-    removeItemFromAllItemsList: (state, action : PayloadAction<string>) => {
-      state.list = state.list.filter((item) => item["_id"] !== action.payload)
-    }
-  }
+    removeItemFromAllItemsList: (state, action: PayloadAction<string>) => {
+      state.list = state.list.filter((item) => item["_id"] !== action.payload);
+    },
+    addItemToAllItemsList: (state, action: PayloadAction<ServiceItem>) => {
+      state.list.push(action.payload);
+    },
+  },
 });
 
-export const { updateAllItemsList, removeItemFromAllItemsList } = allItemsSlice.actions;
+export const {
+  updateAllItemsList,
+  removeItemFromAllItemsList,
+  addItemToAllItemsList,
+} = allItemsSlice.actions;
 
 export default allItemsSlice.reducer;
