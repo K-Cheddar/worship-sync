@@ -46,13 +46,13 @@ const Songs = () => {
 
   return (
     <div className="px-2 py-4 h-full">
-      <h2 className="text-2xl text-center">Songs</h2>
+      <h2 className="text-2xl text-center mb-2">Songs</h2>
       <div>
         <Input
           value={searchValue}
           onChange={(val) => setSearchValue(val as string)}
           label="Search"
-          className="w-56 text-base flex gap-2 items-center mb-4"
+          className="md:w-1/2 text-base flex gap-2 items-center mb-4 px-6"
         />
       </div>
       <ul className="song-list">
@@ -62,13 +62,13 @@ const Songs = () => {
           return (
             <li
               key={song._id}
-              className={`flex border border-transparent gap-2 ${bg} py-1 px-4 rounded-md items-center hover:border-gray-300`}
+              className={`flex border border-transparent gap-2 ${bg} pl-4 rounded-md items-center hover:border-gray-300`}
             >
               <p className="text-base flex-1">{song.name}</p>
               <Button
                 color="#22d3ee"
                 variant="tertiary"
-                className="text-sm h-6 leading-3 ml-auto"
+                className="text-sm h-full leading-3 ml-auto"
                 padding="py-1 px-2"
                 svg={AddSVG}
                 onClick={() => dispatch(addItemToItemList(song))}

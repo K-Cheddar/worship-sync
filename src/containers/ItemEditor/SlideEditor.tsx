@@ -35,15 +35,11 @@ const SlideEditor = () => {
 
   const boxes = arrangement?.slides[selectedSlide]?.boxes || [];
 
-  const nameClasses = "text-base font-semibold w-fit max-w-15 truncate";
-
-  console.log({ name, type, arrangements, selectedArrangement, selectedSlide });
-
   return (
     <div>
-      <section className="flex justify-end w-full pr-2 bg-slate-900 h-8 mb-1 gap-1">
+      <section className="flex justify-end w-full pr-2 bg-slate-900 h-8 mb-1 gap-1 overflow-hidden">
         <span
-          className={`flex mr-auto px-2 items-center gap-2 border-l-4 w-fit ${borderColorMap.get(
+          className={`slide-editor-song-name-container ${borderColorMap.get(
             type
           )}`}
         >
@@ -55,11 +51,11 @@ const SlideEditor = () => {
               isEditingName ? () => saveName() : () => setIsEditingName(true)
             }
           />
-          {!isEditingName && <h2 className={nameClasses}>{name}</h2>}
+          {!isEditingName && <h2 className="slide-editor-song-name">{name}</h2>}
           {isEditingName && (
             <Input
               hideLabel
-              className={nameClasses}
+              className="slide-editor-song-name"
               value={localName}
               onChange={(val) => setLocalName(val as string)}
             />

@@ -4,6 +4,7 @@ import { FunctionComponent } from "react";
 import cn from "classnames";
 import { borderColorMap, iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { Link } from "react-router-dom";
+import "./LeftPanelButton.scss";
 
 type LeftPanelButtonProps = {
   isSelected: boolean;
@@ -36,9 +37,7 @@ const LeftPanelButton = ({
     >
       <Button
         variant={actions ? "none" : "tertiary"}
-        className={`relative w-full text-sm border-l-4 ${borderColorMap.get(
-          type
-        )}`}
+        className={`left-panel-button ${borderColorMap.get(type)}`}
         wrap
         svg={svgMap.get(type) || UnknownSVG}
         gap="gap-3"
@@ -61,6 +60,7 @@ const LeftPanelButton = ({
               key={action.id}
               onClick={() => action.action(id)}
               variant="tertiary"
+              className="left-panel-action-button"
             />
           );
         })}

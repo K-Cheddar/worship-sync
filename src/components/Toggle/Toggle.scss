@@ -1,6 +1,6 @@
-.toggle-container {
+.toggle-input-container {
 
-  @apply w-8 h-4 border rounded-2xl relative border-gray-300 flex;
+  @apply w-8 h-4 border rounded-2xl border-gray-300 flex;
 
   :focus-within, &:focus-visible, &:focus {
     @apply outline-1 outline-slate-200;
@@ -20,7 +20,7 @@
 }
 
 .toggle-circle {
-  top: -5px;
+  top: -4px;
 
   @apply transition-all absolute pointer-events-none;
 
@@ -29,6 +29,6 @@
   }
 
   .off & {
-    right: 14px;
+    right: 15px;
   }
 }

@@ -53,3 +53,15 @@
 
   scrollbar-width: thin;
 }
+
+.slide-editor-song-name {
+  @apply text-base font-semibold flex-1 truncate;
+
+  max-width: calc(100% - 2rem)
+}
+
+.slide-editor-song-name-container {
+  @apply flex mr-auto px-2 items-center gap-2 border-l-4 flex-1;
+
+  max-width: calc(100% - 6rem);
+}

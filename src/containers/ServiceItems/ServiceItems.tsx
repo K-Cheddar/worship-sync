@@ -4,7 +4,7 @@ import "./ServiceItems.scss";
 import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import generateRandomId from "../../utils/generateRandomId";
 import { useDispatch, useSelector } from "../../hooks";
-import { removeItemFromList, updateItemList } from "../../store/itemList";
+import { removeItemFromList, initiateItemList } from "../../store/itemList";
 import { mockItemList } from "../../store/mockItemList";
 
 const ServiceItems = () => {
@@ -23,19 +23,19 @@ const ServiceItems = () => {
   }, [dispatch]);
 
   useEffect(() => {
-    dispatch(updateItemList(mockItemList));
+    dispatch(initiateItemList(mockItemList));
   }, [dispatch]);
 
   return (
     <>
-      <h3 className="font-bold text-center h-7 pt-1 text-base bg-slate-800">
+      <h3 className="font-bold text-center p-1 text-base bg-slate-800">
         Service Items
       </h3>
       <ul className="overflow-y-auto overflow-x-visible flex-1 service-items-list">
         {serviceItems.map((item) => {
           return (
             <LeftPanelButton
-              key={item["_id"]}
+              key={item.key}
               title={item.name}
               isSelected={item["_id"] === id}
               to={`item/${window.btoa(item["_id"])}`}

@@ -6,6 +6,7 @@ export type Option = {
 export type ServiceItem = {
   name: string;
   _id: string;
+  key?: string;
   background?: string;
   nameColor?: string;
   type:
