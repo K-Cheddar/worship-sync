@@ -1,0 +1,23 @@
+.bible-section {
+  @apply overflow-y-auto pr-2 pl-1;
+
+  height: calc(100% - clamp(4rem, 5vw, 5rem)); 
+
+  scrollbar-width: thin;
+}
+
+.bible-verses-list {
+  @apply overflow-y-auto flex flex-col gap-1 py-2 rounded-md w-full;
+
+  height: calc(100% - clamp(3rem, 4vw, 4rem));
+
+  scrollbar-width: thin;
+}
+
+.bible-section-input {
+  @apply items-center flex flex-col text-sm min-w-12;
+
+  label {
+    @apply capitalize;
+  }
+}

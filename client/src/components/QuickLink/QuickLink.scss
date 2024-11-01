@@ -1,0 +1,16 @@
+.quick-link {
+  @apply flex flex-col hover:bg-slate-500 cursor-pointer rounded items-center p-1;
+
+  &:hover {
+    @apply bg-slate-500;
+
+    button {
+      @apply opacity-85;
+    }
+  }
+
+  .quick-link-image {
+    width: 3vw;
+    height: calc(3vw * 9 / 16);
+  }
+}
