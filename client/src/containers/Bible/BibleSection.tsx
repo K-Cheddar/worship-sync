@@ -50,7 +50,7 @@ const BibleSection = ({
       ({ index }) => index === value
     );
 
-    if (updatedFilteredList?.[0] && (searchValue || !isValueInList)) {
+    if (updatedFilteredList?.[0] && !isValueInList) {
       setValue(updatedFilteredList[0].index);
     }
   }, [searchValue, initialList, setValue, type, value, min]);
@@ -65,7 +65,7 @@ const BibleSection = ({
         label={type}
         className="bible-section-input"
       />
-      <ul className="bible-section">
+      <ul className="bible-section" tabIndex={-1}>
         {filteredList.map(({ name, index }) => {
           const isSelected = index === value;
           return (
