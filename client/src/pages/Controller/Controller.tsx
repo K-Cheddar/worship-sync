@@ -70,7 +70,7 @@ const Controller = () => {
                 </h2>
               }
             />
-            <Route path="/item/:itemId" element={<Item />} />
+            <Route path="/item/:itemId/:listId" element={<Item />} />
             <Route path="participants" element={<Participants />} />
             <Route
               path="bible"

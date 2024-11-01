@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { ServiceItem } from "../types";
+import { DBServiceItem, ServiceItem } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
 type ItemListState = {
@@ -17,21 +17,21 @@ export const itemListSlice = createSlice({
     updateItemList: (state, action: PayloadAction<ServiceItem[]>) => {
       state.list = action.payload;
     },
-    initiateItemList: (state, action: PayloadAction<ServiceItem[]>) => {
+    initiateItemList: (state, action: PayloadAction<DBServiceItem[]>) => {
       state.list = action.payload.map((item) => {
         return {
           ...item,
-          key: item["_id"] + generateRandomId(),
+          listId: generateRandomId(),
         };
       });
     },
     removeItemFromList: (state, action: PayloadAction<string>) => {
-      state.list = state.list.filter((item) => item["_id"] !== action.payload);
+      state.list = state.list.filter((item) => item.listId !== action.payload);
     },
-    addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
+    addItemToItemList: (state, action: PayloadAction<DBServiceItem>) => {
       const newItemWithId = {
         ...action.payload,
-        key: action.payload["_id"] + generateRandomId(),
+        listId: generateRandomId(),
       };
       state.list.push(newItemWithId);
     },

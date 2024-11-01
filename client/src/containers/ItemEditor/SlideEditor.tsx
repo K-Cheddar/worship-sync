@@ -46,8 +46,6 @@ const SlideEditor = () => {
       return item;
     });
 
-    console.log({ updatedList });
-
     dispatch(updateItemList(updatedList));
   };
 

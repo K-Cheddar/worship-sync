@@ -14,6 +14,7 @@ type ItemState = {
   name: string;
   type: string;
   id: string;
+  listId?: string;
   selectedArrangement: number;
   shouldSkipTitle: boolean;
   arrangements: Arrangment[];
@@ -27,6 +28,7 @@ const initialState: ItemState = {
   name: "",
   type: "",
   id: "1",
+  listId: "",
   selectedArrangement: 0,
   shouldSkipTitle: false,
   arrangements: [],
@@ -38,9 +40,11 @@ export const itemSlice = createSlice({
   initialState,
   reducers: {
     setActiveItem: (state, action: PayloadAction<UpdateItemState>) => {
+      console.log();
       state.name = action.payload.name;
       state.type = action.payload.type;
       state.id = action.payload.id;
+      state.listId = action.payload.listId;
       state.selectedArrangement = action.payload.selectedArrangement;
       state.shouldSkipTitle = action.payload.shouldSkipTitle;
       state.arrangements = action.payload.arrangements;

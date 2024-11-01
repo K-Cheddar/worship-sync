@@ -28,6 +28,7 @@ const buttons: ButtonType[] = [
 
 const EditorButtons = () => {
   const location = useLocation();
+
   return (
     <div className="flex flex-col h-fit">
       {buttons.map(({ title, type, section }) => {
@@ -36,7 +37,9 @@ const EditorButtons = () => {
           <LeftPanelButton
             key={id}
             title={title}
-            isSelected={location.pathname === section}
+            isSelected={
+              location.pathname.replace("/controller/", "") === section
+            } // Remove controller route from path
             to={section}
             type={type}
             id={id}

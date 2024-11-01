@@ -6,16 +6,18 @@ import generateRandomId from "../../utils/generateRandomId";
 import { useDispatch, useSelector } from "../../hooks";
 import { removeItemFromList, initiateItemList } from "../../store/itemList";
 import { mockItemList } from "../../store/mockItemList";
+import { useLocation } from "react-router-dom";
 
 const ServiceItems = () => {
   const dispatch = useDispatch();
+  const location = useLocation();
   const { list: serviceItems } = useSelector((state) => state.itemList);
-  const { id } = useSelector((state) => state.item);
+  const { listId } = useSelector((state) => state.item);
 
   const actions = useMemo(() => {
     return [
       {
-        action: (itemId: string) => dispatch(removeItemFromList(itemId)),
+        action: (listId: string) => dispatch(removeItemFromList(listId)),
         svg: DeleteSVG,
         id: generateRandomId(),
       },
@@ -33,12 +35,16 @@ const ServiceItems = () => {
       </h3>
       <ul className="overflow-y-auto overflow-x-visible flex-1 service-items-list">
         {serviceItems.map((item) => {
+          const isSelected =
+            item.listId === listId && location.pathname.includes("item");
           return (
             <LeftPanelButton
-              key={item.key}
+              key={item.listId}
               title={item.name}
-              isSelected={item["_id"] === id}
-              to={`item/${window.btoa(item["_id"])}`}
+              isSelected={isSelected}
+              to={`item/${window.btoa(item["_id"])}/${window.btoa(
+                item.listId
+              )}`}
               type={item.type}
               actions={actions}
               id={item["_id"]}

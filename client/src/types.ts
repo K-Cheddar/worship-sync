@@ -6,7 +6,7 @@ export type Option = {
 export type ServiceItem = {
   name: string;
   _id: string;
-  key?: string;
+  listId: string;
   background?: string;
   nameColor?: string;
   type:
@@ -18,6 +18,8 @@ export type ServiceItem = {
     | "announcement"
     | string;
 };
+
+export type DBServiceItem = Omit<ServiceItem, "listId">;
 
 export type MenuItemType = {
   text?: string;
@@ -66,6 +68,7 @@ export type UpdateItemState = {
   id: string;
   selectedArrangement: number;
   shouldSkipTitle: boolean;
+  listId?: string;
   arrangements: Arrangment[];
 };
 

@@ -23,8 +23,22 @@ const getItemFromDB = async (itemId: string) => {
 };
 
 const Item = () => {
-  const { itemId } = useParams();
-  const decodedItemId = useMemo(() => window.atob(itemId || ""), [itemId]);
+  const { itemId, listId } = useParams();
+
+  const decodedItemId = useMemo(() => {
+    try {
+      return window.atob(itemId || "");
+    } catch {
+      return "";
+    }
+  }, [itemId]);
+  const decodedListId = useMemo(() => {
+    try {
+      return window.atob(listId || "");
+    } catch {
+      return "";
+    }
+  }, [listId]);
   const [status, setStatus] = useState<"loading" | "success" | "error">(
     "loading"
   );
@@ -35,11 +49,10 @@ const Item = () => {
       const item = await getItemFromDB(decodedItemId);
       if (!item) return setStatus("error");
       const formattedItem = await formatItemInfo(item);
-      console.log({ formattedItem });
-      dispatch(setActiveItem(formattedItem));
+      dispatch(setActiveItem({ ...formattedItem, listId: decodedListId }));
     };
     selectItem();
-  }, [decodedItemId, dispatch]);
+  }, [decodedItemId, dispatch, decodedListId]);
 
   if (status === "error")
     return (
