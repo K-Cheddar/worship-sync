@@ -1,6 +1,6 @@
 .input-container {
 
-  @apply h-fit;
+  @apply h-fit relative;
 
   ::-webkit-inner-spin-button, 
   ::-webkit-outer-spin-button {

@@ -5,6 +5,7 @@ import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import "./Songs.scss";
 import { addItemToItemList } from "../../store/itemList";
+import { Link } from "react-router-dom";
 
 const Songs = () => {
   const { list } = useSelector((state) => state.allItems);
@@ -78,6 +79,17 @@ const Songs = () => {
             </li>
           );
         })}
+        <li className="text-sm flex gap-2 items-center mt-2 justify-center">
+          <p>Can't find what you're looking for?</p>
+          <Button variant="secondary" className="relative">
+            <Link
+              className="h-full w-full"
+              to={`/controller/create?type=song&name=${encodeURI(searchValue)}`}
+            >
+              Create a new song
+            </Link>
+          </Button>
+        </li>
         <li
           className={`w-full text-sm text-center py-1 rounded-md ${
             isFullListLoaded ? "bg-transparent" : "bg-black"

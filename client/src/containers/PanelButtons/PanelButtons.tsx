@@ -24,6 +24,11 @@ const buttons: ButtonType[] = [
     title: "Participants",
     section: "participants",
   },
+  {
+    type: "create",
+    title: "Create New Item",
+    section: "create",
+  },
 ];
 
 const EditorButtons = () => {

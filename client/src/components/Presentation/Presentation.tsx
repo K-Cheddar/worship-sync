@@ -43,7 +43,7 @@ const Presentation = ({
       </section>
       <section className="gap-2 flex flex-col pt-2">
         <Toggle
-          label="Transmitting"
+          label="Sending"
           value={isTransmitting}
           onChange={toggleIsTransmitting}
         />

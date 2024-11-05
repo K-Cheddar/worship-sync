@@ -1,11 +1,6 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import {
-  Arrangment,
-  Box,
-  FormattedLyrics,
-  SongOrder,
-  UpdateItemState,
-} from "../types";
+import { Arrangment, Box, UpdateItemState } from "../types";
+import { formatSong } from "../utils/overflow";
 
 type ItemState = {
   slidesPerRow: number;
@@ -40,7 +35,6 @@ export const itemSlice = createSlice({
   initialState,
   reducers: {
     setActiveItem: (state, action: PayloadAction<UpdateItemState>) => {
-      console.log();
       state.name = action.payload.name;
       state.type = action.payload.type;
       state.id = action.payload.id;
@@ -83,19 +77,34 @@ export const itemSlice = createSlice({
       state.arrangements[state.selectedArrangement].slides[
         state.selectedSlide
       ].boxes = [...action.payload];
+      const _arrangements = state.arrangements.map((arrangement, index) => {
+        if (index === state.selectedArrangement) {
+          return {
+            ...arrangement,
+            slides: state.arrangements[state.selectedArrangement].slides.map(
+              (slide, ind) => {
+                if (ind === state.selectedSlide) {
+                  return {
+                    ...slide,
+                    boxes: action.payload,
+                  };
+                }
+                return slide;
+              }
+            ),
+          };
+        }
+        return arrangement;
+      });
+      const { arrangements } = formatSong({
+        ...state,
+        arrangements: _arrangements,
+      });
+      console.log(_arrangements);
+      // state.arrangements = [...arrangements];
     },
-    updateSongOrder: (state, action: PayloadAction<SongOrder[]>) => {
-      state.arrangements[state.selectedArrangement].songOrder = [
-        ...action.payload,
-      ];
-    },
-    updateFormattedLyrics: (
-      state,
-      action: PayloadAction<FormattedLyrics[]>
-    ) => {
-      state.arrangements[state.selectedArrangement].formattedLyrics = [
-        ...action.payload,
-      ];
+    updateArrangements: (state, action: PayloadAction<Arrangment[]>) => {
+      state.arrangements = [...action.payload];
     },
     updateAllSlideBackgrounds: (state, action: PayloadAction<string>) => {
       const allSlides = state.arrangements[state.selectedArrangement].slides;
@@ -130,10 +139,9 @@ export const {
   toggleEditMode,
   setName,
   updateBoxes,
-  updateSongOrder,
   increaseFormattedLyrics,
   decreaseFormattedLyrics,
-  updateFormattedLyrics,
+  updateArrangements,
   setActiveItem,
   updateAllSlideBackgrounds,
   updateSlideBackground,

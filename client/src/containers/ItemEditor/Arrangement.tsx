@@ -3,23 +3,30 @@ import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import { ReactComponent as CopySVG } from "../../assets/icons/copy.svg";
+import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import { useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
+import generateRandomId from "../../utils/generateRandomId";
 
 type ArrangementProps = {
   arrangement: Arrangment;
   setLocalArrangements: React.Dispatch<React.SetStateAction<Arrangment[]>>;
   localArrangements: Arrangment[];
+  setSelectedArrangement: () => void;
+  index: number;
 };
 
 const Arrangement = ({
   arrangement,
   setLocalArrangements,
   localArrangements,
+  setSelectedArrangement,
+  index,
 }: ArrangementProps) => {
   const [isEditMode, setIsEditMode] = useState(false);
   const [value, setValue] = useState(arrangement.name);
+
   return (
     <>
       <li
@@ -27,6 +34,9 @@ const Arrangement = ({
         className={`flex flex-col items-center rounded-md bg-slate-900 border border-transparent hover:border-slate-500 p-1`}
       >
         <div className="flex justify-end w-full px-2 bg-black h-6 rounded-t-sm">
+          {isEditMode && (
+            <Button svg={CloseSVG} onClick={() => setIsEditMode(false)} />
+          )}
           <Button
             svg={isEditMode ? CheckSVG : EditSVG}
             onClick={() => {
@@ -45,8 +55,33 @@ const Arrangement = ({
             }}
             variant="tertiary"
           />
-          <Button svg={CopySVG} variant="tertiary" />
-          <Button svg={DeleteSVG} variant="tertiary" />
+          <Button
+            svg={CopySVG}
+            variant="tertiary"
+            onClick={() => {
+              const copiedArrangements = [...localArrangements];
+
+              const newArrangement = {
+                ...arrangement,
+                name: arrangement.name + " copy",
+                id: generateRandomId(),
+              };
+              copiedArrangements.push(newArrangement);
+              setLocalArrangements(copiedArrangements);
+            }}
+          />
+          {index !== 0 && (
+            <Button
+              svg={DeleteSVG}
+              variant="tertiary"
+              onClick={() => {
+                const copiedArrangements = [...localArrangements].filter(
+                  (_, i) => i !== index
+                );
+                setLocalArrangements(copiedArrangements);
+              }}
+            />
+          )}
         </div>
         {isEditMode ? (
           <Input
@@ -56,9 +91,13 @@ const Arrangement = ({
             className="text-sm"
           />
         ) : (
-          <p className="px-2 py-1 text-base flex justify-center w-full break-words rounded-b-sm">
+          <Button
+            variant="tertiary"
+            className="px-2 py-1 text-base flex justify-center w-full break-words rounded-b-sm"
+            onClick={() => setSelectedArrangement()}
+          >
             {arrangement.name}
-          </p>
+          </Button>
         )}
       </li>
     </>

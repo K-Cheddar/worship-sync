@@ -10,7 +10,7 @@ import { useDispatch } from "../../hooks";
 import { setActiveItem } from "../../store/itemSlice";
 
 const mockItem: DBItem = {
-  name: "There's a welcome here",
+  name: "There's A Welcome Here",
   type: "song",
   id: generateRandomId(),
   selectedArrangement: 0,

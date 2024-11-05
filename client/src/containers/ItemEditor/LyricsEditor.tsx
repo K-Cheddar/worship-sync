@@ -6,64 +6,100 @@ import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
 import Button from "../../components/Button/Button";
 import { useEffect, useMemo, useState } from "react";
 import {
-  setName,
   toggleEditMode,
-  updateSongOrder,
   increaseFormattedLyrics,
   decreaseFormattedLyrics,
-  updateFormattedLyrics,
+  updateArrangements,
+  setSelectedArrangement,
 } from "../../store/itemSlice";
-import Input from "../../components/Input/Input";
 
 import TextArea from "../../components/TextArea/TextArea";
 import "./ItemEditor.scss";
-import FormattedLyrics from "./FormattedLyrics";
+import LyricBoxes from "./LyricBoxes";
 import SongSections from "./SongSections";
 import { FormattedLyrics as FormattedLyricsType, SongOrder } from "../../types";
 import { sectionTypes } from "../../utils/slideColorMap";
 import Arrangement from "./Arrangement";
+import { updateFormattedSections } from "./updateFormattedSections";
+import generateRandomId from "../../utils/generateRandomId";
+import { sortList } from "../../utils/sort";
+import { formatSong } from "../../utils/overflow";
 
 const LyricsEditor = () => {
-  const { isEditMode, name, arrangements, selectedArrangement } = useSelector(
-    (state) => state.item
-  );
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [localName, setLocalName] = useState(name);
+  const item = useSelector((state) => state.item);
+  const { isEditMode, arrangements, selectedArrangement } = item;
   const [unformattedLyrics, setUnformattedLyrics] = useState("");
-  const [formattedLyrics, setFormattedLyrics] = useState<FormattedLyricsType[]>(
-    []
-  );
+  const [localFormattedLyrics, setLocalFormattedLyrics] = useState<
+    FormattedLyricsType[]
+  >([]);
   const [songOrder, setSongOrder] = useState<SongOrder[]>([]);
   const [arrangementName, setArrangementName] = useState("");
   const [localArrangements, setLocalArrangements] = useState(arrangements);
+  const [localSelectedArrangement, setLocalSelectedArrangement] =
+    useState(selectedArrangement);
   const dispatch = useDispatch();
 
   useEffect(() => {
     const arrangement = arrangements[selectedArrangement];
-    setFormattedLyrics(arrangement?.formattedLyrics || []);
+    setLocalFormattedLyrics(arrangement?.formattedLyrics || []);
     setSongOrder(arrangement?.songOrder || []);
     setArrangementName(arrangement?.name || "Master");
     setLocalArrangements(arrangements);
   }, [arrangements, selectedArrangement]);
 
   useEffect(() => {
-    setArrangementName(
-      localArrangements[selectedArrangement]?.name || "Master"
-    );
-  }, [localArrangements, selectedArrangement]);
+    if (!localArrangements[localSelectedArrangement]) {
+      setLocalSelectedArrangement(0);
+    } else {
+      setArrangementName(localArrangements[localSelectedArrangement].name);
+      setLocalFormattedLyrics(
+        localArrangements[localSelectedArrangement].formattedLyrics
+      );
+      setSongOrder(localArrangements[localSelectedArrangement].songOrder);
+    }
+  }, [localArrangements, localSelectedArrangement]);
+
+  const updateSongOrder = (_songOrder: SongOrder[]) => {
+    setLocalArrangements((_lArrangements) => {
+      return _lArrangements.map((el, index) => {
+        if (index === localSelectedArrangement) {
+          return { ...el, songOrder: _songOrder };
+        }
+        return el;
+      });
+    });
+  };
 
   const { availableSections, currentSections } = useMemo(() => {
-    const sections = formattedLyrics.map(({ name }) => name);
+    const sections = sortList(localFormattedLyrics.map(({ name }) => name));
     return {
       availableSections: Array.from(
-        new Set([...sectionTypes, ...sections])
+        new Set([...sortList(sectionTypes), ...sections])
       ).map((section) => ({ label: section, value: section })),
       currentSections: sections.map((section) => ({
         label: section,
         value: section,
       })),
     };
-  }, [formattedLyrics]);
+  }, [localFormattedLyrics]);
+
+  const setFormattedLyrics = (_lyrics: FormattedLyricsType[]) => {
+    const { formattedLyrics: _formattedLyrics, songOrder: _songOrder } =
+      updateFormattedSections({
+        formattedLyrics: _lyrics,
+        songOrder: songOrder,
+      });
+
+    const copiedLocalArrangements = [...localArrangements];
+
+    copiedLocalArrangements[localSelectedArrangement] = {
+      ...copiedLocalArrangements[localSelectedArrangement],
+      formattedLyrics: [..._formattedLyrics],
+      songOrder: [..._songOrder],
+    };
+
+    setLocalArrangements(copiedLocalArrangements);
+  };
 
   if (!isEditMode) {
     return <div className="w-0 h-0 absolute" />;
@@ -74,10 +110,43 @@ const LyricsEditor = () => {
   };
 
   const save = () => {
-    dispatch(setName(localName));
     dispatch(toggleEditMode());
-    dispatch(updateSongOrder(songOrder));
-    dispatch(updateFormattedLyrics(formattedLyrics));
+    dispatch(setSelectedArrangement(localSelectedArrangement));
+    const _item = formatSong({
+      ...item,
+      arrangements: localArrangements,
+      selectedArrangement: localSelectedArrangement,
+    });
+    console.log(_item);
+    dispatch(updateArrangements(_item.arrangements));
+  };
+
+  const createSections = () => {
+    if (!unformattedLyrics.trim()) return;
+
+    const newLyrics: FormattedLyricsType[] = [...localFormattedLyrics];
+    const newSongOrder: SongOrder[] = [...songOrder];
+    const lines = unformattedLyrics.split("\n\n");
+
+    for (let i = 0; i < lines.length; i++) {
+      const name = "Verse " + newLyrics.length;
+      const index = newLyrics.findIndex((e) => e.words === lines[i]);
+      if (index === -1) {
+        newLyrics.push({
+          type: "Verse",
+          name,
+          words: lines[i],
+          id: generateRandomId(),
+          slideSpan: 1,
+        });
+        newSongOrder.push({ name, id: generateRandomId() });
+      } else {
+        songOrder.push({ name: newLyrics[index].name, id: generateRandomId() });
+      }
+
+      setSongOrder(newSongOrder);
+      setFormattedLyrics(newLyrics);
+    }
   };
 
   return (
@@ -108,12 +177,18 @@ const LyricsEditor = () => {
             value={unformattedLyrics}
             onChange={(val) => setUnformattedLyrics(val)}
           />
-          <Button className="text-sm mt-1 mx-auto">Format Lyrics</Button>
+          <Button className="text-sm mt-1 mx-auto" onClick={createSections}>
+            Format Lyrics
+          </Button>
           <h3 className="text-base mt-4 mb-2 font-semibold">Arrangements</h3>
           <ul className="song-arrangement-list">
-            {localArrangements.map((arrangement) => (
+            {localArrangements.map((arrangement, index) => (
               <Arrangement
                 key={arrangement.name}
+                index={index}
+                setSelectedArrangement={() =>
+                  setLocalSelectedArrangement(index)
+                }
                 arrangement={arrangement}
                 setLocalArrangements={setLocalArrangements}
                 localArrangements={localArrangements}
@@ -125,16 +200,17 @@ const LyricsEditor = () => {
           <h2 className="text-2xl mb-2 text-center font-semibold">
             {arrangementName}
           </h2>
-          <FormattedLyrics
-            formattedLyrics={formattedLyrics}
-            setFormattedLyrics={setFormattedLyrics}
+          <LyricBoxes
+            formattedLyrics={localFormattedLyrics}
+            reformatLyrics={setFormattedLyrics}
+            setFormattedLyrics={setLocalFormattedLyrics}
             availableSections={availableSections}
           />
         </section>
         <section className="mr-4 flex flex-col">
           <SongSections
             songOrder={songOrder}
-            setSongOrder={setSongOrder}
+            setSongOrder={updateSongOrder}
             currentSections={currentSections}
           />
         </section>

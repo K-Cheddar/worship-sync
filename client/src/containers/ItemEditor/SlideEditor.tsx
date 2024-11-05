@@ -11,14 +11,17 @@ import { useEffect, useState } from "react";
 import { borderColorMap } from "../../utils/itemTypeMaps";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useDispatch, useSelector } from "../../hooks";
-import { toggleEditMode } from "../../store/itemSlice";
+import { toggleEditMode, updateArrangements } from "../../store/itemSlice";
 import { setName, updateBoxes } from "../../store/itemSlice";
 import { updateItemList } from "../../store/itemList";
+import { updateAllItemsList } from "../../store/allItems";
+import { formatSong } from "../../utils/overflow";
 
 const SlideEditor = () => {
-  const { name, type, arrangements, selectedArrangement, selectedSlide, id } =
-    useSelector((state) => state.item);
+  const item = useSelector((state) => state.item);
+  const { name, type, arrangements, selectedArrangement, selectedSlide } = item;
   const { list } = useSelector((state) => state.itemList);
+  const { list: allItemsList } = useSelector((state) => state.allItems);
   const [showEditor, setShowEditor] = useState(true);
   const [isEditingName, setIsEditingName] = useState(false);
   const [localName, setLocalName] = useState(name);
@@ -34,10 +37,10 @@ const SlideEditor = () => {
     setIsEditingName(false);
     dispatch(setName(localName));
 
-    console.log({ localName });
+    console.log(list, name, localName);
 
     const updatedList = list.map((item) => {
-      if (item["_id"] === id) {
+      if (item.name === name) {
         return {
           ...item,
           name: localName,
@@ -46,7 +49,32 @@ const SlideEditor = () => {
       return item;
     });
 
+    const updatedAllItemsList = allItemsList.map((item) => {
+      if (item.name === name) {
+        return {
+          ...item,
+          name: localName,
+        };
+      }
+      return item;
+    });
+
+    dispatch(updateAllItemsList(updatedAllItemsList));
     dispatch(updateItemList(updatedList));
+  };
+
+  const onChange = ({ index, value }: { index: number; value: string }) => {
+    const _item = formatSong({
+      ...item,
+      arrangements,
+      selectedArrangement,
+    });
+    dispatch(
+      updateBoxes(
+        boxes.map((b, i) => (i === index ? { ...b, words: value } : b))
+      )
+    );
+    // dispatch(updateArrangements(_item.arrangements));
   };
 
   const boxes = arrangement?.slides[selectedSlide]?.boxes || [];
@@ -67,7 +95,12 @@ const SlideEditor = () => {
               isEditingName ? () => saveName() : () => setIsEditingName(true)
             }
           />
-          {!isEditingName && <h2 className="slide-editor-song-name">{name}</h2>}
+          {!isEditingName && (
+            <span className="slide-editor-song-name">
+              <h2>{name}</h2>
+              <p className="text-xs">({arrangement?.name})</p>
+            </span>
+          )}
           {isEditingName && (
             <Input
               hideLabel
@@ -135,15 +168,9 @@ const SlideEditor = () => {
           <DisplayWindow
             showBorder
             boxes={boxes}
-            onChange={({ index, value }) =>
-              dispatch(
-                updateBoxes(
-                  boxes.map((b, i) =>
-                    i === index ? { ...b, words: value } : b
-                  )
-                )
-              )
-            }
+            onChange={({ index, value }) => {
+              onChange({ index, value });
+            }}
             width={42}
             displayType="editor"
           />

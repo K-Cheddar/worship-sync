@@ -73,6 +73,7 @@ export type UpdateItemState = {
 };
 
 export type DBItem = Omit<UpdateItemState, "songOrder" | "arrangements"> & {
+  _id?: string;
   arrangements: {
     name: string;
     formattedLyrics: FormattedLyrics[];
@@ -86,6 +87,7 @@ export type Arrangment = {
   formattedLyrics: FormattedLyrics[];
   songOrder: SongOrder[];
   slides: ItemSlide[];
+  id: string;
 };
 
 export type FormattedLyrics = {

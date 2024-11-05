@@ -16,11 +16,15 @@ import {
   setStartVerse,
   setVerses,
   setVersion,
+  setSearchValue,
 } from "../../store/bibleSlice";
 import { bibleVersions, internalBibleVersions } from "../../utils/getBibles";
 import { BibleDbContext } from "../../context/bibleDb";
 import { getVerses as getVersesApi } from "../../api/getVerses";
 import { bibleStructure } from "../../utils/bibleStructure";
+import BibleVersesList from "./BibleVersesList";
+import { setCreateItem } from "../../store/createItemSlice";
+import { useSearchParams } from "react-router-dom";
 
 const Bible = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -29,6 +33,7 @@ const Bible = () => {
   );
   const [hasExternalVerses, setHasExternalVerses] = useState(false);
   const dispatch = useDispatch();
+  const [searchParams] = useSearchParams();
 
   const {
     version,
@@ -39,7 +44,10 @@ const Bible = () => {
     verses,
     startVerse,
     endVerse,
+    searchValues,
   } = useSelector((state) => state.bible);
+
+  const createItemName = decodeURI(searchParams.get("name") || "");
 
   const { db } = useContext(BibleDbContext) || {};
 
@@ -51,7 +59,6 @@ const Bible = () => {
         let bible: bibleType | undefined;
         try {
           bible = await db?.get(version);
-          console.log({ bible });
         } catch (error) {
           console.error(error);
         }
@@ -121,6 +128,8 @@ const Bible = () => {
     return { value, label };
   });
 
+  const submitVerses = () => {};
+
   return (
     <div className="text-base px-2 py-4 h-full flex flex-col gap-2">
       <div className="flex gap-2">
@@ -144,33 +153,57 @@ const Bible = () => {
           <BibleSection
             initialList={books as bookType[]}
             setValue={(val) => dispatch(setBook(val))}
+            searchValue={searchValues.book}
+            setSearchValue={(val) =>
+              dispatch(setSearchValue({ type: "book", value: val }))
+            }
             value={book}
             type="book"
           />
           <BibleSection
             initialList={chapters as chapterType[]}
             setValue={(val) => dispatch(setChapter(val))}
+            searchValue={searchValues.chapter}
+            setSearchValue={(val) =>
+              dispatch(setSearchValue({ type: "chapter", value: val }))
+            }
             value={chapter}
             type="chapter"
           />
           <BibleSection
             initialList={verses as verseType[]}
             setValue={(val) => dispatch(setStartVerse(val))}
+            searchValue={searchValues.startVerse}
+            setSearchValue={(val) =>
+              dispatch(setSearchValue({ type: "startVerse", value: val }))
+            }
             value={startVerse}
             type="verse"
           />
           <BibleSection
             initialList={verses as verseType[]}
             setValue={(val) => dispatch(setEndVerse(val))}
+            searchValue={searchValues.endVerse}
+            setSearchValue={(val) =>
+              dispatch(setSearchValue({ type: "endVerse", value: val }))
+            }
             value={endVerse}
             type="verse"
             min={startVerse}
           />
-
           {books && chapters && verses && (
-            <div className="flex-1 flex flex-col gap-2 items-center h-full">
+            <div
+              className="flex-1 flex flex-col gap-2 items-center h-full mt-4"
+              data-has-title={!!createItemName}
+            >
+              {createItemName && (
+                <div className="flex gap-2 items-center text-lg">
+                  <p className="font-semibold">Name:</p>
+                  <h4>{createItemName}</h4>
+                </div>
+              )}
               <section className="flex gap-2 items-center w-full">
-                <h3 className="text-base pl-6 font-semibold">
+                <h3 className="text-xl pl-6 font-semibold">
                   {books[book]?.name} {chapters[chapter]?.name}:{" "}
                   {verses[startVerse]?.name} - {verses[endVerse]?.name}{" "}
                   {version.toUpperCase()}
@@ -179,50 +212,19 @@ const Bible = () => {
                   variant="cta"
                   padding="px-4 py-1"
                   className="h-6 ml-auto"
+                  onClick={submitVerses}
                 >
-                  Add Verses
+                  Create Item
                 </Button>
               </section>
-              <ul
-                className={`bible-verses-list ${isLoading ? "opacity-60" : ""}`}
-              >
-                {bibleType === "external" && !hasExternalVerses && (
-                  <section className="flex flex-col gap-2 items-center">
-                    <h3 className="text-2xl font-semibold">
-                      External Version Selected
-                    </h3>
-                    <p className="text-base">
-                      {isLoading
-                        ? "Loading verses..."
-                        : "Please click the button above to get verses from Bible Gateway."}
-                    </p>
-                  </section>
-                )}
-                {verses
-                  .filter(
-                    ({ index }) => index >= startVerse && index <= endVerse
-                  )
-                  .map((ele, index) => {
-                    const bg =
-                      index % 2 === 0 ? "bg-slate-600" : "bg-slate-800";
-                    return ele.text?.trim() ? (
-                      <li key={ele.index} className={`${bg} flex gap-2 px-2`}>
-                        <span className="text-lg text-yellow-300">
-                          {ele.name}
-                        </span>
-                        <span className="text-base mr-auto">{ele.text}</span>
-                        <Button
-                          padding="px-1"
-                          variant="tertiary"
-                          className="text-sm"
-                          svg={SendSVG}
-                        >
-                          Send
-                        </Button>
-                      </li>
-                    ) : null;
-                  })}
-              </ul>
+              <BibleVersesList
+                isLoading={isLoading}
+                bibleType={bibleType}
+                hasExternalVerses={hasExternalVerses}
+                verses={verses}
+                startVerse={startVerse}
+                endVerse={endVerse}
+              />
             </div>
           )}
         </div>

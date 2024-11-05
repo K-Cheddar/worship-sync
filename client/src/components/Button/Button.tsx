@@ -16,7 +16,7 @@ export type ButtonProps = Omit<React.HTMLProps<HTMLButtonElement>, "wrap"> & {
   isSelected?: boolean;
   truncate?: boolean;
   padding?: string;
-  iconSize?: string;
+  iconSize?: "xs" | "sm" | "md" | "lg" | "xl" | number;
   type?: "button" | "submit" | "reset" | undefined;
 };
 

@@ -49,6 +49,7 @@ export const formatItemInfo = async (item: DBItem) => {
 
     return {
       name: item.arrangements[item.selectedArrangement].name,
+      id: generateRandomId(),
       formattedLyrics,
       songOrder: songOrderWIds,
       slides,

@@ -16,6 +16,7 @@ import Songs from "../../containers/Songs/Songs";
 import { Route, Routes } from "react-router-dom";
 import BibleDbProvider from "../../context/bibleDb";
 import Item from "./Item";
+import CreateItem from "../../containers/CreateItem/CreateItem";
 
 const resizableDirections = {
   top: false,
@@ -81,6 +82,7 @@ const Controller = () => {
               }
             />
             <Route path="songs" element={<Songs />} />
+            <Route path="create" element={<CreateItem />} />
           </Routes>
         </Resizable>
         <Resizable

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import { bookType, chapterType, verseType } from "../../types";
@@ -9,6 +10,8 @@ type BibleSectionProps = {
   value: number;
   type: "book" | string;
   min?: number;
+  searchValue: string;
+  setSearchValue: (val: string) => void;
 };
 
 const BibleSection = ({
@@ -17,9 +20,10 @@ const BibleSection = ({
   value,
   type,
   min,
+  searchValue,
+  setSearchValue,
 }: BibleSectionProps) => {
   const [filteredList, setFilteredList] = useState(initialList);
-  const [searchValue, setSearchValue] = useState("");
 
   useEffect(() => {
     let updatedFilteredList;
@@ -64,6 +68,8 @@ const BibleSection = ({
         onChange={(val) => setSearchValue(val as string)}
         label={type}
         className="bible-section-input"
+        svg={searchValue ? CloseSVG : undefined}
+        svgAction={() => setSearchValue("")}
       />
       <ul className="bible-section" tabIndex={-1}>
         {filteredList.map(({ name, index }) => {
