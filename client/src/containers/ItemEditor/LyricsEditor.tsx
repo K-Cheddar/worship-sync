@@ -112,12 +112,20 @@ const LyricsEditor = () => {
   const save = () => {
     dispatch(toggleEditMode());
     dispatch(setSelectedArrangement(localSelectedArrangement));
+
+    const _arrangements = [...localArrangements];
+
+    _arrangements[localSelectedArrangement] = {
+      ..._arrangements[localSelectedArrangement],
+      formattedLyrics: [...localFormattedLyrics],
+    };
+
     const _item = formatSong({
       ...item,
-      arrangements: localArrangements,
+      arrangements: _arrangements,
       selectedArrangement: localSelectedArrangement,
     });
-    console.log(_item);
+    console.log(localArrangements);
     dispatch(updateArrangements(_item.arrangements));
   };
 

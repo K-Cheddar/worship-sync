@@ -77,31 +77,6 @@ export const itemSlice = createSlice({
       state.arrangements[state.selectedArrangement].slides[
         state.selectedSlide
       ].boxes = [...action.payload];
-      const _arrangements = state.arrangements.map((arrangement, index) => {
-        if (index === state.selectedArrangement) {
-          return {
-            ...arrangement,
-            slides: state.arrangements[state.selectedArrangement].slides.map(
-              (slide, ind) => {
-                if (ind === state.selectedSlide) {
-                  return {
-                    ...slide,
-                    boxes: action.payload,
-                  };
-                }
-                return slide;
-              }
-            ),
-          };
-        }
-        return arrangement;
-      });
-      const { arrangements } = formatSong({
-        ...state,
-        arrangements: _arrangements,
-      });
-      console.log(_arrangements);
-      // state.arrangements = [...arrangements];
     },
     updateArrangements: (state, action: PayloadAction<Arrangment[]>) => {
       state.arrangements = [...action.payload];

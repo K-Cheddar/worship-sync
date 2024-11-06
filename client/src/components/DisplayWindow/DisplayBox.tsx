@@ -114,6 +114,7 @@ const DisplayBox = ({
     textShadow: `${tSS}vw ${tSS}vw ${tSS}vw #000, ${tSS}vw ${tSS}vw ${tSS}vw #000`,
     WebkitTextStroke: `${fOS}vw #000`,
     textAlign: box.align || "center",
+    lineHeight: 1.25,
   };
   return (
     <li
@@ -159,9 +160,18 @@ const DisplayBox = ({
       {typeof onChange === "function" && (
         <textarea
           className="h-full w-full bg-transparent absolute resize-none overflow-hidden"
+          id={`display-box-text-${index}`}
           value={words}
           style={textStyles}
-          onChange={(e) => onChange({ index, value: e.target.value })}
+          onChange={(e) => {
+            e.preventDefault();
+            onChange({
+              index,
+              value: e.target.value,
+              box,
+              cursorPosition: e.target.selectionStart,
+            });
+          }}
         />
       )}
     </li>

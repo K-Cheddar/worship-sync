@@ -16,6 +16,7 @@ import { setName, updateBoxes } from "../../store/itemSlice";
 import { updateItemList } from "../../store/itemList";
 import { updateAllItemsList } from "../../store/allItems";
 import { formatSong } from "../../utils/overflow";
+import { Box } from "../../types";
 
 const SlideEditor = () => {
   const item = useSelector((state) => state.item);
@@ -63,18 +64,92 @@ const SlideEditor = () => {
     dispatch(updateItemList(updatedList));
   };
 
-  const onChange = ({ index, value }: { index: number; value: string }) => {
-    const _item = formatSong({
-      ...item,
-      arrangements,
-      selectedArrangement,
-    });
-    dispatch(
-      updateBoxes(
-        boxes.map((b, i) => (i === index ? { ...b, words: value } : b))
-      )
-    );
-    // dispatch(updateArrangements(_item.arrangements));
+  const onChange = ({
+    index,
+    value,
+    box,
+    cursorPosition,
+  }: {
+    index: number;
+    value: string;
+    box: Box;
+    cursorPosition: number;
+  }) => {
+    if (
+      box.excludeFromOverflow ||
+      selectedSlide === 0 ||
+      selectedSlide === arrangements[selectedArrangement].slides.length - 1
+    ) {
+      dispatch(
+        updateBoxes(
+          boxes.map((b, i) => (i === index ? { ...b, words: value } : b))
+        )
+      );
+    } else {
+      const formattedLyrics =
+        item.arrangements[item.selectedArrangement].formattedLyrics;
+      const slides = item.arrangements[item.selectedArrangement].slides;
+      const _index = formattedLyrics.findIndex(
+        (e) => e.name === slides[selectedSlide].type
+      );
+
+      console.log({ formattedLyrics, _index, selectedSlide });
+
+      const start =
+        selectedSlide - (slides[selectedSlide]?.boxes[index]?.slideIndex || 0);
+      const end = start + formattedLyrics[_index].slideSpan - 1;
+      let newWords = "";
+
+      console.log({ start, end });
+
+      for (let i = start; i <= end; ++i) {
+        if (i === selectedSlide) newWords += value;
+        else newWords += slides[i].boxes[index].words;
+      }
+      if (newWords !== "") {
+        const updatedArrangements = item.arrangements.map(
+          (arrangement, index) => {
+            if (index === item.selectedArrangement) {
+              return {
+                ...arrangement,
+                formattedLyrics: formattedLyrics.map((lyric, i) => {
+                  if (i === _index) {
+                    return {
+                      ...lyric,
+                      words: newWords,
+                    };
+                  } else {
+                    return lyric;
+                  }
+                }),
+              };
+            } else {
+              return arrangement;
+            }
+          }
+        );
+
+        const _item = formatSong({
+          ...item,
+          arrangements: updatedArrangements,
+          selectedArrangement,
+        });
+
+        console.log({ _item });
+
+        dispatch(updateArrangements(_item.arrangements));
+        setTimeout(() => {
+          const textBoxElement = document.getElementById(
+            `display-box-text-${index}`
+          ) as HTMLTextAreaElement;
+          if (textBoxElement) {
+            textBoxElement.selectionEnd = cursorPosition;
+            textBoxElement.selectionStart = cursorPosition;
+            textBoxElement.scrollTop = 0;
+          }
+        });
+      }
+    }
   };
 
   const boxes = arrangement?.slides[selectedSlide]?.boxes || [];
@@ -168,8 +243,8 @@ const SlideEditor = () => {
           <DisplayWindow
             showBorder
             boxes={boxes}
-            onChange={({ index, value }) => {
-              onChange({ index, value });
+            onChange={(onChangeInfo) => {
+              onChange(onChangeInfo);
             }}
             width={42}
             displayType="editor"

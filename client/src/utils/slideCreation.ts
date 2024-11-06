@@ -4,7 +4,7 @@ import generateRandomId from "./generateRandomId";
 type CreateNewSlideType = {
   type: string;
   box?: Box;
-  words?: string;
+  words?: string[];
   slideIndex?: number;
   fontSize?: number;
   background?: string;
@@ -16,7 +16,7 @@ type CreateNewSlideType = {
 export const createNewSlide = ({
   type,
   box,
-  words = "",
+  words = [],
   slideIndex,
   fontSize,
   background,
@@ -37,13 +37,21 @@ export const createNewSlide = ({
     };
 
   const boxes: Box[] = _boxes ? [..._boxes] : [];
+  const newBoxes: Box[] = [];
 
-  // if (_boxes && words) {
-  //   for (let i = 0; i < _boxes.length; ++i) {
-  //     const box = { ..._boxes[i], words: words[i] ? words[i] : " " };
-  //     boxes.push(box);
-  //   }
-  // }
+  if (_boxes && words.length) {
+    for (let i = 0; i < _boxes.length; ++i) {
+      const box = {
+        ..._boxes[i],
+        words: words[i] ? words[i] : "",
+        id: generateRandomId(),
+      };
+      newBoxes.push(box);
+    }
+  }
+  if (newBoxes.length) {
+    boxes.map((box, i) => newBoxes[i]);
+  }
 
   if (type === "Announcement" && !boxes.length) {
     let obj = Object.assign({}, box);
@@ -83,7 +91,7 @@ export const createNewSlide = ({
     obj.height = 35;
     obj.topMargin = 3;
     obj.sideMargin = 4;
-    obj.words = words;
+    obj.words = words[0] || " ";
     obj.id = generateRandomId();
     boxes.push(obj);
   } else if (!boxes.length) {
@@ -96,9 +104,10 @@ export const createNewSlide = ({
     obj.id = generateRandomId();
     obj.background = "";
     obj.transparent = true;
+    obj.isLocked = false;
     obj.topMargin = 3;
     obj.sideMargin = 4;
-    obj.words = words;
+    obj.words = words[0] || " ";
     boxes.push(obj);
   }
 
@@ -113,7 +122,8 @@ export const createNewSlide = ({
   // if(type === 'Announcement Title')
   // 	obj.duration = 5;
 
-  if (slideIndex && slideIndex >= 0) obj.boxes[1].slideIndex = slideIndex;
+  if (typeof slideIndex === "number" && slideIndex >= 0)
+    obj.boxes[1].slideIndex = slideIndex;
   if (fontSize) obj.boxes[1].fontSize = fontSize;
   if (background) obj.boxes[0].background = background;
   if (brightness) obj.boxes[0].brightness = brightness;

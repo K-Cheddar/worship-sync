@@ -1,4 +1,10 @@
-import { Arrangment, Box, ItemSlide, UpdateItemState } from "../types";
+import {
+  Arrangment,
+  Box,
+  ItemSlide,
+  UpdateItemState,
+  verseType,
+} from "../types";
 import { createNewSlide } from "./slideCreation";
 
 type getMaxLinesProps = {
@@ -14,18 +20,19 @@ export const getMaxLines = ({
 }: getMaxLinesProps) => {
   const newFontSize = fontSize + "vw";
   let windowWidth = window.innerWidth;
-  let topMargin = _topMargin ? 1 - (_topMargin * 2) / 100 : 0.86;
+  let topMargin = _topMargin ? 1 - (_topMargin * 2) / 100 : 0.92;
 
   if (!height) height = 86;
   else height *= topMargin;
   height /= 100; // % -> decimal
-  height = height * windowWidth * 0.239; //Height of Display Editor = 23.9vw
+  height = height * windowWidth * 0.23625; //Height of Display Editor = 23.625vw
 
   let singleSpan = document.createElement("singleSpan");
   singleSpan.innerHTML = "Only Line";
   singleSpan.style.fontSize = newFontSize;
   singleSpan.style.fontFamily = "Verdana";
   singleSpan.style.position = "fixed";
+  singleSpan.style.lineHeight = "1.25";
   document.body.appendChild(singleSpan);
   let lineHeight = singleSpan.offsetHeight;
   document.body.removeChild(singleSpan);
@@ -52,11 +59,11 @@ export const getNumLines = ({
 }: getNumLinesProps) => {
   const newFontSize = fontSize + "vw";
   let windowWidth = window.innerWidth;
-  let sideMargin = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.9;
+  let sideMargin = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.92;
   if (!width) width = 90;
   else width *= sideMargin;
   width /= 100;
-  width = width * windowWidth * 0.425; //Width of Display Editor = 42.5vw
+  width = width * windowWidth * 0.42; //Width of Display Editor = 42vw
 
   let textSpan = document.createElement("textSpan");
   textSpan.innerHTML = text;
@@ -66,6 +73,7 @@ export const getNumLines = ({
   textSpan.style.width = width + "px";
   textSpan.style.position = "fixed";
   textSpan.style.wordBreak = "break-word";
+  textSpan.style.lineHeight = "1.25";
   // textSpan.style.zIndex = 10;
   document.body.appendChild(textSpan);
   let textSpanHeight = textSpan.offsetHeight;
@@ -166,7 +174,7 @@ export const formatLyrics = (item: UpdateItemState) => {
     createNewSlide({
       type: "Title",
       boxes: slides[0].boxes,
-      words: boxes[0].words,
+      words: [boxes[0].words || " "],
     }),
   ];
   const songOrder = item.arrangements[item.selectedArrangement].songOrder;
@@ -234,4 +242,195 @@ export const formatSong = (_item: UpdateItemState) => {
   };
 
   return item;
+};
+
+type formatBibleType = {
+  item: UpdateItemState;
+  mode: "create" | "edit" | "fit";
+  verses: verseType[];
+};
+export const formatBible = ({ item, mode, verses }: formatBibleType) => {
+  let slides = item.arrangements[item.selectedArrangement].slides;
+  let boxes = slides[0].boxes;
+  let newSlides = [
+    createNewSlide({
+      type: "Title",
+      fontSize: 4.5,
+      words: [boxes[1].words || " "],
+      background: boxes[0].background,
+      brightness: boxes[0].brightness,
+    }),
+  ];
+  if (verses) newSlides.push(...formatBibleVerses({ verses, item, mode }));
+  else newSlides.push(...formatBibleVerses({ verses: [], item, mode }));
+
+  item.arrangements[item.selectedArrangement] = {
+    ...item.arrangements[item.selectedArrangement],
+    slides: newSlides,
+  };
+  return item;
+};
+
+type formatBibleVersesType = {
+  verses: verseType[];
+  item: UpdateItemState;
+  mode: "create" | "edit" | "fit";
+};
+const formatBibleVerses = ({ verses, item, mode }: formatBibleVersesType) => {
+  let slides = item.arrangements[item.selectedArrangement].slides;
+  let currentSlide = slides[1];
+  // let allBoxes = slides.flatMap(x => x.boxes);
+  // let overflowBoxes = allBoxes.filter(e => !e.excludeFromOverflow)
+  let currentBoxes = [...currentSlide.boxes];
+  let { maxLines, lineHeight } = getMaxLines({
+    fontSize: currentBoxes[1].fontSize || 1,
+    height: currentBoxes[1].height,
+  });
+  let formattedVerses = [];
+  let slide = "";
+  let type = currentSlide.type;
+  let fitProcessing = true;
+
+  if (mode === "create") {
+    for (let i = 0; i < verses.length; ++i) {
+      const verse = verses[i];
+      let words = verse.text?.split(" ") || [];
+      if (slide[slide.length - 1] === " ")
+        slide = slide.substring(0, slide.length - 1);
+      slide += "{" + verse.name + "}";
+
+      for (let j = 0; j < words.length; j++) {
+        let update = slide + words[j];
+        if (
+          getNumLines({
+            text: update,
+            fontSize: currentBoxes[1].fontSize || 1,
+            lineHeight,
+            width: currentBoxes[1].width,
+          }) <= maxLines
+        )
+          slide = update + " ";
+        else {
+          slide = slide.replace(/\s+/g, " ").trim();
+          formattedVerses.push(
+            createNewSlide({
+              type: "Verse " + verse.name,
+              boxes: currentBoxes,
+              words: ["", slide],
+            })
+          );
+          slide = words[j] + " ";
+        }
+      }
+      formattedVerses.push(
+        createNewSlide({
+          type: "Verse " + verse.name,
+          boxes: currentBoxes,
+          words: ["", slide],
+        })
+      );
+      slide = " ";
+    }
+  }
+
+  if (mode === "fit") {
+    while (fitProcessing) {
+      verseLoop: for (let i = 0; i < verses.length; ++i) {
+        const verse = verses[i];
+        let words = verse.text?.split(" ") || [];
+        if (slide[slide.length - 1] === " ")
+          slide = slide.substring(0, slide.length - 1);
+        slide += "{" + verse.name + "}";
+
+        for (let j = 0; j < words.length; j++) {
+          let update = slide + words[j];
+          if (
+            getNumLines({
+              text: update,
+              fontSize: currentBoxes[1].fontSize || 1,
+              lineHeight,
+              width: currentBoxes[1].width,
+            }) <= maxLines
+          )
+            slide = update + " ";
+          else {
+            currentBoxes[1].fontSize = (currentBoxes[1].fontSize || 1) - 0.1;
+            ({ maxLines, lineHeight } = getMaxLines({
+              fontSize: currentBoxes[1].fontSize,
+              height: currentBoxes[1].height,
+            }));
+            formattedVerses = [];
+            slide = "";
+            break verseLoop;
+          }
+        }
+        formattedVerses.push(
+          createNewSlide({
+            type: "Verse " + verse.name,
+            boxes: currentBoxes,
+            words: ["", slide],
+          })
+        );
+        fitProcessing = false;
+      }
+    }
+  }
+
+  if (mode === "edit") {
+    for (let i = 1; i < slides.length; ++i) {
+      currentSlide = slides[i];
+      currentBoxes = currentSlide.boxes;
+      let words = currentBoxes[1].words?.split(" ") || [];
+      if (type !== currentSlide.type) {
+        slide = slide.replace(/\s+/g, " ").trim();
+        formattedVerses.push(
+          createNewSlide({
+            type: type,
+            boxes: currentBoxes,
+            words: ["", slide],
+          })
+        );
+        slide = "";
+      }
+      type = currentSlide.type;
+      ({ maxLines, lineHeight } = getMaxLines({
+        fontSize: currentBoxes[1].fontSize || 1,
+        height: currentBoxes[1].height,
+      }));
+
+      for (let k = 0; k < words.length; k++) {
+        let update = slide + words[k];
+        if (
+          getNumLines({
+            text: update,
+            fontSize: currentBoxes[1].fontSize || 1,
+            lineHeight,
+            width: currentBoxes[1].width,
+          }) <= maxLines
+        )
+          slide = update + " ";
+        else {
+          slide = slide.replace(/\s+/g, " ").trim();
+          formattedVerses.push(
+            createNewSlide({
+              type: type,
+              boxes: currentBoxes,
+              words: ["", slide],
+            })
+          );
+          slide = words[k] + " ";
+        }
+      }
+    }
+  }
+
+  formattedVerses.push(
+    createNewSlide({
+      type: "blank",
+      boxes: currentBoxes,
+      words: ["", " "],
+    })
+  );
+
+  return formattedVerses;
 };
