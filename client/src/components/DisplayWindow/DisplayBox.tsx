@@ -135,6 +135,9 @@ const DisplayBox = ({
         marginBottom: `${box.topMargin}%`,
         marginLeft: `${box.sideMargin}%`,
         marginRight: `${box.sideMargin}%`,
+        color: box.fontColor,
+        top: `${box.y}%`,
+        left: `${box.x}%`,
       }}
     >
       {shouldShowBackground && (

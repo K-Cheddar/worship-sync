@@ -3,6 +3,7 @@ import generateRandomId from "./generateRandomId";
 
 type CreateNewSlideType = {
   type: string;
+  itemType?: string;
   box?: Box;
   words?: string[];
   slideIndex?: number;
@@ -15,6 +16,7 @@ type CreateNewSlideType = {
 
 export const createNewSlide = ({
   type,
+  itemType,
   box,
   words = [],
   slideIndex,
@@ -32,11 +34,12 @@ export const createNewSlide = ({
       x: 0,
       y: 0,
       fontSize: fontSize,
+      id: generateRandomId(),
       background: "",
       fontColor: "rgba(255, 255, 255, 1)",
     };
 
-  const boxes: Box[] = _boxes ? [..._boxes] : [];
+  let boxes: Box[] = _boxes ? [..._boxes] : [];
   const newBoxes: Box[] = [];
 
   if (_boxes && words.length) {
@@ -49,9 +52,37 @@ export const createNewSlide = ({
       newBoxes.push(box);
     }
   }
-  if (newBoxes.length) {
-    boxes.map((box, i) => newBoxes[i]);
+
+  if (itemType === "bible" && words.length === 3 && boxes.length !== 3) {
+    boxes = newBoxes.map((box, index) => {
+      if (index === 0) return box;
+      return {
+        ...box,
+        height: 90,
+        y: 5,
+        width: 100,
+        isLocked: true,
+        topMargin: 3,
+        sideMargin: 4,
+      };
+    });
+    boxes.push({
+      ...box,
+      fontColor: "rgb(253 224 71)",
+      fontSize: 1.5,
+      height: 20,
+      width: 100,
+      words: words[2],
+      isLocked: true,
+      align: "left",
+      topMargin: 1,
+      sideMargin: 2,
+    });
+  } else if (newBoxes.length) {
+    boxes = [...newBoxes];
   }
+
+  console.log({ boxes, words, itemType, newBoxes });
 
   if (type === "Announcement" && !boxes.length) {
     let obj = Object.assign({}, box);
@@ -66,7 +97,6 @@ export const createNewSlide = ({
     obj.sideMargin = 2.5;
     obj.excludeFromOverflow = true;
     obj.words = words ? words[0] : " ";
-    obj.id = generateRandomId();
     boxes.push(obj);
     obj = Object.assign({}, box);
     obj.height = 77;
@@ -78,7 +108,6 @@ export const createNewSlide = ({
     obj.sideMargin = 2.5;
     obj.excludeFromOverflow = true;
     obj.words = words ? words[1] : " ";
-    obj.id = generateRandomId();
     boxes.push(obj);
   } else if (type === "timer" && !boxes.length) {
     let obj = Object.assign({}, box);
@@ -92,7 +121,6 @@ export const createNewSlide = ({
     obj.topMargin = 3;
     obj.sideMargin = 4;
     obj.words = words[0] || " ";
-    obj.id = generateRandomId();
     boxes.push(obj);
   } else if (!boxes.length) {
     let obj = Object.assign({}, box);
@@ -101,7 +129,6 @@ export const createNewSlide = ({
     obj.id = generateRandomId();
     boxes.push(obj);
     obj = Object.assign({}, box);
-    obj.id = generateRandomId();
     obj.background = "";
     obj.transparent = true;
     obj.isLocked = false;

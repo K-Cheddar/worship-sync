@@ -51,7 +51,7 @@ const Item = () => {
       const formattedItem = await formatItemInfo(item);
       dispatch(setActiveItem({ ...formattedItem, listId: decodedListId }));
     };
-    selectItem();
+    // selectItem();
   }, [decodedItemId, dispatch, decodedListId]);
 
   if (status === "error")

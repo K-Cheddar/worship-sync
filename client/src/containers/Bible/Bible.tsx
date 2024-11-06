@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import Select from "../../components/Select/Select";
 import { ReactComponent as SendSVG } from "../../assets/icons/send.svg";
 
@@ -25,6 +25,10 @@ import { bibleStructure } from "../../utils/bibleStructure";
 import BibleVersesList from "./BibleVersesList";
 import { setCreateItem } from "../../store/createItemSlice";
 import { useSearchParams } from "react-router-dom";
+import { formatBible } from "../../utils/overflow";
+import generateRandomId from "../../utils/generateRandomId";
+import { setActiveItem } from "../../store/itemSlice";
+import { addItemToItemList } from "../../store/itemList";
 
 const Bible = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -50,6 +54,19 @@ const Bible = () => {
   const createItemName = decodeURI(searchParams.get("name") || "");
 
   const { db } = useContext(BibleDbContext) || {};
+  const bibleItemName = useMemo(() => {
+    const bookName = books[book]?.name || "";
+    const chapterName = chapters[chapter]?.name || "";
+    const startVerseName = verses[startVerse]?.name || "";
+    const endVerseName = verses[endVerse]?.name || "";
+
+    const verseName =
+      startVerse === endVerse
+        ? startVerseName
+        : `${startVerseName} - ${endVerseName}`;
+
+    return `${bookName} ${chapterName}: ${verseName} ${version.toUpperCase()}`;
+  }, [books, book, chapters, chapter, verses, endVerse, startVerse, version]);
 
   useEffect(() => {
     const getBibles = async () => {
@@ -128,7 +145,24 @@ const Bible = () => {
     return { value, label };
   });
 
-  const submitVerses = () => {};
+  const submitVerses = () => {
+    const item = formatBible({
+      item: {
+        name: createItemName || bibleItemName,
+        type: "bible",
+        id: generateRandomId(),
+      },
+      mode: "create",
+      book: books[book].name,
+      chapter: chapters[chapter].name,
+      version,
+      verses: verses.filter(
+        ({ index }) => index >= startVerse && index <= endVerse
+      ),
+    });
+    dispatch(addItemToItemList({ ...item, _id: item.id }));
+    dispatch(setActiveItem(item));
+  };
 
   return (
     <div className="text-base px-2 py-4 h-full flex flex-col gap-2">
@@ -203,11 +237,7 @@ const Bible = () => {
                 </div>
               )}
               <section className="flex gap-2 items-center w-full">
-                <h3 className="text-xl pl-6 font-semibold">
-                  {books[book]?.name} {chapters[chapter]?.name}:{" "}
-                  {verses[startVerse]?.name} - {verses[endVerse]?.name}{" "}
-                  {version.toUpperCase()}
-                </h3>
+                <h3 className="text-xl pl-6 font-semibold">{bibleItemName}</h3>
                 <Button
                   variant="cta"
                   padding="px-4 py-1"

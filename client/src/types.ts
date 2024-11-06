@@ -66,10 +66,11 @@ export type UpdateItemState = {
   name: string;
   type: string;
   id: string;
-  selectedArrangement: number;
-  shouldSkipTitle: boolean;
+  selectedArrangement?: number;
+  shouldSkipTitle?: boolean;
   listId?: string;
-  arrangements: Arrangment[];
+  arrangements?: Arrangment[];
+  slides?: ItemSlide[];
 };
 
 export type DBItem = Omit<UpdateItemState, "songOrder" | "arrangements"> & {

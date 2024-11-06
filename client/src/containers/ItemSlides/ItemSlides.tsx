@@ -21,10 +21,16 @@ const sizeMap: Map<number, { width: number; cols: string; hSize: string }> =
   ]);
 
 const ItemSlides = () => {
-  const { arrangements, selectedArrangement, selectedSlide, type, name } =
-    useSelector((state) => state.item);
+  const {
+    arrangements,
+    selectedArrangement,
+    selectedSlide,
+    type,
+    name,
+    slides: _slides,
+  } = useSelector((state) => state.item);
   const arrangement = arrangements[selectedArrangement];
-  const slides = arrangement?.slides || [];
+  const slides = _slides || arrangement?.slides || [];
   const size = useSelector((state) => state.item.slidesPerRow);
   const dispatch = useDispatch();
 
@@ -41,7 +47,7 @@ const ItemSlides = () => {
     );
   };
 
-  if (!arrangement) return null;
+  if (!arrangement && !slides.length) return null;
 
   return (
     <>

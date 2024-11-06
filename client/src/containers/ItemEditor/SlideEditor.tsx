@@ -20,7 +20,14 @@ import { Box } from "../../types";
 
 const SlideEditor = () => {
   const item = useSelector((state) => state.item);
-  const { name, type, arrangements, selectedArrangement, selectedSlide } = item;
+  const {
+    name,
+    type,
+    arrangements,
+    selectedArrangement,
+    selectedSlide,
+    slides,
+  } = item;
   const { list } = useSelector((state) => state.itemList);
   const { list: allItemsList } = useSelector((state) => state.allItems);
   const [showEditor, setShowEditor] = useState(true);
@@ -75,6 +82,7 @@ const SlideEditor = () => {
     box: Box;
     cursorPosition: number;
   }) => {
+    if (type === "bible") return;
     if (
       box.excludeFromOverflow ||
       selectedSlide === 0 ||
@@ -93,14 +101,10 @@ const SlideEditor = () => {
         (e) => e.name === slides[selectedSlide].type
       );
 
-      console.log({ formattedLyrics, _index, selectedSlide });
-
       const start =
         selectedSlide - (slides[selectedSlide]?.boxes[index]?.slideIndex || 0);
       const end = start + formattedLyrics[_index].slideSpan - 1;
       let newWords = "";
-
-      console.log({ start, end });
 
       for (let i = start; i <= end; ++i) {
         if (i === selectedSlide) newWords += value;
@@ -135,8 +139,6 @@ const SlideEditor = () => {
           selectedArrangement,
         });
 
-        console.log({ _item });
-
         dispatch(updateArrangements(_item.arrangements));
         setTimeout(() => {
           const textBoxElement = document.getElementById(
@@ -152,7 +154,10 @@ const SlideEditor = () => {
     }
   };
 
-  const boxes = arrangement?.slides[selectedSlide]?.boxes || [];
+  const boxes =
+    slides?.[selectedSlide]?.boxes ||
+    arrangement?.slides[selectedSlide]?.boxes ||
+    [];
 
   return (
     <div>

@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { Arrangment, Box, UpdateItemState } from "../types";
+import { Arrangment, Box, ItemSlide, UpdateItemState } from "../types";
 import { formatSong } from "../utils/overflow";
 
 type ItemState = {
@@ -14,6 +14,7 @@ type ItemState = {
   shouldSkipTitle: boolean;
   arrangements: Arrangment[];
   selectedSlide: number;
+  slides: ItemSlide[];
 };
 
 const initialState: ItemState = {
@@ -28,6 +29,7 @@ const initialState: ItemState = {
   shouldSkipTitle: false,
   arrangements: [],
   selectedSlide: 0,
+  slides: [],
 };
 
 export const itemSlice = createSlice({
@@ -39,9 +41,10 @@ export const itemSlice = createSlice({
       state.type = action.payload.type;
       state.id = action.payload.id;
       state.listId = action.payload.listId;
-      state.selectedArrangement = action.payload.selectedArrangement;
-      state.shouldSkipTitle = action.payload.shouldSkipTitle;
-      state.arrangements = action.payload.arrangements;
+      state.selectedArrangement = action.payload.selectedArrangement || 0;
+      state.shouldSkipTitle = action.payload.shouldSkipTitle || false;
+      state.arrangements = action.payload.arrangements || [];
+      state.slides = action.payload.slides || [];
     },
     increaseSlides: (state) => {
       state.slidesPerRow = Math.min(state.slidesPerRow + 1, 5);
