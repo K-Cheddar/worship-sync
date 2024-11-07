@@ -20,12 +20,12 @@ export const getMaxLines = ({
 }: getMaxLinesProps) => {
   const newFontSize = fontSize + "vw";
   let windowWidth = window.innerWidth;
-  let topMargin = _topMargin ? 1 - (_topMargin * 2) / 100 : 0.92;
+  let verticalMargin = _topMargin ? (_topMargin * 2) / 100 : 0.06;
+  const containerHeight = windowWidth * 0.23625;
+  const marginCalc = windowWidth * 0.42 * verticalMargin; // use window width to calculate margin
 
-  if (!height) height = 86;
-  else height *= topMargin;
-  height /= 100; // % -> decimal
-  height = height * windowWidth * 0.23625; //Height of Display Editor = 23.625vw
+  if (!height) height = 90;
+  const calcHeight = containerHeight * (height / 100) - marginCalc;
 
   let singleSpan = document.createElement("singleSpan");
   singleSpan.innerHTML = "Only Line";
@@ -37,7 +37,7 @@ export const getMaxLines = ({
   let lineHeight = singleSpan.offsetHeight;
   document.body.removeChild(singleSpan);
 
-  let maxLines = Math.floor(height / lineHeight);
+  let maxLines = Math.floor(calcHeight / lineHeight);
   let obj = { maxLines: maxLines, lineHeight: lineHeight };
   return obj;
 };
@@ -242,6 +242,7 @@ export const formatSong = (_item: UpdateItemState) => {
 
   item.arrangements[selectedArrangement] = {
     ...item.arrangements[selectedArrangement],
+    slides,
     formattedLyrics,
   };
 
@@ -391,7 +392,7 @@ const formatBibleVerses = ({
             currentBoxes[1].fontSize = (currentBoxes[1].fontSize || 1) - 0.1;
             ({ maxLines, lineHeight } = getMaxLines({
               fontSize: currentBoxes[1].fontSize,
-              height: currentBoxes[1].height,
+              height: 90,
             }));
             formattedVerses = [];
             slide = "";

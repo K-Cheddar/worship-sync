@@ -9,6 +9,8 @@ type BibleVersesListProps = {
   verses: verseType[];
   startVerse: number;
   endVerse: number;
+  sendVerse: (verse: verseType) => void;
+  canTransmit: boolean;
 };
 
 const BibleVersesList = ({
@@ -18,6 +20,8 @@ const BibleVersesList = ({
   verses,
   startVerse,
   endVerse,
+  canTransmit,
+  sendVerse,
 }: BibleVersesListProps) => {
   return (
     <ul className={`bible-verses-list ${isLoading ? "opacity-60" : ""}`}>
@@ -33,17 +37,20 @@ const BibleVersesList = ({
       )}
       {verses
         .filter(({ index }) => index >= startVerse && index <= endVerse)
-        .map((ele, index) => {
+        .map((verse, index) => {
           const bg = index % 2 === 0 ? "bg-slate-600" : "bg-slate-800";
-          return ele.text?.trim() ? (
-            <li key={ele.index} className={`${bg} flex gap-2 px-2`}>
-              <span className="text-lg text-yellow-300">{ele.name}</span>
-              <span className="text-base mr-auto">{ele.text}</span>
+          return verse.text?.trim() ? (
+            <li key={verse.index} className={`${bg} flex gap-2 px-2`}>
+              <span className="text-lg text-yellow-300">{verse.name}</span>
+              <span className="text-base mr-auto">{verse.text}</span>
               <Button
+                color={canTransmit ? "#22c55e" : "gray"}
                 padding="px-1"
                 variant="tertiary"
                 className="text-sm"
                 svg={SendSVG}
+                onClick={() => sendVerse(verse)}
+                disabled={!canTransmit}
               >
                 Send
               </Button>

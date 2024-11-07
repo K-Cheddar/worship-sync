@@ -29,6 +29,10 @@ import { formatBible } from "../../utils/overflow";
 import generateRandomId from "../../utils/generateRandomId";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemList";
+import {
+  updateBibleDisplayInfo,
+  updatePresentation,
+} from "../../store/presentationSlice";
 
 const Bible = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -50,6 +54,12 @@ const Bible = () => {
     endVerse,
     searchValues,
   } = useSelector((state) => state.bible);
+
+  const {
+    isMonitorTransmitting,
+    isProjectorTransmitting,
+    isStreamTransmitting,
+  } = useSelector((state) => state.presentation);
 
   const createItemName = decodeURI(searchParams.get("name") || "");
 
@@ -164,6 +174,39 @@ const Bible = () => {
     dispatch(setActiveItem(item));
   };
 
+  const sendVerse = (verse: verseType) => {
+    const item = formatBible({
+      item: {
+        name: createItemName || bibleItemName,
+        type: "bible",
+        id: generateRandomId(),
+      },
+      mode: "fit",
+      book: books[book].name,
+      chapter: chapters[chapter].name,
+      version,
+      verses: [verse],
+    });
+
+    const slides = item.slides || [];
+    const title = slides[1]?.boxes[2]?.words || "";
+    const text = slides[1].boxes[1]?.words || "";
+
+    dispatch(
+      updateBibleDisplayInfo({
+        title,
+        text,
+      })
+    );
+    dispatch(
+      updatePresentation({
+        slide: slides[1],
+        type: "bible",
+        name: createItemName || bibleItemName,
+      })
+    );
+  };
+
   return (
     <div className="text-base px-2 py-4 h-full flex flex-col gap-2">
       <div className="flex gap-2">
@@ -254,6 +297,12 @@ const Bible = () => {
                 verses={verses}
                 startVerse={startVerse}
                 endVerse={endVerse}
+                sendVerse={sendVerse}
+                canTransmit={
+                  isMonitorTransmitting ||
+                  isProjectorTransmitting ||
+                  isStreamTransmitting
+                }
               />
             </div>
           )}
