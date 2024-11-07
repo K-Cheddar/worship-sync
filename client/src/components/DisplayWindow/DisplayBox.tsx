@@ -110,6 +110,21 @@ const DisplayBox = ({
   const fontSizeValue = bFontSize ? bFontSize / fontAdjustment : 1;
   const tSS = fontSizeValue / (width > 20 ? 32 : 10); // text shadow size
   const fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size
+  const boxWidth = isStream
+    ? "60%"
+    : `calc(${box.width}% - ${box.sideMargin ? box.sideMargin * 2 : 0}%)`;
+  // % margin is calculated based on the width so we get the percentage of top and bottom margin, then multiply by the width of the container
+  const boxHeight = isStream
+    ? "fit"
+    : `calc(${box.height}% - (${width}vw * (${box.topMargin || 0} + ${
+        box.topMargin || 0
+      }) / 100) )`;
+  const marginLeft = isStream ? "20%" : `${box.sideMargin}%`;
+  const marginRight = isStream ? "20%" : `${box.sideMargin}%`;
+  const marginTop = isStream ? "auto" : `${box.topMargin}%`;
+  const marginBottom = isStream ? "5%" : `${box.topMargin}%`;
+  const boxTop = isStream ? "95%" : `${box.y}%`;
+  const boxLeft = isStream ? "unset" : `${box.x}%`;
   const textStyles = {
     textShadow: `${tSS}vw ${tSS}vw ${tSS}vw #000, ${tSS}vw ${tSS}vw ${tSS}vw #000`,
     WebkitTextStroke: `${fOS}vw #000`,
@@ -122,22 +137,17 @@ const DisplayBox = ({
       ref={boxRef}
       className="absolute leading-tight"
       style={{
-        width: `calc(${box.width}% - ${
-          box.sideMargin ? box.sideMargin * 2 : 0
-        }%)`,
-        // % margin is calculated based on the width so we get the percentage of top and bottom margin, then multiply by the width of the container
-        height: `calc(${box.height}% - (${width}vw * (${box.topMargin || 0} + ${
-          box.topMargin || 0
-        }) / 100) )`,
+        width: boxWidth,
+        height: boxHeight,
         pointerEvents: box.isLocked ? "none" : "all",
         fontSize: `${fontSizeValue}vw`,
-        marginTop: `${box.topMargin}%`,
-        marginBottom: `${box.topMargin}%`,
-        marginLeft: `${box.sideMargin}%`,
-        marginRight: `${box.sideMargin}%`,
+        marginTop,
+        marginBottom,
+        marginLeft,
+        marginRight,
         color: box.fontColor,
-        top: `${box.y}%`,
-        left: `${box.x}%`,
+        top: boxTop,
+        left: boxLeft,
       }}
     >
       {shouldShowBackground && (

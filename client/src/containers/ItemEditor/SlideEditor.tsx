@@ -178,7 +178,7 @@ const SlideEditor = () => {
           {!isEditingName && (
             <span className="slide-editor-song-name">
               <h2>{name}</h2>
-              <p className="text-xs">({arrangement?.name})</p>
+              {arrangement && <p className="text-xs">({arrangement?.name})</p>}
             </span>
           )}
           {isEditingName && (

@@ -7,26 +7,26 @@
   @apply relative overflow-hidden text-white;
 }
 
-.overlay-info-container {
+.participant-info-container {
   @apply w-fit absolute flex flex-col bg-gray-800/75; 
 
-  border-left: var(--overlay-info-border-width) solid green;
+  border-left: var(--participant-info-border-width) solid green;
   padding: 0 2.5% 1% 2.5%;
   max-width: 70%;
   bottom: 5%;
 }
 
-.overlay-info-name {
-  font-size: var(--overlay-info-name-size);
+.participant-info-name {
+  font-size: var(--participant-info-name-size);
 }
 
-.overlay-info-title {
-  font-size: var(--overlay-info-title-size);
+.participant-info-title {
+  font-size: var(--participant-info-title-size);
   font-style: italic;
 }
 
-.overlay-info-event {
-  font-size: var(--overlay-info-event-size);
+.participant-info-event {
+  font-size: var(--participant-info-event-size);
 }
 
 .display-box-background { 
@@ -35,4 +35,39 @@
 
 .display-box-text {
   @apply w-full bg-transparent whitespace-pre-line absolute;
+}
+
+.bible-info-container,
+.prev-bible-info-container {
+  @apply w-fit absolute flex flex-col;
+
+  width: 70%;
+  margin: 0 15%;
+  bottom: 5%;
+  border-radius: 5%;
+  line-height: 1.25;
+
+}
+
+.bible-info-title,
+.prev-bible-info-title {
+  @apply bg-green-800 w-fit;;
+
+  border-top-left-radius: 5%;
+  border-top-right-radius: 5%;
+  padding: 2% 4% 1%;
+  font-size: var(--bible-info-title-size);
+
+}
+
+.bible-info-text,
+.prev-bible-info-text {
+  @apply bg-gray-900/95;
+
+  padding: 1.5% 2.5%;
+  border-top-right-radius: 5%;
+  border-bottom-right-radius: 5%;
+  border-bottom-left-radius: 5%;
+
+  font-size: var(--bible-info-text-size);
 }

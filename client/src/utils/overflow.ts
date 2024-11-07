@@ -312,7 +312,7 @@ const formatBibleVerses = ({
   let currentBoxes = [...currentSlide.boxes];
   let { maxLines, lineHeight } = getMaxLines({
     fontSize: currentBoxes[1].fontSize || 1,
-    height: 85,
+    height: 90,
   });
   let formattedVerses = [];
   let slide = "";
@@ -323,8 +323,6 @@ const formatBibleVerses = ({
     for (let i = 0; i < verses.length; ++i) {
       const verse = verses[i];
       let words = verse.text?.split(" ") || [];
-      if (slide[slide.length - 1] === " ")
-        slide = slide.substring(0, slide.length - 1);
 
       for (let j = 0; j < words.length; j++) {
         let update = slide + words[j];
@@ -347,7 +345,7 @@ const formatBibleVerses = ({
               words: [
                 "",
                 slide,
-                `${book} ${chapter}: ${verse.name} ${version?.toUpperCase()}`,
+                `${book} ${chapter}:${verse.name} ${version?.toUpperCase()}`,
               ],
             })
           );
@@ -362,7 +360,7 @@ const formatBibleVerses = ({
           words: [
             "",
             slide,
-            `${book} ${chapter}: ${verse.name} ${version?.toUpperCase()}`,
+            `${book} ${chapter}:${verse.name} ${version?.toUpperCase()}`,
           ],
         })
       );

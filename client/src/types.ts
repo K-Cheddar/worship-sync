@@ -110,10 +110,16 @@ export type Presentation = {
   slide: ItemSlide | null;
   time?: number;
   displayType?: DisplayType;
-  overlayInfo?: OverlayInfo;
+  participantInfo?: ParticipantInfo;
+  bibleDisplayInfo?: BibleDisplayInfo;
 };
 
-export type OverlayInfo = {
+export type BibleDisplayInfo = {
+  title: string;
+  text: string;
+};
+
+export type ParticipantInfo = {
   name?: string;
   title?: string;
   event?: string;

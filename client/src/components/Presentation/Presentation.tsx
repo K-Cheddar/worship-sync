@@ -34,8 +34,10 @@ const Presentation = ({
           width={14}
           showBorder={showBorder}
           displayType={info.displayType}
-          overlayInfo={info.overlayInfo}
-          prevOverlayInfo={prevInfo.overlayInfo}
+          participantInfo={info.participantInfo}
+          prevParticipantInfo={prevInfo.participantInfo}
+          prevBibleDisplayInfo={prevInfo.bibleDisplayInfo}
+          bibleDisplayInfo={info.bibleDisplayInfo}
           time={info.time}
           prevTime={prevInfo.time}
           shouldAnimate

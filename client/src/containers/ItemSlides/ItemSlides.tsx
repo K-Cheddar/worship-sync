@@ -11,7 +11,10 @@ import {
 import { useSelector } from "../../hooks";
 import { useDispatch } from "../../hooks";
 import { songSectionBgColorMap } from "../../utils/slideColorMap";
-import { updatePresentation } from "../../store/presentationSlice";
+import {
+  updateBibleDisplayInfo,
+  updatePresentation,
+} from "../../store/presentationSlice";
 
 const sizeMap: Map<number, { width: number; cols: string; hSize: string }> =
   new Map([
@@ -38,6 +41,19 @@ const ItemSlides = () => {
 
   const selectSlide = (index: number) => {
     dispatch(setSelectedSlide(index));
+    if (type === "bible") {
+      const title =
+        index > 0
+          ? slides[index].boxes[2]?.words || ""
+          : slides[index].boxes[1]?.words || "";
+      const text = index > 0 ? slides[index].boxes[1]?.words || "" : "";
+      dispatch(
+        updateBibleDisplayInfo({
+          title,
+          text,
+        })
+      );
+    }
     dispatch(
       updatePresentation({
         slide: slides[index],

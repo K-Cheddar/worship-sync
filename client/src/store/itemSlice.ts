@@ -77,34 +77,54 @@ export const itemSlice = createSlice({
       state.selectedArrangement = action.payload;
     },
     updateBoxes: (state, action: PayloadAction<Box[]>) => {
-      state.arrangements[state.selectedArrangement].slides[
-        state.selectedSlide
-      ].boxes = [...action.payload];
+      if (state.arrangements[state.selectedArrangement].slides.length > 0) {
+        state.arrangements[state.selectedArrangement].slides[
+          state.selectedSlide
+        ].boxes = [...action.payload];
+      }
+
+      state.slides[state.selectedSlide].boxes = [...action.payload];
     },
     updateArrangements: (state, action: PayloadAction<Arrangment[]>) => {
       state.arrangements = [...action.payload];
     },
     updateAllSlideBackgrounds: (state, action: PayloadAction<string>) => {
-      const allSlides = state.arrangements[state.selectedArrangement].slides;
-      const updatedSlides = allSlides.map((slide) => {
-        return {
-          ...slide,
-          boxes: [
-            ...slide.boxes.map((box, index) => {
-              if (index === 0) {
-                return { ...box, background: action.payload };
-              }
-              return box;
-            }),
-          ],
-        };
-      });
-      state.arrangements[state.selectedArrangement].slides = [...updatedSlides];
+      const arrangementSlides =
+        state.arrangements[state.selectedArrangement]?.slides;
+      const mapSlides = (slides: ItemSlide[]) => {
+        return slides.map((slide) => {
+          return {
+            ...slide,
+            boxes: [
+              ...slide.boxes.map((box, index) => {
+                if (index === 0) {
+                  return { ...box, background: action.payload };
+                }
+                return box;
+              }),
+            ],
+          };
+        });
+      };
+      if (arrangementSlides) {
+        const updatedSlides = mapSlides(arrangementSlides);
+        state.arrangements[state.selectedArrangement].slides = [
+          ...updatedSlides,
+        ];
+      }
+      state.slides = mapSlides(state.slides);
     },
     updateSlideBackground: (state, action: PayloadAction<string>) => {
-      state.arrangements[state.selectedArrangement].slides[
-        state.selectedSlide
-      ].boxes[0].background = action.payload;
+      const arrangementSlides =
+        state.arrangements[state.selectedArrangement]?.slides;
+
+      if (arrangementSlides) {
+        state.arrangements[state.selectedArrangement].slides[
+          state.selectedSlide
+        ].boxes[0].background = action.payload;
+      }
+
+      state.slides[state.selectedSlide].boxes[0].background = action.payload;
     },
   },
 });

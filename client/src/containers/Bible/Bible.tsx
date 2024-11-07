@@ -65,7 +65,7 @@ const Bible = () => {
         ? startVerseName
         : `${startVerseName} - ${endVerseName}`;
 
-    return `${bookName} ${chapterName}: ${verseName} ${version.toUpperCase()}`;
+    return `${bookName} ${chapterName}:${verseName} ${version.toUpperCase()}`;
   }, [books, book, chapters, chapter, verses, endVerse, startVerse, version]);
 
   useEffect(() => {

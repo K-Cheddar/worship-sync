@@ -35,6 +35,7 @@ export const createNewSlide = ({
       y: 0,
       fontSize: fontSize,
       id: generateRandomId(),
+      isLocked: true,
       background: "",
       fontColor: "rgba(255, 255, 255, 1)",
     };
