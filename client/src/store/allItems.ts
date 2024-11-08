@@ -1,8 +1,8 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { ServiceItem } from "../types";
+import { DBServiceItem } from "../types";
 
 type AllItems = {
-  list: ServiceItem[];
+  list: DBServiceItem[];
 };
 
 const initialState: AllItems = {
@@ -13,13 +13,13 @@ export const allItemsSlice = createSlice({
   name: "allItems",
   initialState,
   reducers: {
-    updateAllItemsList: (state, action: PayloadAction<ServiceItem[]>) => {
+    updateAllItemsList: (state, action: PayloadAction<DBServiceItem[]>) => {
       state.list = action.payload;
     },
     removeItemFromAllItemsList: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((item) => item["_id"] !== action.payload);
     },
-    addItemToAllItemsList: (state, action: PayloadAction<ServiceItem>) => {
+    addItemToAllItemsList: (state, action: PayloadAction<DBServiceItem>) => {
       state.list.push(action.payload);
     },
   },

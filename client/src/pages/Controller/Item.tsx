@@ -12,9 +12,11 @@ import { setActiveItem } from "../../store/itemSlice";
 const mockItem: DBItem = {
   name: "There's A Welcome Here",
   type: "song",
-  id: generateRandomId(),
+  _id: generateRandomId(),
+  _rev: "",
+  background: "",
   selectedArrangement: 0,
-  shouldSkipTitle: false,
+  skipTitle: false,
   arrangements: mockArrangement,
 };
 

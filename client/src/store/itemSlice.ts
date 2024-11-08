@@ -1,25 +1,7 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { Arrangment, Box, ItemSlide, UpdateItemState } from "../types";
-import { formatSong } from "../utils/overflow";
-
-type ItemState = {
-  slidesPerRow: number;
-  formattedLyricsPerRow: number;
-  isEditMode: boolean;
-  name: string;
-  type: string;
-  id: string;
-  listId?: string;
-  selectedArrangement: number;
-  shouldSkipTitle: boolean;
-  arrangements: Arrangment[];
-  selectedSlide: number;
-  slides: ItemSlide[];
-};
+import { Arrangment, Box, ItemSlide, ItemState } from "../types";
 
 const initialState: ItemState = {
-  slidesPerRow: 4,
-  formattedLyricsPerRow: 4,
   isEditMode: false,
   name: "",
   type: "",
@@ -30,13 +12,15 @@ const initialState: ItemState = {
   arrangements: [],
   selectedSlide: 0,
   slides: [],
+  selectedBox: 1,
+  bibleInfo: { book: "", chapter: "", version: "", verses: [] },
 };
 
 export const itemSlice = createSlice({
   name: "item",
   initialState,
   reducers: {
-    setActiveItem: (state, action: PayloadAction<UpdateItemState>) => {
+    setActiveItem: (state, action: PayloadAction<ItemState>) => {
       state.name = action.payload.name;
       state.type = action.payload.type;
       state.id = action.payload.id;
@@ -45,24 +29,12 @@ export const itemSlice = createSlice({
       state.shouldSkipTitle = action.payload.shouldSkipTitle || false;
       state.arrangements = action.payload.arrangements || [];
       state.slides = action.payload.slides || [];
-    },
-    increaseSlides: (state) => {
-      state.slidesPerRow = Math.min(state.slidesPerRow + 1, 5);
-    },
-    decreaseSlides: (state) => {
-      state.slidesPerRow = Math.max(state.slidesPerRow - 1, 3);
-    },
-    increaseFormattedLyrics: (state) => {
-      state.formattedLyricsPerRow = Math.min(
-        state.formattedLyricsPerRow + 1,
-        5
-      );
-    },
-    decreaseFormattedLyrics: (state) => {
-      state.formattedLyricsPerRow = Math.max(
-        state.formattedLyricsPerRow - 1,
-        3
-      );
+      state.bibleInfo = action.payload.bibleInfo || {
+        book: "",
+        chapter: "",
+        version: "",
+        verses: [],
+      };
     },
     toggleEditMode: (state) => {
       state.isEditMode = !state.isEditMode;
@@ -132,13 +104,9 @@ export const itemSlice = createSlice({
 export const {
   setSelectedSlide,
   setSelectedArrangement,
-  increaseSlides,
-  decreaseSlides,
   toggleEditMode,
   setName,
   updateBoxes,
-  increaseFormattedLyrics,
-  decreaseFormattedLyrics,
   updateArrangements,
   setActiveItem,
   updateAllSlideBackgrounds,

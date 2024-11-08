@@ -3,11 +3,8 @@ import Button from "../../components/Button/Button";
 import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import "./ItemSlides.scss";
-import {
-  increaseSlides,
-  decreaseSlides,
-  setSelectedSlide,
-} from "../../store/itemSlice";
+import { setSelectedSlide } from "../../store/itemSlice";
+import { increaseSlides, decreaseSlides } from "../../store/preferencesSlice";
 import { useSelector } from "../../hooks";
 import { useDispatch } from "../../hooks";
 import { songSectionBgColorMap } from "../../utils/slideColorMap";
@@ -34,7 +31,7 @@ const ItemSlides = () => {
   } = useSelector((state) => state.item);
   const arrangement = arrangements[selectedArrangement];
   const slides = _slides || arrangement?.slides || [];
-  const size = useSelector((state) => state.item.slidesPerRow);
+  const size = useSelector((state) => state.preferences.slidesPerRow);
   const dispatch = useDispatch();
 
   const width = sizeMap.get(size)?.width || 12;
@@ -53,6 +50,8 @@ const ItemSlides = () => {
           text,
         })
       );
+    } else {
+      dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
     }
     dispatch(
       updatePresentation({

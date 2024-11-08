@@ -10,6 +10,10 @@ import TextArea from "../../components/TextArea/TextArea";
 import { setCreateItem } from "../../store/createItemSlice";
 import { useDispatch } from "../../hooks";
 import { useSelector } from "react-redux";
+import { createNewSong, createSections } from "../../utils/itemUtil";
+import { setActiveItem } from "../../store/itemSlice";
+import { addItemToItemList } from "../../store/itemList";
+import { addItemToAllItemsList } from "../../store/allItems";
 
 type ItemTypesType = {
   type: string;
@@ -63,6 +67,22 @@ const CreateItem = () => {
         text,
       })
     );
+
+    if (selectedType === "song") {
+      const { formattedLyrics, songOrder } = createSections({
+        unformattedLyrics: text,
+      });
+
+      const newItem = createNewSong({
+        name: itemName,
+        formattedLyrics,
+        songOrder,
+      });
+
+      dispatch(setActiveItem(newItem));
+      dispatch(addItemToItemList({ ...newItem, _id: newItem.id }));
+      dispatch(addItemToAllItemsList({ ...newItem, _id: "" }));
+    }
 
     if (selectedType === "bible") {
       naviagte(`/controller/bible?name=${encodeURI(itemName)}`);

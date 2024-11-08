@@ -8,6 +8,7 @@ import { bibleSlice } from "./bibleSlice";
 import { itemListSlice } from "./itemList";
 import { allItemsSlice } from "./allItems";
 import { createItemSlice } from "./createItemSlice";
+import { preferencesSlice } from "./preferencesSlice";
 
 const store = configureStore({
   reducer: {
@@ -19,6 +20,7 @@ const store = configureStore({
     itemList: itemListSlice.reducer,
     allItems: allItemsSlice.reducer,
     createItem: createItemSlice.reducer,
+    preferences: preferencesSlice.reducer,
   },
 });
 

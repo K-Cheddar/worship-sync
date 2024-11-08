@@ -51,10 +51,10 @@ const DisplayWindow = ({
   bibleDisplayInfo,
   prevBibleDisplayInfo,
 }: DisplayWindowProps) => {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const participantRef = useRef<HTMLDivElement | null>(null);
-  const bibleRef = useRef<HTMLDivElement | null>(null);
-  const prevBibleRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLUListElement | null>(null);
+  const participantRef = useRef<HTMLLIElement | null>(null);
+  const bibleRef = useRef<HTMLLIElement | null>(null);
+  const prevBibleRef = useRef<HTMLLIElement | null>(null);
   const participantTimeline = useRef<GSAPTimeline | null>();
   const bibleTimeline = useRef<GSAPTimeline | null>();
   const prevBibleTimeline = useRef<GSAPTimeline | null>();
@@ -204,7 +204,7 @@ const DisplayWindow = ({
   // }, { dependencies: [prevParticipantInfo] })
 
   return (
-    <div
+    <ul
       className={`display-window ${
         showBorder ? "border border-gray-500" : ""
       } ${displayType !== "stream" ? "bg-black" : ""}`}
@@ -216,46 +216,43 @@ const DisplayWindow = ({
         } as React.CSSProperties
       }
     >
-      {!bibleDisplayInfo && !prevBibleDisplayInfo && (
-        <>
-          {boxes.map((box, index) => {
-            return (
-              <DisplayBox
-                key={box.id}
-                box={box}
-                width={width}
-                displayType={displayType}
-                showBackground={showBackground}
-                isStream={isStream}
-                fontAdjustment={fontAdjustment}
-                onChange={onChange}
-                index={index}
-                shouldAnimate={shouldAnimate}
-                prevBox={prevBoxes[index]}
-                time={time}
-              />
-            );
-          })}
-          {prevBoxes.map((box, index) => {
-            return (
-              <DisplayBox
-                key={box.id}
-                box={box}
-                width={width}
-                displayType={displayType}
-                showBackground={showBackground}
-                isStream={isStream}
-                fontAdjustment={fontAdjustment}
-                onChange={onChange}
-                index={index}
-                shouldAnimate={shouldAnimate}
-                isPrev
-                time={prevTime}
-              />
-            );
-          })}
-        </>
-      )}
+      {boxes.map((box, index) => {
+        return (
+          <DisplayBox
+            key={box.id}
+            box={box}
+            width={width}
+            displayType={displayType}
+            showBackground={showBackground}
+            isStream={isStream}
+            fontAdjustment={fontAdjustment}
+            onChange={onChange}
+            index={index}
+            shouldAnimate={shouldAnimate}
+            prevBox={prevBoxes[index]}
+            time={time}
+          />
+        );
+      })}
+      {prevBoxes.map((box, index) => {
+        return (
+          <DisplayBox
+            key={box.id}
+            box={box}
+            width={width}
+            displayType={displayType}
+            showBackground={showBackground}
+            isStream={isStream}
+            fontAdjustment={fontAdjustment}
+            onChange={onChange}
+            index={index}
+            shouldAnimate={shouldAnimate}
+            isPrev
+            time={prevTime}
+          />
+        );
+      })}
+
       {/* {hasPrevParticipantData && (
         <div 
           ref={prevParticipantRef}
@@ -274,7 +271,7 @@ const DisplayWindow = ({
      )} */}
 
       {isStream && (
-        <div
+        <li
           ref={bibleRef}
           className="bible-info-container"
           style={
@@ -291,11 +288,11 @@ const DisplayWindow = ({
           {bibleDisplayInfo?.text?.trim() && (
             <p className="bible-info-text">{bibleDisplayInfo.text}</p>
           )}
-        </div>
+        </li>
       )}
 
       {isStream && (
-        <div
+        <li
           ref={prevBibleRef}
           className="prev-bible-info-container"
           style={
@@ -314,11 +311,11 @@ const DisplayWindow = ({
           {prevBibleDisplayInfo?.text?.trim() && (
             <p className="prev-bible-info-text">{prevBibleDisplayInfo.text}</p>
           )}
-        </div>
+        </li>
       )}
 
       {isStream && (
-        <div
+        <li
           ref={participantRef}
           className="participant-info-container"
           style={
@@ -339,9 +336,9 @@ const DisplayWindow = ({
           {participantInfo.event && (
             <p className="participant-info-event">{participantInfo.event}</p>
           )}
-        </div>
+        </li>
       )}
-    </div>
+    </ul>
   );
 };
 

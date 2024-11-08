@@ -66,7 +66,10 @@ export const presentationSlice = createSlice({
         state.prevStreamInfo.type = state.streamInfo.type;
         state.prevStreamInfo.time = state.streamInfo.time;
 
-        state.streamInfo.slide = action.payload.slide;
+        if (action.payload.type !== "bible") {
+          state.streamInfo.slide = action.payload.slide;
+        }
+
         state.streamInfo.name = action.payload.name;
         state.streamInfo.type = action.payload.type;
         state.streamInfo.time = Date.now();
@@ -102,7 +105,7 @@ export const presentationSlice = createSlice({
         state.prevStreamInfo.bibleDisplayInfo =
           state.streamInfo.bibleDisplayInfo;
         state.streamInfo.bibleDisplayInfo = { ...action.payload };
-        // state.streamInfo.slide = null;
+        state.streamInfo.slide = null;
         // state.prevStreamInfo.slide = null;
       }
     },

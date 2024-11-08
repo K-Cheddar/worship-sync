@@ -23,16 +23,15 @@ import { BibleDbContext } from "../../context/bibleDb";
 import { getVerses as getVersesApi } from "../../api/getVerses";
 import { bibleStructure } from "../../utils/bibleStructure";
 import BibleVersesList from "./BibleVersesList";
-import { setCreateItem } from "../../store/createItemSlice";
 import { useSearchParams } from "react-router-dom";
 import { formatBible } from "../../utils/overflow";
-import generateRandomId from "../../utils/generateRandomId";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemList";
 import {
   updateBibleDisplayInfo,
   updatePresentation,
 } from "../../store/presentationSlice";
+import { createItemFromProps } from "../../utils/itemUtil";
 
 const Bible = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -157,12 +156,11 @@ const Bible = () => {
 
   const submitVerses = () => {
     const item = formatBible({
-      item: {
+      item: createItemFromProps({
         name: createItemName || bibleItemName,
         type: "bible",
-        id: generateRandomId(),
-      },
-      mode: "create",
+      }),
+      mode: "add",
       book: books[book].name,
       chapter: chapters[chapter].name,
       version,
@@ -171,16 +169,16 @@ const Bible = () => {
       ),
     });
     dispatch(addItemToItemList({ ...item, _id: item.id }));
+    console.log({ item });
     dispatch(setActiveItem(item));
   };
 
   const sendVerse = (verse: verseType) => {
     const item = formatBible({
-      item: {
+      item: createItemFromProps({
         name: createItemName || bibleItemName,
         type: "bible",
-        id: generateRandomId(),
-      },
+      }),
       mode: "fit",
       book: books[book].name,
       chapter: chapters[chapter].name,

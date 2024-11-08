@@ -62,19 +62,54 @@ export type QuickLinkType = {
   displayType?: DisplayType;
 };
 
-export type UpdateItemState = {
+export type ItemState = {
   name: string;
   type: string;
   id: string;
+  selectedArrangement: number;
+  shouldSkipTitle?: boolean;
+  listId?: string;
+  arrangements: Arrangment[];
+  selectedSlide: number;
+  selectedBox: number;
+  slides: ItemSlide[];
+  isEditMode?: boolean;
+  bibleInfo?: {
+    book: string;
+    chapter: string;
+    version: string;
+    verses: verseType[];
+  };
+};
+
+export type OptionalItemState = {
+  name: string;
+  type: string;
+  id?: string;
   selectedArrangement?: number;
   shouldSkipTitle?: boolean;
   listId?: string;
   arrangements?: Arrangment[];
+  selectedSlide?: number;
+  selectedBox?: number;
   slides?: ItemSlide[];
+  isEditMode?: boolean;
+  bibleInfo?: {
+    book: string;
+    chapter: string;
+    verse: string;
+    version: string;
+  };
 };
 
-export type DBItem = Omit<UpdateItemState, "songOrder" | "arrangements"> & {
-  _id?: string;
+export type DBItem = {
+  _id: string;
+  name: string;
+  background: string;
+  selectedArrangement: number;
+  skipTitle: boolean;
+  type: string;
+  _rev: string;
   arrangements: {
     name: string;
     formattedLyrics: FormattedLyrics[];
@@ -160,4 +195,9 @@ export type bookType = {
 
 export type bibleType = {
   books: bookType[];
+};
+
+export type PreferencesType = {
+  slidesPerRow: number;
+  formattedLyricsPerRow: number;
 };

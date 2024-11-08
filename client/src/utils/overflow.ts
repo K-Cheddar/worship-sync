@@ -1,10 +1,4 @@
-import {
-  Arrangment,
-  Box,
-  ItemSlide,
-  UpdateItemState,
-  verseType,
-} from "../types";
+import { Arrangment, Box, ItemSlide, ItemState, verseType } from "../types";
 import { createNewSlide } from "./slideCreation";
 
 type getMaxLinesProps = {
@@ -39,6 +33,7 @@ export const getMaxLines = ({
 
   let maxLines = Math.floor(calcHeight / lineHeight);
   let obj = { maxLines: maxLines, lineHeight: lineHeight };
+
   return obj;
 };
 
@@ -163,7 +158,7 @@ export const formatSection = ({
   return fLyrics;
 };
 
-export const formatLyrics = (item: UpdateItemState) => {
+export const formatLyrics = (item: ItemState) => {
   const selectedArrangement = item.selectedArrangement || 0;
   const arrangements = item.arrangements || [];
   let slides = arrangements[selectedArrangement].slides || [];
@@ -176,7 +171,7 @@ export const formatLyrics = (item: UpdateItemState) => {
     createNewSlide({
       type: "Title",
       boxes: slides[0].boxes,
-      words: [boxes[0].words || " "],
+      words: [boxes[1].words || " "],
     }),
   ];
   const songOrder = arrangements[selectedArrangement].songOrder;
@@ -202,7 +197,7 @@ export const formatLyrics = (item: UpdateItemState) => {
   return newSlides;
 };
 
-export const formatSong = (_item: UpdateItemState) => {
+export const formatSong = (_item: ItemState) => {
   const item = {
     ..._item,
     arrangements: _item.arrangements
@@ -242,20 +237,21 @@ export const formatSong = (_item: UpdateItemState) => {
 
   item.arrangements[selectedArrangement] = {
     ...item.arrangements[selectedArrangement],
-    slides,
     formattedLyrics,
   };
+
+  item.slides = [...slides];
 
   return item;
 };
 
 type formatBibleType = {
-  item: UpdateItemState;
-  mode: "create" | "edit" | "fit";
-  verses: verseType[];
-  book: string;
-  chapter: string;
-  version: string;
+  item: ItemState;
+  mode: "add" | "fit";
+  verses?: verseType[];
+  book?: string;
+  chapter?: string;
+  version?: string;
 };
 export const formatBible = ({
   item,
@@ -264,11 +260,13 @@ export const formatBible = ({
   book,
   chapter,
   version,
-}: formatBibleType) => {
-  let slides = item.slides || [
-    createNewSlide({ type: "Title", fontSize: 4.5, words: [item.name] }),
-    createNewSlide({ type: "Verse", fontSize: 2.5 }),
-  ];
+}: formatBibleType): ItemState => {
+  let slides = item.slides.length
+    ? item.slides
+    : [
+        createNewSlide({ type: "Title", fontSize: 4.5, words: [item.name] }),
+        createNewSlide({ type: "Verse", fontSize: 2.5 }),
+      ];
   let boxes = slides[0]?.boxes || [];
   let newSlides = [
     createNewSlide({
@@ -279,21 +277,67 @@ export const formatBible = ({
       brightness: boxes[0]?.brightness || 100,
     }),
   ];
-  item.slides = [...slides];
-  if (verses)
-    newSlides.push(
-      ...formatBibleVerses({ verses, item, mode, book, chapter, version })
-    );
-  else newSlides.push(...formatBibleVerses({ verses: [], item, mode }));
+  let _item = {
+    ...item,
+    slides: [...slides],
+  };
 
-  item.slides = [...newSlides];
-  return item;
+  const _book = book || item.bibleInfo?.book || "";
+  const _chapter = chapter || item.bibleInfo?.chapter || "";
+  const _version = version || item.bibleInfo?.version || "";
+  const _verses = verses || item.bibleInfo?.verses || [];
+
+  console.log({ verses, _verses });
+
+  if (_verses.length)
+    newSlides.push(
+      ...formatBibleVerses({
+        verses: _verses,
+        item: _item,
+        mode,
+        book: _book,
+        chapter: _chapter,
+        version: _version,
+      })
+    );
+  else
+    newSlides.push(
+      ...formatBibleVerses({
+        verses: [],
+        item: _item,
+        mode,
+        book: _book,
+        chapter: _chapter,
+        version: _version,
+      })
+    );
+
+  _item.slides = [...newSlides];
+
+  return {
+    ..._item,
+    bibleInfo: {
+      book: _book,
+      chapter: _chapter,
+      version: _version,
+      verses: _verses,
+    },
+  };
 };
 
+type GetBibleNameType = {
+  book: string | undefined;
+  chapter: string | undefined;
+  verse: string | undefined;
+  version: string | undefined;
+};
+const getBibleName = ({ book, chapter, verse, version }: GetBibleNameType) =>
+  `${book} ${chapter}:${verse} ${version?.toUpperCase()}`;
+
 type formatBibleVersesType = {
-  verses: verseType[];
-  item: UpdateItemState;
-  mode: "create" | "edit" | "fit";
+  verses?: verseType[];
+  item: ItemState;
+  mode: "add" | "fit";
   book?: string;
   chapter?: string;
   version?: string;
@@ -317,10 +361,10 @@ const formatBibleVerses = ({
   });
   let formattedVerses = [];
   let slide = "";
-  let type = currentSlide.type;
+  // let type = currentSlide.type;
   let fitProcessing = true;
 
-  if (mode === "create") {
+  if (mode === "add" && verses) {
     for (let i = 0; i < verses.length; ++i) {
       const verse = verses[i];
       let words = verse.text?.split(" ") || [];
@@ -346,7 +390,7 @@ const formatBibleVerses = ({
               words: [
                 "",
                 slide,
-                `${book} ${chapter}:${verse.name} ${version?.toUpperCase()}`,
+                getBibleName({ book, chapter, verse: verse.name, version }),
               ],
             })
           );
@@ -361,7 +405,7 @@ const formatBibleVerses = ({
           words: [
             "",
             slide,
-            `${book} ${chapter}:${verse.name} ${version?.toUpperCase()}`,
+            getBibleName({ book, chapter, verse: verse.name, version }),
           ],
         })
       );
@@ -369,7 +413,7 @@ const formatBibleVerses = ({
     }
   }
 
-  if (mode === "fit") {
+  if (mode === "fit" && verses) {
     while (fitProcessing) {
       verseLoop: for (let i = 0; i < verses.length; ++i) {
         const verse = verses[i];
@@ -407,59 +451,11 @@ const formatBibleVerses = ({
             words: [
               "",
               slide,
-              `${book} ${chapter}: ${verse.name} ${version?.toUpperCase()}`,
+              getBibleName({ book, chapter, verse: verse.name, version }),
             ],
           })
         );
         fitProcessing = false;
-      }
-    }
-  }
-
-  if (mode === "edit") {
-    for (let i = 1; i < slides.length; ++i) {
-      currentSlide = slides[i];
-      currentBoxes = currentSlide.boxes;
-      let words = currentBoxes[1].words?.split(" ") || [];
-      if (type !== currentSlide.type) {
-        slide = slide.replace(/\s+/g, " ").trim();
-        formattedVerses.push(
-          createNewSlide({
-            type: type,
-            boxes: currentBoxes,
-            words: ["", slide],
-          })
-        );
-        slide = "";
-      }
-      type = currentSlide.type;
-      ({ maxLines, lineHeight } = getMaxLines({
-        fontSize: currentBoxes[1].fontSize || 1,
-        height: currentBoxes[1].height,
-      }));
-
-      for (let k = 0; k < words.length; k++) {
-        let update = slide + words[k];
-        if (
-          getNumLines({
-            text: update,
-            fontSize: currentBoxes[1].fontSize || 1,
-            lineHeight,
-            width: currentBoxes[1].width,
-          }) <= maxLines
-        )
-          slide = update + " ";
-        else {
-          slide = slide.replace(/\s+/g, " ").trim();
-          formattedVerses.push(
-            createNewSlide({
-              type: type,
-              boxes: currentBoxes,
-              words: ["", slide],
-            })
-          );
-          slide = words[k] + " ";
-        }
       }
     }
   }

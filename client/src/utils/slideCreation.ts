@@ -31,6 +31,8 @@ export const createNewSlide = ({
       brightness: 100,
       height: 100,
       width: 100,
+      topMargin: 0,
+      sideMargin: 0,
       x: 0,
       y: 0,
       fontSize: fontSize,
@@ -78,12 +80,11 @@ export const createNewSlide = ({
       align: "left",
       topMargin: 1,
       sideMargin: 2,
+      excludeFromOverflow: true,
     });
   } else if (newBoxes.length) {
     boxes = [...newBoxes];
   }
-
-  console.log({ boxes, words, itemType, newBoxes });
 
   if (type === "Announcement" && !boxes.length) {
     let obj = Object.assign({}, box);

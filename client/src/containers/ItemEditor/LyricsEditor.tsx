@@ -7,11 +7,14 @@ import Button from "../../components/Button/Button";
 import { useEffect, useMemo, useState } from "react";
 import {
   toggleEditMode,
-  increaseFormattedLyrics,
-  decreaseFormattedLyrics,
   updateArrangements,
   setSelectedArrangement,
 } from "../../store/itemSlice";
+
+import {
+  increaseFormattedLyrics,
+  decreaseFormattedLyrics,
+} from "../../store/preferencesSlice";
 
 import TextArea from "../../components/TextArea/TextArea";
 import "./ItemEditor.scss";
@@ -24,6 +27,7 @@ import { updateFormattedSections } from "./updateFormattedSections";
 import generateRandomId from "../../utils/generateRandomId";
 import { sortList } from "../../utils/sort";
 import { formatSong } from "../../utils/overflow";
+import { createSections as createSectionsUtil } from "../../utils/itemUtil";
 
 const LyricsEditor = () => {
   const item = useSelector((state) => state.item);
@@ -125,36 +129,21 @@ const LyricsEditor = () => {
       arrangements: _arrangements,
       selectedArrangement: localSelectedArrangement,
     });
-    console.log(localArrangements);
     dispatch(updateArrangements(_item.arrangements));
   };
 
   const createSections = () => {
     if (!unformattedLyrics.trim()) return;
 
-    const newLyrics: FormattedLyricsType[] = [...localFormattedLyrics];
-    const newSongOrder: SongOrder[] = [...songOrder];
-    const lines = unformattedLyrics.split("\n\n");
+    const { formattedLyrics: _formattedLyrics, songOrder: _songOrder } =
+      createSectionsUtil({
+        formattedLyrics: localFormattedLyrics,
+        songOrder,
+        unformattedLyrics,
+      });
 
-    for (let i = 0; i < lines.length; i++) {
-      const name = "Verse " + newLyrics.length;
-      const index = newLyrics.findIndex((e) => e.words === lines[i]);
-      if (index === -1) {
-        newLyrics.push({
-          type: "Verse",
-          name,
-          words: lines[i],
-          id: generateRandomId(),
-          slideSpan: 1,
-        });
-        newSongOrder.push({ name, id: generateRandomId() });
-      } else {
-        songOrder.push({ name: newLyrics[index].name, id: generateRandomId() });
-      }
-
-      setSongOrder(newSongOrder);
-      setFormattedLyrics(newLyrics);
-    }
+    setSongOrder(_songOrder);
+    setFormattedLyrics(_formattedLyrics);
   };
 
   return (

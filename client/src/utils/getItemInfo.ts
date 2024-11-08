@@ -1,14 +1,17 @@
-import { DBItem, SongOrder, UpdateItemState } from "../types";
+import { DBItem, SongOrder, ItemState } from "../types";
 import generateRandomId from "./generateRandomId";
 
 export const formatItemInfo = async (item: DBItem) => {
-  const _item: UpdateItemState = {
+  const _item: ItemState = {
     name: item.name,
     type: item.type,
-    id: item.id,
+    id: item._id,
     selectedArrangement: item.selectedArrangement,
-    shouldSkipTitle: item.shouldSkipTitle,
+    shouldSkipTitle: item.skipTitle,
     arrangements: [],
+    slides: [],
+    selectedBox: 1,
+    selectedSlide: 0,
   };
 
   const updatedArrangements = item.arrangements.map((arrangement) => {
