@@ -55,7 +55,7 @@ export const getNumLines = ({
   const newFontSize = fontSize + "vw";
   let windowWidth = window.innerWidth;
   let sideMargin = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.92;
-  if (!width) width = 90;
+  if (!width) width = 95;
   else width *= sideMargin;
   width /= 100;
   width = width * windowWidth * 0.42; //Width of Display Editor = 42vw
@@ -74,7 +74,7 @@ export const getNumLines = ({
   let textSpanHeight = textSpan.offsetHeight;
   document.body.removeChild(textSpan);
 
-  let lines = Math.floor(textSpanHeight / lineHeight);
+  let lines = Math.round(textSpanHeight / lineHeight);
   return lines;
 };
 
@@ -271,7 +271,7 @@ export const formatBible = ({
   let newSlides = [
     createNewSlide({
       type: "Title",
-      fontSize: 4.5,
+      fontSize: boxes[1]?.fontSize || 4.5,
       words: [boxes[1]?.words || " "],
       background: boxes[0]?.background || "",
       brightness: boxes[0]?.brightness || 100,
@@ -286,8 +286,6 @@ export const formatBible = ({
   const _chapter = chapter || item.bibleInfo?.chapter || "";
   const _version = version || item.bibleInfo?.version || "";
   const _verses = verses || item.bibleInfo?.verses || [];
-
-  console.log({ verses, _verses });
 
   if (_verses.length)
     newSlides.push(
@@ -357,7 +355,7 @@ const formatBibleVerses = ({
   let currentBoxes = [...currentSlide.boxes];
   let { maxLines, lineHeight } = getMaxLines({
     fontSize: currentBoxes[1].fontSize || 1,
-    height: 90,
+    height: 95,
   });
   let formattedVerses = [];
   let slide = "";
@@ -436,7 +434,7 @@ const formatBibleVerses = ({
             currentBoxes[1].fontSize = (currentBoxes[1].fontSize || 1) - 0.1;
             ({ maxLines, lineHeight } = getMaxLines({
               fontSize: currentBoxes[1].fontSize,
-              height: 90,
+              height: 95,
             }));
             formattedVerses = [];
             slide = "";

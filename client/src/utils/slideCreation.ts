@@ -61,7 +61,7 @@ export const createNewSlide = ({
       if (index === 0) return box;
       return {
         ...box,
-        height: 90,
+        height: 95,
         y: 5,
         width: 100,
         isLocked: true,

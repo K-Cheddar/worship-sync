@@ -169,7 +169,6 @@ const Bible = () => {
       ),
     });
     dispatch(addItemToItemList({ ...item, _id: item.id }));
-    console.log({ item });
     dispatch(setActiveItem(item));
   };
 

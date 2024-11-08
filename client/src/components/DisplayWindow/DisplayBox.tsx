@@ -160,17 +160,17 @@ const DisplayBox = ({
       {isStream && box.background && (
         <div className="h-full w-full absolute bg-transparent" />
       )}
-      {typeof onChange !== "function" && (
-        <p
-          className={`display-box-text ${
-            isStream ? "h-fit bottom-0 text-center" : "h-full"
-          }`}
-          style={textStyles}
-        >
-          {words}
-        </p>
-      )}
-      {typeof onChange === "function" && (
+      {/* {typeof onChange !== "function" && ( */}
+      <p
+        className={`display-box-text ${
+          isStream ? "h-fit bottom-0 text-center" : "h-full"
+        }`}
+        style={textStyles}
+      >
+        {words}
+      </p>
+      {/* )} */}
+      {/* {typeof onChange === "function" && (
         <textarea
           className="h-full w-full bg-transparent absolute resize-none overflow-hidden"
           id={`display-box-text-${index}`}
@@ -186,7 +186,7 @@ const DisplayBox = ({
             });
           }}
         />
-      )}
+      )} */}
     </li>
   );
 };

@@ -27,7 +27,7 @@ const SlideEditTools = () => {
     const _val = Math.max(Math.min(val, 48), 1);
     setFontSize(_val);
     const fSize = _val / 10;
-    console.log({ item });
+    console.log(val, _val, fSize);
     const updatedItem = updateFontSize({ fontSize: fSize, item });
     console.log({ updatedItem });
     dispatch(setActiveItem(updatedItem));
