@@ -146,6 +146,7 @@ const DisplayBox = ({
         marginLeft,
         marginRight,
         color: box.fontColor,
+        filter: `brightness(${box.brightness}%)`,
         top: boxTop,
         left: boxLeft,
       }}

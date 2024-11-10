@@ -107,6 +107,9 @@ export const itemSlice = createSlice({
         (_, index) => index !== action.payload
       );
     },
+    updateSlides: (state, action: PayloadAction<ItemSlide[]>) => {
+      state.slides = [...action.payload];
+    },
   },
 });
 
@@ -122,6 +125,7 @@ export const {
   updateSlideBackground,
   addSlide,
   removeSlide,
+  updateSlides,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

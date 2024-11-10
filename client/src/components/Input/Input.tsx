@@ -2,7 +2,7 @@ import { FunctionComponent } from "react";
 import "./Input.scss";
 import Button from "../Button/Button";
 
-type InputProps = {
+type InputProps = React.HTMLProps<HTMLInputElement> & {
   className?: string;
   type?: string;
   value: string | number;

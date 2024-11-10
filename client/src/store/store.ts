@@ -1,7 +1,7 @@
 import { combineReducers, configureStore } from "@reduxjs/toolkit";
 import userReducer from "./userSlice";
 import { itemSlice } from "./itemSlice";
-import undoable from "redux-undo";
+import undoable, { excludeAction } from "redux-undo";
 import { presentationSlice } from "./presentationSlice";
 import { participantsSlice } from "./participantsSlice";
 import { bibleSlice } from "./bibleSlice";
@@ -15,18 +15,23 @@ const undoableReducers = undoable(
     item: itemSlice.reducer,
     participants: participantsSlice.reducer,
     itemList: itemListSlice.reducer,
-  })
+  }),
+  {
+    filter: excludeAction([
+      itemSlice.actions.toggleEditMode.toString(),
+      itemSlice.actions.setSelectedSlide.toString(),
+      participantsSlice.actions.selectParticipant.toString(),
+      itemListSlice.actions.initiateItemList.toString(),
+    ]),
+  }
 );
 
 const store = configureStore({
   reducer: {
     user: undoable(userReducer),
     undoable: undoableReducers,
-    // item: undoable(itemSlice.reducer),
     presentation: presentationSlice.reducer,
-    // participants: undoable(participantsSlice.reducer),
     bible: bibleSlice.reducer,
-    // itemList: undoable(itemListSlice.reducer),
     allItems: allItemsSlice.reducer,
     createItem: createItemSlice.reducer,
     preferences: preferencesSlice.reducer,
