@@ -1,17 +1,21 @@
+import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
 import Button from "../../components/Button/Button";
 import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
+import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import "./ItemSlides.scss";
-import { setSelectedSlide } from "../../store/itemSlice";
+import { removeSlide, setSelectedSlide } from "../../store/itemSlice";
 import { increaseSlides, decreaseSlides } from "../../store/preferencesSlice";
 import { useSelector } from "../../hooks";
 import { useDispatch } from "../../hooks";
-import { songSectionBgColorMap } from "../../utils/slideColorMap";
+import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import {
   updateBibleDisplayInfo,
   updatePresentation,
 } from "../../store/presentationSlice";
+import { createNewSlide } from "../../utils/slideCreation";
+import { addSlide as addSlideAction } from "../../store/itemSlice";
 
 const sizeMap: Map<number, { width: number; cols: string; hSize: string }> =
   new Map([
@@ -28,7 +32,7 @@ const ItemSlides = () => {
     type,
     name,
     slides: _slides,
-  } = useSelector((state) => state.item);
+  } = useSelector((state) => state.undoable.present.item);
   const arrangement = arrangements[selectedArrangement];
   const slides = _slides || arrangement?.slides || [];
   const size = useSelector((state) => state.preferences.slidesPerRow);
@@ -62,11 +66,20 @@ const ItemSlides = () => {
     );
   };
 
-  if (!arrangement && !slides.length) return null;
+  const addSlide = () => {
+    const slide = createNewSlide({
+      type: "Section",
+      fontSize: 2.5,
+      words: [""],
+    });
+    dispatch(addSlideAction(slide));
+  };
+
+  if (!arrangement && !slides.length && type !== "free") return null;
 
   return (
     <>
-      <div className="flex justify-end w-full px-2 bg-slate-900 h-6 my-2 gap-1">
+      <div className="flex w-full px-2 bg-slate-900 h-6 my-2 gap-1">
         <Button
           variant="tertiary"
           svg={ZoomOutSVG}
@@ -76,6 +89,12 @@ const ItemSlides = () => {
           variant="tertiary"
           svg={ZoomInSVG}
           onClick={() => dispatch(decreaseSlides())}
+        />
+        <Button
+          variant="tertiary"
+          className="ml-auto"
+          svg={DeleteSVG}
+          onClick={() => dispatch(removeSlide(selectedSlide))}
         />
       </div>
       <ul className={`item-slides-container ${sizeMap.get(size)?.cols}`}>
@@ -93,7 +112,7 @@ const ItemSlides = () => {
               <h4
                 className={`${
                   sizeMap.get(size)?.hSize
-                } rounded-t-md truncate px-2 text-center ${songSectionBgColorMap.get(
+                } rounded-t-md truncate px-2 text-center ${itemSectionBgColorMap.get(
                   slide.type.split(" ")[0]
                 )}`}
                 style={{ width: `${width}vw` }}
@@ -109,6 +128,18 @@ const ItemSlides = () => {
             </li>
           );
         })}
+        {type === "free" && (
+          <li className="flex flex-col px-2">
+            <Button
+              key="lyrics-box-add-section"
+              onClick={() => addSlide()}
+              variant="tertiary"
+              svg={AddSVG}
+              iconSize={64}
+              className="w-full flex-1 justify-center border border-slate-500 rounded-md"
+            />
+          </li>
+        )}
       </ul>
     </>
   );

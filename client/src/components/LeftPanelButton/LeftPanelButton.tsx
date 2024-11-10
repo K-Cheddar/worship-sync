@@ -49,7 +49,7 @@ const LeftPanelButton = ({
         <p className="font-semibold">{title}</p>
         <Link
           to={to}
-          className="font-semibold w-full h-full flex items-center absolute"
+          className="font-semibold w-full h-full flex items-center absolute left-0"
         />
       </Button>
       {actions &&

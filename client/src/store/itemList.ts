@@ -26,7 +26,9 @@ export const itemListSlice = createSlice({
       });
     },
     removeItemFromList: (state, action: PayloadAction<string>) => {
-      state.list = state.list.filter((item) => item.listId !== action.payload);
+      state.list = state.list.filter((item) => {
+        return item.listId !== action.payload;
+      });
     },
     addItemToItemList: (state, action: PayloadAction<DBServiceItem>) => {
       const newItemWithId = {

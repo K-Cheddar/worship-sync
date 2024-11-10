@@ -1,9 +1,9 @@
 import Button from "../../components/Button/Button";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
-import { songSectionBorderColorMap } from "../../utils/slideColorMap";
+import { itemSectionBorderColorMap } from "../../utils/slideColorMap";
 import { SongOrder } from "../../types";
 import Select from "../../components/Select/Select";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import generateRandomId from "../../utils/generateRandomId";
 
 type SongSectionsProps = {
@@ -17,7 +17,11 @@ const SongSections = ({
   setSongOrder,
   currentSections,
 }: SongSectionsProps) => {
-  const [section, setSection] = useState(songOrder[0]?.name || "");
+  const [section, setSection] = useState(currentSections[0]?.value || "");
+
+  useEffect(() => {
+    setSection(currentSections[0]?.value || "");
+  }, [currentSections]);
 
   return (
     <>
@@ -26,7 +30,7 @@ const SongSections = ({
         {songOrder.map(({ id, name }, index) => (
           <li
             key={id}
-            className={`flex items-center px-2 h-7 bg-black rounded-lg hover:bg-gray-800 cursor-pointer border-b-4 ${songSectionBorderColorMap.get(
+            className={`flex items-center px-2 h-7 bg-black rounded-lg hover:bg-gray-800 cursor-pointer border-b-4 ${itemSectionBorderColorMap.get(
               name.split(" ")[0]
             )}`}
           >
@@ -63,6 +67,7 @@ const SongSections = ({
             ])
           }
           className="text-base mt-2 w-full justify-center h-7"
+          disabled={!section}
         >
           Add Section
         </Button>

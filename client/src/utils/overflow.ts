@@ -170,8 +170,8 @@ export const formatLyrics = (item: ItemState) => {
   const newSlides = [
     createNewSlide({
       type: "Title",
-      boxes: slides[0].boxes,
-      words: [boxes[1].words || " "],
+      boxes,
+      words: ["", boxes[1].words || " "],
     }),
   ];
   const songOrder = arrangements[selectedArrangement].songOrder;
@@ -193,7 +193,7 @@ export const formatLyrics = (item: ItemState) => {
     );
   }
 
-  newSlides.push(createNewSlide({ type: "blank", box: lastBoxes[0] }));
+  newSlides.push(createNewSlide({ type: "Blank", box: lastBoxes[0] }));
   return newSlides;
 };
 
@@ -264,7 +264,11 @@ export const formatBible = ({
   let slides = item.slides.length
     ? item.slides
     : [
-        createNewSlide({ type: "Title", fontSize: 4.5, words: [item.name] }),
+        createNewSlide({
+          type: "Title",
+          fontSize: 4.5,
+          words: ["", item.name],
+        }),
         createNewSlide({ type: "Verse", fontSize: 2.5 }),
       ];
   let boxes = slides[0]?.boxes || [];
@@ -272,7 +276,7 @@ export const formatBible = ({
     createNewSlide({
       type: "Title",
       fontSize: boxes[1]?.fontSize || 4.5,
-      words: [boxes[1]?.words || " "],
+      words: ["", boxes[1]?.words || " "],
       background: boxes[0]?.background || "",
       brightness: boxes[0]?.brightness || 100,
     }),
@@ -460,7 +464,7 @@ const formatBibleVerses = ({
 
   formattedVerses.push(
     createNewSlide({
-      type: "blank",
+      type: "Blank",
       boxes: currentBoxes,
       words: ["", " "],
     })

@@ -10,3 +10,7 @@
     }
   }
 }
+
+.left-panel-action-button {
+  @apply hover:bg-slate-800 active:bg-slate-900;
+}

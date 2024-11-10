@@ -49,7 +49,7 @@ export const itemSlice = createSlice({
       state.selectedArrangement = action.payload;
     },
     updateBoxes: (state, action: PayloadAction<Box[]>) => {
-      if (state.arrangements[state.selectedArrangement].slides.length > 0) {
+      if (state.arrangements[state.selectedArrangement]?.slides?.length > 0) {
         state.arrangements[state.selectedArrangement].slides[
           state.selectedSlide
         ].boxes = [...action.payload];
@@ -59,6 +59,7 @@ export const itemSlice = createSlice({
     },
     updateArrangements: (state, action: PayloadAction<Arrangment[]>) => {
       state.arrangements = [...action.payload];
+      state.slides = [...action.payload[state.selectedArrangement].slides];
     },
     updateAllSlideBackgrounds: (state, action: PayloadAction<string>) => {
       const arrangementSlides =
@@ -98,6 +99,14 @@ export const itemSlice = createSlice({
 
       state.slides[state.selectedSlide].boxes[0].background = action.payload;
     },
+    addSlide: (state, action: PayloadAction<ItemSlide>) => {
+      state.slides = [...state.slides, action.payload];
+    },
+    removeSlide: (state, action: PayloadAction<number>) => {
+      state.slides = state.slides.filter(
+        (_, index) => index !== action.payload
+      );
+    },
   },
 });
 
@@ -111,6 +120,8 @@ export const {
   setActiveItem,
   updateAllSlideBackgrounds,
   updateSlideBackground,
+  addSlide,
+  removeSlide,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

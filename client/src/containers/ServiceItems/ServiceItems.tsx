@@ -11,13 +11,17 @@ import { useLocation } from "react-router-dom";
 const ServiceItems = () => {
   const dispatch = useDispatch();
   const location = useLocation();
-  const { list: serviceItems } = useSelector((state) => state.itemList);
-  const { listId } = useSelector((state) => state.item);
+  const { list: serviceItems } = useSelector(
+    (state) => state.undoable.present.itemList
+  );
+  const { listId } = useSelector((state) => state.undoable.present.item);
 
   const actions = useMemo(() => {
     return [
       {
-        action: (listId: string) => dispatch(removeItemFromList(listId)),
+        action: (listId: string) => {
+          dispatch(removeItemFromList(listId));
+        },
         svg: DeleteSVG,
         id: generateRandomId(),
       },
@@ -47,7 +51,7 @@ const ServiceItems = () => {
               )}`}
               type={item.type}
               actions={actions}
-              id={item["_id"]}
+              id={item.listId}
             />
           );
         })}

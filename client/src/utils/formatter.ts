@@ -20,7 +20,7 @@ export const updateFontSize = ({
 
   if (!slide) return item;
 
-  if (selectedSlide !== 0 && item.type !== "image") {
+  if (selectedSlide !== 0 && item.type !== "free") {
     slides = slides.map((slide) => {
       return {
         ...slide,

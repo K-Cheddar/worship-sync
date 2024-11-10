@@ -35,6 +35,8 @@
 
 .display-box-text {
   @apply w-full bg-transparent whitespace-pre-line absolute;
+  
+  overflow-wrap: anywhere;
 }
 
 .bible-info-container,

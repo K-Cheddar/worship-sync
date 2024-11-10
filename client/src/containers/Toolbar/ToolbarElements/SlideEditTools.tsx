@@ -13,7 +13,7 @@ const SlideEditTools = () => {
   const dispatch = useDispatch();
   const [fontSize, setFontSize] = useState(24);
 
-  const item = useSelector((state) => state.item);
+  const item = useSelector((state) => state.undoable.present.item);
   const { slides, selectedSlide } = item;
 
   const slide = slides[selectedSlide];
@@ -27,9 +27,7 @@ const SlideEditTools = () => {
     const _val = Math.max(Math.min(val, 48), 1);
     setFontSize(_val);
     const fSize = _val / 10;
-    console.log(val, _val, fSize);
     const updatedItem = updateFontSize({ fontSize: fSize, item });
-    console.log({ updatedItem });
     dispatch(setActiveItem(updatedItem));
   };
 

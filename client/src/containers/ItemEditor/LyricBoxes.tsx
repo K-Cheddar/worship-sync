@@ -5,7 +5,7 @@ import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
 import TextArea from "../../components/TextArea/TextArea";
 import { useSelector } from "../../hooks";
-import { sectionTypes, songSectionBgColorMap } from "../../utils/slideColorMap";
+import { sectionTypes, itemSectionBgColorMap } from "../../utils/slideColorMap";
 import { FormattedLyrics as FormattedLyricsType } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 
@@ -20,6 +20,7 @@ type FormattedLyricsProps = {
   setFormattedLyrics: (formattedLyrics: FormattedLyricsType[]) => void;
   reformatLyrics: (formattedLyrics: FormattedLyricsType[]) => void;
   availableSections: { value: string; label: string }[];
+  onFormattedLyricsDelete: (index: number) => void;
 };
 
 const LyricBoxes = ({
@@ -27,6 +28,7 @@ const LyricBoxes = ({
   setFormattedLyrics,
   reformatLyrics,
   availableSections,
+  onFormattedLyricsDelete,
 }: FormattedLyricsProps) => {
   const { formattedLyricsPerRow } = useSelector((state) => state.preferences);
 
@@ -71,7 +73,7 @@ const LyricBoxes = ({
       {formattedLyrics.map(({ id, type, name, words }, index) => (
         <li key={id} className="text-sm px-2">
           <div
-            className={`formatted-lyrics-section ${songSectionBgColorMap.get(
+            className={`formatted-lyrics-section ${itemSectionBgColorMap.get(
               type
             )}`}
           >
@@ -85,9 +87,7 @@ const LyricBoxes = ({
               variant="tertiary"
               svg={DeleteSVG}
               onClick={() => {
-                const copiedFormattedLyrics = [...formattedLyrics];
-                copiedFormattedLyrics.splice(index, 1);
-                reformatLyrics(copiedFormattedLyrics);
+                onFormattedLyricsDelete(index);
               }}
             />
           </div>
@@ -112,7 +112,7 @@ const LyricBoxes = ({
           }}
           value={newSectionType}
           options={sectionTypes.map((type) => ({ value: type, label: type }))}
-          className={`formatted-lyrics-section ${songSectionBgColorMap.get(
+          className={`formatted-lyrics-section ${itemSectionBgColorMap.get(
             newSectionType
           )}`}
         />

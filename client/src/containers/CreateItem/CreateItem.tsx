@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import RadioButton from "../../components/RadioButton/RadioButton";
 import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
 import Button from "../../components/Button/Button";
@@ -10,10 +10,16 @@ import TextArea from "../../components/TextArea/TextArea";
 import { setCreateItem } from "../../store/createItemSlice";
 import { useDispatch } from "../../hooks";
 import { useSelector } from "react-redux";
-import { createNewSong, createSections } from "../../utils/itemUtil";
+import {
+  createNewFreeForm,
+  createNewSong,
+  createSections,
+  updateFormattedSections,
+} from "../../utils/itemUtil";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemList";
 import { addItemToAllItemsList } from "../../store/allItems";
+import { DBServiceItem } from "../../types";
 
 type ItemTypesType = {
   type: string;
@@ -45,6 +51,7 @@ const CreateItem = () => {
     type: savedType,
     text: savedText,
   } = useSelector((state: any) => state.createItem);
+  const { list } = useSelector((state: any) => state.allItems);
   const [searchParams] = useSearchParams();
   const initialType = decodeURI(
     searchParams.get("type") || savedType || "song"
@@ -59,6 +66,17 @@ const CreateItem = () => {
   const naviagte = useNavigate();
   const dispatch = useDispatch();
 
+  const existingItem: DBServiceItem | undefined = useMemo(() => {
+    if (selectedType !== "bible") {
+      return (list as DBServiceItem[]).find(
+        (item) =>
+          item.name.toLowerCase().trim() === itemName.toLowerCase().trim() &&
+          item.type === selectedType
+      );
+    }
+    return undefined;
+  }, [itemName, list, selectedType]);
+
   const createItem = () => {
     dispatch(
       setCreateItem({
@@ -69,8 +87,14 @@ const CreateItem = () => {
     );
 
     if (selectedType === "song") {
-      const { formattedLyrics, songOrder } = createSections({
-        unformattedLyrics: text,
+      const { formattedLyrics: _formattedLyrics, songOrder: _songOrder } =
+        createSections({
+          unformattedLyrics: text,
+        });
+
+      const { formattedLyrics, songOrder } = updateFormattedSections({
+        formattedLyrics: _formattedLyrics,
+        songOrder: _songOrder,
       });
 
       const newItem = createNewSong({
@@ -84,15 +108,28 @@ const CreateItem = () => {
       dispatch(addItemToAllItemsList({ ...newItem, _id: "" }));
     }
 
+    if (selectedType === "free") {
+      const newItem = createNewFreeForm({
+        name: itemName,
+      });
+
+      dispatch(setActiveItem(newItem));
+      dispatch(addItemToItemList({ ...newItem, _id: newItem.id }));
+      dispatch(addItemToAllItemsList({ ...newItem, _id: "" }));
+    }
+
     if (selectedType === "bible") {
       naviagte(`/controller/bible?name=${encodeURI(itemName)}`);
     }
+
+    setItemName("");
+    setText("");
   };
 
   return (
     <div>
       <h2 className="text-2xl text-center font-semibold ">Create Item</h2>
-      <div className="my-2 mx-4 rounded-md p-4 bg-slate-800 w-56">
+      <div className="my-2 mx-4 rounded-md p-4 bg-slate-800 w-1/2">
         <ul className="flex flex-col gap-2">
           <h3 className="text-lg font-semibold text-center">
             Select Item Type
@@ -103,6 +140,19 @@ const CreateItem = () => {
             label="Item Name"
             className="text-base"
           />
+          {existingItem && (
+            <p className="text-cyan-400 bg-slate-600 text-sm rounded-md p-1">
+              <span className="italic">"{existingItem.name}"</span>
+              <span> already exists.</span>
+              <Button
+                variant="tertiary"
+                className="inline"
+                onClick={() => dispatch(addItemToItemList(existingItem))}
+              >
+                Add to list
+              </Button>
+            </p>
+          )}
           {itemTypes.map((itemType) => (
             <li key={itemType.type} className="flex gap-2 item-center">
               <Icon
@@ -127,7 +177,7 @@ const CreateItem = () => {
           ))}
         </ul>
 
-        {selectedType !== "bible" && (
+        {selectedType === "song" && (
           <TextArea
             className="w-full h-72"
             label="Paste Text Here"
@@ -137,7 +187,7 @@ const CreateItem = () => {
         )}
 
         <Button
-          disabled={!itemName}
+          disabled={!itemName || !!existingItem}
           variant="cta"
           className="text-base w-full justify-center mt-4"
           onClick={createItem}

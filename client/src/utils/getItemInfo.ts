@@ -60,5 +60,6 @@ export const formatItemInfo = async (item: DBItem) => {
   });
 
   _item.arrangements = updatedArrangements;
+  _item.slides = updatedArrangements[item.selectedArrangement].slides;
   return _item;
 };

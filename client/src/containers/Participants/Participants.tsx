@@ -18,7 +18,7 @@ import { updateParticipantInfo } from "../../store/presentationSlice";
 
 const Participants = () => {
   const { list, id, name, title, event, showDelete } = useSelector(
-    (state) => state.participants
+    (state) => state.undoable.present.participants
   );
   const { isStreamTransmitting } = useSelector((state) => state.presentation);
   const [localName, setLocalName] = useState(name);

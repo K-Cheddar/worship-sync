@@ -136,7 +136,7 @@ export const createNewSlide = ({
     obj.isLocked = false;
     obj.topMargin = 3;
     obj.sideMargin = 4;
-    obj.words = words[0] || " ";
+    obj.words = words[1] || " ";
     boxes.push(obj);
   }
 

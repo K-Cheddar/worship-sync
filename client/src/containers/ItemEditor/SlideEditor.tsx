@@ -19,7 +19,7 @@ import { formatSong } from "../../utils/overflow";
 import { Box } from "../../types";
 
 const SlideEditor = () => {
-  const item = useSelector((state) => state.item);
+  const item = useSelector((state) => state.undoable.present.item);
   const {
     name,
     type,
@@ -28,7 +28,7 @@ const SlideEditor = () => {
     selectedSlide,
     slides,
   } = item;
-  const { list } = useSelector((state) => state.itemList);
+  const { list } = useSelector((state) => state.undoable.present.itemList);
   const { list: allItemsList } = useSelector((state) => state.allItems);
   const [showEditor, setShowEditor] = useState(true);
   const [isEditingName, setIsEditingName] = useState(false);
@@ -44,8 +44,6 @@ const SlideEditor = () => {
   const saveName = () => {
     setIsEditingName(false);
     dispatch(setName(localName));
-
-    console.log(list, name, localName);
 
     const updatedList = list.map((item) => {
       if (item.name === name) {
@@ -83,73 +81,84 @@ const SlideEditor = () => {
     cursorPosition: number;
   }) => {
     if (type === "bible") return;
-    if (
-      box.excludeFromOverflow ||
-      selectedSlide === 0 ||
-      selectedSlide === arrangements[selectedArrangement].slides.length - 1
-    ) {
+    if (type === "free") {
       dispatch(
         updateBoxes(
           boxes.map((b, i) => (i === index ? { ...b, words: value } : b))
         )
       );
-    } else {
-      const formattedLyrics =
-        item.arrangements[item.selectedArrangement].formattedLyrics;
-      const slides = item.arrangements[item.selectedArrangement].slides;
-      const _index = formattedLyrics.findIndex(
-        (e) => e.name === slides[selectedSlide].type
-      );
-
-      const start =
-        selectedSlide - (slides[selectedSlide]?.boxes[index]?.slideIndex || 0);
-      const end = start + formattedLyrics[_index].slideSpan - 1;
-      let newWords = "";
-
-      for (let i = start; i <= end; ++i) {
-        if (i === selectedSlide) newWords += value;
-        else newWords += slides[i].boxes[index].words;
-      }
-      if (newWords !== "") {
-        const updatedArrangements = item.arrangements.map(
-          (arrangement, index) => {
-            if (index === item.selectedArrangement) {
-              return {
-                ...arrangement,
-                formattedLyrics: formattedLyrics.map((lyric, i) => {
-                  if (i === _index) {
-                    return {
-                      ...lyric,
-                      words: newWords,
-                    };
-                  } else {
-                    return lyric;
-                  }
-                }),
-              };
-            } else {
-              return arrangement;
-            }
-          }
+      return;
+    }
+    if (type === "song") {
+      if (
+        box.excludeFromOverflow ||
+        selectedSlide === 0 ||
+        selectedSlide === arrangements[selectedArrangement]?.slides?.length - 1
+      ) {
+        dispatch(
+          updateBoxes(
+            boxes.map((b, i) => (i === index ? { ...b, words: value } : b))
+          )
+        );
+      } else {
+        const formattedLyrics =
+          item.arrangements[item.selectedArrangement].formattedLyrics;
+        const slides = item.arrangements[item.selectedArrangement].slides;
+        const _index = formattedLyrics.findIndex(
+          (e) => e.name === slides[selectedSlide].type
         );
 
-        const _item = formatSong({
-          ...item,
-          arrangements: updatedArrangements,
-          selectedArrangement,
-        });
+        const start =
+          selectedSlide -
+          (slides[selectedSlide]?.boxes[index]?.slideIndex || 0);
+        const end = start + formattedLyrics[_index].slideSpan - 1;
+        let newWords = "";
 
-        dispatch(updateArrangements(_item.arrangements));
-        setTimeout(() => {
-          const textBoxElement = document.getElementById(
-            `display-box-text-${index}`
-          ) as HTMLTextAreaElement;
-          if (textBoxElement) {
-            textBoxElement.selectionEnd = cursorPosition;
-            textBoxElement.selectionStart = cursorPosition;
-            textBoxElement.scrollTop = 0;
-          }
-        });
+        for (let i = start; i <= end; ++i) {
+          if (i === selectedSlide) newWords += value;
+          else newWords += slides[i].boxes[index].words;
+        }
+        if (newWords !== "") {
+          const updatedArrangements = item.arrangements.map(
+            (arrangement, index) => {
+              if (index === item.selectedArrangement) {
+                return {
+                  ...arrangement,
+                  formattedLyrics: formattedLyrics.map((lyric, i) => {
+                    if (i === _index) {
+                      return {
+                        ...lyric,
+                        words: newWords,
+                      };
+                    } else {
+                      return lyric;
+                    }
+                  }),
+                };
+              } else {
+                return arrangement;
+              }
+            }
+          );
+
+          const _item = formatSong({
+            ...item,
+            arrangements: updatedArrangements,
+            selectedArrangement,
+          });
+
+          dispatch(updateArrangements(_item.arrangements));
+          setTimeout(() => {
+            const textBoxElement = document.getElementById(
+              `display-box-text-${index}`
+            ) as HTMLTextAreaElement;
+            if (textBoxElement) {
+              textBoxElement.selectionEnd = cursorPosition;
+              textBoxElement.selectionStart = cursorPosition;
+              textBoxElement.scrollTop = 0;
+            }
+          });
+        }
       }
     }
   };
@@ -161,7 +170,7 @@ const SlideEditor = () => {
 
   return (
     <div>
-      <section className="flex justify-end w-full pr-2 bg-slate-900 h-8 mb-1 gap-1 overflow-hidden">
+      <section className="flex justify-end w-full pr-2 bg-slate-900 h-[clamp(2rem, 2.5vw, 3rem)] mb-1 gap-1 overflow-hidden">
         <span
           className={`slide-editor-song-name-container ${borderColorMap.get(
             type
