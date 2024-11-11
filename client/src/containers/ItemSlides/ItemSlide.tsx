@@ -49,6 +49,7 @@ const ItemSlide = ({
         selectedSlide === index ? "border-cyan-500" : "border-transparent"
       }`}
       onClick={() => selectSlide(index)}
+      id={`item-slide-${index}`}
     >
       <h4
         className={`${

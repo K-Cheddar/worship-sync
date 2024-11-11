@@ -24,6 +24,7 @@ import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import { useSensors } from "../../utils/dndUtils";
 
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
+import { useEffect } from "react";
 
 export const sizeMap: Map<
   number,
@@ -53,6 +54,24 @@ const ItemSlides = () => {
   const { setNodeRef } = useDroppable({
     id: "item-slides-list",
   });
+
+  useEffect(() => {
+    const slideElement = document.getElementById(`item-slide-${selectedSlide}`);
+    const parentElement = document.getElementById("item-slides-container");
+    if (slideElement && parentElement) {
+      // TODO check if slide is visible before scrolling
+      // const { top, left, bottom, right } = slideElement.getBoundingClientRect();
+      // if (
+      //   top < window.innerHeight &&
+      //   left < window.innerWidth &&
+      //   bottom > 0 &&
+      //   right > 0
+      // ) {
+      //   return;
+      // }
+      slideElement.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [selectedSlide]);
 
   const selectSlide = (index: number) => {
     dispatch(setSelectedSlide(index));
@@ -104,6 +123,16 @@ const ItemSlides = () => {
     dispatch(updateSlides(updatedSlides));
   };
 
+  const advanceSlide = () => {
+    const nextSlide = Math.min(selectedSlide + 1, slides.length - 1);
+    dispatch(setSelectedSlide(nextSlide));
+  };
+
+  const previousSlide = () => {
+    const nextSlide = Math.max(selectedSlide - 1, 0);
+    dispatch(setSelectedSlide(nextSlide));
+  };
+
   if (!arrangement && !slides.length && type !== "free") return null;
 
   return (
@@ -137,6 +166,16 @@ const ItemSlides = () => {
       </div>
       <ul
         ref={setNodeRef}
+        tabIndex={0}
+        id="item-slides-container"
+        onKeyDown={(e) => {
+          if (e.key === " " || e.key === "ArrowRight") {
+            advanceSlide();
+          }
+          if ((e.key === " " && e.shiftKey) || e.key === "ArrowLeft") {
+            previousSlide();
+          }
+        }}
         className={`item-slides-container ${sizeMap.get(size)?.cols}`}
       >
         <SortableContext
