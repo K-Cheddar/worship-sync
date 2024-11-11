@@ -9,12 +9,14 @@ import { itemListSlice } from "./itemList";
 import { allItemsSlice } from "./allItems";
 import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
+import { itemListsSlice } from "./itemLists";
 
 const undoableReducers = undoable(
   combineReducers({
     item: itemSlice.reducer,
     participants: participantsSlice.reducer,
     itemList: itemListSlice.reducer,
+    itemLists: itemListsSlice.reducer,
   }),
   {
     filter: excludeAction([

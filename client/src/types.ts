@@ -201,3 +201,15 @@ export type PreferencesType = {
   slidesPerRow: number;
   formattedLyricsPerRow: number;
 };
+
+export type ItemList = {
+  name: string;
+  id: string;
+  isOutline: boolean;
+};
+
+export type DBItemList = {
+  id: string;
+  name: string;
+  outline: boolean;
+};

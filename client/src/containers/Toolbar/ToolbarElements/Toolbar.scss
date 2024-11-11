@@ -1,0 +1,17 @@
+.services-dropdown {
+  select {
+    @apply w-40;
+    option {
+      @apply  text-lg w-40;
+
+      overflow-wrap: anywhere;
+
+    }
+  }
+}
+
+.services-list {
+  @apply flex-1 overflow-y-auto;
+  
+  scrollbar-width: thin;
+}

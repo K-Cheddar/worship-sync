@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "../../hooks";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import "./Songs.scss";
-import { addItemToItemList } from "../../store/itemList";
+import { addItemToItemList, removeItemFromList } from "../../store/itemList";
 import { Link } from "react-router-dom";
+import { removeItemFromAllItemsList } from "../../store/allItems";
 
 const Songs = () => {
   const { list } = useSelector((state) => state.allItems);
@@ -53,7 +55,7 @@ const Songs = () => {
           value={searchValue}
           onChange={(val) => setSearchValue(val as string)}
           label="Search"
-          className="md:w-1/2 text-base flex gap-2 items-center mb-4 px-6"
+          className="md:w-2/3 text-base flex gap-2 items-center mb-4 px-6"
         />
       </div>
       <ul className="song-list">
@@ -76,20 +78,33 @@ const Songs = () => {
               >
                 Add to List
               </Button>
+              <Button
+                svg={DeleteSVG}
+                variant="tertiary"
+                color="red"
+                onClick={() => {
+                  dispatch(removeItemFromAllItemsList(song._id));
+                  // dispatch(removeItemFromList(song._id));
+                }}
+              />
             </li>
           );
         })}
-        <li className="text-sm flex gap-2 items-center mt-2 justify-center">
-          <p>Can't find what you're looking for?</p>
-          <Button variant="secondary" className="relative">
-            <Link
-              className="h-full w-full"
-              to={`/controller/create?type=song&name=${encodeURI(searchValue)}`}
-            >
-              Create a new song
-            </Link>
-          </Button>
-        </li>
+        {isFullListLoaded && (
+          <li className="text-sm flex gap-2 items-center mt-2 justify-center">
+            <p>Can't find what you're looking for?</p>
+            <Button variant="secondary" className="relative">
+              <Link
+                className="h-full w-full"
+                to={`/controller/create?type=song&name=${encodeURI(
+                  searchValue
+                )}`}
+              >
+                Create a new song
+              </Link>
+            </Button>
+          </li>
+        )}
         <li
           className={`w-full text-sm text-center py-1 rounded-md ${
             isFullListLoaded ? "bg-transparent" : "bg-black"
