@@ -94,6 +94,7 @@ const LyricBoxes = ({
           <TextArea
             hideLabel
             className="h-[30vh]"
+            data-ignore-undo="true"
             value={words}
             onChange={(val) => {
               const copiedFormattedLyrics = [...formattedLyrics];

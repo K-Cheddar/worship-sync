@@ -61,7 +61,14 @@ export const updateFontSize = ({
     _item = formatBible({ item: _item, mode: "add" });
 
   if (item.type === "song" && selectedSlide !== 0) {
-    _item = formatSong(item);
+    _item = {
+      ...item,
+      arrangements: _item.arrangements.map((arr, index) => {
+        if (index !== item.selectedArrangement) return arr;
+        return { ...arr, slides: _item.slides };
+      }),
+    };
+    _item = formatSong(_item);
   }
 
   if (selectedSlide >= slides.length) selectedSlide = slides.length - 1;

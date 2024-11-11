@@ -69,6 +69,7 @@ const ItemSlides = () => {
       // ) {
       //   return;
       // }
+      slideElement.focus();
       slideElement.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [selectedSlide]);
@@ -170,9 +171,11 @@ const ItemSlides = () => {
         id="item-slides-container"
         onKeyDown={(e) => {
           if (e.key === " " || e.key === "ArrowRight") {
+            e.preventDefault();
             advanceSlide();
           }
           if ((e.key === " " && e.shiftKey) || e.key === "ArrowLeft") {
+            e.preventDefault();
             previousSlide();
           }
         }}

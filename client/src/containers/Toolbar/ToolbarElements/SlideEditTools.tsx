@@ -37,7 +37,6 @@ const SlideEditTools = () => {
     const _val = Math.max(Math.min(val, 100), 1);
     setBrightness(_val);
     const updatedItem = updateBrightness({ brightness: _val, item });
-    console.log(updatedItem);
     dispatch(setActiveItem(updatedItem));
   };
 
