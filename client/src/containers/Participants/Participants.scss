@@ -2,5 +2,5 @@
   scrollbar-width: thin;
   max-height: calc(100% - clamp(4rem, 5vw, 5rem));
 
-  @apply flex flex-col gap-2 w-full overflow-y-auto;
+  @apply flex flex-col gap-2 w-full overflow-y-auto overflow-x-hidden;
 }

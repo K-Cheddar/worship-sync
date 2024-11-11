@@ -78,6 +78,7 @@ const DisplayWindow = ({
         !isStream
       )
         return;
+      const width = containerRef.current.offsetWidth;
 
       participantTimeline.current?.clear();
 
@@ -90,7 +91,7 @@ const DisplayWindow = ({
 
       participantTimeline.current = gsap
         .timeline()
-        .set(targets, { xPercent: -100 });
+        .set(targets, { x: -width * 0.75 });
 
       // Only play animate if there is participant info
       if (
@@ -100,17 +101,17 @@ const DisplayWindow = ({
       ) {
         participantTimeline.current
           .to(participantRef.current, {
-            xPercent: 10,
+            x: width * 0.025,
             duration: 1,
             ease: "power1.inOut",
           })
           .to(
             innerElements,
-            { xPercent: 0, duration: 1, ease: "power1.inOut", stagger: 0.2 },
+            { x: 0, duration: 1, ease: "power1.inOut", stagger: 0.2 },
             "-=0.75"
           )
           .to(targets, {
-            xPercent: -100,
+            x: -width * 0.75,
             duration: 1,
             ease: "power1.inOut",
             delay: 7,

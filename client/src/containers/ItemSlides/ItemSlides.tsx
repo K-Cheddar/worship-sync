@@ -3,26 +3,36 @@ import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
 import Button from "../../components/Button/Button";
 import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
-import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import "./ItemSlides.scss";
-import { removeSlide, setSelectedSlide } from "../../store/itemSlice";
+import {
+  removeSlide,
+  setSelectedSlide,
+  updateSlides,
+} from "../../store/itemSlice";
 import { increaseSlides, decreaseSlides } from "../../store/preferencesSlice";
 import { useSelector } from "../../hooks";
 import { useDispatch } from "../../hooks";
-import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import {
   updateBibleDisplayInfo,
   updatePresentation,
 } from "../../store/presentationSlice";
 import { createNewSlide } from "../../utils/slideCreation";
 import { addSlide as addSlideAction } from "../../store/itemSlice";
+import ItemSlide from "./ItemSlide";
+import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 
-const sizeMap: Map<number, { width: number; cols: string; hSize: string }> =
-  new Map([
-    [5, { width: 9.75, cols: "grid-cols-5", hSize: "text-xs" }],
-    [4, { width: 12.25, cols: "grid-cols-4", hSize: "text-sm" }],
-    [3, { width: 16.5, cols: "grid-cols-3", hSize: "text-base" }],
-  ]);
+import { useSensors } from "../../utils/dndUtils";
+
+import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
+
+export const sizeMap: Map<
+  number,
+  { width: number; cols: string; hSize: string }
+> = new Map([
+  [5, { width: 9.75, cols: "grid-cols-5", hSize: "text-xs" }],
+  [4, { width: 12.25, cols: "grid-cols-4", hSize: "text-sm" }],
+  [3, { width: 16.5, cols: "grid-cols-3", hSize: "text-base" }],
+]);
 
 const ItemSlides = () => {
   const {
@@ -38,7 +48,11 @@ const ItemSlides = () => {
   const size = useSelector((state) => state.preferences.slidesPerRow);
   const dispatch = useDispatch();
 
-  const width = sizeMap.get(size)?.width || 12;
+  const sensors = useSensors();
+
+  const { setNodeRef } = useDroppable({
+    id: "item-slides-list",
+  });
 
   const selectSlide = (index: number) => {
     dispatch(setSelectedSlide(index));
@@ -75,10 +89,25 @@ const ItemSlides = () => {
     dispatch(addSlideAction(slide));
   };
 
+  const onDragEnd = (event: DragEndEvent) => {
+    const { over, active } = event;
+    if (!over || !active) return;
+
+    const { id: overId } = over;
+    const { id: activeId } = active;
+    const updatedSlides = [...slides];
+    const newIndex = updatedSlides.findIndex((slide) => slide.id === overId);
+    const oldIndex = updatedSlides.findIndex((slide) => slide.id === activeId);
+    const element = slides[oldIndex];
+    updatedSlides.splice(oldIndex, 1);
+    updatedSlides.splice(newIndex, 0, element);
+    dispatch(updateSlides(updatedSlides));
+  };
+
   if (!arrangement && !slides.length && type !== "free") return null;
 
   return (
-    <>
+    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
       <div className="flex w-full px-2 bg-slate-900 h-6 my-2 gap-1">
         <Button
           variant="tertiary"
@@ -90,58 +119,44 @@ const ItemSlides = () => {
           svg={ZoomInSVG}
           onClick={() => dispatch(decreaseSlides())}
         />
-        <Button
-          variant="tertiary"
-          className="ml-auto"
-          svg={DeleteSVG}
-          onClick={() => dispatch(removeSlide(selectedSlide))}
-        />
-      </div>
-      <ul className={`item-slides-container ${sizeMap.get(size)?.cols}`}>
-        {slides.map((slide, index) => {
-          return (
-            <li
-              key={slide.id}
-              className={`item-slide ${
-                selectedSlide === index
-                  ? "border-cyan-500"
-                  : "border-transparent"
-              }`}
-              onClick={() => selectSlide(index)}
-            >
-              <h4
-                className={`${
-                  sizeMap.get(size)?.hSize
-                } rounded-t-md truncate px-2 text-center ${itemSectionBgColorMap.get(
-                  slide.type.split(" ")[0]
-                )}`}
-                style={{ width: `${width}vw` }}
-              >
-                {slide.type}
-              </h4>
-              <DisplayWindow
-                showBorder
-                boxes={slide.boxes}
-                width={width}
-                displayType="slide"
-              />
-            </li>
-          );
-        })}
         {type === "free" && (
-          <li className="flex flex-col px-2">
+          <>
             <Button
-              key="lyrics-box-add-section"
-              onClick={() => addSlide()}
               variant="tertiary"
+              className="ml-auto"
               svg={AddSVG}
-              iconSize={64}
-              className="w-full flex-1 justify-center border border-slate-500 rounded-md"
+              onClick={() => addSlide()}
             />
-          </li>
+            <Button
+              variant="tertiary"
+              svg={DeleteSVG}
+              onClick={() => dispatch(removeSlide(selectedSlide))}
+            />
+          </>
         )}
+      </div>
+      <ul
+        ref={setNodeRef}
+        className={`item-slides-container ${sizeMap.get(size)?.cols}`}
+      >
+        <SortableContext
+          items={slides.map((slide) => slide.id || "")}
+          strategy={rectSortingStrategy}
+        >
+          {slides.map((slide, index) => (
+            <ItemSlide
+              key={slide.id}
+              slide={slide}
+              index={index}
+              selectSlide={selectSlide}
+              selectedSlide={selectedSlide}
+              size={size}
+              itemType={type}
+            />
+          ))}
+        </SortableContext>
       </ul>
-    </>
+    </DndContext>
   );
 };
 

@@ -23,6 +23,7 @@ const undoableReducers = undoable(
       participantsSlice.actions.selectParticipant.toString(),
       itemListSlice.actions.initiateItemList.toString(),
     ]),
+    limit: 100,
   }
 );
 
