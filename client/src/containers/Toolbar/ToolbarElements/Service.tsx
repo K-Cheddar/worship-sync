@@ -10,7 +10,7 @@ import { useState } from "react";
 
 type ServiceProps = {
   list: ItemList;
-  deleteList: (listId: string) => void;
+  deleteList: (_id: string) => void;
   updateList: (list: ItemList) => void;
   addList?: (list: ItemList) => void;
   copyList?: (list: ItemList) => void;

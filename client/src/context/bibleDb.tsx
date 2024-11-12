@@ -1,6 +1,6 @@
 import { createContext, useEffect, useState } from "react";
 import PouchDB from "pouchdb";
-import getBibles, { bibleVersions, checkBibles } from "../utils/getBibles";
+import getBibles, { checkBibles } from "../utils/getBibles";
 
 type BibleDbContextType = {
   db: PouchDB.Database | null;

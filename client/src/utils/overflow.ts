@@ -165,6 +165,7 @@ export const formatLyrics = (item: ItemState) => {
   slides = [...slides];
 
   const boxes = slides[0].boxes;
+  console.log({ boxes });
   const lastSlide = slides.length - 1;
   const lastBoxes = slides[lastSlide].boxes;
   const newSlides = [
@@ -172,8 +173,10 @@ export const formatLyrics = (item: ItemState) => {
       type: "Title",
       boxes,
       words: ["", boxes[1].words || " "],
+      fontSize: boxes[1].fontSize || 4.5,
     }),
   ];
+  console.log({ newSlides });
   const songOrder = arrangements[selectedArrangement].songOrder;
   const formattedLyrics = arrangements[selectedArrangement].formattedLyrics;
   const fontSize: number = slides[1] ? slides[1].boxes[1].fontSize || 2.5 : 2.5;

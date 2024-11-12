@@ -15,3 +15,9 @@
   
   scrollbar-width: thin;
 }
+
+.services-container {
+  @apply flex gap-4 flex-1;
+
+  max-height: calc(100% - 2.5rem);
+}

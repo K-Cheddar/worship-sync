@@ -123,8 +123,8 @@ const DisplayBox = ({
   const marginRight = isStream ? "20%" : `${box.sideMargin}%`;
   const marginTop = isStream ? "auto" : `${box.topMargin}%`;
   const marginBottom = isStream ? "5%" : `${box.topMargin}%`;
-  const boxTop = isStream ? "95%" : `${box.y}%`;
-  const boxLeft = isStream ? "unset" : `${box.x}%`;
+  const boxTop = isStream ? "95%" : `${box.y || 0}%`;
+  const boxLeft = isStream ? "unset" : `${box.x || 0}%`;
   const textStyles = {
     textShadow: `${tSS}vw ${tSS}vw ${tSS}vw #000, ${tSS}vw ${tSS}vw ${tSS}vw #000`,
     WebkitTextStroke: `${fOS}vw #000`,

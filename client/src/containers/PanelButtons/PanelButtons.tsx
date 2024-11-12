@@ -20,6 +20,11 @@ const buttons: ButtonType[] = [
     section: "songs",
   },
   {
+    type: "free",
+    title: "Free Form Items",
+    section: "free",
+  },
+  {
     type: "participants",
     title: "Participants",
     section: "participants",

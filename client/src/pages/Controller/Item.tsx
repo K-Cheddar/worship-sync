@@ -1,46 +1,25 @@
 import { useParams } from "react-router-dom";
 import SlideEditor from "../../containers/ItemEditor/SlideEditor";
 import ItemSlides from "../../containers/ItemSlides/ItemSlides";
-import { useEffect, useMemo, useState } from "react";
-import generateRandomId from "../../utils/generateRandomId";
-import { mockArrangement } from "../../store/mockArrangement";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { DBItem } from "../../types";
-import { formatItemInfo } from "../../utils/getItemInfo";
+import { formatItemInfo } from "../../utils/formatItemInfo";
 import { useDispatch } from "../../hooks";
 import { setActiveItem } from "../../store/itemSlice";
-
-const mockItem: DBItem = {
-  name: "There's A Welcome Here",
-  type: "song",
-  _id: generateRandomId(),
-  _rev: "",
-  background: "",
-  selectedArrangement: 0,
-  skipTitle: false,
-  arrangements: mockArrangement,
-};
-
-const getItemFromDB = async (itemId: string) => {
-  return mockItem;
-};
+import { RemoteDbContext } from "../../context/remoteDb";
 
 const Item = () => {
-  const { itemId, listId } = useParams();
+  const { itemId } = useParams();
+  const { db } = useContext(RemoteDbContext) || {};
 
   const decodedItemId = useMemo(() => {
     try {
-      return window.atob(itemId || "");
+      return decodeURI(window.atob(itemId || ""));
     } catch {
       return "";
     }
   }, [itemId]);
-  const decodedListId = useMemo(() => {
-    try {
-      return window.atob(listId || "");
-    } catch {
-      return "";
-    }
-  }, [listId]);
+
   const [status, setStatus] = useState<"loading" | "success" | "error">(
     "loading"
   );
@@ -48,13 +27,21 @@ const Item = () => {
 
   useEffect(() => {
     const selectItem = async () => {
-      const item = await getItemFromDB(decodedItemId);
-      if (!item) return setStatus("error");
-      const formattedItem = await formatItemInfo(item);
-      dispatch(setActiveItem({ ...formattedItem, listId: decodedListId }));
+      try {
+        console.log(decodedItemId);
+        const response: DBItem | undefined = await db?.get(decodedItemId);
+        const item = response;
+        if (!item) return setStatus("error");
+        const formattedItem = await formatItemInfo(item);
+        dispatch(setActiveItem({ ...formattedItem }));
+        setStatus("success");
+      } catch (e) {
+        console.error(e);
+        setStatus("error");
+      }
     };
     selectItem();
-  }, [decodedItemId, dispatch, decodedListId]);
+  }, [decodedItemId, dispatch, db]);
 
   if (status === "error")
     return (

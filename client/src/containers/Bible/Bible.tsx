@@ -168,7 +168,7 @@ const Bible = () => {
         ({ index }) => index >= startVerse && index <= endVerse
       ),
     });
-    dispatch(addItemToItemList({ ...item, _id: item.id }));
+    dispatch(addItemToItemList({ ...item, _id: item._id }));
     dispatch(setActiveItem(item));
   };
 

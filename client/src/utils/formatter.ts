@@ -27,7 +27,8 @@ export const updateFontSize = ({
   if (!slide) return item;
 
   if (selectedSlide !== 0 && item.type !== "free") {
-    slides = slides.map((slide) => {
+    slides = slides.map((slide, index) => {
+      if (index === 0) return slide;
       return {
         ...slide,
         boxes: slide.boxes.map((box) => {
@@ -65,7 +66,7 @@ export const updateFontSize = ({
       ...item,
       arrangements: _item.arrangements.map((arr, index) => {
         if (index !== item.selectedArrangement) return arr;
-        return { ...arr, slides: _item.slides };
+        return { ...arr, slides: [...slides] };
       }),
     };
     _item = formatSong(_item);

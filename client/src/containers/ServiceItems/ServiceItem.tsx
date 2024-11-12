@@ -12,16 +12,16 @@ import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 
 type ServiceItemsProps = {
-  listId: string | undefined;
+  _id: string | undefined;
   location: Location;
   item: ServiceItemType;
 };
 
-const ServiceItem = ({ item, listId, location }: ServiceItemsProps) => {
+const ServiceItem = ({ item, _id, location }: ServiceItemsProps) => {
   const dispatch = useDispatch();
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
-      id: item.listId,
+      id: item._id,
     });
 
   const style = {
@@ -32,9 +32,8 @@ const ServiceItem = ({ item, listId, location }: ServiceItemsProps) => {
   const actions = useMemo(() => {
     return [
       {
-        action: (listId: string) => {
-          console.log(listId);
-          dispatch(removeItemFromList(listId));
+        action: (_id: string) => {
+          dispatch(removeItemFromList(_id));
         },
         svg: DeleteSVG,
         id: generateRandomId(),
@@ -42,8 +41,7 @@ const ServiceItem = ({ item, listId, location }: ServiceItemsProps) => {
     ];
   }, [dispatch]);
 
-  const isSelected =
-    item.listId === listId && location.pathname.includes("item");
+  const isSelected = item._id === _id && location.pathname.includes("item");
 
   return (
     <LeftPanelButton
@@ -53,12 +51,10 @@ const ServiceItem = ({ item, listId, location }: ServiceItemsProps) => {
       ref={setNodeRef}
       title={item.name}
       isSelected={isSelected}
-      to={`item/${window.btoa(encodeURI(item["_id"]))}/${window.btoa(
-        encodeURI(item.listId)
-      )}`}
+      to={`item/${window.btoa(encodeURI(item._id))}`}
       type={item.type}
       actions={actions}
-      id={item.listId}
+      id={item._id}
     />
   );
 };

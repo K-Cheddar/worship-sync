@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { ReactComponent as OpenSVG } from "../../../assets/icons/open-folder.svg";
 import { ReactComponent as AddSVG } from "../../../assets/icons/add.svg";
 import Select from "../../../components/Select/Select";
@@ -8,37 +8,54 @@ import {
   initiateItemLists,
   removeFromAllItemLists,
   removeFromItemLists,
+  selectItemList,
   updateAllItemLists,
   updateItemLists,
 } from "../../../store/itemLists";
-import getItemLists from "../../../utils/getItemLists";
+import getItemListsUtil from "../../../utils/getItemLists";
 import Modal from "../../../components/Modal/Modal";
 import Button from "../../../components/Button/Button";
 import Service from "./Service";
 import "./Toolbar.scss";
-import { ItemList } from "../../../types";
+import { DBItemLists, ItemList } from "../../../types";
 import generateRandomId from "../../../utils/generateRandomId";
+import { RemoteDbContext } from "../../../context/remoteDb";
 
 const Services = () => {
-  const { allLists, currentLists } = useSelector(
+  const { allLists, currentLists, selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
+
   const dispatch = useDispatch();
   const listsOptions = currentLists.map((list) => ({
     value: list.id,
     label: list.name,
   }));
-  const [selectedList, setSelectedList] = useState<string>(
-    listsOptions[0]?.value || ""
-  );
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const { db } = useContext(RemoteDbContext) || {};
 
   useEffect(() => {
-    const { allLists: _allLists, currentLists: _currentLists } = getItemLists();
-    dispatch(initiateAllItemLists(_allLists));
-    dispatch(initiateItemLists(_currentLists));
-  }, [dispatch]);
+    const getItemLists = async () => {
+      try {
+        const response1: DBItemLists | undefined = await db?.get("ItemLists");
+        const _itemLists = response1?.itemLists || [];
+        const response2: DBItemLists | undefined = await db?.get(
+          "allItemLists"
+        );
+        const _allItemLists = response2?.itemLists || [];
+        const { formattedItemLists, formattedAllItemLists } = getItemListsUtil(
+          _itemLists,
+          _allItemLists
+        );
+        dispatch(initiateItemLists(formattedItemLists));
+        dispatch(initiateAllItemLists(formattedAllItemLists));
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    getItemLists();
+  }, [db, dispatch]);
 
   const _updateItemLists = (list: ItemList) => {
     dispatch(
@@ -63,8 +80,8 @@ const Services = () => {
         className="services-dropdown"
         labelProps={{ className: "mr-2" }}
         options={listsOptions}
-        value={selectedList}
-        onChange={(list) => setSelectedList(list)}
+        value={selectedList?.id || ""}
+        onChange={(list) => dispatch(selectItemList(list))}
       />
       <Button
         svg={OpenSVG}
@@ -72,8 +89,8 @@ const Services = () => {
         variant="tertiary"
       />
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)}>
-        <div className="flex flex-col gap-2 h-[400px] w-[500px]">
-          <div className="flex gap-4 flex-1">
+        <div className="flex flex-col gap-2 h-[50vh] w-[40vw]">
+          <div className="services-container">
             <section className="flex-1 h-full p-1 flex flex-col">
               <h3 className="text-xl font-semibold mb-2">Current Item Lists</h3>
               <ul className="services-list">

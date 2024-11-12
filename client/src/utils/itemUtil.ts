@@ -80,13 +80,12 @@ export const createNewSong = ({
   const newItem: ItemState = {
     name,
     type: "song",
-    id: generateRandomId(),
+    _id: generateRandomId(),
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,
     slides: [],
     shouldSkipTitle: false,
-    listId: "",
     arrangements,
   };
 
@@ -98,10 +97,9 @@ export const createNewSong = ({
 export const createItemFromProps = ({
   name,
   type,
-  id,
+  _id,
   selectedArrangement,
   shouldSkipTitle,
-  listId,
   arrangements,
   selectedSlide,
   selectedBox,
@@ -110,10 +108,9 @@ export const createItemFromProps = ({
   const item: ItemState = {
     name,
     type,
-    id: id || generateRandomId(),
+    _id: _id || generateRandomId(),
     selectedArrangement: selectedArrangement || 0,
     shouldSkipTitle,
-    listId,
     arrangements: arrangements || [],
     selectedSlide: selectedSlide || 0,
     selectedBox: selectedBox || 1,
@@ -206,7 +203,7 @@ export const createNewFreeForm = ({
   const newItem: ItemState = {
     name,
     type: "free",
-    id: generateRandomId(),
+    _id: generateRandomId(),
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,
@@ -215,7 +212,6 @@ export const createNewFreeForm = ({
       createNewSlide({ type: "Section", fontSize: 2.5, words: [""] }),
     ],
     arrangements: [],
-    listId: "",
   };
 
   return newItem;

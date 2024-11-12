@@ -1,8 +1,7 @@
-import { useEffect } from "react";
+import { useContext, useEffect, useState } from "react";
 import "./ServiceItems.scss";
 import { useDispatch, useSelector } from "../../hooks";
 import { initiateItemList, updateItemList } from "../../store/itemList";
-import { mockItemList } from "../../store/mockItemList";
 import { useLocation } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 
@@ -13,6 +12,8 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import ServiceItem from "./ServiceItem";
+import { RemoteDbContext } from "../../context/remoteDb";
+import { DBItemListDetails } from "../../types";
 
 const ServiceItems = () => {
   const dispatch = useDispatch();
@@ -20,7 +21,13 @@ const ServiceItems = () => {
   const { list: serviceItems } = useSelector(
     (state) => state.undoable.present.itemList
   );
-  const { listId } = useSelector((state) => state.undoable.present.item);
+  const { selectedList } = useSelector(
+    (state) => state.undoable.present.itemLists
+  );
+  const { _id } = useSelector((state) => state.undoable.present.item);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const { db } = useContext(RemoteDbContext) || {};
 
   const { setNodeRef } = useDroppable({
     id: "service-items-list",
@@ -29,8 +36,21 @@ const ServiceItems = () => {
   const sensors = useSensors();
 
   useEffect(() => {
-    dispatch(initiateItemList(mockItemList));
-  }, [dispatch]);
+    const getItemLists = async () => {
+      if (!selectedList) return;
+      try {
+        const response: DBItemListDetails | undefined = await db?.get(
+          selectedList.id
+        );
+        const itemList = response?.items || [];
+        dispatch(initiateItemList(itemList));
+        setIsLoading(false);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    getItemLists();
+  }, [dispatch, db, selectedList]);
 
   const onDragEnd = (event: DragEndEvent) => {
     const { over, active } = event;
@@ -39,11 +59,9 @@ const ServiceItems = () => {
     const { id } = over;
     const { id: activeId } = active;
     const updatedServiceItems = [...serviceItems];
-    const newIndex = updatedServiceItems.findIndex(
-      (item) => item.listId === id
-    );
+    const newIndex = updatedServiceItems.findIndex((item) => item._id === id);
     const oldIndex = updatedServiceItems.findIndex(
-      (item) => item.listId === activeId
+      (item) => item._id === activeId
     );
     const element = serviceItems[oldIndex];
     updatedServiceItems.splice(oldIndex, 1);
@@ -54,29 +72,32 @@ const ServiceItems = () => {
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <h3 className="font-bold text-center p-1 text-base bg-slate-800">
-        Service Items
+        {selectedList?.name || "Service Items"}
       </h3>
-
-      <ul
-        ref={setNodeRef}
-        className={`overflow-y-auto overflow-x-hidden flex-1 service-items-list`}
-      >
-        <SortableContext
-          items={serviceItems.map((item) => item.listId)}
-          strategy={verticalListSortingStrategy}
+      {isLoading ? (
+        <div className="text-lg text-center mt-2">Loading items...</div>
+      ) : (
+        <ul
+          ref={setNodeRef}
+          className={`overflow-y-auto overflow-x-hidden flex-1 service-items-list`}
         >
-          {serviceItems.map((item) => {
-            return (
-              <ServiceItem
-                key={item.listId}
-                item={item}
-                listId={listId}
-                location={location}
-              />
-            );
-          })}
-        </SortableContext>
-      </ul>
+          <SortableContext
+            items={serviceItems.map((item) => item._id)}
+            strategy={verticalListSortingStrategy}
+          >
+            {serviceItems.map((item) => {
+              return (
+                <ServiceItem
+                  key={item._id}
+                  item={item}
+                  _id={_id}
+                  location={location}
+                />
+              );
+            })}
+          </SortableContext>
+        </ul>
+      )}
     </DndContext>
   );
 };

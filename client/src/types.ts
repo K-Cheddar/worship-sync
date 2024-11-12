@@ -6,7 +6,6 @@ export type Option = {
 export type ServiceItem = {
   name: string;
   _id: string;
-  listId: string;
   background?: string;
   nameColor?: string;
   type:
@@ -18,8 +17,6 @@ export type ServiceItem = {
     | "announcement"
     | string;
 };
-
-export type DBServiceItem = Omit<ServiceItem, "listId">;
 
 export type MenuItemType = {
   text?: string;
@@ -62,13 +59,29 @@ export type QuickLinkType = {
   displayType?: DisplayType;
 };
 
+export type DBItem = {
+  _id: string;
+  name: string;
+  background: string;
+  selectedArrangement: number;
+  skipTitle: boolean;
+  type: string;
+  slides: ItemSlide[];
+  arrangements: {
+    name: string;
+    formattedLyrics: FormattedLyrics[];
+    songOrder: string[];
+    slides: ItemSlide[];
+  }[];
+};
+
 export type ItemState = {
   name: string;
   type: string;
-  id: string;
+  _id: string;
   selectedArrangement: number;
   shouldSkipTitle?: boolean;
-  listId?: string;
+  _rev?: string;
   arrangements: Arrangment[];
   selectedSlide: number;
   selectedBox: number;
@@ -85,10 +98,9 @@ export type ItemState = {
 export type OptionalItemState = {
   name: string;
   type: string;
-  id?: string;
+  _id?: string;
   selectedArrangement?: number;
   shouldSkipTitle?: boolean;
-  listId?: string;
   arrangements?: Arrangment[];
   selectedSlide?: number;
   selectedBox?: number;
@@ -100,22 +112,6 @@ export type OptionalItemState = {
     verse: string;
     version: string;
   };
-};
-
-export type DBItem = {
-  _id: string;
-  name: string;
-  background: string;
-  selectedArrangement: number;
-  skipTitle: boolean;
-  type: string;
-  _rev: string;
-  arrangements: {
-    name: string;
-    formattedLyrics: FormattedLyrics[];
-    songOrder: string[];
-    slides: ItemSlide[];
-  }[];
 };
 
 export type Arrangment = {
@@ -212,4 +208,16 @@ export type DBItemList = {
   id: string;
   name: string;
   outline: boolean;
+};
+
+export type DBItemLists = {
+  itemLists: DBItemList[];
+  _id: string;
+  _rev: string;
+};
+
+export type DBItemListDetails = {
+  _id: string;
+  _rev: string;
+  items: ServiceItem[];
 };

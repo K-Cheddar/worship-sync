@@ -5,8 +5,7 @@ const initialState: ItemState = {
   isEditMode: false,
   name: "",
   type: "",
-  id: "1",
-  listId: "",
+  _id: "1",
   selectedArrangement: 0,
   shouldSkipTitle: false,
   arrangements: [],
@@ -23,9 +22,9 @@ export const itemSlice = createSlice({
     setActiveItem: (state, action: PayloadAction<ItemState>) => {
       state.name = action.payload.name;
       state.type = action.payload.type;
-      state.id = action.payload.id;
-      state.listId = action.payload.listId;
+      state._id = action.payload._id;
       state.selectedArrangement = action.payload.selectedArrangement || 0;
+      state.selectedSlide = action.payload.selectedSlide || 0;
       state.shouldSkipTitle = action.payload.shouldSkipTitle || false;
       state.arrangements = action.payload.arrangements || [];
       state.slides = action.payload.slides || [];

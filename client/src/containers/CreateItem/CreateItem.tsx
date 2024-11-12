@@ -19,7 +19,7 @@ import {
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemList";
 import { addItemToAllItemsList } from "../../store/allItems";
-import { DBServiceItem } from "../../types";
+import { ServiceItem } from "../../types";
 
 type ItemTypesType = {
   type: string;
@@ -66,9 +66,9 @@ const CreateItem = () => {
   const naviagte = useNavigate();
   const dispatch = useDispatch();
 
-  const existingItem: DBServiceItem | undefined = useMemo(() => {
+  const existingItem: ServiceItem | undefined = useMemo(() => {
     if (selectedType !== "bible") {
-      return (list as DBServiceItem[]).find(
+      return (list as ServiceItem[]).find(
         (item) =>
           item.name.toLowerCase().trim() === itemName.toLowerCase().trim() &&
           item.type === selectedType
@@ -104,7 +104,7 @@ const CreateItem = () => {
       });
 
       dispatch(setActiveItem(newItem));
-      dispatch(addItemToItemList({ ...newItem, _id: newItem.id }));
+      dispatch(addItemToItemList({ ...newItem, _id: newItem._id }));
       dispatch(addItemToAllItemsList({ ...newItem, _id: "" }));
     }
 
@@ -114,7 +114,7 @@ const CreateItem = () => {
       });
 
       dispatch(setActiveItem(newItem));
-      dispatch(addItemToItemList({ ...newItem, _id: newItem.id }));
+      dispatch(addItemToItemList({ ...newItem, _id: newItem._id }));
       dispatch(addItemToAllItemsList({ ...newItem, _id: "" }));
     }
 
