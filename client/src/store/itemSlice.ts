@@ -6,6 +6,7 @@ const initialState: ItemState = {
   name: "",
   type: "",
   _id: "1",
+  listId: "",
   selectedArrangement: 0,
   shouldSkipTitle: false,
   arrangements: [],
@@ -23,6 +24,7 @@ export const itemSlice = createSlice({
       state.name = action.payload.name;
       state.type = action.payload.type;
       state._id = action.payload._id;
+      state.listId = action.payload.listId;
       state.selectedArrangement = action.payload.selectedArrangement || 0;
       state.selectedSlide = action.payload.selectedSlide || 0;
       state.shouldSkipTitle = action.payload.shouldSkipTitle || false;

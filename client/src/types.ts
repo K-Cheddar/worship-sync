@@ -8,6 +8,7 @@ export type ServiceItem = {
   _id: string;
   background?: string;
   nameColor?: string;
+  listId: string;
   type:
     | "song"
     | "video"
@@ -79,6 +80,7 @@ export type ItemState = {
   name: string;
   type: string;
   _id: string;
+  listId?: string;
   selectedArrangement: number;
   shouldSkipTitle?: boolean;
   _rev?: string;
@@ -99,6 +101,7 @@ export type OptionalItemState = {
   name: string;
   type: string;
   _id?: string;
+  listId?: string;
   selectedArrangement?: number;
   shouldSkipTitle?: boolean;
   arrangements?: Arrangment[];

@@ -30,9 +30,11 @@ export const sizeMap: Map<
   number,
   { width: number; cols: string; hSize: string }
 > = new Map([
-  [5, { width: 9.75, cols: "grid-cols-5", hSize: "text-xs" }],
-  [4, { width: 12.25, cols: "grid-cols-4", hSize: "text-sm" }],
-  [3, { width: 16.5, cols: "grid-cols-3", hSize: "text-base" }],
+  [7, { width: 7, cols: "grid-cols-7", hSize: "text-xs" }],
+  [6, { width: 8.25, cols: "grid-cols-6", hSize: "text-xs" }],
+  [5, { width: 10, cols: "grid-cols-5", hSize: "text-xs" }],
+  [4, { width: 12.5, cols: "grid-cols-4", hSize: "text-sm" }],
+  [3, { width: 16.75, cols: "grid-cols-3", hSize: "text-base" }],
 ]);
 
 const ItemSlides = () => {

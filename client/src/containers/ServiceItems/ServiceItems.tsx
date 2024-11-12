@@ -24,7 +24,7 @@ const ServiceItems = () => {
   const { selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
-  const { _id } = useSelector((state) => state.undoable.present.item);
+  const { listId } = useSelector((state) => state.undoable.present.item);
   const [isLoading, setIsLoading] = useState(true);
 
   const { db } = useContext(RemoteDbContext) || {};
@@ -59,9 +59,11 @@ const ServiceItems = () => {
     const { id } = over;
     const { id: activeId } = active;
     const updatedServiceItems = [...serviceItems];
-    const newIndex = updatedServiceItems.findIndex((item) => item._id === id);
+    const newIndex = updatedServiceItems.findIndex(
+      (item) => item.listId === id
+    );
     const oldIndex = updatedServiceItems.findIndex(
-      (item) => item._id === activeId
+      (item) => item.listId === activeId
     );
     const element = serviceItems[oldIndex];
     updatedServiceItems.splice(oldIndex, 1);
@@ -77,20 +79,17 @@ const ServiceItems = () => {
       {isLoading ? (
         <div className="text-lg text-center mt-2">Loading items...</div>
       ) : (
-        <ul
-          ref={setNodeRef}
-          className={`overflow-y-auto overflow-x-hidden flex-1 service-items-list`}
-        >
+        <ul ref={setNodeRef} className={`service-items-list`}>
           <SortableContext
-            items={serviceItems.map((item) => item._id)}
+            items={serviceItems.map((item) => item.listId)}
             strategy={verticalListSortingStrategy}
           >
             {serviceItems.map((item) => {
               return (
                 <ServiceItem
-                  key={item._id}
+                  key={item.listId}
                   item={item}
-                  _id={_id}
+                  listId={listId}
                   location={location}
                 />
               );

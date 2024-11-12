@@ -11,7 +11,7 @@ export const preferencesSlice = createSlice({
   initialState,
   reducers: {
     increaseSlides: (state) => {
-      state.slidesPerRow = Math.min((state.slidesPerRow || 3) + 1, 5);
+      state.slidesPerRow = Math.min((state.slidesPerRow || 3) + 1, 7);
     },
     decreaseSlides: (state) => {
       state.slidesPerRow = Math.max((state.slidesPerRow || 3) - 1, 3);

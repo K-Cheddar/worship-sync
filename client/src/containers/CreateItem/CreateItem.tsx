@@ -19,7 +19,8 @@ import {
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemList";
 import { addItemToAllItemsList } from "../../store/allItems";
-import { ServiceItem } from "../../types";
+import { ItemState, ServiceItem } from "../../types";
+import generateRandomId from "../../utils/generateRandomId";
 
 type ItemTypesType = {
   type: string;
@@ -77,6 +78,16 @@ const CreateItem = () => {
     return undefined;
   }, [itemName, list, selectedType]);
 
+  const dispatchNewItem = (item: ItemState) => {
+    dispatch(setActiveItem(item));
+    dispatch(
+      addItemToItemList({ ...item, _id: item._id, listId: generateRandomId() })
+    );
+    dispatch(
+      addItemToAllItemsList({ ...item, _id: "", listId: generateRandomId() })
+    );
+  };
+
   const createItem = () => {
     dispatch(
       setCreateItem({
@@ -103,9 +114,7 @@ const CreateItem = () => {
         songOrder,
       });
 
-      dispatch(setActiveItem(newItem));
-      dispatch(addItemToItemList({ ...newItem, _id: newItem._id }));
-      dispatch(addItemToAllItemsList({ ...newItem, _id: "" }));
+      dispatchNewItem(newItem);
     }
 
     if (selectedType === "free") {
@@ -113,9 +122,7 @@ const CreateItem = () => {
         name: itemName,
       });
 
-      dispatch(setActiveItem(newItem));
-      dispatch(addItemToItemList({ ...newItem, _id: newItem._id }));
-      dispatch(addItemToAllItemsList({ ...newItem, _id: "" }));
+      dispatchNewItem(newItem);
     }
 
     if (selectedType === "bible") {

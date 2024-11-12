@@ -9,7 +9,7 @@ import { setActiveItem } from "../../store/itemSlice";
 import { RemoteDbContext } from "../../context/remoteDb";
 
 const Item = () => {
-  const { itemId } = useParams();
+  const { itemId, listId } = useParams();
   const { db } = useContext(RemoteDbContext) || {};
 
   const decodedItemId = useMemo(() => {
@@ -20,6 +20,14 @@ const Item = () => {
     }
   }, [itemId]);
 
+  const decodedListId = useMemo(() => {
+    try {
+      return decodeURI(window.atob(listId || ""));
+    } catch {
+      return "";
+    }
+  }, [listId]);
+
   const [status, setStatus] = useState<"loading" | "success" | "error">(
     "loading"
   );
@@ -28,12 +36,11 @@ const Item = () => {
   useEffect(() => {
     const selectItem = async () => {
       try {
-        console.log(decodedItemId);
         const response: DBItem | undefined = await db?.get(decodedItemId);
         const item = response;
         if (!item) return setStatus("error");
         const formattedItem = await formatItemInfo(item);
-        dispatch(setActiveItem({ ...formattedItem }));
+        dispatch(setActiveItem({ ...formattedItem, listId: decodedListId }));
         setStatus("success");
       } catch (e) {
         console.error(e);
@@ -41,7 +48,7 @@ const Item = () => {
       }
     };
     selectItem();
-  }, [decodedItemId, dispatch, db]);
+  }, [decodedItemId, dispatch, db, decodedListId]);
 
   if (status === "error")
     return (

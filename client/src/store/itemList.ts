@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { ServiceItem } from "../types";
+import generateRandomId from "../utils/generateRandomId";
 
 type ItemListState = {
   list: ServiceItem[];
@@ -17,15 +18,22 @@ export const itemListSlice = createSlice({
       state.list = action.payload;
     },
     initiateItemList: (state, action: PayloadAction<ServiceItem[]>) => {
-      state.list = action.payload;
+      state.list = action.payload.map((item) => ({
+        ...item,
+        listId: generateRandomId(),
+      }));
     },
     removeItemFromList: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((item) => {
-        return item._id !== action.payload;
+        return item.listId !== action.payload;
       });
     },
     addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
-      state.list.push(action.payload);
+      if (action.payload.listId) {
+        state.list.push(action.payload);
+      } else {
+        state.list.push({ ...action.payload, listId: generateRandomId() });
+      }
     },
   },
 });

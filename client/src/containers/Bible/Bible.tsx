@@ -32,6 +32,7 @@ import {
   updatePresentation,
 } from "../../store/presentationSlice";
 import { createItemFromProps } from "../../utils/itemUtil";
+import generateRandomId from "../../utils/generateRandomId";
 
 const Bible = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -168,7 +169,9 @@ const Bible = () => {
         ({ index }) => index >= startVerse && index <= endVerse
       ),
     });
-    dispatch(addItemToItemList({ ...item, _id: item._id }));
+    dispatch(
+      addItemToItemList({ ...item, _id: item._id, listId: generateRandomId() })
+    );
     dispatch(setActiveItem(item));
   };
 
