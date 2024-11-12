@@ -144,6 +144,7 @@ export const formatSection = ({
     }
     boxes[0].words = " ";
     boxes[1].excludeFromOverflow = false;
+    boxes[1].brightness = 100; // todo fix brightness on added slides without this line
 
     i += counter - 1;
     fLyrics.push(
