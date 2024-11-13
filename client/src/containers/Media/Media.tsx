@@ -1,47 +1,38 @@
 import { useContext, useEffect } from "react";
 import Button from "../../components/Button/Button";
 import Menu from "../../components/Menu/Menu";
-import { RemoteDbContext } from "../../context/remoteDb";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   updateAllSlideBackgrounds,
   updateSlideBackground,
 } from "../../store/itemSlice";
-import { dummyMedia } from "./dummyMedia";
 import "./Media.scss";
 import { DBMedia } from "../../types";
 import { initiateMediaList } from "../../store/media";
-import { Cloudinary } from "@cloudinary/url-gen";
 import { retrieveImages } from "../../utils/itemUtil";
-
-const cloud = new Cloudinary({
-  cloud: {
-    cloudName: "portable-media",
-    apiKey: process.env.REACT_APP_CLOUDINARY_KEY,
-    apiSecret: process.env.REACT_APP_CLOUDINARY_SECRET,
-  },
-});
+import { useLocation } from "react-router-dom";
 
 const Media = () => {
   const dispatch = useDispatch();
-  const images = dummyMedia;
+  const location = useLocation();
 
   const { list } = useSelector((state) => state.media);
+  const { isLoading } = useSelector((state) => state.undoable.present.item);
 
-  const { db } = useContext(RemoteDbContext) || {};
+  const { db, cloud } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     const getAllItems = async () => {
+      if (!db || !cloud) return;
       const response: DBMedia | undefined = await db?.get("images");
       const backgrounds = response?.backgrounds || [];
-      console.log({ backgrounds });
       const images = retrieveImages({ backgrounds, cloud });
-      console.log({ images });
       dispatch(initiateMediaList(images));
     };
 
     getAllItems();
-  }, [dispatch, db]);
+  }, [dispatch, db, cloud]);
 
   return (
     <>
@@ -56,16 +47,21 @@ const Media = () => {
               key={id}
             >
               <Menu
-                menuItems={[
-                  {
-                    text: "Set Item Background",
-                    onClick: () => dispatch(updateAllSlideBackgrounds(image)),
-                  },
-                  {
-                    text: "Set Slide Background",
-                    onClick: () => dispatch(updateSlideBackground(image)),
-                  },
-                ]}
+                menuItems={
+                  isLoading || !location.pathname.includes("/item/")
+                    ? []
+                    : [
+                        {
+                          text: "Set Item Background",
+                          onClick: () =>
+                            dispatch(updateAllSlideBackgrounds(image)),
+                        },
+                        {
+                          text: "Set Slide Background",
+                          onClick: () => dispatch(updateSlideBackground(image)),
+                        },
+                      ]
+                }
                 TriggeringButton={
                   <Button
                     variant="none"
@@ -76,6 +72,7 @@ const Media = () => {
                       className="max-w-full max-h-full"
                       alt={id}
                       src={image}
+                      loading="lazy"
                     />
                   </Button>
                 }

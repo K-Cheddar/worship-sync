@@ -1,7 +1,8 @@
+import { Cloudinary } from "@cloudinary/url-gen";
 import { SongOrder, ItemState, DBItem } from "../types";
 import generateRandomId from "./generateRandomId";
 
-export const formatItemInfo = async (item: DBItem) => {
+export const formatItemInfo = async (item: DBItem, cloud: Cloudinary) => {
   const _item: ItemState = {
     name: item.name,
     type: item.type,
@@ -28,27 +29,26 @@ export const formatItemInfo = async (item: DBItem) => {
         });
       }
 
-      if (!slides[0].id) {
-        slides = slides.map((el) => {
-          return {
-            ...el,
-            id: generateRandomId(),
-            boxes: [
-              ...el.boxes.map((box, index) => {
-                return {
-                  ...box,
-                  id: generateRandomId(),
-                  background: index === 1 ? "" : box.background,
-                  isLocked: index === 0 ? true : box.isLocked,
-                  brightness: index !== 0 ? 100 : box.brightness,
-                  width: box.width || 100,
-                  height: box.height || 100,
-                };
-              }),
-            ],
-          };
-        });
-      }
+      slides = slides.map((el) => {
+        return {
+          ...el,
+          id: generateRandomId(),
+          boxes: [
+            ...el.boxes.map((box, index) => {
+              return {
+                ...box,
+                id: generateRandomId(),
+                background:
+                  index === 1 ? "" : cloud.image(box.background).toURL(),
+                isLocked: index === 0 ? true : box.isLocked,
+                brightness: index !== 0 ? 100 : box.brightness,
+                width: box.width || 100,
+                height: box.height || 100,
+              };
+            }),
+          ],
+        };
+      });
 
       let songOrderWIds: SongOrder[] = [];
 

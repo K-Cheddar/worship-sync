@@ -55,7 +55,7 @@
 }
 
 .slide-editor-song-name {
-  @apply text-base font-semibold flex-1 truncate;
+  @apply text-base font-semibold flex-1 truncate flex items-center gap-2;
 
   max-width: calc(100% - 2rem)
 }

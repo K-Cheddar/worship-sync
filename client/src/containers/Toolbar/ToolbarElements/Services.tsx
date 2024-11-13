@@ -19,7 +19,7 @@ import Service from "./Service";
 import "./Toolbar.scss";
 import { DBItemLists, ItemList } from "../../../types";
 import generateRandomId from "../../../utils/generateRandomId";
-import { RemoteDbContext } from "../../../context/remoteDb";
+import { GlobalInfoContext } from "../../../context/globalInfo";
 
 const Services = () => {
   const { allLists, currentLists, selectedList } = useSelector(
@@ -33,7 +33,7 @@ const Services = () => {
   }));
 
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { db } = useContext(RemoteDbContext) || {};
+  const { db } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     const getItemLists = async () => {

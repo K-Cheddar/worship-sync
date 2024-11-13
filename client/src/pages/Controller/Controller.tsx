@@ -11,11 +11,11 @@ import { useContext, useEffect } from "react";
 import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
-import { initiateAllItemsList, updateAllItemsList } from "../../store/allItems";
+import { initiateAllItemsList } from "../../store/allItems";
 import Songs from "../../containers/Songs/Songs";
 import { Route, Routes } from "react-router-dom";
 import BibleDbProvider from "../../context/bibleDb";
-import RemoteDbProvider, { RemoteDbContext } from "../../context/remoteDb";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import FreeForms from "../../containers/FreeForms/FreeForms";
@@ -41,7 +41,7 @@ const Controller = () => {
     (state) => state.undoable.present.itemLists
   );
 
-  const { db } = useContext(RemoteDbContext) || {};
+  const { db } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     const getAllItems = async () => {
@@ -55,9 +55,10 @@ const Controller = () => {
 
   useEffect(() => {
     const getItemLists = async () => {
-      if (!selectedList) return;
+      if (!selectedList || !db) return;
+      dispatch(setItemListIsLoading(true));
+      console.log("get lists", selectedList);
       try {
-        dispatch(setItemListIsLoading(true));
         const response: DBItemListDetails | undefined = await db?.get(
           selectedList.id
         );
@@ -65,11 +66,12 @@ const Controller = () => {
         const overlays = response?.overlays || [];
         dispatch(initiateItemList(itemList));
         dispatch(initiateOverlayList(overlays));
-        dispatch(setItemListIsLoading(false));
       } catch (e) {
         console.error(e);
       }
+      dispatch(setItemListIsLoading(false));
     };
+
     getItemLists();
   }, [dispatch, db, selectedList]);
 

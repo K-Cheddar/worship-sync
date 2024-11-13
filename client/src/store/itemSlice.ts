@@ -14,6 +14,7 @@ const initialState: ItemState = {
   slides: [],
   selectedBox: 1,
   bibleInfo: { book: "", chapter: "", version: "", verses: [] },
+  isLoading: true,
 };
 
 export const itemSlice = createSlice({
@@ -111,6 +112,9 @@ export const itemSlice = createSlice({
     updateSlides: (state, action: PayloadAction<ItemSlide[]>) => {
       state.slides = [...action.payload];
     },
+    setItemIsLoading: (state, action: PayloadAction<boolean>) => {
+      state.isLoading = action.payload;
+    },
   },
 });
 
@@ -126,6 +130,7 @@ export const {
   updateSlideBackground,
   addSlide,
   removeSlide,
+  setItemIsLoading,
   updateSlides,
 } = itemSlice.actions;
 

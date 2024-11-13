@@ -44,10 +44,12 @@ const ItemSlides = () => {
     selectedSlide,
     type,
     name,
-    slides: _slides,
+    slides: __slides,
+    isLoading,
   } = useSelector((state) => state.undoable.present.item);
   const arrangement = arrangements[selectedArrangement];
-  const slides = _slides || arrangement?.slides || [];
+  const _slides = __slides || arrangement?.slides || [];
+  const slides = isLoading ? [] : _slides;
   const size = useSelector((state) => state.preferences.slidesPerRow);
   const dispatch = useDispatch();
 

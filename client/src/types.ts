@@ -1,5 +1,3 @@
-import { CloudinaryImage } from "@cloudinary/url-gen";
-
 export type Option = {
   label: string;
   value: string;
@@ -97,6 +95,7 @@ export type ItemState = {
     version: string;
     verses: verseType[];
   };
+  isLoading?: boolean;
 };
 
 export type OptionalItemState = {

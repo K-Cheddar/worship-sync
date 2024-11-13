@@ -27,6 +27,7 @@ const SlideEditor = () => {
     selectedArrangement,
     selectedSlide,
     slides,
+    isLoading,
   } = item;
   const { list } = useSelector((state) => state.undoable.present.itemList);
   const { list: allItemsList } = useSelector((state) => state.allItems);
@@ -163,10 +164,12 @@ const SlideEditor = () => {
     }
   };
 
-  const boxes =
+  let _boxes =
     slides?.[selectedSlide]?.boxes ||
     arrangement?.slides[selectedSlide]?.boxes ||
     [];
+
+  const boxes = isLoading ? [] : _boxes;
 
   return (
     <div>
@@ -179,6 +182,7 @@ const SlideEditor = () => {
           <Button
             variant="tertiary"
             padding="px-4"
+            disabled={isLoading}
             svg={isEditingName ? CheckSVG : EditSVG}
             onClick={
               isEditingName ? () => saveName() : () => setIsEditingName(true)
@@ -186,8 +190,12 @@ const SlideEditor = () => {
           />
           {!isEditingName && (
             <span className="slide-editor-song-name">
-              <h2>{name}</h2>
-              {arrangement && <p className="text-xs">({arrangement?.name})</p>}
+              <h2>{isLoading ? "" : name}</h2>
+              {arrangement && (
+                <p className="text-sm">
+                  {isLoading ? "" : `(${arrangement?.name})`}
+                </p>
+              )}
             </span>
           )}
           {isEditingName && (
@@ -202,6 +210,7 @@ const SlideEditor = () => {
         {type === "song" && (
           <Button
             className="text-sm"
+            disabled={isLoading}
             onClick={() => dispatch(toggleEditMode())}
           >
             Edit Lyrics

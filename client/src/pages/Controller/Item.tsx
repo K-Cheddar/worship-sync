@@ -4,13 +4,14 @@ import ItemSlides from "../../containers/ItemSlides/ItemSlides";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { DBItem } from "../../types";
 import { formatItemInfo } from "../../utils/formatItemInfo";
-import { useDispatch } from "../../hooks";
-import { setActiveItem } from "../../store/itemSlice";
-import { RemoteDbContext } from "../../context/remoteDb";
+import { useDispatch, useSelector } from "../../hooks";
+import { setActiveItem, setItemIsLoading } from "../../store/itemSlice";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 const Item = () => {
   const { itemId, listId } = useParams();
-  const { db } = useContext(RemoteDbContext) || {};
+  const { db, cloud } = useContext(GlobalInfoContext) || {};
+  const { isLoading } = useSelector((state) => state.undoable.present.item);
 
   const decodedItemId = useMemo(() => {
     try {
@@ -35,20 +36,23 @@ const Item = () => {
 
   useEffect(() => {
     const selectItem = async () => {
+      if (!db || !cloud) return;
       try {
+        dispatch(setItemIsLoading(true));
         const response: DBItem | undefined = await db?.get(decodedItemId);
         const item = response;
         if (!item) return setStatus("error");
-        const formattedItem = await formatItemInfo(item);
+        const formattedItem = await formatItemInfo(item, cloud);
         dispatch(setActiveItem({ ...formattedItem, listId: decodedListId }));
         setStatus("success");
+        dispatch(setItemIsLoading(false));
       } catch (e) {
         console.error(e);
         setStatus("error");
       }
     };
     selectItem();
-  }, [decodedItemId, dispatch, db, decodedListId]);
+  }, [decodedItemId, dispatch, db, decodedListId, cloud]);
 
   if (status === "error")
     return (
