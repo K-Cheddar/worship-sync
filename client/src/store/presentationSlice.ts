@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { BibleDisplayInfo, ParticipantInfo, Presentation } from "../types";
+import { BibleDisplayInfo, OverlayInfo, Presentation } from "../types";
 
 type PresentationState = {
   isProjectorTransmitting: boolean;
@@ -89,11 +89,16 @@ export const presentationSlice = createSlice({
       state.isMonitorTransmitting = action.payload;
       state.isStreamTransmitting = action.payload;
     },
-    updateParticipantInfo: (state, action: PayloadAction<ParticipantInfo>) => {
+    updateOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
       if (state.isStreamTransmitting) {
         // set previous info for cross animation
-        state.prevStreamInfo.participantInfo = state.streamInfo.participantInfo;
-        state.streamInfo.participantInfo = { ...action.payload };
+        if (action.payload.type === "floating") {
+          state.prevStreamInfo.flOverlayInfo = state.streamInfo.flOverlayInfo;
+          state.streamInfo.flOverlayInfo = { ...action.payload };
+        } else if (action.payload.type === "stick-to-bottom") {
+          state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
+          state.streamInfo.stbOverlayInfo = { ...action.payload };
+        }
       }
     },
     updateBibleDisplayInfo: (
@@ -143,7 +148,8 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.name = state.streamInfo.name;
       state.prevStreamInfo.type = state.streamInfo.type;
       state.prevStreamInfo.time = state.streamInfo.time;
-      state.prevStreamInfo.participantInfo = state.streamInfo.participantInfo;
+      state.prevStreamInfo.flOverlayInfo = state.streamInfo.flOverlayInfo;
+      state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
 
       state.streamInfo = {
@@ -151,7 +157,8 @@ export const presentationSlice = createSlice({
         type: "",
         name: "",
         slide: null,
-        participantInfo: { event: "", name: "" },
+        flOverlayInfo: { event: "", name: "" },
+        stbOverlayInfo: { event: "", name: "" },
         bibleDisplayInfo: { title: "", text: "" },
       };
     },
@@ -171,7 +178,8 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.name = state.streamInfo.name;
       state.prevStreamInfo.type = state.streamInfo.type;
       state.prevStreamInfo.time = state.streamInfo.time;
-      state.prevStreamInfo.participantInfo = state.streamInfo.participantInfo;
+      state.prevStreamInfo.flOverlayInfo = state.streamInfo.flOverlayInfo;
+      state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
 
       state.projectorInfo = {
@@ -191,7 +199,8 @@ export const presentationSlice = createSlice({
         type: "",
         name: "",
         slide: null,
-        participantInfo: { event: "", name: "" },
+        stbOverlayInfo: { event: "", name: "" },
+        flOverlayInfo: { event: "", name: "" },
         bibleDisplayInfo: { title: "", text: "" },
       };
     },
@@ -213,7 +222,7 @@ export const {
   toggleMonitorTransmitting,
   toggleStreamTransmitting,
   setTransmitToAll,
-  updateParticipantInfo,
+  updateOverlayInfo,
   updateBibleDisplayInfo,
   clearProjector,
   clearMonitor,

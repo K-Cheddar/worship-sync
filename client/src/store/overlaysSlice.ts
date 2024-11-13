@@ -1,14 +1,16 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { ParticipantType } from "../types";
+import { OverlayType } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
-const dummyParticipants: ParticipantType[] = [
+const dummyOverlays: OverlayType[] = [
   {
     title: "",
     id: generateRandomId(),
     name: "email address: pastor@eliathahsda.org",
     showDelete: false,
     event: "phone #: 203-231-9960",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -16,6 +18,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Rashaun Baldeo",
     showDelete: false,
     event: "Sabbath School Host",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -23,6 +27,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Jacob Hall",
     showDelete: false,
     event: "Sabbath School Co-Host",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -30,6 +36,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Yolanda Hall",
     showDelete: false,
     event: "Sabbath School Co-Host",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -37,6 +45,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Javar Baldeo",
     showDelete: false,
     event: "Sabbath School Co-Host",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -44,6 +54,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Dr. Greg Baldeo Orville Mullings & Jennifer Peters",
     showDelete: false,
     event: "Welcome ",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -51,6 +63,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Praise Team",
     showDelete: false,
     event: "Welcome & Welcome Song",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -58,6 +72,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Dr. Greg Baldeo, Orville Mullings & Jennifer Peters",
     showDelete: true,
     event: "Announcements",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -65,6 +81,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Clifton Anderson",
     showDelete: false,
     event: "Call to Praise",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -72,6 +90,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Praise Team",
     showDelete: false,
     event: "Song of Praise",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -79,6 +99,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Clifton Anderson",
     showDelete: false,
     event: "Invocation",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -86,6 +108,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Praise Team ",
     showDelete: false,
     event: "Congregational Hymn",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -93,6 +117,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Alyandra ",
     showDelete: false,
     event: "Reading the Word",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -100,6 +126,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Dobney Keen",
     showDelete: false,
     event: "Offertory",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -107,6 +135,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Patrick Robinson",
     showDelete: false,
     event: "Special Song",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -114,6 +144,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Worship Leader",
     showDelete: false,
     event: "Call to Prayer",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -121,6 +153,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Praise Team",
     showDelete: false,
     event: "Prayer Song",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -128,6 +162,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Luciana Esnard",
     showDelete: false,
     event: "Intercessory Prayer",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -135,6 +171,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Praise Team ",
     showDelete: false,
     event: "Praise & Worship",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -142,6 +180,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Orville Mullings",
     showDelete: false,
     event: 'Sermon - "What is Next"',
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -149,6 +189,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Praise Team",
     showDelete: false,
     event: "Appeal Song",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -156,6 +198,8 @@ const dummyParticipants: ParticipantType[] = [
     name: "Orville Mullings",
     showDelete: false,
     event: "Appeal / Closing Prayer",
+    duration: 7,
+    type: "floating",
   },
   {
     title: "",
@@ -163,77 +207,93 @@ const dummyParticipants: ParticipantType[] = [
     name: "Praise Team",
     showDelete: false,
     event: "Afterglow",
+    duration: 7,
+    type: "floating",
   },
 ];
 
-type ParticipantsState = ParticipantType & {
-  list: ParticipantType[];
+type OverlaysState = OverlayType & {
+  list: OverlayType[];
 };
 
-const initialState: ParticipantsState = {
+const initialState: OverlaysState = {
   name: "",
   title: "",
   event: "",
   id: "",
+  duration: 7,
+  type: "floating",
   showDelete: true,
-  list: dummyParticipants,
+  list: [],
 };
 
-export const participantsSlice = createSlice({
-  name: "participants",
+export const overlaysSlice = createSlice({
+  name: "overlays",
   initialState,
   reducers: {
-    selectParticipant: (state, action: PayloadAction<ParticipantType>) => {
+    selectOverlay: (state, action: PayloadAction<OverlayType>) => {
       state.name = action.payload.name;
-      state.title = action.payload.title;
+      state.title =
+        action.payload.type === "stick-to-bottom" ? "" : action.payload.title;
       state.event = action.payload.event;
       state.id = action.payload.id;
+      state.duration = action.payload.duration;
+      state.type = action.payload.type;
       state.showDelete = action.payload.showDelete;
     },
-    addParticipant: (state) => {
+    addOverlay: (state) => {
       state.list.push({
         name: "",
         title: "",
         event: "",
+        duration: 7,
+        type: "floating",
         showDelete: true,
         id: generateRandomId(),
       });
     },
-    updateParticipantList: (
-      state,
-      action: PayloadAction<ParticipantType[]>
-    ) => {
+    updateOverlayList: (state, action: PayloadAction<OverlayType[]>) => {
       state.list = action.payload;
     },
-    deleteParticipant: (state, action: PayloadAction<string>) => {
+    initiateOverlayList: (state, action: PayloadAction<OverlayType[]>) => {
+      if (action.payload.length === 0) {
+        state.list = dummyOverlays;
+        return;
+      }
+      state.list = action.payload.map((overlay) => ({
+        ...overlay,
+        id: generateRandomId(),
+      }));
+    },
+    deleteOverlay: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter(
-        (participant) => participant.id !== action.payload
+        (overlay) => overlay.id !== action.payload
       );
     },
-    updateParticipant: (state, action: PayloadAction<ParticipantType>) => {
-      const { name, title, event, id, showDelete } = action.payload;
-      state.list = state.list.map((participant) => {
-        if (participant.id === id) {
+    updateOverlay: (state, action: PayloadAction<OverlayType>) => {
+      state.list = state.list.map((overlay) => {
+        if (overlay.id === action.payload.id) {
           return {
-            name,
-            title,
-            event,
-            id,
-            showDelete,
+            ...action.payload,
+            title:
+              action.payload.type === "stick-to-bottom"
+                ? ""
+                : action.payload.title,
           };
         }
-        return participant;
+        return overlay;
       });
     },
   },
 });
 
 export const {
-  selectParticipant,
-  addParticipant,
-  updateParticipantList: updateList,
-  deleteParticipant,
-  updateParticipant,
-} = participantsSlice.actions;
+  selectOverlay,
+  addOverlay,
+  updateOverlayList: updateList,
+  deleteOverlay,
+  updateOverlay,
+  initiateOverlayList,
+} = overlaysSlice.actions;
 
-export default participantsSlice.reducer;
+export default overlaysSlice.reducer;

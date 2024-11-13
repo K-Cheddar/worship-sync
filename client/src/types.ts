@@ -1,3 +1,5 @@
+import { CloudinaryImage } from "@cloudinary/url-gen";
+
 export type Option = {
   label: string;
   value: string;
@@ -144,7 +146,8 @@ export type Presentation = {
   slide: ItemSlide | null;
   time?: number;
   displayType?: DisplayType;
-  participantInfo?: ParticipantInfo;
+  flOverlayInfo?: OverlayInfo;
+  stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
 };
 
@@ -153,10 +156,12 @@ export type BibleDisplayInfo = {
   text: string;
 };
 
-export type ParticipantInfo = {
+export type OverlayInfo = {
   name?: string;
   title?: string;
   event?: string;
+  duration?: number;
+  type?: "floating" | "stick-to-bottom";
 };
 
 export type DisplayType =
@@ -166,10 +171,12 @@ export type DisplayType =
   | "editor"
   | "slide";
 
-export type ParticipantType = {
+export type OverlayType = {
   name: string;
   title: string;
   event: string;
+  duration: number;
+  type: "floating" | "stick-to-bottom";
   id: string;
   showDelete: boolean;
 };
@@ -223,4 +230,25 @@ export type DBItemListDetails = {
   _id: string;
   _rev: string;
   items: ServiceItem[];
+  overlays: OverlayType[];
+};
+
+export type DBAllItems = {
+  _id: string;
+  _rev: string;
+  items: ServiceItem[];
+};
+
+export type Media = {
+  category: string;
+  name: string;
+  type: string;
+  id: string;
+  image: string;
+};
+
+export type DBMedia = {
+  _id: string;
+  _rev: string;
+  backgrounds: Media[];
 };

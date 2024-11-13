@@ -16,7 +16,7 @@ export const svgMap: Map<string, FunctionComponent> = new Map([
   ["bible", BibleSVG],
   ["timer", TimerSVG],
   ["announcement", AnnouncementSVG],
-  ["participants", PeopleSVG],
+  ["overlays", PeopleSVG],
   ["create", AddSVG],
   ["free", DocSVG],
 ]);
@@ -29,7 +29,7 @@ export const borderColorMap: Map<string, string> = new Map([
   ["timer", "border-pink-500"],
   ["announcement", "border-yellow-500"],
   ["create", "border-lime-400"],
-  ["participants", "border-red-500"],
+  ["overlays", "border-red-500"],
   ["free", "border-orange-500"],
 ]);
 
@@ -41,6 +41,6 @@ export const iconColorMap: Map<string, string> = new Map([
   ["timer", "#ec4899"],
   ["announcement", "#eab308"],
   ["create", "#a3e635"],
-  ["participants", "#ef4444"],
+  ["overlays", "#ef4444"],
   ["free", "#f97316"],
 ]);

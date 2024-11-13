@@ -3,18 +3,19 @@ import userReducer from "./userSlice";
 import { itemSlice } from "./itemSlice";
 import undoable, { excludeAction } from "redux-undo";
 import { presentationSlice } from "./presentationSlice";
-import { participantsSlice } from "./participantsSlice";
+import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { itemListSlice } from "./itemList";
 import { allItemsSlice } from "./allItems";
 import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemLists";
+import { mediaItemsSlice } from "./media";
 
 const undoableReducers = undoable(
   combineReducers({
     item: itemSlice.reducer,
-    participants: participantsSlice.reducer,
+    overlays: overlaysSlice.reducer,
     itemList: itemListSlice.reducer,
     itemLists: itemListsSlice.reducer,
   }),
@@ -22,7 +23,7 @@ const undoableReducers = undoable(
     filter: excludeAction([
       itemSlice.actions.toggleEditMode.toString(),
       itemSlice.actions.setSelectedSlide.toString(),
-      participantsSlice.actions.selectParticipant.toString(),
+      overlaysSlice.actions.selectOverlay.toString(),
       itemListSlice.actions.initiateItemList.toString(),
     ]),
     limit: 100,
@@ -32,6 +33,7 @@ const undoableReducers = undoable(
 const store = configureStore({
   reducer: {
     user: undoable(userReducer),
+    media: mediaItemsSlice.reducer,
     undoable: undoableReducers,
     presentation: presentationSlice.reducer,
     bible: bibleSlice.reducer,

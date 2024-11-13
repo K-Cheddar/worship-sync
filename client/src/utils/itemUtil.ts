@@ -1,9 +1,11 @@
+import { Cloudinary } from "@cloudinary/url-gen";
 import {
   Arrangment,
   FormattedLyrics,
   SongOrder,
   ItemState,
   OptionalItemState,
+  Media,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatSong } from "./overflow";
@@ -215,4 +217,26 @@ export const createNewFreeForm = ({
   };
 
   return newItem;
+};
+
+type RetriveImagesProps = {
+  backgrounds: Media[];
+  cloud: Cloudinary;
+};
+export const retrieveImages = ({
+  backgrounds,
+  cloud,
+}: RetriveImagesProps): Media[] => {
+  const images: Media[] = [];
+  for (let i = 0; i < backgrounds.length; i++) {
+    let element = backgrounds[i];
+    const image = cloud.image(element.name);
+
+    images.push({
+      ...element,
+      image: image.toURL(),
+      id: generateRandomId(),
+    });
+  }
+  return images;
 };

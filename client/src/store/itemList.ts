@@ -4,10 +4,12 @@ import generateRandomId from "../utils/generateRandomId";
 
 type ItemListState = {
   list: ServiceItem[];
+  isLoading: boolean;
 };
 
 const initialState: ItemListState = {
   list: [],
+  isLoading: true,
 };
 
 export const itemListSlice = createSlice({
@@ -35,6 +37,9 @@ export const itemListSlice = createSlice({
         state.list.push({ ...action.payload, listId: generateRandomId() });
       }
     },
+    setItemListIsLoading: (state, action: PayloadAction<boolean>) => {
+      state.isLoading = action.payload;
+    },
   },
 });
 
@@ -43,6 +48,7 @@ export const {
   removeItemFromList,
   addItemToItemList,
   initiateItemList,
+  setItemListIsLoading,
 } = itemListSlice.actions;
 
 export default itemListSlice.reducer;

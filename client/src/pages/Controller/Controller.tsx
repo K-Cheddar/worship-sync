@@ -7,18 +7,21 @@ import TransmitHandler from "../../containers/TransmitHandler/TransmitHandler";
 
 import "./Controller.scss";
 import LyricsEditor from "../../containers/ItemEditor/LyricsEditor";
-import { useEffect } from "react";
-import Participants from "../../containers/Participants/Participants";
+import { useContext, useEffect } from "react";
+import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
-import { useDispatch } from "../../hooks";
-import { updateAllItemsList } from "../../store/allItems";
+import { useDispatch, useSelector } from "../../hooks";
+import { initiateAllItemsList, updateAllItemsList } from "../../store/allItems";
 import Songs from "../../containers/Songs/Songs";
 import { Route, Routes } from "react-router-dom";
 import BibleDbProvider from "../../context/bibleDb";
-import RemoteDbProvider from "../../context/remoteDb";
+import RemoteDbProvider, { RemoteDbContext } from "../../context/remoteDb";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import FreeForms from "../../containers/FreeForms/FreeForms";
+import { DBAllItems, DBItemListDetails } from "../../types";
+import { initiateItemList, setItemListIsLoading } from "../../store/itemList";
+import { initiateOverlayList } from "../../store/overlaysSlice";
 
 const resizableDirections = {
   top: false,
@@ -34,72 +37,94 @@ const resizableDirections = {
 const Controller = () => {
   const dispatch = useDispatch();
 
+  const { selectedList } = useSelector(
+    (state) => state.undoable.present.itemLists
+  );
+
+  const { db } = useContext(RemoteDbContext) || {};
+
   useEffect(() => {
     const getAllItems = async () => {
-      const response = await fetch(
-        "http://localhost:3000/dummyDB/allItems.json"
-      );
-      const data = await response.json();
-      dispatch(updateAllItemsList(data));
+      const response: DBAllItems | undefined = await db?.get("allItems");
+      const items = response?.items || [];
+      dispatch(initiateAllItemsList(items));
     };
 
     getAllItems();
-  }, [dispatch]);
+  }, [dispatch, db]);
+
+  useEffect(() => {
+    const getItemLists = async () => {
+      if (!selectedList) return;
+      try {
+        dispatch(setItemListIsLoading(true));
+        const response: DBItemListDetails | undefined = await db?.get(
+          selectedList.id
+        );
+        const itemList = response?.items || [];
+        const overlays = response?.overlays || [];
+        dispatch(initiateItemList(itemList));
+        dispatch(initiateOverlayList(overlays));
+        dispatch(setItemListIsLoading(false));
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    getItemLists();
+  }, [dispatch, db, selectedList]);
 
   return (
-    <RemoteDbProvider>
-      <div className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none">
-        <Toolbar className="flex border-b-2 border-slate-500 h-10 text-sm" />
-        <div className="controller-main ">
-          <LyricsEditor />
-          <Resizable
-            defaultSize={{ width: "15%" }}
-            className="flex flex-col border-r-2 border-slate-500"
-            enable={resizableDirections}
-          >
-            <EditorButtons />
-            <ServiceItems />
-          </Resizable>
-          <Resizable
-            defaultSize={{ width: "55%" }}
-            className="flex flex-col flex-1 border-r-2 border-slate-500 relative"
-            enable={resizableDirections}
-          >
-            <Routes>
-              <Route
-                path="/"
-                element={
-                  <h2 className="text-2xl text-center mt-4 font-bold">
-                    No Item Selected
-                  </h2>
-                }
-              />
-              <Route path="/item/:itemId/:listId" element={<Item />} />
-              <Route path="participants" element={<Participants />} />
-              <Route
-                path="bible"
-                element={
-                  <BibleDbProvider>
-                    <Bible />
-                  </BibleDbProvider>
-                }
-              />
-              <Route path="songs" element={<Songs />} />
-              <Route path="free" element={<FreeForms />} />
-              <Route path="create" element={<CreateItem />} />
-            </Routes>
-          </Resizable>
-          <Resizable
-            defaultSize={{ width: "30%" }}
-            className="flex flex-col"
-            enable={{ ...resizableDirections }}
-          >
-            <TransmitHandler className="flex flex-col mt-2 gap-4 w-fit items-center h-fit bg-slate-800 p-4 rounded-lg mx-auto" />
-            <Media />
-          </Resizable>
-        </div>
+    <div className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none">
+      <Toolbar className="flex border-b-2 border-slate-500 h-10 text-sm" />
+      <div className="controller-main ">
+        <LyricsEditor />
+        <Resizable
+          defaultSize={{ width: "15%" }}
+          className="flex flex-col border-r-2 border-slate-500"
+          enable={resizableDirections}
+        >
+          <EditorButtons />
+          <ServiceItems />
+        </Resizable>
+        <Resizable
+          defaultSize={{ width: "55%" }}
+          className="flex flex-col flex-1 border-r-2 border-slate-500 relative"
+          enable={resizableDirections}
+        >
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <h2 className="text-2xl text-center mt-4 font-bold">
+                  No Item Selected
+                </h2>
+              }
+            />
+            <Route path="/item/:itemId/:listId" element={<Item />} />
+            <Route path="overlays" element={<Overlays />} />
+            <Route
+              path="bible"
+              element={
+                <BibleDbProvider>
+                  <Bible />
+                </BibleDbProvider>
+              }
+            />
+            <Route path="songs" element={<Songs />} />
+            <Route path="free" element={<FreeForms />} />
+            <Route path="create" element={<CreateItem />} />
+          </Routes>
+        </Resizable>
+        <Resizable
+          defaultSize={{ width: "30%" }}
+          className="flex flex-col"
+          enable={{ ...resizableDirections }}
+        >
+          <TransmitHandler className="flex flex-col mt-2 gap-4 w-fit items-center h-fit bg-slate-800 p-4 rounded-lg mx-auto" />
+          <Media />
+        </Resizable>
       </div>
-    </RemoteDbProvider>
+    </div>
   );
 };
 

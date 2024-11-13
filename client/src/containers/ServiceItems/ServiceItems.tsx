@@ -1,7 +1,6 @@
-import { useContext, useEffect, useState } from "react";
 import "./ServiceItems.scss";
 import { useDispatch, useSelector } from "../../hooks";
-import { initiateItemList, updateItemList } from "../../store/itemList";
+import { updateItemList } from "../../store/itemList";
 import { useLocation } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 
@@ -12,45 +11,23 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import ServiceItem from "./ServiceItem";
-import { RemoteDbContext } from "../../context/remoteDb";
-import { DBItemListDetails } from "../../types";
 
 const ServiceItems = () => {
   const dispatch = useDispatch();
   const location = useLocation();
-  const { list: serviceItems } = useSelector(
+  const { list: serviceItems, isLoading } = useSelector(
     (state) => state.undoable.present.itemList
   );
   const { selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
   const { listId } = useSelector((state) => state.undoable.present.item);
-  const [isLoading, setIsLoading] = useState(true);
-
-  const { db } = useContext(RemoteDbContext) || {};
 
   const { setNodeRef } = useDroppable({
     id: "service-items-list",
   });
 
   const sensors = useSensors();
-
-  useEffect(() => {
-    const getItemLists = async () => {
-      if (!selectedList) return;
-      try {
-        const response: DBItemListDetails | undefined = await db?.get(
-          selectedList.id
-        );
-        const itemList = response?.items || [];
-        dispatch(initiateItemList(itemList));
-        setIsLoading(false);
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    getItemLists();
-  }, [dispatch, db, selectedList]);
 
   const onDragEnd = (event: DragEndEvent) => {
     const { over, active } = event;

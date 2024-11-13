@@ -25,9 +25,9 @@ const buttons: ButtonType[] = [
     section: "free",
   },
   {
-    type: "participants",
-    title: "Participants",
-    section: "participants",
+    type: "overlays",
+    title: "Overlays",
+    section: "overlays",
   },
   {
     type: "create",

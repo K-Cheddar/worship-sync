@@ -30,6 +30,7 @@ const Input = ({
   svgAction,
   iconSize = "md",
   color = "#1f2937",
+  disabled = false,
   ...rest
 }: InputProps) => {
   return (
@@ -44,9 +45,10 @@ const Input = ({
       <input
         className={`w-full rounded py-1 pl-2 text-black ${
           svg ? "pr-6" : "pr-2"
-        }`}
+        } ${disabled ? "opacity-50" : ""}`}
         type={type}
         value={value}
+        disabled={disabled}
         onChange={(e) => {
           const val = e.target.value;
           if (type === "number") {

@@ -11,8 +11,9 @@ const Stream = () => {
       boxes={streamInfo.slide?.boxes || []}
       prevBoxes={prevStreamInfo.slide?.boxes || []}
       displayType={streamInfo.displayType}
-      participantInfo={streamInfo.participantInfo}
-      prevParticipantInfo={prevStreamInfo.participantInfo}
+      flOverlayInfo={streamInfo.flOverlayInfo}
+      prevOverlayInfo={prevStreamInfo.flOverlayInfo}
+      stbOverlayInfo={streamInfo.stbOverlayInfo}
       prevBibleDisplayInfo={prevStreamInfo.bibleDisplayInfo}
       bibleDisplayInfo={streamInfo.bibleDisplayInfo}
       shouldAnimate

@@ -9,6 +9,7 @@ import Monitor from "./pages/Monitor";
 import Stream from "./pages/Stream";
 import { Provider } from "react-redux";
 import store from "./store/store";
+import RemoteDbProvider from "./context/remoteDb";
 
 gsap.registerPlugin(useGSAP);
 
@@ -18,7 +19,14 @@ function App() {
       <Router>
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/controller/*" element={<Controller />} />
+          <Route
+            path="/controller/*"
+            element={
+              <RemoteDbProvider>
+                <Controller />
+              </RemoteDbProvider>
+            }
+          />
           <Route path="/presentation" element={<Presentation />} />
           <Route path="/monitor" element={<Monitor />} />
           <Route path="/stream" element={<Stream />} />
