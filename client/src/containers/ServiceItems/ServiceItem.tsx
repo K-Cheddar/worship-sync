@@ -4,7 +4,7 @@ import "./ServiceItems.scss";
 import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import generateRandomId from "../../utils/generateRandomId";
 import { useDispatch } from "../../hooks";
-import { removeItemFromList } from "../../store/itemList";
+import { removeItemFromList } from "../../store/itemListSlice";
 
 import { Location } from "react-router-dom";
 import { ServiceItem as ServiceItemType } from "../../types";

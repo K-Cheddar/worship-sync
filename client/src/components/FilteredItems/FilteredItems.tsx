@@ -5,9 +5,12 @@ import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import Button from "../Button/Button";
 import Input from "../Input/Input";
 import "./FilteredItems.scss";
-import { addItemToItemList, removeItemFromList } from "../../store/itemList";
+import {
+  addItemToItemList,
+  removeItemFromList,
+} from "../../store/itemListSlice";
 import { Link } from "react-router-dom";
-import { removeItemFromAllItemsList } from "../../store/allItems";
+import { removeItemFromAllItemsList } from "../../store/allItemsSlice";
 import { ServiceItem } from "../../types";
 
 type FilteredItemsProps = {

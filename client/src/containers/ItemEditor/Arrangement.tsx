@@ -7,7 +7,6 @@ import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import { useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
-import generateRandomId from "../../utils/generateRandomId";
 
 type ArrangementProps = {
   arrangement: Arrangment;
@@ -64,7 +63,7 @@ const Arrangement = ({
               const newArrangement = {
                 ...arrangement,
                 name: arrangement.name + " copy",
-                id: generateRandomId(),
+                id: localArrangements.length.toString(),
               };
               copiedArrangements.push(newArrangement);
               setLocalArrangements(copiedArrangements);

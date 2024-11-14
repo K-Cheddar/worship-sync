@@ -1,5 +1,35 @@
-import { ItemState } from "../types";
+import { ItemSlide, ItemState } from "../types";
 import { formatBible, formatSong } from "./overflow";
+
+type UpdateSlideBgPropertyType = {
+  property: string;
+  value: any;
+  slideIndex: number;
+  slides: ItemSlide[];
+};
+
+export const updateSlideBgProperty = ({
+  property,
+  value,
+  slideIndex,
+  slides,
+}: UpdateSlideBgPropertyType): ItemSlide[] => {
+  const updatedSlides = slides.map((slide, sIndex) => {
+    if (slideIndex !== sIndex) return slide;
+    return {
+      ...slide,
+      boxes: slide.boxes.map((box, boxIndex) => {
+        if (boxIndex !== 0) return box;
+        return {
+          ...box,
+          [property]: value,
+        };
+      }),
+    };
+  });
+
+  return [...updatedSlides];
+};
 
 const getSlidesFromItem = (item: ItemState) => {
   let { selectedSlide } = item;
@@ -96,17 +126,36 @@ export const updateBrightness = ({
 
   if (!slide) return item;
 
-  slides = slides.map((slide) => {
-    return {
-      ...slide,
-      boxes: slide.boxes.map((box, index) => {
-        if (index !== 0) return box;
-        return {
-          ...box,
-          brightness: brightness,
-        };
-      }),
-    };
+  slides = updateSlideBgProperty({
+    property: "brightness",
+    value: brightness,
+    slideIndex: item.selectedSlide,
+    slides: [...slides],
+  });
+
+  return {
+    ...item,
+    slides: [...slides],
+  };
+};
+
+type UpdateKeepAspectRatioProps = {
+  shouldKeepAspectRatio: boolean;
+  item: ItemState;
+};
+
+export const updateKeepAspectRatio = ({
+  shouldKeepAspectRatio,
+  item,
+}: UpdateKeepAspectRatioProps): ItemState => {
+  let { slides, slide } = getSlidesFromItem(item);
+  if (!slide) return item;
+
+  slides = updateSlideBgProperty({
+    property: "shouldKeepAspectRatio",
+    value: shouldKeepAspectRatio,
+    slideIndex: item.selectedSlide,
+    slides: [...slides],
   });
 
   return {

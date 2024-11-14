@@ -1,6 +1,6 @@
 import "./ServiceItems.scss";
 import { useDispatch, useSelector } from "../../hooks";
-import { updateItemList } from "../../store/itemList";
+import { updateItemList } from "../../store/itemListSlice";
 import { useLocation } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 

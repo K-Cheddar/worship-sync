@@ -5,14 +5,20 @@ import Input from "../../../components/Input/Input";
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useLocation } from "react-router-dom";
-import { updateFontSize, updateBrightness } from "../../../utils/formatter";
+import {
+  updateFontSize,
+  updateBrightness,
+  updateKeepAspectRatio,
+} from "../../../utils/formatter";
 import { setActiveItem } from "../../../store/itemSlice";
+import Toggle from "../../../components/Toggle/Toggle";
 
 const SlideEditTools = () => {
   const location = useLocation();
   const dispatch = useDispatch();
   const [fontSize, setFontSize] = useState(24);
   const [brightness, setBrightness] = useState(50);
+  const [shouldKeepAspectRatio, setShouldKeepAspectRatio] = useState(false);
 
   const item = useSelector((state) => state.undoable.present.item);
   const { slides, selectedSlide } = item;
@@ -23,6 +29,7 @@ const SlideEditTools = () => {
     const fSize = (slide?.boxes?.[1]?.fontSize || 2.5) * 10;
     setFontSize(fSize);
     setBrightness(slide?.boxes?.[0]?.brightness || 100);
+    setShouldKeepAspectRatio(slide?.boxes?.[0]?.shouldKeepAspectRatio || false);
   }, [slide]);
 
   const _updateFontSize = (val: number) => {
@@ -40,9 +47,21 @@ const SlideEditTools = () => {
     dispatch(setActiveItem(updatedItem));
   };
 
+  const _updateKeepAspectRatio = (val: boolean) => {
+    setShouldKeepAspectRatio(val);
+    console.log({ item });
+    const updatedItem = updateKeepAspectRatio({
+      shouldKeepAspectRatio: val,
+      item,
+    });
+    dispatch(setActiveItem(updatedItem));
+  };
+
   if (!location.pathname.includes("controller/item") || !slide) {
     return null;
   }
+
+  const canChangeAspectRatio = ~(item.type === "free" || item.type === "image");
 
   return (
     <div className="flex gap-2 items-center">
@@ -68,7 +87,11 @@ const SlideEditTools = () => {
           onClick={() => _updateFontSize(fontSize + 1)}
         />
       </div>
-      <div className="flex gap-1 items-center border-l-2 border-slate-500 pl-2">
+      <div
+        className={`flex gap-1 items-center border-l-2 border-slate-500 pl-2 ${
+          canChangeAspectRatio ? "border-r-2 pr-2" : ""
+        }`}
+      >
         <p className="text-sm font-semibold">Brightness:</p>
         <Button
           svg={MinusSVG}
@@ -91,6 +114,13 @@ const SlideEditTools = () => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
+      {canChangeAspectRatio && (
+        <Toggle
+          label="Keep Aspect Ratio"
+          value={shouldKeepAspectRatio}
+          onChange={(val) => _updateKeepAspectRatio(val)}
+        />
+      )}
     </div>
   );
 };

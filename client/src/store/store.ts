@@ -5,12 +5,12 @@ import undoable, { excludeAction } from "redux-undo";
 import { presentationSlice } from "./presentationSlice";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
-import { itemListSlice } from "./itemList";
-import { allItemsSlice } from "./allItems";
+import { itemListSlice } from "./itemListSlice";
+import { allItemsSlice } from "./allItemsSlice";
 import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
-import { itemListsSlice } from "./itemLists";
-import { mediaItemsSlice } from "./media";
+import { itemListsSlice } from "./itemListsSlice";
+import { mediaItemsSlice } from "./mediaSlice";
 
 const undoableReducers = undoable(
   combineReducers({

@@ -11,7 +11,7 @@ import {
   selectItemList,
   updateAllItemLists,
   updateItemLists,
-} from "../../../store/itemLists";
+} from "../../../store/itemListsSlice";
 import getItemListsUtil from "../../../utils/getItemLists";
 import Modal from "../../../components/Modal/Modal";
 import Button from "../../../components/Button/Button";

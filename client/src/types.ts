@@ -39,6 +39,7 @@ export type Box = {
   x?: number;
   y?: number;
   fontColor?: string;
+  shouldKeepAspectRatio?: boolean;
   excludeFromOverflow?: boolean;
   transparent?: boolean;
   topMargin?: number;

@@ -26,7 +26,7 @@ import BibleVersesList from "./BibleVersesList";
 import { useSearchParams } from "react-router-dom";
 import { formatBible } from "../../utils/overflow";
 import { setActiveItem } from "../../store/itemSlice";
-import { addItemToItemList } from "../../store/itemList";
+import { addItemToItemList } from "../../store/itemListSlice";
 import {
   updateBibleDisplayInfo,
   updatePresentation,

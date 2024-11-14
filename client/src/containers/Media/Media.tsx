@@ -9,7 +9,7 @@ import {
 } from "../../store/itemSlice";
 import "./Media.scss";
 import { DBMedia } from "../../types";
-import { initiateMediaList } from "../../store/media";
+import { initiateMediaList } from "../../store/mediaSlice";
 import { retrieveImages } from "../../utils/itemUtil";
 import { useLocation } from "react-router-dom";
 

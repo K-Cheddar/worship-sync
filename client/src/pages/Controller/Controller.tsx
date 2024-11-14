@@ -11,7 +11,7 @@ import { useContext, useEffect } from "react";
 import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
-import { initiateAllItemsList } from "../../store/allItems";
+import { initiateAllItemsList } from "../../store/allItemsSlice";
 import Songs from "../../containers/Songs/Songs";
 import { Route, Routes } from "react-router-dom";
 import BibleDbProvider from "../../context/bibleDb";
@@ -20,7 +20,10 @@ import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import FreeForms from "../../containers/FreeForms/FreeForms";
 import { DBAllItems, DBItemListDetails } from "../../types";
-import { initiateItemList, setItemListIsLoading } from "../../store/itemList";
+import {
+  initiateItemList,
+  setItemListIsLoading,
+} from "../../store/itemListSlice";
 import { initiateOverlayList } from "../../store/overlaysSlice";
 
 const resizableDirections = {

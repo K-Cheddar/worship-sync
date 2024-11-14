@@ -17,8 +17,8 @@ import {
   updateFormattedSections,
 } from "../../utils/itemUtil";
 import { setActiveItem } from "../../store/itemSlice";
-import { addItemToItemList } from "../../store/itemList";
-import { addItemToAllItemsList } from "../../store/allItems";
+import { addItemToItemList } from "../../store/itemListSlice";
+import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { ItemState, ServiceItem } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 

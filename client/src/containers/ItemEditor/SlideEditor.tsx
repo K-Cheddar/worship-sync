@@ -13,8 +13,8 @@ import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useDispatch, useSelector } from "../../hooks";
 import { toggleEditMode, updateArrangements } from "../../store/itemSlice";
 import { setName, updateBoxes } from "../../store/itemSlice";
-import { updateItemList } from "../../store/itemList";
-import { updateAllItemsList } from "../../store/allItems";
+import { updateItemList } from "../../store/itemListSlice";
+import { updateAllItemsList } from "../../store/allItemsSlice";
 import { formatSong } from "../../utils/overflow";
 import { Box } from "../../types";
 

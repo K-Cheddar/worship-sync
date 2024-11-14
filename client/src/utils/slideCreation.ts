@@ -40,6 +40,7 @@ export const createNewSlide = ({
       isLocked: true,
       background: "",
       fontColor: "rgba(255, 255, 255, 1)",
+      shouldKeepAspectRatio: false,
     };
 
   let boxes: Box[] = _boxes ? [..._boxes] : [];

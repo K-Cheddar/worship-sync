@@ -153,7 +153,9 @@ const DisplayBox = ({
     >
       {shouldShowBackground && (
         <img
-          className="display-box-background"
+          className={`display-box-background ${
+            box.shouldKeepAspectRatio ? "object-contain" : ""
+          }`}
           src={box.background}
           alt={box.label}
         />
