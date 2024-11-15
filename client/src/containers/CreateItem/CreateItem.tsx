@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import RadioButton from "../../components/RadioButton/RadioButton";
 import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
 import Button from "../../components/Button/Button";
@@ -21,6 +21,7 @@ import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { ItemState, ServiceItem } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 type ItemTypesType = {
   type: string;
@@ -64,6 +65,8 @@ const CreateItem = () => {
     types.map((type) => ({ ...type, selected: type.type === initialType }))
   );
   const [itemName, setItemName] = useState<string>(initialName);
+  const { db } = useContext(GlobalInfoContext) || {};
+
   const naviagte = useNavigate();
   const dispatch = useDispatch();
 
@@ -88,7 +91,7 @@ const CreateItem = () => {
     );
   };
 
-  const createItem = () => {
+  const createItem = async () => {
     dispatch(
       setCreateItem({
         name: itemName,
@@ -108,18 +111,24 @@ const CreateItem = () => {
         songOrder: _songOrder,
       });
 
-      const newItem = createNewSong({
+      const newItem = await createNewSong({
         name: itemName,
         formattedLyrics,
         songOrder,
+        list,
+        db,
       });
+
+      console.log(newItem);
 
       dispatchNewItem(newItem);
     }
 
     if (selectedType === "free") {
-      const newItem = createNewFreeForm({
+      const newItem = await createNewFreeForm({
         name: itemName,
+        list,
+        db,
       });
 
       dispatchNewItem(newItem);
@@ -146,6 +155,7 @@ const CreateItem = () => {
             onChange={(val) => setItemName(val as string)}
             label="Item Name"
             className="text-base"
+            data-ignore-undo="true"
           />
           {existingItem && (
             <p className="text-cyan-400 bg-slate-600 text-sm rounded-md p-1">
@@ -190,6 +200,7 @@ const CreateItem = () => {
             label="Paste Text Here"
             value={text}
             onChange={(val) => setText(val)}
+            data-ignore-undo="true"
           />
         )}
 

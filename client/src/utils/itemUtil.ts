@@ -6,11 +6,18 @@ import {
   ItemState,
   OptionalItemState,
   Media,
+  ServiceItem,
+  DBItem,
+  DBAllItems,
+  BibleDisplayInfo,
+  ItemSlide,
+  verseType,
 } from "../types";
 import generateRandomId from "./generateRandomId";
-import { formatSong } from "./overflow";
+import { formatBible, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
+import { fill } from "@cloudinary/url-gen/actions/resize";
 
 type CreateSectionsType = {
   formattedLyrics?: FormattedLyrics[];
@@ -59,13 +66,17 @@ type CreateNewSongType = {
   formattedLyrics: FormattedLyrics[];
   songOrder: SongOrder[];
   name: string;
+  list: ServiceItem[];
+  db: PouchDB.Database | undefined;
 };
 
-export const createNewSong = ({
+export const createNewSong = async ({
   name,
   formattedLyrics,
   songOrder,
-}: CreateNewSongType): ItemState => {
+  list,
+  db,
+}: CreateNewSongType): Promise<ItemState> => {
   const arrangements: Arrangment[] = [
     {
       name: "Master",
@@ -79,10 +90,12 @@ export const createNewSong = ({
     },
   ];
 
+  const _name = makeUnique({ value: name, property: "name", list });
+
   const newItem: ItemState = {
-    name,
+    name: _name,
     type: "song",
-    _id: generateRandomId(),
+    _id: _name,
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,
@@ -93,7 +106,11 @@ export const createNewSong = ({
 
   const item = formatSong(newItem);
 
-  return item;
+  console.log({ item });
+
+  const _item = await createNewItemInDb({ item, db });
+
+  return _item;
 };
 
 export const createItemFromProps = ({
@@ -106,7 +123,7 @@ export const createItemFromProps = ({
   selectedSlide,
   selectedBox,
   slides,
-}: OptionalItemState) => {
+}: OptionalItemState): ItemState => {
   const item: ItemState = {
     name,
     type,
@@ -117,9 +134,55 @@ export const createItemFromProps = ({
     selectedSlide: selectedSlide || 0,
     selectedBox: selectedBox || 1,
     slides: slides || [],
-    isEditMode: false,
   };
+
   return item;
+};
+
+type CreateNewBibleType = {
+  name: string;
+  book: string;
+  chapter: string;
+  version: string;
+  verses: verseType[];
+  db: PouchDB.Database | undefined;
+  list: ServiceItem[];
+};
+
+export const createNewBible = async ({
+  name,
+  book,
+  chapter,
+  version,
+  verses,
+  db,
+  list,
+}: CreateNewBibleType): Promise<ItemState> => {
+  const _name = makeUnique({ value: name, property: "name", list });
+
+  const newItem: ItemState = {
+    name,
+    type: "bible",
+    _id: _name,
+    selectedArrangement: 0,
+    shouldSkipTitle: false,
+    arrangements: [],
+    selectedSlide: 0,
+    selectedBox: 1,
+    slides: [],
+  };
+
+  const item = formatBible({
+    item: newItem,
+    mode: "add",
+    book,
+    chapter,
+    version,
+    verses,
+  });
+
+  const _item = await createNewItemInDb({ item, db });
+  return _item;
 };
 
 type updateFormattedSectionsType = {
@@ -197,15 +260,22 @@ export const updateFormattedSections = ({
   };
 };
 
-type CreateNewFreeFormType = { name: string };
+type CreateNewFreeFormType = {
+  name: string;
+  list: ServiceItem[];
+  db: PouchDB.Database | undefined;
+};
 
-export const createNewFreeForm = ({
+export const createNewFreeForm = async ({
   name,
-}: CreateNewFreeFormType): ItemState => {
+  list,
+  db,
+}: CreateNewFreeFormType): Promise<ItemState> => {
+  const _name = makeUnique({ value: name, property: "name", list });
   const newItem: ItemState = {
-    name,
+    name: _name,
     type: "free",
-    _id: generateRandomId(),
+    _id: _name,
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,
@@ -216,7 +286,9 @@ export const createNewFreeForm = ({
     arrangements: [],
   };
 
-  return newItem;
+  const item = await createNewItemInDb({ item: newItem, db });
+
+  return item;
 };
 
 type RetriveImagesProps = {
@@ -230,7 +302,7 @@ export const retrieveImages = ({
   const images: Media[] = [];
   for (let i = 0; i < backgrounds.length; i++) {
     let element = backgrounds[i];
-    const image = cloud.image(element.name);
+    const image = cloud.image(element.name).resize(fill().width(250));
 
     images.push({
       ...element,
@@ -239,4 +311,63 @@ export const retrieveImages = ({
     });
   }
   return images;
+};
+
+type MakeUniqueType = {
+  value: string;
+  property: string;
+  list: any[];
+};
+
+export const makeUnique = ({ value, property, list }: MakeUniqueType) => {
+  let element = list.find((e) => e[property] === value);
+
+  if (element) {
+    let counter = 1;
+    while (true) {
+      const _count = counter;
+      if (list.find((e) => e[property] === value + ` (${_count})`)) ++counter;
+      else {
+        return value + ` (${_count})`;
+      }
+    }
+  } else return value;
+};
+
+type CreateNewItemInDbType = {
+  item: ItemState;
+  db: PouchDB.Database | undefined;
+};
+export const createNewItemInDb = async ({
+  item,
+  db,
+}: CreateNewItemInDbType): Promise<ItemState> => {
+  if (!db) return item;
+  try {
+    const response: DBItem = await db.get(item._id);
+    return {
+      ...item,
+      _id: response._id,
+      name: response.name,
+      slides: response.slides,
+    };
+  } catch (error) {
+    // item does not exist
+    // db.get('allItems').then((allItems) {
+    // 	allItems.items.push(itemObj);
+    // 	allItems.items = Sort.sortNamesInList(allItems.items);
+    // 	updateState({allItems: allItems.items});
+    // 	db.put(allItems);
+    // });
+    const allItems: DBAllItems = await db.get("allItems");
+    allItems.items.push({
+      name: item.name,
+      type: item.type,
+      _id: item._id,
+      listId: item.listId || generateRandomId(),
+    });
+    db.put(allItems);
+    db.put(item);
+    return item;
+  }
 };

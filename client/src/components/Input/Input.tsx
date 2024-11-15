@@ -49,6 +49,7 @@ const Input = ({
         type={type}
         value={value}
         disabled={disabled}
+        data-ignore-undo="true"
         onChange={(e) => {
           const val = e.target.value;
           if (type === "number") {

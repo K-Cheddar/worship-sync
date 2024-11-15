@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch } from "../../hooks";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
@@ -8,10 +8,12 @@ import "./FilteredItems.scss";
 import {
   addItemToItemList,
   removeItemFromList,
+  removeItemFromListById,
 } from "../../store/itemListSlice";
 import { Link } from "react-router-dom";
 import { removeItemFromAllItemsList } from "../../store/allItemsSlice";
-import { ServiceItem } from "../../types";
+import { DBAllItems, ServiceItem } from "../../types";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -32,6 +34,8 @@ const FilteredItems = ({ list, type, heading, label }: FilteredItemsProps) => {
   const [numShownItems, setNumShownItems] = useState(20);
   const [searchValue, setSearchValue] = useState("");
   const isFullListLoaded = filteredList.length <= numShownItems;
+
+  const { db } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     setFilteredList(
@@ -57,6 +61,22 @@ const FilteredItems = ({ list, type, heading, label }: FilteredItemsProps) => {
     };
   }, []);
 
+  const deleteItem = async (item: ServiceItem) => {
+    dispatch(removeItemFromAllItemsList(item._id));
+    dispatch(removeItemFromListById(item._id));
+    if (db) {
+      try {
+        const doc = await db.get(item._id);
+        db.remove(doc);
+        const allItemsDoc: DBAllItems = await db.get("allItems");
+        allItemsDoc.items = allItemsDoc.items.filter((i) => i._id !== item._id);
+        db.put(allItemsDoc);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+  };
+
   return (
     <div className="px-2 py-4 h-full">
       <h2 className="text-2xl text-center mb-2 md:w-2/3 ">{heading}</h2>
@@ -66,6 +86,7 @@ const FilteredItems = ({ list, type, heading, label }: FilteredItemsProps) => {
           onChange={(val) => setSearchValue(val as string)}
           label="Search"
           className="md:w-2/3 text-base flex gap-2 items-center mb-4 px-6"
+          data-ignore-undo="true"
         />
       </div>
       <ul className="filtered-items-list">
@@ -92,10 +113,7 @@ const FilteredItems = ({ list, type, heading, label }: FilteredItemsProps) => {
                 svg={DeleteSVG}
                 variant="tertiary"
                 color="red"
-                onClick={() => {
-                  dispatch(removeItemFromAllItemsList(item._id));
-                  // dispatch(removeItemFromList(item._id));
-                }}
+                onClick={() => deleteItem(item)}
               />
             </li>
           );

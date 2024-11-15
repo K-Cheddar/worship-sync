@@ -1,7 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import Select from "../../components/Select/Select";
-import { ReactComponent as SendSVG } from "../../assets/icons/send.svg";
-
 import "./Bible.scss";
 import BibleSection from "./BibleSection";
 import { bibleType, bookType, chapterType, verseType } from "../../types";
@@ -31,8 +29,9 @@ import {
   updateBibleDisplayInfo,
   updatePresentation,
 } from "../../store/presentationSlice";
-import { createItemFromProps } from "../../utils/itemUtil";
+import { createItemFromProps, createNewBible } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 const Bible = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -61,9 +60,12 @@ const Bible = () => {
     isStreamTransmitting,
   } = useSelector((state) => state.presentation);
 
+  const { list } = useSelector((state) => state.allItems);
+
   const createItemName = decodeURI(searchParams.get("name") || "");
 
   const { db } = useContext(BibleDbContext) || {};
+  const { db: c_db } = useContext(GlobalInfoContext) || {};
   const bibleItemName = useMemo(() => {
     const bookName = books[book]?.name || "";
     const chapterName = chapters[chapter]?.name || "";
@@ -155,20 +157,19 @@ const Bible = () => {
     return { value, label };
   });
 
-  const submitVerses = () => {
-    const item = formatBible({
-      item: createItemFromProps({
-        name: createItemName || bibleItemName,
-        type: "bible",
-      }),
-      mode: "add",
+  const submitVerses = async () => {
+    const item = await createNewBible({
+      name: createItemName || bibleItemName,
       book: books[book].name,
       chapter: chapters[chapter].name,
       version,
       verses: verses.filter(
         ({ index }) => index >= startVerse && index <= endVerse
       ),
+      db: c_db,
+      list,
     });
+
     dispatch(
       addItemToItemList({ ...item, _id: item._id, listId: generateRandomId() })
     );
@@ -176,11 +177,12 @@ const Bible = () => {
   };
 
   const sendVerse = (verse: verseType) => {
+    const _item = createItemFromProps({
+      name: createItemName || bibleItemName,
+      type: "bible",
+    });
     const item = formatBible({
-      item: createItemFromProps({
-        name: createItemName || bibleItemName,
-        type: "bible",
-      }),
+      item: _item,
       mode: "fit",
       book: books[book].name,
       chapter: chapters[chapter].name,

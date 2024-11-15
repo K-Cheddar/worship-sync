@@ -7,6 +7,7 @@ import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import { useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
+import generateRandomId from "../../utils/generateRandomId";
 
 type ArrangementProps = {
   arrangement: Arrangment;
@@ -63,7 +64,7 @@ const Arrangement = ({
               const newArrangement = {
                 ...arrangement,
                 name: arrangement.name + " copy",
-                id: localArrangements.length.toString(),
+                id: generateRandomId(),
               };
               copiedArrangements.push(newArrangement);
               setLocalArrangements(copiedArrangements);
@@ -88,6 +89,7 @@ const Arrangement = ({
             onChange={(value) => setValue(value as string)}
             hideLabel
             className="text-sm"
+            data-ignore-undo="true"
           />
         ) : (
           <Button

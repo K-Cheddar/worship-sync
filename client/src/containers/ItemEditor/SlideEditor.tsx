@@ -204,6 +204,7 @@ const SlideEditor = () => {
               className="slide-editor-song-name"
               value={localName}
               onChange={(val) => setLocalName(val as string)}
+              data-ignore-undo="true"
             />
           )}
         </span>

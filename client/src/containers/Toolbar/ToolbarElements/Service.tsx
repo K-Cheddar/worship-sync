@@ -36,6 +36,7 @@ const Service = ({
         <Input
           className="text-lg flex-1"
           label="Edit List Name"
+          data-ignore-undo="true"
           hideLabel
           value={name}
           onChange={(val) => setName(val as string)}

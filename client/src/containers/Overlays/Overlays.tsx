@@ -145,6 +145,7 @@ const Overlays = () => {
                       label="Name"
                       value={localName}
                       onChange={(val) => setLocalName(val as string)}
+                      data-ignore-undo="true"
                     />
                     <Input
                       className="text-sm flex gap-2 items-center"
@@ -153,6 +154,7 @@ const Overlays = () => {
                       disabled={localType === "stick-to-bottom"}
                       value={localTitle}
                       onChange={(val) => setLocalTitle(val as string)}
+                      data-ignore-undo="true"
                     />
                     <Input
                       className="text-sm flex gap-2 items-center"
@@ -160,6 +162,7 @@ const Overlays = () => {
                       label="Event"
                       value={localEvent}
                       onChange={(val) => setLocalEvent(val as string)}
+                      data-ignore-undo="true"
                     />
                     <Input
                       className="text-sm flex gap-2 items-center"
@@ -168,6 +171,7 @@ const Overlays = () => {
                       value={localDuration}
                       type="number"
                       onChange={(val) => setLocalDuration(val as number)}
+                      data-ignore-undo="true"
                     />
                     <h4 className="text-center text-base">Type:</h4>
                     <div className="flex gap-2 justify-center">

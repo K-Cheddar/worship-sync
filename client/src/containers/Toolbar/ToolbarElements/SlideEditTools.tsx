@@ -80,6 +80,7 @@ const SlideEditTools = () => {
           onChange={(val) => _updateFontSize(val as number)}
           className="w-10"
           hideLabel
+          data-ignore-undo="true"
         />
         <Button
           svg={AddSVG}
@@ -105,6 +106,7 @@ const SlideEditTools = () => {
           onChange={(val) => _updateBrightness(val as number)}
           className="w-10"
           hideLabel
+          data-ignore-undo="true"
           max={100}
           min={1}
         />

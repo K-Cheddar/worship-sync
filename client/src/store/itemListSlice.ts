@@ -30,6 +30,11 @@ export const itemListSlice = createSlice({
         return item.listId !== action.payload;
       });
     },
+    removeItemFromListById: (state, action: PayloadAction<string>) => {
+      state.list = state.list.filter((item) => {
+        return item._id !== action.payload;
+      });
+    },
     addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
       if (action.payload.listId) {
         state.list.push(action.payload);
@@ -49,6 +54,7 @@ export const {
   addItemToItemList,
   initiateItemList,
   setItemListIsLoading,
+  removeItemFromListById,
 } = itemListSlice.actions;
 
 export default itemListSlice.reducer;

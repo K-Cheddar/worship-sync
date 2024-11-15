@@ -64,6 +64,7 @@ const BibleSection = ({
       className={`flex flex-col gap-2 ${type === "book" ? "w-1/5" : "w-14"}`}
     >
       <Input
+        data-ignore-undo="true"
         value={searchValue}
         onChange={(val) => setSearchValue(val as string)}
         label={type}

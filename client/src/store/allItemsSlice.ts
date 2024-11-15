@@ -20,7 +20,7 @@ export const allItemsSlice = createSlice({
       state.list = action.payload;
     },
     removeItemFromAllItemsList: (state, action: PayloadAction<string>) => {
-      state.list = state.list.filter((item) => item["_id"] !== action.payload);
+      state.list = state.list.filter((item) => item._id !== action.payload);
     },
     addItemToAllItemsList: (state, action: PayloadAction<ServiceItem>) => {
       state.list.push(action.payload);

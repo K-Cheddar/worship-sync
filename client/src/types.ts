@@ -64,9 +64,8 @@ export type QuickLinkType = {
 export type DBItem = {
   _id: string;
   name: string;
-  background: string;
   selectedArrangement: number;
-  skipTitle: boolean;
+  skipTitle?: boolean;
   type: string;
   slides: ItemSlide[];
   arrangements: {
