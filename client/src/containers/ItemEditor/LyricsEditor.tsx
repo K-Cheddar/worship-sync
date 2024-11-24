@@ -5,11 +5,7 @@ import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
 
 import Button from "../../components/Button/Button";
 import { useEffect, useMemo, useState } from "react";
-import {
-  toggleEditMode,
-  updateArrangements,
-  setSelectedArrangement,
-} from "../../store/itemSlice";
+import { toggleEditMode, updateArrangements } from "../../store/itemSlice";
 
 import {
   increaseFormattedLyrics,
@@ -24,7 +20,6 @@ import { FormattedLyrics as FormattedLyricsType, SongOrder } from "../../types";
 import { sectionTypes } from "../../utils/slideColorMap";
 import Arrangement from "./Arrangement";
 import { updateFormattedSections } from "../../utils/itemUtil";
-import generateRandomId from "../../utils/generateRandomId";
 import { sortList } from "../../utils/sort";
 import { formatSong } from "../../utils/overflow";
 import { createSections as createSectionsUtil } from "../../utils/itemUtil";
@@ -144,8 +139,6 @@ const LyricsEditor = () => {
 
   const save = () => {
     dispatch(toggleEditMode());
-    dispatch(setSelectedArrangement(localSelectedArrangement));
-
     const _arrangements = [...localArrangements];
 
     _arrangements[localSelectedArrangement] = {
@@ -158,7 +151,12 @@ const LyricsEditor = () => {
       arrangements: _arrangements,
       selectedArrangement: localSelectedArrangement,
     });
-    dispatch(updateArrangements(_item.arrangements));
+    dispatch(
+      updateArrangements({
+        arrangements: _item.arrangements,
+        selectedArrangement: localSelectedArrangement,
+      })
+    );
   };
 
   const createSections = () => {

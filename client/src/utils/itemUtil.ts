@@ -9,9 +9,11 @@ import {
   ServiceItem,
   DBItem,
   DBAllItems,
-  BibleDisplayInfo,
-  ItemSlide,
   verseType,
+  ItemList,
+  DBItemListDetails,
+  DBItemList,
+  ItemListDetails,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatBible, formatSong } from "./overflow";
@@ -68,6 +70,7 @@ type CreateNewSongType = {
   name: string;
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
+  selectedList: ItemList;
 };
 
 export const createNewSong = async ({
@@ -76,6 +79,7 @@ export const createNewSong = async ({
   songOrder,
   list,
   db,
+  selectedList,
 }: CreateNewSongType): Promise<ItemState> => {
   const arrangements: Arrangment[] = [
     {
@@ -106,9 +110,7 @@ export const createNewSong = async ({
 
   const item = formatSong(newItem);
 
-  console.log({ item });
-
-  const _item = await createNewItemInDb({ item, db });
+  const _item = await createNewItemInDb({ item, db, selectedList });
 
   return _item;
 };
@@ -147,6 +149,7 @@ type CreateNewBibleType = {
   verses: verseType[];
   db: PouchDB.Database | undefined;
   list: ServiceItem[];
+  selectedList: ItemList;
 };
 
 export const createNewBible = async ({
@@ -157,6 +160,7 @@ export const createNewBible = async ({
   verses,
   db,
   list,
+  selectedList,
 }: CreateNewBibleType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
 
@@ -181,7 +185,7 @@ export const createNewBible = async ({
     verses,
   });
 
-  const _item = await createNewItemInDb({ item, db });
+  const _item = await createNewItemInDb({ item, db, selectedList });
   return _item;
 };
 
@@ -264,12 +268,14 @@ type CreateNewFreeFormType = {
   name: string;
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
+  selectedList: ItemList;
 };
 
 export const createNewFreeForm = async ({
   name,
   list,
   db,
+  selectedList,
 }: CreateNewFreeFormType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
   const newItem: ItemState = {
@@ -286,7 +292,7 @@ export const createNewFreeForm = async ({
     arrangements: [],
   };
 
-  const item = await createNewItemInDb({ item: newItem, db });
+  const item = await createNewItemInDb({ item: newItem, db, selectedList });
 
   return item;
 };
@@ -302,7 +308,8 @@ export const retrieveImages = ({
   const images: Media[] = [];
   for (let i = 0; i < backgrounds.length; i++) {
     let element = backgrounds[i];
-    const image = cloud.image(element.name).resize(fill().width(250));
+    // const image = cloud.image(element.name).resize(fill().width(250));
+    const image = cloud.image(element.name);
 
     images.push({
       ...element,
@@ -337,10 +344,12 @@ export const makeUnique = ({ value, property, list }: MakeUniqueType) => {
 type CreateNewItemInDbType = {
   item: ItemState;
   db: PouchDB.Database | undefined;
+  selectedList: ItemList;
 };
 export const createNewItemInDb = async ({
   item,
   db,
+  selectedList,
 }: CreateNewItemInDbType): Promise<ItemState> => {
   if (!db) return item;
   try {
@@ -359,15 +368,97 @@ export const createNewItemInDb = async ({
     // 	updateState({allItems: allItems.items});
     // 	db.put(allItems);
     // });
-    const allItems: DBAllItems = await db.get("allItems");
-    allItems.items.push({
-      name: item.name,
-      type: item.type,
-      _id: item._id,
-      listId: item.listId || generateRandomId(),
-    });
-    db.put(allItems);
     db.put(item);
     return item;
+  }
+};
+
+type UpdateItemInListType = {
+  property: string;
+  value: any;
+  id: string;
+  list: any[];
+};
+
+export const updateItemInList = ({
+  property,
+  value,
+  list,
+  id,
+}: UpdateItemInListType) => {
+  return list.map((i) => {
+    if (i._id === id) {
+      return {
+        ...i,
+        [property]: value,
+      };
+    }
+    return i;
+  });
+};
+
+type CreateNewItemList = {
+  db: PouchDB.Database | undefined;
+  name: string;
+  currentLists: ItemList[];
+};
+export const createNewItemList = async ({
+  db,
+  name,
+  currentLists,
+}: CreateNewItemList): Promise<ItemList> => {
+  const newName = makeUnique({
+    value: name,
+    property: "name",
+    list: currentLists,
+  });
+  const list: ItemList = {
+    name: newName,
+    id: newName,
+  };
+  if (!db) return list;
+  try {
+    const response: DBItemListDetails = await db.get(list.id);
+    return {
+      id: response._id,
+      name: response.name,
+    };
+  } catch (error) {
+    db.put(list);
+    return { id: list.id, name: list.name };
+  }
+};
+
+type CreateItemListFromExisting = {
+  db: PouchDB.Database | undefined;
+  currentLists: ItemList[];
+  selectedList: ItemList;
+};
+
+export const createItemListFromExisting = async ({
+  db,
+  currentLists,
+  selectedList,
+}: CreateItemListFromExisting): Promise<ItemList | null> => {
+  if (!db) return null;
+
+  try {
+    const response: DBItemListDetails = await db.get(selectedList.id);
+    const name = makeUnique({
+      value: selectedList.name,
+      property: "name",
+      list: currentLists,
+    });
+    const list: ItemListDetails = {
+      _id: name,
+      name,
+      items: response.items,
+      overlays: response.overlays,
+    };
+    db.put(list);
+    return { id: list._id, name: list.name };
+  } catch (error) {
+    console.error(error);
+    return null;
   }
 };

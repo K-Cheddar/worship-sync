@@ -9,9 +9,14 @@ export interface MenuItemProps
 }
 
 const MenuItem = ({ children, onClick, to }: MenuItemProps) => {
-  const innerClasses = "px-3 py-2 h-full w-full";
+  const innerClasses = "px-3 py-2 h-full w-full block";
+  const isLinkOrButton = to || onClick;
   return (
-    <li className="bg-slate-200 font-semibold hover:bg-slate-300 active:bg-slate-400 cursor-pointer w-full  text-sm text-black">
+    <li
+      className={`bg-slate-200 font-semibold hover:bg-slate-300 active:bg-slate-400 cursor-pointer w-full text-sm text-black ${
+        !isLinkOrButton && "px-3 py-2"
+      }`}
+    >
       {onClick && (
         <button className={innerClasses} onClick={onClick}>
           {children}

@@ -62,6 +62,10 @@ const Bible = () => {
 
   const { list } = useSelector((state) => state.allItems);
 
+  const { selectedList } = useSelector(
+    (state: any) => state.undoable.present.itemLists
+  );
+
   const createItemName = decodeURI(searchParams.get("name") || "");
 
   const { db } = useContext(BibleDbContext) || {};
@@ -168,6 +172,7 @@ const Bible = () => {
       ),
       db: c_db,
       list,
+      selectedList,
     });
 
     dispatch(

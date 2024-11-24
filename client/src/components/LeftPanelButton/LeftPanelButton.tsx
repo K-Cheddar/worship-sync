@@ -18,10 +18,14 @@ type LeftPanelButtonProps = {
     svg: FunctionComponent<{}>;
     id: string;
   }[];
+  image?: string;
 };
 
 const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
-  ({ isSelected, to, title, type, actions, id, style, ...rest }, ref) => {
+  (
+    { isSelected, to, title, type, actions, id, style, image, ...rest },
+    ref
+  ) => {
     return (
       <li
         ref={ref}
@@ -38,13 +42,14 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           className={`left-panel-button ${borderColorMap.get(type)}`}
           wrap
           svg={svgMap.get(type) || UnknownSVG}
-          gap="gap-3"
+          gap="gap-2"
           color={iconColorMap.get(type)}
           isSelected={isSelected}
           iconSize="md"
           padding="py-1 px-2"
         >
-          <p className="font-semibold">{title}</p>
+          {image && <img src={image} className="w-10" alt="" />}
+          <p className="font-semibold pl-1">{title}</p>
           <Link
             to={to}
             className="font-semibold w-full h-full flex items-center absolute left-0"

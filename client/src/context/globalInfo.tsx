@@ -11,6 +11,8 @@ export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
   null
 );
 
+export let globalDb: PouchDB.Database | undefined = undefined;
+
 const GlobalInfoProvider = ({ children }: any) => {
   const [db, setDb] = useState<PouchDB.Database | undefined>(undefined);
   const [cloud, setCloud] = useState<Cloudinary | undefined>(undefined);
@@ -20,13 +22,14 @@ const GlobalInfoProvider = ({ children }: any) => {
       const database = "demo";
       let remoteURL =
         process.env.REACT_APP_DATABASE_STRING + "portable-media-" + database;
-      const globalInfo = new PouchDB(remoteURL);
+      const remoteDb = new PouchDB(remoteURL);
       const localDb = new PouchDB("portable-media");
 
-      globalInfo.replicate
+      remoteDb.replicate
         .to(localDb, { retry: true })
         .on("complete", function (info) {
           setDb(localDb);
+          globalDb = localDb;
           console.log("Replication completed");
         });
     };

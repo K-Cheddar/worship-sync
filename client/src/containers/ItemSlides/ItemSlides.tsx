@@ -48,7 +48,7 @@ const ItemSlides = () => {
     isLoading,
   } = useSelector((state) => state.undoable.present.item);
   const arrangement = arrangements[selectedArrangement];
-  const _slides = __slides || arrangement?.slides || [];
+  const _slides = arrangement?.slides || __slides || [];
   const slides = isLoading ? [] : _slides;
   const size = useSelector((state) => state.preferences.slidesPerRow);
   const dispatch = useDispatch();
@@ -110,7 +110,7 @@ const ItemSlides = () => {
       fontSize: 2.5,
       words: [""],
     });
-    dispatch(addSlideAction(slide));
+    dispatch(addSlideAction({ slide }));
   };
 
   const onDragEnd = (event: DragEndEvent) => {
@@ -125,7 +125,7 @@ const ItemSlides = () => {
     const element = slides[oldIndex];
     updatedSlides.splice(oldIndex, 1);
     updatedSlides.splice(newIndex, 0, element);
-    dispatch(updateSlides(updatedSlides));
+    dispatch(updateSlides({ slides: updatedSlides }));
   };
 
   const advanceSlide = () => {
@@ -164,7 +164,9 @@ const ItemSlides = () => {
             <Button
               variant="tertiary"
               svg={DeleteSVG}
-              onClick={() => dispatch(removeSlide(selectedSlide))}
+              onClick={() => {
+                dispatch(removeSlide({ index: selectedSlide }));
+              }}
             />
           </>
         )}

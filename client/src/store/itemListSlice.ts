@@ -36,6 +36,7 @@ export const itemListSlice = createSlice({
       });
     },
     addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
+      console.log("addItemToItemList", action.payload);
       if (action.payload.listId) {
         state.list.push(action.payload);
       } else {

@@ -56,6 +56,7 @@ const ServiceItem = ({ item, listId, location }: ServiceItemsProps) => {
         encodeURI(item.listId)
       )}`}
       type={item.type}
+      image={item.background}
       actions={actions}
       id={item.listId}
     />

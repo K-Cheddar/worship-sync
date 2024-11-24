@@ -5,18 +5,18 @@ import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
 import { ReactComponent as CollapseSVG } from "../../assets/icons/collapse.svg";
 import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
+import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import Input from "../../components/Input/Input";
 import "./ItemEditor.scss";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { borderColorMap } from "../../utils/itemTypeMaps";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useDispatch, useSelector } from "../../hooks";
 import { toggleEditMode, updateArrangements } from "../../store/itemSlice";
 import { setName, updateBoxes } from "../../store/itemSlice";
-import { updateItemList } from "../../store/itemListSlice";
-import { updateAllItemsList } from "../../store/allItemsSlice";
 import { formatSong } from "../../utils/overflow";
 import { Box } from "../../types";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 const SlideEditor = () => {
   const item = useSelector((state) => state.undoable.present.item);
@@ -29,12 +29,12 @@ const SlideEditor = () => {
     slides,
     isLoading,
   } = item;
-  const { list } = useSelector((state) => state.undoable.present.itemList);
-  const { list: allItemsList } = useSelector((state) => state.allItems);
   const [showEditor, setShowEditor] = useState(true);
   const [isEditingName, setIsEditingName] = useState(false);
   const [localName, setLocalName] = useState(name);
   const arrangement = arrangements[selectedArrangement];
+
+  const { db } = useContext(GlobalInfoContext) || {};
 
   const dispatch = useDispatch();
 
@@ -44,30 +44,9 @@ const SlideEditor = () => {
 
   const saveName = () => {
     setIsEditingName(false);
-    dispatch(setName(localName));
-
-    const updatedList = list.map((item) => {
-      if (item.name === name) {
-        return {
-          ...item,
-          name: localName,
-        };
-      }
-      return item;
-    });
-
-    const updatedAllItemsList = allItemsList.map((item) => {
-      if (item.name === name) {
-        return {
-          ...item,
-          name: localName,
-        };
-      }
-      return item;
-    });
-
-    dispatch(updateAllItemsList(updatedAllItemsList));
-    dispatch(updateItemList(updatedList));
+    if (db) {
+      dispatch(setName({ name: localName }));
+    }
   };
 
   const onChange = ({
@@ -81,13 +60,12 @@ const SlideEditor = () => {
     box: Box;
     cursorPosition: number;
   }) => {
-    if (type === "bible") return;
+    if (type === "bible" || !db) return;
+    const newBoxes = boxes.map((b, i) =>
+      i === index ? { ...b, words: value } : b
+    );
     if (type === "free") {
-      dispatch(
-        updateBoxes(
-          boxes.map((b, i) => (i === index ? { ...b, words: value } : b))
-        )
-      );
+      dispatch(updateBoxes({ boxes: newBoxes }));
       return;
     }
     if (type === "song") {
@@ -96,11 +74,7 @@ const SlideEditor = () => {
         selectedSlide === 0 ||
         selectedSlide === arrangements[selectedArrangement]?.slides?.length - 1
       ) {
-        dispatch(
-          updateBoxes(
-            boxes.map((b, i) => (i === index ? { ...b, words: value } : b))
-          )
-        );
+        dispatch(updateBoxes({ boxes: newBoxes }));
       } else {
         const formattedLyrics =
           item.arrangements[item.selectedArrangement].formattedLyrics;
@@ -148,7 +122,7 @@ const SlideEditor = () => {
             selectedArrangement,
           });
 
-          dispatch(updateArrangements(_item.arrangements));
+          dispatch(updateArrangements({ arrangements: _item.arrangements }));
           setTimeout(() => {
             const textBoxElement = document.getElementById(
               `display-box-text-${index}`
@@ -158,7 +132,7 @@ const SlideEditor = () => {
               textBoxElement.selectionStart = cursorPosition;
               textBoxElement.scrollTop = 0;
             }
-          });
+          }, 10);
         }
       }
     }
@@ -179,9 +153,17 @@ const SlideEditor = () => {
             type
           )}`}
         >
+          {isEditingName && (
+            <Button
+              variant="tertiary"
+              padding="px-2"
+              svg={CloseSVG}
+              onClick={() => setIsEditingName(false)}
+            />
+          )}
           <Button
             variant="tertiary"
-            padding="px-4"
+            padding="px-2"
             disabled={isLoading}
             svg={isEditingName ? CheckSVG : EditSVG}
             onClick={
@@ -250,15 +232,15 @@ const SlideEditor = () => {
                     svg={box.isLocked ? LockSVG : UnlockSVG}
                     color={box.isLocked ? "gray" : "green"}
                     variant="tertiary"
-                    onClick={() =>
+                    onClick={() => {
                       dispatch(
-                        updateBoxes(
-                          boxes.map((b, i) =>
+                        updateBoxes({
+                          boxes: boxes.map((b, i) =>
                             i === index ? { ...b, isLocked: !b.isLocked } : b
-                          )
-                        )
-                      )
-                    }
+                          ),
+                        })
+                      );
+                    }}
                   />
                 </span>
               );

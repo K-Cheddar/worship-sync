@@ -3,10 +3,12 @@ import { ServiceItem } from "../types";
 
 type AllItems = {
   list: ServiceItem[];
+  isAllItemsLoading: boolean;
 };
 
 const initialState: AllItems = {
   list: [],
+  isAllItemsLoading: true,
 };
 
 export const allItemsSlice = createSlice({
@@ -18,6 +20,7 @@ export const allItemsSlice = createSlice({
     },
     initiateAllItemsList: (state, action: PayloadAction<ServiceItem[]>) => {
       state.list = action.payload;
+      state.isAllItemsLoading = false;
     },
     removeItemFromAllItemsList: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((item) => item._id !== action.payload);

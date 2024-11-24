@@ -1,5 +1,10 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { Arrangment, Box, ItemSlide, ItemState } from "../types";
+import { createAsyncThunk } from "../hooks/reduxHooks";
+import { updateAllItemsList } from "./allItemsSlice";
+import { updateItemList } from "./itemListSlice";
+import { updateItemInList } from "../utils/itemUtil";
+import { AppDispatch, RootState } from "./store";
 
 const initialState: ItemState = {
   isEditMode: false,
@@ -9,6 +14,7 @@ const initialState: ItemState = {
   listId: "",
   selectedArrangement: 0,
   shouldSkipTitle: false,
+  background: "",
   arrangements: [],
   selectedSlide: 0,
   slides: [],
@@ -41,97 +47,287 @@ export const itemSlice = createSlice({
     toggleEditMode: (state) => {
       state.isEditMode = !state.isEditMode;
     },
-    setName: (state, action: PayloadAction<string>) => {
+    _setName: (state, action: PayloadAction<string>) => {
       state.name = action.payload;
     },
     setSelectedSlide: (state, action: PayloadAction<number>) => {
       state.selectedSlide = action.payload;
     },
-    setSelectedArrangement: (state, action: PayloadAction<number>) => {
+    _setSelectedArrangement: (state, action: PayloadAction<number>) => {
       state.selectedArrangement = action.payload;
     },
-    updateBoxes: (state, action: PayloadAction<Box[]>) => {
-      if (state.arrangements[state.selectedArrangement]?.slides?.length > 0) {
-        state.arrangements[state.selectedArrangement].slides[
-          state.selectedSlide
-        ].boxes = [...action.payload];
-      }
-
-      state.slides[state.selectedSlide].boxes = [...action.payload];
-    },
-    updateArrangements: (state, action: PayloadAction<Arrangment[]>) => {
+    _updateArrangements: (state, action: PayloadAction<Arrangment[]>) => {
       state.arrangements = [...action.payload];
-      state.slides = [...action.payload[state.selectedArrangement].slides];
     },
-    updateAllSlideBackgrounds: (state, action: PayloadAction<string>) => {
-      const arrangementSlides =
-        state.arrangements[state.selectedArrangement]?.slides;
-      const mapSlides = (slides: ItemSlide[]) => {
-        return slides.map((slide) => {
-          return {
-            ...slide,
-            boxes: [
-              ...slide.boxes.map((box, index) => {
-                if (index === 0) {
-                  return { ...box, background: action.payload };
-                }
-                return box;
-              }),
-            ],
-          };
-        });
-      };
-      if (arrangementSlides) {
-        const updatedSlides = mapSlides(arrangementSlides);
-        state.arrangements[state.selectedArrangement].slides = [
-          ...updatedSlides,
-        ];
-      }
-      state.slides = mapSlides(state.slides);
-    },
-    updateSlideBackground: (state, action: PayloadAction<string>) => {
-      const arrangementSlides =
-        state.arrangements[state.selectedArrangement]?.slides;
-
-      if (arrangementSlides) {
-        state.arrangements[state.selectedArrangement].slides[
-          state.selectedSlide
-        ].boxes[0].background = action.payload;
-      }
-
-      state.slides[state.selectedSlide].boxes[0].background = action.payload;
-    },
-    addSlide: (state, action: PayloadAction<ItemSlide>) => {
-      state.slides = [...state.slides, action.payload];
-    },
-    removeSlide: (state, action: PayloadAction<number>) => {
-      state.slides = state.slides.filter(
-        (_, index) => index !== action.payload
-      );
-    },
-    updateSlides: (state, action: PayloadAction<ItemSlide[]>) => {
+    _updateSlides: (state, action: PayloadAction<ItemSlide[]>) => {
       state.slides = [...action.payload];
     },
     setItemIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
     },
+    setBackground: (state, action: PayloadAction<string>) => {
+      state.background = action.payload;
+    },
   },
 });
 
+type UpdateItemInListsType = {
+  value: any;
+  property: string;
+  state: RootState;
+  dispatch: AppDispatch;
+};
+const _updateItemInLists = ({
+  value,
+  property,
+  state,
+  dispatch,
+}: UpdateItemInListsType) => {
+  const { list } = state.undoable.present.itemList;
+  const { list: allItemsList } = state.allItems;
+  const { _id } = state.undoable.present.item;
+
+  const updatedList = updateItemInList({
+    property,
+    value,
+    id: _id,
+    list,
+  });
+  const updatedAllItemsList = updateItemInList({
+    property,
+    value,
+    id: _id,
+    list: allItemsList,
+  });
+
+  dispatch(updateAllItemsList(updatedAllItemsList));
+  dispatch(updateItemList(updatedList));
+};
+
+export const setName = createAsyncThunk(
+  "item/updateName",
+  async (args: { name: string }, { dispatch, getState }) => {
+    const newName = args.name;
+
+    const state = getState();
+
+    dispatch(_setName(newName));
+
+    _updateItemInLists({
+      value: newName,
+      property: "name",
+      state,
+      dispatch,
+    });
+  }
+);
+
+export const setSelectedArrangement = createAsyncThunk(
+  "item/setSelectedArrangement",
+  async (args: { selectedArrangement: number }, { dispatch }) => {
+    dispatch(_setSelectedArrangement(args.selectedArrangement));
+  }
+);
+
+export const updateBoxes = createAsyncThunk(
+  "item/updateBoxes",
+  async (args: { boxes: Box[] }, { dispatch, getState }) => {
+    const item = getState().undoable.present.item;
+    let arrangements = [...item.arrangements];
+    if (item.arrangements[item.selectedArrangement]?.slides?.length > 0) {
+      arrangements = arrangements.map((arrangement, index) => {
+        if (index !== item.selectedArrangement) return arrangement;
+        return {
+          ...arrangement,
+          slides: [
+            ...arrangement.slides.map((slide, slideIndex) => {
+              if (slideIndex !== item.selectedSlide) return slide;
+              return { ...slide, boxes: [...args.boxes] };
+            }),
+          ],
+        };
+      });
+    }
+
+    const slides = item.slides.map((slide, index) => {
+      if (index !== item.selectedSlide) return slide;
+      return { ...slide, boxes: [...args.boxes] };
+    });
+
+    dispatch(_updateArrangements(arrangements));
+    dispatch(_updateSlides(slides));
+  }
+);
+
+export const updateArrangements = createAsyncThunk(
+  "item/updateArrangements",
+  async (
+    args: {
+      arrangements: Arrangment[];
+      selectedArrangement?: number;
+    },
+    { dispatch, getState }
+  ) => {
+    const { selectedArrangement: currentArrangement } =
+      getState().undoable.present.item;
+    const { selectedArrangement, arrangements } = args;
+    dispatch(_updateArrangements(arrangements));
+    if (selectedArrangement !== undefined) {
+      dispatch(_setSelectedArrangement(selectedArrangement));
+    }
+    dispatch(
+      _updateSlides(
+        arrangements[selectedArrangement || currentArrangement].slides
+      )
+    );
+  }
+);
+
+export const updateAllSlideBackgrounds = createAsyncThunk(
+  "item/updateAllSlideBackgrounds",
+  async (args: { background: string }, { dispatch, getState }) => {
+    const state = getState();
+    const item = state.undoable.present.item;
+
+    const arrangementSlides =
+      item.arrangements[item.selectedArrangement]?.slides;
+    const mapSlides = (slides: ItemSlide[]) => {
+      return slides.map((slide) => {
+        return {
+          ...slide,
+          boxes: [
+            ...slide.boxes.map((box, index) => {
+              if (index === 0) {
+                return { ...box, background: args.background };
+              }
+              return box;
+            }),
+          ],
+        };
+      });
+    };
+    let arrangements = [...item.arrangements];
+    if (arrangementSlides) {
+      const updatedSlides = mapSlides(arrangementSlides);
+      arrangements = arrangements.map((arrangement, index) => {
+        if (index !== item.selectedArrangement) return arrangement;
+        return {
+          ...arrangement,
+          slides: [...updatedSlides],
+        };
+      });
+    }
+    const slides = mapSlides(item.slides);
+
+    dispatch(_updateSlides(slides));
+    dispatch(_updateArrangements(arrangements));
+    dispatch(setBackground(args.background));
+
+    _updateItemInLists({
+      value: args.background,
+      property: "background",
+      state,
+      dispatch,
+    });
+  }
+);
+
+export const updateSlideBackground = createAsyncThunk(
+  "item/updateSlideBackground",
+  async (args: { background: string }, { dispatch, getState }) => {
+    console.log("slides update");
+    const state = getState();
+    const item = state.undoable.present.item;
+
+    const arrangementSlides =
+      item.arrangements[item.selectedArrangement]?.slides;
+
+    let arrangements = [...item.arrangements];
+
+    if (arrangementSlides) {
+      arrangements = arrangements.map((arrangement, index) => {
+        if (index !== item.selectedArrangement) return arrangement;
+        return {
+          ...arrangement,
+          slides: [
+            ...arrangement.slides.map((slide, slideIndex) => {
+              if (slideIndex !== item.selectedSlide) return slide;
+              return {
+                ...slide,
+                boxes: slide.boxes.map((box, index) => {
+                  if (index !== 0) return box;
+                  return { ...box, background: args.background };
+                }),
+              };
+            }),
+          ],
+        };
+      });
+    }
+
+    const slides = item.slides.map((slide, index) => {
+      if (index !== item.selectedSlide) return slide;
+      return {
+        ...slide,
+        boxes: slide.boxes.map((box, index) => {
+          if (index !== 0) return box;
+          return { ...box, background: args.background };
+        }),
+      };
+    });
+
+    dispatch(_updateSlides(slides));
+    dispatch(_updateArrangements(arrangements));
+
+    if (item.selectedSlide === 0) {
+      dispatch(setBackground(args.background));
+      _updateItemInLists({
+        value: args.background,
+        property: "background",
+        state,
+        dispatch,
+      });
+    }
+  }
+);
+
+export const addSlide = createAsyncThunk(
+  "item/addSlide",
+  async (args: { slide: ItemSlide }, { dispatch, getState }) => {
+    const item = getState().undoable.present.item;
+    const newSlides = [...item.slides, args.slide];
+    dispatch(updateSlides({ slides: newSlides }));
+  }
+);
+
+export const removeSlide = createAsyncThunk(
+  "item/removeSlide",
+  async (args: { index: number }, { dispatch, getState }) => {
+    const item = getState().undoable.present.item;
+    const newSlides = (item.slides = item.slides.filter(
+      (_, index) => index !== args.index
+    ));
+    dispatch(updateSlides({ slides: newSlides }));
+  }
+);
+
+export const updateSlides = createAsyncThunk(
+  "item/updateSlides",
+  async (args: { slides: ItemSlide[] }, { dispatch }) => {
+    dispatch(_updateSlides(args.slides));
+  }
+);
+
 export const {
   setSelectedSlide,
-  setSelectedArrangement,
+  _setSelectedArrangement,
   toggleEditMode,
-  setName,
-  updateBoxes,
-  updateArrangements,
+  _setName,
+  _updateArrangements,
   setActiveItem,
-  updateAllSlideBackgrounds,
-  updateSlideBackground,
-  addSlide,
-  removeSlide,
   setItemIsLoading,
-  updateSlides,
+  _updateSlides,
+  setBackground,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

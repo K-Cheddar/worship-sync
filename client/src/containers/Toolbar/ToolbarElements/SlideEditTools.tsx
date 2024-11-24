@@ -49,7 +49,6 @@ const SlideEditTools = () => {
 
   const _updateKeepAspectRatio = (val: boolean) => {
     setShouldKeepAspectRatio(val);
-    console.log({ item });
     const updatedItem = updateKeepAspectRatio({
       shouldKeepAspectRatio: val,
       item,

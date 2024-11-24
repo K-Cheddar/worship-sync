@@ -5,5 +5,5 @@
 .media-items {
   scrollbar-width: thin;
 
-  @apply grid grid-cols-4 overflow-y-auto px-4 bg-slate-800 mx-2 gap-2;
+  @apply grid grid-cols-4 overflow-y-auto px-4 bg-slate-800 mx-2 gap-2 pt-2;
 }

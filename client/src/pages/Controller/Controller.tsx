@@ -25,6 +25,7 @@ import {
   setItemListIsLoading,
 } from "../../store/itemListSlice";
 import { initiateOverlayList } from "../../store/overlaysSlice";
+import { formatItemList } from "../../utils/formatItemList";
 
 const resizableDirections = {
   top: false,
@@ -44,7 +45,7 @@ const Controller = () => {
     (state) => state.undoable.present.itemLists
   );
 
-  const { db } = useContext(GlobalInfoContext) || {};
+  const { db, cloud } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     const getAllItems = async () => {
@@ -58,16 +59,18 @@ const Controller = () => {
 
   useEffect(() => {
     const getItemLists = async () => {
-      if (!selectedList || !db) return;
+      if (!selectedList || !db || !cloud) return;
       dispatch(setItemListIsLoading(true));
-      console.log("get lists", selectedList);
       try {
         const response: DBItemListDetails | undefined = await db?.get(
           selectedList.id
         );
         const itemList = response?.items || [];
         const overlays = response?.overlays || [];
-        dispatch(initiateItemList(itemList));
+        if (cloud) {
+          dispatch(initiateItemList(formatItemList(itemList, cloud)));
+        }
+        console.log({ overlays });
         dispatch(initiateOverlayList(overlays));
       } catch (e) {
         console.error(e);
@@ -76,7 +79,7 @@ const Controller = () => {
     };
 
     getItemLists();
-  }, [dispatch, db, selectedList]);
+  }, [dispatch, db, selectedList, cloud]);
 
   return (
     <div className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none">

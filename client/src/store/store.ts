@@ -1,5 +1,8 @@
-import { combineReducers, configureStore } from "@reduxjs/toolkit";
-import userReducer from "./userSlice";
+import {
+  combineReducers,
+  configureStore,
+  createListenerMiddleware,
+} from "@reduxjs/toolkit";
 import { itemSlice } from "./itemSlice";
 import undoable, { excludeAction } from "redux-undo";
 import { presentationSlice } from "./presentationSlice";
@@ -11,6 +14,8 @@ import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
+import { globalDb as db } from "../context/globalInfo";
+import { DBAllItems, DBItem, DBItemListDetails, DBItemLists } from "../types";
 
 const undoableReducers = undoable(
   combineReducers({
@@ -30,9 +35,160 @@ const undoableReducers = undoable(
   }
 );
 
+const listenerMiddleware = createListenerMiddleware();
+
+// handle item updates
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).undoable.present.item !==
+        (previousState as RootState).undoable.present.item &&
+      action.type !== "item/setSelectedSlide" &&
+      action.type !== "item/toggleEditMode" &&
+      action.type !== "item/setActiveItem" &&
+      action.type !== "item/setItemIsLoading" &&
+      action.type.startsWith("item/")
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    console.log("action", action);
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    // update Item
+    const item = (listenerApi.getState() as RootState).undoable.present.item;
+    console.log({ item });
+    if (!db) return;
+    let db_item: DBItem = await db.get(item._id);
+
+    db_item = {
+      ...db_item,
+      name: item.name,
+      background: item.background,
+      slides: item.slides,
+      arrangements: item.arrangements,
+      selectedArrangement: item.selectedArrangement,
+      bibleInfo: item.bibleInfo,
+    };
+    db.put(db_item);
+  },
+});
+
+// handle ItemList updates
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).undoable.present.itemList !==
+        (previousState as RootState).undoable.present.itemList &&
+      action.type !== "itemList/initiateItemList" &&
+      action.type !== "itemList/setItemListIsLoading" &&
+      action.type.startsWith("itemList/")
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    console.log("action", action);
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    // update ItemList
+    const { list } = (listenerApi.getState() as RootState).undoable.present
+      .itemList;
+    const { selectedList } = (listenerApi.getState() as RootState).undoable
+      .present.itemLists;
+    if (!db || !selectedList) return;
+    let db_itemList: DBItemListDetails = await db.get(selectedList.id);
+    db_itemList.items = [...list];
+    db.put(db_itemList);
+  },
+});
+
+// handle itemLists updates
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).undoable.present.itemLists !==
+        (previousState as RootState).undoable.present.itemLists &&
+      action.type !== "itemLists/initiateItemLists" &&
+      action.type.startsWith("itemLists/")
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    console.log("action", action);
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    // update ItemList
+    const { currentLists, selectedList } = (listenerApi.getState() as RootState)
+      .undoable.present.itemLists;
+
+    if (!db || !selectedList) return;
+    const db_itemLists: DBItemLists = await db.get("ItemLists");
+    db_itemLists.itemLists = [...currentLists];
+    db_itemLists.selectedList = selectedList;
+    db.put(db_itemLists);
+  },
+});
+
+// handle allItems updates
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).allItems !==
+        (previousState as RootState).allItems &&
+      action.type !== "allItems/initiateAllItemsList" &&
+      action.type.startsWith("allItems/")
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    console.log("action", action);
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    // update ItemList
+    const { list } = (listenerApi.getState() as RootState).allItems;
+
+    if (!db) return;
+    const db_allItems: DBAllItems = await db.get("allItems");
+    db_allItems.items = [...list];
+    db.put(db_allItems);
+  },
+});
+
+// handle updating overlays
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).undoable.present.overlays !==
+        (previousState as RootState).undoable.present.overlays &&
+      action.type !== "overlays/initiateOverlayList" &&
+      action.type.startsWith("overlays/")
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    console.log("action", action);
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    // update ItemList
+    const { list } = (listenerApi.getState() as RootState).undoable.present
+      .overlays;
+    const { selectedList } = (listenerApi.getState() as RootState).undoable
+      .present.itemLists;
+
+    if (!db || !selectedList) return;
+    const db_itemList: DBItemListDetails = await db.get(selectedList.id);
+    db_itemList.overlays = [...list];
+    db.put(db_itemList);
+  },
+});
+
 const store = configureStore({
   reducer: {
-    user: undoable(userReducer),
     media: mediaItemsSlice.reducer,
     undoable: undoableReducers,
     presentation: presentationSlice.reducer,
@@ -41,6 +197,8 @@ const store = configureStore({
     createItem: createItemSlice.reducer,
     preferences: preferencesSlice.reducer,
   },
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware().prepend(listenerMiddleware.middleware),
 });
 
 export default store;

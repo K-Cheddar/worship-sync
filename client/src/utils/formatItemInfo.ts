@@ -2,7 +2,7 @@ import { Cloudinary } from "@cloudinary/url-gen";
 import { SongOrder, ItemState, DBItem } from "../types";
 import generateRandomId from "./generateRandomId";
 
-export const formatItemInfo = async (item: DBItem, cloud: Cloudinary) => {
+export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
   const _item: ItemState = {
     name: item.name,
     type: item.type,
@@ -35,11 +35,13 @@ export const formatItemInfo = async (item: DBItem, cloud: Cloudinary) => {
           id: generateRandomId(),
           boxes: [
             ...el.boxes.map((box, index) => {
+              const boxBackground = box.background?.startsWith("https")
+                ? box.background
+                : cloud.image(box.background).toURL();
               return {
                 ...box,
                 id: generateRandomId(),
-                background:
-                  index === 1 ? "" : cloud.image(box.background).toURL(),
+                background: index === 1 ? "" : boxBackground,
                 isLocked: index === 0 ? true : box.isLocked,
                 brightness: index !== 0 ? 100 : box.brightness,
                 width: box.width || 100,
@@ -53,9 +55,11 @@ export const formatItemInfo = async (item: DBItem, cloud: Cloudinary) => {
       let songOrderWIds: SongOrder[] = [];
 
       if (typeof songOrder[0] === "string") {
-        songOrderWIds = songOrder.map((el) => {
+        songOrderWIds = (songOrder as string[]).map((el) => {
           return { name: el, id: generateRandomId() };
         });
+      } else {
+        songOrderWIds = songOrder as SongOrder[];
       }
 
       return {

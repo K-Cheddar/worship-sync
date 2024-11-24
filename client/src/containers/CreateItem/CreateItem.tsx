@@ -54,6 +54,9 @@ const CreateItem = () => {
     text: savedText,
   } = useSelector((state: any) => state.createItem);
   const { list } = useSelector((state: any) => state.allItems);
+  const { selectedList } = useSelector(
+    (state: any) => state.undoable.present.itemLists
+  );
   const [searchParams] = useSearchParams();
   const initialType = decodeURI(
     searchParams.get("type") || savedType || "song"
@@ -87,7 +90,11 @@ const CreateItem = () => {
       addItemToItemList({ ...item, _id: item._id, listId: generateRandomId() })
     );
     dispatch(
-      addItemToAllItemsList({ ...item, _id: "", listId: generateRandomId() })
+      addItemToAllItemsList({
+        ...item,
+        _id: item._id,
+        listId: generateRandomId(),
+      })
     );
   };
 
@@ -117,9 +124,8 @@ const CreateItem = () => {
         songOrder,
         list,
         db,
+        selectedList,
       });
-
-      console.log(newItem);
 
       dispatchNewItem(newItem);
     }
@@ -129,6 +135,7 @@ const CreateItem = () => {
         name: itemName,
         list,
         db,
+        selectedList,
       });
 
       dispatchNewItem(newItem);

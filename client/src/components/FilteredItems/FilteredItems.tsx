@@ -20,9 +20,16 @@ type FilteredItemsProps = {
   type: string;
   heading: string;
   label: string;
+  isLoading: boolean;
 };
 
-const FilteredItems = ({ list, type, heading, label }: FilteredItemsProps) => {
+const FilteredItems = ({
+  list,
+  type,
+  heading,
+  label,
+  isLoading,
+}: FilteredItemsProps) => {
   const dispatch = useDispatch();
   const loader = useRef(null);
 
@@ -68,9 +75,6 @@ const FilteredItems = ({ list, type, heading, label }: FilteredItemsProps) => {
       try {
         const doc = await db.get(item._id);
         db.remove(doc);
-        const allItemsDoc: DBAllItems = await db.get("allItems");
-        allItemsDoc.items = allItemsDoc.items.filter((i) => i._id !== item._id);
-        db.put(allItemsDoc);
       } catch (error) {
         console.error(error);
       }
@@ -80,9 +84,13 @@ const FilteredItems = ({ list, type, heading, label }: FilteredItemsProps) => {
   return (
     <div className="px-2 py-4 h-full">
       <h2 className="text-2xl text-center mb-2 md:w-2/3 ">{heading}</h2>
+      {isLoading && (
+        <h3 className="text-lg text-center">{heading} is loading...</h3>
+      )}
       <div>
         <Input
           value={searchValue}
+          disabled={isLoading}
           onChange={(val) => setSearchValue(val as string)}
           label="Search"
           className="md:w-2/3 text-base flex gap-2 items-center mb-4 px-6"

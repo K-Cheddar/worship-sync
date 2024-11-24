@@ -7,7 +7,6 @@ export type ServiceItem = {
   name: string;
   _id: string;
   background?: string;
-  nameColor?: string;
   listId: string;
   type:
     | "song"
@@ -16,6 +15,7 @@ export type ServiceItem = {
     | "bible"
     | "timer"
     | "announcement"
+    | "free"
     | string;
 };
 
@@ -66,12 +66,19 @@ export type DBItem = {
   name: string;
   selectedArrangement: number;
   skipTitle?: boolean;
+  background?: string;
   type: string;
   slides: ItemSlide[];
+  bibleInfo?: {
+    book: string;
+    chapter: string;
+    version: string;
+    verses: verseType[];
+  };
   arrangements: {
     name: string;
     formattedLyrics: FormattedLyrics[];
-    songOrder: string[];
+    songOrder: string[] | SongOrder[];
     slides: ItemSlide[];
   }[];
 };
@@ -84,6 +91,7 @@ export type ItemState = {
   selectedArrangement: number;
   shouldSkipTitle?: boolean;
   _rev?: string;
+  background?: string;
   arrangements: Arrangment[];
   selectedSlide: number;
   selectedBox: number;
@@ -210,17 +218,26 @@ export type PreferencesType = {
 export type ItemList = {
   name: string;
   id: string;
-  isOutline: boolean;
+  isOutline?: boolean;
+};
+
+export type ItemListDetails = {
+  name: string;
+  _id: string;
+  isOutline?: boolean;
+  items: ServiceItem[];
+  overlays: OverlayType[];
 };
 
 export type DBItemList = {
   id: string;
   name: string;
-  outline: boolean;
+  outline?: boolean;
 };
 
 export type DBItemLists = {
   itemLists: DBItemList[];
+  selectedList: DBItemList;
   _id: string;
   _rev: string;
 };
@@ -228,6 +245,7 @@ export type DBItemLists = {
 export type DBItemListDetails = {
   _id: string;
   _rev: string;
+  name: string;
   items: ServiceItem[];
   overlays: OverlayType[];
 };

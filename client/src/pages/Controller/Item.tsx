@@ -42,7 +42,7 @@ const Item = () => {
         const response: DBItem | undefined = await db?.get(decodedItemId);
         const item = response;
         if (!item) return setStatus("error");
-        const formattedItem = await formatItemInfo(item, cloud);
+        const formattedItem = formatItemInfo(item, cloud);
         dispatch(setActiveItem({ ...formattedItem, listId: decodedListId }));
         setStatus("success");
         dispatch(setItemIsLoading(false));
