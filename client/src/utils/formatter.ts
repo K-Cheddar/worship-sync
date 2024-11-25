@@ -4,7 +4,7 @@ import { formatBible, formatSong } from "./overflow";
 type UpdateSlideBgPropertyType = {
   property: string;
   value: any;
-  slideIndex: number;
+  slideIndex?: number;
   slides: ItemSlide[];
 };
 
@@ -15,7 +15,7 @@ export const updateSlideBgProperty = ({
   slides,
 }: UpdateSlideBgPropertyType): ItemSlide[] => {
   const updatedSlides = slides.map((slide, sIndex) => {
-    if (slideIndex !== sIndex) return slide;
+    if (slideIndex !== undefined && slideIndex !== sIndex) return slide;
     return {
       ...slide,
       boxes: slide.boxes.map((box, boxIndex) => {
@@ -129,13 +129,19 @@ export const updateBrightness = ({
   slides = updateSlideBgProperty({
     property: "brightness",
     value: brightness,
-    slideIndex: item.selectedSlide,
     slides: [...slides],
+    slideIndex: item.type === "free" ? item.selectedSlide : undefined,
+  });
+
+  const arrangements = item.arrangements.map((arr, index) => {
+    if (index !== item.selectedArrangement) return arr;
+    return { ...arr, slides: [...slides] };
   });
 
   return {
     ...item,
     slides: [...slides],
+    arrangements: [...arrangements],
   };
 };
 

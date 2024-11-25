@@ -10,8 +10,9 @@ import {
   updateBrightness,
   updateKeepAspectRatio,
 } from "../../../utils/formatter";
-import { setActiveItem } from "../../../store/itemSlice";
+import { updateArrangements, updateSlides } from "../../../store/itemSlice";
 import Toggle from "../../../components/Toggle/Toggle";
+import { ItemState } from "../../../types";
 
 const SlideEditTools = () => {
   const location = useLocation();
@@ -32,19 +33,26 @@ const SlideEditTools = () => {
     setShouldKeepAspectRatio(slide?.boxes?.[0]?.shouldKeepAspectRatio || false);
   }, [slide]);
 
+  const updateItem = (updatedItem: ItemState) => {
+    dispatch(updateSlides({ slides: updatedItem.slides }));
+    if (updatedItem.arrangements.length > 0) {
+      dispatch(updateArrangements({ arrangements: updatedItem.arrangements }));
+    }
+  };
+
   const _updateFontSize = (val: number) => {
     const _val = Math.max(Math.min(val, 48), 1);
     setFontSize(_val);
     const fSize = _val / 10;
     const updatedItem = updateFontSize({ fontSize: fSize, item });
-    dispatch(setActiveItem(updatedItem));
+    updateItem(updatedItem);
   };
 
   const _updateBrightness = (val: number) => {
     const _val = Math.max(Math.min(val, 100), 1);
     setBrightness(_val);
     const updatedItem = updateBrightness({ brightness: _val, item });
-    dispatch(setActiveItem(updatedItem));
+    updateItem(updatedItem);
   };
 
   const _updateKeepAspectRatio = (val: boolean) => {
@@ -53,7 +61,7 @@ const SlideEditTools = () => {
       shouldKeepAspectRatio: val,
       item,
     });
-    dispatch(setActiveItem(updatedItem));
+    updateItem(updatedItem);
   };
 
   if (!location.pathname.includes("controller/item") || !slide) {
