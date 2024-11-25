@@ -15,7 +15,13 @@ import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
 import { globalDb as db } from "../context/globalInfo";
-import { DBAllItems, DBItem, DBItemListDetails, DBItemLists } from "../types";
+import {
+  DBAllItems,
+  DBItem,
+  DBItemListDetails,
+  DBItemLists,
+  DBMedia,
+} from "../types";
 
 const undoableReducers = undoable(
   combineReducers({
@@ -184,6 +190,32 @@ listenerMiddleware.startListening({
     const db_itemList: DBItemListDetails = await db.get(selectedList.id);
     db_itemList.overlays = [...list];
     db.put(db_itemList);
+  },
+});
+
+// handle updating media
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).media !==
+        (previousState as RootState).media &&
+      action.type !== "media/initiateMediaList" &&
+      action.type.startsWith("media/")
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    console.log("action", action);
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    // update ItemList
+    const { list } = (listenerApi.getState() as RootState).media;
+
+    if (!db) return;
+    const db_backgrounds: DBMedia = await db.get("images");
+    db_backgrounds.backgrounds = [...list];
+    db.put(db_backgrounds);
   },
 });
 

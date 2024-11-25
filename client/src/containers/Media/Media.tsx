@@ -13,6 +13,10 @@ import "./Media.scss";
 import { DBMedia } from "../../types";
 import { initiateMediaList, updateMediaList } from "../../store/mediaSlice";
 import { retrieveImages } from "../../utils/itemUtil";
+import CloudinaryUploadWidget, {
+  imageInfoType,
+} from "./CloudinaryUploadWidget";
+import generateRandomId from "../../utils/generateRandomId";
 
 const Media = () => {
   const dispatch = useDispatch();
@@ -44,9 +48,20 @@ const Media = () => {
     if (!db) return;
     const updatedList = list.filter((item) => item.id !== selectedMedia.id);
     dispatch(updateMediaList(updatedList));
-    const db_mediaList: DBMedia = await db.get("images");
-    db_mediaList.backgrounds = [...updatedList];
-    db.put(db_mediaList);
+  };
+
+  const addNewBackground = ({ public_id, secure_url }: imageInfoType) => {
+    const updatedList = [
+      ...list,
+      {
+        category: "uncategorized",
+        name: public_id,
+        type: "image",
+        id: generateRandomId(),
+        image: secure_url,
+      },
+    ];
+    dispatch(updateMediaList(updatedList));
   };
 
   return (
@@ -83,8 +98,16 @@ const Media = () => {
         >
           Set Slide
         </Button>
+        <CloudinaryUploadWidget
+          uwConfig={{
+            uploadPreset: "bpqu4ma5",
+            cloudName: "portable-media",
+          }}
+          onComplete={(info) => {
+            addNewBackground(info);
+          }}
+        />
         <Button
-          className="ml-auto"
           variant="tertiary"
           disabled={selectedMedia.id === "" || isLoading}
           svg={DeleteSVG}
