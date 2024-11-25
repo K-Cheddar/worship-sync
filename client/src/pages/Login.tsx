@@ -1,41 +1,64 @@
 import Input from "../components/Input/Input";
-import { useContext, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { GlobalInfoContext } from "../context/globalInfo";
+import { ReactComponent as VisibleSVG } from "../assets/icons/visible.svg";
+import { ReactComponent as NotVisibleSVG } from "../assets/icons/not-visible.svg";
 import Button from "../components/Button/Button";
+import { useNavigate } from "react-router-dom";
 
 const Login = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
-  const { login } = useContext(GlobalInfoContext) || {};
+  const navigate = useNavigate();
+
+  const { login, loginState, setLoginState } =
+    useContext(GlobalInfoContext) || {};
+  const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      setShowPassword(false);
+      setUsername("");
+      setPassword("");
+      setLoginState && setLoginState("idle");
+    };
+  }, [setLoginState]);
 
   return (
     <div className="h-screen w-screen bg-slate-700 flex items-center justify-center">
       <form
+        autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault();
           if (!login) return;
           login({ username, password });
         }}
-        className="bg-slate-800 rounded-xl w-[500px] max-w-[75%] p-8 text-white flex flex-col items-center"
+        className="bg-slate-800 rounded-xl w-[300px] max-w-[75%] p-8 text-white flex flex-col items-center"
       >
         <h1 className="text-2xl font-semibold text-center">Login</h1>
         <Input
           label="Username"
+          id="username"
           value={username}
           onChange={(val) => setUsername(val as string)}
         />
         <Input
           label="Password"
-          type="password"
+          id="password"
+          type={showPassword ? "text" : "password"}
           value={password}
           onChange={(val) => setPassword(val as string)}
+          svg={showPassword ? NotVisibleSVG : VisibleSVG}
+          svgAction={() => setShowPassword(!showPassword)}
+          svgPadding="px-1 py-4"
         />
         <Button
-          disabled={!username || !password}
           variant="cta"
-          className="text-lg mt-4"
-          padding="px-8 py-2"
+          type={"submit"}
+          className="text-lg mt-4 w-full justify-center"
+          isLoading={loginState === "loading"}
+          disabled={loginState === "loading"}
           onClick={() => {
             if (!login) return;
             login({ username, password });
@@ -43,6 +66,17 @@ const Login = () => {
         >
           Login
         </Button>
+        <Button
+          className="text-lg mt-4 w-full justify-center"
+          onClick={() => navigate("/")}
+        >
+          Home
+        </Button>
+        {loginState === "error" && (
+          <p className="text-red-500 mt-4 text-base">
+            Invalid username or password
+          </p>
+        )}
       </form>
     </div>
   );

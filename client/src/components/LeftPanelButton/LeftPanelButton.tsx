@@ -31,7 +31,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         ref={ref}
         style={style}
         className={cn(
-          "flex",
+          "flex min-h-8",
           actions && !isSelected && "hover:bg-gray-500 active:bg-gray-400",
           isSelected && "bg-gray-900"
         )}

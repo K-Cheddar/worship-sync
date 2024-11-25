@@ -1,12 +1,12 @@
-import { createContext, useEffect, useState } from "react";
+import { createContext, useEffect, useMemo, useState } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
-import { DBLogin, UserInfoType } from "../types";
+import { DBLogin } from "../types";
 import { useNavigate } from "react-router-dom";
 
-type GlobalInfoContextType = UserInfoType & {
+type GlobalInfoContextType = {
   db: PouchDB.Database | undefined;
   cloud: Cloudinary;
   login: ({
@@ -17,6 +17,11 @@ type GlobalInfoContextType = UserInfoType & {
     password: string;
   }) => void;
   logout: () => void;
+  loginState: "idle" | "loading" | "error" | "success";
+  user: string;
+  database: string;
+  uploadPreset: string;
+  setLoginState: (val: "idle" | "loading" | "error" | "success") => void;
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
@@ -45,13 +50,15 @@ const GlobalInfoProvider = ({ children }: any) => {
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
   const navigate = useNavigate();
 
-  const cloud = new Cloudinary({
-    cloud: {
-      cloudName: "portable-media",
-      apiKey: process.env.REACT_APP_CLOUDINARY_KEY,
-      apiSecret: process.env.REACT_APP_CLOUDINARY_SECRET,
-    },
-  });
+  const cloud = useMemo(() => {
+    return new Cloudinary({
+      cloud: {
+        cloudName: "portable-media",
+        apiKey: process.env.REACT_APP_CLOUDINARY_KEY,
+        apiSecret: process.env.REACT_APP_CLOUDINARY_SECRET,
+      },
+    });
+  }, []);
 
   useEffect(() => {
     const setupDb = async () => {
@@ -107,6 +114,8 @@ const GlobalInfoProvider = ({ children }: any) => {
   }) => {
     if (!db) return;
 
+    setLoginState("loading");
+
     try {
       const dbName =
         process.env.REACT_APP_DATABASE_STRING + "portable-media-logins";
@@ -123,6 +132,9 @@ const GlobalInfoProvider = ({ children }: any) => {
         localStorage.setItem("user", user.username);
         localStorage.setItem("database", user.database);
         localStorage.setItem("upload_preset", user.upload_preset);
+        setUser(user.username);
+        setDatabase(user.database);
+        setUploadPreset(user.upload_preset);
         navigate("/");
       }
     } catch (e) {
@@ -140,6 +152,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     setDatabase("demo");
     setUploadPreset("bpqu4ma5");
     navigate("/");
+    db?.destroy();
   };
 
   return (
@@ -147,11 +160,12 @@ const GlobalInfoProvider = ({ children }: any) => {
       value={{
         db,
         cloud,
-        isLoggedIn: loginState === "success",
+        loginState,
         user,
         database,
         uploadPreset,
         login,
+        setLoginState,
         logout,
       }}
     >

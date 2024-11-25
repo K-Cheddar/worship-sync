@@ -1,6 +1,7 @@
 import { FunctionComponent } from "react";
 import "./Input.scss";
 import Button from "../Button/Button";
+import generateRandomId from "../../utils/generateRandomId";
 
 type InputProps = React.HTMLProps<HTMLInputElement> & {
   className?: string;
@@ -15,11 +16,14 @@ type InputProps = React.HTMLProps<HTMLInputElement> & {
   svgAction?: () => void;
   iconSize?: string;
   color?: string;
+  svgPadding?: string;
+  svgClassName?: string;
 };
 
 const Input = ({
   className,
   type = "text",
+  id,
   value,
   onChange,
   label,
@@ -31,48 +35,55 @@ const Input = ({
   iconSize = "md",
   color = "#1f2937",
   disabled = false,
+  svgPadding = "p-1",
+  svgClassName = "right-px",
   ...rest
 }: InputProps) => {
+  const inputId = id || generateRandomId();
   return (
-    <div className={`${className} input-container`}>
+    <div className={`${className || ""} input-container`}>
       <label
+        htmlFor={inputId}
         className={`${labelFontSize} font-semibold ${
           hideLabel ? "sr-only" : ""
         } ${lableClassName}`}
       >
         {label}:
       </label>
-      <input
-        className={`w-full rounded py-1 pl-2 text-black ${
-          svg ? "pr-6" : "pr-2"
-        } ${disabled ? "opacity-50" : ""}`}
-        type={type}
-        value={value}
-        disabled={disabled}
-        data-ignore-undo="true"
-        onChange={(e) => {
-          const val = e.target.value;
-          if (type === "number") {
-            onChange(Number(val));
-          } else if (type === "date") {
-            onChange(new Date(val));
-          } else {
-            onChange(e.target.value);
-          }
-        }}
-        {...rest}
-      />
-      {svg && (
-        <Button
-          svg={svg}
-          variant="tertiary"
-          className="absolute right-0.5 bottom-0"
-          padding="p-0"
-          color={color}
-          onClick={svgAction}
-          tabIndex={-1}
+      <span className="relative ">
+        <input
+          className={`w-full rounded py-1 pl-2 text-black ${
+            svg ? "pr-6" : "pr-2"
+          } ${disabled ? "opacity-50" : ""}`}
+          type={type}
+          value={value}
+          disabled={disabled}
+          data-ignore-undo="true"
+          onChange={(e) => {
+            const val = e.target.value;
+            if (type === "number") {
+              onChange(Number(val));
+            } else if (type === "date") {
+              onChange(new Date(val));
+            } else {
+              onChange(e.target.value);
+            }
+          }}
+          id={inputId}
+          {...rest}
         />
-      )}
+        {svg && (
+          <Button
+            svg={svg}
+            variant="tertiary"
+            className={`absolute bottom-0 top-0 my-auto ${svgClassName}`}
+            padding={svgPadding}
+            color={color}
+            onClick={svgAction}
+            tabIndex={-1}
+          />
+        )}
+      </span>
     </div>
   );
 };

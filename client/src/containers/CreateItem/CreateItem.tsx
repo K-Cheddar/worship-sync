@@ -187,6 +187,7 @@ const CreateItem = () => {
                 label={itemType.label}
                 value={itemType.selected}
                 textSize="text-base"
+                className="w-24"
                 onChange={() => {
                   setSelectedType(itemType.type);
                   setItemTypes((prev) =>
@@ -203,7 +204,7 @@ const CreateItem = () => {
 
         {selectedType === "song" && (
           <TextArea
-            className="w-full h-72"
+            className="w-full h-72 mt-2"
             label="Paste Text Here"
             value={text}
             onChange={(val) => setText(val)}

@@ -270,13 +270,6 @@ export type DBMedia = {
   backgrounds: Media[];
 };
 
-export type UserInfoType = {
-  isLoggedIn: boolean;
-  user: string;
-  database: string;
-  uploadPreset: string;
-};
-
 export type DBUserInfo = {
   username: string;
   password: string;

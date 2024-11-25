@@ -32,7 +32,7 @@ const RadioButton = ({
         <Icon
           svg={value ? CheckedSVG : UncheckedSVG}
           color={value ? "#67e8f9" : "#e5e7eb"}
-          className="absolute pointer-events-none"
+          className="absolute pointer-events-none right-0"
         />
       </div>
     </div>

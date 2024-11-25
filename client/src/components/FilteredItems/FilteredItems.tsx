@@ -104,7 +104,7 @@ const FilteredItems = ({
           return (
             <li
               key={item._id}
-              className={`flex border border-transparent gap-2 ${bg} pl-4 rounded-md items-center hover:border-gray-300`}
+              className={`flex border border-transparent gap-2 ${bg} pl-4 rounded-md items-center hover:border-gray-300 min-h-8`}
             >
               <p className="text-base flex-1">{item.name}</p>
               <Button

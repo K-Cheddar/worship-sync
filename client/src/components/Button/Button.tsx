@@ -3,6 +3,7 @@ import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-documen
 import Icon from "../Icon/Icon";
 import cn from "classnames";
 import "./Button.scss";
+import Spinner from "../Spinner/Spinner";
 
 export type ButtonProps = Omit<React.HTMLProps<HTMLButtonElement>, "wrap"> & {
   children?: ReactNode;
@@ -18,6 +19,7 @@ export type ButtonProps = Omit<React.HTMLProps<HTMLButtonElement>, "wrap"> & {
   padding?: string;
   iconSize?: "xs" | "sm" | "md" | "lg" | "xl" | number;
   type?: "button" | "submit" | "reset" | undefined;
+  isLoading?: boolean;
 };
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
@@ -36,6 +38,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       truncate = false,
       iconSize = "md",
       type = "button",
+      isLoading = false,
       ...rest
     },
     ref
@@ -68,6 +71,9 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         {svg && iconPosition === "left" && iconWProps}
         {children}
         {svg && iconPosition === "right" && iconWProps}
+        {isLoading && (
+          <Spinner className="absolute" width="24px" borderWidth="3px" />
+        )}
       </button>
     );
   }

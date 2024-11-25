@@ -7,8 +7,9 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useNavigate } from "react-router-dom";
 
 const ToolbarMenu = () => {
-  const { logout, isLoggedIn } = useContext(GlobalInfoContext) || {};
+  const { logout, loginState } = useContext(GlobalInfoContext) || {};
   const navigate = useNavigate();
+  const isLoggedIn = loginState === "success";
 
   const menuItems: MenuItemType[] = [
     {
@@ -22,7 +23,7 @@ const ToolbarMenu = () => {
       to: "/",
     },
     {
-      text: "Logout",
+      text: isLoggedIn ? "Logout" : "Login",
       onClick: () => {
         if (isLoggedIn && logout) {
           logout();
