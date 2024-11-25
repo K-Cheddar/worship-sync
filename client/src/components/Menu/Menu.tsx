@@ -37,6 +37,7 @@ const Menu = ({ menuItems, TriggeringButton, ...rest }: MenuProps) => {
     onOpenChange: setIsOpen,
     middleware: [flip({ fallbackAxisSideDirection: "end" }), shift()],
     whileElementsMounted: autoUpdate,
+    placement: "bottom-end",
   });
 
   const click = useClick(context);

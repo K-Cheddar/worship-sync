@@ -10,6 +10,7 @@ import Stream from "./pages/Stream";
 import { Provider } from "react-redux";
 import store from "./store/store";
 import GlobalInfoProvider from "./context/globalInfo";
+import Login from "./pages/Login";
 
 gsap.registerPlugin(useGSAP);
 
@@ -17,20 +18,16 @@ function App() {
   return (
     <Provider store={store}>
       <Router>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route
-            path="/controller/*"
-            element={
-              <GlobalInfoProvider>
-                <Controller />
-              </GlobalInfoProvider>
-            }
-          />
-          <Route path="/presentation" element={<Presentation />} />
-          <Route path="/monitor" element={<Monitor />} />
-          <Route path="/stream" element={<Stream />} />
-        </Routes>
+        <GlobalInfoProvider>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/controller/*" element={<Controller />} />
+            <Route path="/presentation" element={<Presentation />} />
+            <Route path="/monitor" element={<Monitor />} />
+            <Route path="/stream" element={<Stream />} />
+            <Route path="/login" element={<Login />} />
+          </Routes>
+        </GlobalInfoProvider>
       </Router>
     </Provider>
   );

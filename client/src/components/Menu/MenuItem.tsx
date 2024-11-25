@@ -9,7 +9,7 @@ export interface MenuItemProps
 }
 
 const MenuItem = ({ children, onClick, to }: MenuItemProps) => {
-  const innerClasses = "px-3 py-2 h-full w-full block";
+  const innerClasses = "px-3 py-2 h-full w-full block text-left";
   const isLinkOrButton = to || onClick;
   return (
     <li

@@ -125,8 +125,10 @@ const Media = () => {
             const isSelected = id === selectedMedia.id;
             return (
               <li
-                className={`self-center border-4 border-slate-500 flex items-center justify-center aspect-video cursor-pointer ${
-                  isSelected ? "border-cyan-400" : "hover:border-slate-300"
+                className={`self-center border-2 flex items-center justify-center aspect-video cursor-pointer ${
+                  isSelected
+                    ? "border-cyan-400"
+                    : "border-slate-500 hover:border-slate-300"
                 }`}
                 key={id}
               >

@@ -269,3 +269,23 @@ export type DBMedia = {
   _rev: string;
   backgrounds: Media[];
 };
+
+export type UserInfoType = {
+  isLoggedIn: boolean;
+  user: string;
+  database: string;
+  uploadPreset: string;
+};
+
+export type DBUserInfo = {
+  username: string;
+  password: string;
+  database: string;
+  upload_preset: string;
+};
+
+export type DBLogin = {
+  _id: string;
+  _rev: string;
+  logins: DBUserInfo[];
+};
