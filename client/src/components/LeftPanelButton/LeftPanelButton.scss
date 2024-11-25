@@ -5,7 +5,7 @@
 .left-panel-button,
 .left-panel-action-button {
   @media(max-width: 768px) {
-    svg {
+    svg, img {
       display: none;
     }
   }
