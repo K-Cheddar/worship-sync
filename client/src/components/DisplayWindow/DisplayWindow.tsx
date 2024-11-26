@@ -29,6 +29,7 @@ type DisplayWindowProps = {
   bibleDisplayInfo?: BibleDisplayInfo;
   prevBibleDisplayInfo?: BibleDisplayInfo;
   shouldAnimate?: boolean;
+  shouldPlayVideo?: boolean;
   time?: number;
   prevTime?: number;
 };
@@ -44,6 +45,7 @@ const DisplayWindow = ({
   flOverlayInfo = {},
   stbOverlayInfo = {},
   shouldAnimate = false,
+  shouldPlayVideo = false,
   time,
   prevTime,
   bibleDisplayInfo,
@@ -86,6 +88,7 @@ const DisplayWindow = ({
             onChange={onChange}
             index={index}
             shouldAnimate={shouldAnimate}
+            shouldPlayVideo={shouldPlayVideo}
             prevBox={prevBoxes[index]}
             time={time}
           />
@@ -104,6 +107,7 @@ const DisplayWindow = ({
             onChange={onChange}
             index={index}
             shouldAnimate={shouldAnimate}
+            shouldPlayVideo={shouldPlayVideo}
             isPrev
             time={prevTime}
           />

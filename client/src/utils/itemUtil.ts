@@ -309,11 +309,21 @@ export const retrieveImages = ({
   for (let i = 0; i < backgrounds.length; i++) {
     let element = backgrounds[i];
     // const image = cloud.image(element.name).resize(fill().width(250));
-    const image = cloud.image(element.name);
+    let image = "";
+    let video;
+    if (element.type === "image") {
+      image = cloud.image(element.name).toURL();
+    }
+    if (element.type === "video") {
+      video = cloud.video(element.name).toURL();
+      const [videoUrl] = video.split("?");
+      image = videoUrl + ".png?type=video";
+    }
 
     images.push({
       ...element,
-      image: image.toURL(),
+      image,
+      video,
       id: generateRandomId(),
     });
   }

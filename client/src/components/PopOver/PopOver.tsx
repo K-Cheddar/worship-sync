@@ -50,7 +50,7 @@ const PopOver = ({ children, TriggeringButton }: PopOverProps) => {
       {isOpen && (
         <FloatingFocusManager context={context} modal>
           <div
-            className="bg-slate-700 relative rounded-lg shadow-xl z-30"
+            className="bg-slate-700 relative rounded-lg shadow-2xl z-30 border-2 border-slate-600"
             style={floatingStyles}
             ref={refs.setFloating}
             {...getFloatingProps()}
@@ -61,7 +61,7 @@ const PopOver = ({ children, TriggeringButton }: PopOverProps) => {
               svg={CloseSVG}
               onClick={() => setIsOpen(false)}
             />
-            <div className="p-4 pt-8 relative">{children}</div>
+            <div className="p-4 relative">{children}</div>
           </div>
         </FloatingFocusManager>
       )}

@@ -16,6 +16,7 @@ type DisplayBoxProps = {
   shouldAnimate?: boolean;
   isPrev?: boolean;
   time?: number;
+  shouldPlayVideo?: boolean;
 };
 
 const DisplayBox = ({
@@ -29,12 +30,16 @@ const DisplayBox = ({
   onChange,
   index,
   shouldAnimate,
+  shouldPlayVideo,
   isPrev,
   time,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLLIElement>(null);
   const boxTimeline = useRef<GSAPTimeline>();
   const shouldShowBackground = showBackground && box.background;
+  // This should be done outside the boxes to keep it playing when slides change. In that case maybe only one video per item.
+  // const isVideoBg = box.background?.endsWith("?type=video");
+  // const videoUrl = box.background?.split('.png')[0]
 
   useGSAP(
     () => {

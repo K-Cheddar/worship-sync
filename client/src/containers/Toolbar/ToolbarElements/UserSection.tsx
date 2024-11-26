@@ -7,7 +7,7 @@ const UserSection = () => {
   const { user } = useContext(GlobalInfoContext) || {};
   return (
     <div>
-      <Button color="orange" svg={AccountSVG} variant="tertiary">
+      <Button color="orange" svg={AccountSVG} variant="none">
         {user}
       </Button>
     </div>

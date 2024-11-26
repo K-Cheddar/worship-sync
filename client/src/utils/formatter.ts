@@ -34,9 +34,11 @@ export const updateSlideBgProperty = ({
 const getSlidesFromItem = (item: ItemState) => {
   let { selectedSlide } = item;
   let slides;
-  if (item.type === "song")
+  if (item.type === "song") {
     slides = item.arrangements[item.selectedArrangement].slides || null;
-  else slides = item.slides || null;
+  } else {
+    slides = item.slides || null;
+  }
   let slide = slides ? slides[selectedSlide] : null;
   return { slides, slide };
 };
@@ -105,6 +107,7 @@ export const updateFontSize = ({
   if (selectedSlide >= slides.length) selectedSlide = slides.length - 1;
 
   // needsUpdate.updateItem = true;
+
   return {
     ..._item,
     selectedSlide: selectedSlide,

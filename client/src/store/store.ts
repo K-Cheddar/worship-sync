@@ -1,7 +1,9 @@
 import {
+  Action,
   combineReducers,
   configureStore,
   createListenerMiddleware,
+  Reducer,
 } from "@reduxjs/toolkit";
 import { itemSlice } from "./itemSlice";
 import undoable, { excludeAction } from "redux-undo";
@@ -52,8 +54,7 @@ listenerMiddleware.startListening({
       action.type !== "item/setSelectedSlide" &&
       action.type !== "item/toggleEditMode" &&
       action.type !== "item/setActiveItem" &&
-      action.type !== "item/setItemIsLoading" &&
-      action.type.startsWith("item/")
+      action.type !== "item/setItemIsLoading"
     );
   },
 
@@ -88,8 +89,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.itemList !==
         (previousState as RootState).undoable.present.itemList &&
       action.type !== "itemList/initiateItemList" &&
-      action.type !== "itemList/setItemListIsLoading" &&
-      action.type.startsWith("itemList/")
+      action.type !== "itemList/setItemListIsLoading"
     );
   },
 
@@ -116,8 +116,7 @@ listenerMiddleware.startListening({
     return (
       (currentState as RootState).undoable.present.itemLists !==
         (previousState as RootState).undoable.present.itemLists &&
-      action.type !== "itemLists/initiateItemLists" &&
-      action.type.startsWith("itemLists/")
+      action.type !== "itemLists/initiateItemLists"
     );
   },
 
@@ -144,8 +143,7 @@ listenerMiddleware.startListening({
     return (
       (currentState as RootState).allItems !==
         (previousState as RootState).allItems &&
-      action.type !== "allItems/initiateAllItemsList" &&
-      action.type.startsWith("allItems/")
+      action.type !== "allItems/initiateAllItemsList"
     );
   },
 
@@ -170,8 +168,7 @@ listenerMiddleware.startListening({
     return (
       (currentState as RootState).undoable.present.overlays !==
         (previousState as RootState).undoable.present.overlays &&
-      action.type !== "overlays/initiateOverlayList" &&
-      action.type.startsWith("overlays/")
+      action.type !== "overlays/initiateOverlayList"
     );
   },
 
@@ -199,8 +196,7 @@ listenerMiddleware.startListening({
     return (
       (currentState as RootState).media !==
         (previousState as RootState).media &&
-      action.type !== "media/initiateMediaList" &&
-      action.type.startsWith("media/")
+      action.type !== "media/initiateMediaList"
     );
   },
 
@@ -219,16 +215,25 @@ listenerMiddleware.startListening({
   },
 });
 
+const combinedReducers = combineReducers({
+  media: mediaItemsSlice.reducer,
+  undoable: undoableReducers,
+  presentation: presentationSlice.reducer,
+  bible: bibleSlice.reducer,
+  allItems: allItemsSlice.reducer,
+  createItem: createItemSlice.reducer,
+  preferences: preferencesSlice.reducer,
+});
+
+const rootReducer: Reducer = (state: RootState, action: Action) => {
+  if (action.type === "RESET") {
+    state = {} as RootState;
+  }
+  return combinedReducers(state, action);
+};
+
 const store = configureStore({
-  reducer: {
-    media: mediaItemsSlice.reducer,
-    undoable: undoableReducers,
-    presentation: presentationSlice.reducer,
-    bible: bibleSlice.reducer,
-    allItems: allItemsSlice.reducer,
-    createItem: createItemSlice.reducer,
-    preferences: preferencesSlice.reducer,
-  },
+  reducer: rootReducer,
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().prepend(listenerMiddleware.middleware),
 });
@@ -236,6 +241,6 @@ const store = configureStore({
 export default store;
 
 // Infer the `RootState` and `AppDispatch` types from the store itself
-export type RootState = ReturnType<typeof store.getState>;
+export type RootState = ReturnType<typeof combinedReducers>;
 // Inferred type: {posts: PostsState, comments: CommentsState, users: UsersState}
 export type AppDispatch = typeof store.dispatch;

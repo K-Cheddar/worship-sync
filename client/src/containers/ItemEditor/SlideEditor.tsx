@@ -156,14 +156,12 @@ const SlideEditor = () => {
           {isEditingName && (
             <Button
               variant="tertiary"
-              padding="px-2"
               svg={CloseSVG}
               onClick={() => setIsEditingName(false)}
             />
           )}
           <Button
             variant="tertiary"
-            padding="px-2"
             disabled={isLoading}
             svg={isEditingName ? CheckSVG : EditSVG}
             onClick={
@@ -193,15 +191,17 @@ const SlideEditor = () => {
         {type === "song" && (
           <Button
             className="text-sm"
+            variant="tertiary"
             disabled={isLoading}
             onClick={() => dispatch(toggleEditMode())}
+            svg={EditSVG}
           >
             Edit Lyrics
           </Button>
         )}
         <Button
           variant="tertiary"
-          padding="p-0"
+          padding="p-1"
           svg={showEditor ? CollapseSVG : ExpandSVG}
           onClick={() => setShowEditor(!showEditor)}
           className="text-xs"

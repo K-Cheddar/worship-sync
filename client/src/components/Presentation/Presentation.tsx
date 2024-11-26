@@ -42,6 +42,7 @@ const Presentation = ({
           time={info.time}
           prevTime={prevInfo.time}
           shouldAnimate
+          shouldPlayVideo
         />
       </section>
       <section className="gap-2 flex flex-col pt-2">

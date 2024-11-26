@@ -9,6 +9,7 @@ import { useNavigate } from "react-router-dom";
 const Login = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [hasError, setHasError] = useState(false);
 
   const navigate = useNavigate();
 
@@ -17,13 +18,20 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
+    if (loginState === "error") {
+      setHasError(true);
+    }
+  }, [loginState]);
+
+  useEffect(() => {
+    if (loginState === "success") navigate("/");
     return () => {
       setShowPassword(false);
       setUsername("");
       setPassword("");
-      setLoginState && setLoginState("idle");
+      setHasError(false);
     };
-  }, [setLoginState]);
+  }, [setLoginState, loginState, navigate]);
 
   return (
     <div className="h-screen w-screen bg-slate-700 flex items-center justify-center">
@@ -72,7 +80,7 @@ const Login = () => {
         >
           Home
         </Button>
-        {loginState === "error" && (
+        {hasError && (
           <p className="text-red-500 mt-4 text-base">
             Invalid username or password
           </p>

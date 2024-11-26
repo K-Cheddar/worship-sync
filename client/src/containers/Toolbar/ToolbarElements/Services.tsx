@@ -74,9 +74,11 @@ const Services = () => {
         <div className="flex flex-col gap-2">
           <div className="services-container">
             <section className="flex-1 h-full p-1 flex flex-col">
-              <h3 className="text-xl font-semibold mb-2">Current Item Lists</h3>
+              <h3 className="text-xl font-semibold mb-2 text-center">
+                Current Item Lists
+              </h3>
               <ul className="services-list">
-                {currentLists.map((list) => (
+                {currentLists.map((list, index) => (
                   <Service
                     key={list.id}
                     list={list}
@@ -90,16 +92,19 @@ const Services = () => {
                         dispatch(updateItemLists([...currentLists, newList]));
                       }
                     }}
-                    deleteList={async (id) => {
-                      dispatch(removeFromItemLists(id));
-                      if (db) {
-                        const existingList: DBItemListDetails = await db.get(
-                          id
-                        );
-                        db.remove(existingList);
-                        dispatch(selectItemList(currentLists[0].id));
-                      }
-                    }}
+                    deleteList={
+                      index === 0
+                        ? undefined
+                        : async (id) => {
+                            dispatch(removeFromItemLists(id));
+                            if (db) {
+                              const existingList: DBItemListDetails =
+                                await db.get(id);
+                              db.remove(existingList);
+                              dispatch(selectItemList(currentLists[0].id));
+                            }
+                          }
+                    }
                     updateList={(list) => {
                       _updateItemLists(list);
                     }}
@@ -110,7 +115,7 @@ const Services = () => {
           </div>
           <Button
             svg={AddSVG}
-            className="ml-auto text-base"
+            className="w-full justify-center text-base"
             onClick={async () => {
               const newList = await createNewItemList({
                 db,

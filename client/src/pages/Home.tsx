@@ -22,14 +22,22 @@ const LinkButton = ({ to, children }: { to: string; children: ReactNode }) => {
 const Welcome = () => {
   const { loginState, logout } = useContext(GlobalInfoContext) || {};
   const isLoggedIn = loginState === "success";
+  console.log("HOME", { loginState });
   return (
     <main className="bg-slate-700 h-screen w-screen text-white">
       <div className="flex w-full justify-end p-2 gap-4 text-lg">
         <Button
           variant="tertiary"
           onClick={isLoggedIn && logout ? logout : undefined}
+          padding={`${isLoggedIn ? "px-4 py-1" : "p-0"}`}
         >
-          {!isLoggedIn ? <Link to="/login">Login</Link> : "Logout"}
+          {!isLoggedIn ? (
+            <Link className="h-full w-full px-4 py-1" to="/login">
+              Login
+            </Link>
+          ) : (
+            "Logout"
+          )}
         </Button>
         <UserSection />
       </div>

@@ -10,12 +10,11 @@ import { useState } from "react";
 
 type ServiceProps = {
   list: ItemList;
-  deleteList: (_id: string) => void;
+  deleteList?: (_id: string) => void;
   updateList: (list: ItemList) => void;
   addList?: (list: ItemList) => void;
   copyList?: (list: ItemList) => void;
   canBeAdded?: boolean;
-  isAllLists?: boolean;
 };
 
 const Service = ({
@@ -24,17 +23,17 @@ const Service = ({
   updateList,
   addList,
   canBeAdded,
-  isAllLists,
   copyList,
 }: ServiceProps) => {
   const [name, setName] = useState<string>(list.name);
   const [isEditing, setIsEditing] = useState<boolean>(false);
+  const nameClasses = "text-lg flex-1 mr-2 pl-2";
   return (
     <li className="p-1.5 hover:bg-gray-800 rounded-md flex gap-1 items-center">
-      {!isEditing && <p className="text-lg flex-1">{list.name}</p>}
+      {!isEditing && <p className={nameClasses}>{list.name}</p>}
       {isEditing && (
         <Input
-          className="text-lg flex-1"
+          className={nameClasses}
           label="Edit List Name"
           data-ignore-undo="true"
           hideLabel
@@ -71,9 +70,10 @@ const Service = ({
       )}
       <Button
         variant="tertiary"
-        color={`${isAllLists ? "red" : "white"}`}
+        color={deleteList ? "red" : "gray"}
+        disabled={!deleteList}
         svg={DeleteSVG}
-        onClick={() => deleteList(list.id)}
+        onClick={() => deleteList && deleteList(list.id)}
       />
     </li>
   );

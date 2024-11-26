@@ -13,7 +13,7 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
     slides: [],
     selectedBox: 1,
     selectedSlide: 0,
-    bibleInfo: { book: "", chapter: "", version: "", verses: [] },
+    bibleInfo: item.bibleInfo,
   };
 
   let updatedArrangements;

@@ -50,13 +50,13 @@ const Media = () => {
     dispatch(updateMediaList(updatedList));
   };
 
-  const addNewBackground = ({ public_id, secure_url }: imageInfoType) => {
+  const addNewBackground = ({ public_id, secure_url, type }: imageInfoType) => {
     const updatedList = [
       ...list,
       {
         category: "uncategorized",
         name: public_id,
-        type: "image",
+        type,
         id: generateRandomId(),
         image: secure_url,
       },

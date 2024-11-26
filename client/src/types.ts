@@ -262,6 +262,7 @@ export type Media = {
   type: string;
   id: string;
   image: string;
+  video?: string;
 };
 
 export type DBMedia = {

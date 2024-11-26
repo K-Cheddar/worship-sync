@@ -1,10 +1,11 @@
-import { createContext, useEffect, useMemo, useState } from "react";
+import { createContext, useEffect, useMemo, useRef, useState } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { DBLogin } from "../types";
 import { useNavigate } from "react-router-dom";
+import { useDispatch } from "../hooks";
 
 type GlobalInfoContextType = {
   db: PouchDB.Database | undefined;
@@ -48,7 +49,9 @@ const GlobalInfoProvider = ({ children }: any) => {
   const [user, setUser] = useState("Demo");
   const [database, setDatabase] = useState("demo");
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
+  const syncRef = useRef<any>();
   const navigate = useNavigate();
+  const dispatch = useDispatch();
 
   const cloud = useMemo(() => {
     return new Cloudinary({
@@ -62,6 +65,7 @@ const GlobalInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     const setupDb = async () => {
+      console.log(database, loginState);
       let remoteURL =
         process.env.REACT_APP_DATABASE_STRING + "portable-media-" + database;
       const remoteDb = new PouchDB(remoteURL);
@@ -73,9 +77,23 @@ const GlobalInfoProvider = ({ children }: any) => {
           setDb(localDb);
           globalDb = localDb;
           console.log("Replication completed");
+          if (loginState === "success") {
+            syncRef.current = localDb
+              .sync(remoteDb, { retry: true }) // should live be true?
+              .on("change", () => {
+                console.log("change");
+              });
+          }
         });
     };
 
+    if (loginState === "success" || loginState === "idle") {
+      setupDb();
+    }
+  }, [database, loginState]);
+
+  useEffect(() => {
+    console.log("setting from local storage");
     localStorage.setItem("presentation", "null");
     const _isLoggedIn = localStorage.getItem("loggedIn") === "true";
     setLoginState(_isLoggedIn ? "success" : "idle");
@@ -91,9 +109,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     if (_uploadPreset !== null && _uploadPreset !== "null") {
       setUploadPreset(_uploadPreset);
     }
-
-    setupDb();
-  }, [database]);
+  }, []);
 
   useEffect(() => {
     initializeApp(firebaseConfig);
@@ -127,6 +143,8 @@ const GlobalInfoProvider = ({ children }: any) => {
       if (!user) {
         setLoginState("error");
       } else {
+        await db?.destroy();
+        setDb(undefined);
         setLoginState("success");
         localStorage.setItem("loggedIn", "true");
         localStorage.setItem("user", user.username);
@@ -147,12 +165,14 @@ const GlobalInfoProvider = ({ children }: any) => {
     localStorage.setItem("user", "Demo");
     localStorage.setItem("database", "demo");
     localStorage.setItem("upload_preset", "bpqu4ma5");
-    setLoginState("idle");
+    syncRef.current?.cancel();
+    dispatch({ type: "RESET" });
     setUser("Demo");
     setDatabase("demo");
     setUploadPreset("bpqu4ma5");
     navigate("/");
-    db?.destroy();
+    setLoginState("loading");
+    setLoginState("idle");
   };
 
   return (

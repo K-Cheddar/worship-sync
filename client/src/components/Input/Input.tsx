@@ -50,7 +50,7 @@ const Input = ({
       >
         {label}:
       </label>
-      <span className="relative ">
+      <span className="relative w-full">
         <input
           className={`w-full rounded py-1 pl-2 text-black ${
             svg ? "pr-6" : "pr-2"
