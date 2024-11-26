@@ -53,18 +53,25 @@ listenerMiddleware.startListening({
         (previousState as RootState).undoable.present.item &&
       action.type !== "item/setSelectedSlide" &&
       action.type !== "item/toggleEditMode" &&
-      action.type !== "item/setActiveItem" &&
-      action.type !== "item/setItemIsLoading"
+      action.type !== "item/setItemIsLoading" &&
+      !!(currentState as RootState).undoable.present.item.hasPendingUpdate
     );
   },
 
   effect: async (action, listenerApi) => {
     console.log("action", action);
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
+    let state = listenerApi.getState() as RootState;
+    if (action.type === "item/setActiveItem") {
+      state = listenerApi.getOriginalState() as RootState;
+    } else {
+      listenerApi.cancelActiveListeners();
+      await listenerApi.delay(3500);
+    }
+
+    listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
 
     // update Item
-    const item = (listenerApi.getState() as RootState).undoable.present.item;
+    const item = state.undoable.present.item;
     console.log({ item });
     if (!db) return;
     let db_item: DBItem = await db.get(item._id);
@@ -96,7 +103,7 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     console.log("action", action);
     listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
+    await listenerApi.delay(1500);
 
     // update ItemList
     const { list } = (listenerApi.getState() as RootState).undoable.present
@@ -123,7 +130,7 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     console.log("action", action);
     listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
+    await listenerApi.delay(1500);
 
     // update ItemList
     const { currentLists, selectedList } = (listenerApi.getState() as RootState)
@@ -150,7 +157,7 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     console.log("action", action);
     listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
+    await listenerApi.delay(5000);
 
     // update ItemList
     const { list } = (listenerApi.getState() as RootState).allItems;
@@ -168,14 +175,15 @@ listenerMiddleware.startListening({
     return (
       (currentState as RootState).undoable.present.overlays !==
         (previousState as RootState).undoable.present.overlays &&
-      action.type !== "overlays/initiateOverlayList"
+      action.type !== "overlays/initiateOverlayList" &&
+      action.type !== "overlays/selectOverlay"
     );
   },
 
   effect: async (action, listenerApi) => {
     console.log("action", action);
     listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
+    await listenerApi.delay(3500);
 
     // update ItemList
     const { list } = (listenerApi.getState() as RootState).undoable.present
@@ -203,7 +211,7 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     console.log("action", action);
     listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
+    await listenerApi.delay(5000);
 
     // update ItemList
     const { list } = (listenerApi.getState() as RootState).media;

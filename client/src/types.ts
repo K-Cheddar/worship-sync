@@ -104,6 +104,7 @@ export type ItemState = {
     verses: verseType[];
   };
   isLoading?: boolean;
+  hasPendingUpdate?: boolean;
 };
 
 export type OptionalItemState = {

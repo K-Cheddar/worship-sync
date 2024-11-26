@@ -85,17 +85,16 @@ const CreateItem = () => {
   }, [itemName, list, selectedType]);
 
   const dispatchNewItem = (item: ItemState) => {
+    const listItem = {
+      name: item.name,
+      type: item.type,
+      background: item.background,
+      _id: item._id,
+      listId: generateRandomId(),
+    };
     dispatch(setActiveItem(item));
-    dispatch(
-      addItemToItemList({ ...item, _id: item._id, listId: generateRandomId() })
-    );
-    dispatch(
-      addItemToAllItemsList({
-        ...item,
-        _id: item._id,
-        listId: generateRandomId(),
-      })
-    );
+    dispatch(addItemToItemList(listItem));
+    dispatch(addItemToAllItemsList(listItem));
   };
 
   const createItem = async () => {

@@ -1,4 +1,11 @@
-import { createContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 import PouchDB from "pouchdb";
@@ -23,6 +30,7 @@ type GlobalInfoContextType = {
   database: string;
   uploadPreset: string;
   setLoginState: (val: "idle" | "loading" | "error" | "success") => void;
+  updater: EventTarget;
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
@@ -49,6 +57,7 @@ const GlobalInfoProvider = ({ children }: any) => {
   const [user, setUser] = useState("Demo");
   const [database, setDatabase] = useState("demo");
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
+  const updater = useRef(new EventTarget());
   const syncRef = useRef<any>();
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -63,34 +72,40 @@ const GlobalInfoProvider = ({ children }: any) => {
     });
   }, []);
 
+  const setupDb = useCallback(async () => {
+    console.log(database, loginState);
+    let remoteURL =
+      process.env.REACT_APP_DATABASE_STRING + "portable-media-" + database;
+    const remoteDb = new PouchDB(remoteURL);
+    const localDb = new PouchDB("portable-media");
+
+    remoteDb.replicate
+      .to(localDb, { retry: true })
+      .on("complete", function (info) {
+        setDb(localDb);
+        globalDb = localDb;
+        console.log("Replication completed");
+        if (loginState === "success") {
+          syncRef.current = localDb
+            .sync(remoteDb, { retry: true, live: true })
+            .on("change", (event) => {
+              if (event.direction === "push") {
+                console.log("updating from local");
+              }
+              if (event.direction === "pull") {
+                console.log("updating from remote");
+                updater.current.dispatchEvent(new Event("update"));
+              }
+            });
+        }
+      });
+  }, [database, loginState]);
+
   useEffect(() => {
-    const setupDb = async () => {
-      console.log(database, loginState);
-      let remoteURL =
-        process.env.REACT_APP_DATABASE_STRING + "portable-media-" + database;
-      const remoteDb = new PouchDB(remoteURL);
-      const localDb = new PouchDB("portable-media");
-
-      remoteDb.replicate
-        .to(localDb, { retry: true })
-        .on("complete", function (info) {
-          setDb(localDb);
-          globalDb = localDb;
-          console.log("Replication completed");
-          if (loginState === "success") {
-            syncRef.current = localDb
-              .sync(remoteDb, { retry: true }) // should live be true?
-              .on("change", () => {
-                console.log("change");
-              });
-          }
-        });
-    };
-
     if (loginState === "success" || loginState === "idle") {
       setupDb();
     }
-  }, [database, loginState]);
+  }, [loginState, setupDb]);
 
   useEffect(() => {
     console.log("setting from local storage");
@@ -143,6 +158,7 @@ const GlobalInfoProvider = ({ children }: any) => {
       if (!user) {
         setLoginState("error");
       } else {
+        dispatch({ type: "RESET" });
         await db?.destroy();
         setDb(undefined);
         setLoginState("success");
@@ -160,18 +176,18 @@ const GlobalInfoProvider = ({ children }: any) => {
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    setLoginState("loading");
     localStorage.setItem("loggedIn", "false");
     localStorage.setItem("user", "Demo");
     localStorage.setItem("database", "demo");
     localStorage.setItem("upload_preset", "bpqu4ma5");
-    syncRef.current?.cancel();
+    await syncRef.current?.cancel();
     dispatch({ type: "RESET" });
     setUser("Demo");
     setDatabase("demo");
     setUploadPreset("bpqu4ma5");
     navigate("/");
-    setLoginState("loading");
     setLoginState("idle");
   };
 
@@ -187,6 +203,7 @@ const GlobalInfoProvider = ({ children }: any) => {
         login,
         setLoginState,
         logout,
+        updater: updater.current,
       }}
     >
       {children}

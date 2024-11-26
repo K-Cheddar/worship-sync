@@ -21,6 +21,7 @@ const initialState: ItemState = {
   selectedBox: 1,
   bibleInfo: { book: "", chapter: "", version: "", verses: [] },
   isLoading: true,
+  hasPendingUpdate: false,
 };
 
 export const itemSlice = createSlice({
@@ -49,24 +50,32 @@ export const itemSlice = createSlice({
     },
     _setName: (state, action: PayloadAction<string>) => {
       state.name = action.payload;
+      state.hasPendingUpdate = true;
     },
     setSelectedSlide: (state, action: PayloadAction<number>) => {
       state.selectedSlide = action.payload;
     },
     _setSelectedArrangement: (state, action: PayloadAction<number>) => {
       state.selectedArrangement = action.payload;
+      state.hasPendingUpdate = true;
     },
     _updateArrangements: (state, action: PayloadAction<Arrangment[]>) => {
       state.arrangements = [...action.payload];
+      state.hasPendingUpdate = true;
     },
     _updateSlides: (state, action: PayloadAction<ItemSlide[]>) => {
       state.slides = [...action.payload];
+      state.hasPendingUpdate = true;
     },
     setItemIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
     },
     setBackground: (state, action: PayloadAction<string>) => {
       state.background = action.payload;
+      state.hasPendingUpdate = true;
+    },
+    setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
+      state.hasPendingUpdate = action.payload;
     },
   },
 });
@@ -328,6 +337,7 @@ export const {
   setItemIsLoading,
   _updateSlides,
   setBackground,
+  setHasPendingUpdate,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

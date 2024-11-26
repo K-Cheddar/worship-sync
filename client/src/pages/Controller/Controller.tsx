@@ -45,7 +45,7 @@ const Controller = () => {
     (state) => state.undoable.present.itemLists
   );
 
-  const { db, cloud } = useContext(GlobalInfoContext) || {};
+  const { db, cloud, updater } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     const getAllItems = async () => {
@@ -53,12 +53,22 @@ const Controller = () => {
       const items = response?.items || [];
       dispatch(initiateAllItemsList(items));
     };
-
     getAllItems();
+
+    // updater?.addEventListener("update", () => {
+    //   console.log("updating all items from update event");
+    //   getAllItems();
+    // });
+
+    // return () => {
+    //   updater?.removeEventListener("update", getAllItems);
+    // };
   }, [dispatch, db]);
 
+  useEffect(() => {}, []);
+
   useEffect(() => {
-    const getItemLists = async () => {
+    const getItemList = async () => {
       if (!selectedList || !db || !cloud) return;
       dispatch(setItemListIsLoading(true));
       try {
@@ -78,7 +88,18 @@ const Controller = () => {
       dispatch(setItemListIsLoading(false));
     };
 
-    getItemLists();
+    console.log({ db, selectedList, cloud });
+
+    getItemList();
+
+    // updater?.addEventListener("update", () => {
+    //   console.log("updating itemList from update event");
+    //   getItemList();
+    // });
+
+    // return () => {
+    //   updater?.removeEventListener("update", getItemList);
+    // };
   }, [dispatch, db, selectedList, cloud]);
 
   return (

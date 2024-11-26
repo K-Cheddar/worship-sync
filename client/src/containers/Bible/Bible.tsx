@@ -176,7 +176,13 @@ const Bible = () => {
     });
 
     dispatch(
-      addItemToItemList({ ...item, _id: item._id, listId: generateRandomId() })
+      addItemToItemList({
+        _id: item._id,
+        name: item.name,
+        type: "bible",
+        background: item.background,
+        listId: generateRandomId(),
+      })
     );
     dispatch(setActiveItem(item));
   };

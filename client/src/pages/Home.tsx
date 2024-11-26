@@ -48,6 +48,7 @@ const Welcome = () => {
         className="max-w-[75%] mx-auto"
         width={400}
         height={367}
+        loading="eager"
       />
       <p className="text-lg text-center w-full px-4">
         This software is in beta and works best with chromium based browsers
