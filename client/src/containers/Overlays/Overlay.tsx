@@ -4,7 +4,10 @@ import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import { useDispatch } from "../../hooks";
 import { deleteOverlay, selectOverlay } from "../../store/overlaysSlice";
 import "./Overlays.scss";
-import { updateOverlayInfo } from "../../store/presentationSlice";
+import {
+  updateFlOverlayInfo,
+  updateStbOverlayInfo,
+} from "../../store/presentationSlice";
 import { OverlayType } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
@@ -92,15 +95,23 @@ const Overlay = ({
           disabled={!isStreamTransmitting}
           svg={OverlaysSVG}
           onClick={() =>
-            dispatch(
-              updateOverlayInfo({
-                name: overlay.name,
-                title: overlay.title,
-                event: overlay.event,
-                duration: overlay.duration,
-                type: overlay.type,
-              })
-            )
+            dispatch(() => {
+              if (overlay.type === "stick-to-bottom") {
+                updateStbOverlayInfo({
+                  name: overlay.name,
+                  event: overlay.event,
+                  duration: overlay.duration,
+                });
+              } else if (overlay.type === "floating") {
+                updateFlOverlayInfo({
+                  name: overlay.name,
+                  title: overlay.title,
+                  event: overlay.event,
+                  duration: overlay.duration,
+                  type: overlay.type,
+                });
+              }
+            })
           }
         >
           Send

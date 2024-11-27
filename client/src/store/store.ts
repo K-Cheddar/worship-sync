@@ -16,7 +16,8 @@ import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
-import { globalDb as db, globalFireDbInfo } from "../context/globalInfo";
+import { globalDb as db } from "../context/controllerInfo";
+import { globalFireDbInfo } from "../context/globalInfo";
 import { ref, set } from "firebase/database";
 import {
   DBAllItems,
@@ -60,7 +61,6 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    console.log("action", action);
     let state = listenerApi.getState() as RootState;
     if (action.type === "item/setActiveItem") {
       state = listenerApi.getOriginalState() as RootState;
@@ -73,7 +73,6 @@ listenerMiddleware.startListening({
 
     // update Item
     const item = state.undoable.present.item;
-    console.log({ item });
     if (!db) return;
     let db_item: DBItem = await db.get(item._id);
 
@@ -102,7 +101,6 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    console.log("action", action);
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
@@ -129,7 +127,6 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    console.log("action", action);
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
@@ -156,7 +153,6 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    console.log("action", action);
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(5000);
 
@@ -182,7 +178,6 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    console.log("action", action);
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(3500);
 
@@ -210,7 +205,6 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    console.log("action", action);
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(5000);
 
@@ -233,29 +227,46 @@ listenerMiddleware.startListening({
       action.type !== "presentation/toggleProjectorTransmitting" &&
       action.type !== "presentation/toggleMonitorTransmitting" &&
       action.type !== "presentation/toggleStreamTransmitting" &&
-      action.type !== "presentation/setTransmitToAll"
+      action.type !== "presentation/setTransmitToAll" &&
+      action.type !== "presentation/updateProjectorFromRemote" &&
+      action.type !== "presentation/updateMonitorFromRemote" &&
+      action.type !== "presentation/updateStreamFromRemote" &&
+      action.type !== "presentation/updateBibleDisplayInfoFromRemote" &&
+      action.type !== "presentation/updateOverlayInfoFromRemote"
     );
   },
 
   effect: async (action, listenerApi) => {
-    console.log("action", action, globalFireDbInfo);
+    console.log("action", action);
     if (!globalFireDbInfo.db) return;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
-    const cleanedObject = JSON.parse(
-      JSON.stringify(
-        (listenerApi.getState() as RootState).presentation,
-        (key, val) => (val === undefined ? null : val)
-      )
-    );
+    const cleanObject = (obj: Object) =>
+      JSON.parse(
+        JSON.stringify(obj, (_, val) => (val === undefined ? null : val))
+      );
+
+    const { projectorInfo, monitorInfo, streamInfo } = (
+      listenerApi.getState() as RootState
+    ).presentation;
+    const presentationUpdate = {
+      projectorInfo,
+      monitorInfo,
+      streamInfo,
+      stream_bibleInfo: streamInfo.bibleDisplayInfo,
+      stream_flOverlayInfo: streamInfo.flOverlayInfo,
+      stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
+    };
+
+    // console.log({ presentationUpdate });
 
     set(
       ref(
         globalFireDbInfo.db,
         "users/" + globalFireDbInfo.user + "/v2/presentation"
       ),
-      cleanedObject
+      cleanObject(presentationUpdate)
     );
   },
 });

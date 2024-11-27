@@ -6,11 +6,11 @@ import { DBItem } from "../../types";
 import { formatItemInfo } from "../../utils/formatItemInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import { setActiveItem, setItemIsLoading } from "../../store/itemSlice";
-import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 
 const Item = () => {
   const { itemId, listId } = useParams();
-  const { db, cloud } = useContext(GlobalInfoContext) || {};
+  const { db, cloud } = useContext(ControllerInfoContext) || {};
   const { isLoading } = useSelector((state) => state.undoable.present.item);
 
   const decodedItemId = useMemo(() => {

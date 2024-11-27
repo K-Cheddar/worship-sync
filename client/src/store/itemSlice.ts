@@ -244,7 +244,6 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
 export const updateSlideBackground = createAsyncThunk(
   "item/updateSlideBackground",
   async (args: { background: string }, { dispatch, getState }) => {
-    console.log("slides update");
     const state = getState();
     const item = state.undoable.present.item;
 

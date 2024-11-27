@@ -27,7 +27,14 @@ const initialState: PresentationState = {
   prevStreamInfo: { type: "", name: "", slide: null, displayType: "stream" },
   projectorInfo: { type: "", name: "", slide: null, displayType: "projector" },
   monitorInfo: { type: "", name: "", slide: null, displayType: "monitor" },
-  streamInfo: { type: "", name: "", slide: null, displayType: "stream" },
+  streamInfo: {
+    type: "",
+    name: "",
+    slide: null,
+    displayType: "stream",
+    flOverlayInfo: { time: Date.now() },
+    stbOverlayInfo: { time: Date.now() },
+  },
 };
 
 export const presentationSlice = createSlice({
@@ -89,39 +96,79 @@ export const presentationSlice = createSlice({
       state.isMonitorTransmitting = action.payload;
       state.isStreamTransmitting = action.payload;
     },
-    updateOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
-      if (state.isStreamTransmitting || action.payload.ignoreIsTransmitting) {
+    updateFlOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
+      if (state.isStreamTransmitting) {
         // set previous info for cross animation
-        if (action.payload.type === "floating") {
-          state.prevStreamInfo.flOverlayInfo = state.streamInfo.flOverlayInfo;
-          state.streamInfo.flOverlayInfo = { ...action.payload };
-          state.streamInfo.time = action.payload.ignoreIsTransmitting
-            ? action.payload.time
-            : Date.now();
-        } else if (action.payload.type === "stick-to-bottom") {
-          state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
-          state.streamInfo.stbOverlayInfo = { ...action.payload };
-          state.streamInfo.time = action.payload.ignoreIsTransmitting
-            ? action.payload.time
-            : Date.now();
-        }
+        state.prevStreamInfo.flOverlayInfo = state.streamInfo.flOverlayInfo;
+        state.streamInfo.flOverlayInfo = {
+          ...action.payload,
+          time: Date.now(),
+        };
+        state.streamInfo.time = Date.now();
       }
+    },
+    updateStbOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
+      if (state.isStreamTransmitting) {
+        // set previous info for cross animation
+        state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
+        state.streamInfo.stbOverlayInfo = {
+          ...action.payload,
+          time: Date.now(),
+        };
+        state.streamInfo.time = Date.now();
+      }
+    },
+    updateFlOverlayInfoFromRemote: (
+      state,
+      action: PayloadAction<OverlayInfo>
+    ) => {
+      // set previous info for cross animation
+      state.prevStreamInfo.flOverlayInfo = state.streamInfo.flOverlayInfo;
+      state.streamInfo.flOverlayInfo = {
+        ...action.payload,
+        time: action.payload.time,
+      };
+      state.streamInfo.time = action.payload.time;
+    },
+    updateStbOverlayInfoFromRemote: (
+      state,
+      action: PayloadAction<OverlayInfo>
+    ) => {
+      // set previous info for cross animation
+      state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
+      state.streamInfo.stbOverlayInfo = {
+        ...action.payload,
+        time: action.payload.time,
+      };
+      state.streamInfo.time = action.payload.time;
     },
     updateBibleDisplayInfo: (
       state,
       action: PayloadAction<BibleDisplayInfo>
     ) => {
-      if (state.isStreamTransmitting || action.payload.ignoreIsTransmitting) {
+      if (state.isStreamTransmitting) {
         // set previous info for cross animation
         state.prevStreamInfo.bibleDisplayInfo =
           state.streamInfo.bibleDisplayInfo;
-        state.streamInfo.bibleDisplayInfo = { ...action.payload };
+        state.streamInfo.bibleDisplayInfo = {
+          ...action.payload,
+          time: Date.now(),
+        };
         state.streamInfo.slide = null;
-        state.streamInfo.time = action.payload.ignoreIsTransmitting
-          ? action.payload.time
-          : Date.now();
+        state.streamInfo.time = Date.now();
         // state.prevStreamInfo.slide = null;
       }
+    },
+    updateBibleDisplayInfoFromRemote: (
+      state,
+      action: PayloadAction<BibleDisplayInfo>
+    ) => {
+      // set previous info for cross animation
+      state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
+      state.streamInfo.bibleDisplayInfo = { ...action.payload };
+      state.streamInfo.slide = null;
+      state.streamInfo.time = action.payload.time;
+      // state.prevStreamInfo.slide = null;
     },
     clearProjector: (state) => {
       // set previous info for fading out
@@ -131,10 +178,8 @@ export const presentationSlice = createSlice({
       state.prevProjectorInfo.time = state.projectorInfo.time;
 
       state.projectorInfo = {
-        ...state.projectorInfo,
-        type: "",
-        name: "",
-        slide: null,
+        ...initialState.projectorInfo,
+        time: Date.now(),
       };
     },
     clearMonitor: (state) => {
@@ -145,10 +190,8 @@ export const presentationSlice = createSlice({
       state.prevMonitorInfo.time = state.monitorInfo.time;
 
       state.monitorInfo = {
-        ...state.monitorInfo,
-        type: "",
-        name: "",
-        slide: null,
+        ...initialState.monitorInfo,
+        time: Date.now(),
       };
     },
     clearStream: (state) => {
@@ -162,13 +205,9 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
 
       state.streamInfo = {
-        ...state.streamInfo,
-        type: "",
-        name: "",
-        slide: null,
-        flOverlayInfo: { event: "", name: "" },
-        stbOverlayInfo: { event: "", name: "" },
-        bibleDisplayInfo: { title: "", text: "" },
+        ...initialState.streamInfo,
+        time: Date.now(),
+        bibleDisplayInfo: { title: "", text: "", time: Date.now() },
       };
     },
     clearAll: (state) => {
@@ -192,33 +231,22 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
 
       state.projectorInfo = {
-        ...state.projectorInfo,
-        type: "",
-        name: "",
-        slide: null,
+        ...initialState.projectorInfo,
+        time: Date.now(),
       };
       state.monitorInfo = {
-        ...state.monitorInfo,
-        type: "",
-        name: "",
-        slide: null,
+        ...initialState.monitorInfo,
+        time: Date.now(),
       };
       state.streamInfo = {
-        ...state.streamInfo,
-        type: "",
-        name: "",
-        slide: null,
-        stbOverlayInfo: { event: "", name: "" },
-        flOverlayInfo: { event: "", name: "" },
-        bibleDisplayInfo: { title: "", text: "" },
+        ...initialState.streamInfo,
+        time: Date.now(),
+        bibleDisplayInfo: { title: "", text: "", time: Date.now() },
       };
     },
     updateProjector: (state, action: PayloadAction<Presentation>) => {
       // set previous info for cross animation
-      if (
-        state.isProjectorTransmitting ||
-        action.payload.ignoreIsTransmitting
-      ) {
+      if (state.isProjectorTransmitting) {
         state.prevProjectorInfo.slide = state.projectorInfo.slide;
         state.prevProjectorInfo.name = state.projectorInfo.name;
         state.prevProjectorInfo.type = state.projectorInfo.type;
@@ -227,14 +255,24 @@ export const presentationSlice = createSlice({
         state.projectorInfo.slide = action.payload.slide;
         state.projectorInfo.name = action.payload.name;
         state.projectorInfo.type = action.payload.type;
-        state.projectorInfo.time = action.payload.ignoreIsTransmitting
-          ? action.payload.time
-          : Date.now();
+        state.projectorInfo.time = Date.now();
       }
+    },
+    updateProjectorFromRemote: (state, action: PayloadAction<Presentation>) => {
+      // set previous info for cross animation
+      state.prevProjectorInfo.slide = state.projectorInfo.slide;
+      state.prevProjectorInfo.name = state.projectorInfo.name;
+      state.prevProjectorInfo.type = state.projectorInfo.type;
+      state.prevProjectorInfo.time = state.projectorInfo.time;
+
+      state.projectorInfo.slide = action.payload.slide;
+      state.projectorInfo.name = action.payload.name;
+      state.projectorInfo.type = action.payload.type;
+      state.projectorInfo.time = action.payload.time;
     },
     updateMonitor: (state, action: PayloadAction<Presentation>) => {
       // set previous info for cross animation
-      if (state.isMonitorTransmitting || action.payload.ignoreIsTransmitting) {
+      if (state.isMonitorTransmitting) {
         state.prevMonitorInfo.slide = state.monitorInfo.slide;
         state.prevMonitorInfo.name = state.monitorInfo.name;
         state.prevMonitorInfo.type = state.monitorInfo.type;
@@ -243,14 +281,24 @@ export const presentationSlice = createSlice({
         state.monitorInfo.slide = action.payload.slide;
         state.monitorInfo.name = action.payload.name;
         state.monitorInfo.type = action.payload.type;
-        state.monitorInfo.time = action.payload.ignoreIsTransmitting
-          ? action.payload.time
-          : Date.now();
+        state.monitorInfo.time = Date.now();
       }
+    },
+    updateMonitorFromRemote: (state, action: PayloadAction<Presentation>) => {
+      // set previous info for cross animation
+      state.prevMonitorInfo.slide = state.monitorInfo.slide;
+      state.prevMonitorInfo.name = state.monitorInfo.name;
+      state.prevMonitorInfo.type = state.monitorInfo.type;
+      state.prevMonitorInfo.time = state.monitorInfo.time;
+
+      state.monitorInfo.slide = action.payload.slide;
+      state.monitorInfo.name = action.payload.name;
+      state.monitorInfo.type = action.payload.type;
+      state.monitorInfo.time = action.payload.time;
     },
     updateStream: (state, action: PayloadAction<Presentation>) => {
       // set previous info for cross animation
-      if (state.isStreamTransmitting || action.payload.ignoreIsTransmitting) {
+      if (state.isStreamTransmitting) {
         state.prevStreamInfo.slide = state.streamInfo.slide;
         state.prevStreamInfo.name = state.streamInfo.name;
         state.prevStreamInfo.type = state.streamInfo.type;
@@ -262,10 +310,23 @@ export const presentationSlice = createSlice({
 
         state.streamInfo.name = action.payload.name;
         state.streamInfo.type = action.payload.type;
-        state.streamInfo.time = action.payload.ignoreIsTransmitting
-          ? action.payload.time
-          : Date.now();
+        state.streamInfo.time = Date.now();
       }
+    },
+    updateStreamFromRemote: (state, action: PayloadAction<Presentation>) => {
+      // set previous info for cross animation
+      state.prevStreamInfo.slide = state.streamInfo.slide;
+      state.prevStreamInfo.name = state.streamInfo.name;
+      state.prevStreamInfo.type = state.streamInfo.type;
+      state.prevStreamInfo.time = state.streamInfo.time;
+
+      if (action.payload.type !== "bible") {
+        state.streamInfo.slide = action.payload.slide;
+      }
+
+      state.streamInfo.name = action.payload.name;
+      state.streamInfo.type = action.payload.type;
+      state.streamInfo.time = action.payload.time;
     },
   },
 });
@@ -276,7 +337,8 @@ export const {
   toggleMonitorTransmitting,
   toggleStreamTransmitting,
   setTransmitToAll,
-  updateOverlayInfo,
+  updateFlOverlayInfo,
+  updateStbOverlayInfo,
   updateBibleDisplayInfo,
   clearProjector,
   clearMonitor,
@@ -285,6 +347,12 @@ export const {
   updateProjector,
   updateMonitor,
   updateStream,
+  updateProjectorFromRemote,
+  updateMonitorFromRemote,
+  updateStreamFromRemote,
+  updateBibleDisplayInfoFromRemote,
+  updateFlOverlayInfoFromRemote,
+  updateStbOverlayInfoFromRemote,
 } = presentationSlice.actions;
 
 export default presentationSlice.reducer;

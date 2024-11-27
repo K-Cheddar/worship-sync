@@ -7,13 +7,12 @@ import Input from "../Input/Input";
 import "./FilteredItems.scss";
 import {
   addItemToItemList,
-  removeItemFromList,
   removeItemFromListById,
 } from "../../store/itemListSlice";
 import { Link } from "react-router-dom";
 import { removeItemFromAllItemsList } from "../../store/allItemsSlice";
-import { DBAllItems, ServiceItem } from "../../types";
-import { GlobalInfoContext } from "../../context/globalInfo";
+import { ServiceItem } from "../../types";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -42,7 +41,7 @@ const FilteredItems = ({
   const [searchValue, setSearchValue] = useState("");
   const isFullListLoaded = filteredList.length <= numShownItems;
 
-  const { db } = useContext(GlobalInfoContext) || {};
+  const { db } = useContext(ControllerInfoContext) || {};
 
   useEffect(() => {
     setFilteredList(

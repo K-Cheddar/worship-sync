@@ -16,7 +16,7 @@ import { toggleEditMode, updateArrangements } from "../../store/itemSlice";
 import { setName, updateBoxes } from "../../store/itemSlice";
 import { formatSong } from "../../utils/overflow";
 import { Box } from "../../types";
-import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 
 const SlideEditor = () => {
   const item = useSelector((state) => state.undoable.present.item);
@@ -34,7 +34,7 @@ const SlideEditor = () => {
   const [localName, setLocalName] = useState(name);
   const arrangement = arrangements[selectedArrangement];
 
-  const { db } = useContext(GlobalInfoContext) || {};
+  const { db } = useContext(ControllerInfoContext) || {};
 
   const dispatch = useDispatch();
 

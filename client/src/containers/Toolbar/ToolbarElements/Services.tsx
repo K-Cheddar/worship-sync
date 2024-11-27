@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect } from "react";
 import { ReactComponent as OpenSVG } from "../../../assets/icons/open-folder.svg";
 import { ReactComponent as AddSVG } from "../../../assets/icons/add.svg";
 import Select from "../../../components/Select/Select";
@@ -15,7 +15,7 @@ import Button from "../../../components/Button/Button";
 import Service from "./Service";
 import "./Toolbar.scss";
 import { DBItemListDetails, DBItemLists, ItemList } from "../../../types";
-import { GlobalInfoContext } from "../../../context/globalInfo";
+import { ControllerInfoContext } from "../../../context/controllerInfo";
 import {
   createItemListFromExisting,
   createNewItemList,
@@ -32,7 +32,7 @@ const Services = () => {
     label: list.name,
   }));
 
-  const { db } = useContext(GlobalInfoContext) || {};
+  const { db } = useContext(ControllerInfoContext) || {};
 
   useEffect(() => {
     const getItemLists = async () => {

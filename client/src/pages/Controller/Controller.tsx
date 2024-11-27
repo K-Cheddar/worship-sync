@@ -15,7 +15,7 @@ import { initiateAllItemsList } from "../../store/allItemsSlice";
 import Songs from "../../containers/Songs/Songs";
 import { Route, Routes } from "react-router-dom";
 import BibleDbProvider from "../../context/bibleDb";
-import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import FreeForms from "../../containers/FreeForms/FreeForms";
@@ -45,7 +45,7 @@ const Controller = () => {
     (state) => state.undoable.present.itemLists
   );
 
-  const { db, cloud, updater } = useContext(GlobalInfoContext) || {};
+  const { db, cloud, updater } = useContext(ControllerInfoContext) || {};
 
   useEffect(() => {
     const getAllItems = async () => {
@@ -80,15 +80,12 @@ const Controller = () => {
         if (cloud) {
           dispatch(initiateItemList(formatItemList(itemList, cloud)));
         }
-        console.log({ overlays });
         dispatch(initiateOverlayList(overlays));
       } catch (e) {
         console.error(e);
       }
       dispatch(setItemListIsLoading(false));
     };
-
-    console.log({ db, selectedList, cloud });
 
     getItemList();
 

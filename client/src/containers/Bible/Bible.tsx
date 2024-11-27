@@ -31,7 +31,7 @@ import {
 } from "../../store/presentationSlice";
 import { createItemFromProps, createNewBible } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
-import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 
 const Bible = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -69,7 +69,7 @@ const Bible = () => {
   const createItemName = decodeURI(searchParams.get("name") || "");
 
   const { db } = useContext(BibleDbContext) || {};
-  const { db: c_db } = useContext(GlobalInfoContext) || {};
+  const { db: c_db } = useContext(ControllerInfoContext) || {};
   const bibleItemName = useMemo(() => {
     const bookName = books[book]?.name || "";
     const chapterName = chapters[chapter]?.name || "";

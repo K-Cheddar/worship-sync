@@ -21,7 +21,7 @@ import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { ItemState, ServiceItem } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
-import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 
 type ItemTypesType = {
   type: string;
@@ -68,7 +68,7 @@ const CreateItem = () => {
     types.map((type) => ({ ...type, selected: type.type === initialType }))
   );
   const [itemName, setItemName] = useState<string>(initialName);
-  const { db } = useContext(GlobalInfoContext) || {};
+  const { db } = useContext(ControllerInfoContext) || {};
 
   const naviagte = useNavigate();
   const dispatch = useDispatch();

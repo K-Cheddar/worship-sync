@@ -3,7 +3,7 @@ import Button from "../../components/Button/Button";
 import { ReactComponent as BgAll } from "../../assets/icons/background-all.svg";
 import { ReactComponent as BGOne } from "../../assets/icons/background-one.svg";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
-import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   updateAllSlideBackgrounds,
@@ -30,7 +30,7 @@ const Media = () => {
   }>({ id: "", image: "" });
   const [isMediaLoading, setIsMediaLoading] = useState(true);
 
-  const { db, cloud } = useContext(GlobalInfoContext) || {};
+  const { db, cloud } = useContext(ControllerInfoContext) || {};
 
   useEffect(() => {
     const getAllItems = async () => {
