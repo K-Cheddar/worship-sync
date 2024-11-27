@@ -15,7 +15,7 @@ const ToolbarMenu = () => {
     {
       text: "Open Stage Monitor",
       onClick: () => {
-        const monitorWindow = window.open("/monitor");
+        const monitorWindow = window.open("#/monitor");
       },
     },
     {

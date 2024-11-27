@@ -90,14 +90,20 @@ export const presentationSlice = createSlice({
       state.isStreamTransmitting = action.payload;
     },
     updateOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
-      if (state.isStreamTransmitting) {
+      if (state.isStreamTransmitting || action.payload.ignoreIsTransmitting) {
         // set previous info for cross animation
         if (action.payload.type === "floating") {
           state.prevStreamInfo.flOverlayInfo = state.streamInfo.flOverlayInfo;
           state.streamInfo.flOverlayInfo = { ...action.payload };
+          state.streamInfo.time = action.payload.ignoreIsTransmitting
+            ? action.payload.time
+            : Date.now();
         } else if (action.payload.type === "stick-to-bottom") {
           state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
           state.streamInfo.stbOverlayInfo = { ...action.payload };
+          state.streamInfo.time = action.payload.ignoreIsTransmitting
+            ? action.payload.time
+            : Date.now();
         }
       }
     },
@@ -105,12 +111,15 @@ export const presentationSlice = createSlice({
       state,
       action: PayloadAction<BibleDisplayInfo>
     ) => {
-      if (state.isStreamTransmitting) {
+      if (state.isStreamTransmitting || action.payload.ignoreIsTransmitting) {
         // set previous info for cross animation
         state.prevStreamInfo.bibleDisplayInfo =
           state.streamInfo.bibleDisplayInfo;
         state.streamInfo.bibleDisplayInfo = { ...action.payload };
         state.streamInfo.slide = null;
+        state.streamInfo.time = action.payload.ignoreIsTransmitting
+          ? action.payload.time
+          : Date.now();
         // state.prevStreamInfo.slide = null;
       }
     },
@@ -205,13 +214,58 @@ export const presentationSlice = createSlice({
       };
     },
     updateProjector: (state, action: PayloadAction<Presentation>) => {
-      state.projectorInfo = { ...state.projectorInfo, ...action.payload };
+      // set previous info for cross animation
+      if (
+        state.isProjectorTransmitting ||
+        action.payload.ignoreIsTransmitting
+      ) {
+        state.prevProjectorInfo.slide = state.projectorInfo.slide;
+        state.prevProjectorInfo.name = state.projectorInfo.name;
+        state.prevProjectorInfo.type = state.projectorInfo.type;
+        state.prevProjectorInfo.time = state.projectorInfo.time;
+
+        state.projectorInfo.slide = action.payload.slide;
+        state.projectorInfo.name = action.payload.name;
+        state.projectorInfo.type = action.payload.type;
+        state.projectorInfo.time = action.payload.ignoreIsTransmitting
+          ? action.payload.time
+          : Date.now();
+      }
     },
     updateMonitor: (state, action: PayloadAction<Presentation>) => {
-      state.monitorInfo = { ...state.monitorInfo, ...action.payload };
+      // set previous info for cross animation
+      if (state.isMonitorTransmitting || action.payload.ignoreIsTransmitting) {
+        state.prevMonitorInfo.slide = state.monitorInfo.slide;
+        state.prevMonitorInfo.name = state.monitorInfo.name;
+        state.prevMonitorInfo.type = state.monitorInfo.type;
+        state.prevMonitorInfo.time = state.monitorInfo.time;
+
+        state.monitorInfo.slide = action.payload.slide;
+        state.monitorInfo.name = action.payload.name;
+        state.monitorInfo.type = action.payload.type;
+        state.monitorInfo.time = action.payload.ignoreIsTransmitting
+          ? action.payload.time
+          : Date.now();
+      }
     },
     updateStream: (state, action: PayloadAction<Presentation>) => {
-      state.streamInfo = { ...state.streamInfo, ...action.payload };
+      // set previous info for cross animation
+      if (state.isStreamTransmitting || action.payload.ignoreIsTransmitting) {
+        state.prevStreamInfo.slide = state.streamInfo.slide;
+        state.prevStreamInfo.name = state.streamInfo.name;
+        state.prevStreamInfo.type = state.streamInfo.type;
+        state.prevStreamInfo.time = state.streamInfo.time;
+
+        if (action.payload.type !== "bible") {
+          state.streamInfo.slide = action.payload.slide;
+        }
+
+        state.streamInfo.name = action.payload.name;
+        state.streamInfo.type = action.payload.type;
+        state.streamInfo.time = action.payload.ignoreIsTransmitting
+          ? action.payload.time
+          : Date.now();
+      }
     },
   },
 });

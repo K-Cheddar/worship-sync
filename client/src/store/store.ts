@@ -16,7 +16,8 @@ import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
-import { globalDb as db } from "../context/globalInfo";
+import { globalDb as db, globalFireDbInfo } from "../context/globalInfo";
+import { ref, set } from "firebase/database";
 import {
   DBAllItems,
   DBItem,
@@ -220,6 +221,42 @@ listenerMiddleware.startListening({
     const db_backgrounds: DBMedia = await db.get("images");
     db_backgrounds.backgrounds = [...list];
     db.put(db_backgrounds);
+  },
+});
+
+// handle updating presentation
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).presentation !==
+        (previousState as RootState).presentation &&
+      action.type !== "presentation/toggleProjectorTransmitting" &&
+      action.type !== "presentation/toggleMonitorTransmitting" &&
+      action.type !== "presentation/toggleStreamTransmitting" &&
+      action.type !== "presentation/setTransmitToAll"
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    console.log("action", action, globalFireDbInfo);
+    if (!globalFireDbInfo.db) return;
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    const cleanedObject = JSON.parse(
+      JSON.stringify(
+        (listenerApi.getState() as RootState).presentation,
+        (key, val) => (val === undefined ? null : val)
+      )
+    );
+
+    set(
+      ref(
+        globalFireDbInfo.db,
+        "users/" + globalFireDbInfo.user + "/v2/presentation"
+      ),
+      cleanedObject
+    );
   },
 });
 

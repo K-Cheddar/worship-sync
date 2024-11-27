@@ -8,6 +8,7 @@ import {
 } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
+import { getDatabase, Database } from "firebase/database";
 import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { DBLogin } from "../types";
@@ -31,6 +32,7 @@ type GlobalInfoContextType = {
   uploadPreset: string;
   setLoginState: (val: "idle" | "loading" | "error" | "success") => void;
   updater: EventTarget;
+  firebaseDb: Database | undefined;
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
@@ -47,10 +49,20 @@ const firebaseConfig = {
   appId: "1:456418139697:web:02dabb94557dbf1dc07f10",
 };
 
+type globalFireBaseInfoType = {
+  db: Database | undefined;
+  user: string;
+};
+
 export let globalDb: PouchDB.Database | undefined = undefined;
+export let globalFireDbInfo: globalFireBaseInfoType = {
+  db: undefined,
+  user: "Demo",
+};
 
 const GlobalInfoProvider = ({ children }: any) => {
   const [db, setDb] = useState<PouchDB.Database | undefined>(undefined);
+  const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
   const [loginState, setLoginState] = useState<
     "idle" | "loading" | "error" | "success"
   >("idle");
@@ -115,6 +127,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     const _user = localStorage.getItem("user");
     if (_user !== null && _user !== "null") {
       setUser(_user);
+      globalFireDbInfo.user = _user;
     }
     const _database = localStorage.getItem("database");
     if (_database !== null && _database !== "null") {
@@ -128,6 +141,11 @@ const GlobalInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     initializeApp(firebaseConfig);
+
+    const _db = getDatabase();
+    setFirebaseDb(_db);
+    globalFireDbInfo.db = _db;
+
     const auth = getAuth();
     signInWithEmailAndPassword(
       auth,
@@ -167,6 +185,7 @@ const GlobalInfoProvider = ({ children }: any) => {
         localStorage.setItem("database", user.database);
         localStorage.setItem("upload_preset", user.upload_preset);
         setUser(user.username);
+        globalFireDbInfo.user = user.username;
         setDatabase(user.database);
         setUploadPreset(user.upload_preset);
         navigate("/");
@@ -185,6 +204,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     await syncRef.current?.cancel();
     dispatch({ type: "RESET" });
     setUser("Demo");
+    globalFireDbInfo.user = "Demo";
     setDatabase("demo");
     setUploadPreset("bpqu4ma5");
     navigate("/");
@@ -204,6 +224,7 @@ const GlobalInfoProvider = ({ children }: any) => {
         setLoginState,
         logout,
         updater: updater.current,
+        firebaseDb,
       }}
     >
       {children}

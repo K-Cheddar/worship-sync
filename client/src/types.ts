@@ -157,11 +157,14 @@ export type Presentation = {
   flOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
+  ignoreIsTransmitting?: boolean;
 };
 
 export type BibleDisplayInfo = {
   title: string;
   text: string;
+  ignoreIsTransmitting?: boolean;
+  time?: number;
 };
 
 export type OverlayInfo = {
@@ -170,6 +173,8 @@ export type OverlayInfo = {
   event?: string;
   duration?: number;
   type?: "floating" | "stick-to-bottom";
+  ignoreIsTransmitting?: boolean;
+  time?: number;
 };
 
 export type DisplayType =
