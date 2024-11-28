@@ -3,9 +3,11 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
+import getBibles, { checkBibles } from "../utils/getBibles";
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
+  bibleDb: PouchDB.Database | undefined;
   cloud: Cloudinary;
   updater: EventTarget;
 };
@@ -25,6 +27,9 @@ const cloud = new Cloudinary({
 
 const ControllerInfoProvider = ({ children }: any) => {
   const [db, setDb] = useState<PouchDB.Database | undefined>(undefined);
+  const [bibleDb, setBibleDb] = useState<PouchDB.Database | undefined>(
+    undefined
+  );
 
   const { database, loginState } = useContext(GlobalInfoContext) || {};
 
@@ -66,12 +71,29 @@ const ControllerInfoProvider = ({ children }: any) => {
     }
   }, [loginState, database]);
 
+  useEffect(() => {
+    const setupDb = async () => {
+      const _db = new PouchDB("bibles");
+
+      let bibles = await checkBibles(_db);
+
+      if (bibles.some((e) => e === false)) {
+        await getBibles(_db);
+      }
+
+      setBibleDb(_db);
+    };
+
+    setupDb();
+  }, []);
+
   return (
     <ControllerInfoContext.Provider
       value={{
         db,
         cloud,
         updater: updater.current,
+        bibleDb,
       }}
     >
       {children}

@@ -130,12 +130,12 @@ const ItemSlides = () => {
 
   const advanceSlide = () => {
     const nextSlide = Math.min(selectedSlide + 1, slides.length - 1);
-    dispatch(setSelectedSlide(nextSlide));
+    selectSlide(nextSlide);
   };
 
   const previousSlide = () => {
     const nextSlide = Math.max(selectedSlide - 1, 0);
-    dispatch(setSelectedSlide(nextSlide));
+    selectSlide(nextSlide);
   };
 
   if (!arrangement && !slides.length && type !== "free") return null;

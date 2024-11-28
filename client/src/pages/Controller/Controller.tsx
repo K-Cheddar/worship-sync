@@ -14,7 +14,6 @@ import { useDispatch, useSelector } from "../../hooks";
 import { initiateAllItemsList } from "../../store/allItemsSlice";
 import Songs from "../../containers/Songs/Songs";
 import { Route, Routes } from "react-router-dom";
-import BibleDbProvider from "../../context/bibleDb";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
@@ -128,14 +127,7 @@ const Controller = () => {
             />
             <Route path="/item/:itemId/:listId" element={<Item />} />
             <Route path="overlays" element={<Overlays />} />
-            <Route
-              path="bible"
-              element={
-                <BibleDbProvider>
-                  <Bible />
-                </BibleDbProvider>
-              }
-            />
+            <Route path="bible" element={<Bible />} />
             <Route path="songs" element={<Songs />} />
             <Route path="free" element={<FreeForms />} />
             <Route path="create" element={<CreateItem />} />

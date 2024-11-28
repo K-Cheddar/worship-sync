@@ -17,7 +17,6 @@ import {
   setSearchValue,
 } from "../../store/bibleSlice";
 import { bibleVersions, internalBibleVersions } from "../../utils/getBibles";
-import { BibleDbContext } from "../../context/bibleDb";
 import { getVerses as getVersesApi } from "../../api/getVerses";
 import { bibleStructure } from "../../utils/bibleStructure";
 import BibleVersesList from "./BibleVersesList";
@@ -68,8 +67,7 @@ const Bible = () => {
 
   const createItemName = decodeURI(searchParams.get("name") || "");
 
-  const { db } = useContext(BibleDbContext) || {};
-  const { db: c_db } = useContext(ControllerInfoContext) || {};
+  const { db, bibleDb } = useContext(ControllerInfoContext) || {};
   const bibleItemName = useMemo(() => {
     const bookName = books[book]?.name || "";
     const chapterName = chapters[chapter]?.name || "";
@@ -91,7 +89,7 @@ const Bible = () => {
         setBibleType("internal");
         let bible: bibleType | undefined;
         try {
-          bible = await db?.get(version);
+          bible = await bibleDb?.get(version);
         } catch (error) {
           console.error(error);
         }
@@ -123,7 +121,7 @@ const Bible = () => {
     getBibles();
     // we only want this to update on version change, not book or chapter change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db, version]);
+  }, [bibleDb, version]);
 
   const getVersesFromGateway = async () => {
     try {
@@ -170,7 +168,7 @@ const Bible = () => {
       verses: verses.filter(
         ({ index }) => index >= startVerse && index <= endVerse
       ),
-      db: c_db,
+      db,
       list,
       selectedList,
     });
