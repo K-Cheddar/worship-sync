@@ -12,7 +12,6 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import bodyParser from "body-parser";
-import getVerses from "./getBible.js";
 import fs from "fs/promises";
 
 const app = express();
@@ -76,9 +75,17 @@ app.get("/api/bible", async (req, res) => {
   let chapter = req.query.chapter;
   let version = req.query.version;
 
-  const verses = await getVerses(book, chapter, version);
+  let data = "";
 
-  res.send(verses);
+  const url = `https://www.biblegateway.com/passage/?search=${book}%20${chapter}&version=${version}`;
+
+  try {
+    const response = await fetch(url);
+    data = await response.text();
+  } catch (error) {}
+  // console.log(data);
+
+  res.send(data);
 });
 
 app.get("/bible", async (req, res) => {

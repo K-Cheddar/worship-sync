@@ -133,7 +133,9 @@ const Bible = () => {
       });
       setIsLoading(false);
       setHasExternalVerses(!!data);
-      dispatch(setVerses(data.verses));
+      if (data) {
+        dispatch(setVerses(data.verses));
+      }
     } catch (error) {
       setIsLoading(false);
       console.error(error);
