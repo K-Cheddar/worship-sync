@@ -11,8 +11,8 @@ const Stream = () => {
       boxes={streamInfo.slide?.boxes || []}
       prevBoxes={prevStreamInfo.slide?.boxes || []}
       displayType={streamInfo.displayType}
-      flOverlayInfo={streamInfo.flOverlayInfo}
-      prevOverlayInfo={prevStreamInfo.flOverlayInfo}
+      participantOverlayInfo={streamInfo.participantOverlayInfo}
+      prevOverlayInfo={prevStreamInfo.participantOverlayInfo}
       stbOverlayInfo={streamInfo.stbOverlayInfo}
       prevBibleDisplayInfo={prevStreamInfo.bibleDisplayInfo}
       bibleDisplayInfo={streamInfo.bibleDisplayInfo}

@@ -6,7 +6,7 @@ import "./DisplayWindow.scss";
 
 type DisplayStreamOverlayProps = {
   width: number;
-  flOverlayInfo?: OverlayInfo;
+  participantOverlayInfo?: OverlayInfo;
   shouldAnimate?: boolean;
   isStream: boolean;
 };
@@ -16,16 +16,16 @@ const DisplayStreamOverlay = forwardRef<
   DisplayStreamOverlayProps
 >(
   (
-    { width, flOverlayInfo = {}, shouldAnimate = false, isStream },
+    { width, participantOverlayInfo = {}, shouldAnimate = false, isStream },
     containerRef
   ) => {
-    const floatingOverlayRef = useRef<HTMLLIElement | null>(null);
+    const participantOverlayRef = useRef<HTMLLIElement | null>(null);
     const overlayTimeline = useRef<GSAPTimeline | null>();
 
     useGSAP(
       () => {
         if (
-          !floatingOverlayRef.current ||
+          !participantOverlayRef.current ||
           !(containerRef as React.MutableRefObject<HTMLUListElement>)
             ?.current ||
           !shouldAnimate ||
@@ -38,20 +38,24 @@ const DisplayStreamOverlay = forwardRef<
         overlayTimeline.current?.clear();
 
         const innerElements = [
-          ".overlay-floating-info-name",
-          ".overlay-floating-info-title",
-          ".overlay-floating-info-event",
+          ".overlay-participant-info-name",
+          ".overlay-participant-info-title",
+          ".overlay-participant-info-event",
         ];
-        const targets = [floatingOverlayRef.current, ...innerElements];
+        const targets = [participantOverlayRef.current, ...innerElements];
 
         overlayTimeline.current = gsap
           .timeline()
           .set(targets, { x: -width * 0.75 });
 
         // Only play animate if there is overlay info
-        if (flOverlayInfo.name || flOverlayInfo.title || flOverlayInfo.event) {
+        if (
+          participantOverlayInfo.name ||
+          participantOverlayInfo.title ||
+          participantOverlayInfo.event
+        ) {
           overlayTimeline.current
-            .to(floatingOverlayRef.current, {
+            .to(participantOverlayRef.current, {
               x: width * 0.025,
               duration: 1,
               ease: "power1.inOut",
@@ -65,38 +69,48 @@ const DisplayStreamOverlay = forwardRef<
               x: -width * 0.75,
               duration: 1,
               ease: "power1.inOut",
-              delay: flOverlayInfo.duration,
+              delay: participantOverlayInfo.duration,
             });
         }
       },
-      { scope: floatingOverlayRef, dependencies: [flOverlayInfo] }
+      { scope: participantOverlayRef, dependencies: [participantOverlayInfo] }
     );
 
-    if (!flOverlayInfo.name && !flOverlayInfo.title && !flOverlayInfo.event)
+    if (
+      !participantOverlayInfo.name &&
+      !participantOverlayInfo.title &&
+      !participantOverlayInfo.event
+    )
       return null;
 
     return isStream ? (
       <>
         <li
-          ref={floatingOverlayRef}
-          className="overlay-floating-info-container"
+          ref={participantOverlayRef}
+          className="overlay-participant-info-container"
           style={
             {
-              "--overlay-floating-info-border-width": `${width / 71.4}vw`,
-              "--overlay-floating-info-name-size": `${width / 31.3}vw`,
-              "--overlay-floating-info-title-size": `${width / 41.2}vw`,
-              "--overlay-floating-info-event-size": `${width / 50}vw`,
+              "--overlay-participant-info-border-width": `${width / 71.4}vw`,
+              "--overlay-participant-info-name-size": `${width / 31.3}vw`,
+              "--overlay-participant-info-title-size": `${width / 41.2}vw`,
+              "--overlay-participant-info-event-size": `${width / 50}vw`,
             } as CSSProperties
           }
         >
-          {flOverlayInfo.name && (
-            <p className="overlay-floating-info-name">{flOverlayInfo.name}</p>
+          {participantOverlayInfo.name && (
+            <p className="overlay-participant-info-name">
+              {participantOverlayInfo.name}
+            </p>
           )}
-          {flOverlayInfo.title && (
-            <p className="overlay-floating-info-title">{flOverlayInfo.title}</p>
+          {participantOverlayInfo.title && (
+            <p className="overlay-participant-info-title">
+              {participantOverlayInfo.title}
+            </p>
           )}
-          {flOverlayInfo.event && (
-            <p className="overlay-floating-info-event">{flOverlayInfo.event}</p>
+          {participantOverlayInfo.event && (
+            <p className="overlay-participant-info-event">
+              {participantOverlayInfo.event}
+            </p>
           )}
         </li>
       </>

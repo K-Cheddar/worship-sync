@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { BibleDisplayInfo, OverlayInfo, Presentation } from "../types";
+import generateRandomId from "../utils/generateRandomId";
 
 type PresentationState = {
   isProjectorTransmitting: boolean;
@@ -32,8 +33,14 @@ const initialState: PresentationState = {
     name: "",
     slide: null,
     displayType: "stream",
-    flOverlayInfo: { time: Date.now() },
-    stbOverlayInfo: { time: Date.now() },
+    participantOverlayInfo: {
+      name: "",
+      event: "",
+      title: "",
+      time: Date.now(),
+      id: generateRandomId(),
+    },
+    stbOverlayInfo: { name: "", time: Date.now(), id: generateRandomId() },
   },
 };
 
@@ -96,11 +103,17 @@ export const presentationSlice = createSlice({
       state.isMonitorTransmitting = action.payload;
       state.isStreamTransmitting = action.payload;
     },
-    updateFlOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
+    updateParticipantOverlayInfo: (
+      state,
+      action: PayloadAction<OverlayInfo>
+    ) => {
+      console.log({ action });
+
       if (state.isStreamTransmitting) {
         // set previous info for cross animation
-        state.prevStreamInfo.flOverlayInfo = state.streamInfo.flOverlayInfo;
-        state.streamInfo.flOverlayInfo = {
+        state.prevStreamInfo.participantOverlayInfo =
+          state.streamInfo.participantOverlayInfo;
+        state.streamInfo.participantOverlayInfo = {
           ...action.payload,
           time: Date.now(),
         };
@@ -118,13 +131,14 @@ export const presentationSlice = createSlice({
         state.streamInfo.time = Date.now();
       }
     },
-    updateFlOverlayInfoFromRemote: (
+    updateParticipantOverlayInfoFromRemote: (
       state,
       action: PayloadAction<OverlayInfo>
     ) => {
       // set previous info for cross animation
-      state.prevStreamInfo.flOverlayInfo = state.streamInfo.flOverlayInfo;
-      state.streamInfo.flOverlayInfo = {
+      state.prevStreamInfo.participantOverlayInfo =
+        state.streamInfo.participantOverlayInfo;
+      state.streamInfo.participantOverlayInfo = {
         ...action.payload,
         time: action.payload.time,
       };
@@ -200,7 +214,8 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.name = state.streamInfo.name;
       state.prevStreamInfo.type = state.streamInfo.type;
       state.prevStreamInfo.time = state.streamInfo.time;
-      state.prevStreamInfo.flOverlayInfo = state.streamInfo.flOverlayInfo;
+      state.prevStreamInfo.participantOverlayInfo =
+        state.streamInfo.participantOverlayInfo;
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
 
@@ -226,7 +241,8 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.name = state.streamInfo.name;
       state.prevStreamInfo.type = state.streamInfo.type;
       state.prevStreamInfo.time = state.streamInfo.time;
-      state.prevStreamInfo.flOverlayInfo = state.streamInfo.flOverlayInfo;
+      state.prevStreamInfo.participantOverlayInfo =
+        state.streamInfo.participantOverlayInfo;
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
 
@@ -337,7 +353,7 @@ export const {
   toggleMonitorTransmitting,
   toggleStreamTransmitting,
   setTransmitToAll,
-  updateFlOverlayInfo,
+  updateParticipantOverlayInfo,
   updateStbOverlayInfo,
   updateBibleDisplayInfo,
   clearProjector,
@@ -351,7 +367,7 @@ export const {
   updateMonitorFromRemote,
   updateStreamFromRemote,
   updateBibleDisplayInfoFromRemote,
-  updateFlOverlayInfoFromRemote,
+  updateParticipantOverlayInfoFromRemote,
   updateStbOverlayInfoFromRemote,
 } = presentationSlice.actions;
 

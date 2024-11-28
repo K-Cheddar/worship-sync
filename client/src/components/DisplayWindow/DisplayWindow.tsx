@@ -3,7 +3,7 @@ import { BibleDisplayInfo, Box, DisplayType, OverlayInfo } from "../../types";
 import "./DisplayWindow.scss";
 import DisplayBox from "./DisplayBox";
 import DisplayStreamBible from "./DisplayStreamBible";
-import DisplayFlOverlay from "./DisplayFlOverlay";
+import DisplayParticipantOverlay from "./DisplayParticipantOverlay";
 import DisplayStbOverlay from "./DisplayStbOverlay";
 
 type DisplayWindowProps = {
@@ -24,7 +24,7 @@ type DisplayWindowProps = {
   showBorder?: boolean;
   displayType?: DisplayType;
   prevOverlayInfo?: OverlayInfo;
-  flOverlayInfo?: OverlayInfo;
+  participantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
   prevBibleDisplayInfo?: BibleDisplayInfo;
@@ -42,8 +42,8 @@ const DisplayWindow = ({
   showBorder = false,
   displayType,
   prevOverlayInfo,
-  flOverlayInfo = {},
-  stbOverlayInfo = {},
+  participantOverlayInfo,
+  stbOverlayInfo,
   shouldAnimate = false,
   shouldPlayVideo = false,
   time,
@@ -131,10 +131,10 @@ const DisplayWindow = ({
         ref={containerRef}
       />
 
-      <DisplayFlOverlay
+      <DisplayParticipantOverlay
         width={width}
         shouldAnimate={shouldAnimate}
-        flOverlayInfo={flOverlayInfo}
+        participantOverlayInfo={participantOverlayInfo}
         isStream={isStream}
         ref={containerRef}
       />

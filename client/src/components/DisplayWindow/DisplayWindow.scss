@@ -7,26 +7,26 @@
   @apply relative overflow-hidden text-white;
 }
 
-.overlay-floating-info-container {
+.overlay-participant-info-container {
   @apply w-fit absolute flex flex-col bg-gray-800/75; 
 
-  border-left: var(--overlay-floating-info-border-width) solid green;
+  border-left: var(--overlay-participant-info-border-width) solid green;
   padding: 0 2.5% 1% 2.5%;
   max-width: 70%;
   bottom: 8.5%;
 }
 
-.overlay-floating-info-name {
-  font-size: var(--overlay-floating-info-name-size);
+.overlay-participant-info-name {
+  font-size: var(--overlay-participant-info-name-size);
 }
 
-.overlay-floating-info-title {
-  font-size: var(--overlay-floating-info-title-size);
+.overlay-participant-info-title {
+  font-size: var(--overlay-participant-info-title-size);
   font-style: italic;
 }
 
-.overlay-floating-info-event {
-  font-size: var(--overlay-floating-info-event-size);
+.overlay-participant-info-event {
+  font-size: var(--overlay-participant-info-event-size);
 }
 
 .overlay-stb-info-container {

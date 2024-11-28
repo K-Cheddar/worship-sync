@@ -1,219 +1,156 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { OverlayType } from "../types";
+import { OverlayInfo } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
-const dummyOverlays: OverlayType[] = [
+const dummyOverlays: OverlayInfo[] = [
   {
+    id: "1ido13oa37rcorfa09t",
+    name: "email address: pastor@church.org",
     title: "",
-    id: generateRandomId(),
-    name: "email address: pastor@eliathahsda.org",
+    event: "phone #: 123-456-7890",
     showDelete: false,
-    event: "phone #: 203-231-9960",
     duration: 7,
-    type: "floating",
+    type: "stick-to-bottom",
   },
   {
+    id: "1ido13oa3rk4br4a4qh",
+    name: "Host Name",
     title: "",
-    id: generateRandomId(),
-    name: "Rashaun Baldeo",
-    showDelete: false,
     event: "Sabbath School Host",
+    showDelete: false,
     duration: 7,
-    type: "floating",
+    type: "participant",
   },
   {
+    id: "1ido13oa3fivqefmtpm8",
+    name: "Co-Host 1 Name",
     title: "",
-    id: generateRandomId(),
-    name: "Jacob Hall",
-    showDelete: false,
     event: "Sabbath School Co-Host",
+    showDelete: false,
     duration: 7,
-    type: "floating",
+    type: "participant",
   },
   {
+    id: "1ido13oa3u2ieh8h78m8",
+    name: "Co-Host 2 Name",
     title: "",
-    id: generateRandomId(),
-    name: "Yolanda Hall",
-    showDelete: false,
     event: "Sabbath School Co-Host",
-    duration: 7,
-    type: "floating",
-  },
-  {
-    title: "",
-    id: generateRandomId(),
-    name: "Javar Baldeo",
     showDelete: false,
-    event: "Sabbath School Co-Host",
     duration: 7,
-    type: "floating",
+    type: "participant",
   },
   {
+    id: "1ido13oa3f1svnq65si",
+    name: "Announcer Name!",
     title: "",
-    id: generateRandomId(),
-    name: "Dr. Greg Baldeo Orville Mullings & Jennifer Peters",
-    showDelete: false,
-    event: "Welcome ",
-    duration: 7,
-    type: "floating",
-  },
-  {
-    title: "",
-    id: generateRandomId(),
-    name: "Praise Team",
-    showDelete: false,
-    event: "Welcome & Welcome Song",
-    duration: 7,
-    type: "floating",
-  },
-  {
-    title: "",
-    id: generateRandomId(),
-    name: "Dr. Greg Baldeo, Orville Mullings & Jennifer Peters",
-    showDelete: true,
     event: "Announcements",
-    duration: 7,
-    type: "floating",
-  },
-  {
-    title: "",
-    id: generateRandomId(),
-    name: "Clifton Anderson",
     showDelete: false,
-    event: "Call to Praise",
     duration: 7,
-    type: "floating",
+    type: "participant",
   },
   {
+    id: "1ido13oa3kv0vcnhp8b",
+    name: "Greeter Name",
     title: "",
-    id: generateRandomId(),
+    event: "Welcome ",
+    showDelete: false,
+    duration: 7,
+    type: "participant",
+  },
+  {
+    id: "1ido13oa3di21upjov9",
     name: "Praise Team",
+    title: "",
+    event: "Welcome Song",
     showDelete: false,
-    event: "Song of Praise",
     duration: 7,
-    type: "floating",
+    type: "participant",
   },
   {
+    id: "1ido13oa3d6tj6hftfu",
+    name: "Reader Name",
     title: "",
-    id: generateRandomId(),
-    name: "Clifton Anderson",
-    showDelete: false,
-    event: "Invocation",
-    duration: 7,
-    type: "floating",
-  },
-  {
-    title: "",
-    id: generateRandomId(),
-    name: "Praise Team ",
-    showDelete: false,
-    event: "Congregational Hymn",
-    duration: 7,
-    type: "floating",
-  },
-  {
-    title: "",
-    id: generateRandomId(),
-    name: "Alyandra ",
-    showDelete: false,
     event: "Reading the Word",
+    showDelete: false,
     duration: 7,
-    type: "floating",
+    type: "participant",
   },
   {
+    id: "1ido13oa3rl9e7c6rj8g",
+    name: "Treasurer Name",
     title: "",
-    id: generateRandomId(),
-    name: "Dobney Keen",
-    showDelete: false,
     event: "Offertory",
+    showDelete: false,
     duration: 7,
-    type: "floating",
+    type: "participant",
   },
   {
+    id: "1ido13oa3dcgkjfshgo8",
+    name: "Singer Name",
     title: "",
-    id: generateRandomId(),
-    name: "Patrick Robinson",
-    showDelete: false,
     event: "Special Song",
+    showDelete: false,
     duration: 7,
-    type: "floating",
+    type: "participant",
   },
   {
+    id: "1ido13oa3cvatv91i9a",
+    name: "Prayer Name",
     title: "",
-    id: generateRandomId(),
-    name: "Worship Leader",
-    showDelete: false,
-    event: "Call to Prayer",
-    duration: 7,
-    type: "floating",
-  },
-  {
-    title: "",
-    id: generateRandomId(),
-    name: "Praise Team",
-    showDelete: false,
-    event: "Prayer Song",
-    duration: 7,
-    type: "floating",
-  },
-  {
-    title: "",
-    id: generateRandomId(),
-    name: "Luciana Esnard",
-    showDelete: false,
     event: "Intercessory Prayer",
+    showDelete: false,
     duration: 7,
-    type: "floating",
+    type: "participant",
   },
   {
-    title: "",
-    id: generateRandomId(),
+    id: "1ido13oa38ps3qv5k4hg",
     name: "Praise Team ",
-    showDelete: false,
+    title: "",
     event: "Praise & Worship",
-    duration: 7,
-    type: "floating",
-  },
-  {
-    title: "",
-    id: generateRandomId(),
-    name: "Orville Mullings",
     showDelete: false,
-    event: 'Sermon - "What is Next"',
     duration: 7,
-    type: "floating",
+    type: "participant",
   },
   {
+    id: "1ido13oa3ng1gaeqttp",
+    name: "Pastor Name",
     title: "",
-    id: generateRandomId(),
+    event: 'Sermon - "Sermon Title"',
+    showDelete: false,
+    duration: 7,
+    type: "participant",
+  },
+  {
+    id: "1ido13oa343f1bdaak7",
     name: "Praise Team",
-    showDelete: false,
+    title: "",
     event: "Appeal Song",
-    duration: 7,
-    type: "floating",
-  },
-  {
-    title: "",
-    id: generateRandomId(),
-    name: "Orville Mullings",
     showDelete: false,
-    event: "Appeal / Closing Prayer",
     duration: 7,
-    type: "floating",
+    type: "participant",
   },
   {
-    title: "",
-    id: generateRandomId(),
+    id: "1ido13oa381jg3ebknqg",
     name: "Praise Team",
-    showDelete: false,
+    title: "",
     event: "Afterglow",
+    showDelete: false,
     duration: 7,
-    type: "floating",
+    type: "participant",
+  },
+  {
+    id: "1ido13oa3ikr5nqouvt8",
+    name: "Pastor Name",
+    title: "",
+    event: "Appeal / Closing Prayer",
+    showDelete: false,
+    duration: 7,
+    type: "participant",
   },
 ];
 
-type OverlaysState = OverlayType & {
-  list: OverlayType[];
+type OverlaysState = OverlayInfo & {
+  list: OverlayInfo[];
 };
 
 const initialState: OverlaysState = {
@@ -222,7 +159,7 @@ const initialState: OverlaysState = {
   event: "",
   id: "",
   duration: 7,
-  type: "floating",
+  type: "participant",
   showDelete: true,
   list: [],
 };
@@ -231,7 +168,7 @@ export const overlaysSlice = createSlice({
   name: "overlays",
   initialState,
   reducers: {
-    selectOverlay: (state, action: PayloadAction<OverlayType>) => {
+    selectOverlay: (state, action: PayloadAction<OverlayInfo>) => {
       state.name = action.payload.name;
       state.title =
         action.payload.type === "stick-to-bottom" ? "" : action.payload.title;
@@ -247,15 +184,15 @@ export const overlaysSlice = createSlice({
         title: "",
         event: "",
         duration: 7,
-        type: "floating",
+        type: "participant",
         showDelete: true,
         id: generateRandomId(),
       });
     },
-    updateOverlayList: (state, action: PayloadAction<OverlayType[]>) => {
+    updateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
       state.list = action.payload;
     },
-    initiateOverlayList: (state, action: PayloadAction<OverlayType[]>) => {
+    initiateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
       if (action.payload.length === 0) {
         state.list = dummyOverlays;
         return;
@@ -270,7 +207,7 @@ export const overlaysSlice = createSlice({
         (overlay) => overlay.id !== action.payload
       );
     },
-    updateOverlay: (state, action: PayloadAction<OverlayType>) => {
+    updateOverlay: (state, action: PayloadAction<OverlayInfo>) => {
       state.list = state.list.map((overlay) => {
         if (overlay.id === action.payload.id) {
           return {

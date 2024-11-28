@@ -187,6 +187,8 @@ listenerMiddleware.startListening({
     const { selectedList } = (listenerApi.getState() as RootState).undoable
       .present.itemLists;
 
+    console.log({ list });
+
     if (!db || !selectedList) return;
     const db_itemList: DBItemListDetails = await db.get(selectedList.id);
     db_itemList.overlays = [...list];
@@ -237,7 +239,6 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    console.log("action", action);
     if (!globalFireDbInfo.db) return;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
@@ -255,11 +256,9 @@ listenerMiddleware.startListening({
       monitorInfo,
       streamInfo,
       stream_bibleInfo: streamInfo.bibleDisplayInfo,
-      stream_flOverlayInfo: streamInfo.flOverlayInfo,
+      stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
       stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
     };
-
-    // console.log({ presentationUpdate });
 
     set(
       ref(

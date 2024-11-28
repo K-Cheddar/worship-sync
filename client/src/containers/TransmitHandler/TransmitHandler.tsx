@@ -11,7 +11,7 @@ import {
   updateProjectorFromRemote,
   updateStreamFromRemote,
   updateBibleDisplayInfoFromRemote,
-  updateFlOverlayInfoFromRemote,
+  updateParticipantOverlayInfoFromRemote,
   updateStbOverlayInfoFromRemote,
 } from "../../store/presentationSlice";
 import Presentation from "../../components/Presentation/Presentation";
@@ -45,14 +45,14 @@ const TransmitHandler = ({ className }: { className: string }) => {
     monitorInfo: Unsubscribe | undefined;
     streamInfo: Unsubscribe | undefined;
     stream_bibleInfo: Unsubscribe | undefined;
-    stream_flOverlayInfo: Unsubscribe | undefined;
+    stream_participantOverlayInfo: Unsubscribe | undefined;
     stream_stbOverlayInfo: Unsubscribe | undefined;
   }>({
     projectorInfo: undefined,
     monitorInfo: undefined,
     streamInfo: undefined,
     stream_bibleInfo: undefined,
-    stream_flOverlayInfo: undefined,
+    stream_participantOverlayInfo: undefined,
     stream_stbOverlayInfo: undefined,
   });
 
@@ -73,8 +73,8 @@ const TransmitHandler = ({ className }: { className: string }) => {
       const _streamInfo: PresentationType | undefined = data.streamInfo;
       const _stream_bibleInfo: BibleDisplayInfo | undefined =
         data.stream_bibleInfo;
-      const _stream_flOverlayInfo: OverlayInfo | undefined =
-        data.stream_flOverlayInfo;
+      const _stream_participantOverlayInfo: OverlayInfo | undefined =
+        data.stream_participantOverlayInfo;
       const _stream_stbOverlayInfo: OverlayInfo | undefined =
         data.stream_stbOverlayInfo;
 
@@ -107,10 +107,10 @@ const TransmitHandler = ({ className }: { className: string }) => {
           updateFunction: updateBibleDisplayInfoFromRemote,
           compareTo: streamInfo.bibleDisplayInfo,
         },
-        stream_flOverlayInfo: {
-          info: _stream_flOverlayInfo,
-          updateFunction: updateFlOverlayInfoFromRemote,
-          compareTo: streamInfo.flOverlayInfo,
+        stream_participantOverlayInfo: {
+          info: _stream_participantOverlayInfo,
+          updateFunction: updateParticipantOverlayInfoFromRemote,
+          compareTo: streamInfo.participantOverlayInfo,
         },
         stream_stbOverlayInfo: {
           info: _stream_stbOverlayInfo,
@@ -118,22 +118,6 @@ const TransmitHandler = ({ className }: { className: string }) => {
           compareTo: streamInfo.stbOverlayInfo,
         },
       };
-
-      console.log({
-        monitorInfo,
-        _monitorInfo,
-        projectorInfo,
-        _projectorInfo,
-        streamInfo,
-        _streamInfo,
-        stream_bibleInfo: _stream_bibleInfo,
-        stream_flOverlayInfo: _stream_flOverlayInfo,
-        stream_stbOverlayInfo: _stream_stbOverlayInfo,
-      });
-
-      // const shouldUpdate = (update : PresentationType | BibleDisplayInfo | OverlayInfo) => {
-
-      // }
 
       const keys = Object.keys(updateInfo);
       for (const key of keys) {
@@ -147,65 +131,9 @@ const TransmitHandler = ({ className }: { className: string }) => {
           (info.time && compareTo?.time && info.time > compareTo.time) ||
           (info.time && !compareTo?.time)
         ) {
-          console.log("dispatching", key, info);
           dispatch(updateFunction({ ...info }));
         }
       }
-
-      // if (
-      //   (_monitorInfo.time &&
-      //     monitorInfo.time &&
-      //     _monitorInfo.time > monitorInfo.time) ||
-      //   (_monitorInfo.time && !monitorInfo.time)
-      // ) {
-      //   dispatch(
-      //     updateMonitor({ ..._monitorInfo, ignoreIsTransmitting: true })
-      //   );
-      // }
-
-      // if (
-      //   (_projectorInfo.time &&
-      //     projectorInfo.time &&
-      //     _projectorInfo.time > projectorInfo.time) ||
-      //   (_projectorInfo.time && !projectorInfo.time)
-      // ) {
-      //   dispatch(
-      //     updateProjector({ ..._projectorInfo, ignoreIsTransmitting: true })
-      //   );
-      // }
-
-      // if (
-      //   (_streamInfo.time &&
-      //     streamInfo.time &&
-      //     _streamInfo.time > streamInfo.time) ||
-      //   (_streamInfo.time && !streamInfo.time)
-      // ) {
-      //   dispatch(updateStream({ ..._streamInfo, ignoreIsTransmitting: true }));
-      //   if (_streamInfo.bibleDisplayInfo) {
-      //     dispatch(
-      //       updateBibleDisplayInfo({
-      //         ..._streamInfo.bibleDisplayInfo,
-      //         ignoreIsTransmitting: true,
-      //       })
-      //     );
-      //   }
-      //   if (_streamInfo.flOverlayInfo) {
-      //     dispatch(
-      //       updateOverlayInfo({
-      //         ..._streamInfo.flOverlayInfo,
-      //         ignoreIsTransmitting: true,
-      //       })
-      //     );
-      //   }
-      //   if (_streamInfo.stbOverlayInfo) {
-      //     dispatch(
-      //       updateOverlayInfo({
-      //         ..._streamInfo.stbOverlayInfo,
-      //         ignoreIsTransmitting: true,
-      //       })
-      //     );
-      //   }
-      // }
     };
 
     // unsubscribe from any previous listeners
@@ -223,9 +151,7 @@ const TransmitHandler = ({ className }: { className: string }) => {
         onValueRef.current[_key] = onValue(updateRef, (snapshot) => {
           const data = snapshot.val();
           if (data) {
-            const _data = { [key]: data };
-            updateFromFirebase(_data);
-            console.log({ _data });
+            updateFromFirebase({ [key]: data });
           }
         });
       }
@@ -236,6 +162,8 @@ const TransmitHandler = ({ className }: { className: string }) => {
     setIsTransmitting(!isTransmitting);
     dispatch(setTransmitToAll(!isTransmitting));
   };
+
+  console.log({ streamInfo });
 
   return (
     <section className={className}>

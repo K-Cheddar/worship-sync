@@ -27,20 +27,20 @@ const Overlays = () => {
     useSelector((state) => state.undoable.present.overlays);
   const { isStreamTransmitting } = useSelector((state) => state.presentation);
   const { isLoading } = useSelector((state) => state.undoable.present.itemList);
-  const [localName, setLocalName] = useState(name);
-  const [localTitle, setLocalTitle] = useState(title);
-  const [localEvent, setLocalEvent] = useState(event);
-  const [localShowDelete, setLocalShowDelete] = useState(showDelete);
-  const [localDuration, setLocalDuration] = useState(duration);
+  const [localName, setLocalName] = useState(name || "");
+  const [localTitle, setLocalTitle] = useState(title || "");
+  const [localEvent, setLocalEvent] = useState(event || "");
+  const [localShowDelete, setLocalShowDelete] = useState(showDelete || false);
+  const [localDuration, setLocalDuration] = useState(duration || 7);
   const [localType, setLocalType] = useState(type);
   const dispatch = useDispatch();
 
   useEffect(() => {
-    setLocalName(name);
-    setLocalTitle(title);
-    setLocalEvent(event);
-    setLocalShowDelete(showDelete);
-    setLocalDuration(duration);
+    setLocalName(name || "");
+    setLocalTitle(title || "");
+    setLocalEvent(event || "");
+    setLocalShowDelete(showDelete || false);
+    setLocalDuration(duration || 7);
     setLocalType(type);
   }, [name, title, event, id, showDelete, duration, type]);
 
@@ -113,14 +113,15 @@ const Overlays = () => {
                     <DisplayWindow
                       showBorder
                       width={25}
-                      flOverlayInfo={
-                        localType === "floating"
+                      participantOverlayInfo={
+                        localType === "participant"
                           ? {
                               name: localName,
                               title: localTitle,
                               event: localEvent,
                               duration: localDuration,
                               type: localType,
+                              id,
                             }
                           : undefined
                       }
@@ -132,6 +133,7 @@ const Overlays = () => {
                               event: localEvent,
                               duration: localDuration,
                               type: localType,
+                              id,
                             }
                           : undefined
                       }
@@ -176,9 +178,9 @@ const Overlays = () => {
                     <h4 className="text-center text-base">Type:</h4>
                     <div className="flex gap-2 justify-center">
                       <RadioButton
-                        label="Floating"
-                        value={localType === "floating"}
-                        onChange={(val) => setLocalType("floating")}
+                        label="Participant"
+                        value={localType === "participant"}
+                        onChange={(val) => setLocalType("participant")}
                       />
                       <RadioButton
                         label="Stick to Bottom"

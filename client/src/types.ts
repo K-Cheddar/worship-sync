@@ -154,7 +154,7 @@ export type Presentation = {
   slide: ItemSlide | null;
   time?: number;
   displayType?: DisplayType;
-  flOverlayInfo?: OverlayInfo;
+  participantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
 };
@@ -170,8 +170,10 @@ export type OverlayInfo = {
   title?: string;
   event?: string;
   duration?: number;
-  type?: "floating" | "stick-to-bottom";
+  type?: "participant" | "stick-to-bottom" | "qr-code";
   time?: number;
+  id: string;
+  showDelete?: boolean;
 };
 
 export type DisplayType =
@@ -180,16 +182,6 @@ export type DisplayType =
   | "stream"
   | "editor"
   | "slide";
-
-export type OverlayType = {
-  name: string;
-  title: string;
-  event: string;
-  duration: number;
-  type: "floating" | "stick-to-bottom";
-  id: string;
-  showDelete: boolean;
-};
 
 export type verseType = {
   name: string;
@@ -229,7 +221,7 @@ export type ItemListDetails = {
   _id: string;
   isOutline?: boolean;
   items: ServiceItem[];
-  overlays: OverlayType[];
+  overlays: OverlayInfo[];
 };
 
 export type DBItemList = {
@@ -250,7 +242,7 @@ export type DBItemListDetails = {
   _rev: string;
   name: string;
   items: ServiceItem[];
-  overlays: OverlayType[];
+  overlays: OverlayInfo[];
 };
 
 export type DBAllItems = {

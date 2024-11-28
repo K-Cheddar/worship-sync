@@ -5,15 +5,15 @@ import { useDispatch } from "../../hooks";
 import { deleteOverlay, selectOverlay } from "../../store/overlaysSlice";
 import "./Overlays.scss";
 import {
-  updateFlOverlayInfo,
+  updateParticipantOverlayInfo,
   updateStbOverlayInfo,
 } from "../../store/presentationSlice";
-import { OverlayType } from "../../types";
+import { OverlayInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 
 type OverlayProps = {
-  overlay: OverlayType;
+  overlay: OverlayInfo;
   selectedId: string;
   isStreamTransmitting: boolean;
 };
@@ -94,25 +94,30 @@ const Overlay = ({
           padding="px-2 py-1"
           disabled={!isStreamTransmitting}
           svg={OverlaysSVG}
-          onClick={() =>
-            dispatch(() => {
-              if (overlay.type === "stick-to-bottom") {
+          onClick={() => {
+            console.log("overlay", overlay);
+            if (overlay.type === "stick-to-bottom") {
+              dispatch(
                 updateStbOverlayInfo({
                   name: overlay.name,
                   event: overlay.event,
                   duration: overlay.duration,
-                });
-              } else if (overlay.type === "floating") {
-                updateFlOverlayInfo({
+                  id: overlay.id,
+                })
+              );
+            } else if (overlay.type === "participant") {
+              dispatch(
+                updateParticipantOverlayInfo({
                   name: overlay.name,
                   title: overlay.title,
                   event: overlay.event,
                   duration: overlay.duration,
                   type: overlay.type,
-                });
-              }
-            })
-          }
+                  id: overlay.id,
+                })
+              );
+            }
+          }}
         >
           Send
         </Button>
