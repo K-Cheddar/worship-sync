@@ -70,7 +70,7 @@ const Overlays = () => {
   };
 
   return (
-    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+    <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <div className="flex flex-col w-full h-full p-2 gap-2">
         <h2 className="text-xl font-semibold text-center h-fit">Overlays</h2>
         {isLoading ? (
@@ -80,7 +80,7 @@ const Overlays = () => {
             <section className="w-1/2 flex flex-col gap-2 h-full">
               <ul className="overlays-list" ref={setNodeRef}>
                 <SortableContext
-                  items={list}
+                  items={list.map((overlay) => overlay.id)}
                   strategy={verticalListSortingStrategy}
                 >
                   {list.map((overlay) => {

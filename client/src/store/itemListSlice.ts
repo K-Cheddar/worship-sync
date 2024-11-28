@@ -36,11 +36,7 @@ export const itemListSlice = createSlice({
       });
     },
     addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
-      if (action.payload.listId) {
-        state.list.push(action.payload);
-      } else {
-        state.list.push({ ...action.payload, listId: generateRandomId() });
-      }
+      state.list.push({ ...action.payload, listId: generateRandomId() });
     },
     setItemListIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;

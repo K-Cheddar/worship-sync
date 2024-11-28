@@ -31,7 +31,7 @@ const BibleVersesList = ({
           <p className="text-base">
             {isLoading
               ? "Loading verses..."
-              : "Please click the button above to get verses from Bible Gateway."}
+              : "Please click the button above to get this chapter from Bible Gateway."}
           </p>
         </section>
       )}
