@@ -17,7 +17,6 @@ import {
   FloatingFocusManager,
 } from "@floating-ui/react";
 
-// import "./styles.css";
 import { MenuItemType } from "../../types";
 import MenuItem from "./MenuItem";
 import "./Menu.scss";

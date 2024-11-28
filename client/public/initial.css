@@ -1,0 +1,44 @@
+img {
+  max-height: 100vh;
+  max-width: 45vw;
+  margin: auto;
+  display: block;
+  padding-top: 2.5%;
+}
+
+.spinner {
+  position: absolute;
+  top: 15%;
+  border-style: solid;
+  border-color: #FFF;
+  border-width: 10px;
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  box-sizing: border-box;
+  animation: rotation 1s linear infinite;
+  width: 20vw;
+  height: 20vw;
+  left: 40%;
+  z-index: 20;
+}
+
+@keyframes rotation {
+  0% {
+      transform: rotate(0deg);
+  }
+  100% {
+      transform: rotate(360deg);
+  }
+} 
+
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  background-color: black;
+  width: 100vw;
+  height: 100vh;
+  opacity: 30%;
+  z-index: 10;
+}
