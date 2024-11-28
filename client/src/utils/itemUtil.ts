@@ -21,6 +21,10 @@ import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
 import { fill } from "@cloudinary/url-gen/actions/resize";
 
+const DEFAULT_SONG_BACKGROUND =
+  "https://res.cloudinary.com/portable-media/image/upload/v1/eliathah/WorshipBackground_ycr280?_a=DATAg1AAZAA0";
+const DEFAULT_SONG_BRIGHTNESS = 50;
+
 type CreateSectionsType = {
   formattedLyrics?: FormattedLyrics[];
   songOrder?: SongOrder[];
@@ -88,8 +92,20 @@ export const createNewSong = async ({
       songOrder,
       id: generateRandomId(),
       slides: [
-        createNewSlide({ type: "Title", fontSize: 4.5, words: ["", name] }),
-        createNewSlide({ type: "Blank", fontSize: 2.5, words: [""] }),
+        createNewSlide({
+          type: "Title",
+          fontSize: 4.5,
+          words: ["", name],
+          background: DEFAULT_SONG_BACKGROUND,
+          brightness: DEFAULT_SONG_BRIGHTNESS,
+        }),
+        createNewSlide({
+          type: "Blank",
+          fontSize: 2.5,
+          words: [""],
+          background: DEFAULT_SONG_BACKGROUND,
+          brightness: DEFAULT_SONG_BRIGHTNESS,
+        }),
       ],
     },
   ];
@@ -100,6 +116,7 @@ export const createNewSong = async ({
     name: _name,
     type: "song",
     _id: _name,
+    background: DEFAULT_SONG_BACKGROUND,
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,

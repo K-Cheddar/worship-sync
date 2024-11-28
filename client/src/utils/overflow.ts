@@ -1,6 +1,10 @@
 import { Arrangment, Box, ItemSlide, ItemState, verseType } from "../types";
 import { createNewSlide } from "./slideCreation";
 
+const DEFAULT_BIBLE_BACKGROUND =
+  "https://res.cloudinary.com/portable-media/image/upload/v1/backgrounds/bible-background_mlek3e?_a=DATAg1AAZAA0";
+const DEFAULT_BIBLE_BRIGHTNESS = 65;
+
 type getMaxLinesProps = {
   fontSize: number;
   height: number;
@@ -270,8 +274,15 @@ export const formatBible = ({
           type: "Title",
           fontSize: 4.5,
           words: ["", item.name],
+          background: DEFAULT_BIBLE_BACKGROUND,
+          brightness: DEFAULT_BIBLE_BRIGHTNESS,
         }),
-        createNewSlide({ type: "Verse", fontSize: 2.5 }),
+        createNewSlide({
+          type: "Verse",
+          fontSize: 2.5,
+          background: DEFAULT_BIBLE_BACKGROUND,
+          brightness: DEFAULT_BIBLE_BRIGHTNESS,
+        }),
       ];
   let boxes = slides[0]?.boxes || [];
   let newSlides = [
@@ -279,12 +290,13 @@ export const formatBible = ({
       type: "Title",
       fontSize: boxes[1]?.fontSize || 4.5,
       words: ["", boxes[1]?.words || " "],
-      background: boxes[0]?.background || "",
-      brightness: boxes[0]?.brightness || 100,
+      background: boxes[0]?.background || DEFAULT_BIBLE_BACKGROUND,
+      brightness: boxes[0]?.brightness || DEFAULT_BIBLE_BRIGHTNESS,
     }),
   ];
   let _item = {
     ...item,
+    background: item.background || DEFAULT_BIBLE_BACKGROUND,
     slides: [...slides],
   };
 
