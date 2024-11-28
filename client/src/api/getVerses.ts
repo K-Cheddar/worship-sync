@@ -33,9 +33,13 @@ const parseData = async (textHtml: string, chapter: number, book: string) => {
   el.innerHTML = textHtml;
 
   const textArea = el.querySelector("div .passage-text");
-  const headings = textArea?.querySelectorAll("h1, h2, h3, h4, h5, h6") || [];
-  for (let i = 0; i < headings.length; ++i) {
-    headings[i]?.remove();
+
+  const unwantedText =
+    textArea?.querySelectorAll(
+      "h1, h2, h3, h4, h5, h6, .crossreference, .footnote"
+    ) || [];
+  for (let i = 0; i < unwantedText.length; ++i) {
+    unwantedText[i]?.remove();
   }
 
   const versesHtml = textArea?.querySelectorAll(
@@ -54,7 +58,6 @@ const parseData = async (textHtml: string, chapter: number, book: string) => {
       name: (verses.length + 1).toString(), // verse number comes first
       text: splitText[1]
         .replace(/\[[^\]]{1,2}\]/g, "")
-        .replace(/\([^\)]{1,2}\]/g, "")
         .replaceAll(" ", " ")
         .replace("\n", "")
         .trim(),
@@ -77,7 +80,6 @@ const parseData = async (textHtml: string, chapter: number, book: string) => {
     }
     currentClass = className;
     currentText += (versesHtml[i] as HTMLElement).innerText + " ";
-    console.log({ currentText });
   }
   addVerse();
 

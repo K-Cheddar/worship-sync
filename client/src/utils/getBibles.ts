@@ -12,7 +12,6 @@ export const bibleVersions = [
   { value: "cev", label: "Contemporary English Version (External)" },
   { value: "erv", label: "Easy to Read Version (External)" },
   { value: "gw", label: "God's Word (External)" },
-  { value: "msg", label: "The Message (External)" },
   { value: "nasb", label: "New American Standard Bible (External)" },
   { value: "NCV", label: "New Century Version (External)" },
 ];

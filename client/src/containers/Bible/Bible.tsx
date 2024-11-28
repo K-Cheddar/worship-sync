@@ -131,9 +131,10 @@ const Bible = () => {
         chapter,
         version,
       });
+      const dataHasVerses = !!data?.verses?.length;
       setIsLoading(false);
-      setHasExternalVerses(!!data);
-      if (data) {
+      setHasExternalVerses(dataHasVerses);
+      if (dataHasVerses) {
         dispatch(setVerses(data.verses));
       }
     } catch (error) {
