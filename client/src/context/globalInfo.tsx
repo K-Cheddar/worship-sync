@@ -1,12 +1,27 @@
-import { createContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useEffect, useRef, useState } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 import { getDatabase, Database } from "firebase/database";
 import PouchDB from "pouchdb";
 import { DBLogin } from "../types";
 import { useNavigate } from "react-router-dom";
-import { useDispatch } from "../hooks";
+import { useDispatch, useSelector } from "../hooks";
 import { globalDb } from "./controllerInfo";
+import { ref, onValue, Unsubscribe } from "firebase/database";
+import {
+  updateMonitorFromRemote,
+  updateProjectorFromRemote,
+  updateStreamFromRemote,
+  updateBibleDisplayInfoFromRemote,
+  updateParticipantOverlayInfoFromRemote,
+  updateStbOverlayInfoFromRemote,
+} from "../store/presentationSlice";
+import {
+  BibleDisplayInfo,
+  OverlayInfo,
+  Presentation as PresentationType,
+} from "../types";
+import { UnknownAction } from "@reduxjs/toolkit";
 
 type GlobalInfoContextType = {
   login: ({
@@ -50,6 +65,10 @@ export let globalFireDbInfo: globalFireBaseInfoType = {
 };
 
 const GlobalInfoProvider = ({ children }: any) => {
+  const { projectorInfo, monitorInfo, streamInfo } = useSelector(
+    (state) => state.presentation
+  );
+
   const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
   const [loginState, setLoginState] = useState<
     "idle" | "loading" | "error" | "success"
@@ -57,12 +76,101 @@ const GlobalInfoProvider = ({ children }: any) => {
   const [user, setUser] = useState("Demo");
   const [database, setDatabase] = useState("demo");
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
+
+  const onValueRef = useRef<{
+    projectorInfo: Unsubscribe | undefined;
+    monitorInfo: Unsubscribe | undefined;
+    streamInfo: Unsubscribe | undefined;
+    stream_bibleInfo: Unsubscribe | undefined;
+    stream_participantOverlayInfo: Unsubscribe | undefined;
+    stream_stbOverlayInfo: Unsubscribe | undefined;
+  }>({
+    projectorInfo: undefined,
+    monitorInfo: undefined,
+    streamInfo: undefined,
+    stream_bibleInfo: undefined,
+    stream_participantOverlayInfo: undefined,
+    stream_stbOverlayInfo: undefined,
+  });
+
   const syncRef = useRef<any>();
   const navigate = useNavigate();
   const dispatch = useDispatch();
 
+  const updateFromRemote = useCallback(
+    (data: any) => {
+      const _monitorInfo: PresentationType | undefined = data.monitorInfo;
+      const _projectorInfo: PresentationType | undefined = data.projectorInfo;
+      const _streamInfo: PresentationType | undefined = data.streamInfo;
+      const _stream_bibleInfo: BibleDisplayInfo | undefined =
+        data.stream_bibleInfo;
+      const _stream_participantOverlayInfo: OverlayInfo | undefined =
+        data.stream_participantOverlayInfo;
+      const _stream_stbOverlayInfo: OverlayInfo | undefined =
+        data.stream_stbOverlayInfo;
+
+      type updateInfoChildType = {
+        info: PresentationType | BibleDisplayInfo | OverlayInfo;
+        updateFunction: (
+          arg0: PresentationType | BibleDisplayInfo | OverlayInfo
+        ) => UnknownAction;
+        compareTo: PresentationType | BibleDisplayInfo | OverlayInfo;
+      };
+
+      const updateInfo = {
+        monitorInfo: {
+          info: _monitorInfo,
+          updateFunction: updateMonitorFromRemote,
+          compareTo: monitorInfo,
+        },
+        projectorInfo: {
+          info: _projectorInfo,
+          updateFunction: updateProjectorFromRemote,
+          compareTo: projectorInfo,
+        },
+        streamInfo: {
+          info: _streamInfo,
+          updateFunction: updateStreamFromRemote,
+          compareTo: streamInfo,
+        },
+        stream_bibleInfo: {
+          info: _stream_bibleInfo,
+          updateFunction: updateBibleDisplayInfoFromRemote,
+          compareTo: streamInfo.bibleDisplayInfo,
+        },
+        stream_participantOverlayInfo: {
+          info: _stream_participantOverlayInfo,
+          updateFunction: updateParticipantOverlayInfoFromRemote,
+          compareTo: streamInfo.participantOverlayInfo,
+        },
+        stream_stbOverlayInfo: {
+          info: _stream_stbOverlayInfo,
+          updateFunction: updateStbOverlayInfoFromRemote,
+          compareTo: streamInfo.stbOverlayInfo,
+        },
+      };
+
+      const keys = Object.keys(updateInfo);
+      for (const key of keys) {
+        const _key = key as keyof typeof updateInfo; // Define type
+        const obj = updateInfo[_key];
+        const { info, updateFunction, compareTo } = obj as updateInfoChildType;
+
+        if (!info) continue; // nothing to update here.
+
+        if (
+          (info.time && compareTo?.time && info.time > compareTo.time) ||
+          (info.time && !compareTo?.time)
+        ) {
+          dispatch(updateFunction({ ...info }));
+        }
+      }
+    },
+    [dispatch, monitorInfo, projectorInfo, streamInfo]
+  );
+
+  // get info from local storage on startup
   useEffect(() => {
-    console.log("setting from local storage");
     localStorage.setItem("presentation", "null");
     const _isLoggedIn = localStorage.getItem("loggedIn") === "true";
     setLoginState(_isLoggedIn ? "success" : "idle");
@@ -81,6 +189,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     }
   }, []);
 
+  // initialize firebase
   useEffect(() => {
     initializeApp(firebaseConfig);
 
@@ -94,6 +203,45 @@ const GlobalInfoProvider = ({ children }: any) => {
       "eliathahsdatechteam@gmail.com",
       "TamTam7550"
     );
+  }, []);
+
+  // get updates from firebase - realtime changes from others
+  useEffect(() => {
+    if (!firebaseDb) return;
+
+    // unsubscribe from any previous listeners
+    if (onValueRef.current) {
+      const keys = Object.keys(onValueRef.current);
+      for (const key of keys) {
+        const _key = key as keyof typeof onValueRef.current; // Define type
+        onValueRef.current[_key]?.();
+
+        const updateRef = ref(
+          firebaseDb,
+          "users/" + user + "/v2/presentation/" + key
+        );
+
+        onValueRef.current[_key] = onValue(updateRef, (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            updateFromRemote({ [key]: data });
+          }
+        });
+      }
+    }
+  }, [firebaseDb, user, updateFromRemote]);
+
+  useEffect(() => {
+    window.addEventListener("storage", ({ key, newValue }) => {
+      const onValueKeys = Object.keys(onValueRef.current);
+      if (newValue && onValueKeys.some((e) => e === key)) {
+        const value = JSON.parse(newValue);
+        // console.log("Storage update", key, value);
+        updateFromRemote({ [key as keyof typeof onValueRef.current]: value });
+      }
+    });
+    // Disabling this because we only want this event listener to register once
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const login = async ({

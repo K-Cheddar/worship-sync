@@ -260,6 +260,22 @@ listenerMiddleware.startListening({
       stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
     };
 
+    localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
+    localStorage.setItem("monitorInfo", JSON.stringify(monitorInfo));
+    localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
+    localStorage.setItem(
+      "stream_bibleInfo",
+      JSON.stringify(streamInfo.bibleDisplayInfo)
+    );
+    localStorage.setItem(
+      "stream_participantOverlayInfo",
+      JSON.stringify(streamInfo.participantOverlayInfo)
+    );
+    localStorage.setItem(
+      "stream_stbOverlayInfo",
+      JSON.stringify(streamInfo.stbOverlayInfo)
+    );
+
     set(
       ref(
         globalFireDbInfo.db,
