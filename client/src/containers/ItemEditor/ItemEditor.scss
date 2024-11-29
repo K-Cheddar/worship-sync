@@ -24,7 +24,7 @@
   height: 100%;
   scrollbar-width: thin;
 
-  @apply flex flex-col gap-2 overflow-y-auto;
+  @apply flex flex-col gap-2 overflow-y-auto overflow-x-hidden;
 }
 
 .lyrics-editor-middle {

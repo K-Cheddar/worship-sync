@@ -7,6 +7,7 @@ import {
   initiateItemLists,
   removeFromItemLists,
   selectItemList,
+  setInitialItemList,
   updateItemLists,
 } from "../../../store/itemListsSlice";
 import getItemListsUtil from "../../../utils/getItemLists";
@@ -36,6 +37,7 @@ const Services = () => {
 
   useEffect(() => {
     const getItemLists = async () => {
+      if (!db) return;
       try {
         const response: DBItemLists | undefined = await db?.get("ItemLists");
         const _itemLists = response?.itemLists || [];
@@ -43,7 +45,7 @@ const Services = () => {
         const formattedItemLists = getItemListsUtil(_itemLists);
         dispatch(initiateItemLists(formattedItemLists));
         if (_selectedList) {
-          dispatch(selectItemList(_selectedList.id));
+          dispatch(setInitialItemList(_selectedList.id));
         }
       } catch (e) {
         console.error(e);

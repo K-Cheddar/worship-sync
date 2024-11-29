@@ -211,11 +211,11 @@ const GlobalInfoProvider = ({ children }: any) => {
   useEffect(() => {
     if (!firebaseDb) return;
 
-    // unsubscribe from any previous listeners
     if (onValueRef.current) {
       const keys = Object.keys(onValueRef.current);
       for (const key of keys) {
         const _key = key as keyof typeof onValueRef.current; // Define type
+        // unsubscribe from any previous listeners
         onValueRef.current[_key]?.();
 
         const updateRef = ref(
@@ -269,7 +269,9 @@ const GlobalInfoProvider = ({ children }: any) => {
         setLoginState("error");
       } else {
         dispatch({ type: "RESET" });
-        await globalDb.destroy();
+        if (globalDb) {
+          await globalDb.destroy();
+        }
         setLoginState("success");
         localStorage.setItem("loggedIn", "true");
         localStorage.setItem("user", user.username);

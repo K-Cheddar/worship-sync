@@ -18,7 +18,12 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import FreeForms from "../../containers/FreeForms/FreeForms";
-import { DBAllItems, DBItemListDetails } from "../../types";
+import {
+  DBAllItems,
+  DBItemListDetails,
+  DBItemLists,
+  ServiceItem,
+} from "../../types";
 import {
   initiateItemList,
   setItemListIsLoading,
@@ -48,9 +53,50 @@ const Controller = () => {
 
   useEffect(() => {
     const getAllItems = async () => {
-      const response: DBAllItems | undefined = await db?.get("allItems");
-      const items = response?.items || [];
+      if (!db) return;
+      const allItems: DBAllItems | undefined = await db.get("allItems");
+      const items = allItems?.items || [];
       dispatch(initiateAllItemsList(items));
+
+      // delete unneeded bible items
+
+      let bibleItems = items.filter((item) => item.type === "bible");
+
+      const allItemLists: DBItemLists | undefined = await db.get("ItemLists");
+      const itemLists = allItemLists?.itemLists || [];
+      const bibleItemsInLists: ServiceItem[] = [];
+
+      for (const itemList of itemLists) {
+        const listDetails: DBItemListDetails = await db.get(itemList.id);
+        const listItems = listDetails?.items || [];
+        bibleItemsInLists.push(
+          ...listItems.filter((item) => item.type === "bible")
+        );
+      }
+
+      const bibleItemsToBeDeleted = bibleItems.filter(
+        (bibleItem) =>
+          !bibleItemsInLists.some(
+            (bibleItemInList) => bibleItemInList._id === bibleItem._id
+          )
+      );
+
+      if (bibleItemsToBeDeleted.length === 0) return; // nothing to delete
+
+      const updatedItems = items.filter(
+        (item) => !bibleItemsToBeDeleted.includes(item)
+      );
+
+      // Remove bible items from all items and delete them individually
+      await db.put({ ...allItems, items: updatedItems });
+      for (const item of bibleItemsToBeDeleted) {
+        try {
+          const doc = await db.get(item._id);
+          db.remove(doc);
+        } catch (error) {
+          console.error(error);
+        }
+      }
     };
     getAllItems();
 
@@ -63,8 +109,6 @@ const Controller = () => {
     //   updater?.removeEventListener("update", getAllItems);
     // };
   }, [dispatch, db]);
-
-  useEffect(() => {}, []);
 
   useEffect(() => {
     const getItemList = async () => {

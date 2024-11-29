@@ -107,8 +107,6 @@ export const presentationSlice = createSlice({
       state,
       action: PayloadAction<OverlayInfo>
     ) => {
-      console.log({ action });
-
       if (state.isStreamTransmitting) {
         // set previous info for cross animation
         state.prevStreamInfo.participantOverlayInfo =

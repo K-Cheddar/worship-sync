@@ -24,7 +24,6 @@ const Welcome = () => {
   const { loginState } = useContext(GlobalInfoContext) || {};
   const { logout } = useContext(ControllerInfoContext) || {};
   const isLoggedIn = loginState === "success";
-  console.log("HOME", { loginState });
   return (
     <main className="bg-slate-700 h-screen w-screen text-white">
       <div className="flex w-full justify-end p-2 gap-4 text-lg">

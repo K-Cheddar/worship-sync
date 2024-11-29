@@ -95,7 +95,6 @@ const Overlay = ({
           disabled={!isStreamTransmitting}
           svg={OverlaysSVG}
           onClick={() => {
-            console.log("overlay", overlay);
             if (overlay.type === "stick-to-bottom") {
               dispatch(
                 updateStbOverlayInfo({

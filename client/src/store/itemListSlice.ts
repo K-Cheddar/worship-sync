@@ -5,11 +5,13 @@ import generateRandomId from "../utils/generateRandomId";
 type ItemListState = {
   list: ServiceItem[];
   isLoading: boolean;
+  selectedItemListId: string;
 };
 
 const initialState: ItemListState = {
   list: [],
   isLoading: true,
+  selectedItemListId: "",
 };
 
 export const itemListSlice = createSlice({
@@ -18,6 +20,9 @@ export const itemListSlice = createSlice({
   reducers: {
     updateItemList: (state, action: PayloadAction<ServiceItem[]>) => {
       state.list = action.payload;
+    },
+    setActiveItemInList: (state, action: PayloadAction<string>) => {
+      state.selectedItemListId = action.payload;
     },
     initiateItemList: (state, action: PayloadAction<ServiceItem[]>) => {
       state.list = action.payload.map((item) => ({
@@ -36,7 +41,15 @@ export const itemListSlice = createSlice({
       });
     },
     addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
-      state.list.push({ ...action.payload, listId: generateRandomId() });
+      const newItem = { ...action.payload, listId: generateRandomId() };
+      const selectedIndex = state.list.findIndex(
+        (e) => e.listId === state.selectedItemListId
+      );
+      if (selectedIndex !== -1) {
+        state.list.splice(selectedIndex + 1, 0, newItem);
+      } else {
+        state.list.push(newItem);
+      }
     },
     setItemListIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
@@ -49,6 +62,7 @@ export const {
   removeItemFromList,
   addItemToItemList,
   initiateItemList,
+  setActiveItemInList,
   setItemListIsLoading,
   removeItemFromListById,
 } = itemListSlice.actions;

@@ -4,6 +4,7 @@ import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
 import getBibles, { checkBibles } from "../utils/getBibles";
+import Spinner from "../components/Spinner/Spinner";
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
@@ -26,13 +27,16 @@ const cloud = new Cloudinary({
   },
 });
 
+let pendingMax = 0;
+
 const ControllerInfoProvider = ({ children }: any) => {
   const [db, setDb] = useState<PouchDB.Database | undefined>(undefined);
   const [bibleDb, setBibleDb] = useState<PouchDB.Database | undefined>(
     undefined
   );
+  const [dbProgress, setDbProgress] = useState(0);
 
-  const { database, loginState, logout, setLoginState } =
+  const { database, loginState, logout, setLoginState, user } =
     useContext(GlobalInfoContext) || {};
 
   const updater = useRef(new EventTarget());
@@ -48,7 +52,17 @@ const ControllerInfoProvider = ({ children }: any) => {
 
       remoteDb.replicate
         .to(localDb, { retry: true })
-        .on("complete", function (info) {
+        .on("change", (info) => {
+          const pending: number = (info as any).pending; // this property exists when printing info
+          pendingMax = pendingMax < pending ? pending : pendingMax;
+          if (pendingMax > 0) {
+            setDbProgress(Math.floor((1 - pending / pendingMax) * 100));
+          } else {
+            setDbProgress(100);
+          }
+        })
+        .on("complete", () => {
+          setDbProgress(100);
           setDb(localDb);
           globalDb = localDb;
           console.log("Replication completed");
@@ -57,10 +71,10 @@ const ControllerInfoProvider = ({ children }: any) => {
               .sync(remoteDb, { retry: true, live: true })
               .on("change", (event) => {
                 if (event.direction === "push") {
-                  console.log("updating from local");
+                  console.log("updating from local", event);
                 }
                 if (event.direction === "pull") {
-                  console.log("updating from remote");
+                  console.log("updating from remote", event);
                   updater.current.dispatchEvent(new Event("update"));
                 }
               });
@@ -95,6 +109,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     db?.destroy().then(() => {
       globalDb = undefined;
       setDb(undefined);
+      setDbProgress(0);
       logout?.();
     });
   };
@@ -109,6 +124,19 @@ const ControllerInfoProvider = ({ children }: any) => {
         logout: _logout,
       }}
     >
+      {dbProgress !== 100 && (
+        <div className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8">
+          <p>
+            Setting up <span className="font-bold">Worship</span>
+            <span className="text-orange-500 font-semibold">Sync</span> for{" "}
+            <span className="font-semibold">{user}</span>
+          </p>
+          <Spinner />
+          <p>
+            Progress: <span className="text-orange-500">{dbProgress}%</span>
+          </p>
+        </div>
+      )}
       {children}
     </ControllerInfoContext.Provider>
   );
