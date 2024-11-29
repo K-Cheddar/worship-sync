@@ -22,6 +22,7 @@ import {
   Presentation as PresentationType,
 } from "../types";
 import { UnknownAction } from "@reduxjs/toolkit";
+import { ActionCreators } from "redux-undo";
 
 type GlobalInfoContextType = {
   login: ({
@@ -93,7 +94,6 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_stbOverlayInfo: undefined,
   });
 
-  const syncRef = useRef<any>();
   const navigate = useNavigate();
   const dispatch = useDispatch();
 
@@ -191,6 +191,8 @@ const GlobalInfoProvider = ({ children }: any) => {
 
   // initialize firebase
   useEffect(() => {
+    if (loginState !== "success") return; // only initialize app for logged in users
+
     initializeApp(firebaseConfig);
 
     const _db = getDatabase();
@@ -203,7 +205,7 @@ const GlobalInfoProvider = ({ children }: any) => {
       "eliathahsdatechteam@gmail.com",
       "TamTam7550"
     );
-  }, []);
+  }, [loginState]);
 
   // get updates from firebase - realtime changes from others
   useEffect(() => {
@@ -284,20 +286,21 @@ const GlobalInfoProvider = ({ children }: any) => {
     }
   };
 
-  const logout = async () => {
-    setLoginState("loading");
+  const logout = () => {
     localStorage.setItem("loggedIn", "false");
     localStorage.setItem("user", "Demo");
     localStorage.setItem("database", "demo");
     localStorage.setItem("upload_preset", "bpqu4ma5");
-    await syncRef.current?.cancel();
     dispatch({ type: "RESET" });
+    dispatch(ActionCreators.clearHistory());
     setUser("Demo");
     globalFireDbInfo.user = "Demo";
     setDatabase("demo");
     setUploadPreset("bpqu4ma5");
     navigate("/");
     setLoginState("idle");
+    setFirebaseDb(undefined);
+    globalFireDbInfo.db = undefined;
   };
 
   return (

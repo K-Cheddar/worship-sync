@@ -5,9 +5,11 @@ import { MenuItemType } from "../../../types";
 import { useContext } from "react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useNavigate } from "react-router-dom";
+import { ControllerInfoContext } from "../../../context/controllerInfo";
 
 const ToolbarMenu = () => {
-  const { logout, loginState } = useContext(GlobalInfoContext) || {};
+  const { loginState } = useContext(GlobalInfoContext) || {};
+  const { logout } = useContext(ControllerInfoContext) || {};
   const navigate = useNavigate();
   const isLoggedIn = loginState === "success";
 
@@ -24,7 +26,7 @@ const ToolbarMenu = () => {
     },
     {
       text: isLoggedIn ? "Logout" : "Login",
-      onClick: () => {
+      onClick: async () => {
         if (isLoggedIn && logout) {
           logout();
         } else {
