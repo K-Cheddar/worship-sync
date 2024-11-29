@@ -8,7 +8,6 @@ export type ServiceItem = {
   _id: string;
   background?: string;
   listId: string;
-  isInList?: boolean;
   type:
     | "song"
     | "video"

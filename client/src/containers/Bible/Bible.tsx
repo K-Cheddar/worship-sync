@@ -32,6 +32,7 @@ import { createItemFromProps, createNewBible } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
+import { setCreateItem } from "../../store/createItemSlice";
 
 const Bible = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -188,6 +189,7 @@ const Bible = () => {
     dispatch(addItemToItemList(itemForList));
     dispatch(addItemToAllItemsList(itemForList));
     dispatch(setActiveItem(item));
+    dispatch(setCreateItem({ name: "", type: "", text: "" }));
   };
 
   const sendVerse = (verse: verseType) => {
