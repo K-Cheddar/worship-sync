@@ -4,6 +4,7 @@ import Button from "../components/Button/Button";
 import { ReactNode, useContext } from "react";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { GlobalInfoContext } from "../context/globalInfo";
+import { ControllerInfoContext } from "../context/controllerInfo";
 
 const LinkButton = ({ to, children }: { to: string; children: ReactNode }) => {
   return (
@@ -20,7 +21,8 @@ const LinkButton = ({ to, children }: { to: string; children: ReactNode }) => {
 };
 
 const Welcome = () => {
-  const { loginState, logout } = useContext(GlobalInfoContext) || {};
+  const { loginState } = useContext(GlobalInfoContext) || {};
+  const { logout } = useContext(ControllerInfoContext) || {};
   const isLoggedIn = loginState === "success";
   console.log("HOME", { loginState });
   return (

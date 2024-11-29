@@ -10,6 +10,7 @@ type ControllerInfoContextType = {
   bibleDb: PouchDB.Database | undefined;
   cloud: Cloudinary;
   updater: EventTarget;
+  logout: () => Promise<void>;
 };
 
 export const ControllerInfoContext =
@@ -31,7 +32,8 @@ const ControllerInfoProvider = ({ children }: any) => {
     undefined
   );
 
-  const { database, loginState } = useContext(GlobalInfoContext) || {};
+  const { database, loginState, logout, setLoginState } =
+    useContext(GlobalInfoContext) || {};
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>();
@@ -87,6 +89,16 @@ const ControllerInfoProvider = ({ children }: any) => {
     setupDb();
   }, []);
 
+  const _logout = async () => {
+    setLoginState?.("loading");
+    await syncRef.current?.cancel();
+    db?.destroy().then(() => {
+      globalDb = undefined;
+      setDb(undefined);
+      logout?.();
+    });
+  };
+
   return (
     <ControllerInfoContext.Provider
       value={{
@@ -94,6 +106,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         cloud,
         updater: updater.current,
         bibleDb,
+        logout: _logout,
       }}
     >
       {children}
