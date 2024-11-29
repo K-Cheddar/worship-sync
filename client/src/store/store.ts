@@ -56,7 +56,8 @@ listenerMiddleware.startListening({
       action.type !== "item/setSelectedSlide" &&
       action.type !== "item/toggleEditMode" &&
       action.type !== "item/setItemIsLoading" &&
-      !!(currentState as RootState).undoable.present.item.hasPendingUpdate
+      !!(currentState as RootState).undoable.present.item.hasPendingUpdate &&
+      action.type !== "RESET"
     );
   },
 
@@ -96,7 +97,10 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.itemList !==
         (previousState as RootState).undoable.present.itemList &&
       action.type !== "itemList/initiateItemList" &&
-      action.type !== "itemList/setItemListIsLoading"
+      action.type !== "itemList/setItemListIsLoading" &&
+      action.type !== "itemList/setInitialItemList" &&
+      action.type !== "itemList/setActiveItemInList" &&
+      action.type !== "RESET"
     );
   },
 
@@ -122,7 +126,8 @@ listenerMiddleware.startListening({
     return (
       (currentState as RootState).undoable.present.itemLists !==
         (previousState as RootState).undoable.present.itemLists &&
-      action.type !== "itemLists/initiateItemLists"
+      action.type !== "itemLists/initiateItemLists" &&
+      action.type !== "RESET"
     );
   },
 
@@ -148,13 +153,14 @@ listenerMiddleware.startListening({
     return (
       (currentState as RootState).allItems !==
         (previousState as RootState).allItems &&
-      action.type !== "allItems/initiateAllItemsList"
+      action.type !== "allItems/initiateAllItemsList" &&
+      action.type !== "RESET"
     );
   },
 
   effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
-    await listenerApi.delay(5000);
+    await listenerApi.delay(1500);
 
     // update ItemList
     const { list } = (listenerApi.getState() as RootState).allItems;
@@ -173,7 +179,8 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.overlays !==
         (previousState as RootState).undoable.present.overlays &&
       action.type !== "overlays/initiateOverlayList" &&
-      action.type !== "overlays/selectOverlay"
+      action.type !== "overlays/selectOverlay" &&
+      action.type !== "RESET"
     );
   },
 
@@ -186,8 +193,6 @@ listenerMiddleware.startListening({
       .overlays;
     const { selectedList } = (listenerApi.getState() as RootState).undoable
       .present.itemLists;
-
-    console.log({ list });
 
     if (!db || !selectedList) return;
     const db_itemList: DBItemListDetails = await db.get(selectedList.id);
@@ -202,13 +207,14 @@ listenerMiddleware.startListening({
     return (
       (currentState as RootState).media !==
         (previousState as RootState).media &&
-      action.type !== "media/initiateMediaList"
+      action.type !== "media/initiateMediaList" &&
+      action.type !== "RESET"
     );
   },
 
   effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
-    await listenerApi.delay(5000);
+    await listenerApi.delay(1500);
 
     // update ItemList
     const { list } = (listenerApi.getState() as RootState).media;
@@ -234,7 +240,8 @@ listenerMiddleware.startListening({
       action.type !== "presentation/updateMonitorFromRemote" &&
       action.type !== "presentation/updateStreamFromRemote" &&
       action.type !== "presentation/updateBibleDisplayInfoFromRemote" &&
-      action.type !== "presentation/updateOverlayInfoFromRemote"
+      action.type !== "presentation/updateOverlayInfoFromRemote" &&
+      action.type !== "RESET"
     );
   },
 

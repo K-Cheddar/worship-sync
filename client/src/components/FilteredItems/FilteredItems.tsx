@@ -13,6 +13,7 @@ import { Link } from "react-router-dom";
 import { removeItemFromAllItemsList } from "../../store/allItemsSlice";
 import { ServiceItem } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { ActionCreators } from "redux-undo";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -39,6 +40,9 @@ const FilteredItems = ({
   const [filteredList, setFilteredList] = useState(listOfType);
   const [numShownItems, setNumShownItems] = useState(20);
   const [searchValue, setSearchValue] = useState("");
+  const [itemToBeDeleted, setItemToBeDeleted] = useState<ServiceItem | null>(
+    null
+  );
   const isFullListLoaded = filteredList.length <= numShownItems;
 
   const { db } = useContext(ControllerInfoContext) || {};
@@ -68,8 +72,10 @@ const FilteredItems = ({
   }, []);
 
   const deleteItem = async (item: ServiceItem) => {
+    setItemToBeDeleted(null);
     dispatch(removeItemFromAllItemsList(item._id));
     dispatch(removeItemFromListById(item._id));
+    dispatch(ActionCreators.clearHistory());
     if (db) {
       try {
         const doc = await db.get(item._id);
@@ -82,6 +88,34 @@ const FilteredItems = ({
 
   return (
     <div className="px-2 py-4 h-full">
+      {itemToBeDeleted && (
+        <div className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center">
+          <div className="bg-slate-700 rounded px-8 py-4">
+            <p className="text-xl">
+              Are you sure you want to delete{" "}
+              <span className="font-semibold">{itemToBeDeleted.name}</span>?
+            </p>
+            <p className="text-lg text-amber-400">
+              This action is permanent and will clear your undo history.
+            </p>
+            <div className="flex gap-6 w-full mt-4">
+              <Button
+                className="flex-1 justify-center"
+                onClick={() => setItemToBeDeleted(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1 justify-center"
+                variant="cta"
+                onClick={() => deleteItem(itemToBeDeleted)}
+              >
+                Delete Forever
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       <h2 className="text-2xl text-center mb-2 md:w-2/3 ">{heading}</h2>
       {isLoading && (
         <h3 className="text-lg text-center">{heading} is loading...</h3>
@@ -120,7 +154,7 @@ const FilteredItems = ({
                 svg={DeleteSVG}
                 variant="tertiary"
                 color="red"
-                onClick={() => deleteItem(item)}
+                onClick={() => setItemToBeDeleted(item)}
               />
             </li>
           );

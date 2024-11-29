@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { ItemList } from "../types";
+import { ItemList, ServiceItem } from "../types";
 
 type ItemListState = {
   currentLists: ItemList[];
@@ -18,6 +18,7 @@ export const itemListsSlice = createSlice({
     updateItemLists: (state, action: PayloadAction<ItemList[]>) => {
       state.currentLists = action.payload;
     },
+
     initiateItemLists: (state, action: PayloadAction<ItemList[]>) => {
       state.currentLists = action.payload;
       state.selectedList = action.payload[0];
@@ -32,6 +33,11 @@ export const itemListsSlice = createSlice({
         (item) => item.id === action.payload
       );
     },
+    setInitialItemList: (state, action: PayloadAction<string>) => {
+      state.selectedList = state.currentLists.find(
+        (item) => item.id === action.payload
+      );
+    },
   },
 });
 
@@ -40,6 +46,7 @@ export const {
   removeFromItemLists,
   initiateItemLists,
   selectItemList,
+  setInitialItemList,
 } = itemListsSlice.actions;
 
 export default itemListsSlice.reducer;

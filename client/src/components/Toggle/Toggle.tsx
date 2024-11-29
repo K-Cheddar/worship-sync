@@ -18,14 +18,14 @@ const Toggle = ({ label, value, onChange, className }: ToggleProps) => {
     >
       <label className="text-sm font-semibold">{label}:</label>
       <div className={`${value ? "on" : "off"} toggle-input-container`}>
-        <input
-          className="w-full h-full absolute opacity-0 cursor-pointer left-0 top-0"
-          type="checkbox"
-          checked={value}
-          onChange={(e) => onChange(e.target.checked)}
-        />
         <Icon svg={CircleSVG} className={`toggle-circle`} />
       </div>
+      <input
+        className="w-full h-full absolute opacity-0 cursor-pointer left-0 top-0"
+        type="checkbox"
+        checked={value}
+        onChange={(e) => onChange(e.target.checked)}
+      />
     </div>
   );
 };

@@ -1,10 +1,12 @@
 import Button from "../../components/Button/Button";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
-import { itemSectionBorderColorMap } from "../../utils/slideColorMap";
 import { SongOrder } from "../../types";
 import Select from "../../components/Select/Select";
 import { useEffect, useState } from "react";
 import generateRandomId from "../../utils/generateRandomId";
+import { DndContext, DragEndEvent, useDroppable } from "@dnd-kit/core";
+import { useSensors } from "../../utils/dndUtils";
+import { SortableContext } from "@dnd-kit/sortable";
+import SongSection from "./SongSection";
 
 type SongSectionsProps = {
   songOrder: SongOrder[];
@@ -23,31 +25,44 @@ const SongSections = ({
     setSection(currentSections[0]?.value || "");
   }, [currentSections]);
 
+  const { setNodeRef } = useDroppable({
+    id: "song-sections-list",
+  });
+
+  const sensors = useSensors();
+
+  // TODO make this a Utility
+  const onDragEnd = (event: DragEndEvent) => {
+    const { over, active } = event;
+    if (!over || !active) return;
+
+    const { id } = over;
+    const { id: activeId } = active;
+    const updatedSongOrder = [...songOrder];
+    const newIndex = updatedSongOrder.findIndex((item) => item.id === id);
+    const oldIndex = updatedSongOrder.findIndex((item) => item.id === activeId);
+    const element = songOrder[oldIndex];
+    updatedSongOrder.splice(oldIndex, 1);
+    updatedSongOrder.splice(newIndex, 0, element);
+    setSongOrder(updatedSongOrder);
+  };
+
   return (
-    <>
+    <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <h2 className="text-lg mb-2 text-center font-semibold">Song Order</h2>
-      <ul className="song-sections">
-        {songOrder.map(({ id, name }, index) => (
-          <li
-            key={id}
-            className={`flex items-center px-2 h-7 bg-black rounded-lg hover:bg-gray-800 cursor-pointer border-b-4 ${itemSectionBorderColorMap.get(
-              name.split(" ")[0]
-            )}`}
-          >
-            <p className="pr-1 text-base">{name}</p>
-            <Button
-              className="ml-auto"
-              variant="tertiary"
-              color="#dc2626"
-              svg={DeleteSVG}
-              onClick={() => {
-                const copiedSongOrder = [...songOrder];
-                copiedSongOrder.splice(index, 1);
-                setSongOrder(copiedSongOrder);
-              }}
+      <ul id="song-sections-list" className="song-sections" ref={setNodeRef}>
+        <SortableContext items={songOrder.map(({ id }) => id)}>
+          {songOrder.map(({ id, name }, index) => (
+            <SongSection
+              key={id}
+              name={name}
+              index={index}
+              setSongOrder={setSongOrder}
+              songOrder={songOrder}
+              id={id}
             />
-          </li>
-        ))}
+          ))}
+        </SortableContext>
       </ul>
       <div className="mt-4">
         <h4 className="text-sm font-semibold w-full text-center">
@@ -72,7 +87,7 @@ const SongSections = ({
           Add Section
         </Button>
       </div>
-    </>
+    </DndContext>
   );
 };
 

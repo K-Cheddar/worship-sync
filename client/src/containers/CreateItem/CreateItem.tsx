@@ -98,14 +98,6 @@ const CreateItem = () => {
   };
 
   const createItem = async () => {
-    dispatch(
-      setCreateItem({
-        name: itemName,
-        type: selectedType,
-        text,
-      })
-    );
-
     if (selectedType === "song") {
       const { formattedLyrics: _formattedLyrics, songOrder: _songOrder } =
         createSections({
@@ -141,6 +133,13 @@ const CreateItem = () => {
     }
 
     if (selectedType === "bible") {
+      dispatch(
+        setCreateItem({
+          name: itemName,
+          type: selectedType,
+          text,
+        })
+      );
       naviagte(`/controller/bible?name=${encodeURI(itemName)}`);
     }
 
