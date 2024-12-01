@@ -208,6 +208,9 @@ export type bibleType = {
 export type PreferencesType = {
   slidesPerRow: number;
   formattedLyricsPerRow: number;
+  shouldShowItemEditor: boolean;
+  isMediaExpanded: boolean;
+  mediaItemsPerRow: number;
 };
 
 export type ItemList = {
@@ -256,8 +259,8 @@ export type Media = {
   name: string;
   type: string;
   id: string;
-  image: string;
-  video?: string;
+  background: string;
+  thumbnail: string;
 };
 
 export type DBMedia = {

@@ -326,21 +326,26 @@ export const retrieveImages = ({
   for (let i = 0; i < backgrounds.length; i++) {
     let element = backgrounds[i];
     // const image = cloud.image(element.name).resize(fill().width(250));
-    let image = "";
-    let video;
+    let thumbnail = "";
+    let background = "";
     if (element.type === "image") {
-      image = cloud.image(element.name).toURL();
+      background = cloud.image(element.name).toURL();
+      thumbnail = cloud.image(element.name).resize(fill().width(250)).toURL();
     }
     if (element.type === "video") {
-      video = cloud.video(element.name).toURL();
-      const [videoUrl] = video.split("?");
-      image = videoUrl + ".png?type=video";
+      background = cloud.video(element.name).toURL();
+      const scaledDownVideo = cloud
+        .video(element.name)
+        .resize(fill().width(250))
+        .toURL();
+      const [videoUrl] = scaledDownVideo.split("?");
+      thumbnail = videoUrl + ".png?type=video";
     }
 
     images.push({
       ...element,
-      image,
-      video,
+      background,
+      thumbnail,
       id: generateRandomId(),
     });
   }

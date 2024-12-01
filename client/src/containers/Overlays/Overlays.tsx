@@ -96,7 +96,7 @@ const Overlays = () => {
                 </SortableContext>
               </ul>
               <Button
-                className="text-sm h-7 w-fit mr-auto"
+                className="text-sm w-full justify-center mt-2"
                 svg={AddSVG}
                 onClick={() => dispatch(addOverlay())}
               >
@@ -143,7 +143,7 @@ const Overlays = () => {
                   <section className="flex flex-col gap-2 bg-slate-800 p-2 rounded-md min-w-1/2 items-center">
                     <Input
                       className="text-sm flex gap-2 items-center"
-                      lableClassName="w-16"
+                      lableClassName="w-24"
                       label="Name"
                       value={localName}
                       onChange={(val) => setLocalName(val as string)}
@@ -151,7 +151,7 @@ const Overlays = () => {
                     />
                     <Input
                       className="text-sm flex gap-2 items-center"
-                      lableClassName="w-16"
+                      lableClassName="w-24"
                       label="Title"
                       disabled={localType === "stick-to-bottom"}
                       value={localTitle}
@@ -160,7 +160,7 @@ const Overlays = () => {
                     />
                     <Input
                       className="text-sm flex gap-2 items-center"
-                      lableClassName="w-16"
+                      lableClassName="w-24"
                       label="Event"
                       value={localEvent}
                       onChange={(val) => setLocalEvent(val as string)}
@@ -168,7 +168,7 @@ const Overlays = () => {
                     />
                     <Input
                       className="text-sm flex gap-2 items-center"
-                      lableClassName="w-16"
+                      lableClassName="w-24"
                       label="Duration"
                       value={localDuration}
                       type="number"
@@ -196,7 +196,7 @@ const Overlays = () => {
                     />
 
                     <Button
-                      className="text-sm h-7 w-full justify-center"
+                      className="text-sm w-full justify-center"
                       onClick={() =>
                         dispatch(
                           updateOverlay({

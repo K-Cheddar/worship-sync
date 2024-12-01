@@ -57,7 +57,7 @@ const DisplayStreamBible = forwardRef<
         } else {
           bibleTimeline.current = gsap
             .timeline()
-            .set(targets, { yPercent: 100 });
+            .set(targets, { yPercent: 120 });
 
           // Only play animate if there is bible info
           if (
@@ -100,7 +100,7 @@ const DisplayStreamBible = forwardRef<
             .timeline()
             .set(targets, { yPercent: 0, opacity: 1 })
             .to(targets, {
-              yPercent: 100,
+              yPercent: 120,
               duration: 1,
               ease: "power1.inOut",
             });
@@ -118,7 +118,9 @@ const DisplayStreamBible = forwardRef<
             {
               "--bible-info-border-width": `${width / 71.4}vw`,
               "--bible-info-title-size": `${width / 42.3}vw`,
-              "--bible-info-text-size": `${width / 38.2}vw`,
+              "--bible-info-text-size": `${width / 40}vw`,
+              "--bible-info-text-shadow-size-p": `${width / 66.7}px`,
+              "--bible-info-text-shadow-size-n": `-${width / 66.7}px`,
             } as CSSProperties
           }
         >
@@ -137,7 +139,9 @@ const DisplayStreamBible = forwardRef<
             {
               "--bible-info-border-width": `${width / 71.4}vw`,
               "--bible-info-title-size": `${width / 42.3}vw`,
-              "--bible-info-text-size": `${width / 38.2}vw`,
+              "--bible-info-text-size": `${width / 40}vw`,
+              "--bible-info-text-shadow-size-p": `${width / 66}px`,
+              "--bible-info-text-shadow-size-n": `-${width / 66}px`,
             } as CSSProperties
           }
         >

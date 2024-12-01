@@ -239,7 +239,7 @@ const LyricsEditor = () => {
           />
         </section>
       </div>
-      <div className="flex justify-end h-8 mb-2 mr-2 mt-4">
+      <div className="flex justify-end h-8 mr-4 my-4">
         <Button
           variant="secondary"
           className="text-base"
@@ -247,7 +247,7 @@ const LyricsEditor = () => {
         >
           Cancel
         </Button>
-        <Button variant="cta" className="text-base ml-2" onClick={() => save()}>
+        <Button variant="cta" className="text-base ml-4" onClick={() => save()}>
           Save Changes
         </Button>
       </div>

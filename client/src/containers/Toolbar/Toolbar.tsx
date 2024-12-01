@@ -6,18 +6,21 @@ import SlideEditTools from "./ToolbarElements/SlideEditTools";
 import Undo from "./ToolbarElements/Undo";
 import UserSection from "./ToolbarElements/UserSection";
 import cn from "classnames";
+import { useSelector } from "../../hooks";
 
 type SectionProps = {
   children: React.ReactNode;
   last?: boolean;
+  hidden?: boolean;
 };
-const Section = ({ children, last }: SectionProps) => {
+const Section = ({ children, last, hidden }: SectionProps) => {
   return (
     <section
       className={cn(
-        "px-2 py-0 flex gap-1 items-center",
+        "px-2 py-1 flex gap-1 items-center",
         !last && "border-r-2 border-slate-500",
-        last && "ml-auto"
+        last && "ml-auto",
+        hidden && "hidden"
       )}
     >
       {children}
@@ -27,17 +30,20 @@ const Section = ({ children, last }: SectionProps) => {
 
 const Toolbar = ({ className }: { className: string }) => {
   const location = useLocation();
+  const { isEditMode } = useSelector((state) => state.undoable.present.item);
   return (
     <div className={className}>
       <Section>
         <Menu />
+      </Section>
+      <Section hidden={isEditMode}>
         <Undo />
       </Section>
-      <Section>
+      <Section hidden={isEditMode}>
         <Services />
       </Section>
       {location.pathname.includes("controller/item") && (
-        <Section>
+        <Section hidden={isEditMode}>
           <SlideEditTools />
         </Section>
       )}

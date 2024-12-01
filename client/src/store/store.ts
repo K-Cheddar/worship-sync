@@ -5,7 +5,7 @@ import {
   createListenerMiddleware,
   Reducer,
 } from "@reduxjs/toolkit";
-import { itemSlice } from "./itemSlice";
+import { itemSlice, setHasPendingUpdate } from "./itemSlice";
 import undoable, { excludeAction } from "redux-undo";
 import { presentationSlice } from "./presentationSlice";
 import { overlaysSlice } from "./overlaysSlice";
@@ -37,6 +37,7 @@ const undoableReducers = undoable(
   {
     filter: excludeAction([
       itemSlice.actions.toggleEditMode.toString(),
+      itemSlice.actions.setHasPendingUpdate.toString(),
       itemSlice.actions.setSelectedSlide.toString(),
       overlaysSlice.actions.selectOverlay.toString(),
       itemListSlice.actions.initiateItemList.toString(),
@@ -98,7 +99,6 @@ listenerMiddleware.startListening({
         (previousState as RootState).undoable.present.itemList &&
       action.type !== "itemList/initiateItemList" &&
       action.type !== "itemList/setItemListIsLoading" &&
-      action.type !== "itemList/setInitialItemList" &&
       action.type !== "itemList/setActiveItemInList" &&
       action.type !== "RESET"
     );
@@ -126,6 +126,7 @@ listenerMiddleware.startListening({
     return (
       (currentState as RootState).undoable.present.itemLists !==
         (previousState as RootState).undoable.present.itemLists &&
+      action.type !== "itemLists/setInitialItemList" &&
       action.type !== "itemLists/initiateItemLists" &&
       action.type !== "RESET"
     );
@@ -261,7 +262,11 @@ listenerMiddleware.startListening({
     const presentationUpdate = {
       projectorInfo,
       monitorInfo,
-      streamInfo,
+      streamInfo: {
+        displayType: streamInfo.displayType,
+        time: streamInfo.time,
+        slide: streamInfo.slide,
+      },
       stream_bibleInfo: streamInfo.bibleDisplayInfo,
       stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
       stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
@@ -290,6 +295,15 @@ listenerMiddleware.startListening({
       ),
       cleanObject(presentationUpdate)
     );
+  },
+});
+
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return currentState !== previousState;
+  },
+  effect: async (action, listenerApi) => {
+    console.log(action);
   },
 });
 

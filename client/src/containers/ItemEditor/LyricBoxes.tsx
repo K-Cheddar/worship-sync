@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import Button from "../../components/Button/Button";
@@ -10,9 +10,13 @@ import { FormattedLyrics as FormattedLyricsType } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 
 const sizeMap: Map<number, string> = new Map([
+  [7, "grid-cols-7"],
+  [6, "grid-cols-6"],
   [5, "grid-cols-5"],
   [4, "grid-cols-4"],
   [3, "grid-cols-3"],
+  [2, "grid-cols-2"],
+  [1, "grid-cols-1"],
 ]);
 
 type FormattedLyricsProps = {
@@ -66,9 +70,7 @@ const LyricBoxes = ({
 
   return (
     <ul
-      className={`grid gap-2 overflow-y-auto max-h-full ${sizeMap.get(
-        formattedLyricsPerRow
-      )}`}
+      className={`formatted-lyrics-list ${sizeMap.get(formattedLyricsPerRow)}`}
     >
       {formattedLyrics.map(({ id, type, name, words }, index) => (
         <li key={id} className="text-sm px-2">
@@ -81,6 +83,7 @@ const LyricBoxes = ({
               onChange={(val) => changeSectionType(val, index)}
               value={name}
               options={availableSections}
+              className=""
             />
             <Button
               className="ml-auto"

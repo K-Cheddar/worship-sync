@@ -44,7 +44,6 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     const setupDb = async () => {
-      console.log(database, loginState);
       let remoteURL =
         process.env.REACT_APP_DATABASE_STRING + "portable-media-" + database;
       const remoteDb = new PouchDB(remoteURL);
@@ -82,7 +81,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         });
     };
 
-    if (loginState === "success" || loginState === "idle") {
+    if (loginState === "success" || loginState === "demo") {
       setupDb();
     }
   }, [loginState, database]);

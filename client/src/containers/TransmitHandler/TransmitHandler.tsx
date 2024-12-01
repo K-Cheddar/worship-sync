@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import Toggle from "../../components/Toggle/Toggle";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -11,8 +11,9 @@ import {
 import Presentation from "../../components/Presentation/Presentation";
 import { monitorLinks, projectorLinks, streamLinks } from "./dummyLinks";
 import Button from "../../components/Button/Button";
+import "./TransmitHandler.scss";
 
-const TransmitHandler = ({ className }: { className: string }) => {
+const TransmitHandler = () => {
   const {
     isMonitorTransmitting,
     isProjectorTransmitting,
@@ -27,6 +28,20 @@ const TransmitHandler = ({ className }: { className: string }) => {
   const [isTransmitting, setIsTransmitting] = useState(false);
   const dispatch = useDispatch();
 
+  const { isMediaExpanded } = useSelector((state) => state.preferences);
+
+  const [handlerHeight, setHandlerHeight] = useState(0);
+
+  const transmitHandlerRef = useCallback((node: HTMLElement) => {
+    if (node) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        setHandlerHeight(entries[0].borderBoxSize[0].blockSize);
+      });
+
+      resizeObserver.observe(node);
+    }
+  }, []);
+
   useEffect(() => {
     setIsTransmitting(
       isMonitorTransmitting && isProjectorTransmitting && isStreamTransmitting
@@ -39,47 +54,57 @@ const TransmitHandler = ({ className }: { className: string }) => {
   };
 
   return (
-    <section className={className}>
-      <div className="w-full flex justify-center items-center gap-4">
-        <Button
-          onClick={() => dispatch(clearAll())}
-          className="text-sm"
-          padding="py-1 px-2"
-        >
-          Clear All
-        </Button>
-        <hr className="border-r border-slate-400 h-full" />
-        <Toggle
-          label="Sending to all"
-          value={isTransmitting}
-          onChange={handleSetTransmitting}
+    <div
+      className="transmit-handler-container"
+      data-is-media-expanded={isMediaExpanded}
+      style={
+        {
+          "--transmit-handler-height": `${handlerHeight}px`,
+        } as CSSProperties
+      }
+    >
+      <section className="transmit-handler" ref={transmitHandlerRef}>
+        <div className="w-full flex justify-center items-center gap-4">
+          <Button
+            onClick={() => dispatch(clearAll())}
+            className="text-sm"
+            padding="py-1 px-2"
+          >
+            Clear All
+          </Button>
+          <hr className="border-r border-slate-400 h-full" />
+          <Toggle
+            label="Sending to all"
+            value={isTransmitting}
+            onChange={handleSetTransmitting}
+          />
+        </div>
+        <Presentation
+          name="Projector"
+          prevInfo={prevProjectorInfo}
+          info={projectorInfo}
+          isTransmitting={isProjectorTransmitting}
+          toggleIsTransmitting={() => dispatch(toggleProjectorTransmitting())}
+          quickLinks={projectorLinks}
         />
-      </div>
-      <Presentation
-        name="Projector"
-        prevInfo={prevProjectorInfo}
-        info={projectorInfo}
-        isTransmitting={isProjectorTransmitting}
-        toggleIsTransmitting={() => dispatch(toggleProjectorTransmitting())}
-        quickLinks={projectorLinks}
-      />
-      <Presentation
-        name="Monitor"
-        prevInfo={prevMonitorInfo}
-        info={monitorInfo}
-        isTransmitting={isMonitorTransmitting}
-        toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
-        quickLinks={monitorLinks}
-      />
-      <Presentation
-        name="Stream"
-        prevInfo={prevStreamInfo}
-        info={streamInfo}
-        isTransmitting={isStreamTransmitting}
-        toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
-        quickLinks={streamLinks}
-      />
-    </section>
+        <Presentation
+          name="Monitor"
+          prevInfo={prevMonitorInfo}
+          info={monitorInfo}
+          isTransmitting={isMonitorTransmitting}
+          toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
+          quickLinks={monitorLinks}
+        />
+        <Presentation
+          name="Stream"
+          prevInfo={prevStreamInfo}
+          info={streamInfo}
+          isTransmitting={isStreamTransmitting}
+          toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
+          quickLinks={streamLinks}
+        />
+      </section>
+    </div>
   );
 };
 

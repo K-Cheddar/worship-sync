@@ -8,7 +8,14 @@ import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import Input from "../../components/Input/Input";
 import "./ItemEditor.scss";
-import { useContext, useEffect, useState } from "react";
+import {
+  CSSProperties,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { borderColorMap } from "../../utils/itemTypeMaps";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useDispatch, useSelector } from "../../hooks";
@@ -17,6 +24,7 @@ import { setName, updateBoxes } from "../../store/itemSlice";
 import { formatSong } from "../../utils/overflow";
 import { Box } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { setShouldShowItemEditor } from "../../store/preferencesSlice";
 
 const SlideEditor = () => {
   const item = useSelector((state) => state.undoable.present.item);
@@ -29,12 +37,24 @@ const SlideEditor = () => {
     slides,
     isLoading,
   } = item;
-  const [showEditor, setShowEditor] = useState(true);
+
+  const { shouldShowItemEditor } = useSelector((state) => state.preferences);
+
   const [isEditingName, setIsEditingName] = useState(false);
+  const [editorHeight, setEditorHeight] = useState(0);
   const [localName, setLocalName] = useState(name);
   const arrangement = arrangements[selectedArrangement];
-
   const { db } = useContext(ControllerInfoContext) || {};
+
+  const editorRef = useCallback((node: HTMLUListElement) => {
+    if (node) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        setEditorHeight(entries[0].borderBoxSize[0].blockSize);
+      });
+
+      resizeObserver.observe(node);
+    }
+  }, []);
 
   const dispatch = useDispatch();
 
@@ -147,7 +167,7 @@ const SlideEditor = () => {
 
   return (
     <div>
-      <section className="flex justify-end w-full pr-2 bg-slate-900 h-[clamp(2rem, 2.5vw, 3rem)] mb-1 gap-1 overflow-hidden">
+      <section className="flex justify-end w-full pr-2 bg-slate-900 h-8 mb-1 gap-1 overflow-hidden">
         <span
           className={`slide-editor-song-name-container ${borderColorMap.get(
             type
@@ -202,61 +222,70 @@ const SlideEditor = () => {
         <Button
           variant="tertiary"
           padding="p-1"
-          svg={showEditor ? CollapseSVG : ExpandSVG}
-          onClick={() => setShowEditor(!showEditor)}
+          svg={shouldShowItemEditor ? CollapseSVG : ExpandSVG}
+          onClick={() =>
+            dispatch(setShouldShowItemEditor(!shouldShowItemEditor))
+          }
           className="text-xs"
         ></Button>
       </section>
-      {showEditor && (
-        <div className="flex">
-          <section className="w-[10vw]">
-            <p className="text-center font-semibold border-b-2 border-black text-lg">
-              Slide Content
-            </p>
-            {boxes.map((box, index) => {
-              return (
-                <span
-                  key={box.id}
-                  className={`flex gap-1 bg-slate-600 border-slate-300 ${
-                    index !== boxes.length - 1 && "border-b"
-                  }`}
+      <div
+        className="slide-editor-container"
+        data-show={shouldShowItemEditor}
+        style={
+          {
+            "--slide-editor-height": `${editorHeight}px`,
+          } as CSSProperties
+        }
+      >
+        <section className="w-[10vw]">
+          <p className="text-center font-semibold border-b-2 border-black text-lg">
+            Slide Content
+          </p>
+          {boxes.map((box, index) => {
+            return (
+              <span
+                key={box.id}
+                className={`flex gap-1 bg-slate-600 border-slate-300 ${
+                  index !== boxes.length - 1 && "border-b"
+                }`}
+              >
+                <Button
+                  truncate
+                  className="flex-1 text-xs hover:bg-slate-500"
+                  variant="none"
                 >
-                  <Button
-                    truncate
-                    className="flex-1 text-xs hover:bg-slate-500"
-                    variant="none"
-                  >
-                    <p>{box.label || box.words?.trim() || box.background}</p>
-                  </Button>
-                  <Button
-                    svg={box.isLocked ? LockSVG : UnlockSVG}
-                    color={box.isLocked ? "gray" : "green"}
-                    variant="tertiary"
-                    onClick={() => {
-                      dispatch(
-                        updateBoxes({
-                          boxes: boxes.map((b, i) =>
-                            i === index ? { ...b, isLocked: !b.isLocked } : b
-                          ),
-                        })
-                      );
-                    }}
-                  />
-                </span>
-              );
-            })}
-          </section>
-          <DisplayWindow
-            showBorder
-            boxes={boxes}
-            onChange={(onChangeInfo) => {
-              onChange(onChangeInfo);
-            }}
-            width={42}
-            displayType="editor"
-          />
-        </div>
-      )}
+                  <p>{box.label || box.words?.trim() || box.background}</p>
+                </Button>
+                <Button
+                  svg={box.isLocked ? LockSVG : UnlockSVG}
+                  color={box.isLocked ? "gray" : "green"}
+                  variant="tertiary"
+                  onClick={() => {
+                    dispatch(
+                      updateBoxes({
+                        boxes: boxes.map((b, i) =>
+                          i === index ? { ...b, isLocked: !b.isLocked } : b
+                        ),
+                      })
+                    );
+                  }}
+                />
+              </span>
+            );
+          })}
+        </section>
+        <DisplayWindow
+          showBorder
+          ref={editorRef}
+          boxes={boxes}
+          onChange={(onChangeInfo) => {
+            onChange(onChangeInfo);
+          }}
+          width={42}
+          displayType="editor"
+        />
+      </div>
     </div>
   );
 };

@@ -144,7 +144,7 @@ const Controller = () => {
 
   return (
     <div className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none">
-      <Toolbar className="flex border-b-2 border-slate-500 h-10 text-sm" />
+      <Toolbar className="flex border-b-2 border-slate-500 h-10 text-sm min-h-fit" />
       <div className="controller-main ">
         <LyricsEditor />
         <Resizable
@@ -182,7 +182,7 @@ const Controller = () => {
           className="flex flex-col"
           enable={{ ...resizableDirections }}
         >
-          <TransmitHandler className="flex flex-col mt-2 gap-4 w-fit items-center h-fit bg-slate-800 p-4 rounded-lg mx-auto" />
+          <TransmitHandler />
           <Media />
         </Resizable>
       </div>

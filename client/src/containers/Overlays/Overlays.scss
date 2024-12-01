@@ -1,6 +1,6 @@
 .overlays-list { 
   scrollbar-width: thin;
-  max-height: calc(100% - clamp(4rem, 5vw, 5rem));
+  max-height: calc(100% - clamp(5rem, 6vw, 7rem));
 
   @apply flex flex-col gap-2 w-full overflow-y-auto overflow-x-hidden;
 }

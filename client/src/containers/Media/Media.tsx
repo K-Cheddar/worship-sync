@@ -3,6 +3,10 @@ import Button from "../../components/Button/Button";
 import { ReactComponent as BgAll } from "../../assets/icons/background-all.svg";
 import { ReactComponent as BGOne } from "../../assets/icons/background-one.svg";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
+import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
+import { ReactComponent as CollapseSVG } from "../../assets/icons/collapse.svg";
+import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
+import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -17,17 +21,34 @@ import CloudinaryUploadWidget, {
   imageInfoType,
 } from "./CloudinaryUploadWidget";
 import generateRandomId from "../../utils/generateRandomId";
+import {
+  decreaseMediaItems,
+  increaseMediaItems,
+  setIsMediaExpanded,
+} from "../../store/preferencesSlice";
+
+const sizeMap: Map<number, string> = new Map([
+  [7, "grid-cols-7"],
+  [6, "grid-cols-6"],
+  [5, "grid-cols-5"],
+  [4, "grid-cols-4"],
+  [3, "grid-cols-3"],
+  [2, "grid-cols-2"],
+]);
 
 const Media = () => {
   const dispatch = useDispatch();
 
   const { list } = useSelector((state) => state.media);
   const { isLoading } = useSelector((state) => state.undoable.present.item);
+  const { isMediaExpanded, mediaItemsPerRow } = useSelector(
+    (state) => state.preferences
+  );
 
   const [selectedMedia, setSelectedMedia] = useState<{
     id: string;
-    image: string;
-  }>({ id: "", image: "" });
+    background: string;
+  }>({ id: "", background: "" });
   const [isMediaLoading, setIsMediaLoading] = useState(true);
 
   const { db, cloud } = useContext(ControllerInfoContext) || {};
@@ -58,7 +79,8 @@ const Media = () => {
         name: public_id,
         type,
         id: generateRandomId(),
-        image: secure_url,
+        background: secure_url,
+        thumbnail: secure_url,
       },
     ];
     dispatch(updateMediaList(updatedList));
@@ -66,7 +88,11 @@ const Media = () => {
 
   return (
     <>
-      <div className="mt-4 mx-2 px-2 bg-slate-900 rounded-t-md flex items-center text-sm">
+      <div
+        className={`mx-2 px-2 bg-slate-900 rounded-t-md flex items-center text-sm relative z-10 transition-all ${
+          isMediaExpanded ? "mt-2" : "mt-4"
+        }`}
+      >
         <Button
           variant="tertiary"
           disabled={selectedMedia.id === "" || isLoading}
@@ -76,7 +102,7 @@ const Media = () => {
             if (selectedMedia && db) {
               dispatch(
                 updateAllSlideBackgrounds({
-                  background: selectedMedia.image,
+                  background: selectedMedia.background,
                 })
               );
             }
@@ -91,13 +117,18 @@ const Media = () => {
           onClick={() => {
             if (selectedMedia && db) {
               dispatch(
-                updateSlideBackground({ background: selectedMedia.image })
+                updateSlideBackground({ background: selectedMedia.background })
               );
             }
           }}
         >
           Set Slide
         </Button>
+        <Button
+          variant="tertiary"
+          svg={isMediaExpanded ? CollapseSVG : ExpandSVG}
+          onClick={() => dispatch(setIsMediaExpanded(!isMediaExpanded))}
+        />
         <CloudinaryUploadWidget
           uwConfig={{
             uploadPreset: "bpqu4ma5",
@@ -114,14 +145,32 @@ const Media = () => {
           onClick={() => deleteBackground()}
         />
       </div>
+      {!isMediaLoading && isMediaExpanded && (
+        <div className="flex gap-2 justify-center z-10 py-1 bg-slate-900 mx-2 h-6">
+          <Button
+            variant="tertiary"
+            svg={ZoomOutSVG}
+            onClick={() => dispatch(increaseMediaItems())}
+          />
+          <Button
+            variant="tertiary"
+            svg={ZoomInSVG}
+            onClick={() => dispatch(decreaseMediaItems())}
+          />
+        </div>
+      )}
       {isMediaLoading && (
         <h3 className="text-center font-lg pt-4 bg-slate-800 mx-2 h-full">
           Loading media...
         </h3>
       )}
-      {list.length !== 0 && (
-        <ul className="media-items">
-          {list.map(({ id, image }) => {
+      {!isMediaLoading && list.length !== 0 && (
+        <ul
+          className={`media-items ${
+            isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : "grid-cols-5"
+          }`}
+        >
+          {list.map(({ id, thumbnail, background }) => {
             const isSelected = id === selectedMedia.id;
             return (
               <li
@@ -137,13 +186,13 @@ const Media = () => {
                   padding="p-0"
                   className="w-full h-full justify-center"
                   onClick={() => {
-                    setSelectedMedia({ id, image });
+                    setSelectedMedia({ id, background });
                   }}
                 >
                   <img
                     className="max-w-full max-h-full"
                     alt={id}
-                    src={image}
+                    src={thumbnail}
                     loading="lazy"
                   />
                 </Button>

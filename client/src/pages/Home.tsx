@@ -25,7 +25,7 @@ const Welcome = () => {
   const { logout } = useContext(ControllerInfoContext) || {};
   const isLoggedIn = loginState === "success";
   return (
-    <main className="bg-slate-700 h-screen w-screen text-white">
+    <main className="bg-slate-700 h-screen text-white">
       <div className="flex w-full justify-end p-2 gap-4 text-lg">
         <Button
           variant="tertiary"

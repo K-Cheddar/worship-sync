@@ -24,6 +24,8 @@ import {
 import { UnknownAction } from "@reduxjs/toolkit";
 import { ActionCreators } from "redux-undo";
 
+type LoginStateType = "idle" | "loading" | "error" | "success" | "demo";
+
 type GlobalInfoContextType = {
   login: ({
     username,
@@ -33,11 +35,11 @@ type GlobalInfoContextType = {
     password: string;
   }) => void;
   logout: () => void;
-  loginState: "idle" | "loading" | "error" | "success";
+  loginState: LoginStateType;
   user: string;
   database: string;
   uploadPreset: string;
-  setLoginState: (val: "idle" | "loading" | "error" | "success") => void;
+  setLoginState: (val: LoginStateType) => void;
   firebaseDb: Database | undefined;
 };
 
@@ -71,9 +73,7 @@ const GlobalInfoProvider = ({ children }: any) => {
   );
 
   const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
-  const [loginState, setLoginState] = useState<
-    "idle" | "loading" | "error" | "success"
-  >("idle");
+  const [loginState, setLoginState] = useState<LoginStateType>("idle");
   const [user, setUser] = useState("Demo");
   const [database, setDatabase] = useState("demo");
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
@@ -118,15 +118,15 @@ const GlobalInfoProvider = ({ children }: any) => {
       };
 
       const updateInfo = {
-        monitorInfo: {
-          info: _monitorInfo,
-          updateFunction: updateMonitorFromRemote,
-          compareTo: monitorInfo,
-        },
         projectorInfo: {
           info: _projectorInfo,
           updateFunction: updateProjectorFromRemote,
           compareTo: projectorInfo,
+        },
+        monitorInfo: {
+          info: _monitorInfo,
+          updateFunction: updateMonitorFromRemote,
+          compareTo: monitorInfo,
         },
         streamInfo: {
           info: _streamInfo,
@@ -173,7 +173,7 @@ const GlobalInfoProvider = ({ children }: any) => {
   useEffect(() => {
     localStorage.setItem("presentation", "null");
     const _isLoggedIn = localStorage.getItem("loggedIn") === "true";
-    setLoginState(_isLoggedIn ? "success" : "idle");
+    setLoginState(_isLoggedIn ? "success" : "demo");
     const _user = localStorage.getItem("user");
     if (_user !== null && _user !== "null") {
       setUser(_user);
@@ -300,7 +300,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     setDatabase("demo");
     setUploadPreset("bpqu4ma5");
     navigate("/");
-    setLoginState("idle");
+    setLoginState("demo");
     setFirebaseDb(undefined);
     globalFireDbInfo.db = undefined;
   };

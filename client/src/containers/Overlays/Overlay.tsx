@@ -52,8 +52,8 @@ const Overlay = ({
         variant="tertiary"
         wrap
         className="flex-col flex-1 h-full leading-4"
-        padding="px-2 py-0.5"
-        gap="gap-0"
+        padding="px-2 py-1.5"
+        gap="gap-1"
         onClick={() => dispatch(selectOverlay(overlay))}
       >
         {overlay.name && (

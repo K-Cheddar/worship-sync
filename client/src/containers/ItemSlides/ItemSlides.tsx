@@ -35,6 +35,8 @@ export const sizeMap: Map<
   [5, { width: 10, cols: "grid-cols-5", hSize: "text-xs" }],
   [4, { width: 12.5, cols: "grid-cols-4", hSize: "text-sm" }],
   [3, { width: 16.75, cols: "grid-cols-3", hSize: "text-base" }],
+  [2, { width: 25, cols: "grid-cols-2", hSize: "text-base" }],
+  [1, { width: 52, cols: "grid-cols-1", hSize: "text-base" }],
 ]);
 
 const ItemSlides = () => {
@@ -142,7 +144,7 @@ const ItemSlides = () => {
 
   return (
     <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-      <div className="flex w-full px-2 bg-slate-900 h-6 my-2 gap-1">
+      <div className="flex w-full px-2 bg-slate-900 h-6 mb-2 gap-1">
         <Button
           variant="tertiary"
           svg={ZoomOutSVG}
