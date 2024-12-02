@@ -12,5 +12,10 @@
   .quick-link-image {
     width: 3vw;
     height: calc(3vw * 9 / 16);
+
+    @media (max-width: 768px) {
+      width: 9vw;
+      height: calc(9vw * 9 / 16);
+    }
   }
 }

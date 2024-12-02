@@ -1,4 +1,11 @@
-import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import {
+  CSSProperties,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import Toggle from "../../components/Toggle/Toggle";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -12,6 +19,7 @@ import Presentation from "../../components/Presentation/Presentation";
 import { monitorLinks, projectorLinks, streamLinks } from "./dummyLinks";
 import Button from "../../components/Button/Button";
 import "./TransmitHandler.scss";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 
 const TransmitHandler = () => {
   const {
@@ -29,6 +37,8 @@ const TransmitHandler = () => {
   const dispatch = useDispatch();
 
   const { isMediaExpanded } = useSelector((state) => state.preferences);
+
+  const { isMobile } = useContext(ControllerInfoContext) || {};
 
   const [handlerHeight, setHandlerHeight] = useState(0);
 
@@ -86,6 +96,7 @@ const TransmitHandler = () => {
           isTransmitting={isProjectorTransmitting}
           toggleIsTransmitting={() => dispatch(toggleProjectorTransmitting())}
           quickLinks={projectorLinks}
+          isMobile={isMobile}
         />
         <Presentation
           name="Monitor"
@@ -94,6 +105,7 @@ const TransmitHandler = () => {
           isTransmitting={isMonitorTransmitting}
           toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
           quickLinks={monitorLinks}
+          isMobile={isMobile}
         />
         <Presentation
           name="Stream"
@@ -102,6 +114,7 @@ const TransmitHandler = () => {
           isTransmitting={isStreamTransmitting}
           toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
           quickLinks={streamLinks}
+          isMobile={isMobile}
         />
       </section>
     </div>

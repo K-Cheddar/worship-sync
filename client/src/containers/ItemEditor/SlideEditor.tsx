@@ -44,7 +44,10 @@ const SlideEditor = () => {
   const [editorHeight, setEditorHeight] = useState(0);
   const [localName, setLocalName] = useState(name);
   const arrangement = arrangements[selectedArrangement];
-  const { db } = useContext(ControllerInfoContext) || {};
+
+  const slideInfoRef = useRef(null);
+
+  const { db, isMobile } = useContext(ControllerInfoContext) || {};
 
   const editorRef = useCallback((node: HTMLUListElement) => {
     if (node) {
@@ -234,12 +237,14 @@ const SlideEditor = () => {
         data-show={shouldShowItemEditor}
         style={
           {
-            "--slide-editor-height": `${editorHeight}px`,
+            "--slide-editor-height": isMobile
+              ? "fit-content"
+              : `${editorHeight}px`,
           } as CSSProperties
         }
       >
-        <section className="w-[10vw]">
-          <p className="text-center font-semibold border-b-2 border-black text-lg">
+        <section className="md:w-[10vw] max-md:w-[100%]" ref={slideInfoRef}>
+          <p className="text-center font-semibold border-b-2 border-black text-sm">
             Slide Content
           </p>
           {boxes.map((box, index) => {
@@ -277,12 +282,12 @@ const SlideEditor = () => {
         </section>
         <DisplayWindow
           showBorder
-          ref={editorRef}
           boxes={boxes}
+          ref={editorRef}
           onChange={(onChangeInfo) => {
             onChange(onChangeInfo);
           }}
-          width={42}
+          width={isMobile ? 84 : 42}
           displayType="editor"
         />
       </div>

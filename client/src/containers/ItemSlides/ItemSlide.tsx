@@ -14,6 +14,7 @@ type ItemSlideProps = {
   selectedSlide: number;
   size: number;
   itemType: string;
+  isMobile: boolean;
 };
 
 const ItemSlide = ({
@@ -23,8 +24,11 @@ const ItemSlide = ({
   selectedSlide,
   size,
   itemType,
+  isMobile,
 }: ItemSlideProps) => {
-  const width = sizeMap.get(size)?.width || 12;
+  const width =
+    (isMobile ? sizeMap.get(size)?.mobileWidth : sizeMap.get(size)?.width) ||
+    12;
 
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({

@@ -52,7 +52,7 @@ const Input = ({
       </label>
       <span className="relative w-full">
         <input
-          className={`w-full rounded py-1 pl-2 text-black ${
+          className={`w-full rounded text-sm py-1 pl-2 text-black ${
             svg ? "pr-6" : "pr-2"
           } ${disabled ? "opacity-50" : ""}`}
           type={type}

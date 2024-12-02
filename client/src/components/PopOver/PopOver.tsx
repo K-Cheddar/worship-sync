@@ -56,12 +56,12 @@ const PopOver = ({ children, TriggeringButton }: PopOverProps) => {
             {...getFloatingProps()}
           >
             <Button
-              className="absolute top-1 right-1 z-40"
+              className="ml-auto mt-2 mr-2"
               variant="tertiary"
               svg={CloseSVG}
               onClick={() => setIsOpen(false)}
             />
-            <div className="p-4 relative">{children}</div>
+            <div className="px-4 pb-4 relative">{children}</div>
           </div>
         </FloatingFocusManager>
       )}

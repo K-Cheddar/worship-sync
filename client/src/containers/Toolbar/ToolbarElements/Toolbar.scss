@@ -1,8 +1,8 @@
 .services-dropdown {
   select {
-    @apply w-40;
+    @apply max-md:max-w-24 md:max-w-40;
     option {
-      @apply  text-lg w-40;
+      @apply  text-lg;
 
       overflow-wrap: anywhere;
 

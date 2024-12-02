@@ -11,6 +11,7 @@ type PresentationProps = {
   toggleIsTransmitting: () => void;
   quickLinks: QuickLinkType[];
   showBorder?: boolean;
+  isMobile?: boolean;
 };
 
 const Presentation = ({
@@ -21,6 +22,7 @@ const Presentation = ({
   toggleIsTransmitting,
   quickLinks,
   showBorder = true,
+  isMobile,
 }: PresentationProps) => {
   return (
     <div className="flex gap-2">
@@ -31,7 +33,7 @@ const Presentation = ({
         <DisplayWindow
           boxes={info.slide?.boxes || []}
           prevBoxes={prevInfo.slide?.boxes || []}
-          width={14}
+          width={isMobile ? 32 : 14}
           showBorder={showBorder}
           displayType={info.displayType}
           participantOverlayInfo={info.participantOverlayInfo}

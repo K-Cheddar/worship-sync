@@ -24,19 +24,37 @@ import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import { useSensors } from "../../utils/dndUtils";
 
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
-import { useEffect } from "react";
+import { useContext, useEffect } from "react";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 
 export const sizeMap: Map<
   number,
-  { width: number; cols: string; hSize: string }
+  { width: number; cols: string; hSize: string; mobileWidth: number }
 > = new Map([
-  [7, { width: 7, cols: "grid-cols-7", hSize: "text-xs" }],
-  [6, { width: 8.25, cols: "grid-cols-6", hSize: "text-xs" }],
-  [5, { width: 10, cols: "grid-cols-5", hSize: "text-xs" }],
-  [4, { width: 12.5, cols: "grid-cols-4", hSize: "text-sm" }],
-  [3, { width: 16.75, cols: "grid-cols-3", hSize: "text-base" }],
-  [2, { width: 25, cols: "grid-cols-2", hSize: "text-base" }],
-  [1, { width: 52, cols: "grid-cols-1", hSize: "text-base" }],
+  [7, { width: 7, mobileWidth: 10, cols: "grid-cols-7", hSize: "text-xs" }],
+  [6, { width: 8.25, mobileWidth: 12, cols: "grid-cols-6", hSize: "text-xs" }],
+  [5, { width: 10, mobileWidth: 15, cols: "grid-cols-5", hSize: "text-xs" }],
+  [
+    4,
+    { width: 12.75, mobileWidth: 19.25, cols: "grid-cols-4", hSize: "text-sm" },
+  ],
+  [
+    3,
+    { width: 17, mobileWidth: 26.25, cols: "grid-cols-3", hSize: "text-base" },
+  ],
+  [
+    2,
+    { width: 26, mobileWidth: 40.5, cols: "grid-cols-2", hSize: "text-base" },
+  ],
+  [
+    1,
+    {
+      width: 52.25,
+      mobileWidth: 82.5,
+      cols: "grid-cols-1",
+      hSize: "text-base",
+    },
+  ],
 ]);
 
 const ItemSlides = () => {
@@ -53,6 +71,7 @@ const ItemSlides = () => {
   const _slides = arrangement?.slides || __slides || [];
   const slides = isLoading ? [] : _slides;
   const size = useSelector((state) => state.preferences.slidesPerRow);
+  const { isMobile } = useContext(ControllerInfoContext) || {};
   const dispatch = useDispatch();
 
   const sensors = useSensors();
@@ -76,9 +95,11 @@ const ItemSlides = () => {
       //   return;
       // }
       slideElement.focus();
-      slideElement.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (!isMobile) {
+        slideElement.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
     }
-  }, [selectedSlide]);
+  }, [selectedSlide, isMobile]);
 
   const selectSlide = (index: number) => {
     dispatch(setSelectedSlide(index));
@@ -202,6 +223,7 @@ const ItemSlides = () => {
               selectedSlide={selectedSlide}
               size={size}
               itemType={type}
+              isMobile={isMobile || false}
             />
           ))}
         </SortableContext>

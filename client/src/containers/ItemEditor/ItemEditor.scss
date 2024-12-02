@@ -55,13 +55,13 @@
 }
 
 .slide-editor-container {
-  @apply flex transition-all relative;
+  @apply flex transition-all relative max-md:flex-col gap-2 max-md:items-center;
 
   &[data-show="true"] {
     @apply mb-2;
 
     height: var(--slide-editor-height);
-    z-index: 0;
+    z-index: 1;
   }
 
   &[data-show="false"] {

@@ -1,4 +1,6 @@
-import { Resizable } from "re-resizable";
+// import { Resizable } from "re-resizable";
+import { ReactComponent as ExpandSVG } from "../../assets/icons/left-panel-open.svg";
+import { ReactComponent as CollapseSVG } from "../../assets/icons/left-panel-close.svg";
 import EditorButtons from "../../containers/PanelButtons/PanelButtons";
 import Media from "../../containers/Media/Media";
 import ServiceItems from "../../containers/ServiceItems/ServiceItems";
@@ -7,7 +9,7 @@ import TransmitHandler from "../../containers/TransmitHandler/TransmitHandler";
 
 import "./Controller.scss";
 import LyricsEditor from "../../containers/ItemEditor/LyricsEditor";
-import { useContext, useEffect } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
@@ -30,17 +32,29 @@ import {
 } from "../../store/itemListSlice";
 import { initiateOverlayList } from "../../store/overlaysSlice";
 import { formatItemList } from "../../utils/formatItemList";
+import Button from "../../components/Button/Button";
 
-const resizableDirections = {
-  top: false,
-  right: false,
-  bottom: false,
-  left: false,
-  topRight: false,
-  bottomRight: false,
-  bottomLeft: false,
-  topLeft: false,
-};
+// Here for future to implement resizable
+
+/* <Resizable
+defaultSize={{ width: "30%" }}
+className="flex flex-col"
+enable={{ ...resizableDirections }}
+>
+<TransmitHandler />
+<Media />
+</Resizable> */
+
+// const resizableDirections = {
+//   top: false,
+//   right: false,
+//   bottom: false,
+//   left: false,
+//   topRight: false,
+//   bottomRight: false,
+//   bottomLeft: false,
+//   topLeft: false,
+// };
 
 const Controller = () => {
   const dispatch = useDispatch();
@@ -49,7 +63,11 @@ const Controller = () => {
     (state) => state.undoable.present.itemLists
   );
 
-  const { db, cloud, updater } = useContext(ControllerInfoContext) || {};
+  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
+
+  const { db, cloud, updater, setIsMobile } =
+    useContext(ControllerInfoContext) || {};
 
   useEffect(() => {
     const getAllItems = async () => {
@@ -142,24 +160,52 @@ const Controller = () => {
     // };
   }, [dispatch, db, selectedList, cloud]);
 
+  const controllerRef = useCallback(
+    (node: HTMLDivElement) => {
+      if (node) {
+        const resizeObserver = new ResizeObserver((entries) => {
+          const width = entries[0].borderBoxSize[0].inlineSize;
+          if (width < 768) {
+            setIsLeftPanelOpen(false);
+            setIsRightPanelOpen(false);
+            setIsMobile?.(true);
+          } else {
+            setIsMobile?.(false);
+          }
+        });
+
+        resizeObserver.observe(node);
+      }
+    },
+    [setIsMobile]
+  );
+
   return (
     <div className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none">
       <Toolbar className="flex border-b-2 border-slate-500 h-10 text-sm min-h-fit" />
-      <div className="controller-main ">
+      <div className="controller-main" ref={controllerRef}>
         <LyricsEditor />
-        <Resizable
-          defaultSize={{ width: "15%" }}
-          className="flex flex-col border-r-2 border-slate-500"
-          enable={resizableDirections}
+        <Button
+          className="md:hidden mr-2"
+          svg={isLeftPanelOpen ? CollapseSVG : ExpandSVG}
+          onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
+        />
+        <div
+          className={`flex flex-col border-r-2 border-slate-500 bg-slate-700 h-full md:w-[15%] max-md:absolute max-md:left-0 ${
+            isLeftPanelOpen ? "w-fit max-md:z-10" : "w-0 max-md:z-[-1]"
+          }`}
         >
+          <Button
+            className="md:hidden text-sm mb-2 justify-center"
+            svg={isLeftPanelOpen ? CollapseSVG : ExpandSVG}
+            onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
+          >
+            Close Panel
+          </Button>
           <EditorButtons />
           <ServiceItems />
-        </Resizable>
-        <Resizable
-          defaultSize={{ width: "55%" }}
-          className="flex flex-col flex-1 border-r-2 border-slate-500 relative"
-          enable={resizableDirections}
-        >
+        </div>
+        <div className="flex flex-col flex-1 relative w-[55%]">
           <Routes>
             <Route
               path="/"
@@ -176,15 +222,28 @@ const Controller = () => {
             <Route path="free" element={<FreeForms />} />
             <Route path="create" element={<CreateItem />} />
           </Routes>
-        </Resizable>
-        <Resizable
-          defaultSize={{ width: "30%" }}
-          className="flex flex-col"
-          enable={{ ...resizableDirections }}
+        </div>
+
+        <Button
+          className="md:hidden text-sm ml-2 justify-center"
+          svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
+          onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+        />
+        <div
+          className={`flex flex-col md:w-[30%] max-md:w-[65%] bg-slate-700 border-slate-500 max-md:absolute h-full border-l-2 max-md:right-0 ${
+            isRightPanelOpen ? "w-fit max-md:z-10" : "w-0 max-md:z-[-1]"
+          }`}
         >
+          <Button
+            className="md:hidden text-sm mb-2 justify-center"
+            svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
+            onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+          >
+            Close Panel
+          </Button>
           <TransmitHandler />
           <Media />
-        </Resizable>
+        </div>
       </div>
     </div>
   );

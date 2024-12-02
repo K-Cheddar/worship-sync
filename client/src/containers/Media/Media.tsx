@@ -51,7 +51,9 @@ const Media = () => {
   }>({ id: "", background: "" });
   const [isMediaLoading, setIsMediaLoading] = useState(true);
 
-  const { db, cloud } = useContext(ControllerInfoContext) || {};
+  const { db, cloud, isMobile } = useContext(ControllerInfoContext) || {};
+
+  const defaultItemsPerRow = isMobile ? "grid-cols-3" : "grid-cols-5";
 
   useEffect(() => {
     const getAllItems = async () => {
@@ -167,7 +169,7 @@ const Media = () => {
       {!isMediaLoading && list.length !== 0 && (
         <ul
           className={`media-items ${
-            isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : "grid-cols-5"
+            isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : defaultItemsPerRow
           }`}
         >
           {list.map(({ id, thumbnail, background }) => {
