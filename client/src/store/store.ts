@@ -298,14 +298,14 @@ listenerMiddleware.startListening({
   },
 });
 
-listenerMiddleware.startListening({
-  predicate: (action, currentState, previousState) => {
-    return currentState !== previousState;
-  },
-  effect: async (action, listenerApi) => {
-    console.log(action);
-  },
-});
+// listenerMiddleware.startListening({
+//   predicate: (action, currentState, previousState) => {
+//     return currentState !== previousState;
+//   },
+//   effect: async (action, listenerApi) => {
+//     console.log(action);
+//   },
+// });
 
 const combinedReducers = combineReducers({
   media: mediaItemsSlice.reducer,
