@@ -8,7 +8,7 @@ import {
 } from "../../store/overlaysSlice";
 import Input from "../../components/Input/Input";
 import "./Overlays.scss";
-import { useEffect, useState } from "react";
+import { CSSProperties, useContext, useEffect, useRef, useState } from "react";
 import Toggle from "../../components/Toggle/Toggle";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import Overlay from "./Overlay";
@@ -21,6 +21,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import RadioButton from "../../components/RadioButton/RadioButton";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 
 const Overlays = () => {
   const { list, id, name, title, event, showDelete, duration, type } =
@@ -34,6 +35,8 @@ const Overlays = () => {
   const [localDuration, setLocalDuration] = useState(duration || 7);
   const [localType, setLocalType] = useState(type);
   const dispatch = useDispatch();
+  const { isMobile } = useContext(ControllerInfoContext) || {};
+  const overlayEditorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLocalName(name || "");
@@ -71,13 +74,20 @@ const Overlays = () => {
 
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
-      <div className="flex flex-col w-full h-full p-2 gap-2">
+      <div
+        className="flex flex-col w-full h-full p-2 gap-2"
+        style={
+          {
+            "--overlay-editor-height": `${overlayEditorRef.current?.clientHeight}px`,
+          } as CSSProperties
+        }
+      >
         <h2 className="text-xl font-semibold text-center h-fit">Overlays</h2>
         {isLoading ? (
           <h3 className="text-lg text-center">Loading overlays...</h3>
         ) : (
-          <div className="flex gap-2 h-full">
-            <section className="w-1/2 flex flex-col gap-2 h-full">
+          <div className="flex gap-2 md:h-full max-md:flex-col-reverse">
+            <section className="flex-1 flex flex-col gap-2">
               <ul className="overlays-list" ref={setNodeRef}>
                 <SortableContext
                   items={list.map((overlay) => overlay.id)}
@@ -103,43 +113,48 @@ const Overlays = () => {
                 Add Overlay
               </Button>
             </section>
-            <div className="flex flex-col items-center gap-4 flex-1">
+            <div
+              ref={overlayEditorRef}
+              className="flex flex-col items-center gap-4 flex-1"
+            >
               {id && (
                 <>
-                  <div>
-                    <h2 className="bg-slate-900 text-center font-semibold text-base">
-                      Preview
-                    </h2>
-                    <DisplayWindow
-                      showBorder
-                      width={25}
-                      participantOverlayInfo={
-                        localType === "participant"
-                          ? {
-                              name: localName,
-                              title: localTitle,
-                              event: localEvent,
-                              duration: localDuration,
-                              type: localType,
-                              id,
-                            }
-                          : undefined
-                      }
-                      stbOverlayInfo={
-                        localType === "stick-to-bottom"
-                          ? {
-                              name: localName,
-                              title: localTitle,
-                              event: localEvent,
-                              duration: localDuration,
-                              type: localType,
-                              id,
-                            }
-                          : undefined
-                      }
-                      displayType="stream"
-                    />
-                  </div>
+                  {!isMobile && (
+                    <div>
+                      <h2 className="bg-slate-900 text-center font-semibold text-base">
+                        Preview
+                      </h2>
+                      <DisplayWindow
+                        showBorder
+                        width={25}
+                        participantOverlayInfo={
+                          localType === "participant"
+                            ? {
+                                name: localName,
+                                title: localTitle,
+                                event: localEvent,
+                                duration: localDuration,
+                                type: localType,
+                                id,
+                              }
+                            : undefined
+                        }
+                        stbOverlayInfo={
+                          localType === "stick-to-bottom"
+                            ? {
+                                name: localName,
+                                title: localTitle,
+                                event: localEvent,
+                                duration: localDuration,
+                                type: localType,
+                                id,
+                              }
+                            : undefined
+                        }
+                        displayType="stream"
+                      />
+                    </div>
+                  )}
                   <section className="flex flex-col gap-2 bg-slate-800 p-2 rounded-md min-w-1/2 items-center">
                     <Input
                       className="text-sm flex gap-2 items-center"

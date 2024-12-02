@@ -9,7 +9,7 @@ import TransmitHandler from "../../containers/TransmitHandler/TransmitHandler";
 
 import "./Controller.scss";
 import LyricsEditor from "../../containers/ItemEditor/LyricsEditor";
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
@@ -65,6 +65,9 @@ const Controller = () => {
 
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
+
+  const leftPanelRef = useRef<HTMLDivElement | null>(null);
+  const rightPanelRef = useRef<HTMLDivElement | null>(null);
 
   const { db, cloud, updater, setIsMobile } =
     useContext(ControllerInfoContext) || {};
@@ -180,8 +183,21 @@ const Controller = () => {
     [setIsMobile]
   );
 
+  const handleElementClick = (element: any) => {
+    if (!leftPanelRef.current?.contains(element.target) && isLeftPanelOpen) {
+      setIsLeftPanelOpen(false);
+    }
+
+    if (!rightPanelRef.current?.contains(element.target) && isRightPanelOpen) {
+      setIsRightPanelOpen(false);
+    }
+  };
+
   return (
-    <div className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none">
+    <div
+      onClick={(e) => handleElementClick(e)}
+      className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none"
+    >
       <Toolbar className="flex border-b-2 border-slate-500 h-10 text-sm min-h-fit" />
       <div className="controller-main" ref={controllerRef}>
         <LyricsEditor />
@@ -191,9 +207,10 @@ const Controller = () => {
           onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
         />
         <div
-          className={`flex flex-col border-r-2 border-slate-500 bg-slate-700 h-full md:w-[15%] max-md:absolute max-md:left-0 ${
-            isLeftPanelOpen ? "w-fit max-md:z-10" : "w-0 max-md:z-[-1]"
+          className={`flex flex-col border-r-2 border-slate-500 bg-slate-700 h-full md:w-[15%] max-md:absolute max-md:left-0 transition-all ${
+            isLeftPanelOpen ? "w-[60%] max-md:z-10" : "w-0 max-md:z-[-1]"
           }`}
+          ref={leftPanelRef}
         >
           <Button
             className="md:hidden text-sm mb-2 justify-center"
@@ -230,9 +247,10 @@ const Controller = () => {
           onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
         />
         <div
-          className={`flex flex-col md:w-[30%] max-md:w-[65%] bg-slate-700 border-slate-500 max-md:absolute h-full border-l-2 max-md:right-0 ${
-            isRightPanelOpen ? "w-fit max-md:z-10" : "w-0 max-md:z-[-1]"
+          className={`flex flex-col md:w-[30%] bg-slate-700 border-slate-500 max-md:absolute h-full transition-all border-l-2 max-md:right-0 ${
+            isRightPanelOpen ? "w-[65%] max-md:z-10" : "w-0 max-md:z-[-1]"
           }`}
+          ref={rightPanelRef}
         >
           <Button
             className="md:hidden text-sm mb-2 justify-center"

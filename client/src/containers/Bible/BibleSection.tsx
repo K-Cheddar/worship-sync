@@ -61,7 +61,9 @@ const BibleSection = ({
 
   return (
     <div
-      className={`flex flex-col gap-2 ${type === "book" ? "w-1/5" : "w-14"}`}
+      className={`flex flex-col gap-2 ${
+        type === "book" ? "md:w-1/5 max-md:w-[40%]" : "w-14"
+      }`}
     >
       <Input
         data-ignore-undo="true"
