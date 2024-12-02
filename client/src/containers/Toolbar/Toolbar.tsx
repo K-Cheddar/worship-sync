@@ -7,6 +7,7 @@ import Undo from "./ToolbarElements/Undo";
 import UserSection from "./ToolbarElements/UserSection";
 import cn from "classnames";
 import { useSelector } from "../../hooks";
+import { forwardRef } from "react";
 
 type SectionProps = {
   children: React.ReactNode;
@@ -28,33 +29,35 @@ const Section = ({ children, last, hidden }: SectionProps) => {
   );
 };
 
-const Toolbar = ({ className }: { className: string }) => {
-  const location = useLocation();
-  const { isEditMode } = useSelector((state) => state.undoable.present.item);
-  return (
-    <div className={className}>
-      <Section>
-        <Menu />
-      </Section>
-      <Section hidden={isEditMode}>
-        <Undo />
-      </Section>
-      <Section hidden={isEditMode}>
-        <Services />
-      </Section>
-      {location.pathname.includes("controller/item") && (
-        <Section hidden={isEditMode}>
-          <SlideEditTools />
+const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
+  ({ className }, ref) => {
+    const location = useLocation();
+    const { isEditMode } = useSelector((state) => state.undoable.present.item);
+    return (
+      <div ref={ref} className={className}>
+        <Section>
+          <Menu />
         </Section>
-      )}
-      {/* <Section>
+        <Section hidden={isEditMode}>
+          <Undo />
+        </Section>
+        <Section hidden={isEditMode}>
+          <Services />
+        </Section>
+        {location.pathname.includes("controller/item") && (
+          <Section hidden={isEditMode}>
+            <SlideEditTools />
+          </Section>
+        )}
+        {/* <Section>
         <ItemEditTools/>
       </Section> */}
-      <Section last>
-        <UserSection />
-      </Section>
-    </div>
-  );
-};
+        <Section last>
+          <UserSection />
+        </Section>
+      </div>
+    );
+  }
+);
 
 export default Toolbar;

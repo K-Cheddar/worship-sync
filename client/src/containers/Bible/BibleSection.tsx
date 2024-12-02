@@ -62,7 +62,7 @@ const BibleSection = ({
   return (
     <div
       className={`flex flex-col gap-2 ${
-        type === "book" ? "md:w-1/5 max-md:w-[40%]" : "w-14"
+        type === "book" ? "lg:w-1/5 max-lg:w-[40%]" : "w-14"
       }`}
     >
       <Input
@@ -82,6 +82,7 @@ const BibleSection = ({
               <Button
                 tabIndex={-1}
                 variant="none"
+                truncate
                 onClick={() => setValue(index)}
                 className={`w-full items-center justify-center ${
                   isSelected ? "bg-gray-900" : "hover:bg-gray-500"

@@ -1,5 +1,5 @@
 .controller-main {
-  max-height: calc(100% - 2.5rem);
+  max-height: calc(100% - var(--toolbar-height));
 
   @apply flex flex-1 relative;
 }

@@ -8,7 +8,14 @@ import {
 } from "../../store/overlaysSlice";
 import Input from "../../components/Input/Input";
 import "./Overlays.scss";
-import { CSSProperties, useContext, useEffect, useRef, useState } from "react";
+import {
+  CSSProperties,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import Toggle from "../../components/Toggle/Toggle";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import Overlay from "./Overlay";
@@ -36,7 +43,9 @@ const Overlays = () => {
   const [localType, setLocalType] = useState(type);
   const dispatch = useDispatch();
   const { isMobile } = useContext(ControllerInfoContext) || {};
-  const overlayEditorRef = useRef<HTMLDivElement>(null);
+
+  const [overlayEditorHeight, setOverlayEditorHeight] = useState(0);
+  const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => {
     setLocalName(name || "");
@@ -72,13 +81,23 @@ const Overlays = () => {
     dispatch(updateList(updatedOverlays));
   };
 
+  const overlayEditorRef = useCallback((node: HTMLDivElement) => {
+    if (node) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        setOverlayEditorHeight(entries[0].borderBoxSize[0].blockSize);
+      });
+
+      resizeObserver.observe(node);
+    }
+  }, []);
+
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <div
         className="flex flex-col w-full h-full p-2 gap-2"
         style={
           {
-            "--overlay-editor-height": `${overlayEditorRef.current?.clientHeight}px`,
+            "--overlay-editor-height": `${overlayEditorHeight}px`,
           } as CSSProperties
         }
       >
@@ -86,7 +105,7 @@ const Overlays = () => {
         {isLoading ? (
           <h3 className="text-lg text-center">Loading overlays...</h3>
         ) : (
-          <div className="flex gap-2 md:h-full max-md:flex-col-reverse">
+          <div className="flex gap-2 lg:h-full max-lg:flex-col-reverse">
             <section className="flex-1 flex flex-col gap-2">
               <ul className="overlays-list" ref={setNodeRef}>
                 <SortableContext
@@ -119,14 +138,21 @@ const Overlays = () => {
             >
               {id && (
                 <>
-                  {!isMobile && (
+                  <Button
+                    className="lg:hidden text-sm w-full justify-center"
+                    variant="tertiary"
+                    onClick={() => setShowPreview((val) => !val)}
+                  >
+                    {showPreview ? "Hide" : "Show"} Preview
+                  </Button>
+                  {(!isMobile || showPreview) && (
                     <div>
                       <h2 className="bg-slate-900 text-center font-semibold text-base">
                         Preview
                       </h2>
                       <DisplayWindow
                         showBorder
-                        width={25}
+                        width={isMobile ? 50 : 25}
                         participantOverlayInfo={
                           localType === "participant"
                             ? {

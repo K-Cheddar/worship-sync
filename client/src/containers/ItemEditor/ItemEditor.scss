@@ -1,8 +1,14 @@
 .lyrics-editor {
   width: 70%;
-  height: calc(100% - 2.5rem);
 
-  @apply absolute left-0 bg-slate-700 z-10 border-r-2 border-slate-500 flex flex-col gap-2;
+  @apply absolute left-0 bg-slate-700 lg:z-10 lg:border-r-2 border-slate-500 flex flex-col gap-2 h-full;
+
+  @media (max-width: 1023px) {
+    @apply shadow-xl px-8;
+
+    z-index: 2;
+    width: 100%;
+  }
 }
 
 .formatted-lyrics-section {
@@ -55,7 +61,7 @@
 }
 
 .slide-editor-container {
-  @apply flex transition-all relative max-md:flex-col gap-2 max-md:items-center;
+  @apply flex transition-all relative max-lg:flex-col gap-2 max-lg:items-center;
 
   &[data-show="true"] {
     @apply mb-2;
@@ -83,7 +89,7 @@
 }
 
 .formatted-lyrics-list {
-  @apply grid gap-2 overflow-y-auto max-h-full;
+  @apply grid gap-2 overflow-y-auto;
   scrollbar-width: thin;
 
   max-height: calc(100% - clamp(2.5rem, 2.5vw, 3.5rem));

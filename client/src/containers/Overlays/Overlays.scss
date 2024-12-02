@@ -2,9 +2,9 @@
   scrollbar-width: thin;
   max-height: calc(100% - clamp(5rem, 6vw, 7rem));
 
-  @media(max-width: 768px) {
+  @media(max-width: 1023px) {
     @apply mt-4;
-    max-height: calc(100vh - var(--overlay-editor-height) - 3rem);
+    max-height: calc(100vh - var(--overlay-editor-height) - 8rem);
   }
 
   @apply flex flex-col gap-2 w-full overflow-y-auto overflow-x-hidden;

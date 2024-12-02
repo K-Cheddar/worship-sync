@@ -25,6 +25,7 @@ type FormattedLyricsProps = {
   reformatLyrics: (formattedLyrics: FormattedLyricsType[]) => void;
   availableSections: { value: string; label: string }[];
   onFormattedLyricsDelete: (index: number) => void;
+  isMobile: boolean;
 };
 
 const LyricBoxes = ({
@@ -33,6 +34,7 @@ const LyricBoxes = ({
   reformatLyrics,
   availableSections,
   onFormattedLyricsDelete,
+  isMobile,
 }: FormattedLyricsProps) => {
   const { formattedLyricsPerRow } = useSelector((state) => state.preferences);
 
@@ -70,7 +72,9 @@ const LyricBoxes = ({
 
   return (
     <ul
-      className={`formatted-lyrics-list ${sizeMap.get(formattedLyricsPerRow)}`}
+      className={`formatted-lyrics-list ${
+        isMobile ? "grid-cols-1" : sizeMap.get(formattedLyricsPerRow)
+      }`}
     >
       {formattedLyrics.map(({ id, type, name, words }, index) => (
         <li key={id} className="text-sm px-2">

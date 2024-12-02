@@ -1,4 +1,12 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import {
+  CSSProperties,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Select from "../../components/Select/Select";
 import "./Bible.scss";
 import BibleSection from "./BibleSection";
@@ -24,6 +32,7 @@ import { useSearchParams } from "react-router-dom";
 import { formatBible } from "../../utils/overflow";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
+import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import {
   updateBibleDisplayInfo,
   updatePresentation,
@@ -65,6 +74,8 @@ const Bible = () => {
 
   const [showVersesDisplaySection, setShowVersesDisplaySection] =
     useState(false);
+
+  const [versionSelectorHeight, setVersionSelectorHeight] = useState(0);
 
   const { selectedList } = useSelector(
     (state: any) => state.undoable.present.itemLists
@@ -229,9 +240,19 @@ const Bible = () => {
     );
   };
 
+  const versionSelectorRef = useCallback((node: HTMLDivElement) => {
+    if (node) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        setVersionSelectorHeight(entries[0].borderBoxSize[0].blockSize);
+      });
+
+      resizeObserver.observe(node);
+    }
+  }, []);
+
   const versesDisplaySection = books && chapters && verses && (
     <div
-      className="flex-1 flex flex-col gap-2 items-center h-full mt-4"
+      className="flex-1 flex flex-col gap-2 items-center h-full mt-2"
       data-has-title={!!createItemName}
     >
       {createItemName && (
@@ -240,18 +261,7 @@ const Bible = () => {
           <h4>{createItemName}</h4>
         </div>
       )}
-      <section className="flex gap-2 items-center w-full">
-        <h3 className="text-xl pl-6 font-semibold">{bibleItemName}</h3>
-        <Button
-          variant="cta"
-          padding="px-4 py-1"
-          className="ml-auto"
-          onClick={submitVerses}
-          wrap
-        >
-          Create Item
-        </Button>
-      </section>
+      <h3 className="text-xl font-semibold">{bibleItemName}</h3>
       <BibleVersesList
         isLoading={isLoading}
         bibleType={bibleType}
@@ -266,42 +276,69 @@ const Bible = () => {
           isStreamTransmitting
         }
       />
+      <Button
+        variant="cta"
+        padding="px-4 py-1"
+        className="ml-auto"
+        onClick={submitVerses}
+        svg={AddSVG}
+      >
+        Add to list
+      </Button>
     </div>
   );
 
   return (
-    <div className="text-base px-2 py-4 h-full flex flex-col gap-2">
-      <div className="flex gap-4 items-end max-md:flex-col">
+    <div
+      className="text-base px-2 py-4 h-full flex flex-col gap-2"
+      style={
+        {
+          "--bible-version-selector-height": `${versionSelectorHeight}px`,
+        } as CSSProperties
+      }
+    >
+      <div ref={versionSelectorRef} className="flex gap-4 items-end flex-wrap">
         <Select
           value={version}
           onChange={(val) => dispatch(setVersion(val))}
           label="Version"
+          className="max-lg:w-full flex justify-center"
+          hideLabel
           options={versionOptions}
         />
         <Button
-          wrap
-          className="md:h-fit max-md:w-full max-md:justify-center"
+          className="lg:h-fit max-lg:flex-1 max-lg:justify-center"
           onClick={getVersesFromGateway}
         >
           Get chapter from Bible Gateway
         </Button>
+        <div className="flex w-full lg:hidden">
+          <Button
+            onClick={() => setShowVersesDisplaySection(false)}
+            className="my-4 justify-center rounded-r-none flex-1"
+            variant={!showVersesDisplaySection ? "primary" : "secondary"}
+          >
+            Selector
+          </Button>
+          <Button
+            onClick={() => setShowVersesDisplaySection(true)}
+            className="my-4 justify-center rounded-l-none flex-1"
+            variant={showVersesDisplaySection ? "primary" : "secondary"}
+          >
+            Selected Verses
+          </Button>
+        </div>
       </div>
       {!books.length && (
         <div className="text-2xl w-full text-center semi-bold mt-10">
           Loading Bibles...
         </div>
       )}
-      <Button
-        onClick={() => setShowVersesDisplaySection(!showVersesDisplaySection)}
-        className="md:hidden my-4 justify-center"
-        variant="secondary"
-      >
-        {showVersesDisplaySection ? "Show Selector" : "Show Verses"}
-      </Button>
+
       {isMobile && showVersesDisplaySection && versesDisplaySection}
       {((isMobile && !showVersesDisplaySection) || !isMobile) &&
         !!books.length && (
-          <div className="flex h-full w-full gap-4 max-md:justify-center">
+          <div className="flex h-full w-full gap-4 max-lg:justify-center">
             <BibleSection
               initialList={books as bookType[]}
               setValue={(val) => dispatch(setBook(val))}

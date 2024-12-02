@@ -116,7 +116,7 @@ const FilteredItems = ({
           </div>
         </div>
       )}
-      <h2 className="text-2xl text-center mb-2 md:w-2/3 ">{heading}</h2>
+      <h2 className="text-2xl text-center mb-2 lg:w-2/3 ">{heading}</h2>
       {isLoading && (
         <h3 className="text-lg text-center">{heading} is loading...</h3>
       )}
@@ -126,7 +126,7 @@ const FilteredItems = ({
           disabled={isLoading}
           onChange={(val) => setSearchValue(val as string)}
           label="Search"
-          className="md:w-2/3 text-base flex gap-2 items-center mb-4 px-6"
+          className="lg:w-2/3 text-base flex gap-2 items-center mb-4 px-6"
           data-ignore-undo="true"
         />
       </div>

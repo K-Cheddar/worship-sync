@@ -147,7 +147,7 @@ const Media = () => {
           onClick={() => deleteBackground()}
         />
       </div>
-      {!isMediaLoading && isMediaExpanded && (
+      {!isMediaLoading && isMediaExpanded && !isMobile && (
         <div className="flex gap-2 justify-center z-10 py-1 bg-slate-900 mx-2 h-6">
           <Button
             variant="tertiary"
@@ -169,7 +169,9 @@ const Media = () => {
       {!isMediaLoading && list.length !== 0 && (
         <ul
           className={`media-items ${
-            isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : defaultItemsPerRow
+            isMediaExpanded && !isMobile
+              ? sizeMap.get(mediaItemsPerRow)
+              : defaultItemsPerRow
           }`}
         >
           {list.map(({ id, thumbnail, background }) => {

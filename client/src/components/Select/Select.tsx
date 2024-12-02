@@ -10,6 +10,7 @@ type SelectProps = {
   onChange: (value: string) => void;
   label?: string;
   labelProps?: ComponentPropsWithoutRef<"label">;
+  hideLabel?: boolean;
 };
 
 const Select = ({
@@ -18,6 +19,7 @@ const Select = ({
   onChange,
   label,
   labelProps,
+  hideLabel = false,
   className,
   ...rest
 }: SelectProps) => {
@@ -27,7 +29,11 @@ const Select = ({
     <span className={className}>
       {label && (
         <label
-          className={cn("p-1 font-semibold", labelProps?.className)}
+          className={cn(
+            "p-1 font-semibold",
+            labelProps?.className,
+            hideLabel && "sr-only"
+          )}
           {...labelRest}
         >
           {label}:

@@ -9,7 +9,14 @@ import TransmitHandler from "../../containers/TransmitHandler/TransmitHandler";
 
 import "./Controller.scss";
 import LyricsEditor from "../../containers/ItemEditor/LyricsEditor";
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+  CSSProperties,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
@@ -65,6 +72,7 @@ const Controller = () => {
 
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
+  const [toolbarHeight, setToolbarHeight] = useState(0);
 
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
@@ -168,7 +176,7 @@ const Controller = () => {
       if (node) {
         const resizeObserver = new ResizeObserver((entries) => {
           const width = entries[0].borderBoxSize[0].inlineSize;
-          if (width < 768) {
+          if (width < 1024) {
             setIsLeftPanelOpen(false);
             setIsRightPanelOpen(false);
             setIsMobile?.(true);
@@ -182,6 +190,16 @@ const Controller = () => {
     },
     [setIsMobile]
   );
+
+  const toolbarRef = useCallback((node: HTMLDivElement) => {
+    if (node) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        setToolbarHeight(entries[0].borderBoxSize[0].blockSize);
+      });
+
+      resizeObserver.observe(node);
+    }
+  }, []);
 
   const handleElementClick = (element: any) => {
     if (!leftPanelRef.current?.contains(element.target) && isLeftPanelOpen) {
@@ -197,23 +215,31 @@ const Controller = () => {
     <div
       onClick={(e) => handleElementClick(e)}
       className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none"
+      style={
+        {
+          "--toolbar-height": `${toolbarHeight}px`,
+        } as CSSProperties
+      }
     >
-      <Toolbar className="flex border-b-2 border-slate-500 h-10 text-sm min-h-fit" />
+      <Toolbar
+        ref={toolbarRef}
+        className="flex border-b-2 border-slate-500 h-10 text-sm min-h-fit"
+      />
       <div className="controller-main" ref={controllerRef}>
         <LyricsEditor />
         <Button
-          className="md:hidden mr-2"
+          className="lg:hidden mr-2 h-1/4 z-10"
           svg={isLeftPanelOpen ? CollapseSVG : ExpandSVG}
           onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
         />
         <div
-          className={`flex flex-col border-r-2 border-slate-500 bg-slate-700 h-full md:w-[15%] max-md:absolute max-md:left-0 transition-all ${
-            isLeftPanelOpen ? "w-[60%] max-md:z-10" : "w-0 max-md:z-[-1]"
+          className={`flex flex-col border-r-2 border-slate-500 bg-slate-700 h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${
+            isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
           }`}
           ref={leftPanelRef}
         >
           <Button
-            className="md:hidden text-sm mb-2 justify-center"
+            className="lg:hidden text-sm mb-2 justify-center"
             svg={isLeftPanelOpen ? CollapseSVG : ExpandSVG}
             onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
           >
@@ -242,18 +268,18 @@ const Controller = () => {
         </div>
 
         <Button
-          className="md:hidden text-sm ml-2 justify-center"
+          className="lg:hidden text-sm ml-2 justify-center h-1/4 z-10"
           svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
           onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
         />
         <div
-          className={`flex flex-col md:w-[30%] bg-slate-700 border-slate-500 max-md:absolute h-full transition-all border-l-2 max-md:right-0 ${
-            isRightPanelOpen ? "w-[65%] max-md:z-10" : "w-0 max-md:z-[-1]"
+          className={`flex flex-col lg:w-[30%] bg-slate-700 border-slate-500 max-lg:absolute h-full transition-all border-l-2 max-lg:right-0 ${
+            isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
           }`}
           ref={rightPanelRef}
         >
           <Button
-            className="md:hidden text-sm mb-2 justify-center"
+            className="lg:hidden text-sm mb-2 justify-center"
             svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
           >

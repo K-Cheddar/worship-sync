@@ -1,4 +1,5 @@
 import { FunctionComponent } from "react";
+import cn from "classnames";
 import "./Input.scss";
 import Button from "../Button/Button";
 import generateRandomId from "../../utils/generateRandomId";
@@ -44,9 +45,11 @@ const Input = ({
     <div className={`${className || ""} input-container`}>
       <label
         htmlFor={inputId}
-        className={`${labelFontSize} font-semibold ${
-          hideLabel ? "sr-only" : ""
-        } ${lableClassName}`}
+        className={cn(
+          `${labelFontSize} font-semibold`,
+          hideLabel && "sr-only",
+          lableClassName
+        )}
       >
         {label}:
       </label>
