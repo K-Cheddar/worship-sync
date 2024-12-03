@@ -11,6 +11,8 @@ type ControllerInfoContextType = {
   bibleDb: PouchDB.Database | undefined;
   cloud: Cloudinary;
   updater: EventTarget;
+  isMobile: boolean;
+  setIsMobile: (val: boolean) => void;
   logout: () => Promise<void>;
 };
 
@@ -35,6 +37,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     undefined
   );
   const [dbProgress, setDbProgress] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
 
   const { database, loginState, logout, setLoginState, user } =
     useContext(GlobalInfoContext) || {};
@@ -44,7 +47,6 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     const setupDb = async () => {
-      console.log(database, loginState);
       let remoteURL =
         process.env.REACT_APP_DATABASE_STRING + "portable-media-" + database;
       const remoteDb = new PouchDB(remoteURL);
@@ -82,7 +84,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         });
     };
 
-    if (loginState === "success" || loginState === "idle") {
+    if (loginState === "success" || loginState === "demo") {
       setupDb();
     }
   }, [loginState, database]);
@@ -122,6 +124,8 @@ const ControllerInfoProvider = ({ children }: any) => {
         updater: updater.current,
         bibleDb,
         logout: _logout,
+        isMobile,
+        setIsMobile,
       }}
     >
       {dbProgress !== 100 && (

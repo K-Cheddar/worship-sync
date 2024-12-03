@@ -1,8 +1,8 @@
 .services-dropdown {
   select {
-    @apply w-40;
+    @apply max-lg:max-w-24 lg:max-w-40;
     option {
-      @apply  text-lg w-40;
+      @apply  text-lg;
 
       overflow-wrap: anywhere;
 
@@ -19,5 +19,5 @@
 .services-container {
   @apply flex gap-4 flex-1;
 
-  max-height: calc(100% - 2.5rem);
+  max-height: calc(100% - var(--toolbar-height));
 }

@@ -40,12 +40,12 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         <Button
           variant={actions ? "none" : "tertiary"}
           className={`left-panel-button ${borderColorMap.get(type)}`}
+          iconSize="md"
           wrap
           svg={svgMap.get(type) || UnknownSVG}
           gap="gap-2"
           color={iconColorMap.get(type)}
           isSelected={isSelected}
-          iconSize="md"
           padding="py-1 px-2"
         >
           {image && <img src={image} className="w-10" alt="" />}

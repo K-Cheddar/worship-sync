@@ -1,11 +1,11 @@
 .item-slides-container {
   scrollbar-width: thin;
 
-  @apply max-h-full gap-2 px-2 overflow-y-auto grid pb-2 focus-visible:outline-none;
+  @apply max-h-full px-2 overflow-y-auto grid pb-2 focus-visible:outline-none;
 }
 
 .item-slide {
   width: calc(25% - clamp(0.25rem, 0.5vw, 0.5rem));
 
-  @apply cursor-pointer border-4 w-fit;
+  @apply cursor-pointer border-4 max-lg:border-2 w-fit;
 }

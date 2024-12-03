@@ -35,12 +35,11 @@ const initialState: PresentationState = {
     displayType: "stream",
     participantOverlayInfo: {
       name: "",
-      event: "",
-      title: "",
       time: Date.now(),
       id: generateRandomId(),
     },
-    stbOverlayInfo: { name: "", time: Date.now(), id: generateRandomId() },
+    stbOverlayInfo: { heading: "", time: Date.now(), id: generateRandomId() },
+    qrCodeOverlayInfo: { time: Date.now(), id: generateRandomId() },
   },
 };
 
@@ -115,7 +114,6 @@ export const presentationSlice = createSlice({
           ...action.payload,
           time: Date.now(),
         };
-        state.streamInfo.time = Date.now();
       }
     },
     updateStbOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
@@ -126,7 +124,17 @@ export const presentationSlice = createSlice({
           ...action.payload,
           time: Date.now(),
         };
-        state.streamInfo.time = Date.now();
+      }
+    },
+    updateQrCodeOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
+      if (state.isStreamTransmitting) {
+        // set previous info for cross animation
+        state.prevStreamInfo.qrCodeOverlayInfo =
+          state.streamInfo.qrCodeOverlayInfo;
+        state.streamInfo.qrCodeOverlayInfo = {
+          ...action.payload,
+          time: Date.now(),
+        };
       }
     },
     updateParticipantOverlayInfoFromRemote: (
@@ -140,7 +148,6 @@ export const presentationSlice = createSlice({
         ...action.payload,
         time: action.payload.time,
       };
-      state.streamInfo.time = action.payload.time;
     },
     updateStbOverlayInfoFromRemote: (
       state,
@@ -152,7 +159,18 @@ export const presentationSlice = createSlice({
         ...action.payload,
         time: action.payload.time,
       };
-      state.streamInfo.time = action.payload.time;
+    },
+    updateQrCodeOverlayInfoFromRemote: (
+      state,
+      action: PayloadAction<OverlayInfo>
+    ) => {
+      // set previous info for cross animation
+      state.prevStreamInfo.qrCodeOverlayInfo =
+        state.streamInfo.qrCodeOverlayInfo;
+      state.streamInfo.qrCodeOverlayInfo = {
+        ...action.payload,
+        time: action.payload.time,
+      };
     },
     updateBibleDisplayInfo: (
       state,
@@ -166,7 +184,9 @@ export const presentationSlice = createSlice({
           ...action.payload,
           time: Date.now(),
         };
-        state.streamInfo.slide = null;
+        if (action.payload.text || action.payload.title) {
+          state.streamInfo.slide = null;
+        }
         state.streamInfo.time = Date.now();
         // state.prevStreamInfo.slide = null;
       }
@@ -178,9 +198,9 @@ export const presentationSlice = createSlice({
       // set previous info for cross animation
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
       state.streamInfo.bibleDisplayInfo = { ...action.payload };
-      state.streamInfo.slide = null;
-      state.streamInfo.time = action.payload.time;
-      // state.prevStreamInfo.slide = null;
+      if (action.payload.text || action.payload.title) {
+        state.streamInfo.slide = null;
+      }
     },
     clearProjector: (state) => {
       // set previous info for fading out
@@ -216,11 +236,28 @@ export const presentationSlice = createSlice({
         state.streamInfo.participantOverlayInfo;
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
+      state.prevStreamInfo.qrCodeOverlayInfo =
+        state.streamInfo.qrCodeOverlayInfo;
 
       state.streamInfo = {
         ...initialState.streamInfo,
         time: Date.now(),
         bibleDisplayInfo: { title: "", text: "", time: Date.now() },
+        participantOverlayInfo: {
+          name: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        },
+        stbOverlayInfo: {
+          heading: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        },
+        qrCodeOverlayInfo: {
+          description: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        },
       };
     },
     clearAll: (state) => {
@@ -243,6 +280,8 @@ export const presentationSlice = createSlice({
         state.streamInfo.participantOverlayInfo;
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
+      state.prevStreamInfo.qrCodeOverlayInfo =
+        state.streamInfo.qrCodeOverlayInfo;
 
       state.projectorInfo = {
         ...initialState.projectorInfo,
@@ -256,6 +295,21 @@ export const presentationSlice = createSlice({
         ...initialState.streamInfo,
         time: Date.now(),
         bibleDisplayInfo: { title: "", text: "", time: Date.now() },
+        participantOverlayInfo: {
+          name: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        },
+        stbOverlayInfo: {
+          heading: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        },
+        qrCodeOverlayInfo: {
+          description: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        },
       };
     },
     updateProjector: (state, action: PayloadAction<Presentation>) => {
@@ -353,6 +407,7 @@ export const {
   setTransmitToAll,
   updateParticipantOverlayInfo,
   updateStbOverlayInfo,
+  updateQrCodeOverlayInfo,
   updateBibleDisplayInfo,
   clearProjector,
   clearMonitor,
@@ -367,6 +422,7 @@ export const {
   updateBibleDisplayInfoFromRemote,
   updateParticipantOverlayInfoFromRemote,
   updateStbOverlayInfoFromRemote,
+  updateQrCodeOverlayInfoFromRemote,
 } = presentationSlice.actions;
 
 export default presentationSlice.reducer;

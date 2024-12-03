@@ -16,8 +16,17 @@ const ToolbarMenu = () => {
   const menuItems: MenuItemType[] = [
     {
       text: "Open Stage Monitor",
-      onClick: () => {
-        const monitorWindow = window.open("#/monitor");
+      onClick: async () => {
+        try {
+          // TODO place on existing monitor
+          const monitorWindow = window.open(
+            "#/monitor",
+            "_monitor",
+            "width=500,height=360"
+          );
+        } catch (err) {
+          console.error(err);
+        }
       },
     },
     {

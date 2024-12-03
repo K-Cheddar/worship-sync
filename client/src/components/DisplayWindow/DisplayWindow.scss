@@ -11,9 +11,19 @@
   @apply w-fit absolute flex flex-col bg-gray-800/75; 
 
   border-left: var(--overlay-participant-info-border-width) solid green;
-  padding: 0 2.5% 1% 2.5%;
+  padding: var(--overlay-participant-info-padding);
   max-width: 70%;
   bottom: 8.5%;
+  left: var(--overlay-participant-info-left);
+
+  border-bottom-right-radius: 3% 10%;
+  border-top-right-radius: 3% 10%;
+
+  text-shadow:
+  var(--overlay-participant-info-text-shadow-size-n) var(--overlay-participant-info-text-shadow-size-n) 0 #000,  
+   var(--overlay-participant-info-text-shadow-size-p) var(--overlay-participant-info-text-shadow-size-n) 0 #000,
+   var(--overlay-participant-info-text-shadow-size-n) var(--overlay-participant-info-text-shadow-size-p) 0 #000,
+    var(--overlay-participant-info-text-shadow-size-p) var(--overlay-participant-info-text-shadow-size-p) 0 #000;
 }
 
 .overlay-participant-info-name {
@@ -35,10 +45,16 @@
   // border-top: var(--overlay-stb-info-border-width) solid green;
   // border-bottom: var(--overlay-stb-info-border-width) solid green;
   font-size: var(--overlay-stb-info-text-size);
-  padding: 0.5% 2.5%;
+  padding: var(--overlay-stb-info-padding);
+
+  text-shadow:
+  var(--overlay-stb-info-text-shadow-size-n) var(--overlay-stb-info-text-shadow-size-n) 0 #000,  
+   var(--overlay-stb-info-text-shadow-size-p) var(--overlay-stb-info-text-shadow-size-n) 0 #000,
+   var(--overlay-stb-info-text-shadow-size-n) var(--overlay-stb-info-text-shadow-size-p) 0 #000,
+    var(--overlay-stb-info-text-shadow-size-p) var(--overlay-stb-info-text-shadow-size-p) 0 #000;
 }
 
-.overlay-stb-info-name {
+.overlay-stb-info-heading {
   @apply font-semibold;
 
   margin-right: 2%;
@@ -60,9 +76,13 @@
 
   width: 70%;
   margin: 0 15%;
-  bottom: 5%;
-  border-radius: 5%;
-  line-height: 1.25;
+  bottom: 10%;
+
+  text-shadow:
+  var(--bible-info-text-shadow-size-n) var(--bible-info-text-shadow-size-n) 0 #000,  
+   var(--bible-info-text-shadow-size-p) var(--bible-info-text-shadow-size-n) 0 #000,
+   var(--bible-info-text-shadow-size-n) var(--bible-info-text-shadow-size-p) 0 #000,
+    var(--bible-info-text-shadow-size-p) var(--bible-info-text-shadow-size-p) 0 #000;
 
 }
 
@@ -70,21 +90,51 @@
 .prev-bible-info-title {
   @apply bg-green-800 w-fit;;
 
-  border-top-left-radius: 5%;
-  border-top-right-radius: 5%;
-  padding: 2% 4% 1%;
+  border-top-left-radius: 5% 20%;
+  border-top-right-radius: 5% 20%;
+  padding: 0.5% 4% 0.5%;
   font-size: var(--bible-info-title-size);
 
 }
 
 .bible-info-text,
 .prev-bible-info-text {
-  @apply bg-gray-900/95;
+  @apply bg-gray-800/95;
 
   padding: 1.5% 2.5%;
-  border-top-right-radius: 5%;
-  border-bottom-right-radius: 5%;
-  border-bottom-left-radius: 5%;
+  border-top-right-radius: 2.5% 20%;
+  border-bottom-right-radius: 2.5% 20%;
+  border-bottom-left-radius: 2.5% 20%;
 
   font-size: var(--bible-info-text-size);
+}
+
+
+.overlay-qr-code-info-container {
+  @apply w-fit absolute flex items-center;
+
+  background-color: var(--overlay-qr-code-info-color);
+  padding: var(--overlay-qr-code-info-padding);
+  gap: var(--overlay-qr-code-info-gap);;
+  max-width: 70%;
+  height: fit-content;
+  bottom: 8.5%;
+  left: var(--overlay-qr-code-info-left);
+
+  border-radius: 2% / 8%;
+
+  text-shadow:
+  var(--overlay-qr-code-info-text-shadow-size-n) var(--overlay-qr-code-info-text-shadow-size-n) 0 #000,  
+   var(--overlay-qr-code-info-text-shadow-size-p) var(--overlay-qr-code-info-text-shadow-size-n) 0 #000,
+   var(--overlay-qr-code-info-text-shadow-size-n) var(--overlay-qr-code-info-text-shadow-size-p) 0 #000,
+    var(--overlay-qr-code-info-text-shadow-size-p) var(--overlay-qr-code-info-text-shadow-size-p) 0 #000;
+}
+
+.overlay-qr-code-info-url {
+  min-width: var(--overlay-qr-code-info-url-width);
+  max-width: var(--overlay-qr-code-info-url-width);
+}
+
+.overlay-qr-code-info-description {
+  font-size: var(--overlay-qr-code-info-description-size);
 }

@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { ItemList, ServiceItem } from "../types";
+import { ItemList } from "../types";
 
 type ItemListState = {
   currentLists: ItemList[];

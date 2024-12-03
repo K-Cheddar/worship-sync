@@ -9,7 +9,11 @@ import {
   setSelectedSlide,
   updateSlides,
 } from "../../store/itemSlice";
-import { increaseSlides, decreaseSlides } from "../../store/preferencesSlice";
+import {
+  increaseSlides,
+  decreaseSlides,
+  setSlides,
+} from "../../store/preferencesSlice";
 import { useSelector } from "../../hooks";
 import { useDispatch } from "../../hooks";
 import {
@@ -24,17 +28,34 @@ import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import { useSensors } from "../../utils/dndUtils";
 
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
-import { useEffect } from "react";
+import { useContext, useEffect } from "react";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 
 export const sizeMap: Map<
   number,
-  { width: number; cols: string; hSize: string }
+  { width: number; cols: string; hSize: string; mobileWidth: number }
 > = new Map([
-  [7, { width: 7, cols: "grid-cols-7", hSize: "text-xs" }],
-  [6, { width: 8.25, cols: "grid-cols-6", hSize: "text-xs" }],
-  [5, { width: 10, cols: "grid-cols-5", hSize: "text-xs" }],
-  [4, { width: 12.5, cols: "grid-cols-4", hSize: "text-sm" }],
-  [3, { width: 16.75, cols: "grid-cols-3", hSize: "text-base" }],
+  [7, { width: 7, mobileWidth: 10, cols: "grid-cols-7", hSize: "text-xs" }],
+  [6, { width: 8.25, mobileWidth: 12, cols: "grid-cols-6", hSize: "text-xs" }],
+  [5, { width: 10, mobileWidth: 15, cols: "grid-cols-5", hSize: "text-xs" }],
+  [
+    4,
+    { width: 12.75, mobileWidth: 19.25, cols: "grid-cols-4", hSize: "text-sm" },
+  ],
+  [
+    3,
+    { width: 17, mobileWidth: 26.25, cols: "grid-cols-3", hSize: "text-base" },
+  ],
+  [2, { width: 26, mobileWidth: 40, cols: "grid-cols-2", hSize: "text-base" }],
+  [
+    1,
+    {
+      width: 52.25,
+      mobileWidth: 81.5,
+      cols: "grid-cols-1",
+      hSize: "text-base",
+    },
+  ],
 ]);
 
 const ItemSlides = () => {
@@ -51,6 +72,7 @@ const ItemSlides = () => {
   const _slides = arrangement?.slides || __slides || [];
   const slides = isLoading ? [] : _slides;
   const size = useSelector((state) => state.preferences.slidesPerRow);
+  const { isMobile } = useContext(ControllerInfoContext) || {};
   const dispatch = useDispatch();
 
   const sensors = useSensors();
@@ -58,6 +80,14 @@ const ItemSlides = () => {
   const { setNodeRef } = useDroppable({
     id: "item-slides-list",
   });
+
+  useEffect(() => {
+    if (isMobile) {
+      dispatch(setSlides(3));
+    } else {
+      dispatch(setSlides(4));
+    }
+  }, [isMobile, dispatch]);
 
   useEffect(() => {
     const slideElement = document.getElementById(`item-slide-${selectedSlide}`);
@@ -74,9 +104,11 @@ const ItemSlides = () => {
       //   return;
       // }
       slideElement.focus();
-      slideElement.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (!isMobile) {
+        slideElement.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
     }
-  }, [selectedSlide]);
+  }, [selectedSlide, isMobile]);
 
   const selectSlide = (index: number) => {
     dispatch(setSelectedSlide(index));
@@ -142,7 +174,7 @@ const ItemSlides = () => {
 
   return (
     <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-      <div className="flex w-full px-2 bg-slate-900 h-6 my-2 gap-1">
+      <div className="flex w-full px-2 bg-slate-900 h-6 mb-2 gap-1">
         <Button
           variant="tertiary"
           svg={ZoomOutSVG}
@@ -200,6 +232,7 @@ const ItemSlides = () => {
               selectedSlide={selectedSlide}
               size={size}
               itemType={type}
+              isMobile={isMobile || false}
             />
           ))}
         </SortableContext>

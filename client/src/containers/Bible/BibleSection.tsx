@@ -61,7 +61,9 @@ const BibleSection = ({
 
   return (
     <div
-      className={`flex flex-col gap-2 ${type === "book" ? "w-1/5" : "w-14"}`}
+      className={`flex flex-col gap-2 ${
+        type === "book" ? "lg:w-1/5 max-lg:w-[40%]" : "w-14"
+      }`}
     >
       <Input
         data-ignore-undo="true"
@@ -80,6 +82,7 @@ const BibleSection = ({
               <Button
                 tabIndex={-1}
                 variant="none"
+                truncate
                 onClick={() => setValue(index)}
                 className={`w-full items-center justify-center ${
                   isSelected ? "bg-gray-900" : "hover:bg-gray-500"

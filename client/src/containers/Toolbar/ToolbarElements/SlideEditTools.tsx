@@ -1,6 +1,7 @@
 import Button from "../../../components/Button/Button";
 import { ReactComponent as AddSVG } from "../../../assets/icons/add.svg";
 import { ReactComponent as MinusSVG } from "../../../assets/icons/remove.svg";
+import { ReactComponent as ExpandSVG } from "../../../assets/icons/expand.svg";
 import Input from "../../../components/Input/Input";
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "../../../hooks";
@@ -13,6 +14,7 @@ import {
 import { updateArrangements, updateSlides } from "../../../store/itemSlice";
 import Toggle from "../../../components/Toggle/Toggle";
 import { ItemState } from "../../../types";
+import PopOver from "../../../components/PopOver/PopOver";
 
 const SlideEditTools = () => {
   const location = useLocation();
@@ -70,9 +72,8 @@ const SlideEditTools = () => {
 
   const canChangeAspectRatio = ~(item.type === "free" || item.type === "image");
 
-  return (
-    <div className="flex gap-2 items-center">
-      {/* leaving this outer div in case more tools are added */}
+  const controls = (
+    <>
       <div className="flex gap-1 items-center">
         <p className="text-sm font-semibold">Font Size:</p>
         <Button
@@ -96,8 +97,10 @@ const SlideEditTools = () => {
         />
       </div>
       <div
-        className={`flex gap-1 items-center border-l-2 border-slate-500 pl-2 ${
-          canChangeAspectRatio ? "border-r-2 pr-2" : ""
+        className={`flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 ${
+          canChangeAspectRatio
+            ? "lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4"
+            : ""
         }`}
       >
         <p className="text-sm font-semibold">Brightness:</p>
@@ -130,6 +133,23 @@ const SlideEditTools = () => {
           onChange={(val) => _updateKeepAspectRatio(val)}
         />
       )}
+    </>
+  );
+
+  return (
+    <div className="flex gap-2 items-center">
+      {/* leaving this outer div in case more tools are added */}
+
+      <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>
+      <PopOver
+        TriggeringButton={
+          <Button className="lg:hidden" variant="tertiary" svg={ExpandSVG}>
+            Tools
+          </Button>
+        }
+      >
+        <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
+      </PopOver>
     </div>
   );
 };

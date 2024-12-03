@@ -6,6 +6,7 @@ import { deleteOverlay, selectOverlay } from "../../store/overlaysSlice";
 import "./Overlays.scss";
 import {
   updateParticipantOverlayInfo,
+  updateQrCodeOverlayInfo,
   updateStbOverlayInfo,
 } from "../../store/presentationSlice";
 import { OverlayInfo } from "../../types";
@@ -26,7 +27,14 @@ const Overlay = ({
   const dispatch = useDispatch();
 
   const isSelected = selectedId === overlay.id;
-  const hasData = overlay.name || overlay.title || overlay.event;
+  const hasData =
+    overlay.name ||
+    overlay.title ||
+    overlay.event ||
+    overlay.heading ||
+    overlay.subHeading ||
+    overlay.url ||
+    overlay.description;
 
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
@@ -52,25 +60,54 @@ const Overlay = ({
         variant="tertiary"
         wrap
         className="flex-col flex-1 h-full leading-4"
-        padding="px-2 py-0.5"
-        gap="gap-0"
+        padding="px-2 py-1.5"
+        gap="gap-1"
         onClick={() => dispatch(selectOverlay(overlay))}
       >
-        {overlay.name && (
-          <span className="text-base flex items-center h-full">
-            {overlay.name}
-          </span>
+        {overlay.type === "participant" && (
+          <>
+            {overlay.name && (
+              <span className="text-base flex items-center h-full">
+                {overlay.name}
+              </span>
+            )}
+            {overlay.title && (
+              <span className="flex text-sm items-center h-full italic">
+                {overlay.title}
+              </span>
+            )}
+            {overlay.event && (
+              <span className="flex text-sm items-center h-full">
+                {overlay.event}
+              </span>
+            )}
+          </>
         )}
-        {overlay.title && (
-          <span className="flex text-sm items-center h-full italic">
-            {overlay.title}
-          </span>
+        {overlay.type === "stick-to-bottom" && (
+          <>
+            {overlay.heading && (
+              <span className="flex text-sm items-center h-full">
+                {overlay.heading}
+              </span>
+            )}
+            {overlay.subHeading && (
+              <span className="flex text-sm items-center h-full">
+                {overlay.subHeading}
+              </span>
+            )}
+          </>
         )}
-        {overlay.event && (
-          <span className="flex text-sm items-center h-full">
-            {overlay.event}
-          </span>
+
+        {overlay.type === "qr-code" && (
+          <>
+            {overlay.description && (
+              <span className="flex text-sm items-center h-full">
+                {overlay.description}
+              </span>
+            )}
+          </>
         )}
+
         {!hasData && (
           <span className="text-sm leading-7">
             Click to add overlay details
@@ -91,25 +128,36 @@ const Overlay = ({
           color={isStreamTransmitting ? "#22c55e" : "gray"}
           variant="tertiary"
           className="text-sm ml-auto h-full"
-          padding="px-2 py-1"
+          padding="px-4 py-1"
           disabled={!isStreamTransmitting}
           svg={OverlaysSVG}
           onClick={() => {
-            if (overlay.type === "stick-to-bottom") {
+            if (overlay.type === "participant") {
               dispatch(
-                updateStbOverlayInfo({
+                updateParticipantOverlayInfo({
                   name: overlay.name,
                   event: overlay.event,
+                  title: overlay.title,
                   duration: overlay.duration,
                   id: overlay.id,
                 })
               );
-            } else if (overlay.type === "participant") {
+            } else if (overlay.type === "stick-to-bottom") {
               dispatch(
-                updateParticipantOverlayInfo({
-                  name: overlay.name,
-                  title: overlay.title,
-                  event: overlay.event,
+                updateStbOverlayInfo({
+                  heading: overlay.heading,
+                  subHeading: overlay.subHeading,
+                  duration: overlay.duration,
+                  type: overlay.type,
+                  id: overlay.id,
+                })
+              );
+            } else if (overlay.type === "qr-code") {
+              dispatch(
+                updateQrCodeOverlayInfo({
+                  url: overlay.url,
+                  description: overlay.description,
+                  color: overlay.color,
                   duration: overlay.duration,
                   type: overlay.type,
                   id: overlay.id,

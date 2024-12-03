@@ -71,7 +71,7 @@ const CloudinaryUploadWidget = ({
     <CloudinaryScriptContext.Provider value={{ loaded }}>
       <Button
         variant="tertiary"
-        className="ml-auto"
+        className="lg:ml-auto"
         svg={AddSVG}
         onClick={initializeCloudinaryWidget}
       />

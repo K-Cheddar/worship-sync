@@ -94,6 +94,7 @@ const Arrangement = ({
         ) : (
           <Button
             variant="tertiary"
+            wrap
             className="px-2 py-1 text-base flex justify-center w-full break-words rounded-b-sm"
             onClick={() => setSelectedArrangement()}
           >

@@ -2,15 +2,6 @@
   @apply relative w-full text-sm border-l-4;
 }
 
-.left-panel-button,
-.left-panel-action-button {
-  @media(max-width: 768px) {
-    svg, img {
-      display: none;
-    }
-  }
-}
-
 .left-panel-action-button {
   @apply hover:bg-slate-800 active:bg-slate-900;
 }

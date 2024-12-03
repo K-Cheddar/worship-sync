@@ -32,7 +32,7 @@ const SongSection = ({
 
   return (
     <li
-      className={`flex items-center px-2 h-7 bg-black rounded-lg hover:bg-gray-800 cursor-pointer border-b-4 ${itemSectionBorderColorMap.get(
+      className={`flex items-center px-2 max-lg:py-2 lg:py-1 bg-black rounded-lg hover:bg-gray-800 cursor-pointer border-b-4 ${itemSectionBorderColorMap.get(
         name.split(" ")[0]
       )}`}
       {...attributes}

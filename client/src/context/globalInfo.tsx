@@ -15,6 +15,7 @@ import {
   updateBibleDisplayInfoFromRemote,
   updateParticipantOverlayInfoFromRemote,
   updateStbOverlayInfoFromRemote,
+  updateQrCodeOverlayInfoFromRemote,
 } from "../store/presentationSlice";
 import {
   BibleDisplayInfo,
@@ -23,6 +24,8 @@ import {
 } from "../types";
 import { UnknownAction } from "@reduxjs/toolkit";
 import { ActionCreators } from "redux-undo";
+
+type LoginStateType = "idle" | "loading" | "error" | "success" | "demo";
 
 type GlobalInfoContextType = {
   login: ({
@@ -33,11 +36,11 @@ type GlobalInfoContextType = {
     password: string;
   }) => void;
   logout: () => void;
-  loginState: "idle" | "loading" | "error" | "success";
+  loginState: LoginStateType;
   user: string;
   database: string;
   uploadPreset: string;
-  setLoginState: (val: "idle" | "loading" | "error" | "success") => void;
+  setLoginState: (val: LoginStateType) => void;
   firebaseDb: Database | undefined;
 };
 
@@ -71,9 +74,7 @@ const GlobalInfoProvider = ({ children }: any) => {
   );
 
   const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
-  const [loginState, setLoginState] = useState<
-    "idle" | "loading" | "error" | "success"
-  >("idle");
+  const [loginState, setLoginState] = useState<LoginStateType>("idle");
   const [user, setUser] = useState("Demo");
   const [database, setDatabase] = useState("demo");
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
@@ -85,6 +86,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_bibleInfo: Unsubscribe | undefined;
     stream_participantOverlayInfo: Unsubscribe | undefined;
     stream_stbOverlayInfo: Unsubscribe | undefined;
+    stream_qrCodeOverlayInfo: Unsubscribe | undefined;
   }>({
     projectorInfo: undefined,
     monitorInfo: undefined,
@@ -92,6 +94,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_bibleInfo: undefined,
     stream_participantOverlayInfo: undefined,
     stream_stbOverlayInfo: undefined,
+    stream_qrCodeOverlayInfo: undefined,
   });
 
   const navigate = useNavigate();
@@ -118,15 +121,15 @@ const GlobalInfoProvider = ({ children }: any) => {
       };
 
       const updateInfo = {
-        monitorInfo: {
-          info: _monitorInfo,
-          updateFunction: updateMonitorFromRemote,
-          compareTo: monitorInfo,
-        },
         projectorInfo: {
           info: _projectorInfo,
           updateFunction: updateProjectorFromRemote,
           compareTo: projectorInfo,
+        },
+        monitorInfo: {
+          info: _monitorInfo,
+          updateFunction: updateMonitorFromRemote,
+          compareTo: monitorInfo,
         },
         streamInfo: {
           info: _streamInfo,
@@ -147,6 +150,11 @@ const GlobalInfoProvider = ({ children }: any) => {
           info: _stream_stbOverlayInfo,
           updateFunction: updateStbOverlayInfoFromRemote,
           compareTo: streamInfo.stbOverlayInfo,
+        },
+        stream_qrCodeOverlayInfo: {
+          info: data.stream_qrCodeOverlayInfo,
+          updateFunction: updateQrCodeOverlayInfoFromRemote,
+          compareTo: streamInfo.qrCodeOverlayInfo,
         },
       };
 
@@ -173,7 +181,7 @@ const GlobalInfoProvider = ({ children }: any) => {
   useEffect(() => {
     localStorage.setItem("presentation", "null");
     const _isLoggedIn = localStorage.getItem("loggedIn") === "true";
-    setLoginState(_isLoggedIn ? "success" : "idle");
+    setLoginState(_isLoggedIn ? "success" : "demo");
     const _user = localStorage.getItem("user");
     if (_user !== null && _user !== "null") {
       setUser(_user);
@@ -300,7 +308,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     setDatabase("demo");
     setUploadPreset("bpqu4ma5");
     navigate("/");
-    setLoginState("idle");
+    setLoginState("demo");
     setFirebaseDb(undefined);
     globalFireDbInfo.db = undefined;
   };

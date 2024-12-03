@@ -1,0 +1,18 @@
+.transmit-handler {
+  @apply flex flex-col mt-2 gap-4 w-fit bg-slate-800 rounded-lg mx-auto h-full min-h-fit max-h-fit p-4;
+}
+
+.transmit-handler-container {
+  @apply transition-all relative;
+
+  &[data-is-media-expanded="true"] {
+    height: 0;
+    z-index: 0;
+    opacity: 0;
+  }
+
+  &[data-is-media-expanded="false"] {
+    height: var(--transmit-handler-height);
+    opacity: 1;
+  }
+}

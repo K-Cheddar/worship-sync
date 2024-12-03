@@ -1,4 +1,12 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import {
+  CSSProperties,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Select from "../../components/Select/Select";
 import "./Bible.scss";
 import BibleSection from "./BibleSection";
@@ -24,6 +32,7 @@ import { useSearchParams } from "react-router-dom";
 import { formatBible } from "../../utils/overflow";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
+import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import {
   updateBibleDisplayInfo,
   updatePresentation,
@@ -63,13 +72,19 @@ const Bible = () => {
 
   const { list } = useSelector((state) => state.allItems);
 
+  const [showVersesDisplaySection, setShowVersesDisplaySection] =
+    useState(false);
+
+  const [versionSelectorHeight, setVersionSelectorHeight] = useState(0);
+
   const { selectedList } = useSelector(
     (state: any) => state.undoable.present.itemLists
   );
 
   const createItemName = decodeURI(searchParams.get("name") || "");
 
-  const { db, bibleDb } = useContext(ControllerInfoContext) || {};
+  const { db, bibleDb, isMobile } = useContext(ControllerInfoContext) || {};
+
   const bibleItemName = useMemo(() => {
     const bookName = books[book]?.name || "";
     const chapterName = chapters[chapter]?.name || "";
@@ -225,107 +240,149 @@ const Bible = () => {
     );
   };
 
+  const versionSelectorRef = useCallback((node: HTMLDivElement) => {
+    if (node) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        setVersionSelectorHeight(entries[0].borderBoxSize[0].blockSize);
+      });
+
+      resizeObserver.observe(node);
+    }
+  }, []);
+
+  const versesDisplaySection = books && chapters && verses && (
+    <div
+      className="flex-1 flex flex-col gap-2 items-center h-full mt-2"
+      data-has-title={!!createItemName}
+    >
+      {createItemName && (
+        <div className="flex gap-2 items-center text-lg">
+          <p className="font-semibold">Name:</p>
+          <h4>{createItemName}</h4>
+        </div>
+      )}
+      <h3 className="text-xl font-semibold">{bibleItemName}</h3>
+      <BibleVersesList
+        isLoading={isLoading}
+        bibleType={bibleType}
+        hasExternalVerses={hasExternalVerses}
+        verses={verses}
+        startVerse={startVerse}
+        endVerse={endVerse}
+        sendVerse={sendVerse}
+        canTransmit={
+          isMonitorTransmitting ||
+          isProjectorTransmitting ||
+          isStreamTransmitting
+        }
+      />
+      <Button
+        variant="cta"
+        padding="px-4 py-1"
+        className="ml-auto"
+        onClick={submitVerses}
+        svg={AddSVG}
+      >
+        Add to list
+      </Button>
+    </div>
+  );
+
   return (
-    <div className="text-base px-2 py-4 h-full flex flex-col gap-2">
-      <div className="flex gap-2">
+    <div
+      className="text-base px-2 py-4 h-full flex flex-col gap-2"
+      style={
+        {
+          "--bible-version-selector-height": `${versionSelectorHeight}px`,
+        } as CSSProperties
+      }
+    >
+      <div ref={versionSelectorRef} className="flex gap-4 items-end flex-wrap">
         <Select
           value={version}
           onChange={(val) => dispatch(setVersion(val))}
           label="Version"
+          className="max-lg:w-full flex justify-center"
+          hideLabel
           options={versionOptions}
         />
-        <Button onClick={getVersesFromGateway}>
+        <Button
+          className="lg:h-fit max-lg:flex-1 max-lg:justify-center"
+          onClick={getVersesFromGateway}
+        >
           Get chapter from Bible Gateway
         </Button>
+        <div className="flex w-full lg:hidden border border-slate-400 my-4 rounded-l-md rounded-r-md">
+          <Button
+            onClick={() => setShowVersesDisplaySection(false)}
+            className="justify-center rounded-r-none flex-1"
+            variant={!showVersesDisplaySection ? "secondary" : "tertiary"}
+          >
+            Verse Selector
+          </Button>
+          <Button
+            onClick={() => setShowVersesDisplaySection(true)}
+            className="justify-center rounded-l-none flex-1"
+            variant={showVersesDisplaySection ? "secondary" : "tertiary"}
+          >
+            Selected Verses
+          </Button>
+        </div>
       </div>
       {!books.length && (
         <div className="text-2xl w-full text-center semi-bold mt-10">
           Loading Bibles...
         </div>
       )}
-      {!!books.length && (
-        <div className="flex h-full w-full gap-4">
-          <BibleSection
-            initialList={books as bookType[]}
-            setValue={(val) => dispatch(setBook(val))}
-            searchValue={searchValues.book}
-            setSearchValue={(val) =>
-              dispatch(setSearchValue({ type: "book", value: val }))
-            }
-            value={book}
-            type="book"
-          />
-          <BibleSection
-            initialList={chapters as chapterType[]}
-            setValue={(val) => dispatch(setChapter(val))}
-            searchValue={searchValues.chapter}
-            setSearchValue={(val) =>
-              dispatch(setSearchValue({ type: "chapter", value: val }))
-            }
-            value={chapter}
-            type="chapter"
-          />
-          <BibleSection
-            initialList={verses as verseType[]}
-            setValue={(val) => dispatch(setStartVerse(val))}
-            searchValue={searchValues.startVerse}
-            setSearchValue={(val) =>
-              dispatch(setSearchValue({ type: "startVerse", value: val }))
-            }
-            value={startVerse}
-            type="verse"
-          />
-          <BibleSection
-            initialList={verses as verseType[]}
-            setValue={(val) => dispatch(setEndVerse(val))}
-            searchValue={searchValues.endVerse}
-            setSearchValue={(val) =>
-              dispatch(setSearchValue({ type: "endVerse", value: val }))
-            }
-            value={endVerse}
-            type="verse"
-            min={startVerse}
-          />
-          {books && chapters && verses && (
-            <div
-              className="flex-1 flex flex-col gap-2 items-center h-full mt-4"
-              data-has-title={!!createItemName}
-            >
-              {createItemName && (
-                <div className="flex gap-2 items-center text-lg">
-                  <p className="font-semibold">Name:</p>
-                  <h4>{createItemName}</h4>
-                </div>
-              )}
-              <section className="flex gap-2 items-center w-full">
-                <h3 className="text-xl pl-6 font-semibold">{bibleItemName}</h3>
-                <Button
-                  variant="cta"
-                  padding="px-4 py-1"
-                  className="h-6 ml-auto"
-                  onClick={submitVerses}
-                >
-                  Create Item
-                </Button>
-              </section>
-              <BibleVersesList
-                isLoading={isLoading}
-                bibleType={bibleType}
-                hasExternalVerses={hasExternalVerses}
-                verses={verses}
-                startVerse={startVerse}
-                endVerse={endVerse}
-                sendVerse={sendVerse}
-                canTransmit={
-                  isMonitorTransmitting ||
-                  isProjectorTransmitting ||
-                  isStreamTransmitting
-                }
-              />
-            </div>
-          )}
-        </div>
-      )}
+
+      {isMobile && showVersesDisplaySection && versesDisplaySection}
+      {((isMobile && !showVersesDisplaySection) || !isMobile) &&
+        !!books.length && (
+          <div className="flex h-full w-full gap-4 max-lg:justify-center">
+            <BibleSection
+              initialList={books as bookType[]}
+              setValue={(val) => dispatch(setBook(val))}
+              searchValue={searchValues.book}
+              setSearchValue={(val) =>
+                dispatch(setSearchValue({ type: "book", value: val }))
+              }
+              value={book}
+              type="book"
+            />
+            <BibleSection
+              initialList={chapters as chapterType[]}
+              setValue={(val) => dispatch(setChapter(val))}
+              searchValue={searchValues.chapter}
+              setSearchValue={(val) =>
+                dispatch(setSearchValue({ type: "chapter", value: val }))
+              }
+              value={chapter}
+              type="chapter"
+            />
+            <BibleSection
+              initialList={verses as verseType[]}
+              setValue={(val) => dispatch(setStartVerse(val))}
+              searchValue={searchValues.startVerse}
+              setSearchValue={(val) =>
+                dispatch(setSearchValue({ type: "startVerse", value: val }))
+              }
+              value={startVerse}
+              type="verse"
+            />
+            <BibleSection
+              initialList={verses as verseType[]}
+              setValue={(val) => dispatch(setEndVerse(val))}
+              searchValue={searchValues.endVerse}
+              setSearchValue={(val) =>
+                dispatch(setSearchValue({ type: "endVerse", value: val }))
+              }
+              value={endVerse}
+              type="verse"
+              min={startVerse}
+            />
+            {!isMobile && versesDisplaySection}
+          </div>
+        )}
     </div>
   );
 };

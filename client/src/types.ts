@@ -157,6 +157,7 @@ export type Presentation = {
   participantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
+  qrCodeOverlayInfo?: OverlayInfo;
 };
 
 export type BibleDisplayInfo = {
@@ -166,9 +167,18 @@ export type BibleDisplayInfo = {
 };
 
 export type OverlayInfo = {
+  // participant
   name?: string;
   title?: string;
   event?: string;
+  // stick-to-bottom
+  heading?: string;
+  subHeading?: string;
+  // qr-code
+  url?: string;
+  description?: string;
+  color?: string;
+  // shared
   duration?: number;
   type?: "participant" | "stick-to-bottom" | "qr-code";
   time?: number;
@@ -208,6 +218,9 @@ export type bibleType = {
 export type PreferencesType = {
   slidesPerRow: number;
   formattedLyricsPerRow: number;
+  shouldShowItemEditor: boolean;
+  isMediaExpanded: boolean;
+  mediaItemsPerRow: number;
 };
 
 export type ItemList = {
@@ -256,8 +269,8 @@ export type Media = {
   name: string;
   type: string;
   id: string;
-  image: string;
-  video?: string;
+  background: string;
+  thumbnail: string;
 };
 
 export type DBMedia = {

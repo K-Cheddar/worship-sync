@@ -1,4 +1,5 @@
 import { FunctionComponent } from "react";
+import cn from "classnames";
 import "./Input.scss";
 import Button from "../Button/Button";
 import generateRandomId from "../../utils/generateRandomId";
@@ -10,11 +11,10 @@ type InputProps = React.HTMLProps<HTMLInputElement> & {
   label?: string;
   hideLabel?: boolean;
   onChange: (value: string | number | Date) => void;
-  lableClassName?: string;
+  labelClassName?: string;
   labelFontSize?: string;
   svg?: FunctionComponent<React.SVGProps<SVGSVGElement>>;
   svgAction?: () => void;
-  iconSize?: string;
   color?: string;
   svgPadding?: string;
   svgClassName?: string;
@@ -28,11 +28,10 @@ const Input = ({
   onChange,
   label,
   hideLabel = false,
-  lableClassName,
+  labelClassName,
   labelFontSize = "text-sm",
   svg,
   svgAction,
-  iconSize = "md",
   color = "#1f2937",
   disabled = false,
   svgPadding = "p-1",
@@ -44,15 +43,17 @@ const Input = ({
     <div className={`${className || ""} input-container`}>
       <label
         htmlFor={inputId}
-        className={`${labelFontSize} font-semibold ${
-          hideLabel ? "sr-only" : ""
-        } ${lableClassName}`}
+        className={cn(
+          `${labelFontSize} font-semibold`,
+          hideLabel && "sr-only",
+          labelClassName
+        )}
       >
         {label}:
       </label>
       <span className="relative w-full">
         <input
-          className={`w-full rounded py-1 pl-2 text-black ${
+          className={`w-full rounded text-sm py-1 pl-2 text-black ${
             svg ? "pr-6" : "pr-2"
           } ${disabled ? "opacity-50" : ""}`}
           type={type}
