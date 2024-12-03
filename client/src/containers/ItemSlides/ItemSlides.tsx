@@ -9,7 +9,11 @@ import {
   setSelectedSlide,
   updateSlides,
 } from "../../store/itemSlice";
-import { increaseSlides, decreaseSlides } from "../../store/preferencesSlice";
+import {
+  increaseSlides,
+  decreaseSlides,
+  setSlides,
+} from "../../store/preferencesSlice";
 import { useSelector } from "../../hooks";
 import { useDispatch } from "../../hooks";
 import {
@@ -79,6 +83,14 @@ const ItemSlides = () => {
   const { setNodeRef } = useDroppable({
     id: "item-slides-list",
   });
+
+  useEffect(() => {
+    if (isMobile) {
+      dispatch(setSlides(3));
+    } else {
+      dispatch(setSlides(4));
+    }
+  }, [isMobile, dispatch]);
 
   useEffect(() => {
     const slideElement = document.getElementById(`item-slide-${selectedSlide}`);

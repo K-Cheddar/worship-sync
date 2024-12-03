@@ -25,7 +25,9 @@ import {
   decreaseMediaItems,
   increaseMediaItems,
   setIsMediaExpanded,
+  setMediaItems,
 } from "../../store/preferencesSlice";
+import { useLocation } from "react-router-dom";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -38,6 +40,7 @@ const sizeMap: Map<number, string> = new Map([
 
 const Media = () => {
   const dispatch = useDispatch();
+  const location = useLocation();
 
   const { list } = useSelector((state) => state.media);
   const { isLoading } = useSelector((state) => state.undoable.present.item);
@@ -54,6 +57,14 @@ const Media = () => {
   const { db, cloud, isMobile } = useContext(ControllerInfoContext) || {};
 
   const defaultItemsPerRow = isMobile ? "grid-cols-3" : "grid-cols-5";
+
+  useEffect(() => {
+    if (isMobile) {
+      dispatch(setMediaItems(3));
+    } else {
+      dispatch(setMediaItems(5));
+    }
+  }, [isMobile, dispatch]);
 
   useEffect(() => {
     const getAllItems = async () => {
@@ -97,7 +108,11 @@ const Media = () => {
       >
         <Button
           variant="tertiary"
-          disabled={selectedMedia.id === "" || isLoading}
+          disabled={
+            selectedMedia.id === "" ||
+            isLoading ||
+            !location.pathname.includes("item")
+          }
           className="mr-2"
           svg={BgAll}
           onClick={() => {
@@ -114,7 +129,11 @@ const Media = () => {
         </Button>
         <Button
           variant="tertiary"
-          disabled={selectedMedia.id === "" || isLoading}
+          disabled={
+            selectedMedia.id === "" ||
+            isLoading ||
+            !location.pathname.includes("item")
+          }
           svg={BGOne}
           onClick={() => {
             if (selectedMedia && db) {
@@ -127,7 +146,7 @@ const Media = () => {
           Set Slide
         </Button>
         <Button
-          variant="tertiary"
+          className="mx-auto"
           svg={isMediaExpanded ? CollapseSVG : ExpandSVG}
           onClick={() => dispatch(setIsMediaExpanded(!isMediaExpanded))}
         />
@@ -147,7 +166,7 @@ const Media = () => {
           onClick={() => deleteBackground()}
         />
       </div>
-      {!isMediaLoading && isMediaExpanded && !isMobile && (
+      {!isMediaLoading && isMediaExpanded && (
         <div className="flex gap-2 justify-center z-10 py-1 bg-slate-900 mx-2 h-6">
           <Button
             variant="tertiary"
@@ -169,9 +188,7 @@ const Media = () => {
       {!isMediaLoading && list.length !== 0 && (
         <ul
           className={`media-items ${
-            isMediaExpanded && !isMobile
-              ? sizeMap.get(mediaItemsPerRow)
-              : defaultItemsPerRow
+            isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : defaultItemsPerRow
           }`}
         >
           {list.map(({ id, thumbnail, background }) => {

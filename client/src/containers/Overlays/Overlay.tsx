@@ -91,7 +91,7 @@ const Overlay = ({
           color={isStreamTransmitting ? "#22c55e" : "gray"}
           variant="tertiary"
           className="text-sm ml-auto h-full"
-          padding="px-2 py-1"
+          padding="px-4 py-1"
           disabled={!isStreamTransmitting}
           svg={OverlaysSVG}
           onClick={() => {
