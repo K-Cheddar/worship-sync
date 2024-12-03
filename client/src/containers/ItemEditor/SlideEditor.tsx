@@ -247,7 +247,10 @@ const SlideEditor = () => {
           } as CSSProperties
         }
       >
-        <section className="lg:w-[10vw] max-lg:w-[100%]" ref={slideInfoRef}>
+        <section
+          className="ml-1 lg:w-[12vw] max-lg:w-[100%]"
+          ref={slideInfoRef}
+        >
           <p className="text-center font-semibold border-b-2 border-black text-sm">
             Slide Content
           </p>
