@@ -41,7 +41,7 @@ const SlideEditor = () => {
   const { shouldShowItemEditor } = useSelector((state) => state.preferences);
 
   const [isEditingName, setIsEditingName] = useState(false);
-  const [editorHeight, setEditorHeight] = useState(0);
+
   const [localName, setLocalName] = useState(name);
   const arrangement = arrangements[selectedArrangement];
 
@@ -49,10 +49,14 @@ const SlideEditor = () => {
 
   const { db, isMobile } = useContext(ControllerInfoContext) || {};
 
+  const [editorHeight, setEditorHeight] = useState(
+    isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
+  );
+
   const editorRef = useCallback((node: HTMLUListElement) => {
     if (node) {
       const resizeObserver = new ResizeObserver((entries) => {
-        setEditorHeight(entries[0].borderBoxSize[0].blockSize);
+        setEditorHeight(`${entries[0].borderBoxSize[0].blockSize}px`);
       });
 
       resizeObserver.observe(node);
@@ -239,7 +243,7 @@ const SlideEditor = () => {
           {
             "--slide-editor-height": isMobile
               ? "fit-content"
-              : `${editorHeight}px`,
+              : `${editorHeight}`,
           } as CSSProperties
         }
       >

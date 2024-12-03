@@ -146,7 +146,7 @@ const Media = () => {
           Set Slide
         </Button>
         <Button
-          className="mx-auto"
+          className="ml-2"
           svg={isMediaExpanded ? CollapseSVG : ExpandSVG}
           onClick={() => dispatch(setIsMediaExpanded(!isMediaExpanded))}
         />
