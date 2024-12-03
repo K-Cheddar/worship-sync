@@ -61,8 +61,6 @@ const DisplayWindow = forwardRef<HTMLUListElement, DisplayWindowProps>(
     const fallbackRef = useRef<HTMLUListElement | null>(null);
     const containerRef = ref || fallbackRef;
 
-    console.log({ qrCodeOverlayInfo, participantOverlayInfo, stbOverlayInfo });
-
     const aspectRatio = 16 / 9;
     const fontAdjustment = width === 42 ? 1 : 42.35 / width; // Display editor is 42vw but sometimes the display gets clipped on other windows
 
@@ -124,38 +122,38 @@ const DisplayWindow = forwardRef<HTMLUListElement, DisplayWindowProps>(
           );
         })}
 
-        <DisplayStreamBible
-          width={width}
-          shouldAnimate={shouldAnimate}
-          bibleDisplayInfo={bibleDisplayInfo}
-          prevBibleDisplayInfo={prevBibleDisplayInfo}
-          isStream={isStream}
-          ref={containerRef}
-        />
+        {isStream && (
+          <>
+            <DisplayStreamBible
+              width={width}
+              shouldAnimate={shouldAnimate}
+              bibleDisplayInfo={bibleDisplayInfo}
+              prevBibleDisplayInfo={prevBibleDisplayInfo}
+              ref={containerRef}
+            />
 
-        <DisplayStbOverlay
-          width={width}
-          shouldAnimate={shouldAnimate}
-          stbOverlayInfo={stbOverlayInfo}
-          isStream={isStream}
-          ref={containerRef}
-        />
+            <DisplayStbOverlay
+              width={width}
+              shouldAnimate={shouldAnimate}
+              stbOverlayInfo={stbOverlayInfo}
+              ref={containerRef}
+            />
 
-        <DisplayParticipantOverlay
-          width={width}
-          shouldAnimate={shouldAnimate}
-          participantOverlayInfo={participantOverlayInfo}
-          isStream={isStream}
-          ref={containerRef}
-        />
+            <DisplayParticipantOverlay
+              width={width}
+              shouldAnimate={shouldAnimate}
+              participantOverlayInfo={participantOverlayInfo}
+              ref={containerRef}
+            />
 
-        <DisplayQrCodeOverlay
-          width={width}
-          shouldAnimate={shouldAnimate}
-          qrCodeOverlayInfo={qrCodeOverlayInfo}
-          isStream={isStream}
-          ref={containerRef}
-        />
+            <DisplayQrCodeOverlay
+              width={width}
+              shouldAnimate={shouldAnimate}
+              qrCodeOverlayInfo={qrCodeOverlayInfo}
+              ref={containerRef}
+            />
+          </>
+        )}
       </ul>
     );
   }

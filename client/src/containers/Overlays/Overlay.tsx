@@ -132,10 +132,9 @@ const Overlay = ({
           disabled={!isStreamTransmitting}
           svg={OverlaysSVG}
           onClick={() => {
-            console.log("overlay", overlay);
             if (overlay.type === "participant") {
               dispatch(
-                updateStbOverlayInfo({
+                updateParticipantOverlayInfo({
                   name: overlay.name,
                   event: overlay.event,
                   title: overlay.title,
@@ -145,7 +144,7 @@ const Overlay = ({
               );
             } else if (overlay.type === "stick-to-bottom") {
               dispatch(
-                updateParticipantOverlayInfo({
+                updateStbOverlayInfo({
                   heading: overlay.heading,
                   subHeading: overlay.subHeading,
                   duration: overlay.duration,

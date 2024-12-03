@@ -9,7 +9,6 @@ type DisplayStreamBibleProps = {
   bibleDisplayInfo?: BibleDisplayInfo;
   prevBibleDisplayInfo?: BibleDisplayInfo;
   shouldAnimate?: boolean;
-  isStream: boolean;
 };
 
 const DisplayStreamBible = forwardRef<
@@ -22,7 +21,6 @@ const DisplayStreamBible = forwardRef<
       shouldAnimate = false,
       bibleDisplayInfo,
       prevBibleDisplayInfo,
-      isStream,
     }: DisplayStreamBibleProps,
     containerRef
   ) => {
@@ -36,8 +34,7 @@ const DisplayStreamBible = forwardRef<
         if (
           !bibleRef.current ||
           !(containerRef as MutableRefObject<HTMLUListElement>)?.current ||
-          !shouldAnimate ||
-          !isStream
+          !shouldAnimate
         )
           return;
 
@@ -77,7 +74,7 @@ const DisplayStreamBible = forwardRef<
 
     useGSAP(
       () => {
-        if (!prevBibleRef.current || !shouldAnimate || !isStream) return;
+        if (!prevBibleRef.current || !shouldAnimate) return;
 
         prevBibleTimeline.current?.clear();
 
@@ -109,7 +106,7 @@ const DisplayStreamBible = forwardRef<
       { scope: prevBibleRef, dependencies: [prevBibleDisplayInfo] }
     );
 
-    return isStream ? (
+    return (
       <>
         <li
           ref={bibleRef}
@@ -155,7 +152,7 @@ const DisplayStreamBible = forwardRef<
           )}
         </li>
       </>
-    ) : null;
+    );
   }
 );
 

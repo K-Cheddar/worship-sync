@@ -8,14 +8,10 @@ type DisplayStbOverlayProps = {
   width: number;
   stbOverlayInfo?: OverlayInfo;
   shouldAnimate?: boolean;
-  isStream: boolean;
 };
 
 const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
-  (
-    { width, stbOverlayInfo = {}, shouldAnimate = false, isStream },
-    containerRef
-  ) => {
+  ({ width, stbOverlayInfo = {}, shouldAnimate = false }, containerRef) => {
     const stbOverlayRef = useRef<HTMLLIElement | null>(null);
     const overlayTimeline = useRef<GSAPTimeline | null>();
 
@@ -25,18 +21,17 @@ const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
           !stbOverlayRef.current ||
           !(containerRef as React.MutableRefObject<HTMLUListElement>)
             ?.current ||
-          !shouldAnimate ||
-          !isStream
+          !shouldAnimate
         )
           return;
 
         overlayTimeline.current?.clear();
 
-        const innerElements = [
-          ".overlay-stb-info-heading",
-          ".overlay-stb-info-subHeading",
-        ];
-        const targets = [stbOverlayRef.current, ...innerElements];
+        // const innerElements = [
+        //   ".overlay-stb-info-heading",
+        //   ".overlay-stb-info-subHeading",
+        // ];
+        // const targets = [stbOverlayRef.current, ...innerElements];
 
         overlayTimeline.current = gsap
           .timeline()
@@ -61,35 +56,33 @@ const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
       { scope: stbOverlayRef, dependencies: [stbOverlayInfo] }
     );
 
-    return isStream ? (
-      <>
-        <li
-          ref={stbOverlayRef}
-          className="overlay-stb-info-container"
-          style={
-            {
-              "--overlay-stb-info-border-width": `${width / 150}vw`,
-              "--overlay-stb-info-text-size": `${width / 50}vw`,
-              "--overlay-stb-info-padding":
-                stbOverlayInfo.heading || stbOverlayInfo.subHeading
-                  ? "0.5% 2.5%"
-                  : "0",
-              "--overlay-stb-info-text-shadow-size-p": `${width / 80}px`,
-              "--overlay-stb-info-text-shadow-size-n": `-${width / 80}px`,
-            } as CSSProperties
-          }
-        >
-          {stbOverlayInfo.heading && (
-            <p className="overlay-stb-info-heading">{stbOverlayInfo.heading}</p>
-          )}
-          {stbOverlayInfo.subHeading && (
-            <p className="overlay-stb-info-subHeading">
-              {stbOverlayInfo.subHeading}
-            </p>
-          )}
-        </li>
-      </>
-    ) : null;
+    return (
+      <li
+        ref={stbOverlayRef}
+        className="overlay-stb-info-container"
+        style={
+          {
+            "--overlay-stb-info-border-width": `${width / 150}vw`,
+            "--overlay-stb-info-text-size": `${width / 50}vw`,
+            "--overlay-stb-info-padding":
+              stbOverlayInfo.heading || stbOverlayInfo.subHeading
+                ? "0.5% 2.5%"
+                : "0",
+            "--overlay-stb-info-text-shadow-size-p": `${width / 80}px`,
+            "--overlay-stb-info-text-shadow-size-n": `-${width / 80}px`,
+          } as CSSProperties
+        }
+      >
+        {stbOverlayInfo.heading && (
+          <p className="overlay-stb-info-heading">{stbOverlayInfo.heading}</p>
+        )}
+        {stbOverlayInfo.subHeading && (
+          <p className="overlay-stb-info-subHeading">
+            {stbOverlayInfo.subHeading}
+          </p>
+        )}
+      </li>
+    );
   }
 );
 
