@@ -11,11 +11,10 @@ type InputProps = React.HTMLProps<HTMLInputElement> & {
   label?: string;
   hideLabel?: boolean;
   onChange: (value: string | number | Date) => void;
-  lableClassName?: string;
+  labelClassName?: string;
   labelFontSize?: string;
   svg?: FunctionComponent<React.SVGProps<SVGSVGElement>>;
   svgAction?: () => void;
-  iconSize?: string;
   color?: string;
   svgPadding?: string;
   svgClassName?: string;
@@ -29,11 +28,10 @@ const Input = ({
   onChange,
   label,
   hideLabel = false,
-  lableClassName,
+  labelClassName,
   labelFontSize = "text-sm",
   svg,
   svgAction,
-  iconSize = "md",
   color = "#1f2937",
   disabled = false,
   svgPadding = "p-1",
@@ -48,7 +46,7 @@ const Input = ({
         className={cn(
           `${labelFontSize} font-semibold`,
           hideLabel && "sr-only",
-          lableClassName
+          labelClassName
         )}
       >
         {label}:

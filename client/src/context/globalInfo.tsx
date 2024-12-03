@@ -15,6 +15,7 @@ import {
   updateBibleDisplayInfoFromRemote,
   updateParticipantOverlayInfoFromRemote,
   updateStbOverlayInfoFromRemote,
+  updateQrCodeOverlayInfoFromRemote,
 } from "../store/presentationSlice";
 import {
   BibleDisplayInfo,
@@ -85,6 +86,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_bibleInfo: Unsubscribe | undefined;
     stream_participantOverlayInfo: Unsubscribe | undefined;
     stream_stbOverlayInfo: Unsubscribe | undefined;
+    stream_qrCodeOverlayInfo: Unsubscribe | undefined;
   }>({
     projectorInfo: undefined,
     monitorInfo: undefined,
@@ -92,6 +94,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_bibleInfo: undefined,
     stream_participantOverlayInfo: undefined,
     stream_stbOverlayInfo: undefined,
+    stream_qrCodeOverlayInfo: undefined,
   });
 
   const navigate = useNavigate();
@@ -147,6 +150,11 @@ const GlobalInfoProvider = ({ children }: any) => {
           info: _stream_stbOverlayInfo,
           updateFunction: updateStbOverlayInfoFromRemote,
           compareTo: streamInfo.stbOverlayInfo,
+        },
+        stream_qrCodeOverlayInfo: {
+          info: data.stream_qrCodeOverlayInfo,
+          updateFunction: updateQrCodeOverlayInfoFromRemote,
+          compareTo: streamInfo.qrCodeOverlayInfo,
         },
       };
 

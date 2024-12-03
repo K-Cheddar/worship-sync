@@ -125,7 +125,7 @@ const Media = () => {
             }
           }}
         >
-          Set Item
+          {isMobile ? "" : "Set Item"}
         </Button>
         <Button
           variant="tertiary"
@@ -143,10 +143,10 @@ const Media = () => {
             }
           }}
         >
-          Set Slide
+          {isMobile ? "" : "Set Slide"}
         </Button>
         <Button
-          className="ml-2"
+          className="lg:ml-2 max-lg:mx-auto"
           svg={isMediaExpanded ? CollapseSVG : ExpandSVG}
           onClick={() => dispatch(setIsMediaExpanded(!isMediaExpanded))}
         />

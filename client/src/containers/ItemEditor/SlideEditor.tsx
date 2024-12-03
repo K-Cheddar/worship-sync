@@ -4,6 +4,7 @@ import { ReactComponent as UnlockSVG } from "../../assets/icons/unlock.svg";
 import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
 import { ReactComponent as CollapseSVG } from "../../assets/icons/collapse.svg";
 import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
+import { ReactComponent as EditTextSVG } from "../../assets/icons/edit-text.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import Input from "../../components/Input/Input";
@@ -218,12 +219,11 @@ const SlideEditor = () => {
         {type === "song" && (
           <Button
             className="text-sm"
-            variant="tertiary"
             disabled={isLoading}
             onClick={() => dispatch(toggleEditMode())}
-            svg={EditSVG}
+            svg={EditTextSVG}
           >
-            Edit Lyrics
+            {isMobile ? "" : "Edit Lyrics"}
           </Button>
         )}
         <Button

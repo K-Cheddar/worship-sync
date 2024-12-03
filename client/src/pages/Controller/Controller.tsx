@@ -22,7 +22,7 @@ import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
 import { initiateAllItemsList } from "../../store/allItemsSlice";
 import Songs from "../../containers/Songs/Songs";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
@@ -65,6 +65,7 @@ enable={{ ...resizableDirections }}
 
 const Controller = () => {
   const dispatch = useDispatch();
+  const location = useLocation();
 
   const { selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
@@ -79,6 +80,13 @@ const Controller = () => {
 
   const { db, cloud, updater, setIsMobile } =
     useContext(ControllerInfoContext) || {};
+
+  useEffect(() => {
+    if (location.pathname === "/controller") {
+      console.log("controller");
+      setIsLeftPanelOpen(true);
+    }
+  }, [location.pathname]);
 
   useEffect(() => {
     const getAllItems = async () => {
@@ -177,8 +185,6 @@ const Controller = () => {
         const resizeObserver = new ResizeObserver((entries) => {
           const width = entries[0].borderBoxSize[0].inlineSize;
           if (width < 1024) {
-            setIsLeftPanelOpen(false);
-            setIsRightPanelOpen(false);
             setIsMobile?.(true);
           } else {
             setIsMobile?.(false);

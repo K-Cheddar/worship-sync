@@ -33,8 +33,8 @@ const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
         overlayTimeline.current?.clear();
 
         const innerElements = [
-          ".overlay-stb-info-name",
-          ".overlay-stb-info-event",
+          ".overlay-stb-info-heading",
+          ".overlay-stb-info-subHeading",
         ];
         const targets = [stbOverlayRef.current, ...innerElements];
 
@@ -43,7 +43,7 @@ const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
           .set(stbOverlayRef.current, { yPercent: 150 });
 
         // Only play animate if there is overlay info
-        if (stbOverlayInfo.name || stbOverlayInfo.event) {
+        if (stbOverlayInfo.heading || stbOverlayInfo.subHeading) {
           overlayTimeline.current
             .to(stbOverlayRef.current, {
               yPercent: 0,
@@ -71,17 +71,21 @@ const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
               "--overlay-stb-info-border-width": `${width / 150}vw`,
               "--overlay-stb-info-text-size": `${width / 50}vw`,
               "--overlay-stb-info-padding":
-                stbOverlayInfo.name || stbOverlayInfo.event ? "0.5% 2.5%" : "0",
+                stbOverlayInfo.heading || stbOverlayInfo.subHeading
+                  ? "0.5% 2.5%"
+                  : "0",
               "--overlay-stb-info-text-shadow-size-p": `${width / 80}px`,
               "--overlay-stb-info-text-shadow-size-n": `-${width / 80}px`,
             } as CSSProperties
           }
         >
-          {stbOverlayInfo.name && (
-            <p className="overlay-stb-info-name">{stbOverlayInfo.name}</p>
+          {stbOverlayInfo.heading && (
+            <p className="overlay-stb-info-heading">{stbOverlayInfo.heading}</p>
           )}
-          {stbOverlayInfo.event && (
-            <p className="overlay-stb-info-event">{stbOverlayInfo.event}</p>
+          {stbOverlayInfo.subHeading && (
+            <p className="overlay-stb-info-subHeading">
+              {stbOverlayInfo.subHeading}
+            </p>
           )}
         </li>
       </>

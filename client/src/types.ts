@@ -157,6 +157,7 @@ export type Presentation = {
   participantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
+  qrCodeOverlayInfo?: OverlayInfo;
 };
 
 export type BibleDisplayInfo = {
@@ -166,9 +167,18 @@ export type BibleDisplayInfo = {
 };
 
 export type OverlayInfo = {
+  // participant
   name?: string;
   title?: string;
   event?: string;
+  // stick-to-bottom
+  heading?: string;
+  subHeading?: string;
+  // qr-code
+  url?: string;
+  description?: string;
+  color?: string;
+  // shared
   duration?: number;
   type?: "participant" | "stick-to-bottom" | "qr-code";
   time?: number;

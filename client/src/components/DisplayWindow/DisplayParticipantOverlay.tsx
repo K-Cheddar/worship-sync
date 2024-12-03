@@ -76,13 +76,6 @@ const DisplayStreamOverlay = forwardRef<
       { scope: participantOverlayRef, dependencies: [participantOverlayInfo] }
     );
 
-    // if (
-    //   !participantOverlayInfo.name &&
-    //   !participantOverlayInfo.title &&
-    //   !participantOverlayInfo.event
-    // )
-    //   return null;
-
     return isStream ? (
       <>
         <li

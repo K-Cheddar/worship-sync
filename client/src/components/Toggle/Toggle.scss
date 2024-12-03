@@ -2,6 +2,10 @@
 
   @apply w-8 h-4 border rounded-2xl border-gray-300 flex items-center relative;
 
+  @media screen and (max-width: 1023px) {
+    @apply w-10 h-5;
+  }
+
   :focus-within, &:focus-visible, &:focus {
     @apply outline-1 outline-slate-200;
   }
@@ -29,5 +33,9 @@
 
   .off & {
     right: 15px;
+
+    @media screen and (max-width: 1023px) {
+      right: 19px;
+    }
   }
 }

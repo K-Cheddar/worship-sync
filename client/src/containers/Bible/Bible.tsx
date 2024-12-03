@@ -312,18 +312,18 @@ const Bible = () => {
         >
           Get chapter from Bible Gateway
         </Button>
-        <div className="flex w-full lg:hidden">
+        <div className="flex w-full lg:hidden border border-slate-400 my-4 rounded-l-md rounded-r-md">
           <Button
             onClick={() => setShowVersesDisplaySection(false)}
-            className="my-4 justify-center rounded-r-none flex-1"
-            variant={!showVersesDisplaySection ? "primary" : "secondary"}
+            className="justify-center rounded-r-none flex-1"
+            variant={!showVersesDisplaySection ? "secondary" : "tertiary"}
           >
-            Selector
+            Verse Selector
           </Button>
           <Button
             onClick={() => setShowVersesDisplaySection(true)}
-            className="my-4 justify-center rounded-l-none flex-1"
-            variant={showVersesDisplaySection ? "primary" : "secondary"}
+            className="justify-center rounded-l-none flex-1"
+            variant={showVersesDisplaySection ? "secondary" : "tertiary"}
           >
             Selected Verses
           </Button>

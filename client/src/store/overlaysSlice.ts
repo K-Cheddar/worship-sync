@@ -157,6 +157,11 @@ const initialState: OverlaysState = {
   name: "",
   title: "",
   event: "",
+  heading: "",
+  subHeading: "",
+  url: "",
+  description: "",
+  color: "Green",
   id: "",
   duration: 7,
   type: "participant",
@@ -170,9 +175,13 @@ export const overlaysSlice = createSlice({
   reducers: {
     selectOverlay: (state, action: PayloadAction<OverlayInfo>) => {
       state.name = action.payload.name;
-      state.title =
-        action.payload.type === "stick-to-bottom" ? "" : action.payload.title;
+      state.title = action.payload.title;
       state.event = action.payload.event;
+      state.heading = action.payload.heading;
+      state.subHeading = action.payload.subHeading;
+      state.url = action.payload.url;
+      state.description = action.payload.description;
+      state.color = action.payload.color;
       state.id = action.payload.id;
       state.duration = action.payload.duration;
       state.type = action.payload.type;
@@ -180,12 +189,7 @@ export const overlaysSlice = createSlice({
     },
     addOverlay: (state) => {
       state.list.push({
-        name: "",
-        title: "",
-        event: "",
-        duration: 7,
-        type: "participant",
-        showDelete: true,
+        ...initialState,
         id: generateRandomId(),
       });
     },
@@ -210,13 +214,7 @@ export const overlaysSlice = createSlice({
     updateOverlay: (state, action: PayloadAction<OverlayInfo>) => {
       state.list = state.list.map((overlay) => {
         if (overlay.id === action.payload.id) {
-          return {
-            ...action.payload,
-            title:
-              action.payload.type === "stick-to-bottom"
-                ? ""
-                : action.payload.title,
-          };
+          return { ...action.payload };
         }
         return overlay;
       });

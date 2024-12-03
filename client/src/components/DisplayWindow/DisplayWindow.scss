@@ -54,7 +54,7 @@
     var(--overlay-stb-info-text-shadow-size-p) var(--overlay-stb-info-text-shadow-size-p) 0 #000;
 }
 
-.overlay-stb-info-name {
+.overlay-stb-info-heading {
   @apply font-semibold;
 
   margin-right: 2%;
@@ -107,4 +107,34 @@
   border-bottom-left-radius: 2.5% 20%;
 
   font-size: var(--bible-info-text-size);
+}
+
+
+.overlay-qr-code-info-container {
+  @apply w-fit absolute flex items-center;
+
+  background-color: var(--overlay-qr-code-info-color);
+  padding: var(--overlay-qr-code-info-padding);
+  gap: var(--overlay-qr-code-info-gap);;
+  max-width: 70%;
+  height: fit-content;
+  bottom: 8.5%;
+  left: var(--overlay-qr-code-info-left);
+
+  border-radius: 2% / 8%;
+
+  text-shadow:
+  var(--overlay-qr-code-info-text-shadow-size-n) var(--overlay-qr-code-info-text-shadow-size-n) 0 #000,  
+   var(--overlay-qr-code-info-text-shadow-size-p) var(--overlay-qr-code-info-text-shadow-size-n) 0 #000,
+   var(--overlay-qr-code-info-text-shadow-size-n) var(--overlay-qr-code-info-text-shadow-size-p) 0 #000,
+    var(--overlay-qr-code-info-text-shadow-size-p) var(--overlay-qr-code-info-text-shadow-size-p) 0 #000;
+}
+
+.overlay-qr-code-info-url {
+  min-width: var(--overlay-qr-code-info-url-width);
+  max-width: var(--overlay-qr-code-info-url-width);
+}
+
+.overlay-qr-code-info-description {
+  font-size: var(--overlay-qr-code-info-description-size);
 }

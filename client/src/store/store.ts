@@ -71,7 +71,7 @@ listenerMiddleware.startListening({
       await listenerApi.delay(3500);
     }
 
-    listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
+    listenerApi.dispatch(setHasPendingUpdate(false));
 
     // update Item
     const item = state.undoable.present.item;
@@ -242,6 +242,7 @@ listenerMiddleware.startListening({
       action.type !== "presentation/updateStreamFromRemote" &&
       action.type !== "presentation/updateBibleDisplayInfoFromRemote" &&
       action.type !== "presentation/updateOverlayInfoFromRemote" &&
+      action.type !== "presentation/updateQrCodeOverlayInfoFromRemote" &&
       action.type !== "RESET"
     );
   },

@@ -5,6 +5,7 @@ import DisplayBox from "./DisplayBox";
 import DisplayStreamBible from "./DisplayStreamBible";
 import DisplayParticipantOverlay from "./DisplayParticipantOverlay";
 import DisplayStbOverlay from "./DisplayStbOverlay";
+import DisplayQrCodeOverlay from "./DisplayQrCodeOverlay";
 
 type DisplayWindowProps = {
   prevBoxes?: Box[];
@@ -26,6 +27,7 @@ type DisplayWindowProps = {
   prevOverlayInfo?: OverlayInfo;
   participantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
+  qrCodeOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
   prevBibleDisplayInfo?: BibleDisplayInfo;
   shouldAnimate?: boolean;
@@ -52,11 +54,14 @@ const DisplayWindow = forwardRef<HTMLUListElement, DisplayWindowProps>(
       prevTime,
       bibleDisplayInfo,
       prevBibleDisplayInfo,
+      qrCodeOverlayInfo,
     }: DisplayWindowProps,
     ref
   ) => {
     const fallbackRef = useRef<HTMLUListElement | null>(null);
     const containerRef = ref || fallbackRef;
+
+    console.log({ qrCodeOverlayInfo, participantOverlayInfo, stbOverlayInfo });
 
     const aspectRatio = 16 / 9;
     const fontAdjustment = width === 42 ? 1 : 42.35 / width; // Display editor is 42vw but sometimes the display gets clipped on other windows
@@ -140,6 +145,14 @@ const DisplayWindow = forwardRef<HTMLUListElement, DisplayWindowProps>(
           width={width}
           shouldAnimate={shouldAnimate}
           participantOverlayInfo={participantOverlayInfo}
+          isStream={isStream}
+          ref={containerRef}
+        />
+
+        <DisplayQrCodeOverlay
+          width={width}
+          shouldAnimate={shouldAnimate}
+          qrCodeOverlayInfo={qrCodeOverlayInfo}
           isStream={isStream}
           ref={containerRef}
         />

@@ -38,7 +38,8 @@ const initialState: PresentationState = {
       time: Date.now(),
       id: generateRandomId(),
     },
-    stbOverlayInfo: { name: "", time: Date.now(), id: generateRandomId() },
+    stbOverlayInfo: { heading: "", time: Date.now(), id: generateRandomId() },
+    qrCodeOverlayInfo: { time: Date.now(), id: generateRandomId() },
   },
 };
 
@@ -125,6 +126,17 @@ export const presentationSlice = createSlice({
         };
       }
     },
+    updateQrCodeOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
+      if (state.isStreamTransmitting) {
+        // set previous info for cross animation
+        state.prevStreamInfo.qrCodeOverlayInfo =
+          state.streamInfo.qrCodeOverlayInfo;
+        state.streamInfo.qrCodeOverlayInfo = {
+          ...action.payload,
+          time: Date.now(),
+        };
+      }
+    },
     updateParticipantOverlayInfoFromRemote: (
       state,
       action: PayloadAction<OverlayInfo>
@@ -144,6 +156,18 @@ export const presentationSlice = createSlice({
       // set previous info for cross animation
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.streamInfo.stbOverlayInfo = {
+        ...action.payload,
+        time: action.payload.time,
+      };
+    },
+    updateQrCodeOverlayInfoFromRemote: (
+      state,
+      action: PayloadAction<OverlayInfo>
+    ) => {
+      // set previous info for cross animation
+      state.prevStreamInfo.qrCodeOverlayInfo =
+        state.streamInfo.qrCodeOverlayInfo;
+      state.streamInfo.qrCodeOverlayInfo = {
         ...action.payload,
         time: action.payload.time,
       };
@@ -212,6 +236,8 @@ export const presentationSlice = createSlice({
         state.streamInfo.participantOverlayInfo;
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
+      state.prevStreamInfo.qrCodeOverlayInfo =
+        state.streamInfo.qrCodeOverlayInfo;
 
       state.streamInfo = {
         ...initialState.streamInfo,
@@ -222,7 +248,16 @@ export const presentationSlice = createSlice({
           time: Date.now(),
           id: generateRandomId(),
         },
-        stbOverlayInfo: { name: "", time: Date.now(), id: generateRandomId() },
+        stbOverlayInfo: {
+          heading: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        },
+        qrCodeOverlayInfo: {
+          description: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        },
       };
     },
     clearAll: (state) => {
@@ -245,6 +280,8 @@ export const presentationSlice = createSlice({
         state.streamInfo.participantOverlayInfo;
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
+      state.prevStreamInfo.qrCodeOverlayInfo =
+        state.streamInfo.qrCodeOverlayInfo;
 
       state.projectorInfo = {
         ...initialState.projectorInfo,
@@ -263,7 +300,16 @@ export const presentationSlice = createSlice({
           time: Date.now(),
           id: generateRandomId(),
         },
-        stbOverlayInfo: { name: "", time: Date.now(), id: generateRandomId() },
+        stbOverlayInfo: {
+          heading: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        },
+        qrCodeOverlayInfo: {
+          description: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        },
       };
     },
     updateProjector: (state, action: PayloadAction<Presentation>) => {
@@ -361,6 +407,7 @@ export const {
   setTransmitToAll,
   updateParticipantOverlayInfo,
   updateStbOverlayInfo,
+  updateQrCodeOverlayInfo,
   updateBibleDisplayInfo,
   clearProjector,
   clearMonitor,
@@ -375,6 +422,7 @@ export const {
   updateBibleDisplayInfoFromRemote,
   updateParticipantOverlayInfoFromRemote,
   updateStbOverlayInfoFromRemote,
+  updateQrCodeOverlayInfoFromRemote,
 } = presentationSlice.actions;
 
 export default presentationSlice.reducer;

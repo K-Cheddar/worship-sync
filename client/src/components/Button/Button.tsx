@@ -1,9 +1,17 @@
-import React, { forwardRef, FunctionComponent, ReactNode, useRef } from "react";
+import React, {
+  forwardRef,
+  FunctionComponent,
+  ReactNode,
+  useContext,
+  useMemo,
+  useRef,
+} from "react";
 import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
 import Icon from "../Icon/Icon";
 import cn from "classnames";
 import "./Button.scss";
 import Spinner from "../Spinner/Spinner";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 
 export type ButtonProps = Omit<React.HTMLProps<HTMLButtonElement>, "wrap"> & {
   children?: ReactNode;
@@ -36,7 +44,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       padding,
       isSelected = false,
       truncate = false,
-      iconSize = "md",
+      iconSize: _iconSize,
       type = "button",
       isLoading = false,
       ...rest
@@ -45,6 +53,17 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ) => {
     const fallbackRef = useRef(null);
     const buttonRef = ref || fallbackRef;
+
+    const { isMobile } = useContext(ControllerInfoContext) || {};
+    // const _iconSize = typeof iconSize === "number" ? iconSize :  undefined;
+    // const _iconSize = isMobile && !iconSize ? 'lg'
+
+    const iconSize = useMemo(() => {
+      if (isMobile) {
+        return _iconSize || "xl";
+      }
+      return _iconSize || "md";
+    }, [isMobile, _iconSize]);
 
     const iconWProps = (
       <Icon svg={svg || UnknownSVG} color={color} size={iconSize} />

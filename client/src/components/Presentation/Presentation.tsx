@@ -39,6 +39,7 @@ const Presentation = ({
           participantOverlayInfo={info.participantOverlayInfo}
           prevOverlayInfo={prevInfo.participantOverlayInfo}
           stbOverlayInfo={info.stbOverlayInfo}
+          qrCodeOverlayInfo={info.qrCodeOverlayInfo}
           prevBibleDisplayInfo={prevInfo.bibleDisplayInfo}
           bibleDisplayInfo={info.bibleDisplayInfo}
           time={info.time}

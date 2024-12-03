@@ -67,7 +67,7 @@ const Services = () => {
       <Select
         label="Outlines"
         className="services-dropdown"
-        labelProps={{ className: "mr-2" }}
+        labelClassName="mr-2"
         options={listsOptions}
         value={selectedList?.id || ""}
         onChange={(list) => dispatch(selectItemList(list))}

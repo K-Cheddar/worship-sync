@@ -46,15 +46,12 @@ export const sizeMap: Map<
     3,
     { width: 17, mobileWidth: 26.25, cols: "grid-cols-3", hSize: "text-base" },
   ],
-  [
-    2,
-    { width: 26, mobileWidth: 40.5, cols: "grid-cols-2", hSize: "text-base" },
-  ],
+  [2, { width: 26, mobileWidth: 40, cols: "grid-cols-2", hSize: "text-base" }],
   [
     1,
     {
       width: 52.25,
-      mobileWidth: 82.5,
+      mobileWidth: 81.5,
       cols: "grid-cols-1",
       hSize: "text-base",
     },
