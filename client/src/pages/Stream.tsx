@@ -19,6 +19,8 @@ const Stream = () => {
     keepScreenOn();
   }, []);
 
+  console.log({ streamInfo });
+
   return (
     <DisplayWindow
       boxes={streamInfo.slide?.boxes || []}
@@ -29,6 +31,7 @@ const Stream = () => {
       stbOverlayInfo={streamInfo.stbOverlayInfo}
       prevBibleDisplayInfo={prevStreamInfo.bibleDisplayInfo}
       bibleDisplayInfo={streamInfo.bibleDisplayInfo}
+      qrCodeOverlayInfo={streamInfo.qrCodeOverlayInfo}
       shouldAnimate
       width={100}
     />

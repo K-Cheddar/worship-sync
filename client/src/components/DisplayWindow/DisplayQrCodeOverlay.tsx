@@ -27,8 +27,6 @@ const DisplayStreamOverlay = forwardRef<
         !shouldAnimate
       )
         return;
-      const width = (containerRef as React.MutableRefObject<HTMLUListElement>)
-        .current!.offsetWidth;
 
       overlayTimeline.current?.clear();
 
@@ -36,31 +34,37 @@ const DisplayStreamOverlay = forwardRef<
         ".overlay-qr-code-info-url",
         ".overlay-qr-code-info-description",
       ];
-      const targets = [qrCodeOverlayRef.current, ...innerElements];
+      // const targets = [qrCodeOverlayRef.current, ...innerElements];
 
       overlayTimeline.current = gsap
         .timeline()
-        .set(targets, { x: -width * 0.75 });
+        .set(qrCodeOverlayRef.current, { opacity: 0 });
 
       // Only play animate if there is overlay info
       if (qrCodeOverlayInfo.url || qrCodeOverlayInfo.description) {
         overlayTimeline.current
+          .set(innerElements, { yPercent: 150 })
           .to(qrCodeOverlayRef.current, {
-            x: width * 0.025,
+            opacity: 1,
             duration: 1,
             ease: "power1.inOut",
           })
           .to(
             innerElements,
-            { x: 0, duration: 1, ease: "power1.inOut", stagger: 0.2 },
-            "-=0.75"
+            { yPercent: 0, duration: 1, ease: "power1.inOut" },
+            "-=0.95"
           )
-          .to(targets, {
-            x: -width * 0.75,
+          .to(qrCodeOverlayRef.current, {
+            opacity: 0,
             duration: 1,
             ease: "power1.inOut",
             delay: qrCodeOverlayInfo.duration,
-          });
+          })
+          .to(
+            innerElements,
+            { yPercent: 150, duration: 1, ease: "power1.inOut" },
+            "-=0.75"
+          );
       }
     },
     { scope: qrCodeOverlayRef, dependencies: [qrCodeOverlayInfo] }
@@ -80,7 +84,6 @@ const DisplayStreamOverlay = forwardRef<
               ? `1% 2.5%`
               : "0",
           "--overlay-qr-code-info-color": qrCodeOverlayInfo.color,
-          "--overlay-qr-code-info-left": shouldAnimate ? 0 : "2.5%",
           "--overlay-qr-code-info-text-shadow-size-p": `${width / 75}px`,
           "--overlay-qr-code-info-text-shadow-size-n": `-${width / 75}px`,
         } as CSSProperties

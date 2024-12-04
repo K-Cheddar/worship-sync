@@ -39,8 +39,7 @@ const Login = () => {
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!login) return;
-          login({ username, password });
+          login?.({ username, password });
         }}
         className="bg-slate-800 rounded-xl w-[300px] max-w-[75%] p-8 text-white flex flex-col items-center"
       >

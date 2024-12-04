@@ -102,16 +102,6 @@ const GlobalInfoProvider = ({ children }: any) => {
 
   const updateFromRemote = useCallback(
     (data: any) => {
-      const _monitorInfo: PresentationType | undefined = data.monitorInfo;
-      const _projectorInfo: PresentationType | undefined = data.projectorInfo;
-      const _streamInfo: PresentationType | undefined = data.streamInfo;
-      const _stream_bibleInfo: BibleDisplayInfo | undefined =
-        data.stream_bibleInfo;
-      const _stream_participantOverlayInfo: OverlayInfo | undefined =
-        data.stream_participantOverlayInfo;
-      const _stream_stbOverlayInfo: OverlayInfo | undefined =
-        data.stream_stbOverlayInfo;
-
       type updateInfoChildType = {
         info: PresentationType | BibleDisplayInfo | OverlayInfo;
         updateFunction: (
@@ -122,32 +112,32 @@ const GlobalInfoProvider = ({ children }: any) => {
 
       const updateInfo = {
         projectorInfo: {
-          info: _projectorInfo,
+          info: data.projectorInfo,
           updateFunction: updateProjectorFromRemote,
           compareTo: projectorInfo,
         },
         monitorInfo: {
-          info: _monitorInfo,
+          info: data.monitorInfo,
           updateFunction: updateMonitorFromRemote,
           compareTo: monitorInfo,
         },
         streamInfo: {
-          info: _streamInfo,
+          info: data.streamInfo,
           updateFunction: updateStreamFromRemote,
           compareTo: streamInfo,
         },
         stream_bibleInfo: {
-          info: _stream_bibleInfo,
+          info: data.stream_bibleInfo,
           updateFunction: updateBibleDisplayInfoFromRemote,
           compareTo: streamInfo.bibleDisplayInfo,
         },
         stream_participantOverlayInfo: {
-          info: _stream_participantOverlayInfo,
+          info: data.stream_participantOverlayInfo,
           updateFunction: updateParticipantOverlayInfoFromRemote,
           compareTo: streamInfo.participantOverlayInfo,
         },
         stream_stbOverlayInfo: {
-          info: _stream_stbOverlayInfo,
+          info: data.stream_stbOverlayInfo,
           updateFunction: updateStbOverlayInfoFromRemote,
           compareTo: streamInfo.stbOverlayInfo,
         },
