@@ -82,6 +82,7 @@ const Input = ({
             color={color}
             onClick={svgAction}
             tabIndex={-1}
+            iconSize={"md"}
           />
         )}
       </span>

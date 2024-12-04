@@ -58,7 +58,7 @@ const Welcome = () => {
       <section className="flex flex-col mt-8 gap-4 bg-slate-800 w-full items-center p-8">
         <LinkButton to="/controller">Controller</LinkButton>
         <LinkButton to="/monitor">Monitor</LinkButton>
-        <LinkButton to="/presentation">Presentation</LinkButton>
+        <LinkButton to="/projector">Projector</LinkButton>
         <LinkButton to="/stream">Stream</LinkButton>
       </section>
     </main>

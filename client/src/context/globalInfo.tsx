@@ -251,8 +251,6 @@ const GlobalInfoProvider = ({ children }: any) => {
     username: string;
     password: string;
   }) => {
-    if (!globalDb) return;
-
     setLoginState("loading");
 
     try {
@@ -267,9 +265,6 @@ const GlobalInfoProvider = ({ children }: any) => {
         setLoginState("error");
       } else {
         dispatch({ type: "RESET" });
-        if (globalDb) {
-          await globalDb.destroy();
-        }
         setLoginState("success");
         localStorage.setItem("loggedIn", "true");
         localStorage.setItem("user", user.username);

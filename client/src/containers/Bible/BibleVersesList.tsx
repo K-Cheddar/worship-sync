@@ -42,7 +42,7 @@ const BibleVersesList = ({
           return verse.text?.trim() ? (
             <li key={verse.index} className={`${bg} flex gap-2 px-2`}>
               <span className="text-lg text-yellow-300">{verse.name}</span>
-              <span className="text-base mr-auto">{verse.text}</span>
+              <span className="text-sm mr-auto">{verse.text}</span>
               <Button
                 color={canTransmit ? "#22c55e" : "gray"}
                 padding="px-1"
