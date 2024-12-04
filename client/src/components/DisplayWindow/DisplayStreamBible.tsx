@@ -113,11 +113,10 @@ const DisplayStreamBible = forwardRef<
           className="bible-info-container"
           style={
             {
-              "--bible-info-border-width": `${width / 71.4}vw`,
-              "--bible-info-title-size": `${width / 42.3}vw`,
-              "--bible-info-text-size": `${width / 40}vw`,
-              "--bible-info-text-shadow-size-p": `${width / 66.7}px`,
-              "--bible-info-text-shadow-size-n": `-${width / 66.7}px`,
+              "--bible-info-title-size": `${width / 58}vw`,
+              "--bible-info-text-size": `${width / 55}vw`,
+              "--bible-info-text-shadow-size-p": `${width / 66}px`,
+              "--bible-info-text-shadow-size-n": `-${width / 66}px`,
             } as CSSProperties
           }
         >
@@ -134,9 +133,8 @@ const DisplayStreamBible = forwardRef<
           className="prev-bible-info-container"
           style={
             {
-              "--bible-info-border-width": `${width / 71.4}vw`,
-              "--bible-info-title-size": `${width / 42.3}vw`,
-              "--bible-info-text-size": `${width / 40}vw`,
+              "--bible-info-title-size": `${width / 58}vw`,
+              "--bible-info-text-size": `${width / 55}vw`,
               "--bible-info-text-shadow-size-p": `${width / 66}px`,
               "--bible-info-text-shadow-size-n": `-${width / 66}px`,
             } as CSSProperties
