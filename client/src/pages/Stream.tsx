@@ -19,8 +19,6 @@ const Stream = () => {
     keepScreenOn();
   }, []);
 
-  console.log({ streamInfo });
-
   return (
     <DisplayWindow
       boxes={streamInfo.slide?.boxes || []}
