@@ -8,9 +8,9 @@
 }
 
 .overlay-participant-info-container {
-  @apply w-fit absolute flex flex-col bg-gray-800/75; 
+  @apply w-fit absolute flex flex-col bg-gray-800/75 overflow-hidden border-green-700 border-solid; 
 
-  border-left: var(--overlay-participant-info-border-width) solid green;
+  border-left-width: var(--overlay-participant-info-border-width);
   padding: var(--overlay-participant-info-padding);
   max-width: 70%;
   bottom: 8.5%;
@@ -40,7 +40,7 @@
 }
 
 .overlay-stb-info-container {
-  @apply min-w-full w-fit absolute bottom-0 bg-green-800/90 text-white flex items-center justify-center text-nowrap;
+  @apply min-w-full w-fit absolute bottom-0 bg-green-700/90 text-white flex items-center justify-center text-nowrap;
 
   // border-top: var(--overlay-stb-info-border-width) solid green;
   // border-bottom: var(--overlay-stb-info-border-width) solid green;
@@ -88,7 +88,7 @@
 
 .bible-info-title,
 .prev-bible-info-title {
-  @apply bg-green-800 w-fit;;
+  @apply bg-green-700 w-fit;;
 
   border-top-left-radius: 5% 20%;
   border-top-right-radius: 5% 20%;
@@ -111,15 +111,14 @@
 
 
 .overlay-qr-code-info-container {
-  @apply w-fit absolute flex items-center;
+  @apply w-fit absolute flex items-center mx-auto left-0 right-0 overflow-hidden;
 
   background-color: var(--overlay-qr-code-info-color);
   padding: var(--overlay-qr-code-info-padding);
   gap: var(--overlay-qr-code-info-gap);;
-  max-width: 70%;
+  max-width: 60%;
   height: fit-content;
   bottom: 8.5%;
-  left: var(--overlay-qr-code-info-left);
 
   border-radius: 2% / 8%;
 

@@ -161,7 +161,7 @@ const initialState: OverlaysState = {
   subHeading: "",
   url: "",
   description: "",
-  color: "Green",
+  color: "#16a34a",
   id: "",
   duration: 7,
   type: "participant",
@@ -188,10 +188,31 @@ export const overlaysSlice = createSlice({
       state.showDelete = action.payload.showDelete;
     },
     addOverlay: (state) => {
-      state.list.push({
-        ...initialState,
+      const existingIndex = state.list.findIndex(
+        (overlay) => overlay.id === state.id
+      );
+      const { list, ...itemState } = state;
+      const newItem = {
+        ...itemState,
+        name:
+          itemState.type === "participant"
+            ? itemState.name + " (Copy)"
+            : itemState.name,
+        heading:
+          itemState.type === "stick-to-bottom"
+            ? itemState.heading + " (Copy)"
+            : itemState.heading,
+        description:
+          itemState.type === "qr-code"
+            ? itemState.description + " (Copy)"
+            : itemState.description,
         id: generateRandomId(),
-      });
+      };
+      if (existingIndex !== -1) {
+        state.list.splice(existingIndex + 1, 0, newItem);
+      } else {
+        state.list.push(newItem);
+      }
     },
     updateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
       state.list = action.payload;

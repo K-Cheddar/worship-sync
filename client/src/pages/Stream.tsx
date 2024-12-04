@@ -29,6 +29,7 @@ const Stream = () => {
       stbOverlayInfo={streamInfo.stbOverlayInfo}
       prevBibleDisplayInfo={prevStreamInfo.bibleDisplayInfo}
       bibleDisplayInfo={streamInfo.bibleDisplayInfo}
+      qrCodeOverlayInfo={streamInfo.qrCodeOverlayInfo}
       shouldAnimate
       width={100}
     />

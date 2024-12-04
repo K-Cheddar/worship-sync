@@ -271,6 +271,7 @@ listenerMiddleware.startListening({
       stream_bibleInfo: streamInfo.bibleDisplayInfo,
       stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
       stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
+      stream_qrCodeOverlayInfo: streamInfo.qrCodeOverlayInfo,
     };
 
     localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
@@ -287,6 +288,10 @@ listenerMiddleware.startListening({
     localStorage.setItem(
       "stream_stbOverlayInfo",
       JSON.stringify(streamInfo.stbOverlayInfo)
+    );
+    localStorage.setItem(
+      "stream_qrCodeOverlayInfo",
+      JSON.stringify(streamInfo.qrCodeOverlayInfo)
     );
 
     set(

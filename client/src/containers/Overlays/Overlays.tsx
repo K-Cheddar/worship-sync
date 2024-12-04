@@ -35,8 +35,7 @@ const colorOptions = [
   { label: "Orange", value: "#ea580c" },
   { label: "Yellow", value: "#eab308" },
   { label: "Green", value: "#16a34a" },
-  { label: "Teal", value: "#14b8a6" },
-  { label: "Cyan", value: "#06b6d4" },
+  { label: "Cyan", value: "#0891b2" },
   { label: "Blue", value: "#2563eb" },
   { label: "Purple", value: "#9333ea" },
 ];
@@ -59,14 +58,14 @@ const Overlays = () => {
   } = useSelector((state) => state.undoable.present.overlays);
   const { isStreamTransmitting } = useSelector((state) => state.presentation);
   const { isLoading } = useSelector((state) => state.undoable.present.itemList);
-  const [localName, setLocalName] = useState(name || "");
+  const [localName, setLocalName] = useState(name || "#16a34a");
   const [localTitle, setLocalTitle] = useState(title || "");
   const [localEvent, setLocalEvent] = useState(event || "");
   const [localHeading, setLocalHeading] = useState(heading || "");
   const [localSubHeading, setLocalSubHeading] = useState(subHeading || "");
   const [localUrl, setLocalUrl] = useState(url || "");
   const [localDescription, setLocalDescription] = useState(description || "");
-  const [localColor, setLocalColor] = useState(color || "Green");
+  const [localColor, setLocalColor] = useState(color || "");
   const [localShowDelete, setLocalShowDelete] = useState(showDelete || false);
   const [localDuration, setLocalDuration] = useState(duration || 7);
   const [localType, setLocalType] = useState(type);
@@ -84,7 +83,7 @@ const Overlays = () => {
     setLocalSubHeading(subHeading || "");
     setLocalUrl(url || "");
     setLocalDescription(description || "");
-    setLocalColor(color || "Green");
+    setLocalColor(color || "#16a34a");
     setLocalShowDelete(showDelete || false);
     setLocalDuration(duration || 7);
     setLocalType(type);
