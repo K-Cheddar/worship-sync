@@ -5,7 +5,7 @@ import { getDatabase, Database } from "firebase/database";
 import PouchDB from "pouchdb";
 import { DBLogin } from "../types";
 import { useNavigate } from "react-router-dom";
-import { useDispatch, useSelector } from "../hooks";
+import { useDispatch } from "../hooks";
 import { ref, onValue, Unsubscribe } from "firebase/database";
 
 import {
@@ -59,10 +59,6 @@ export let globalFireDbInfo: globalFireBaseInfoType = {
 };
 
 const GlobalInfoProvider = ({ children }: any) => {
-  const { projectorInfo, monitorInfo, streamInfo } = useSelector(
-    (state) => state.presentation
-  );
-
   const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
   const [loginState, setLoginState] = useState<LoginStateType>("idle");
   const [user, setUser] = useState("Demo");
@@ -95,44 +91,36 @@ const GlobalInfoProvider = ({ children }: any) => {
       type updateInfoChildType = {
         info: PresentationType | BibleDisplayInfo | OverlayInfo;
         updateAction: string;
-        compareTo: PresentationType | BibleDisplayInfo | OverlayInfo;
       };
 
       const updateInfo = {
         projectorInfo: {
           info: data.projectorInfo,
           updateAction: "debouncedUpdateProjector",
-          compareTo: projectorInfo,
         },
         monitorInfo: {
           info: data.monitorInfo,
           updateAction: "debouncedUpdateMonitor",
-          compareTo: monitorInfo,
         },
         streamInfo: {
           info: data.streamInfo,
           updateAction: "debouncedUpdateStream",
-          compareTo: streamInfo,
         },
         stream_bibleInfo: {
           info: data.stream_bibleInfo,
           updateAction: "debouncedUpdateBibleDisplayInfo",
-          compareTo: streamInfo.bibleDisplayInfo,
         },
         stream_participantOverlayInfo: {
           info: data.stream_participantOverlayInfo,
           updateAction: "debouncedUpdateParticipantOverlayInfo",
-          compareTo: streamInfo.participantOverlayInfo,
         },
         stream_stbOverlayInfo: {
           info: data.stream_stbOverlayInfo,
           updateAction: "debouncedUpdateStbOverlayInfo",
-          compareTo: streamInfo.stbOverlayInfo,
         },
         stream_qrCodeOverlayInfo: {
           info: data.stream_qrCodeOverlayInfo,
           updateAction: "debouncedUpdateQrCodeOverlayInfo",
-          compareTo: streamInfo.qrCodeOverlayInfo,
         },
       };
 
@@ -140,20 +128,13 @@ const GlobalInfoProvider = ({ children }: any) => {
       for (const key of keys) {
         const _key = key as keyof typeof updateInfo; // Define type
         const obj = updateInfo[_key];
-        const { info, updateAction, compareTo } = obj as updateInfoChildType;
+        const { info, updateAction } = obj as updateInfoChildType;
 
         if (!info) continue; // nothing to update here.
-
-        if (
-          (info.time && compareTo?.time && info.time > compareTo.time) ||
-          (info.time && !compareTo?.time)
-        ) {
-          console.log("update from remote", info);
-          dispatch({ type: updateAction, payload: info });
-        }
+        dispatch({ type: updateAction, payload: info });
       }
     },
-    [dispatch, monitorInfo, projectorInfo, streamInfo]
+    [dispatch]
   );
 
   // get info from local storage on startup
@@ -197,6 +178,8 @@ const GlobalInfoProvider = ({ children }: any) => {
   // get updates from firebase - realtime changes from others
   useEffect(() => {
     if (!firebaseDb) return;
+
+    console.log("adding firebase listeners");
 
     if (onValueRef.current) {
       const keys = Object.keys(onValueRef.current);
