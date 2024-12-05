@@ -40,6 +40,8 @@ import {
 import { initiateOverlayList } from "../../store/overlaysSlice";
 import { formatItemList } from "../../utils/formatItemList";
 import Button from "../../components/Button/Button";
+import Spinner from "../../components/Spinner/Spinner";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 // Here for future to implement resizable
 
@@ -78,8 +80,10 @@ const Controller = () => {
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
 
-  const { db, cloud, updater, setIsMobile } =
+  const { db, cloud, updater, setIsMobile, dbProgress } =
     useContext(ControllerInfoContext) || {};
+
+  const { user } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     if (location.pathname === "/controller") {
@@ -218,84 +222,99 @@ const Controller = () => {
   };
 
   return (
-    <div
-      onClick={(e) => handleElementClick(e)}
-      className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none"
-      style={
-        {
-          "--toolbar-height": `${toolbarHeight}px`,
-        } as CSSProperties
-      }
-    >
-      <Toolbar
-        ref={toolbarRef}
-        className="flex border-b-2 border-slate-500 h-10 text-sm min-h-fit"
-      />
-      <div className="controller-main" ref={controllerRef}>
-        <LyricsEditor />
-        <Button
-          className="lg:hidden mr-2 h-1/4 z-10"
-          svg={isLeftPanelOpen ? CollapseSVG : ExpandSVG}
-          onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
+    <>
+      {dbProgress !== 100 && (
+        <div className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8">
+          <p>
+            Setting up <span className="font-bold">Worship</span>
+            <span className="text-orange-500 font-semibold">Sync</span> for{" "}
+            <span className="font-semibold">{user}</span>
+          </p>
+          <Spinner />
+          <p>
+            Progress: <span className="text-orange-500">{dbProgress}%</span>
+          </p>
+        </div>
+      )}
+      <div
+        onClick={(e) => handleElementClick(e)}
+        className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none"
+        style={
+          {
+            "--toolbar-height": `${toolbarHeight}px`,
+          } as CSSProperties
+        }
+      >
+        <Toolbar
+          ref={toolbarRef}
+          className="flex border-b-2 border-slate-500 h-10 text-sm min-h-fit"
         />
-        <div
-          className={`flex flex-col border-r-2 border-slate-500 bg-slate-700 h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${
-            isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
-          }`}
-          ref={leftPanelRef}
-        >
+        <div className="controller-main" ref={controllerRef}>
+          <LyricsEditor />
           <Button
-            className="lg:hidden text-sm mb-2 justify-center"
+            className="lg:hidden mr-2 h-1/4 z-10"
             svg={isLeftPanelOpen ? CollapseSVG : ExpandSVG}
             onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
+          />
+          <div
+            className={`flex flex-col border-r-2 border-slate-500 bg-slate-700 h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${
+              isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
+            }`}
+            ref={leftPanelRef}
           >
-            Close Panel
-          </Button>
-          <EditorButtons />
-          <ServiceItems />
-        </div>
-        <div className="flex flex-col flex-1 relative w-[55%]">
-          <Routes>
-            <Route
-              path="/"
-              element={
-                <h2 className="text-2xl text-center mt-4 font-bold">
-                  No Item Selected
-                </h2>
-              }
-            />
-            <Route path="/item/:itemId/:listId" element={<Item />} />
-            <Route path="overlays" element={<Overlays />} />
-            <Route path="bible" element={<Bible />} />
-            <Route path="songs" element={<Songs />} />
-            <Route path="free" element={<FreeForms />} />
-            <Route path="create" element={<CreateItem />} />
-          </Routes>
-        </div>
+            <Button
+              className="lg:hidden text-sm mb-2 justify-center"
+              svg={isLeftPanelOpen ? CollapseSVG : ExpandSVG}
+              onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
+            >
+              Close Panel
+            </Button>
+            <EditorButtons />
+            <ServiceItems />
+          </div>
+          <div className="flex flex-col flex-1 relative w-[55%]">
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <h2 className="text-2xl text-center mt-4 font-bold">
+                    No Item Selected
+                  </h2>
+                }
+              />
+              <Route path="/item/:itemId/:listId" element={<Item />} />
+              <Route path="overlays" element={<Overlays />} />
+              <Route path="bible" element={<Bible />} />
+              <Route path="songs" element={<Songs />} />
+              <Route path="free" element={<FreeForms />} />
+              <Route path="create" element={<CreateItem />} />
+            </Routes>
+          </div>
 
-        <Button
-          className="lg:hidden text-sm ml-2 justify-center h-1/4 z-10"
-          svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
-          onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-        />
-        <div
-          className={`flex flex-col lg:w-[30%] bg-slate-700 border-slate-500 max-lg:absolute h-full transition-all border-l-2 max-lg:right-0 ${
-            isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
-          }`}
-          ref={rightPanelRef}
-        >
           <Button
-            className="lg:hidden text-sm mb-2 justify-center"
+            className="lg:hidden text-sm ml-2 justify-center h-1/4 z-10"
             svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+          />
+          <div
+            className={`flex flex-col lg:w-[30%] bg-slate-700 border-slate-500 max-lg:absolute h-full transition-all border-l-2 max-lg:right-0 ${
+              isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
+            }`}
+            ref={rightPanelRef}
           >
-            Close Panel
-          </Button>
-          <TransmitHandler />
-          <Media />
+            <Button
+              className="lg:hidden text-sm mb-2 justify-center"
+              svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
+              onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+            >
+              Close Panel
+            </Button>
+            <TransmitHandler />
+            <Media />
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 };
 

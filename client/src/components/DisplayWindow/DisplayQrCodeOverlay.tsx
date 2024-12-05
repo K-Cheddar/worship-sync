@@ -46,24 +46,24 @@ const DisplayStreamOverlay = forwardRef<
           .set(innerElements, { yPercent: 150 })
           .to(qrCodeOverlayRef.current, {
             opacity: 1,
-            duration: 1,
+            duration: 2.5,
             ease: "power1.inOut",
           })
           .to(
             innerElements,
-            { yPercent: 0, duration: 1, ease: "power1.inOut" },
-            "-=0.95"
+            { yPercent: 0, duration: 2, ease: "power1.inOut" },
+            "-=2.0"
           )
           .to(qrCodeOverlayRef.current, {
             opacity: 0,
-            duration: 1,
+            duration: 2.5,
             ease: "power1.inOut",
             delay: qrCodeOverlayInfo.duration,
           })
           .to(
             innerElements,
-            { yPercent: 150, duration: 1, ease: "power1.inOut" },
-            "-=0.75"
+            { yPercent: 150, duration: 2, ease: "power1.inOut" },
+            "-=1.25"
           );
       }
     },
@@ -84,8 +84,8 @@ const DisplayStreamOverlay = forwardRef<
               ? `1% 2.5%`
               : "0",
           "--overlay-qr-code-info-color": qrCodeOverlayInfo.color,
-          "--overlay-qr-code-info-text-shadow-size-p": `${width / 75}px`,
-          "--overlay-qr-code-info-text-shadow-size-n": `-${width / 75}px`,
+          "--overlay-qr-code-info-text-shadow-size-p": `${width / 65}px`,
+          "--overlay-qr-code-info-text-shadow-size-n": `-${width / 65}px`,
         } as CSSProperties
       }
     >

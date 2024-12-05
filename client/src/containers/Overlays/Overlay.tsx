@@ -59,7 +59,7 @@ const Overlay = ({
       <Button
         variant="tertiary"
         wrap
-        className="flex-col flex-1 h-full leading-4"
+        className="flex-col flex-1 h-full leading-4 text-center"
         padding="px-2 py-1.5"
         gap="gap-1"
         onClick={() => dispatch(selectOverlay(overlay))}
@@ -114,15 +114,13 @@ const Overlay = ({
           </span>
         )}
       </Button>
-      {overlay.showDelete && (
-        <Button
-          variant="tertiary"
-          className="text-sm ml-auto h-full"
-          padding="px-2 py-1"
-          svg={DeleteSVG}
-          onClick={() => dispatch(deleteOverlay(overlay.id))}
-        />
-      )}
+      <Button
+        variant="tertiary"
+        className="text-sm ml-auto h-full"
+        padding="px-2 py-1"
+        svg={DeleteSVG}
+        onClick={() => dispatch(deleteOverlay(overlay.id))}
+      />
       {hasData && (
         <Button
           color={isStreamTransmitting ? "#22c55e" : "gray"}

@@ -42,12 +42,12 @@ const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
           overlayTimeline.current
             .to(stbOverlayRef.current, {
               yPercent: 0,
-              duration: 1,
+              duration: 1.5,
               ease: "power1.inOut",
             })
             .to(stbOverlayRef.current, {
               yPercent: 150,
-              duration: 1,
+              duration: 1.5,
               ease: "power1.inOut",
               delay: stbOverlayInfo.duration,
             });
@@ -68,8 +68,8 @@ const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
               stbOverlayInfo.heading || stbOverlayInfo.subHeading
                 ? "0.5% 2.5%"
                 : "0",
-            "--overlay-stb-info-text-shadow-size-p": `${width / 80}px`,
-            "--overlay-stb-info-text-shadow-size-n": `-${width / 80}px`,
+            "--overlay-stb-info-text-shadow-size-p": `${width / 70}px`,
+            "--overlay-stb-info-text-shadow-size-n": `-${width / 70}px`,
           } as CSSProperties
         }
       >

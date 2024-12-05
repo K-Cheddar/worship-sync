@@ -55,17 +55,17 @@ const DisplayStreamOverlay = forwardRef<
           overlayTimeline.current
             .to(participantOverlayRef.current, {
               x: width * 0.025,
-              duration: 1,
+              duration: 2.5,
               ease: "power1.inOut",
             })
             .to(
               innerElements,
-              { x: 0, duration: 1, ease: "power1.inOut", stagger: 0.2 },
-              "-=0.75"
+              { x: 0, duration: 2.5, ease: "power1.inOut", stagger: 0.5 },
+              "-=2.0"
             )
             .to(targets, {
               x: -width * 0.75,
-              duration: 1,
+              duration: 3,
               ease: "power1.inOut",
               delay: participantOverlayInfo.duration,
             });
@@ -91,8 +91,8 @@ const DisplayStreamOverlay = forwardRef<
               participantOverlayInfo.event
                 ? `0 2.5% 1% 2.5%`
                 : "0",
-            "--overlay-participant-info-text-shadow-size-p": `${width / 75}px`,
-            "--overlay-participant-info-text-shadow-size-n": `-${width / 75}px`,
+            "--overlay-participant-info-text-shadow-size-p": `${width / 65}px`,
+            "--overlay-participant-info-text-shadow-size-n": `-${width / 65}px`,
           } as CSSProperties
         }
       >

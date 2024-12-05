@@ -15,7 +15,6 @@ import {
   useEffect,
   useState,
 } from "react";
-import Toggle from "../../components/Toggle/Toggle";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import Overlay from "./Overlay";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
@@ -52,7 +51,6 @@ const Overlays = () => {
     url,
     description,
     color,
-    showDelete,
     duration,
     type,
   } = useSelector((state) => state.undoable.present.overlays);
@@ -66,7 +64,6 @@ const Overlays = () => {
   const [localUrl, setLocalUrl] = useState(url || "");
   const [localDescription, setLocalDescription] = useState(description || "");
   const [localColor, setLocalColor] = useState(color || "");
-  const [localShowDelete, setLocalShowDelete] = useState(showDelete || false);
   const [localDuration, setLocalDuration] = useState(duration || 7);
   const [localType, setLocalType] = useState(type);
   const dispatch = useDispatch();
@@ -84,7 +81,6 @@ const Overlays = () => {
     setLocalUrl(url || "");
     setLocalDescription(description || "");
     setLocalColor(color || "#16a34a");
-    setLocalShowDelete(showDelete || false);
     setLocalDuration(duration || 7);
     setLocalType(type);
   }, [
@@ -97,7 +93,6 @@ const Overlays = () => {
     description,
     color,
     id,
-    showDelete,
     duration,
     type,
   ]);
@@ -312,35 +307,32 @@ const Overlays = () => {
                       className="text-sm flex gap-2 items-center"
                       labelClassName="w-24"
                       label="Duration"
-                      value={localDuration}
+                      value={localDuration || ""}
                       type="number"
                       onChange={(val) => setLocalDuration(val as number)}
                       data-ignore-undo="true"
                     />
                     <h4 className="text-center text-base">Type:</h4>
-                    <div className="flex gap-2 justify-center">
+                    <div className="flex gap-2 justify-between flex-col">
                       <RadioButton
                         label="Participant"
+                        className="w-full"
                         value={localType === "participant"}
                         onChange={(val) => setLocalType("participant")}
                       />
                       <RadioButton
                         label="Stick to Bottom"
+                        className="w-full"
                         value={localType === "stick-to-bottom"}
                         onChange={(val) => setLocalType("stick-to-bottom")}
                       />
                       <RadioButton
                         label="QR Code"
+                        className="w-full"
                         value={localType === "qr-code"}
                         onChange={(val) => setLocalType("qr-code")}
                       />
                     </div>
-                    <Toggle
-                      label="Show Delete"
-                      className="my-2"
-                      value={localShowDelete}
-                      onChange={(val) => setLocalShowDelete(val)}
-                    />
 
                     <Button
                       className="text-sm w-full justify-center"
@@ -356,7 +348,6 @@ const Overlays = () => {
                             url: localUrl,
                             description: localDescription,
                             color: localColor,
-                            showDelete: localShowDelete,
                             duration: localDuration,
                             type: localType,
                           })

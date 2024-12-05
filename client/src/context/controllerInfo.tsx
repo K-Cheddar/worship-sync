@@ -5,6 +5,7 @@ import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
 import getBibles, { checkBibles } from "../utils/getBibles";
 import Spinner from "../components/Spinner/Spinner";
+import { useLocation } from "react-router-dom";
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
@@ -12,8 +13,16 @@ type ControllerInfoContextType = {
   cloud: Cloudinary;
   updater: EventTarget;
   isMobile: boolean;
+  dbProgress: number;
   setIsMobile: (val: boolean) => void;
   logout: () => Promise<void>;
+  login: ({
+    username,
+    password,
+  }: {
+    username: string;
+    password: string;
+  }) => Promise<void>;
 };
 
 export const ControllerInfoContext =
@@ -38,8 +47,11 @@ const ControllerInfoProvider = ({ children }: any) => {
   );
   const [dbProgress, setDbProgress] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
+  const [isDbSetup, setIsDbSetup] = useState(false);
 
-  const { database, loginState, logout, setLoginState, user } =
+  const location = useLocation();
+
+  const { database, loginState, logout, setLoginState, user, login } =
     useContext(GlobalInfoContext) || {};
 
   const updater = useRef(new EventTarget());
@@ -66,6 +78,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         .on("complete", () => {
           setDbProgress(100);
           setDb(localDb);
+          setIsDbSetup(true);
           globalDb = localDb;
           console.log("Replication completed");
           if (loginState === "success") {
@@ -84,10 +97,15 @@ const ControllerInfoProvider = ({ children }: any) => {
         });
     };
 
-    if (loginState === "success" || loginState === "demo") {
+    if (
+      (loginState === "success" || loginState === "demo") &&
+      location.pathname !== "/" &&
+      location.pathname !== "/login" &&
+      !isDbSetup
+    ) {
       setupDb();
     }
-  }, [loginState, database]);
+  }, [loginState, database, location.pathname, isDbSetup]);
 
   useEffect(() => {
     const setupDb = async () => {
@@ -108,12 +126,47 @@ const ControllerInfoProvider = ({ children }: any) => {
   const _logout = async () => {
     setLoginState?.("loading");
     await syncRef.current?.cancel();
-    db?.destroy().then(() => {
-      globalDb = undefined;
-      setDb(undefined);
-      setDbProgress(0);
+    globalDb = undefined;
+    setDb(undefined);
+    setDbProgress(0);
+    setIsDbSetup(false);
+
+    if (db) {
+      db.destroy()
+        .catch((e) => {
+          console.error(e);
+        })
+        .finally(() => {
+          logout?.();
+        });
+    } else {
       logout?.();
-    });
+    }
+  };
+
+  const _login = async ({
+    username,
+    password,
+  }: {
+    username: string;
+    password: string;
+  }) => {
+    globalDb = undefined;
+    setDb(undefined);
+    setDbProgress(0);
+    setIsDbSetup(false);
+
+    if (db) {
+      db.destroy()
+        .catch((e) => {
+          console.error(e);
+        })
+        .finally(() => {
+          login?.({ username, password });
+        });
+    } else {
+      login?.({ username, password });
+    }
   };
 
   return (
@@ -126,21 +179,10 @@ const ControllerInfoProvider = ({ children }: any) => {
         logout: _logout,
         isMobile,
         setIsMobile,
+        dbProgress,
+        login: _login,
       }}
     >
-      {dbProgress !== 100 && (
-        <div className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8">
-          <p>
-            Setting up <span className="font-bold">Worship</span>
-            <span className="text-orange-500 font-semibold">Sync</span> for{" "}
-            <span className="font-semibold">{user}</span>
-          </p>
-          <Spinner />
-          <p>
-            Progress: <span className="text-orange-500">{dbProgress}%</span>
-          </p>
-        </div>
-      )}
       {children}
     </ControllerInfoContext.Provider>
   );

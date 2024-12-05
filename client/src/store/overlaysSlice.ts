@@ -4,146 +4,148 @@ import generateRandomId from "../utils/generateRandomId";
 
 const dummyOverlays: OverlayInfo[] = [
   {
-    id: "1ido13oa37rcorfa09t",
+    id: "1ie7ha1ps489fli2fm7",
     name: "email address: pastor@church.org",
     title: "",
     event: "phone #: 123-456-7890",
-    showDelete: false,
+    heading: "pastor@church.org",
+    subHeading: "123-456-7890",
+    url: "",
+    description: "",
+    color: "Green",
     duration: 7,
     type: "stick-to-bottom",
   },
   {
-    id: "1ido13oa3rk4br4a4qh",
+    id: "1ie7ha1pska4kie10au8",
+    name: "",
+    title: "",
+    event: "",
+    heading: "",
+    subHeading: "",
+    url: "www.worshipsync.net",
+    description: "Share a special link for your audience to scan here!",
+    color: "#2563eb",
+    duration: 30,
+    type: "qr-code",
+  },
+  {
+    id: "1ie7ha1pst26cpk1efq",
     name: "Host Name",
     title: "",
     event: "Sabbath School Host",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa3fivqefmtpm8",
+    id: "1ie7ha1psml3hjvk5e98",
     name: "Co-Host 1 Name",
     title: "",
     event: "Sabbath School Co-Host",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa3u2ieh8h78m8",
+    id: "1ie7ha1psohr2ecrrn6g",
     name: "Co-Host 2 Name",
     title: "",
     event: "Sabbath School Co-Host",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa3f1svnq65si",
+    id: "1ie7ha1ps86tfso8nu",
     name: "Announcer Name!",
     title: "",
     event: "Announcements",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa3kv0vcnhp8b",
+    id: "1ie7ha1psa0dkjatfkg8",
     name: "Greeter Name",
     title: "",
     event: "Welcome ",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa3di21upjov9",
+    id: "1ie7ha1psol07vae3g5",
     name: "Praise Team",
     title: "",
     event: "Welcome Song",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa3d6tj6hftfu",
+    id: "1ie7ha1pskjkscor5eno",
     name: "Reader Name",
     title: "",
     event: "Reading the Word",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa3rl9e7c6rj8g",
+    id: "1ie7ha1psb89cctrmjq",
     name: "Treasurer Name",
     title: "",
     event: "Offertory",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa3dcgkjfshgo8",
+    id: "1ie7ha1ps3ng0rhhmslo",
     name: "Singer Name",
     title: "",
     event: "Special Song",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa3cvatv91i9a",
+    id: "1ie7ha1psl4i0fnddrsg",
     name: "Prayer Name",
     title: "",
     event: "Intercessory Prayer",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa38ps3qv5k4hg",
+    id: "1ie7ha1ps19f1iv9ki98",
     name: "Praise Team ",
     title: "",
     event: "Praise & Worship",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa3ng1gaeqttp",
+    id: "1ie7ha1ps001aqhnhoio",
     name: "Pastor Name",
     title: "",
     event: 'Sermon - "Sermon Title"',
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa343f1bdaak7",
+    id: "1ie7ha1psbjcclb88uto",
     name: "Praise Team",
     title: "",
     event: "Appeal Song",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa381jg3ebknqg",
+    id: "1ie7ha1psucgaqnvlp68",
     name: "Praise Team",
     title: "",
     event: "Afterglow",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
   {
-    id: "1ido13oa3ikr5nqouvt8",
+    id: "1ie7ha1psjnqrcp0r1ig",
     name: "Pastor Name",
     title: "",
     event: "Appeal / Closing Prayer",
-    showDelete: false,
     duration: 7,
     type: "participant",
   },
@@ -165,7 +167,6 @@ const initialState: OverlaysState = {
   id: "",
   duration: 7,
   type: "participant",
-  showDelete: true,
   list: [],
 };
 
@@ -185,7 +186,6 @@ export const overlaysSlice = createSlice({
       state.id = action.payload.id;
       state.duration = action.payload.duration;
       state.type = action.payload.type;
-      state.showDelete = action.payload.showDelete;
     },
     addOverlay: (state) => {
       const existingIndex = state.list.findIndex(
@@ -231,6 +231,19 @@ export const overlaysSlice = createSlice({
       state.list = state.list.filter(
         (overlay) => overlay.id !== action.payload
       );
+      if (state.id === action.payload) {
+        state.id = "";
+        state.color = "#16a34a";
+        state.name = "";
+        state.title = "";
+        state.event = "";
+        state.heading = "";
+        state.subHeading = "";
+        state.url = "";
+        state.description = "";
+        state.duration = 7;
+        state.type = "participant";
+      }
     },
     updateOverlay: (state, action: PayloadAction<OverlayInfo>) => {
       state.list = state.list.map((overlay) => {

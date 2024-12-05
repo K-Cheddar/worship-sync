@@ -54,16 +54,16 @@ const DisplayStreamBible = forwardRef<
         } else {
           bibleTimeline.current = gsap
             .timeline()
-            .set(targets, { yPercent: 120 });
+            .set(targets, { yPercent: 150 });
 
-          // Only play animate if there is bible info
+          // Only animate if there is bible info
           if (
             bibleDisplayInfo?.title?.trim() ||
             bibleDisplayInfo?.text?.trim()
           ) {
             bibleTimeline.current.to(targets, {
               yPercent: 0,
-              duration: 1,
+              duration: 2,
               ease: "power1.inOut",
             });
           }
@@ -97,8 +97,8 @@ const DisplayStreamBible = forwardRef<
             .timeline()
             .set(targets, { yPercent: 0, opacity: 1 })
             .to(targets, {
-              yPercent: 120,
-              duration: 1,
+              yPercent: 150,
+              duration: 2,
               ease: "power1.inOut",
             });
         }

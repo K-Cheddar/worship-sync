@@ -5,6 +5,7 @@ import { ReactComponent as VisibleSVG } from "../assets/icons/visible.svg";
 import { ReactComponent as NotVisibleSVG } from "../assets/icons/not-visible.svg";
 import Button from "../components/Button/Button";
 import { useNavigate } from "react-router-dom";
+import { ControllerInfoContext } from "../context/controllerInfo";
 
 const Login = () => {
   const [username, setUsername] = useState("");
@@ -13,8 +14,10 @@ const Login = () => {
 
   const navigate = useNavigate();
 
-  const { login, loginState, setLoginState } =
-    useContext(GlobalInfoContext) || {};
+  const { loginState, setLoginState } = useContext(GlobalInfoContext) || {};
+
+  const { login } = useContext(ControllerInfoContext) || {};
+
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
@@ -49,6 +52,7 @@ const Login = () => {
           id="username"
           value={username}
           onChange={(val) => setUsername(val as string)}
+          className="w-full"
         />
         <Input
           label="Password"
@@ -59,6 +63,7 @@ const Login = () => {
           svg={showPassword ? NotVisibleSVG : VisibleSVG}
           svgAction={() => setShowPassword(!showPassword)}
           svgPadding="px-1 py-4"
+          className="w-full"
         />
         <Button
           variant="cta"

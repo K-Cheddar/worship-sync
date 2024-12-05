@@ -183,7 +183,6 @@ export type OverlayInfo = {
   type?: "participant" | "stick-to-bottom" | "qr-code";
   time?: number;
   id: string;
-  showDelete?: boolean;
 };
 
 export type DisplayType =

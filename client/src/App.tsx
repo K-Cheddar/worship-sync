@@ -4,7 +4,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react"; // <-- import the hook from our React package
 import Home from "./pages/Home";
 import Controller from "./pages/Controller/Controller";
-import Presentation from "./pages/Projector";
+import Projector from "./pages/Projector";
 import Monitor from "./pages/Monitor";
 import Stream from "./pages/Stream";
 import { Provider } from "react-redux";
@@ -26,7 +26,7 @@ function App() {
               <Route path="/controller/*" element={<Controller />} />
               <Route path="/login" element={<Login />} />
             </Route>
-            <Route path="/presentation" element={<Presentation />} />
+            <Route path="/projector" element={<Projector />} />
             <Route path="/monitor" element={<Monitor />} />
             <Route path="/stream" element={<Stream />} />
           </Routes>
