@@ -7,7 +7,16 @@ import {
 } from "@reduxjs/toolkit";
 import { itemSlice, setHasPendingUpdate } from "./itemSlice";
 import undoable, { excludeAction } from "redux-undo";
-import { presentationSlice } from "./presentationSlice";
+import {
+  presentationSlice,
+  updateBibleDisplayInfoFromRemote,
+  updateMonitorFromRemote,
+  updateParticipantOverlayInfoFromRemote,
+  updateProjectorFromRemote,
+  updateQrCodeOverlayInfoFromRemote,
+  updateStbOverlayInfoFromRemote,
+  updateStreamFromRemote,
+} from "./presentationSlice";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { itemListSlice } from "./itemListSlice";
@@ -20,11 +29,14 @@ import { globalDb as db } from "../context/controllerInfo";
 import { globalFireDbInfo } from "../context/globalInfo";
 import { ref, set } from "firebase/database";
 import {
+  BibleDisplayInfo,
   DBAllItems,
   DBItem,
   DBItemListDetails,
   DBItemLists,
   DBMedia,
+  OverlayInfo,
+  Presentation,
 } from "../types";
 
 const undoableReducers = undoable(
@@ -240,8 +252,9 @@ listenerMiddleware.startListening({
       action.type !== "presentation/updateProjectorFromRemote" &&
       action.type !== "presentation/updateMonitorFromRemote" &&
       action.type !== "presentation/updateStreamFromRemote" &&
+      action.type !== "presentation/updateParticipantOverlayInfoFromRemote" &&
+      action.type !== "presentation/updateStbOverlayInfoFromRemote" &&
       action.type !== "presentation/updateBibleDisplayInfoFromRemote" &&
-      action.type !== "presentation/updateOverlayInfoFromRemote" &&
       action.type !== "presentation/updateQrCodeOverlayInfoFromRemote" &&
       action.type !== "RESET"
     );
@@ -300,6 +313,118 @@ listenerMiddleware.startListening({
         "users/" + globalFireDbInfo.user + "/v2/presentation"
       ),
       cleanObject(presentationUpdate)
+    );
+  },
+});
+
+// handle updating from remote projector
+listenerMiddleware.startListening({
+  predicate: (action) => {
+    return action.type === "debouncedUpdateProjector";
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(
+      updateProjectorFromRemote(action.payload as Presentation)
+    );
+  },
+});
+
+// handle updating from remote monitor
+listenerMiddleware.startListening({
+  predicate: (action) => {
+    return action.type === "debouncedUpdateMonitor";
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(
+      updateMonitorFromRemote(action.payload as Presentation)
+    );
+  },
+});
+
+// handle updating from remote stream
+listenerMiddleware.startListening({
+  predicate: (action) => {
+    return action.type === "debouncedUpdateStream";
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(
+      updateStreamFromRemote(action.payload as Presentation)
+    );
+  },
+});
+
+// handle updating from remote bible info
+listenerMiddleware.startListening({
+  predicate: (action) => {
+    return action.type === "debouncedUpdateBibleDisplayInfo";
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(
+      updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo)
+    );
+  },
+});
+
+// handle updating from remote participant overlay info
+listenerMiddleware.startListening({
+  predicate: (action) => {
+    return action.type === "debouncedUpdateParticipantOverlayInfo";
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(
+      updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo)
+    );
+  },
+});
+
+// handle updating from remote stb overlay info
+listenerMiddleware.startListening({
+  predicate: (action) => {
+    return action.type === "debouncedUpdateStbOverlayInfo";
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(
+      updateStbOverlayInfoFromRemote(action.payload as OverlayInfo)
+    );
+  },
+});
+
+// handle updating from remote qr code overlay info
+listenerMiddleware.startListening({
+  predicate: (action) => {
+    return action.type === "debouncedUpdateQrCodeOverlayInfo";
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(
+      updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });

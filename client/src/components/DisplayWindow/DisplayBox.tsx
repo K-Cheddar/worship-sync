@@ -109,12 +109,13 @@ const DisplayBox = ({
     { scope: boxRef, dependencies: [box, time] }
   );
 
-  const bFontSize = isStream ? 1 : box.fontSize;
+  const bFontSize = isStream ? 1.2 : box.fontSize;
   const bWords = box.words || "";
   const words = isStream ? bWords.trim() : bWords;
   const fontSizeValue = bFontSize ? bFontSize / fontAdjustment : 1;
   const tSS = fontSizeValue / (width > 20 ? 32 : 10); // text shadow size
-  const fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size
+  const _fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size
+  const fOS = isStream ? _fOS / 2 : _fOS;
   const boxWidth = isStream
     ? "60%"
     : `calc(${box.width}% - ${box.sideMargin ? box.sideMargin * 2 : 0}%)`;

@@ -6,23 +6,13 @@ import PouchDB from "pouchdb";
 import { DBLogin } from "../types";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../hooks";
-import { globalDb } from "./controllerInfo";
 import { ref, onValue, Unsubscribe } from "firebase/database";
-import {
-  updateMonitorFromRemote,
-  updateProjectorFromRemote,
-  updateStreamFromRemote,
-  updateBibleDisplayInfoFromRemote,
-  updateParticipantOverlayInfoFromRemote,
-  updateStbOverlayInfoFromRemote,
-  updateQrCodeOverlayInfoFromRemote,
-} from "../store/presentationSlice";
+
 import {
   BibleDisplayInfo,
   OverlayInfo,
   Presentation as PresentationType,
 } from "../types";
-import { UnknownAction } from "@reduxjs/toolkit";
 import { ActionCreators } from "redux-undo";
 
 type LoginStateType = "idle" | "loading" | "error" | "success" | "demo";
@@ -104,46 +94,44 @@ const GlobalInfoProvider = ({ children }: any) => {
     (data: any) => {
       type updateInfoChildType = {
         info: PresentationType | BibleDisplayInfo | OverlayInfo;
-        updateFunction: (
-          arg0: PresentationType | BibleDisplayInfo | OverlayInfo
-        ) => UnknownAction;
+        updateAction: string;
         compareTo: PresentationType | BibleDisplayInfo | OverlayInfo;
       };
 
       const updateInfo = {
         projectorInfo: {
           info: data.projectorInfo,
-          updateFunction: updateProjectorFromRemote,
+          updateAction: "debouncedUpdateProjector",
           compareTo: projectorInfo,
         },
         monitorInfo: {
           info: data.monitorInfo,
-          updateFunction: updateMonitorFromRemote,
+          updateAction: "debouncedUpdateMonitor",
           compareTo: monitorInfo,
         },
         streamInfo: {
           info: data.streamInfo,
-          updateFunction: updateStreamFromRemote,
+          updateAction: "debouncedUpdateStream",
           compareTo: streamInfo,
         },
         stream_bibleInfo: {
           info: data.stream_bibleInfo,
-          updateFunction: updateBibleDisplayInfoFromRemote,
+          updateAction: "debouncedUpdateBibleDisplayInfo",
           compareTo: streamInfo.bibleDisplayInfo,
         },
         stream_participantOverlayInfo: {
           info: data.stream_participantOverlayInfo,
-          updateFunction: updateParticipantOverlayInfoFromRemote,
+          updateAction: "debouncedUpdateParticipantOverlayInfo",
           compareTo: streamInfo.participantOverlayInfo,
         },
         stream_stbOverlayInfo: {
           info: data.stream_stbOverlayInfo,
-          updateFunction: updateStbOverlayInfoFromRemote,
+          updateAction: "debouncedUpdateStbOverlayInfo",
           compareTo: streamInfo.stbOverlayInfo,
         },
         stream_qrCodeOverlayInfo: {
           info: data.stream_qrCodeOverlayInfo,
-          updateFunction: updateQrCodeOverlayInfoFromRemote,
+          updateAction: "debouncedUpdateQrCodeOverlayInfo",
           compareTo: streamInfo.qrCodeOverlayInfo,
         },
       };
@@ -152,7 +140,7 @@ const GlobalInfoProvider = ({ children }: any) => {
       for (const key of keys) {
         const _key = key as keyof typeof updateInfo; // Define type
         const obj = updateInfo[_key];
-        const { info, updateFunction, compareTo } = obj as updateInfoChildType;
+        const { info, updateAction, compareTo } = obj as updateInfoChildType;
 
         if (!info) continue; // nothing to update here.
 
@@ -160,7 +148,8 @@ const GlobalInfoProvider = ({ children }: any) => {
           (info.time && compareTo?.time && info.time > compareTo.time) ||
           (info.time && !compareTo?.time)
         ) {
-          dispatch(updateFunction({ ...info }));
+          console.log("update from remote", info);
+          dispatch({ type: updateAction, payload: info });
         }
       }
     },
@@ -232,6 +221,7 @@ const GlobalInfoProvider = ({ children }: any) => {
   }, [firebaseDb, user, updateFromRemote]);
 
   useEffect(() => {
+    console.log("adding storage event listener");
     window.addEventListener("storage", ({ key, newValue }) => {
       const onValueKeys = Object.keys(onValueRef.current);
       if (newValue && onValueKeys.some((e) => e === key)) {

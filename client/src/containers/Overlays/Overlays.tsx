@@ -307,7 +307,7 @@ const Overlays = () => {
                       className="text-sm flex gap-2 items-center"
                       labelClassName="w-24"
                       label="Duration"
-                      value={localDuration}
+                      value={localDuration || ""}
                       type="number"
                       onChange={(val) => setLocalDuration(val as number)}
                       data-ignore-undo="true"
