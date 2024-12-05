@@ -2,6 +2,7 @@ import { Box, DisplayType } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
+import cn from "classnames";
 
 type DisplayBoxProps = {
   prevBox?: Box;
@@ -63,17 +64,18 @@ const DisplayBox = ({
       if (isPrev) {
         boxTimeline.current = gsap.timeline();
 
-        if (!skipTextAnimation) {
-          boxTimeline.current.set(".display-box-text", { opacity: 1 });
-        }
         if (!skipBackgroundAnimation && shouldShowBackground) {
           boxTimeline.current.set(".display-box-background", { opacity: 1 });
         }
-        boxTimeline.current.to(".display-box-text", {
-          opacity: 0,
-          duration: textDuration,
-          ease: "power1.inOut",
-        });
+        boxTimeline.current.fromTo(
+          ".display-box-text",
+          { opacity: 1 },
+          {
+            opacity: 0,
+            duration: textDuration,
+            ease: "power1.inOut",
+          }
+        );
 
         if (shouldShowBackground) {
           boxTimeline.current.to(
@@ -85,17 +87,18 @@ const DisplayBox = ({
       } else {
         boxTimeline.current = gsap.timeline();
 
-        if (!skipTextAnimation) {
-          boxTimeline.current.set(".display-box-text", { opacity: 0 });
-        }
         if (!skipBackgroundAnimation && shouldShowBackground) {
           boxTimeline.current.set(".display-box-background", { opacity: 0 });
         }
-        boxTimeline.current.to(".display-box-text", {
-          opacity: 1,
-          duration: textDuration,
-          ease: "power1.inOut",
-        });
+        boxTimeline.current.fromTo(
+          ".display-box-text",
+          { opacity: 0 },
+          {
+            opacity: 1,
+            duration: textDuration,
+            ease: "power1.inOut",
+          }
+        );
 
         if (shouldShowBackground) {
           boxTimeline.current.to(
@@ -159,9 +162,10 @@ const DisplayBox = ({
     >
       {shouldShowBackground && (
         <img
-          className={`display-box-background ${
-            box.shouldKeepAspectRatio ? "object-contain" : ""
-          }`}
+          className={cn(
+            "display-box-background",
+            box.shouldKeepAspectRatio && "object-contain"
+          )}
           src={box.background}
           alt={box.label}
         />

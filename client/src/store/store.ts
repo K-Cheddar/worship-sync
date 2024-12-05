@@ -319,8 +319,18 @@ listenerMiddleware.startListening({
 
 // handle updating from remote projector
 listenerMiddleware.startListening({
-  predicate: (action) => {
-    return action.type === "debouncedUpdateProjector";
+  predicate: (action, currentState, previousState) => {
+    const state = (previousState as RootState).presentation;
+    const info = action.payload as Presentation;
+    return (
+      action.type === "debouncedUpdateProjector" &&
+      !!(
+        (info.time &&
+          state.projectorInfo.time &&
+          info.time > state.projectorInfo.time) ||
+        (info.time && !state.projectorInfo.time)
+      )
+    );
   },
 
   effect: async (action, listenerApi) => {
@@ -335,8 +345,18 @@ listenerMiddleware.startListening({
 
 // handle updating from remote monitor
 listenerMiddleware.startListening({
-  predicate: (action) => {
-    return action.type === "debouncedUpdateMonitor";
+  predicate: (action, currentState, previousState) => {
+    const state = (previousState as RootState).presentation;
+    const info = action.payload as Presentation;
+    return (
+      action.type === "debouncedUpdateMonitor" &&
+      !!(
+        (info.time &&
+          state.monitorInfo.time &&
+          info.time > state.monitorInfo.time) ||
+        (info.time && !state.monitorInfo.time)
+      )
+    );
   },
 
   effect: async (action, listenerApi) => {
@@ -351,8 +371,18 @@ listenerMiddleware.startListening({
 
 // handle updating from remote stream
 listenerMiddleware.startListening({
-  predicate: (action) => {
-    return action.type === "debouncedUpdateStream";
+  predicate: (action, currentState, previousState) => {
+    const state = (previousState as RootState).presentation;
+    const info = action.payload as Presentation;
+    return (
+      action.type === "debouncedUpdateStream" &&
+      !!(
+        (info.time &&
+          state.streamInfo.time &&
+          info.time > state.streamInfo.time) ||
+        (info.time && !state.streamInfo.time)
+      )
+    );
   },
 
   effect: async (action, listenerApi) => {
@@ -367,8 +397,18 @@ listenerMiddleware.startListening({
 
 // handle updating from remote bible info
 listenerMiddleware.startListening({
-  predicate: (action) => {
-    return action.type === "debouncedUpdateBibleDisplayInfo";
+  predicate: (action, currentState, previousState) => {
+    const state = (previousState as RootState).presentation;
+    const info = action.payload as BibleDisplayInfo;
+    return (
+      action.type === "debouncedUpdateBibleDisplayInfo" &&
+      !!(
+        (info.time &&
+          state.streamInfo.bibleDisplayInfo?.time &&
+          info.time > state.streamInfo.bibleDisplayInfo.time) ||
+        (info.time && !state.streamInfo.bibleDisplayInfo?.time)
+      )
+    );
   },
 
   effect: async (action, listenerApi) => {
@@ -383,8 +423,18 @@ listenerMiddleware.startListening({
 
 // handle updating from remote participant overlay info
 listenerMiddleware.startListening({
-  predicate: (action) => {
-    return action.type === "debouncedUpdateParticipantOverlayInfo";
+  predicate: (action, currentState, previousState) => {
+    const state = (previousState as RootState).presentation;
+    const info = action.payload as OverlayInfo;
+    return (
+      action.type === "debouncedUpdateParticipantOverlayInfo" &&
+      !!(
+        (info.time &&
+          state.streamInfo.participantOverlayInfo?.time &&
+          info.time > state.streamInfo.participantOverlayInfo.time) ||
+        (info.time && !state.streamInfo.participantOverlayInfo?.time)
+      )
+    );
   },
 
   effect: async (action, listenerApi) => {
@@ -399,8 +449,18 @@ listenerMiddleware.startListening({
 
 // handle updating from remote stb overlay info
 listenerMiddleware.startListening({
-  predicate: (action) => {
-    return action.type === "debouncedUpdateStbOverlayInfo";
+  predicate: (action, currentState, previousState) => {
+    const state = (previousState as RootState).presentation;
+    const info = action.payload as OverlayInfo;
+    return (
+      action.type === "debouncedUpdateStbOverlayInfo" &&
+      !!(
+        (info.time &&
+          state.streamInfo.stbOverlayInfo?.time &&
+          info.time > state.streamInfo.stbOverlayInfo.time) ||
+        (info.time && !state.streamInfo.stbOverlayInfo?.time)
+      )
+    );
   },
 
   effect: async (action, listenerApi) => {
@@ -415,8 +475,18 @@ listenerMiddleware.startListening({
 
 // handle updating from remote qr code overlay info
 listenerMiddleware.startListening({
-  predicate: (action) => {
-    return action.type === "debouncedUpdateQrCodeOverlayInfo";
+  predicate: (action, currentState, previousState) => {
+    const state = (previousState as RootState).presentation;
+    const info = action.payload as OverlayInfo;
+    return (
+      action.type === "debouncedUpdateQrCodeOverlayInfo" &&
+      !!(
+        (info.time &&
+          state.streamInfo.qrCodeOverlayInfo?.time &&
+          info.time > state.streamInfo.qrCodeOverlayInfo.time) ||
+        (info.time && !state.streamInfo.qrCodeOverlayInfo?.time)
+      )
+    );
   },
 
   effect: async (action, listenerApi) => {

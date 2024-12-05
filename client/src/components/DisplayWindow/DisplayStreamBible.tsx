@@ -44,28 +44,31 @@ const DisplayStreamBible = forwardRef<
         const targets = [bibleRef.current, ...innerElements];
 
         if (prevBibleDisplayInfo?.title?.trim()) {
-          bibleTimeline.current = gsap
-            .timeline()
-            .set(targets, {
+          bibleTimeline.current = gsap.timeline().fromTo(
+            targets,
+            {
               opacity: 0,
               yPercent: 0,
-            })
-            .to(targets, { opacity: 1, duration: 0.35, ease: "power1.inOut" });
+            },
+            { opacity: 1, duration: 0.35, ease: "power1.inOut" }
+          );
         } else {
-          bibleTimeline.current = gsap
-            .timeline()
-            .set(targets, { yPercent: 150 });
+          bibleTimeline.current = gsap.timeline();
 
           // Only animate if there is bible info
           if (
             bibleDisplayInfo?.title?.trim() ||
             bibleDisplayInfo?.text?.trim()
           ) {
-            bibleTimeline.current.to(targets, {
-              yPercent: 0,
-              duration: 2,
-              ease: "power1.inOut",
-            });
+            bibleTimeline.current.fromTo(
+              targets,
+              { yPercent: 150 },
+              {
+                yPercent: 0,
+                duration: 1.5,
+                ease: "power1.inOut",
+              }
+            );
           }
         }
       },
@@ -85,22 +88,24 @@ const DisplayStreamBible = forwardRef<
         const targets = [prevBibleRef.current, ...innerElements];
 
         if (bibleDisplayInfo?.title) {
-          prevBibleTimeline.current = gsap
-            .timeline()
-            .set(targets, {
+          prevBibleTimeline.current = gsap.timeline().fromTo(
+            targets,
+            {
               opacity: 1,
               yPercent: 0,
-            })
-            .to(targets, { opacity: 0, duration: 0.35, ease: "power1.inOut" });
+            },
+            { opacity: 0, duration: 0.35, ease: "power1.inOut" }
+          );
         } else {
-          prevBibleTimeline.current = gsap
-            .timeline()
-            .set(targets, { yPercent: 0, opacity: 1 })
-            .to(targets, {
+          prevBibleTimeline.current = gsap.timeline().fromTo(
+            targets,
+            { yPercent: 0, opacity: 1 },
+            {
               yPercent: 150,
-              duration: 2,
+              duration: 1.5,
               ease: "power1.inOut",
-            });
+            }
+          );
         }
       },
       { scope: prevBibleRef, dependencies: [prevBibleDisplayInfo] }
