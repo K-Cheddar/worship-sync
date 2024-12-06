@@ -112,6 +112,7 @@ listenerMiddleware.startListening({
       action.type !== "itemList/initiateItemList" &&
       action.type !== "itemList/setItemListIsLoading" &&
       action.type !== "itemList/setActiveItemInList" &&
+      action.type !== "itemList/updateItemListFromRemote" &&
       action.type !== "RESET"
     );
   },
@@ -140,6 +141,7 @@ listenerMiddleware.startListening({
         (previousState as RootState).undoable.present.itemLists &&
       action.type !== "itemLists/setInitialItemList" &&
       action.type !== "itemLists/initiateItemLists" &&
+      action.type !== "itemLists/updateItemListsFromRemote" &&
       action.type !== "RESET"
     );
   },
@@ -167,6 +169,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).allItems !==
         (previousState as RootState).allItems &&
       action.type !== "allItems/initiateAllItemsList" &&
+      action.type !== "allItems/updateAllItemsListFromRemote" &&
       action.type !== "RESET"
     );
   },
@@ -192,6 +195,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.overlays !==
         (previousState as RootState).undoable.present.overlays &&
       action.type !== "overlays/initiateOverlayList" &&
+      action.type !== "overlays/updateOverlayListFromRemote" &&
       action.type !== "overlays/selectOverlay" &&
       action.type !== "RESET"
     );
@@ -221,6 +225,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).media !==
         (previousState as RootState).media &&
       action.type !== "media/initiateMediaList" &&
+      action.type !== "media/updateMediaListFromRemote" &&
       action.type !== "RESET"
     );
   },

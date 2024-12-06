@@ -90,7 +90,9 @@ const ControllerInfoProvider = ({ children }: any) => {
                 }
                 if (event.direction === "pull") {
                   console.log("updating from remote", event);
-                  updater.current.dispatchEvent(new Event("update"));
+                  updater.current.dispatchEvent(
+                    new CustomEvent("update", { detail: event.change.docs })
+                  );
                 }
               });
           }

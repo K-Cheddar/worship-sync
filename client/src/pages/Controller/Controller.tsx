@@ -20,7 +20,10 @@ import {
 import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
-import { initiateAllItemsList } from "../../store/allItemsSlice";
+import {
+  initiateAllItemsList,
+  updateAllItemsListFromRemote,
+} from "../../store/allItemsSlice";
 import Songs from "../../containers/Songs/Songs";
 import { Route, Routes, useLocation } from "react-router-dom";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -36,8 +39,12 @@ import {
 import {
   initiateItemList,
   setItemListIsLoading,
+  updateItemListFromRemote,
 } from "../../store/itemListSlice";
-import { initiateOverlayList } from "../../store/overlaysSlice";
+import {
+  initiateOverlayList,
+  updateOverlayListFromRemote,
+} from "../../store/overlaysSlice";
 import { formatItemList } from "../../utils/formatItemList";
 import Button from "../../components/Button/Button";
 import Spinner from "../../components/Spinner/Spinner";
@@ -93,6 +100,7 @@ const Controller = () => {
   }, [location.pathname]);
 
   useEffect(() => {
+    // delete unused bible items
     const getAllItems = async () => {
       if (!db) return;
       const allItems: DBAllItems | undefined = await db.get("allItems");
@@ -140,15 +148,6 @@ const Controller = () => {
       }
     };
     getAllItems();
-
-    // updater?.addEventListener("update", () => {
-    //   console.log("updating all items from update event");
-    //   getAllItems();
-    // });
-
-    // return () => {
-    //   updater?.removeEventListener("update", getAllItems);
-    // };
   }, [dispatch, db]);
 
   useEffect(() => {
@@ -172,16 +171,42 @@ const Controller = () => {
     };
 
     getItemList();
-
-    // updater?.addEventListener("update", () => {
-    //   console.log("updating itemList from update event");
-    //   getItemList();
-    // });
-
-    // return () => {
-    //   updater?.removeEventListener("update", getItemList);
-    // };
   }, [dispatch, db, selectedList, cloud]);
+
+  useEffect(() => {
+    if (!updater || !selectedList) return;
+    const updateAllItemsAndList = async (event: CustomEventInit) => {
+      try {
+        const updates = event.detail;
+        for (const _update of updates) {
+          // check if the list we have selected was updated
+          if (_update._id === selectedList.id) {
+            console.log("updating selected item list from remote", event);
+            const update = _update as DBItemListDetails;
+            const itemList = update.items;
+            const overlays = update.overlays;
+            if (cloud) {
+              dispatch(
+                updateItemListFromRemote(formatItemList(itemList, cloud))
+              );
+            }
+            dispatch(updateOverlayListFromRemote(overlays));
+          }
+          if (_update._id === "allItems") {
+            console.log("updating all items from remote", event);
+            const update = _update as DBAllItems;
+            dispatch(updateAllItemsListFromRemote(update.items));
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    updater.addEventListener("update", updateAllItemsAndList);
+
+    return () => updater.removeEventListener("update", updateAllItemsAndList);
+  }, [updater, dispatch, cloud, selectedList]);
 
   const controllerRef = useCallback(
     (node: HTMLDivElement) => {

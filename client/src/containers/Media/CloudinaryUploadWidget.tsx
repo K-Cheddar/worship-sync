@@ -15,7 +15,8 @@ declare global {
 export type imageInfoType = {
   public_id: string;
   secure_url: string;
-  type: string;
+  resource_type: string;
+  thumbnail_url: string;
 };
 
 type CloudinaryUploadWidgetProps = {

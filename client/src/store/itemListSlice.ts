@@ -30,6 +30,12 @@ export const itemListSlice = createSlice({
         listId: generateRandomId(),
       }));
     },
+    updateItemListFromRemote: (state, action: PayloadAction<ServiceItem[]>) => {
+      state.list = action.payload.map((item) => ({
+        ...item,
+        listId: item.listId || generateRandomId(),
+      }));
+    },
     removeItemFromList: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((item) => {
         return item.listId !== action.payload;
@@ -65,6 +71,7 @@ export const {
   setActiveItemInList,
   setItemListIsLoading,
   removeItemFromListById,
+  updateItemListFromRemote,
 } = itemListSlice.actions;
 
 export default itemListSlice.reducer;

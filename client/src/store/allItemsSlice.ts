@@ -22,6 +22,12 @@ export const allItemsSlice = createSlice({
       state.list = action.payload;
       state.isAllItemsLoading = false;
     },
+    updateAllItemsListFromRemote: (
+      state,
+      action: PayloadAction<ServiceItem[]>
+    ) => {
+      state.list = action.payload;
+    },
     removeItemFromAllItemsList: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((item) => item._id !== action.payload);
     },
@@ -36,6 +42,7 @@ export const {
   removeItemFromAllItemsList,
   addItemToAllItemsList,
   initiateAllItemsList,
+  updateAllItemsListFromRemote,
 } = allItemsSlice.actions;
 
 export default allItemsSlice.reducer;
