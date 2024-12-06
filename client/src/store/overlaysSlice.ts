@@ -227,6 +227,19 @@ export const overlaysSlice = createSlice({
         id: generateRandomId(),
       }));
     },
+    updateOverlayListFromRemote: (
+      state,
+      action: PayloadAction<OverlayInfo[]>
+    ) => {
+      if (action.payload.length === 0) {
+        state.list = dummyOverlays;
+        return;
+      }
+      state.list = action.payload.map((overlay) => ({
+        ...overlay,
+        id: overlay.id || generateRandomId(),
+      }));
+    },
     deleteOverlay: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter(
         (overlay) => overlay.id !== action.payload
@@ -263,6 +276,7 @@ export const {
   deleteOverlay,
   updateOverlay,
   initiateOverlayList,
+  updateOverlayListFromRemote,
 } = overlaysSlice.actions;
 
 export default overlaysSlice.reducer;

@@ -179,8 +179,6 @@ const GlobalInfoProvider = ({ children }: any) => {
   useEffect(() => {
     if (!firebaseDb) return;
 
-    console.log("adding firebase listeners");
-
     if (onValueRef.current) {
       const keys = Object.keys(onValueRef.current);
       for (const key of keys) {
@@ -204,12 +202,10 @@ const GlobalInfoProvider = ({ children }: any) => {
   }, [firebaseDb, user, updateFromRemote]);
 
   useEffect(() => {
-    console.log("adding storage event listener");
     window.addEventListener("storage", ({ key, newValue }) => {
       const onValueKeys = Object.keys(onValueRef.current);
       if (newValue && onValueKeys.some((e) => e === key)) {
         const value = JSON.parse(newValue);
-        // console.log("Storage update", key, value);
         updateFromRemote({ [key as keyof typeof onValueRef.current]: value });
       }
     });

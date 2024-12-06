@@ -9,6 +9,7 @@ import {
   selectItemList,
   setInitialItemList,
   updateItemLists,
+  updateItemListsFromRemote,
 } from "../../../store/itemListsSlice";
 import getItemListsUtil from "../../../utils/getItemLists";
 import PopOver from "../../../components/PopOver/PopOver";
@@ -33,7 +34,7 @@ const Services = () => {
     label: list.name,
   }));
 
-  const { db } = useContext(ControllerInfoContext) || {};
+  const { db, updater } = useContext(ControllerInfoContext) || {};
 
   useEffect(() => {
     const getItemLists = async () => {
@@ -51,8 +52,33 @@ const Services = () => {
         console.error(e);
       }
     };
+
     getItemLists();
-  }, [db, dispatch]);
+  }, [db, dispatch, updater]);
+
+  useEffect(() => {
+    if (!updater) return;
+
+    const updateItemLists = async (event: CustomEventInit) => {
+      try {
+        const updates = event.detail;
+        for (const _update of updates) {
+          if (_update._id === "ItemLists") {
+            console.log("updating item lists from remote");
+            const update = _update as DBItemLists;
+            const formattedItemLists = getItemListsUtil(update.itemLists);
+            dispatch(updateItemListsFromRemote(formattedItemLists));
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    updater.addEventListener("update", updateItemLists);
+
+    return () => updater.removeEventListener("update", updateItemLists);
+  }, [updater, dispatch]);
 
   const _updateItemLists = (list: ItemList) => {
     dispatch(

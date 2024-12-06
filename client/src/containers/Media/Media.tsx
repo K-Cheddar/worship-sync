@@ -15,7 +15,11 @@ import {
 } from "../../store/itemSlice";
 import "./Media.scss";
 import { DBMedia } from "../../types";
-import { initiateMediaList, updateMediaList } from "../../store/mediaSlice";
+import {
+  initiateMediaList,
+  updateMediaList,
+  updateMediaListFromRemote,
+} from "../../store/mediaSlice";
 import { retrieveImages } from "../../utils/itemUtil";
 import CloudinaryUploadWidget, {
   imageInfoType,
@@ -54,7 +58,8 @@ const Media = () => {
   }>({ id: "", background: "" });
   const [isMediaLoading, setIsMediaLoading] = useState(true);
 
-  const { db, cloud, isMobile } = useContext(ControllerInfoContext) || {};
+  const { db, cloud, isMobile, updater } =
+    useContext(ControllerInfoContext) || {};
 
   const defaultItemsPerRow = isMobile ? "grid-cols-3" : "grid-cols-5";
 
@@ -78,22 +83,54 @@ const Media = () => {
     getAllItems();
   }, [dispatch, db, cloud]);
 
+  useEffect(() => {
+    if (!updater || !cloud) return;
+
+    const updateMediaList = async (event: CustomEventInit) => {
+      try {
+        const updates = event.detail;
+        for (const _update of updates) {
+          if (_update._id === "images") {
+            console.log("updating media from remote");
+            const update = _update as DBMedia;
+            const images = retrieveImages({
+              backgrounds: update.backgrounds,
+              cloud,
+            });
+            dispatch(updateMediaListFromRemote(images));
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    updater.addEventListener("update", updateMediaList);
+
+    return () => updater.removeEventListener("update", updateMediaList);
+  }, [updater, dispatch, cloud]);
+
   const deleteBackground = async () => {
     if (!db) return;
     const updatedList = list.filter((item) => item.id !== selectedMedia.id);
     dispatch(updateMediaList(updatedList));
   };
 
-  const addNewBackground = ({ public_id, secure_url, type }: imageInfoType) => {
+  const addNewBackground = ({
+    public_id,
+    secure_url,
+    resource_type,
+    thumbnail_url,
+  }: imageInfoType) => {
     const updatedList = [
       ...list,
       {
         category: "uncategorized",
         name: public_id,
-        type,
+        type: resource_type,
         id: generateRandomId(),
         background: secure_url,
-        thumbnail: secure_url,
+        thumbnail: thumbnail_url,
       },
     ];
     dispatch(updateMediaList(updatedList));
@@ -161,7 +198,7 @@ const Media = () => {
         />
         <Button
           variant="tertiary"
-          disabled={selectedMedia.id === "" || isLoading}
+          disabled={selectedMedia.id === ""}
           svg={DeleteSVG}
           onClick={() => deleteBackground()}
         />
