@@ -112,7 +112,7 @@ const DisplayBox = ({
     { scope: boxRef, dependencies: [box, time] }
   );
 
-  const bFontSize = isStream ? 1.2 : box.fontSize;
+  const bFontSize = isStream ? 1.1 : box.fontSize;
   const bWords = box.words || "";
   const words = isStream ? bWords.trim() : bWords;
   const fontSizeValue = bFontSize ? bFontSize / fontAdjustment : 1;
@@ -128,8 +128,8 @@ const DisplayBox = ({
     : `calc(${box.height}% - (${width}vw * (${box.topMargin || 0} + ${
         box.topMargin || 0
       }) / 100) )`;
-  const marginLeft = isStream ? "20%" : `${box.sideMargin}%`;
-  const marginRight = isStream ? "20%" : `${box.sideMargin}%`;
+  const marginLeft = isStream ? "15%" : `${box.sideMargin}%`;
+  const marginRight = isStream ? "15%" : `${box.sideMargin}%`;
   const marginTop = isStream ? "auto" : `${box.topMargin}%`;
   const marginBottom = isStream ? "10%" : `${box.topMargin}%`;
   const boxTop = isStream ? "90%" : `${box.y || 0}%`;
