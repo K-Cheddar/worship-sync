@@ -96,10 +96,12 @@ const ServiceItem = ({
             height: serviceItemRef.current.offsetHeight,
             minHeight: serviceItemRef.current.style.minHeight,
             borderBottomWidth: serviceItemRef.current.style.borderBottomWidth,
+            opacity: 1,
           },
           {
             height: 0,
             minHeight: 0,
+            opacity: 0,
             borderBottomWidth: 0,
             duration: 0.5,
             ease: "power1.inOut",
@@ -112,11 +114,13 @@ const ServiceItem = ({
           {
             height: 0,
             minHeight: 0,
+            opacity: 0,
             borderBottomWidth: 0,
           },
           {
             height: "auto",
             minHeight: "auto",
+            opacity: 1,
             duration: 0.5,
             borderBottomWidth: "2px",
             ease: "power1.inOut",

@@ -209,6 +209,19 @@ export const overlaysSlice = createSlice({
       state.hasPendingUpdate = true;
     },
     initiateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
+      // reset state when loading an item list
+      state.id = "";
+      state.color = "#16a34a";
+      state.name = "";
+      state.title = "";
+      state.event = "";
+      state.heading = "";
+      state.subHeading = "";
+      state.url = "";
+      state.description = "";
+      state.duration = 7;
+      state.type = "participant";
+
       if (action.payload.length === 0) {
         state.list = dummyOverlays;
         return;
