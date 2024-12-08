@@ -15,13 +15,15 @@ import ServiceItem from "./ServiceItem";
 const ServiceItems = () => {
   const dispatch = useDispatch();
   const location = useLocation();
-  const { list: serviceItems, isLoading } = useSelector(
-    (state) => state.undoable.present.itemList
-  );
+  const {
+    list: serviceItems,
+    isLoading,
+    initialItems,
+    selectedItemListId,
+  } = useSelector((state) => state.undoable.present.itemList);
   const { selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
-  const { listId } = useSelector((state) => state.undoable.present.item);
 
   const { setNodeRef } = useDroppable({
     id: "service-items-list",
@@ -66,7 +68,8 @@ const ServiceItems = () => {
                 <ServiceItem
                   key={item.listId}
                   item={item}
-                  listId={listId}
+                  selectedItemListId={selectedItemListId}
+                  initialItems={initialItems}
                   location={location}
                 />
               );

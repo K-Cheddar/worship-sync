@@ -5,13 +5,17 @@ import generateRandomId from "../utils/generateRandomId";
 type ItemListState = {
   list: ServiceItem[];
   isLoading: boolean;
-  selectedItemListId: string;
+  selectedItemListId: string; // each item has a unique listId even if their ids are the same
+  hasPendingUpdate: boolean;
+  initialItems: string[];
 };
 
 const initialState: ItemListState = {
   list: [],
   isLoading: true,
   selectedItemListId: "",
+  hasPendingUpdate: false,
+  initialItems: [],
 };
 
 export const itemListSlice = createSlice({
@@ -20,6 +24,7 @@ export const itemListSlice = createSlice({
   reducers: {
     updateItemList: (state, action: PayloadAction<ServiceItem[]>) => {
       state.list = action.payload;
+      state.hasPendingUpdate = true;
     },
     setActiveItemInList: (state, action: PayloadAction<string>) => {
       state.selectedItemListId = action.payload;
@@ -29,6 +34,7 @@ export const itemListSlice = createSlice({
         ...item,
         listId: generateRandomId(),
       }));
+      state.initialItems = state.list.map((item) => item.listId);
     },
     updateItemListFromRemote: (state, action: PayloadAction<ServiceItem[]>) => {
       state.list = action.payload.map((item) => ({
@@ -40,11 +46,13 @@ export const itemListSlice = createSlice({
       state.list = state.list.filter((item) => {
         return item.listId !== action.payload;
       });
+      state.hasPendingUpdate = true;
     },
     removeItemFromListById: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((item) => {
         return item._id !== action.payload;
       });
+      state.hasPendingUpdate = true;
     },
     addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
       const newItem = { ...action.payload, listId: generateRandomId() };
@@ -56,9 +64,14 @@ export const itemListSlice = createSlice({
       } else {
         state.list.push(newItem);
       }
+      state.selectedItemListId = newItem.listId;
+      state.hasPendingUpdate = true;
     },
     setItemListIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
+    },
+    setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
+      state.hasPendingUpdate = action.payload;
     },
   },
 });
@@ -72,6 +85,7 @@ export const {
   setItemListIsLoading,
   removeItemFromListById,
   updateItemListFromRemote,
+  setHasPendingUpdate,
 } = itemListSlice.actions;
 
 export default itemListSlice.reducer;

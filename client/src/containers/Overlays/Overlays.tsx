@@ -1,5 +1,6 @@
 import Button from "../../components/Button/Button";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   addOverlay,
@@ -28,6 +29,7 @@ import {
 import RadioButton from "../../components/RadioButton/RadioButton";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import Select from "../../components/Select/Select";
+import generateRandomId from "../../utils/generateRandomId";
 
 const colorOptions = [
   { label: "Red", value: "#dc2626" },
@@ -53,6 +55,7 @@ const Overlays = () => {
     color,
     duration,
     type,
+    initialList,
   } = useSelector((state) => state.undoable.present.overlays);
   const { isStreamTransmitting } = useSelector((state) => state.presentation);
   const { isLoading } = useSelector((state) => state.undoable.present.itemList);
@@ -163,6 +166,7 @@ const Overlays = () => {
                     return (
                       <Overlay
                         key={overlay.id}
+                        initialList={initialList}
                         overlay={overlay}
                         selectedId={id}
                         isStreamTransmitting={isStreamTransmitting}
@@ -174,7 +178,24 @@ const Overlays = () => {
               <Button
                 className="text-sm w-full justify-center mt-2"
                 svg={AddSVG}
-                onClick={() => dispatch(addOverlay())}
+                color="#06b6d4"
+                onClick={() =>
+                  dispatch(
+                    addOverlay({
+                      name: localName,
+                      title: localTitle,
+                      event: localEvent,
+                      heading: localHeading,
+                      subHeading: localSubHeading,
+                      url: localUrl,
+                      description: localDescription,
+                      color: localColor,
+                      duration: localDuration,
+                      type: localType,
+                      id: generateRandomId(),
+                    })
+                  )
+                }
               >
                 Add Overlay
               </Button>
@@ -336,6 +357,8 @@ const Overlays = () => {
 
                     <Button
                       className="text-sm w-full justify-center"
+                      svg={SaveSVG}
+                      color="#06b6d4"
                       onClick={() =>
                         dispatch(
                           updateOverlay({

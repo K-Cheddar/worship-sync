@@ -153,6 +153,8 @@ const dummyOverlays: OverlayInfo[] = [
 
 type OverlaysState = OverlayInfo & {
   list: OverlayInfo[];
+  hasPendingUpdate: boolean;
+  initialList: string[];
 };
 
 const initialState: OverlaysState = {
@@ -167,7 +169,9 @@ const initialState: OverlaysState = {
   id: "",
   duration: 7,
   type: "participant",
+  hasPendingUpdate: false,
   list: [],
+  initialList: [],
 };
 
 export const overlaysSlice = createSlice({
@@ -187,35 +191,22 @@ export const overlaysSlice = createSlice({
       state.duration = action.payload.duration;
       state.type = action.payload.type;
     },
-    addOverlay: (state) => {
+    addOverlay: (state, action: PayloadAction<OverlayInfo>) => {
+      // get index of selected overlay
       const existingIndex = state.list.findIndex(
         (overlay) => overlay.id === state.id
       );
-      const { list, ...itemState } = state;
-      const newItem = {
-        ...itemState,
-        name:
-          itemState.type === "participant"
-            ? itemState.name + " (Copy)"
-            : itemState.name,
-        heading:
-          itemState.type === "stick-to-bottom"
-            ? itemState.heading + " (Copy)"
-            : itemState.heading,
-        description:
-          itemState.type === "qr-code"
-            ? itemState.description + " (Copy)"
-            : itemState.description,
-        id: generateRandomId(),
-      };
+      const newItem = { ...action.payload };
       if (existingIndex !== -1) {
         state.list.splice(existingIndex + 1, 0, newItem);
       } else {
         state.list.push(newItem);
       }
+      state.hasPendingUpdate = true;
     },
     updateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
       state.list = action.payload;
+      state.hasPendingUpdate = true;
     },
     initiateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
       if (action.payload.length === 0) {
@@ -226,6 +217,7 @@ export const overlaysSlice = createSlice({
         ...overlay,
         id: generateRandomId(),
       }));
+      state.initialList = state.list.map((overlay) => overlay.id);
     },
     updateOverlayListFromRemote: (
       state,
@@ -257,6 +249,7 @@ export const overlaysSlice = createSlice({
         state.duration = 7;
         state.type = "participant";
       }
+      state.hasPendingUpdate = true;
     },
     updateOverlay: (state, action: PayloadAction<OverlayInfo>) => {
       state.list = state.list.map((overlay) => {
@@ -265,6 +258,10 @@ export const overlaysSlice = createSlice({
         }
         return overlay;
       });
+      state.hasPendingUpdate = true;
+    },
+    setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
+      state.hasPendingUpdate = action.payload;
     },
   },
 });
@@ -277,6 +274,7 @@ export const {
   updateOverlay,
   initiateOverlayList,
   updateOverlayListFromRemote,
+  setHasPendingUpdate,
 } = overlaysSlice.actions;
 
 export default overlaysSlice.reducer;

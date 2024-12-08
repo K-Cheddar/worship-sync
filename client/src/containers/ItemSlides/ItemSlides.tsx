@@ -196,9 +196,7 @@ const ItemSlides = () => {
             <Button
               variant="tertiary"
               svg={DeleteSVG}
-              onClick={() => {
-                dispatch(removeSlide({ index: selectedSlide }));
-              }}
+              onClick={() => dispatch(removeSlide({ index: selectedSlide }))}
             />
           </>
         )}
