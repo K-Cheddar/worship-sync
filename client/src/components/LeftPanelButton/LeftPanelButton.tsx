@@ -19,11 +19,23 @@ type LeftPanelButtonProps = {
     id: string;
   }[];
   image?: string;
+  className?: string;
 };
 
 const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
   (
-    { isSelected, to, title, type, actions, id, style, image, ...rest },
+    {
+      isSelected,
+      to,
+      title,
+      type,
+      actions,
+      id,
+      style,
+      image,
+      className,
+      ...rest
+    },
     ref
   ) => {
     return (
@@ -33,7 +45,8 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         className={cn(
           "flex min-h-8",
           actions && !isSelected && "hover:bg-gray-500 active:bg-gray-400",
-          isSelected && "bg-gray-900"
+          isSelected && "bg-gray-900",
+          className
         )}
         {...rest}
       >

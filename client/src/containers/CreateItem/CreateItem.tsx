@@ -1,6 +1,8 @@
 import { useContext, useMemo, useState } from "react";
 import RadioButton from "../../components/RadioButton/RadioButton";
 import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
+import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -68,6 +70,9 @@ const CreateItem = () => {
     types.map((type) => ({ ...type, selected: type.type === initialType }))
   );
   const [itemName, setItemName] = useState<string>(initialName);
+  const [justAdded, setJustAdded] = useState(false);
+  const [justCreated, setJustCreated] = useState(false);
+
   const { db } = useContext(ControllerInfoContext) || {};
 
   const naviagte = useNavigate();
@@ -145,6 +150,15 @@ const CreateItem = () => {
 
     setItemName("");
     setText("");
+    setJustCreated(true);
+    setTimeout(() => setJustCreated(false), 2000);
+  };
+
+  const addItem = () => {
+    if (!existingItem) return;
+    dispatch(addItemToItemList(existingItem));
+    setJustAdded(true);
+    setTimeout(() => setJustAdded(false), 2000);
   };
 
   return (
@@ -169,9 +183,12 @@ const CreateItem = () => {
               <Button
                 variant="tertiary"
                 className="inline"
-                onClick={() => dispatch(addItemToItemList(existingItem))}
+                onClick={addItem}
+                svg={justAdded ? CheckSVG : AddSVG}
+                color={justAdded ? "#84cc16" : "#22d3ee"}
+                disabled={justAdded}
               >
-                Add to list
+                {justAdded ? "Added!" : "Add to list"}
               </Button>
             </p>
           )}
@@ -211,12 +228,16 @@ const CreateItem = () => {
         )}
 
         <Button
-          disabled={!itemName || !!existingItem}
+          disabled={!itemName || !!existingItem || justCreated}
           variant="cta"
           className="text-base w-full justify-center mt-4"
           onClick={createItem}
+          svg={justCreated ? CheckSVG : AddSVG}
+          color={justCreated ? "#84cc16" : undefined}
         >
-          Create {itemTypes.find((item) => item.selected)?.label}
+          {justCreated
+            ? "Created!"
+            : `Create ${itemTypes.find((item) => item.selected)?.label}`}
         </Button>
       </div>
     </div>

@@ -4,7 +4,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import Select from "../../components/Select/Select";
@@ -32,7 +31,9 @@ import { useSearchParams } from "react-router-dom";
 import { formatBible } from "../../utils/overflow";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
+import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { ReactComponent as DownloadSVG } from "../../assets/icons/download.svg";
 import {
   updateBibleDisplayInfo,
   updatePresentation,
@@ -76,6 +77,9 @@ const Bible = () => {
     useState(false);
 
   const [versionSelectorHeight, setVersionSelectorHeight] = useState(0);
+  const [justAdded, setJustAdded] = useState(false);
+  const [justGotChapter, setJustGotChapter] = useState(false);
+  const [isLoadingChapter, setIsLoadingChapter] = useState(false);
 
   const { selectedList } = useSelector(
     (state: any) => state.undoable.present.itemLists
@@ -141,6 +145,7 @@ const Bible = () => {
   }, [bibleDb, version]);
 
   const getVersesFromGateway = async () => {
+    setIsLoadingChapter(true);
     try {
       setIsLoading(true);
       const data = await getVersesApi({
@@ -153,11 +158,18 @@ const Bible = () => {
       setHasExternalVerses(dataHasVerses);
       if (dataHasVerses) {
         dispatch(setVerses(data.verses));
+        setJustGotChapter(true);
+        setShowVersesDisplaySection(true);
+
+        setTimeout(() => {
+          setJustGotChapter(false);
+        }, 2000);
       }
     } catch (error) {
       setIsLoading(false);
       console.error(error);
     }
+    setIsLoadingChapter(false);
   };
 
   useEffect(() => {
@@ -205,6 +217,9 @@ const Bible = () => {
     dispatch(addItemToAllItemsList(itemForList));
     dispatch(setActiveItem(item));
     dispatch(setCreateItem({ name: "", type: "", text: "" }));
+    setJustAdded(true);
+
+    setTimeout(() => setJustAdded(false), 2000);
   };
 
   const sendVerse = (verse: verseType) => {
@@ -281,9 +296,11 @@ const Bible = () => {
         padding="px-4 py-1"
         className="ml-auto"
         onClick={submitVerses}
-        svg={AddSVG}
+        disabled={(bibleType === "external" && !hasExternalVerses) || justAdded}
+        color={justAdded ? "#67e8f9" : undefined}
+        svg={justAdded ? CheckSVG : AddSVG}
       >
-        Add to list
+        {justAdded ? "Added!" : "Add to list"}
       </Button>
     </div>
   );
@@ -309,8 +326,14 @@ const Bible = () => {
         <Button
           className="lg:h-fit max-lg:flex-1 max-lg:justify-center"
           onClick={getVersesFromGateway}
+          isLoading={isLoadingChapter}
+          disabled={isLoadingChapter}
+          color={justGotChapter ? "#84cc16" : "#22d3ee"}
+          svg={justGotChapter ? CheckSVG : DownloadSVG}
         >
-          Get chapter from Bible Gateway
+          {justGotChapter
+            ? "Got chapter from Bible Gateway!"
+            : "Get chapter from Bible Gateway"}
         </Button>
         <div className="flex w-full lg:hidden border border-slate-400 my-4 rounded-l-md rounded-r-md">
           <Button

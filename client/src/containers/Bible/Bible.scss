@@ -1,7 +1,7 @@
 .bible-section {
   @apply overflow-y-auto pr-2 pl-1 pb-4 overflow-x-visible;
 
-  height: calc(100% - var(--bible-version-selector-height) - 3rem);
+  height: calc(100% - var(--bible-version-selector-height) - clamp(3rem, 3.5vw, 4rem));
 
   scrollbar-width: thin;
 }
@@ -10,11 +10,11 @@
   @apply overflow-y-auto flex flex-col gap-1 py-2 rounded-md w-full;
 
   [data-has-title="true"] & {
-    height: calc(100% - var(--bible-version-selector-height) - 5rem);
+    height: calc(100% - var(--bible-version-selector-height) - clamp(5rem, 5.5vw, 6rem));
   }
 
   [data-has-title="false"] & {
-    height: calc(100% - var(--bible-version-selector-height) - 6rem);
+    height: calc(100% - var(--bible-version-selector-height) - clamp(5rem, 6.5vw, 7rem));
   }
 
   scrollbar-width: thin;

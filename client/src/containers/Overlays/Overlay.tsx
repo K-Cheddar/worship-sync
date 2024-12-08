@@ -4,6 +4,7 @@ import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import { useDispatch } from "../../hooks";
 import { deleteOverlay, selectOverlay } from "../../store/overlaysSlice";
 import "./Overlays.scss";
+import gsap from "gsap";
 import {
   updateParticipantOverlayInfo,
   updateQrCodeOverlayInfo,
@@ -12,19 +13,27 @@ import {
 import { OverlayInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
+import { useEffect, useRef, useState } from "react";
+import { useGSAP } from "@gsap/react";
 
 type OverlayProps = {
   overlay: OverlayInfo;
   selectedId: string;
   isStreamTransmitting: boolean;
+  initialList: string[];
 };
 
 const Overlay = ({
   overlay,
   selectedId,
   isStreamTransmitting,
+  initialList,
 }: OverlayProps) => {
   const dispatch = useDispatch();
+
+  const previousOverlay = useRef<OverlayInfo | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const overlayRef = useRef<HTMLLIElement | null>(null);
 
   const isSelected = selectedId === overlay.id;
   const hasData =
@@ -46,12 +55,91 @@ const Overlay = ({
     transition,
   };
 
+  useEffect(() => {
+    previousOverlay.current = overlay;
+  }, [overlay]);
+
+  useGSAP(
+    () => {
+      if (!overlayRef.current) return;
+
+      // highlight item if name or background changes
+      if (
+        previousOverlay.current?.name !== overlay.name ||
+        previousOverlay.current?.title !== overlay.title ||
+        previousOverlay.current?.event !== overlay.event ||
+        previousOverlay.current?.heading !== overlay.heading ||
+        previousOverlay.current?.subHeading !== overlay.subHeading ||
+        previousOverlay.current?.url !== overlay.url ||
+        previousOverlay.current?.description !== overlay.description ||
+        previousOverlay.current?.color !== overlay.color ||
+        previousOverlay.current?.type !== overlay.type ||
+        previousOverlay.current?.duration !== overlay.duration
+      ) {
+        gsap
+          .timeline()
+          .fromTo(
+            overlayRef.current,
+            { backgroundColor: overlayRef.current.style.backgroundColor },
+            {
+              backgroundColor: "rgba(255, 255, 255, 0.75)",
+              duration: 0.5,
+              ease: "power1.inOut",
+            }
+          )
+          .to(overlayRef.current, {
+            backgroundColor: overlayRef.current.style.backgroundColor,
+            duration: 0.5,
+            ease: "power1.inOut",
+          });
+      } else if (isDeleting) {
+        // delete animation
+        gsap.timeline().fromTo(
+          overlayRef.current,
+          {
+            height: overlayRef.current.offsetHeight,
+          },
+          {
+            height: 0,
+            duration: 0.5,
+            ease: "power1.inOut",
+          }
+        );
+      } else if (!initialList.includes(overlay.id)) {
+        // initial animation for new items
+        gsap.timeline().fromTo(
+          overlayRef.current,
+          {
+            height: 0,
+          },
+          {
+            height: "auto",
+            duration: 0.5,
+            ease: "power1.inOut",
+          }
+        );
+      }
+    },
+    { scope: overlayRef, dependencies: [overlay, isDeleting] }
+  );
+
+  const deleteOverlayHandler = () => {
+    setIsDeleting(true);
+    setTimeout(() => {
+      dispatch(deleteOverlay(overlay.id));
+      setIsDeleting(false);
+    }, 500);
+  };
+
   return (
     <li
-      className={`flex items-center rounded-lg w-full leading-3 ${
+      className={`flex items-center rounded-lg w-full overflow-clip leading-3 ${
         isSelected ? "bg-slate-950" : "bg-slate-800"
       }`}
-      ref={setNodeRef}
+      ref={(element) => {
+        setNodeRef(element);
+        overlayRef.current = element;
+      }}
       style={style}
       {...attributes}
       {...listeners}
@@ -119,7 +207,7 @@ const Overlay = ({
         className="text-sm ml-auto h-full"
         padding="px-2 py-1"
         svg={DeleteSVG}
-        onClick={() => dispatch(deleteOverlay(overlay.id))}
+        onClick={deleteOverlayHandler}
       />
       {hasData && (
         <Button

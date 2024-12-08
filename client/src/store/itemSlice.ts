@@ -312,9 +312,7 @@ export const removeSlide = createAsyncThunk(
   "item/removeSlide",
   async (args: { index: number }, { dispatch, getState }) => {
     const item = getState().undoable.present.item;
-    const newSlides = (item.slides = item.slides.filter(
-      (_, index) => index !== args.index
-    ));
+    const newSlides = item.slides.filter((_, index) => index !== args.index);
     dispatch(updateSlides({ slides: newSlides }));
   }
 );

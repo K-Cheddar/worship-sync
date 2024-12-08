@@ -5,7 +5,6 @@ import {
   createListenerMiddleware,
   Reducer,
 } from "@reduxjs/toolkit";
-import { itemSlice, setHasPendingUpdate } from "./itemSlice";
 import undoable, { excludeAction } from "redux-undo";
 import {
   presentationSlice,
@@ -17,6 +16,7 @@ import {
   updateStbOverlayInfoFromRemote,
   updateStreamFromRemote,
 } from "./presentationSlice";
+import { itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { itemListSlice } from "./itemListSlice";
@@ -37,6 +37,7 @@ import {
   DBMedia,
   OverlayInfo,
   Presentation,
+  ServiceItem,
 } from "../types";
 
 const undoableReducers = undoable(
@@ -69,6 +70,7 @@ listenerMiddleware.startListening({
       action.type !== "item/setSelectedSlide" &&
       action.type !== "item/toggleEditMode" &&
       action.type !== "item/setItemIsLoading" &&
+      action.type !== "item/setHasPendingUpdate" &&
       !!(currentState as RootState).undoable.present.item.hasPendingUpdate &&
       action.type !== "RESET"
     );
@@ -83,7 +85,7 @@ listenerMiddleware.startListening({
       await listenerApi.delay(3500);
     }
 
-    listenerApi.dispatch(setHasPendingUpdate(false));
+    listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
 
     // update Item
     const item = state.undoable.present.item;
@@ -113,19 +115,28 @@ listenerMiddleware.startListening({
       action.type !== "itemList/setItemListIsLoading" &&
       action.type !== "itemList/setActiveItemInList" &&
       action.type !== "itemList/updateItemListFromRemote" &&
+      action.type !== "itemList/setHasPendingUpdate" &&
+      action.type !== "itemList/setHighlightedItems" &&
+      !!(currentState as RootState).undoable.present.itemList
+        .hasPendingUpdate &&
       action.type !== "RESET"
     );
   },
 
   effect: async (action, listenerApi) => {
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(1500);
+    let state = listenerApi.getState() as RootState;
+    if (action.type === "itemLists/selectItemList") {
+      state = listenerApi.getOriginalState() as RootState;
+    } else {
+      listenerApi.cancelActiveListeners();
+      await listenerApi.delay(1500);
+    }
+
+    listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(false));
 
     // update ItemList
-    const { list } = (listenerApi.getState() as RootState).undoable.present
-      .itemList;
-    const { selectedList } = (listenerApi.getState() as RootState).undoable
-      .present.itemLists;
+    const { list } = state.undoable.present.itemList;
+    const { selectedList } = state.undoable.present.itemLists;
     if (!db || !selectedList) return;
     let db_itemList: DBItemListDetails = await db.get(selectedList.id);
     db_itemList.items = [...list];
@@ -197,19 +208,27 @@ listenerMiddleware.startListening({
       action.type !== "overlays/initiateOverlayList" &&
       action.type !== "overlays/updateOverlayListFromRemote" &&
       action.type !== "overlays/selectOverlay" &&
+      action.type !== "overlays/setHasPendingUpdate" &&
+      !!(currentState as RootState).undoable.present.overlays
+        .hasPendingUpdate &&
       action.type !== "RESET"
     );
   },
 
   effect: async (action, listenerApi) => {
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(3500);
+    let state = listenerApi.getState() as RootState;
+    if (action.type === "itemLists/selectItemList") {
+      state = listenerApi.getOriginalState() as RootState;
+    } else {
+      listenerApi.cancelActiveListeners();
+      await listenerApi.delay(1500);
+    }
+
+    listenerApi.dispatch(overlaysSlice.actions.setHasPendingUpdate(false));
 
     // update ItemList
-    const { list } = (listenerApi.getState() as RootState).undoable.present
-      .overlays;
-    const { selectedList } = (listenerApi.getState() as RootState).undoable
-      .present.itemLists;
+    const { list } = state.undoable.present.overlays;
+    const { selectedList } = state.undoable.present.itemLists;
 
     if (!db || !selectedList) return;
     const db_itemList: DBItemListDetails = await db.get(selectedList.id);

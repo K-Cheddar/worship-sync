@@ -4,7 +4,7 @@
 
   @media(max-width: 1023px) {
     @apply mt-4;
-    max-height: calc(100vh - var(--overlay-editor-height) - 8rem);
+    max-height: calc(100vh - var(--overlay-editor-height) - var(--toolbar-height) - 6rem);
   }
 
   @apply flex flex-col gap-2 w-full overflow-y-auto overflow-x-hidden;

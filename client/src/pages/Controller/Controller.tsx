@@ -94,7 +94,6 @@ const Controller = () => {
 
   useEffect(() => {
     if (location.pathname === "/controller") {
-      console.log("controller");
       setIsLeftPanelOpen(true);
     }
   }, [location.pathname]);

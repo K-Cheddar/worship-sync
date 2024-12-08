@@ -1,7 +1,6 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch } from "../../hooks";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
+import { ReactComponent as CreateSVG } from "../../assets/icons/create.svg";
 import Button from "../Button/Button";
 import Input from "../Input/Input";
 import "./FilteredItems.scss";
@@ -14,6 +13,7 @@ import { removeItemFromAllItemsList } from "../../store/allItemsSlice";
 import { ServiceItem } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { ActionCreators } from "redux-undo";
+import FilteredItem from "./FilteredItem";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -132,37 +132,25 @@ const FilteredItems = ({
       </div>
       <ul className="filtered-items-list">
         {filteredList.slice(0, numShownItems).map((item, index) => {
-          const isEven = index % 2 === 0;
-          const bg = isEven ? "bg-slate-800" : "bg-slate-600";
           return (
-            <li
+            <FilteredItem
               key={item._id}
-              className={`flex border border-transparent gap-2 ${bg} pl-4 rounded-md items-center hover:border-gray-300 min-h-8 py-1.5`}
-            >
-              <p className="text-base flex-1">{item.name}</p>
-              <Button
-                color="#22d3ee"
-                variant="tertiary"
-                className="text-sm h-full leading-3 ml-auto"
-                padding="py-1 px-2"
-                svg={AddSVG}
-                onClick={() => dispatch(addItemToItemList(item))}
-              >
-                Add to List
-              </Button>
-              <Button
-                svg={DeleteSVG}
-                variant="tertiary"
-                color="red"
-                onClick={() => setItemToBeDeleted(item)}
-              />
-            </li>
+              item={item}
+              index={index}
+              addItemToList={(_item) => dispatch(addItemToItemList(_item))}
+              setItemToBeDeleted={setItemToBeDeleted}
+            />
           );
         })}
         {isFullListLoaded && (
           <li className="text-sm flex gap-2 items-center mt-2 justify-center">
             <p>Can't find what you're looking for?</p>
-            <Button variant="secondary" className="relative">
+            <Button
+              variant="secondary"
+              className="relative"
+              svg={CreateSVG}
+              color="#84cc16"
+            >
               <Link
                 className="h-full w-full"
                 to={`/controller/create?type=${type}&name=${encodeURI(
