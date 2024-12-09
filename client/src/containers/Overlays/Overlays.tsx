@@ -1,5 +1,6 @@
 import Button from "../../components/Button/Button";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -74,6 +75,8 @@ const Overlays = () => {
 
   const [overlayEditorHeight, setOverlayEditorHeight] = useState(0);
   const [showPreview, setShowPreview] = useState(false);
+  const [justAdded, setJustAdded] = useState(false);
+  const [justUpdated, setJustUpdated] = useState(false);
 
   useEffect(() => {
     setLocalName(name || "");
@@ -177,9 +180,11 @@ const Overlays = () => {
               </ul>
               <Button
                 className="text-sm w-full justify-center mt-2"
-                svg={AddSVG}
-                color="#06b6d4"
-                onClick={() =>
+                svg={justAdded ? CheckSVG : AddSVG}
+                color={justAdded ? "#84cc16" : "#22d3ee"}
+                disabled={justAdded}
+                onClick={() => {
+                  setJustAdded(true);
                   dispatch(
                     addOverlay({
                       name: localName,
@@ -194,10 +199,13 @@ const Overlays = () => {
                       type: localType,
                       id: generateRandomId(),
                     })
-                  )
-                }
+                  );
+                  setTimeout(() => {
+                    setJustAdded(false);
+                  }, 2000);
+                }}
               >
-                Add Overlay
+                {justAdded ? "Added!" : "Add Overlay"}
               </Button>
             </section>
             <div
@@ -357,9 +365,11 @@ const Overlays = () => {
 
                     <Button
                       className="text-sm w-full justify-center"
-                      svg={SaveSVG}
-                      color="#06b6d4"
-                      onClick={() =>
+                      svg={justUpdated ? CheckSVG : SaveSVG}
+                      color={justAdded ? "#84cc16" : "#22d3ee"}
+                      disabled={justAdded}
+                      onClick={() => {
+                        setJustUpdated(true);
                         dispatch(
                           updateOverlay({
                             id,
@@ -374,10 +384,11 @@ const Overlays = () => {
                             duration: localDuration,
                             type: localType,
                           })
-                        )
-                      }
+                        );
+                        setTimeout(() => setJustUpdated(false), 2000);
+                      }}
                     >
-                      Update Overlay
+                      {justUpdated ? "Updated!" : "Update Overlay"}
                     </Button>
                   </section>
                 </>
