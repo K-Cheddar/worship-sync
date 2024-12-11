@@ -103,6 +103,19 @@ app.get("/bible", async (req, res) => {
   res.send(bible);
 });
 
+app.get("/hymns", async (req, res) => {
+  const hymns = await fs.readFile(
+    "./hymns/master.json",
+    "utf8",
+    function (err, data) {
+      if (err) throw err;
+      return JSON.parse(data);
+    }
+  );
+
+  res.send({ hymns });
+});
+
 // app.post("/api/currentInfo", (req, res) => {
 //   let obj = req.body;
 //   let t = obj.words;

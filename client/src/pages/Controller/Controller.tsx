@@ -21,6 +21,7 @@ import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
 import {
+  addItemToAllItemsList,
   initiateAllItemsList,
   updateAllItemsListFromRemote,
 } from "../../store/allItemsSlice";
@@ -49,6 +50,9 @@ import { formatItemList } from "../../utils/formatItemList";
 import Button from "../../components/Button/Button";
 import Spinner from "../../components/Spinner/Spinner";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { formatSong } from "../../utils/overflow";
+import { createNewSong } from "../../utils/itemUtil";
+import generateRandomId from "../../utils/generateRandomId";
 
 // Here for future to implement resizable
 
@@ -79,6 +83,8 @@ const Controller = () => {
   const { selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
+
+  const { list } = useSelector((state: any) => state.allItems);
 
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
@@ -245,6 +251,38 @@ const Controller = () => {
     }
   };
 
+  const getHymns = async () => {
+    const response = await fetch(`${process.env.REACT_APP_API_BASE_PATH}hymns`);
+    const data = await response.json();
+    const hymns = JSON.parse(data.hymns);
+
+    for (const hymn of hymns) {
+      console.log(hymn.name);
+      const formattedSong = await createNewSong({
+        ...hymn,
+        db,
+        selectedList,
+        list,
+      });
+
+      const listItem = {
+        name: formattedSong.name,
+        type: formattedSong.type,
+        background: formattedSong.background,
+        _id: formattedSong._id,
+        listId: generateRandomId(),
+      };
+
+      if (!formattedSong.alreadyExists) {
+        dispatch(addItemToAllItemsList(listItem));
+      }
+    }
+
+    console.log("Done Adding hymns!");
+
+    // console.log(hymns);
+  };
+
   return (
     <>
       {dbProgress !== 100 && (
@@ -260,6 +298,7 @@ const Controller = () => {
           </p>
         </div>
       )}
+      <Button onClick={getHymns}>GET HYMNS</Button>
       <div
         onClick={(e) => handleElementClick(e)}
         className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none"

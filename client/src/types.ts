@@ -105,6 +105,7 @@ export type ItemState = {
   };
   isLoading?: boolean;
   hasPendingUpdate?: boolean;
+  alreadyExists?: boolean;
 };
 
 export type OptionalItemState = {

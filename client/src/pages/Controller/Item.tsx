@@ -44,6 +44,7 @@ const Item = () => {
         if (!item) return setStatus("error");
         const formattedItem = formatItemInfo(item, cloud);
         dispatch(setActiveItem({ ...formattedItem, listId: decodedListId }));
+        console.log({ item });
         dispatch(setActiveItemInList(decodedListId));
         setStatus("success");
         dispatch(setItemIsLoading(false));

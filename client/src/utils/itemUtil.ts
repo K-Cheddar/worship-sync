@@ -110,12 +110,12 @@ export const createNewSong = async ({
     },
   ];
 
-  const _name = makeUnique({ value: name, property: "name", list });
+  // const _name = makeUnique({ value: name, property: "name", list });
 
   const newItem: ItemState = {
-    name: _name,
+    name: name,
     type: "song",
-    _id: _name,
+    _id: name,
     background: DEFAULT_SONG_BACKGROUND,
     selectedArrangement: 0,
     selectedSlide: 0,
@@ -391,6 +391,7 @@ export const createNewItemInDb = async ({
       _id: response._id,
       name: response.name,
       slides: response.slides,
+      alreadyExists: true,
     };
   } catch (error) {
     // item does not exist
