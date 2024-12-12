@@ -31,7 +31,9 @@ import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import FreeForms from "../../containers/FreeForms/FreeForms";
 import {
+  allDocsType,
   DBAllItems,
+  DBItem,
   DBItemListDetails,
   DBItemLists,
   ServiceItem,
@@ -49,6 +51,9 @@ import { formatItemList } from "../../utils/formatItemList";
 import Button from "../../components/Button/Button";
 import Spinner from "../../components/Spinner/Spinner";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { sortNamesInList } from "../../utils/sort";
+import { deleteUnusedBibleItems, updateAllDocs } from "../../utils/dbUtils";
+import { updateAllSongDocs } from "../../store/allDocsSlice";
 
 // Here for future to implement resizable
 
@@ -104,47 +109,14 @@ const Controller = () => {
       if (!db) return;
       const allItems: DBAllItems | undefined = await db.get("allItems");
       const items = allItems?.items || [];
-      dispatch(initiateAllItemsList(items));
+      const sortedItems = sortNamesInList(items);
+      dispatch(initiateAllItemsList(sortedItems));
+
+      // Get all docs for searching
+      updateAllDocs(dispatch);
 
       // delete unneeded bible items
-
-      let bibleItems = items.filter((item) => item.type === "bible");
-
-      const allItemLists: DBItemLists | undefined = await db.get("ItemLists");
-      const itemLists = allItemLists?.itemLists || [];
-      const bibleItemsInLists: ServiceItem[] = [];
-
-      for (const itemList of itemLists) {
-        const listDetails: DBItemListDetails = await db.get(itemList.id);
-        const listItems = listDetails?.items || [];
-        bibleItemsInLists.push(
-          ...listItems.filter((item) => item.type === "bible")
-        );
-      }
-
-      const bibleItemsToBeDeleted = bibleItems.filter(
-        (bibleItem) =>
-          !bibleItemsInLists.some(
-            (bibleItemInList) => bibleItemInList._id === bibleItem._id
-          )
-      );
-
-      if (bibleItemsToBeDeleted.length === 0) return; // nothing to delete
-
-      const updatedItems = items.filter(
-        (item) => !bibleItemsToBeDeleted.includes(item)
-      );
-
-      // Remove bible items from all items and delete them individually
-      await db.put({ ...allItems, items: updatedItems });
-      for (const item of bibleItemsToBeDeleted) {
-        try {
-          const doc = await db.get(item._id);
-          db.remove(doc);
-        } catch (error) {
-          console.error(error);
-        }
-      }
+      deleteUnusedBibleItems({ db, allItems });
     };
     getAllItems();
   }, [dispatch, db]);
@@ -197,6 +169,9 @@ const Controller = () => {
             dispatch(updateAllItemsListFromRemote(update.items));
           }
         }
+
+        // keep all docs up to date
+        updateAllDocs(dispatch);
       } catch (e) {
         console.error(e);
       }

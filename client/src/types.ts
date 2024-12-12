@@ -290,3 +290,19 @@ export type DBLogin = {
   _rev: string;
   logins: DBUserInfo[];
 };
+
+export type allDocsType = {
+  offset: number;
+  total_rows: number;
+  rows: {
+    id: string;
+    key: string;
+    doc:
+      | DBMedia
+      | DBItemLists
+      | DBItemListDetails
+      | DBAllItems
+      | DBItem
+      | DBMedia;
+  }[];
+};
