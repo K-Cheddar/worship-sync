@@ -17,36 +17,26 @@ const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
 
     useGSAP(
       () => {
-        if (
-          !stbOverlayRef.current ||
-          !(containerRef as React.MutableRefObject<HTMLUListElement>)
-            ?.current ||
-          !shouldAnimate
-        )
-          return;
+        if (!stbOverlayRef.current || !shouldAnimate) return;
 
         overlayTimeline.current?.clear();
 
-        // const innerElements = [
-        //   ".overlay-stb-info-heading",
-        //   ".overlay-stb-info-subHeading",
-        // ];
-        // const targets = [stbOverlayRef.current, ...innerElements];
-
         overlayTimeline.current = gsap
           .timeline()
-          .set(stbOverlayRef.current, { yPercent: 150 });
+          .set(stbOverlayRef.current, { yPercent: 120, opacity: 0 });
 
         // Only play animate if there is overlay info
         if (stbOverlayInfo.heading || stbOverlayInfo.subHeading) {
           overlayTimeline.current
             .to(stbOverlayRef.current, {
               yPercent: 0,
+              opacity: 1,
               duration: 1.5,
               ease: "power1.inOut",
             })
             .to(stbOverlayRef.current, {
-              yPercent: 150,
+              yPercent: 120,
+              opacity: 0,
               duration: 1.5,
               ease: "power1.inOut",
               delay: stbOverlayInfo.duration,
@@ -68,8 +58,6 @@ const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
               stbOverlayInfo.heading || stbOverlayInfo.subHeading
                 ? "0.5% 2.5%"
                 : "0",
-            "--overlay-stb-info-text-shadow-size-p": `${width / 70}px`,
-            "--overlay-stb-info-text-shadow-size-n": `-${width / 70}px`,
           } as CSSProperties
         }
       >

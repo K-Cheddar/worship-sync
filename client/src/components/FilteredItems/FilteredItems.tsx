@@ -228,7 +228,7 @@ const FilteredItems = ({
   };
 
   return (
-    <div className="px-2 py-4 h-full">
+    <div className="px-2 py-4 h-full flex flex-col items-center">
       {itemToBeDeleted && (
         <div className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center">
           <div className="bg-slate-700 rounded px-8 py-4">
@@ -257,11 +257,11 @@ const FilteredItems = ({
           </div>
         </div>
       )}
-      <h2 className="text-2xl text-center mb-2 lg:w-2/3 ">{heading}</h2>
+      <h2 className="text-2xl text-center mb-2 2xl:w-2/3">{heading}</h2>
       {isLoading && (
         <h3 className="text-lg text-center">{heading} is loading...</h3>
       )}
-      <div className="flex gap-2 lg:w-2/3 mb-4 px-6">
+      <div className="flex gap-2 2xl:w-2/3 mb-4 px-6">
         <Input
           value={searchValue}
           disabled={isLoading}

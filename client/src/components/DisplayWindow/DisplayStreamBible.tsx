@@ -62,9 +62,10 @@ const DisplayStreamBible = forwardRef<
           ) {
             bibleTimeline.current.fromTo(
               targets,
-              { yPercent: 150 },
+              { yPercent: 120, opacity: 0 },
               {
                 yPercent: 0,
+                opacity: 1,
                 duration: 1.5,
                 ease: "power1.inOut",
               }
@@ -101,7 +102,8 @@ const DisplayStreamBible = forwardRef<
             targets,
             { yPercent: 0, opacity: 1 },
             {
-              yPercent: 150,
+              yPercent: 120,
+              opacity: 0,
               duration: 1.5,
               ease: "power1.inOut",
             }
@@ -120,8 +122,6 @@ const DisplayStreamBible = forwardRef<
             {
               "--bible-info-title-size": `${width / 58}vw`,
               "--bible-info-text-size": `${width / 55}vw`,
-              "--bible-info-text-shadow-size-p": `${width / 66}px`,
-              "--bible-info-text-shadow-size-n": `-${width / 66}px`,
             } as CSSProperties
           }
         >
@@ -140,8 +140,6 @@ const DisplayStreamBible = forwardRef<
             {
               "--bible-info-title-size": `${width / 58}vw`,
               "--bible-info-text-size": `${width / 55}vw`,
-              "--bible-info-text-shadow-size-p": `${width / 66}px`,
-              "--bible-info-text-shadow-size-n": `-${width / 66}px`,
             } as CSSProperties
           }
         >
