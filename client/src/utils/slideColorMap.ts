@@ -8,6 +8,7 @@ export const sectionTypes = [
   "Reprise",
   "Interlude",
   "Pre-Bridge",
+  "Refrain",
 ];
 
 export const itemSectionBgColorMap: Map<string, string> = new Map([
@@ -16,6 +17,7 @@ export const itemSectionBgColorMap: Map<string, string> = new Map([
   ["Interlude", "bg-fuchsia-700"],
   ["Verse", "bg-blue-700"],
   ["Chorus", "bg-red-700"],
+  ["Refrain", "bg-red-700"],
   ["Bridge", "bg-green-700"],
   ["Outro", "bg-orange-700"],
   ["Ending", "bg-stone-700"],
@@ -33,6 +35,7 @@ export const itemSectionBorderColorMap: Map<string, string> = new Map([
   ["Interlude", "border-fuchsia-700"],
   ["Verse", "border-blue-700"],
   ["Chorus", "border-red-700"],
+  ["Refrain", "border-red-700"],
   ["Bridge", "border-green-700"],
   ["Outro", "border-orange-700"],
   ["Ending", "border-stone-700"],

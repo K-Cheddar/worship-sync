@@ -31,38 +31,37 @@ const DisplayStreamOverlay = forwardRef<
       overlayTimeline.current?.clear();
 
       const innerElements = [
-        ".overlay-qr-code-info-url",
+        // ".overlay-qr-code-info-url",
         ".overlay-qr-code-info-description",
       ];
-      // const targets = [qrCodeOverlayRef.current, ...innerElements];
 
       overlayTimeline.current = gsap
         .timeline()
         .set(qrCodeOverlayRef.current, { opacity: 0 });
 
-      // Only play animate if there is overlay info
+      // Only animate if there is overlay info
       if (qrCodeOverlayInfo.url || qrCodeOverlayInfo.description) {
         overlayTimeline.current
-          .set(innerElements, { yPercent: 150 })
+          .set(innerElements, { xPercent: 80, opacity: 0 })
           .to(qrCodeOverlayRef.current, {
             opacity: 1,
             duration: 2.5,
-            ease: "power1.inOut",
+            ease: "power1.out",
           })
           .to(
             innerElements,
-            { yPercent: 0, duration: 2, ease: "power1.inOut" },
-            "-=2.0"
+            { xPercent: 0, opacity: 1, duration: 2, ease: "power1.out" },
+            "-=2.25"
           )
           .to(qrCodeOverlayRef.current, {
             opacity: 0,
             duration: 2.5,
-            ease: "power1.inOut",
+            ease: "power1.out",
             delay: qrCodeOverlayInfo.duration,
           })
           .to(
             innerElements,
-            { yPercent: 150, duration: 2, ease: "power1.inOut" },
+            { xPercent: 80, duration: 2, opacity: 0, ease: "power1.out" },
             "-=1.25"
           );
       }
@@ -84,8 +83,6 @@ const DisplayStreamOverlay = forwardRef<
               ? `1% 2.5%`
               : "0",
           "--overlay-qr-code-info-color": qrCodeOverlayInfo.color,
-          "--overlay-qr-code-info-text-shadow-size-p": `${width / 65}px`,
-          "--overlay-qr-code-info-text-shadow-size-n": `-${width / 65}px`,
         } as CSSProperties
       }
     >

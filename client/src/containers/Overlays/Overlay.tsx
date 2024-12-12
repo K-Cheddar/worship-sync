@@ -65,16 +65,17 @@ const Overlay = ({
 
       // highlight item if name or background changes
       if (
-        previousOverlay.current?.name !== overlay.name ||
-        previousOverlay.current?.title !== overlay.title ||
-        previousOverlay.current?.event !== overlay.event ||
-        previousOverlay.current?.heading !== overlay.heading ||
-        previousOverlay.current?.subHeading !== overlay.subHeading ||
-        previousOverlay.current?.url !== overlay.url ||
-        previousOverlay.current?.description !== overlay.description ||
-        previousOverlay.current?.color !== overlay.color ||
-        previousOverlay.current?.type !== overlay.type ||
-        previousOverlay.current?.duration !== overlay.duration
+        previousOverlay.current &&
+        (previousOverlay.current.name !== overlay.name ||
+          previousOverlay.current.title !== overlay.title ||
+          previousOverlay.current.event !== overlay.event ||
+          previousOverlay.current.heading !== overlay.heading ||
+          previousOverlay.current.subHeading !== overlay.subHeading ||
+          previousOverlay.current.url !== overlay.url ||
+          previousOverlay.current.description !== overlay.description ||
+          previousOverlay.current.color !== overlay.color ||
+          previousOverlay.current.type !== overlay.type ||
+          previousOverlay.current.duration !== overlay.duration)
       ) {
         gsap
           .timeline()

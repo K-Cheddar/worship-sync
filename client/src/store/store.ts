@@ -39,6 +39,7 @@ import {
   Presentation,
   ServiceItem,
 } from "../types";
+import { allDocsSlice } from "./allDocsSlice";
 
 const undoableReducers = undoable(
   combineReducers({
@@ -540,6 +541,7 @@ const combinedReducers = combineReducers({
   allItems: allItemsSlice.reducer,
   createItem: createItemSlice.reducer,
   preferences: preferencesSlice.reducer,
+  allDocs: allDocsSlice.reducer,
 });
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {

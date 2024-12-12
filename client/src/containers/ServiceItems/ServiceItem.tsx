@@ -69,8 +69,9 @@ const ServiceItem = ({
 
       // highlight item if name or background changes
       if (
-        previousItem.current?.name !== item.name ||
-        previousItem.current?.background !== item.background
+        previousItem.current &&
+        (previousItem.current.name !== item.name ||
+          previousItem.current.background !== item.background)
       ) {
         gsap
           .timeline()

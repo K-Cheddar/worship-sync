@@ -19,11 +19,6 @@
   border-bottom-right-radius: 3% 10%;
   border-top-right-radius: 3% 10%;
 
-  text-shadow:
-  var(--overlay-participant-info-text-shadow-size-n) var(--overlay-participant-info-text-shadow-size-n) 0 #000,  
-   var(--overlay-participant-info-text-shadow-size-p) var(--overlay-participant-info-text-shadow-size-n) 0 #000,
-   var(--overlay-participant-info-text-shadow-size-n) var(--overlay-participant-info-text-shadow-size-p) 0 #000,
-    var(--overlay-participant-info-text-shadow-size-p) var(--overlay-participant-info-text-shadow-size-p) 0 #000;
 }
 
 .overlay-participant-info-name {
@@ -42,16 +37,8 @@
 .overlay-stb-info-container {
   @apply min-w-full w-fit absolute bottom-0 bg-green-700/90 text-white flex items-center justify-center text-nowrap;
 
-  // border-top: var(--overlay-stb-info-border-width) solid green;
-  // border-bottom: var(--overlay-stb-info-border-width) solid green;
   font-size: var(--overlay-stb-info-text-size);
   padding: var(--overlay-stb-info-padding);
-
-  text-shadow:
-  var(--overlay-stb-info-text-shadow-size-n) var(--overlay-stb-info-text-shadow-size-n) 0 #000,  
-   var(--overlay-stb-info-text-shadow-size-p) var(--overlay-stb-info-text-shadow-size-n) 0 #000,
-   var(--overlay-stb-info-text-shadow-size-n) var(--overlay-stb-info-text-shadow-size-p) 0 #000,
-    var(--overlay-stb-info-text-shadow-size-p) var(--overlay-stb-info-text-shadow-size-p) 0 #000;
 }
 
 .overlay-stb-info-heading {
@@ -77,12 +64,6 @@
   width: 70%;
   margin: 0 15%;
   bottom: 10%;
-
-  text-shadow:
-  var(--bible-info-text-shadow-size-n) var(--bible-info-text-shadow-size-n) 0 #000,  
-   var(--bible-info-text-shadow-size-p) var(--bible-info-text-shadow-size-n) 0 #000,
-   var(--bible-info-text-shadow-size-n) var(--bible-info-text-shadow-size-p) 0 #000,
-    var(--bible-info-text-shadow-size-p) var(--bible-info-text-shadow-size-p) 0 #000;
 
 }
 
@@ -121,12 +102,6 @@
   bottom: 8.5%;
 
   border-radius: 2% / 8%;
-
-  text-shadow:
-  var(--overlay-qr-code-info-text-shadow-size-n) var(--overlay-qr-code-info-text-shadow-size-n) 0 #000,  
-   var(--overlay-qr-code-info-text-shadow-size-p) var(--overlay-qr-code-info-text-shadow-size-n) 0 #000,
-   var(--overlay-qr-code-info-text-shadow-size-n) var(--overlay-qr-code-info-text-shadow-size-p) 0 #000,
-    var(--overlay-qr-code-info-text-shadow-size-p) var(--overlay-qr-code-info-text-shadow-size-p) 0 #000;
 }
 
 .overlay-qr-code-info-url {
@@ -135,5 +110,6 @@
 }
 
 .overlay-qr-code-info-description {
+  @apply font-semibold;
   font-size: var(--overlay-qr-code-info-description-size);
 }
