@@ -38,20 +38,13 @@ const Select = ({
         </label>
       )}
       <select
-        className={cn(
-          `rounded px-2 py-1 cursor-pointer select text-black`,
-          selectClassName
-        )}
+        className={cn(`select`, selectClassName)}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         {...rest}
       >
         {options.map((option) => (
-          <option
-            className="hover:bg-green-100"
-            key={option.value}
-            value={option.value}
-          >
+          <option key={option.value} value={option.value}>
             {option.label}
           </option>
         ))}

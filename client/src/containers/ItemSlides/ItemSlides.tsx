@@ -30,6 +30,10 @@ import { useSensors } from "../../utils/dndUtils";
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { useContext, useEffect } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import {
+  handleKeyDownTraverse,
+  keepElementInView,
+} from "../../utils/generalUtils";
 
 export const sizeMap: Map<
   number,
@@ -93,20 +97,7 @@ const ItemSlides = () => {
     const slideElement = document.getElementById(`item-slide-${selectedSlide}`);
     const parentElement = document.getElementById("item-slides-container");
     if (slideElement && parentElement) {
-      // TODO check if slide is visible before scrolling
-      // const { top, left, bottom, right } = slideElement.getBoundingClientRect();
-      // if (
-      //   top < window.innerHeight &&
-      //   left < window.innerWidth &&
-      //   bottom > 0 &&
-      //   right > 0
-      // ) {
-      //   return;
-      // }
-      slideElement.focus();
-      if (!isMobile) {
-        slideElement.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
+      keepElementInView({ child: slideElement, parent: parentElement });
     }
   }, [selectedSlide, isMobile]);
 
@@ -205,16 +196,13 @@ const ItemSlides = () => {
         ref={setNodeRef}
         tabIndex={0}
         id="item-slides-container"
-        onKeyDown={(e) => {
-          if (e.key === " " || e.key === "ArrowRight") {
-            e.preventDefault();
-            advanceSlide();
-          }
-          if ((e.key === " " && e.shiftKey) || e.key === "ArrowLeft") {
-            e.preventDefault();
-            previousSlide();
-          }
-        }}
+        onKeyDown={(e) =>
+          handleKeyDownTraverse({
+            event: e,
+            advance: advanceSlide,
+            previous: previousSlide,
+          })
+        }
         className={`item-slides-container ${sizeMap.get(size)?.cols}`}
       >
         <SortableContext

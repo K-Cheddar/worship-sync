@@ -84,3 +84,64 @@ export const updateWordMatches = ({
     updatedMatch,
   };
 };
+
+type handleKeyDownTraverseType = {
+  event: React.KeyboardEvent;
+  advance: () => void;
+  previous: () => void;
+};
+export const handleKeyDownTraverse = ({
+  event,
+  advance,
+  previous,
+}: handleKeyDownTraverseType) => {
+  if (
+    event.key === " " ||
+    event.key === "ArrowRight" ||
+    event.key === "ArrowDown"
+  ) {
+    event.preventDefault();
+    advance();
+  }
+  if (
+    (event.key === " " && event.shiftKey) ||
+    event.key === "ArrowLeft" ||
+    event.key === "ArrowUp"
+  ) {
+    event.preventDefault();
+    previous();
+  }
+};
+
+type keepElementInViewType = {
+  child: HTMLElement;
+  parent: HTMLElement;
+  shouldScrollToCenter?: boolean;
+};
+export const keepElementInView = ({
+  child,
+  parent,
+  shouldScrollToCenter,
+}: keepElementInViewType) => {
+  try {
+    child.focus();
+    const parentRect = parent.getBoundingClientRect();
+    const verseRect = child.getBoundingClientRect();
+    const scrollDistance = shouldScrollToCenter
+      ? parentRect.height / 2
+      : verseRect.height;
+    if (verseRect.top - verseRect.height < parentRect.top) {
+      parent.scrollTo({
+        top: parent.scrollTop - scrollDistance,
+        behavior: "smooth",
+      });
+    } else if (verseRect.bottom + verseRect.height > parentRect.bottom) {
+      parent.scrollTo({
+        top: parent.scrollTop + scrollDistance,
+        behavior: "smooth",
+      });
+    }
+  } catch (error) {
+    console.error(error);
+  }
+};
