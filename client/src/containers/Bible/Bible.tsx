@@ -391,6 +391,7 @@ const Bible = () => {
               }
               value={startVerse}
               type="verse"
+              label="Start"
             />
             <BibleSection
               initialList={verses as verseType[]}
@@ -402,6 +403,7 @@ const Bible = () => {
               value={endVerse}
               type="verse"
               min={startVerse}
+              label="End"
             />
             {!isMobile && versesDisplaySection}
           </div>

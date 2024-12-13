@@ -12,6 +12,7 @@ type BibleSectionProps = {
   min?: number;
   searchValue: string;
   setSearchValue: (val: string) => void;
+  label?: string;
 };
 
 const BibleSection = ({
@@ -22,6 +23,7 @@ const BibleSection = ({
   min,
   searchValue,
   setSearchValue,
+  label,
 }: BibleSectionProps) => {
   const [filteredList, setFilteredList] = useState(initialList);
 
@@ -69,7 +71,7 @@ const BibleSection = ({
         data-ignore-undo="true"
         value={searchValue}
         onChange={(val) => setSearchValue(val as string)}
-        label={type}
+        label={label || type}
         className="bible-section-input"
         svg={searchValue ? CloseSVG : undefined}
         svgAction={() => setSearchValue("")}

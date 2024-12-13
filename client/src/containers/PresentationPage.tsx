@@ -36,13 +36,13 @@ const Presentation = ({ displayInfo, prevDisplayInfo }: PresentationProps) => {
     />
   ) : (
     <div className="h-screen w-screen flex flex-col items-center justify-center bg-black gap-10">
-      <p className="text-5xl p-6 bg-gray-700 text-yellow-300 text-center">
+      <p className="text-[min(5vw,50px)] p-6 bg-gray-700 text-yellow-300 text-center">
         Drag this window to the intended display
       </p>
       <Button
         variant="cta"
         onClick={handleClick}
-        className="text-7xl"
+        className="text-[min(7vw,70px)]"
         padding="px-6 py-2"
       >
         Click to go Fullscreen

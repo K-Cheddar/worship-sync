@@ -62,8 +62,8 @@ export const createNewSlide = ({
       if (index === 0) return box;
       return {
         ...box,
-        height: 95,
-        y: 5,
+        height: 92,
+        y: 8,
         width: 100,
         isLocked: true,
         topMargin: 3,
@@ -73,7 +73,7 @@ export const createNewSlide = ({
     boxes.push({
       ...box,
       fontColor: "rgb(253 224 71)",
-      fontSize: 1.5,
+      fontSize: 2,
       height: 20,
       width: 100,
       words: words[2],
