@@ -188,7 +188,7 @@ const CreateItem = () => {
                 color={justAdded ? "#84cc16" : "#22d3ee"}
                 disabled={justAdded}
               >
-                {justAdded ? "Added!" : "Add to list"}
+                {justAdded ? "Added!" : "Add to outline"}
               </Button>
             </p>
           )}

@@ -37,7 +37,6 @@ import {
   DBMedia,
   OverlayInfo,
   Presentation,
-  ServiceItem,
 } from "../types";
 import { allDocsSlice } from "./allDocsSlice";
 
@@ -47,14 +46,29 @@ const undoableReducers = undoable(
     overlays: overlaysSlice.reducer,
     itemList: itemListSlice.reducer,
     itemLists: itemListsSlice.reducer,
+    media: mediaItemsSlice.reducer,
   }),
   {
     filter: excludeAction([
+      itemSlice.actions.setItemIsLoading.toString(),
+      itemSlice.actions.setActiveItem.toString(),
+      itemSlice.actions.setSelectedSlide.toString(),
       itemSlice.actions.toggleEditMode.toString(),
       itemSlice.actions.setHasPendingUpdate.toString(),
       itemSlice.actions.setSelectedSlide.toString(),
       overlaysSlice.actions.selectOverlay.toString(),
+      overlaysSlice.actions.initiateOverlayList.toString(),
+      overlaysSlice.actions.updateOverlayListFromRemote.toString(),
+      overlaysSlice.actions.setHasPendingUpdate.toString(),
       itemListSlice.actions.initiateItemList.toString(),
+      itemListSlice.actions.updateItemListFromRemote.toString(),
+      itemListSlice.actions.setItemListIsLoading.toString(),
+      itemListSlice.actions.setHasPendingUpdate.toString(),
+      itemListsSlice.actions.initiateItemLists.toString(),
+      itemListsSlice.actions.updateItemListsFromRemote.toString(),
+      itemListsSlice.actions.setInitialItemList.toString(),
+      mediaItemsSlice.actions.initiateMediaList.toString(),
+      mediaItemsSlice.actions.updateMediaListFromRemote.toString(),
     ]),
     limit: 100,
   }
@@ -242,8 +256,8 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     return (
-      (currentState as RootState).media !==
-        (previousState as RootState).media &&
+      (currentState as RootState).undoable.present.media !==
+        (previousState as RootState).undoable.present.media &&
       action.type !== "media/initiateMediaList" &&
       action.type !== "media/updateMediaListFromRemote" &&
       action.type !== "RESET"
@@ -255,7 +269,8 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     // update ItemList
-    const { list } = (listenerApi.getState() as RootState).media;
+    const { list } = (listenerApi.getState() as RootState).undoable.present
+      .media;
 
     if (!db) return;
     const db_backgrounds: DBMedia = await db.get("images");
@@ -534,7 +549,6 @@ listenerMiddleware.startListening({
 // });
 
 const combinedReducers = combineReducers({
-  media: mediaItemsSlice.reducer,
   undoable: undoableReducers,
   presentation: presentationSlice.reducer,
   bible: bibleSlice.reducer,

@@ -300,7 +300,7 @@ const Bible = () => {
         color={justAdded ? "#67e8f9" : undefined}
         svg={justAdded ? CheckSVG : AddSVG}
       >
-        {justAdded ? "Added!" : "Add to list"}
+        {justAdded ? "Added!" : "Add to outline"}
       </Button>
     </div>
   );
