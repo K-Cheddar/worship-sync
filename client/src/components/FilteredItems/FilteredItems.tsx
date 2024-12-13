@@ -21,6 +21,7 @@ import {
   punctuationRegex,
   updateWordMatches,
 } from "../../utils/generalUtils";
+import Spinner from "../Spinner/Spinner";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -62,6 +63,7 @@ const FilteredItems = ({
   );
 
   const [showWords, setShowWords] = useState(false);
+  const [isSearchLoading, setIsSearchLoading] = useState(false);
 
   const isFullListLoaded = filteredList.length <= numShownItems;
 
@@ -69,110 +71,126 @@ const FilteredItems = ({
 
   useEffect(() => {
     const timeout = setTimeout(() => {
-      setDebouncedSearchValue(searchValue.replace(punctuationRegex, ""));
+      setDebouncedSearchValue(searchValue);
     }, 250);
-
+    setIsSearchLoading(searchValue !== debouncedSearchValue);
     return () => {
       clearTimeout(timeout);
     };
-  }, [searchValue]);
+  }, [searchValue, debouncedSearchValue]);
 
   useEffect(() => {
-    if (debouncedSearchValue.trim() === "") return setFilteredList(listOfType); // no search term
+    const getFilteredItems = async () => {
+      return new Promise<void>((resolve) => {
+        const cleanSearchValue = debouncedSearchValue.replace(
+          punctuationRegex,
+          ""
+        );
+        if (cleanSearchValue.trim() === "") {
+          setIsSearchLoading(false);
+          setFilteredList(listOfType); // no search term
+          resolve();
+          return;
+        }
 
-    const searchTerms = debouncedSearchValue
-      .split(" ")
-      .filter((term) => term.trim()); // ignore spaces
-    const rankedList = [];
-    for (let i = 0; i < listOfType.length; i++) {
-      const name = listOfType[i].name.toLowerCase();
+        const searchTerms = cleanSearchValue
+          .split(" ")
+          .filter((term) => term.trim()); // ignore spaces
+        const rankedList = [];
+        for (let i = 0; i < listOfType.length; i++) {
+          const name = listOfType[i].name.toLowerCase();
 
-      let match = getMatchForString({ string: name, searchTerms });
-      let matchedWords = "";
-      let wordMatches = [];
+          let match = getMatchForString({ string: name, searchTerms });
+          let matchedWords = "";
+          let wordMatches = [];
 
-      // add match points for lyrics
+          // add match points for lyrics
 
-      if (type === "song") {
-        // search lyrics in songs
-        const arrangements =
-          allDocs.find((song) => song.name.toLowerCase() === name)
-            ?.arrangements || [];
+          if (type === "song") {
+            // search lyrics in songs
+            const arrangements =
+              allDocs.find((song) => song.name.toLowerCase() === name)
+                ?.arrangements || [];
 
-        for (let j = 0; j < arrangements.length; j++) {
-          const { formattedLyrics } = arrangements[j];
+            for (let j = 0; j < arrangements.length; j++) {
+              const { formattedLyrics } = arrangements[j];
 
-          for (let k = 0; k < formattedLyrics.length; k++) {
-            const words = formattedLyrics[k].words;
-            const wordMatch = getMatchForString({
-              string: words,
-              searchTerms,
-            });
-            if (wordMatch > 0) {
-              wordMatches.push({
-                match: wordMatch,
-                matchedWords: words,
-              });
+              for (let k = 0; k < formattedLyrics.length; k++) {
+                const words = formattedLyrics[k].words;
+                const wordMatch = getMatchForString({
+                  string: words,
+                  searchTerms,
+                });
+                if (wordMatch > 0) {
+                  wordMatches.push({
+                    match: wordMatch,
+                    matchedWords: words,
+                  });
+                }
+              }
             }
+
+            const { updatedMatchedWords, updatedMatch } = updateWordMatches({
+              matchedWords,
+              match,
+              wordMatches,
+            });
+
+            matchedWords = updatedMatchedWords;
+            match += updatedMatch;
+          } else if (type === "free") {
+            // search slides in free form
+            const slides =
+              allDocs.find((free) => free.name.toLowerCase() === name)
+                ?.slides || [];
+
+            for (let j = 0; j < slides.length; j++) {
+              const { boxes } = slides[j];
+
+              for (let k = 0; k < boxes.length; k++) {
+                const words = boxes[k].words || "";
+                const wordMatch = getMatchForString({
+                  string: words,
+                  searchTerms,
+                });
+                wordMatches.push({
+                  match: wordMatch,
+                  matchedWords: words,
+                });
+              }
+            }
+            const { updatedMatchedWords, updatedMatch } = updateWordMatches({
+              matchedWords,
+              match,
+              wordMatches,
+            });
+
+            matchedWords = updatedMatchedWords;
+            match += updatedMatch;
           }
+
+          rankedList.push({
+            ...listOfType[i],
+            matchPercent: match / searchTerms.length,
+            matchedWords,
+          });
         }
 
-        const { updatedMatchedWords, updatedMatch } = updateWordMatches({
-          matchedWords,
-          match,
-          wordMatches,
-        });
+        const matchedList = rankedList
+          .filter((item) => item.matchPercent >= 0.25) // filter out non-matched items
+          .sort(
+            // sort by match percent, then name
+            (a, b) =>
+              b.matchPercent - a.matchPercent || a.name.localeCompare(b.name)
+          );
 
-        matchedWords = updatedMatchedWords;
-        match += updatedMatch;
-      } else if (type === "free") {
-        // search slides in free form
-        const slides =
-          allDocs.find((free) => free.name.toLowerCase() === name)?.slides ||
-          [];
-
-        for (let j = 0; j < slides.length; j++) {
-          const { boxes } = slides[j];
-
-          for (let k = 0; k < boxes.length; k++) {
-            const words = boxes[k].words || "";
-            const wordMatch = getMatchForString({
-              string: words,
-              searchTerms,
-            });
-            wordMatches.push({
-              match: wordMatch,
-              matchedWords: words,
-            });
-          }
-        }
-        const { updatedMatchedWords, updatedMatch } = updateWordMatches({
-          matchedWords,
-          match,
-          wordMatches,
-        });
-
-        matchedWords = updatedMatchedWords;
-        match += updatedMatch;
-      }
-
-      rankedList.push({
-        ...listOfType[i],
-        matchPercent: match / searchTerms.length,
-        matchedWords,
+        setIsSearchLoading(false);
+        setFilteredList(matchedList);
+        setNumShownItems(30); // reset shown items
+        resolve();
       });
-    }
-
-    const matchedList = rankedList
-      .filter((item) => item.matchPercent >= 0.25) // filter out non-matched items
-      .sort(
-        // sort by match percent, then name
-        (a, b) =>
-          b.matchPercent - a.matchPercent || a.name.localeCompare(b.name)
-      );
-    console.log({ matchedList });
-    setFilteredList(matchedList);
-    setNumShownItems(30); // reset shown items
+    };
+    getFilteredItems();
   }, [debouncedSearchValue, listOfType, allDocs, type]);
 
   useEffect(() => {
@@ -278,10 +296,14 @@ const FilteredItems = ({
           svg={MatchWordSVG}
         >
           {showWords ? "Hide" : "Show"} All{" "}
-          {type === "song" ? "Lyrics" : "Words"}
         </Button>
       </div>
       <ul className="filtered-items-list">
+        {isSearchLoading && (
+          <li className="absolute top-0 left-0 w-full h-full flex items-center justify-center bg-gray-800/35">
+            <Spinner />
+          </li>
+        )}
         {filteredList.slice(0, numShownItems).map((item, index) => {
           return (
             <FilteredItem

@@ -42,11 +42,13 @@ const sizeMap: Map<number, string> = new Map([
   [2, "grid-cols-2"],
 ]);
 
+const emptyMedia = { id: "", background: "" };
+
 const Media = () => {
   const dispatch = useDispatch();
   const location = useLocation();
 
-  const { list } = useSelector((state) => state.media);
+  const { list } = useSelector((state) => state.undoable.present.media);
   const { isLoading } = useSelector((state) => state.undoable.present.item);
   const { isMediaExpanded, mediaItemsPerRow } = useSelector(
     (state) => state.preferences
@@ -55,7 +57,7 @@ const Media = () => {
   const [selectedMedia, setSelectedMedia] = useState<{
     id: string;
     background: string;
-  }>({ id: "", background: "" });
+  }>(emptyMedia);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
 
   const { db, cloud, isMobile, updater } =
@@ -114,6 +116,7 @@ const Media = () => {
     if (!db) return;
     const updatedList = list.filter((item) => item.id !== selectedMedia.id);
     dispatch(updateMediaList(updatedList));
+    setSelectedMedia(emptyMedia);
   };
 
   const addNewBackground = ({
@@ -153,7 +156,7 @@ const Media = () => {
           className="mr-2"
           svg={BgAll}
           onClick={() => {
-            if (selectedMedia && db) {
+            if (selectedMedia.background && db) {
               dispatch(
                 updateAllSlideBackgrounds({
                   background: selectedMedia.background,
@@ -173,7 +176,7 @@ const Media = () => {
           }
           svg={BGOne}
           onClick={() => {
-            if (selectedMedia && db) {
+            if (selectedMedia.background && db) {
               dispatch(
                 updateSlideBackground({ background: selectedMedia.background })
               );
