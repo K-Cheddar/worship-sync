@@ -132,7 +132,7 @@ export const keepElementInView = ({
     const childRect = child.getBoundingClientRect();
     const scrollPadding = shouldScrollToCenter
       ? parentRect.height / 2
-      : childRect.height / 2;
+      : Math.min(childRect.height / 2, parentRect.height - childRect.height);
 
     const leadingDistance = keepNextInView ? childRect.height : 0;
 

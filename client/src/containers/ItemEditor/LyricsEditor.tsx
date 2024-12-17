@@ -2,6 +2,8 @@ import { useSelector, useDispatch } from "../../hooks";
 import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
 import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
+import { ReactComponent as ClosePaneltSVG } from "../../assets/icons/left-panel-close.svg";
+import { ReactComponent as OpenPanelSVG } from "../../assets/icons/left-panel-open.svg";
 
 import Button from "../../components/Button/Button";
 import { useContext, useEffect, useMemo, useState } from "react";
@@ -198,6 +200,7 @@ const LyricsEditor = () => {
         />
         <Button
           className="mx-auto text-sm"
+          svg={showLeftSection ? ClosePaneltSVG : OpenPanelSVG}
           onClick={() => setShowLeftSection(!showLeftSection)}
         >
           {showLeftSection ? "Hide" : "Show"} Arrangments / New Lyrics

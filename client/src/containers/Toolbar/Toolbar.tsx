@@ -1,5 +1,5 @@
 import { useLocation } from "react-router-dom";
-import { ReactComponent as OutlinesSVG } from "../../assets/icons/list.svg";
+import { ReactComponent as SettingsSVG } from "../../assets/icons/settings.svg";
 import { ReactComponent as EditSquareSVG } from "../../assets/icons/edit-square.svg";
 import Menu from "./ToolbarElements/Menu";
 import Services from "./ToolbarElements/Services";
@@ -34,28 +34,29 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
           <Menu />
           {!isEditMode && <Undo />}
         </div>
-        <div className="w-full flex flex-col gap-1 h-[4.5rem] min-h-fit">
+        <div className="w-full flex h-[3.75rem] min-h-fit flex-col">
           <div className="flex gap-1 border-b-2 border-slate-500">
             <Button
               variant="none"
-              svg={OutlinesSVG}
+              svg={SettingsSVG}
               onClick={() => setSection("outlines")}
-              className={`text-xs ${section === "outlines" && "bg-slate-800"}`}
+              className={`text-xs rounded-none ${
+                section === "outlines" && "bg-slate-800"
+              }`}
             >
-              Outlines
+              Settings
             </Button>
-            {onItemPage && (
-              <Button
-                variant="none"
-                svg={EditSquareSVG}
-                onClick={() => setSection("slide-tools")}
-                className={`text-xs ${
-                  section === "slide-tools" && "bg-slate-800"
-                }`}
-              >
-                Slide Tools
-              </Button>
-            )}
+            <Button
+              variant="none"
+              disabled={!onItemPage}
+              svg={EditSquareSVG}
+              onClick={() => setSection("slide-tools")}
+              className={`text-xs rounded-none ${
+                section === "slide-tools" && "bg-slate-800"
+              }`}
+            >
+              Slide Tools
+            </Button>
           </div>
 
           <div

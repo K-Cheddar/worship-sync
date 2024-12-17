@@ -1,5 +1,7 @@
 import Button from "../../../components/Button/Button";
 
+import { ReactComponent as BoxEditSVG } from "../../../assets/icons/box-edit.svg";
+
 import textFull from "../../../assets/images/textbox_full.png";
 import textLeftHalf from "../../../assets/images/textbox_leftHalf.png";
 import textRightHalf from "../../../assets/images/textbox_rightHalf.png";
@@ -11,13 +13,10 @@ import textMidThird from "../../../assets/images/textbox_midThird.png";
 import { Box } from "../../../types";
 import { useDispatch, useSelector } from "../../../hooks";
 import { formatSong } from "../../../utils/overflow";
-import {
-  updateArrangements,
-  updateBoxes,
-  updateSlides,
-} from "../../../store/itemSlice";
+import { updateArrangements, updateBoxes } from "../../../store/itemSlice";
 import { useMemo, useState } from "react";
 import RadioButton from "../../../components/RadioButton/RadioButton";
+import Icon from "../../../components/Icon/Icon";
 
 const BoxEditor = () => {
   const item = useSelector((state) => state.undoable.present.item);
@@ -62,40 +61,11 @@ const BoxEditor = () => {
           }
         : b
     );
-    if (type === "free" || type === "bible") {
-      if (shouldApplyToAll) {
-        const updatedSlides = slides.map((slide, i) => {
-          if (i === selectedSlide) {
-            return {
-              ...slide,
-              boxes: newBoxes,
-            };
-          } else if (i !== 0 && i !== slides.length - 1) {
-            // skip first and last slide
-            return {
-              ...slide,
-              boxes: slide.boxes.map((b, i) =>
-                i === selectedBox
-                  ? {
-                      ...b,
-                      x: box.x,
-                      y: box.y,
-                      width: box.width,
-                      height: box.height,
-                    }
-                  : b
-              ),
-            };
-          } else {
-            return slide;
-          }
-        });
-        dispatch(updateSlides({ slides: updatedSlides }));
-      } else {
-        dispatch(updateBoxes({ boxes: newBoxes }));
-      }
-      return;
-    }
+    // TODO : add support for free and bible
+    // if (type === "free" || type === "bible") {
+    //   dispatch(updateBoxes({ boxes: newBoxes }));
+    //   return;
+    // }
 
     if (type === "song") {
       if (
@@ -118,12 +88,8 @@ const BoxEditor = () => {
                       ...slide,
                       boxes: newBoxes,
                     };
-                  } else if (
-                    shouldApplyToAll &&
-                    i !== 0 &&
-                    i !== slides.length - 1
-                  ) {
-                    // skip first and last slide
+                  } else if (shouldApplyToAll && i !== 0) {
+                    // skip title slide
                     return {
                       ...slide,
                       boxes: slide.boxes.map((b, i) =>
@@ -161,12 +127,15 @@ const BoxEditor = () => {
   };
 
   return (
-    <ul className="flex flex-wrap gap-2 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4 justify-center">
+    <ul className="flex flex-wrap gap-2 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4 justify-center items-center">
+      <li>
+        <Icon svg={BoxEditSVG} size="lg" />
+      </li>
       <li>
         <Button
           image={textFull}
           variant="tertiary"
-          className="w-12"
+          className="w-10"
           onClick={() =>
             updateBoxSize({
               width: 100,
@@ -181,7 +150,7 @@ const BoxEditor = () => {
         <Button
           image={textLeftHalf}
           variant="tertiary"
-          className="w-12"
+          className="w-10"
           onClick={() =>
             updateBoxSize({
               width: 50,
@@ -196,7 +165,7 @@ const BoxEditor = () => {
         <Button
           image={textRightHalf}
           variant="tertiary"
-          className="w-12"
+          className="w-10"
           onClick={() =>
             updateBoxSize({
               width: 50,
@@ -211,7 +180,7 @@ const BoxEditor = () => {
         <Button
           image={textLowerThird}
           variant="tertiary"
-          className="w-12"
+          className="w-10"
           onClick={() =>
             updateBoxSize({
               width: 100,
@@ -226,7 +195,7 @@ const BoxEditor = () => {
         <Button
           image={textMidThird}
           variant="tertiary"
-          className="w-12"
+          className="w-10"
           onClick={() =>
             updateBoxSize({
               width: 100,
@@ -241,7 +210,7 @@ const BoxEditor = () => {
         <Button
           image={textUpperThird}
           variant="tertiary"
-          className="w-12"
+          className="w-10"
           onClick={() =>
             updateBoxSize({
               width: 100,
@@ -256,7 +225,7 @@ const BoxEditor = () => {
         <Button
           image={textMatch}
           variant="tertiary"
-          className="w-12"
+          className="w-10"
           onClick={() =>
             updateBoxSize({
               width: boxes[selectedBox].width,
@@ -267,18 +236,20 @@ const BoxEditor = () => {
           }
         />
       </li>
-      <li className="flex flex-col gap-1">
+      <li>
         <RadioButton
-          label="Apply to all"
-          className="text-xs w-full"
-          value={shouldApplyToAll}
-          onChange={() => setShouldApplyToAll(true)}
-        />
-        <RadioButton
-          className="text-xs w-full"
+          className="text-xs w-fit"
           label="Apply to selected"
           value={!shouldApplyToAll}
           onChange={() => setShouldApplyToAll(false)}
+        />
+      </li>
+      <li>
+        <RadioButton
+          label="Apply to all"
+          className="text-xs w-fit"
+          value={shouldApplyToAll}
+          onChange={() => setShouldApplyToAll(true)}
         />
       </li>
     </ul>

@@ -18,6 +18,7 @@ type InputProps = React.HTMLProps<HTMLInputElement> & {
   color?: string;
   svgPadding?: string;
   svgClassName?: string;
+  inputTextSize?: string;
 };
 
 const Input = ({
@@ -36,6 +37,7 @@ const Input = ({
   disabled = false,
   svgPadding = "p-1",
   svgClassName = "right-px",
+  inputTextSize = "text-sm",
   ...rest
 }: InputProps) => {
   const inputId = id || generateRandomId();
@@ -53,9 +55,12 @@ const Input = ({
       </label>
       <span className="relative w-full">
         <input
-          className={`w-full rounded text-sm py-1 pl-2 text-black ${
-            svg ? "pr-6" : "pr-2"
-          } ${disabled ? "opacity-50" : ""}`}
+          className={cn(
+            "w-full rounded py-1 pl-2 text-black",
+            svg ? "pr-6" : "pr-2",
+            disabled && "opacity-50",
+            inputTextSize
+          )}
           type={type}
           value={value}
           disabled={disabled}
