@@ -55,7 +55,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   };
 
   const _updateBrightness = (val: number) => {
-    const _val = Math.max(Math.min(val, 100), 1);
+    const _val = Math.max(Math.min(val, 100), 10);
     setBrightness(_val);
     const updatedItem = updateBrightness({ brightness: _val, item });
     updateItem(updatedItem);
@@ -90,7 +90,8 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           type="number"
           value={fontSize}
           onChange={(val) => _updateFontSize(val as number)}
-          className="w-10"
+          className="w-8"
+          inputTextSize="text-xs"
           hideLabel
           data-ignore-undo="true"
         />
@@ -114,7 +115,8 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           type="number"
           value={brightness}
           onChange={(val) => _updateBrightness(val as number)}
-          className="w-10"
+          className="w-8"
+          inputTextSize="text-xs"
           hideLabel
           data-ignore-undo="true"
           max={100}

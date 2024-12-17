@@ -7,6 +7,7 @@ import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
 import { ReactComponent as EditTextSVG } from "../../assets/icons/edit-text.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
+import { ReactComponent as BoxSVG } from "../../assets/icons/box.svg";
 
 import Input from "../../components/Input/Input";
 import "./ItemEditor.scss";
@@ -31,6 +32,7 @@ import { formatSong } from "../../utils/overflow";
 import { Box } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
+import Icon from "../../components/Icon/Icon";
 
 const SlideEditor = () => {
   const item = useSelector((state) => state.undoable.present.item);
@@ -277,8 +279,9 @@ const SlideEditor = () => {
           className="ml-1 lg:w-[12vw] max-lg:w-[100%]"
           ref={slideInfoRef}
         >
-          <p className="text-center font-semibold border-b-2 border-black text-sm">
-            Slide Content
+          <p className="text-center font-semibold border-b-2 border-black text-sm flex items-center gap-1 justify-center pb-1">
+            <Icon svg={BoxSVG} />
+            Slide Boxes
           </p>
           {boxes.map((box, index) => {
             return (
@@ -294,7 +297,14 @@ const SlideEditor = () => {
                   variant="none"
                   onClick={() => dispatch(setSelectedBox(index))}
                 >
-                  <p>{box.label || box.words?.trim() || box.background}</p>
+                  <p>
+                    {box.label ||
+                      box.words?.trim() ||
+                      box.background?.replace(
+                        /https:\/\/res\.cloudinary\.com\/.+\/.+\/upload\/v.+\/.+\//g,
+                        ""
+                      )}
+                  </p>
                 </Button>
                 <Button
                   svg={box.isLocked ? LockSVG : UnlockSVG}

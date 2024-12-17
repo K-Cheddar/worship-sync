@@ -38,6 +38,8 @@ const DisplayEditor = ({
   const [boxWidth, setBoxWidth] = useState(`${box.width}%`);
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
   const [showOverflow, setShowOverflow] = useState(false);
+  const [isTextAreaFocused, setIsTextAreaFocused] = useState(false);
+  let textAreaFocusTimeout: NodeJS.Timeout | null = null;
 
   const [isOverflowing, setIsOverflowing] = useState(() => {
     const textArea = document.getElementById(`display-editor-${index}`);
@@ -80,8 +82,6 @@ const DisplayEditor = ({
   useEffect(() => {
     updateBoxSize();
   }, [updateBoxSize]);
-
-  // console.log("rendering");
 
   const updateBoxXY = useCallback(() => {
     const parent = document.getElementById("display-editor");
@@ -247,7 +247,9 @@ const DisplayEditor = ({
       {typeof onChange === "function" && index !== 0 && (
         <>
           <textarea
-            className={`display-editor ${showOverflow ? "" : "overflow-clip"} ${
+            className={`display-editor ${
+              showOverflow ? "overflow-y-visible" : "overflow-y-clip"
+            } ${
               box.isLocked
                 ? "focus-visible:outline-1 focus-visible:outline focus-visible:outline-gray-300"
                 : ""
@@ -264,6 +266,13 @@ const DisplayEditor = ({
               height: textBoxHeight,
               ...textStyles,
             }}
+            onFocus={() => setIsTextAreaFocused(true)}
+            onBlur={() =>
+              (textAreaFocusTimeout = setTimeout(
+                () => setIsTextAreaFocused(false),
+                500
+              ))
+            }
             onChange={(e) => {
               e.preventDefault();
               onChange({
@@ -274,12 +283,19 @@ const DisplayEditor = ({
               });
             }}
           />
-          {isOverflowing && (
+          {isOverflowing && isTextAreaFocused && (
             <Button
               variant="tertiary"
+              onFocus={() => {
+                if (textAreaFocusTimeout) {
+                  clearTimeout(textAreaFocusTimeout);
+                }
+                setIsTextAreaFocused(true);
+              }}
+              onBlur={() => setIsTextAreaFocused(false)}
               svg={showOverflow ? ArrowUpSVG : ArrowDownSVG}
               onClick={() => setShowOverflow(!showOverflow)}
-              className="absolute bottom-0 left-1/2"
+              className={`absolute bottom-0 left-1/2`}
             />
           )}
         </>
