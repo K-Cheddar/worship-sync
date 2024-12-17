@@ -56,6 +56,7 @@ const undoableReducers = undoable(
       itemSlice.actions.toggleEditMode.toString(),
       itemSlice.actions.setHasPendingUpdate.toString(),
       itemSlice.actions.setSelectedSlide.toString(),
+      itemSlice.actions.setSelectedBox.toString(),
       overlaysSlice.actions.selectOverlay.toString(),
       overlaysSlice.actions.initiateOverlayList.toString(),
       overlaysSlice.actions.updateOverlayListFromRemote.toString(),
@@ -83,6 +84,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.item !==
         (previousState as RootState).undoable.present.item &&
       action.type !== "item/setSelectedSlide" &&
+      action.type !== "item/setSelectedBox" &&
       action.type !== "item/toggleEditMode" &&
       action.type !== "item/setItemIsLoading" &&
       action.type !== "item/setHasPendingUpdate" &&

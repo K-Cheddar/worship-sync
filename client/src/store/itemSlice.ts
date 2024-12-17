@@ -77,6 +77,9 @@ export const itemSlice = createSlice({
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
     },
+    setSelectedBox: (state, action: PayloadAction<number>) => {
+      state.selectedBox = action.payload;
+    },
   },
 });
 
@@ -335,6 +338,7 @@ export const {
   _updateSlides,
   setBackground,
   setHasPendingUpdate,
+  setSelectedBox,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

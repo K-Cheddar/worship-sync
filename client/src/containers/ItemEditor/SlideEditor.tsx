@@ -7,6 +7,7 @@ import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
 import { ReactComponent as EditTextSVG } from "../../assets/icons/edit-text.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
+
 import Input from "../../components/Input/Input";
 import "./ItemEditor.scss";
 import {
@@ -20,7 +21,11 @@ import {
 import { borderColorMap } from "../../utils/itemTypeMaps";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useDispatch, useSelector } from "../../hooks";
-import { toggleEditMode, updateArrangements } from "../../store/itemSlice";
+import {
+  setSelectedBox,
+  toggleEditMode,
+  updateArrangements,
+} from "../../store/itemSlice";
 import { setName, updateBoxes } from "../../store/itemSlice";
 import { formatSong } from "../../utils/overflow";
 import { Box } from "../../types";
@@ -35,6 +40,7 @@ const SlideEditor = () => {
     arrangements,
     selectedArrangement,
     selectedSlide,
+    selectedBox,
     slides,
     isLoading,
   } = item;
@@ -54,7 +60,7 @@ const SlideEditor = () => {
     isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
   );
 
-  const editorRef = useCallback((node: HTMLUListElement) => {
+  const editorRef = useCallback((node: HTMLDivElement) => {
     if (node) {
       const resizeObserver = new ResizeObserver((entries) => {
         setEditorHeight(`${entries[0].borderBoxSize[0].blockSize}px`);
@@ -86,16 +92,26 @@ const SlideEditor = () => {
     index: number;
     value: string;
     box: Box;
-    cursorPosition: number;
+    cursorPosition?: number;
   }) => {
-    if (type === "bible" || !db) return;
+    if (type === "bible") return;
     const newBoxes = boxes.map((b, i) =>
-      i === index ? { ...b, words: value } : b
+      i === index
+        ? {
+            ...b,
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height,
+            words: value,
+          }
+        : b
     );
     if (type === "free") {
       dispatch(updateBoxes({ boxes: newBoxes }));
       return;
     }
+
     if (type === "song") {
       if (
         box.excludeFromOverflow ||
@@ -137,6 +153,16 @@ const SlideEditor = () => {
                       return lyric;
                     }
                   }),
+                  slides: slides.map((slide, i) => {
+                    if (i === selectedSlide) {
+                      return {
+                        ...slide,
+                        boxes: newBoxes,
+                      };
+                    } else {
+                      return slide;
+                    }
+                  }),
                 };
               } else {
                 return arrangement;
@@ -155,7 +181,7 @@ const SlideEditor = () => {
             const textBoxElement = document.getElementById(
               `display-box-text-${index}`
             ) as HTMLTextAreaElement;
-            if (textBoxElement) {
+            if (textBoxElement && typeof cursorPosition === "number") {
               textBoxElement.selectionEnd = cursorPosition;
               textBoxElement.selectionStart = cursorPosition;
               textBoxElement.scrollTop = 0;
@@ -260,12 +286,13 @@ const SlideEditor = () => {
                 key={box.id}
                 className={`flex gap-1 bg-slate-600 border-slate-300 ${
                   index !== boxes.length - 1 && "border-b"
-                }`}
+                } ${selectedBox === index && "bg-slate-800"}`}
               >
                 <Button
                   truncate
                   className="flex-1 text-xs hover:bg-slate-500"
                   variant="none"
+                  onClick={() => dispatch(setSelectedBox(index))}
                 >
                   <p>{box.label || box.words?.trim() || box.background}</p>
                 </Button>
@@ -290,6 +317,7 @@ const SlideEditor = () => {
         <DisplayWindow
           showBorder
           boxes={boxes}
+          selectBox={(val) => dispatch(setSelectedBox(val))}
           ref={editorRef}
           onChange={(onChangeInfo) => {
             onChange(onChangeInfo);

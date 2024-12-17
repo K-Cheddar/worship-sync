@@ -7,6 +7,12 @@
   @apply relative overflow-hidden text-white;
 }
 
+.display-editor {
+  @apply h-full w-full bg-transparent absolute resize-none outline-none;
+
+    scrollbar-width: thin;
+}
+
 .overlay-participant-info-container {
   @apply w-fit absolute flex flex-col bg-gray-800/75 overflow-hidden border-green-700 border-solid; 
 

@@ -1,4 +1,4 @@
-import { forwardRef, useRef } from "react";
+import { forwardRef, MutableRefObject, useRef } from "react";
 import { BibleDisplayInfo, Box, DisplayType, OverlayInfo } from "../../types";
 import "./DisplayWindow.scss";
 import DisplayBox from "./DisplayBox";
@@ -6,6 +6,8 @@ import DisplayStreamBible from "./DisplayStreamBible";
 import DisplayParticipantOverlay from "./DisplayParticipantOverlay";
 import DisplayStbOverlay from "./DisplayStbOverlay";
 import DisplayQrCodeOverlay from "./DisplayQrCodeOverlay";
+import DisplayEditor from "./DisplayEditor";
+import DisplayStreamText from "./DisplayStreamText";
 
 type DisplayWindowProps = {
   prevBoxes?: Box[];
@@ -34,9 +36,10 @@ type DisplayWindowProps = {
   shouldPlayVideo?: boolean;
   time?: number;
   prevTime?: number;
+  selectBox?: (index: number) => void;
 };
 
-const DisplayWindow = forwardRef<HTMLUListElement, DisplayWindowProps>(
+const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
   (
     {
       prevBoxes = [],
@@ -55,10 +58,11 @@ const DisplayWindow = forwardRef<HTMLUListElement, DisplayWindowProps>(
       bibleDisplayInfo,
       prevBibleDisplayInfo,
       qrCodeOverlayInfo,
+      selectBox,
     }: DisplayWindowProps,
     ref
   ) => {
-    const fallbackRef = useRef<HTMLUListElement | null>(null);
+    const fallbackRef = useRef<HTMLDivElement | null>(null);
     const containerRef = ref || fallbackRef;
 
     const aspectRatio = 16 / 9;
@@ -69,13 +73,16 @@ const DisplayWindow = forwardRef<HTMLUListElement, DisplayWindowProps>(
       displayType === "slide" ||
       displayType === "editor";
     const isStream = displayType === "stream";
+    const isEditor = displayType === "editor";
+    const isDisplay = !isStream && !isEditor;
 
     return (
-      <ul
+      <div
         className={`display-window ${
           showBorder ? "border border-gray-500" : ""
         } ${displayType !== "stream" ? "bg-black" : ""}`}
         ref={containerRef}
+        id={isEditor ? "display-editor" : undefined}
         style={
           {
             "--slide-editor-height": `${width / aspectRatio}vw`,
@@ -84,42 +91,77 @@ const DisplayWindow = forwardRef<HTMLUListElement, DisplayWindowProps>(
         }
       >
         {boxes.map((box, index) => {
-          return (
-            <DisplayBox
-              key={box.id}
-              box={box}
-              width={width}
-              displayType={displayType}
-              showBackground={showBackground}
-              isStream={isStream}
-              fontAdjustment={fontAdjustment}
-              onChange={onChange}
-              index={index}
-              shouldAnimate={shouldAnimate}
-              shouldPlayVideo={shouldPlayVideo}
-              prevBox={prevBoxes[index]}
-              time={time}
-            />
-          );
+          if (isEditor)
+            return (
+              <DisplayEditor
+                key={box.id}
+                box={box}
+                width={width}
+                fontAdjustment={fontAdjustment}
+                onChange={onChange}
+                index={index}
+                selectBox={selectBox}
+              />
+            );
+          if (isStream)
+            return (
+              <DisplayStreamText
+                key={box.id}
+                box={box}
+                fontAdjustment={fontAdjustment}
+                width={width}
+                time={time}
+              />
+            );
+
+          if (isDisplay)
+            return (
+              <DisplayBox
+                key={box.id}
+                box={box}
+                width={width}
+                displayType={displayType}
+                showBackground={showBackground}
+                fontAdjustment={fontAdjustment}
+                index={index}
+                shouldAnimate={shouldAnimate}
+                shouldPlayVideo={shouldPlayVideo}
+                prevBox={prevBoxes[index]}
+                time={time}
+              />
+            );
+          return null;
         })}
         {prevBoxes.map((box, index) => {
-          return (
-            <DisplayBox
-              key={box.id}
-              box={box}
-              width={width}
-              displayType={displayType}
-              showBackground={showBackground}
-              isStream={isStream}
-              fontAdjustment={fontAdjustment}
-              onChange={onChange}
-              index={index}
-              shouldAnimate={shouldAnimate}
-              shouldPlayVideo={shouldPlayVideo}
-              isPrev
-              time={prevTime}
-            />
-          );
+          if (isDisplay)
+            return (
+              <DisplayBox
+                key={box.id}
+                box={box}
+                width={width}
+                displayType={displayType}
+                showBackground={showBackground}
+                fontAdjustment={fontAdjustment}
+                index={index}
+                shouldAnimate={shouldAnimate}
+                shouldPlayVideo={shouldPlayVideo}
+                prevBox={prevBoxes[index]}
+                time={time}
+                isPrev
+              />
+            );
+          if (isStream)
+            return (
+              <DisplayStreamText
+                key={box.id}
+                fontAdjustment={fontAdjustment}
+                box={box}
+                width={width}
+                time={time}
+                isPrev
+              />
+            );
+          return null;
         })}
 
         {isStream && (
@@ -154,7 +196,7 @@ const DisplayWindow = forwardRef<HTMLUListElement, DisplayWindowProps>(
             />
           </>
         )}
-      </ul>
+      </div>
     );
   }
 );

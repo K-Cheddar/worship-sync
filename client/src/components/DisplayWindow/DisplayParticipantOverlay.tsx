@@ -11,14 +11,14 @@ type DisplayStreamOverlayProps = {
 };
 
 const DisplayStreamOverlay = forwardRef<
-  HTMLUListElement,
+  HTMLDivElement,
   DisplayStreamOverlayProps
 >(
   (
     { width, participantOverlayInfo = {}, shouldAnimate = false },
     containerRef
   ) => {
-    const participantOverlayRef = useRef<HTMLLIElement | null>(null);
+    const participantOverlayRef = useRef<HTMLDivElement | null>(null);
     const overlayTimeline = useRef<GSAPTimeline | null>();
 
     useGSAP(
@@ -38,21 +38,32 @@ const DisplayStreamOverlay = forwardRef<
           .timeline()
           .set(targets, { xPercent: -105, opacity: 0 });
 
-        // Only play animate if there is overlay info
+        // Only animate if there is overlay info
         if (
           participantOverlayInfo.name ||
           participantOverlayInfo.title ||
           participantOverlayInfo.event
         ) {
           overlayTimeline.current
-            .to(participantOverlayRef.current, {
-              xPercent: 5,
-              duration: 2.5,
-              ease: "power1.out",
-              opacity: 1,
-            })
-            .to(
+            .fromTo(
+              participantOverlayRef.current,
+              {
+                xPercent: -105,
+                opacity: 0,
+              },
+              {
+                xPercent: 10,
+                duration: 2.5,
+                ease: "power1.out",
+                opacity: 1,
+              }
+            )
+            .fromTo(
               innerElements,
+              {
+                xPercent: -105,
+                opacity: 0,
+              },
               {
                 xPercent: 0,
                 opacity: 1,
@@ -75,7 +86,7 @@ const DisplayStreamOverlay = forwardRef<
     );
 
     return (
-      <li
+      <div
         ref={participantOverlayRef}
         className="overlay-participant-info-container"
         style={
@@ -109,7 +120,7 @@ const DisplayStreamOverlay = forwardRef<
             {participantOverlayInfo.event}
           </p>
         )}
-      </li>
+      </div>
     );
   }
 );

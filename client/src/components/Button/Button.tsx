@@ -16,6 +16,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 export type ButtonProps = Omit<React.HTMLProps<HTMLButtonElement>, "wrap"> & {
   children?: ReactNode;
   svg?: FunctionComponent<React.SVGProps<SVGSVGElement>>;
+  image?: string;
   variant?: "primary" | "secondary" | "tertiary" | "cta" | "none";
   className?: string;
   color?: string;
@@ -47,6 +48,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       iconSize: _iconSize,
       type = "button",
       isLoading = false,
+      image,
       ...rest
     },
     ref
@@ -90,6 +92,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         {svg && iconPosition === "left" && iconWProps}
         {children}
         {svg && iconPosition === "right" && iconWProps}
+        {image && <img src={image} alt={image} />}
         {isLoading && (
           <Spinner className="absolute" width="24px" borderWidth="3px" />
         )}

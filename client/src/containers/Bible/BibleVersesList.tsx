@@ -44,6 +44,7 @@ const BibleVersesList = ({
         child: verseElement,
         parent: parentElement,
         shouldScrollToCenter: true,
+        keepNextInView: true,
       });
     }
   }, [selectedVerse]);

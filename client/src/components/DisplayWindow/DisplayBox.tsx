@@ -2,6 +2,7 @@ import { Box, DisplayType } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
+import { Rnd } from "react-rnd";
 import cn from "classnames";
 
 type DisplayBoxProps = {
@@ -10,9 +11,7 @@ type DisplayBoxProps = {
   width: number;
   displayType?: DisplayType;
   showBackground: boolean;
-  isStream: boolean;
   fontAdjustment: number;
-  onChange?: Function;
   index: number;
   shouldAnimate?: boolean;
   isPrev?: boolean;
@@ -26,16 +25,14 @@ const DisplayBox = ({
   width,
   displayType,
   showBackground,
-  isStream,
   fontAdjustment,
-  onChange,
   index,
   shouldAnimate,
   shouldPlayVideo,
   isPrev,
   time,
 }: DisplayBoxProps) => {
-  const boxRef = useRef<HTMLLIElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline>();
   const shouldShowBackground = showBackground && box.background;
   // This should be done outside the boxes to keep it playing when slides change. In that case maybe only one video per item.
@@ -112,28 +109,25 @@ const DisplayBox = ({
     { scope: boxRef, dependencies: [box, time] }
   );
 
-  const bFontSize = isStream ? 1.1 : box.fontSize;
+  const bFontSize = box.fontSize;
   const bWords = box.words || "";
-  const words = isStream ? bWords.trim() : bWords;
+  const words = bWords;
   const fontSizeValue = bFontSize ? bFontSize / fontAdjustment : 1;
   const tSS = fontSizeValue / (width > 20 ? 32 : 10); // text shadow size
-  const _fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size
-  const fOS = isStream ? _fOS / 2 : _fOS;
-  const boxWidth = isStream
-    ? "60%"
-    : `calc(${box.width}% - ${box.sideMargin ? box.sideMargin * 2 : 0}%)`;
+  const fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size
+  const boxWidth = `calc(${box.width}% - ${
+    box.sideMargin ? box.sideMargin * 2 : 0
+  }%)`;
   // % margin is calculated based on the width so we get the percentage of top and bottom margin, then multiply by the width of the container
-  const boxHeight = isStream
-    ? "fit"
-    : `calc(${box.height}% - (${width}vw * (${box.topMargin || 0} + ${
-        box.topMargin || 0
-      }) / 100) )`;
-  const marginLeft = isStream ? "15%" : `${box.sideMargin}%`;
-  const marginRight = isStream ? "15%" : `${box.sideMargin}%`;
-  const marginTop = isStream ? "auto" : `${box.topMargin}%`;
-  const marginBottom = isStream ? "10%" : `${box.topMargin}%`;
-  const boxTop = isStream ? "90%" : `${box.y || 0}%`;
-  const boxLeft = isStream ? "unset" : `${box.x || 0}%`;
+  const boxHeight = `calc(${box.height}% - (${width}vw * (${
+    box.topMargin || 0
+  } + ${box.topMargin || 0}) / 100) )`;
+  const marginLeft = `${box.sideMargin}%`;
+  const marginRight = `${box.sideMargin}%`;
+  const marginTop = `${box.topMargin}%`;
+  const marginBottom = `${box.topMargin}%`;
+  const boxTop = `${box.y || 0}%`;
+  const boxLeft = `${box.x || 0}%`;
   const textStyles = {
     textShadow: `${tSS}vw ${tSS}vw ${tSS}vw #000, ${tSS}vw ${tSS}vw ${tSS}vw #000`,
     WebkitTextStroke: `${fOS}vw #000`,
@@ -141,7 +135,7 @@ const DisplayBox = ({
     lineHeight: 1.25,
   };
   return (
-    <li
+    <div
       key={box.id}
       ref={boxRef}
       className="absolute leading-tight"
@@ -170,37 +164,10 @@ const DisplayBox = ({
           alt={box.label}
         />
       )}
-      {isStream && box.background && (
-        <div className="h-full w-full absolute bg-transparent" />
-      )}
-      {typeof onChange !== "function" && (
-        <p
-          className={`display-box-text ${
-            isStream ? "h-fit bottom-0 text-center" : "h-full"
-          }`}
-          style={textStyles}
-        >
-          {words}
-        </p>
-      )}
-      {typeof onChange === "function" && (
-        <textarea
-          className="h-full w-full bg-transparent absolute resize-none overflow-hidden"
-          id={`display-box-text-${index}`}
-          value={words}
-          style={textStyles}
-          onChange={(e) => {
-            e.preventDefault();
-            onChange({
-              index,
-              value: e.target.value,
-              box,
-              cursorPosition: e.target.selectionStart,
-            });
-          }}
-        />
-      )}
-    </li>
+      <p className={`display-box-text h-full`} style={textStyles}>
+        {words}
+      </p>
+    </div>
   );
 };
 
