@@ -11,10 +11,7 @@ type DisplayStreamBibleProps = {
   shouldAnimate?: boolean;
 };
 
-const DisplayStreamBible = forwardRef<
-  HTMLUListElement,
-  DisplayStreamBibleProps
->(
+const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
   (
     {
       width,
@@ -24,8 +21,8 @@ const DisplayStreamBible = forwardRef<
     }: DisplayStreamBibleProps,
     containerRef
   ) => {
-    const bibleRef = useRef<HTMLLIElement | null>(null);
-    const prevBibleRef = useRef<HTMLLIElement | null>(null);
+    const bibleRef = useRef<HTMLDivElement | null>(null);
+    const prevBibleRef = useRef<HTMLDivElement | null>(null);
     const bibleTimeline = useRef<GSAPTimeline | null>();
     const prevBibleTimeline = useRef<GSAPTimeline | null>();
 
@@ -33,7 +30,7 @@ const DisplayStreamBible = forwardRef<
       () => {
         if (
           !bibleRef.current ||
-          !(containerRef as MutableRefObject<HTMLUListElement>)?.current ||
+          !(containerRef as MutableRefObject<HTMLDivElement>)?.current ||
           !shouldAnimate
         )
           return;
@@ -115,7 +112,7 @@ const DisplayStreamBible = forwardRef<
 
     return (
       <>
-        <li
+        <div
           ref={bibleRef}
           className="bible-info-container"
           style={
@@ -131,9 +128,9 @@ const DisplayStreamBible = forwardRef<
           {bibleDisplayInfo?.text?.trim() && (
             <p className="bible-info-text">{bibleDisplayInfo.text}</p>
           )}
-        </li>
+        </div>
 
-        <li
+        <div
           ref={prevBibleRef}
           className="prev-bible-info-container"
           style={
@@ -151,7 +148,7 @@ const DisplayStreamBible = forwardRef<
           {prevBibleDisplayInfo?.text?.trim() && (
             <p className="prev-bible-info-text">{prevBibleDisplayInfo.text}</p>
           )}
-        </li>
+        </div>
       </>
     );
   }

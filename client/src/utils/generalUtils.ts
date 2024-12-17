@@ -117,27 +117,37 @@ type keepElementInViewType = {
   child: HTMLElement;
   parent: HTMLElement;
   shouldScrollToCenter?: boolean;
+  keepNextInView?: boolean;
 };
+
 export const keepElementInView = ({
   child,
   parent,
   shouldScrollToCenter,
+  keepNextInView,
 }: keepElementInViewType) => {
   try {
     child.focus();
     const parentRect = parent.getBoundingClientRect();
-    const verseRect = child.getBoundingClientRect();
-    const scrollDistance = shouldScrollToCenter
+    const childRect = child.getBoundingClientRect();
+    const scrollPadding = shouldScrollToCenter
       ? parentRect.height / 2
-      : verseRect.height;
-    if (verseRect.top - verseRect.height < parentRect.top) {
+      : childRect.height / 2;
+
+    const leadingDistance = keepNextInView ? childRect.height : 0;
+
+    if (childRect.top - leadingDistance < parentRect.top) {
       parent.scrollTo({
-        top: parent.scrollTop - scrollDistance,
+        top:
+          parent.scrollTop - (parentRect.top - childRect.top) - scrollPadding,
         behavior: "smooth",
       });
-    } else if (verseRect.bottom + verseRect.height > parentRect.bottom) {
+    } else if (childRect.bottom + leadingDistance > parentRect.bottom) {
       parent.scrollTo({
-        top: parent.scrollTop + scrollDistance,
+        top:
+          parent.scrollTop +
+          (childRect.bottom - parentRect.bottom) +
+          scrollPadding,
         behavior: "smooth",
       });
     }

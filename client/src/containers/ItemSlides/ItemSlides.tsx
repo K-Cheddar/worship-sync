@@ -28,7 +28,7 @@ import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import { useSensors } from "../../utils/dndUtils";
 
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
-import { useContext, useEffect } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import {
   handleKeyDownTraverse,
@@ -72,12 +72,51 @@ const ItemSlides = () => {
     slides: __slides,
     isLoading,
   } = useSelector((state) => state.undoable.present.item);
+
   const arrangement = arrangements[selectedArrangement];
-  const _slides = arrangement?.slides || __slides || [];
-  const slides = isLoading ? [] : _slides;
+
+  const slides = useMemo(() => {
+    const _slides = arrangement?.slides || __slides || [];
+    return isLoading ? [] : _slides;
+  }, [isLoading, __slides, arrangement?.slides]);
   const size = useSelector((state) => state.preferences.slidesPerRow);
   const { isMobile } = useContext(ControllerInfoContext) || {};
+
+  const debounceTime = useRef(0);
+
   const dispatch = useDispatch();
+
+  const [debouncedSlides, setDebouncedSlides] = useState(slides);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedSlides(slides);
+    }, debounceTime.current);
+
+    return () => clearTimeout(timeout);
+  }, [slides]);
+
+  useEffect(() => {
+    let timeout: NodeJS.Timeout | null = null;
+
+    if (isLoading) {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      setDebouncedSlides([]);
+      debounceTime.current = 0;
+    } else {
+      timeout = setTimeout(() => {
+        debounceTime.current = 150;
+      }, 500);
+    }
+
+    return () => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    };
+  }, [isLoading]);
 
   const sensors = useSensors();
 
@@ -148,6 +187,7 @@ const ItemSlides = () => {
     const element = slides[oldIndex];
     updatedSlides.splice(oldIndex, 1);
     updatedSlides.splice(newIndex, 0, element);
+    setDebouncedSlides(updatedSlides);
     dispatch(updateSlides({ slides: updatedSlides }));
   };
 
@@ -209,7 +249,7 @@ const ItemSlides = () => {
           items={slides.map((slide) => slide.id || "")}
           strategy={rectSortingStrategy}
         >
-          {slides.map((slide, index) => (
+          {debouncedSlides.map((slide, index) => (
             <ItemSlide
               key={slide.id}
               slide={slide}

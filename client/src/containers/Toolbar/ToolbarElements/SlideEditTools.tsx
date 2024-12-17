@@ -2,6 +2,8 @@ import Button from "../../../components/Button/Button";
 import { ReactComponent as AddSVG } from "../../../assets/icons/add.svg";
 import { ReactComponent as MinusSVG } from "../../../assets/icons/remove.svg";
 import { ReactComponent as ExpandSVG } from "../../../assets/icons/expand.svg";
+import { ReactComponent as TextFieldSVG } from "../../../assets/icons/text-field.svg";
+import { ReactComponent as BrightnessSVG } from "../../../assets/icons/brightness.svg";
 import Input from "../../../components/Input/Input";
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "../../../hooks";
@@ -15,8 +17,10 @@ import { updateArrangements, updateSlides } from "../../../store/itemSlice";
 import Toggle from "../../../components/Toggle/Toggle";
 import { ItemState } from "../../../types";
 import PopOver from "../../../components/PopOver/PopOver";
+import Icon from "../../../components/Icon/Icon";
+import BoxEditor from "./BoxEditor";
 
-const SlideEditTools = () => {
+const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
   const dispatch = useDispatch();
   const [fontSize, setFontSize] = useState(24);
@@ -70,12 +74,12 @@ const SlideEditTools = () => {
     return null;
   }
 
-  const canChangeAspectRatio = ~(item.type === "free" || item.type === "image");
+  const canChangeAspectRatio = item.type === "free" || item.type === "image";
 
   const controls = (
     <>
       <div className="flex gap-1 items-center">
-        <p className="text-sm font-semibold">Font Size:</p>
+        <Icon svg={TextFieldSVG} />
         <Button
           svg={MinusSVG}
           variant="tertiary"
@@ -97,13 +101,9 @@ const SlideEditTools = () => {
         />
       </div>
       <div
-        className={`flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 ${
-          canChangeAspectRatio
-            ? "lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4"
-            : ""
-        }`}
+        className={`flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4`}
       >
-        <p className="text-sm font-semibold">Brightness:</p>
+        <Icon size="xl" svg={BrightnessSVG} />
         <Button
           svg={MinusSVG}
           variant="tertiary"
@@ -126,6 +126,7 @@ const SlideEditTools = () => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
+      {item.type === "song" && <BoxEditor />}
       {canChangeAspectRatio && (
         <Toggle
           label="Keep Aspect Ratio"
@@ -137,7 +138,7 @@ const SlideEditTools = () => {
   );
 
   return (
-    <div className="flex gap-2 items-center">
+    <div className={`flex gap-2 items-center ${className || ""}`}>
       {/* leaving this outer div in case more tools are added */}
 
       <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>

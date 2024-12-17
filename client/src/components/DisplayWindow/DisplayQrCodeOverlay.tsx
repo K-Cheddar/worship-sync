@@ -13,17 +13,17 @@ type DisplayStreamOverlayProps = {
 };
 
 const DisplayStreamOverlay = forwardRef<
-  HTMLUListElement,
+  HTMLDivElement,
   DisplayStreamOverlayProps
 >(({ width, qrCodeOverlayInfo = {}, shouldAnimate = false }, containerRef) => {
-  const qrCodeOverlayRef = useRef<HTMLLIElement | null>(null);
+  const qrCodeOverlayRef = useRef<HTMLDivElement | null>(null);
   const overlayTimeline = useRef<GSAPTimeline | null>();
 
   useGSAP(
     () => {
       if (
         !qrCodeOverlayRef.current ||
-        !(containerRef as React.MutableRefObject<HTMLUListElement>)?.current ||
+        !(containerRef as React.MutableRefObject<HTMLDivElement>)?.current ||
         !shouldAnimate
       )
         return;
@@ -70,7 +70,7 @@ const DisplayStreamOverlay = forwardRef<
   );
 
   return (
-    <li
+    <div
       ref={qrCodeOverlayRef}
       className="overlay-qr-code-info-container"
       style={
@@ -99,7 +99,7 @@ const DisplayStreamOverlay = forwardRef<
           {qrCodeOverlayInfo.description}
         </p>
       )}
-    </li>
+    </div>
   );
 });
 

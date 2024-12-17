@@ -344,7 +344,7 @@ const FilteredItems = ({
           }`}
           ref={loader}
         >
-          {!isFullListLoaded && "Loading..."}
+          {!isFullListLoaded && <Spinner />}
         </li>
       </ul>
     </div>

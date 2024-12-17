@@ -1,6 +1,6 @@
 import { useContext, useEffect } from "react";
-import { ReactComponent as OpenSVG } from "../../../assets/icons/open-folder.svg";
 import { ReactComponent as AddSVG } from "../../../assets/icons/add.svg";
+import { ReactComponent as ListSVG } from "../../../assets/icons/list.svg";
 import Select from "../../../components/Select/Select";
 import { useDispatch, useSelector } from "../../../hooks";
 import {
@@ -23,7 +23,7 @@ import {
   createNewItemList,
 } from "../../../utils/itemUtil";
 
-const Services = () => {
+const Services = ({ className }: { className: string }) => {
   const { currentLists, selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
@@ -52,6 +52,8 @@ const Services = () => {
         console.error(e);
       }
     };
+
+    console.log("getting item lists");
 
     getItemLists();
   }, [db, dispatch, updater]);
@@ -89,16 +91,8 @@ const Services = () => {
   };
 
   return (
-    <div className="flex gap-2 items-center">
-      <Select
-        label="Outlines"
-        className="services-dropdown"
-        labelClassName="mr-2"
-        options={listsOptions}
-        value={selectedList?.id || ""}
-        onChange={(list) => dispatch(selectItemList(list))}
-      />
-      <PopOver TriggeringButton={<Button svg={OpenSVG} variant="tertiary" />}>
+    <div className={`flex gap-2 items-center ${className || ""}`}>
+      <PopOver TriggeringButton={<Button svg={ListSVG} variant="tertiary" />}>
         <div className="flex flex-col gap-2">
           <div className="services-container">
             <section className="flex-1 h-full p-1 flex flex-col">
@@ -158,6 +152,15 @@ const Services = () => {
           </Button>
         </div>
       </PopOver>
+      <Select
+        label="Outlines"
+        hideLabel
+        className="services-dropdown"
+        labelClassName="mr-2"
+        options={listsOptions}
+        value={selectedList?.id || ""}
+        onChange={(list) => dispatch(selectItemList(list))}
+      />
     </div>
   );
 };

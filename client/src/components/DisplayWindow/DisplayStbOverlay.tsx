@@ -10,9 +10,9 @@ type DisplayStbOverlayProps = {
   shouldAnimate?: boolean;
 };
 
-const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
+const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
   ({ width, stbOverlayInfo = {}, shouldAnimate = false }, containerRef) => {
-    const stbOverlayRef = useRef<HTMLLIElement | null>(null);
+    const stbOverlayRef = useRef<HTMLDivElement | null>(null);
     const overlayTimeline = useRef<GSAPTimeline | null>();
 
     useGSAP(
@@ -47,7 +47,7 @@ const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
     );
 
     return (
-      <li
+      <div
         ref={stbOverlayRef}
         className="overlay-stb-info-container"
         style={
@@ -69,7 +69,7 @@ const DisplayStbOverlay = forwardRef<HTMLUListElement, DisplayStbOverlayProps>(
             {stbOverlayInfo.subHeading}
           </p>
         )}
-      </li>
+      </div>
     );
   }
 );

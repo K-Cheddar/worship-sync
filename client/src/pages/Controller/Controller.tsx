@@ -53,7 +53,6 @@ import Spinner from "../../components/Spinner/Spinner";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { sortNamesInList } from "../../utils/sort";
 import { deleteUnusedBibleItems, updateAllDocs } from "../../utils/dbUtils";
-import { updateAllSongDocs } from "../../store/allDocsSlice";
 
 // Here for future to implement resizable
 
@@ -246,7 +245,7 @@ const Controller = () => {
       >
         <Toolbar
           ref={toolbarRef}
-          className="flex border-b-2 border-slate-500 h-10 text-sm min-h-fit"
+          className="flex border-b-2 border-slate-500 text-sm min-h-fit"
         />
         <div className="controller-main" ref={controllerRef}>
           <LyricsEditor />

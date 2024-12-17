@@ -114,6 +114,29 @@ export const presentationSlice = createSlice({
           ...action.payload,
           time: Date.now(),
         };
+        if (
+          action.payload.name ||
+          action.payload.title ||
+          action.payload.event
+        ) {
+          state.prevStreamInfo.bibleDisplayInfo =
+            state.streamInfo.bibleDisplayInfo;
+          state.prevStreamInfo.qrCodeOverlayInfo =
+            state.streamInfo.qrCodeOverlayInfo;
+          state.prevStreamInfo.slide = state.streamInfo.slide;
+
+          state.streamInfo.qrCodeOverlayInfo = {
+            description: "",
+            time: Date.now(),
+            id: generateRandomId(),
+          };
+          state.streamInfo.slide = null;
+          state.streamInfo.bibleDisplayInfo = {
+            title: "",
+            text: "",
+            time: Date.now(),
+          };
+        }
       }
     },
     updateStbOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
@@ -135,6 +158,25 @@ export const presentationSlice = createSlice({
           ...action.payload,
           time: Date.now(),
         };
+        if (action.payload.url || action.payload.description) {
+          state.prevStreamInfo.bibleDisplayInfo =
+            state.streamInfo.bibleDisplayInfo;
+          state.prevStreamInfo.participantOverlayInfo =
+            state.streamInfo.participantOverlayInfo;
+          state.prevStreamInfo.slide = state.streamInfo.slide;
+
+          state.streamInfo.participantOverlayInfo = {
+            name: "",
+            time: Date.now(),
+            id: generateRandomId(),
+          };
+          state.streamInfo.slide = null;
+          state.streamInfo.bibleDisplayInfo = {
+            title: "",
+            text: "",
+            time: Date.now(),
+          };
+        }
       }
     },
     updateParticipantOverlayInfoFromRemote: (
@@ -148,6 +190,25 @@ export const presentationSlice = createSlice({
         ...action.payload,
         time: action.payload.time,
       };
+      if (action.payload.name || action.payload.title || action.payload.event) {
+        state.prevStreamInfo.bibleDisplayInfo =
+          state.streamInfo.bibleDisplayInfo;
+        state.prevStreamInfo.qrCodeOverlayInfo =
+          state.streamInfo.qrCodeOverlayInfo;
+        state.prevStreamInfo.slide = state.streamInfo.slide;
+
+        state.streamInfo.qrCodeOverlayInfo = {
+          description: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+        state.streamInfo.slide = null;
+        state.streamInfo.bibleDisplayInfo = {
+          title: "",
+          text: "",
+          time: Date.now(),
+        };
+      }
     },
     updateStbOverlayInfoFromRemote: (
       state,
@@ -171,6 +232,25 @@ export const presentationSlice = createSlice({
         ...action.payload,
         time: action.payload.time,
       };
+      if (action.payload.url || action.payload.description) {
+        state.prevStreamInfo.bibleDisplayInfo =
+          state.streamInfo.bibleDisplayInfo;
+        state.prevStreamInfo.participantOverlayInfo =
+          state.streamInfo.participantOverlayInfo;
+        state.prevStreamInfo.slide = state.streamInfo.slide;
+
+        state.streamInfo.participantOverlayInfo = {
+          name: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+        state.streamInfo.slide = null;
+        state.streamInfo.bibleDisplayInfo = {
+          title: "",
+          text: "",
+          time: Date.now(),
+        };
+      }
     },
     updateBibleDisplayInfo: (
       state,
@@ -185,7 +265,23 @@ export const presentationSlice = createSlice({
           time: Date.now(),
         };
         if (action.payload.text || action.payload.title) {
+          state.prevStreamInfo.qrCodeOverlayInfo =
+            state.streamInfo.qrCodeOverlayInfo;
+          state.prevStreamInfo.participantOverlayInfo =
+            state.streamInfo.participantOverlayInfo;
+          state.prevStreamInfo.slide = state.streamInfo.slide;
+
+          state.streamInfo.participantOverlayInfo = {
+            name: "",
+            time: Date.now(),
+            id: generateRandomId(),
+          };
           state.streamInfo.slide = null;
+          state.streamInfo.qrCodeOverlayInfo = {
+            description: "",
+            time: Date.now(),
+            id: generateRandomId(),
+          };
         }
         state.streamInfo.time = Date.now();
         // state.prevStreamInfo.slide = null;
@@ -199,7 +295,23 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
       state.streamInfo.bibleDisplayInfo = { ...action.payload };
       if (action.payload.text || action.payload.title) {
+        state.prevStreamInfo.qrCodeOverlayInfo =
+          state.streamInfo.qrCodeOverlayInfo;
+        state.prevStreamInfo.participantOverlayInfo =
+          state.streamInfo.participantOverlayInfo;
+        state.prevStreamInfo.slide = state.streamInfo.slide;
+
+        state.streamInfo.participantOverlayInfo = {
+          name: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
         state.streamInfo.slide = null;
+        state.streamInfo.qrCodeOverlayInfo = {
+          description: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
       }
     },
     clearProjector: (state) => {
