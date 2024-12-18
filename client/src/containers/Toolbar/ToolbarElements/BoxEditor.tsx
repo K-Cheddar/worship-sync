@@ -3,6 +3,7 @@ import Button from "../../../components/Button/Button";
 import { ReactComponent as BoxEditSVG } from "../../../assets/icons/box-edit.svg";
 
 import textFull from "../../../assets/images/textbox_full.png";
+import textMid from "../../../assets/images/textbox_mid.png";
 import textLeftHalf from "../../../assets/images/textbox_leftHalf.png";
 import textRightHalf from "../../../assets/images/textbox_rightHalf.png";
 import textMatch from "../../../assets/images/textbox_match.png";
@@ -68,74 +69,66 @@ const BoxEditor = () => {
     // }
 
     if (type === "song") {
-      if (
-        box.excludeFromOverflow ||
-        selectedSlide === 0 ||
-        selectedSlide === arrangements[selectedArrangement]?.slides?.length - 1
-      ) {
-        dispatch(updateBoxes({ boxes: newBoxes }));
-      } else {
-        const slides = item.arrangements[item.selectedArrangement].slides;
+      const slides = item.arrangements[item.selectedArrangement].slides;
 
-        const updatedArrangements = item.arrangements.map(
-          (arrangement, index) => {
-            if (index === item.selectedArrangement) {
-              return {
-                ...arrangement,
-                slides: slides.map((slide, i) => {
-                  if (i === selectedSlide) {
-                    return {
-                      ...slide,
-                      boxes: newBoxes,
-                    };
-                  } else if (shouldApplyToAll && i !== 0) {
-                    // skip title slide
-                    return {
-                      ...slide,
-                      boxes: slide.boxes.map((b, i) =>
-                        i === selectedBox
-                          ? {
-                              ...b,
-                              x: box.x,
-                              y: box.y,
-                              width: box.width,
-                              height: box.height,
-                            }
-                          : b
-                      ),
-                    };
-                  } else {
-                    return slide;
-                  }
-                }),
-              };
-            } else {
-              return arrangement;
-            }
+      const updatedArrangements = item.arrangements.map(
+        (arrangement, index) => {
+          if (index === item.selectedArrangement) {
+            return {
+              ...arrangement,
+              slides: slides.map((slide, i) => {
+                if (i === selectedSlide) {
+                  return {
+                    ...slide,
+                    boxes: newBoxes,
+                  };
+                } else if (shouldApplyToAll) {
+                  return {
+                    ...slide,
+                    boxes: slide.boxes.map((b, i) =>
+                      i === selectedBox
+                        ? {
+                            ...b,
+                            x: box.x,
+                            y: box.y,
+                            width: box.width,
+                            height: box.height,
+                          }
+                        : b
+                    ),
+                  };
+                } else {
+                  return slide;
+                }
+              }),
+            };
+          } else {
+            return arrangement;
           }
-        );
+        }
+      );
 
-        const _item = formatSong({
-          ...item,
-          arrangements: updatedArrangements,
-          selectedArrangement,
-        });
+      const _item = formatSong({
+        ...item,
+        arrangements: updatedArrangements,
+        selectedArrangement,
+      });
 
-        dispatch(updateArrangements({ arrangements: _item.arrangements }));
-      }
+      dispatch(updateArrangements({ arrangements: _item.arrangements }));
     }
   };
 
   return (
     <ul className="flex flex-wrap gap-2 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4 justify-center items-center">
-      <li>
-        <Icon svg={BoxEditSVG} size="lg" />
+      <li className="mr-1">
+        <Icon svg={BoxEditSVG} size="lg" color="#93c5fd" />
       </li>
       <li>
         <Button
           image={textFull}
           variant="tertiary"
           className="w-10"
+          padding="p-0"
           onClick={() =>
             updateBoxSize({
               width: 100,
@@ -148,9 +141,26 @@ const BoxEditor = () => {
       </li>
       <li>
         <Button
+          image={textMid}
+          variant="tertiary"
+          className="w-10"
+          padding="p-0"
+          onClick={() =>
+            updateBoxSize({
+              width: 100,
+              height: 64,
+              x: 0,
+              y: 18,
+            })
+          }
+        />
+      </li>
+      <li>
+        <Button
           image={textLeftHalf}
           variant="tertiary"
           className="w-10"
+          padding="p-0"
           onClick={() =>
             updateBoxSize({
               width: 50,
@@ -166,6 +176,7 @@ const BoxEditor = () => {
           image={textRightHalf}
           variant="tertiary"
           className="w-10"
+          padding="p-0"
           onClick={() =>
             updateBoxSize({
               width: 50,
@@ -181,6 +192,7 @@ const BoxEditor = () => {
           image={textLowerThird}
           variant="tertiary"
           className="w-10"
+          padding="p-0"
           onClick={() =>
             updateBoxSize({
               width: 100,
@@ -196,6 +208,7 @@ const BoxEditor = () => {
           image={textMidThird}
           variant="tertiary"
           className="w-10"
+          padding="p-0"
           onClick={() =>
             updateBoxSize({
               width: 100,
@@ -211,6 +224,7 @@ const BoxEditor = () => {
           image={textUpperThird}
           variant="tertiary"
           className="w-10"
+          padding="p-0"
           onClick={() =>
             updateBoxSize({
               width: 100,
@@ -226,6 +240,7 @@ const BoxEditor = () => {
           image={textMatch}
           variant="tertiary"
           className="w-10"
+          padding="p-0"
           onClick={() =>
             updateBoxSize({
               width: boxes[selectedBox].width,

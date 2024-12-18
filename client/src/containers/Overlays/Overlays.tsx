@@ -223,7 +223,7 @@ const Overlays = () => {
                   </Button>
                   {(!isMobile || showPreview) && (
                     <div>
-                      <h2 className="bg-slate-900 text-center font-semibold text-base">
+                      <h2 className="bg-gray-900 text-center font-semibold text-base">
                         Preview
                       </h2>
                       <DisplayWindow
@@ -268,7 +268,7 @@ const Overlays = () => {
                       />
                     </div>
                   )}
-                  <section className="flex flex-col gap-2 bg-slate-800 p-2 rounded-md min-w-1/2 items-center">
+                  <section className="flex flex-col gap-2 bg-gray-800 p-2 rounded-md min-w-1/2 items-center">
                     {localType === "participant" && (
                       <>
                         <Input

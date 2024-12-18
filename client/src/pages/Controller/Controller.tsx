@@ -236,7 +236,7 @@ const Controller = () => {
       )}
       <div
         onClick={(e) => handleElementClick(e)}
-        className="bg-slate-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none"
+        className="bg-gray-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none"
         style={
           {
             "--toolbar-height": `${toolbarHeight}px`,
@@ -245,7 +245,7 @@ const Controller = () => {
       >
         <Toolbar
           ref={toolbarRef}
-          className="flex border-b-2 border-slate-500 text-sm min-h-fit"
+          className="flex border-b-2 border-gray-500 text-sm min-h-fit"
         />
         <div className="controller-main" ref={controllerRef}>
           <LyricsEditor />
@@ -255,7 +255,7 @@ const Controller = () => {
             onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
           />
           <div
-            className={`flex flex-col border-r-2 border-slate-500 bg-slate-700 h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${
+            className={`flex flex-col border-r-2 border-gray-500 bg-gray-700 h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${
               isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
             }`}
             ref={leftPanelRef}
@@ -295,7 +295,7 @@ const Controller = () => {
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
           />
           <div
-            className={`flex flex-col lg:w-[30%] bg-slate-700 border-slate-500 max-lg:absolute h-full transition-all border-l-2 max-lg:right-0 ${
+            className={`flex flex-col lg:w-[30%] bg-gray-700 border-gray-500 max-lg:absolute h-full transition-all border-l-2 max-lg:right-0 ${
               isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
             }`}
             ref={rightPanelRef}

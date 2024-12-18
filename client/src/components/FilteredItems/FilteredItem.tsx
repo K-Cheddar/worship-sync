@@ -28,7 +28,7 @@ const FilteredItem = ({
   updateShowWords,
 }: FilteredItemProps) => {
   const isEven = index % 2 === 0;
-  const bg = isEven ? "bg-slate-800" : "bg-slate-600";
+  const bg = isEven ? "bg-gray-800" : "bg-gray-600";
 
   const [justAdded, setJustAdded] = useState(false);
   const [showWords, setShowWords] = useState(_showWords);

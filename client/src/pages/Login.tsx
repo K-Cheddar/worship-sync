@@ -37,14 +37,14 @@ const Login = () => {
   }, [setLoginState, loginState, navigate]);
 
   return (
-    <div className="h-screen w-screen bg-slate-700 flex items-center justify-center">
+    <div className="h-screen w-screen bg-gray-700 flex items-center justify-center">
       <form
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault();
           login?.({ username, password });
         }}
-        className="bg-slate-800 rounded-xl w-[300px] max-w-[75%] p-8 text-white flex flex-col items-center"
+        className="bg-gray-800 rounded-xl w-[300px] max-w-[75%] p-8 text-white flex flex-col items-center"
       >
         <h1 className="text-2xl font-semibold text-center">Login</h1>
         <Input

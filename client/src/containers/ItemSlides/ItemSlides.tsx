@@ -205,7 +205,7 @@ const ItemSlides = () => {
 
   return (
     <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-      <div className="flex w-full px-2 bg-slate-900 h-6 mb-2 gap-1">
+      <div className="flex w-full px-2 bg-gray-900 h-6 mb-2 gap-1">
         <Button
           variant="tertiary"
           svg={ZoomOutSVG}

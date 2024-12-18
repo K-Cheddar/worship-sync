@@ -164,7 +164,7 @@ const CreateItem = () => {
   return (
     <div>
       <h2 className="text-2xl text-center font-semibold ">Create Item</h2>
-      <div className="my-2 mx-4 rounded-md p-4 bg-slate-800 w-1/2 max-lg:w-[95%]">
+      <div className="my-2 mx-4 rounded-md p-4 bg-gray-800 w-1/2 max-lg:w-[95%]">
         <ul className="flex flex-col gap-2">
           <h3 className="text-lg font-semibold text-center">
             Select Item Type
@@ -177,7 +177,7 @@ const CreateItem = () => {
             data-ignore-undo="true"
           />
           {existingItem && (
-            <p className="text-cyan-400 bg-slate-600 text-sm rounded-md p-1">
+            <p className="text-cyan-400 bg-gray-600 text-sm rounded-md p-1">
               <span className="italic">"{existingItem.name}"</span>
               <span> already exists.</span>
               <Button

@@ -249,7 +249,7 @@ const FilteredItems = ({
     <div className="px-2 py-4 h-full flex flex-col items-center">
       {itemToBeDeleted && (
         <div className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center">
-          <div className="bg-slate-700 rounded px-8 py-4">
+          <div className="bg-gray-700 rounded px-8 py-4">
             <p className="text-xl">
               Are you sure you want to delete{" "}
               <span className="font-semibold">{itemToBeDeleted.name}</span>?

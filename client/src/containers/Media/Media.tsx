@@ -142,7 +142,7 @@ const Media = () => {
   return (
     <>
       <div
-        className={`mx-2 px-2 bg-slate-900 rounded-t-md flex items-center text-sm relative z-10 transition-all ${
+        className={`mx-2 px-2 bg-gray-900 rounded-t-md flex items-center text-sm relative z-10 transition-all ${
           isMediaExpanded ? "mt-2" : "mt-4"
         }`}
       >
@@ -207,7 +207,7 @@ const Media = () => {
         />
       </div>
       {!isMediaLoading && isMediaExpanded && (
-        <div className="flex gap-2 justify-center z-10 py-1 bg-slate-900 mx-2 h-6">
+        <div className="flex gap-2 justify-center z-10 py-1 bg-gray-900 mx-2 h-6">
           <Button
             variant="tertiary"
             svg={ZoomOutSVG}
@@ -221,7 +221,7 @@ const Media = () => {
         </div>
       )}
       {isMediaLoading && (
-        <h3 className="text-center font-lg pt-4 bg-slate-800 mx-2 h-full">
+        <h3 className="text-center font-lg pt-4 bg-gray-800 mx-2 h-full">
           Loading media...
         </h3>
       )}
@@ -238,7 +238,7 @@ const Media = () => {
                 className={`self-center border-2 flex items-center justify-center aspect-video cursor-pointer ${
                   isSelected
                     ? "border-cyan-400"
-                    : "border-slate-500 hover:border-slate-300"
+                    : "border-gray-500 hover:border-gray-300"
                 }`}
                 key={id}
               >

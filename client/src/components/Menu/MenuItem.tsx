@@ -13,7 +13,7 @@ const MenuItem = ({ children, onClick, to }: MenuItemProps) => {
   const isLinkOrButton = to || onClick;
   return (
     <li
-      className={`bg-slate-200 font-semibold hover:bg-slate-300 active:bg-slate-400 cursor-pointer w-full text-sm text-black ${
+      className={`bg-gray-200 font-semibold hover:bg-gray-300 active:bg-gray-400 cursor-pointer w-full text-sm text-black ${
         !isLinkOrButton && "px-3 py-2"
       }`}
     >

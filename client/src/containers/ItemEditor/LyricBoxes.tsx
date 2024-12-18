@@ -130,7 +130,7 @@ const LyricBoxes = ({
           variant="tertiary"
           svg={AddSVG}
           iconSize={64}
-          className="w-full flex-1 justify-center border border-slate-500 rounded-md"
+          className="w-full flex-1 justify-center border border-gray-500 rounded-md"
         />
       </li>
     </ul>

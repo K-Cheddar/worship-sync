@@ -30,18 +30,18 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
 
     return (
       <div ref={ref} className={className}>
-        <div className="px-2 py-1 flex gap-1 flex-1 border-r-2 border-slate-500 items-center">
+        <div className="px-2 py-1 flex gap-1 flex-1 border-r-2 border-gray-500 items-center">
           <Menu />
           {!isEditMode && <Undo />}
         </div>
         <div className="w-full flex h-[3.75rem] min-h-fit flex-col">
-          <div className="flex gap-1 border-b-2 border-slate-500">
+          <div className="flex gap-1 border-b-2 border-gray-500">
             <Button
               variant="none"
               svg={SettingsSVG}
               onClick={() => setSection("outlines")}
               className={`text-xs rounded-none ${
-                section === "outlines" && "bg-slate-800"
+                section === "outlines" && "bg-gray-800"
               }`}
             >
               Settings
@@ -52,7 +52,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
               svg={EditSquareSVG}
               onClick={() => setSection("slide-tools")}
               className={`text-xs rounded-none ${
-                section === "slide-tools" && "bg-slate-800"
+                section === "slide-tools" && "bg-gray-800"
               }`}
             >
               Slide Tools
@@ -70,7 +70,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
             />
           </div>
         </div>
-        <div className="px-2 py-1 flex gap-1 items-center flex-1 border-l-2 border-slate-500">
+        <div className="px-2 py-1 flex gap-1 items-center flex-1 border-l-2 border-gray-500">
           <UserSection />
         </div>
       </div>

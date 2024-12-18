@@ -52,7 +52,7 @@ const ServiceItems = () => {
 
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
-      <h3 className="font-bold text-center p-1 text-base bg-slate-800">
+      <h3 className="font-bold text-center p-1 text-base bg-gray-800">
         {selectedList?.name || "Service Items"}
       </h3>
       {isLoading ? (

@@ -27,7 +27,7 @@ const Presentation = ({
   return (
     <div className="flex gap-2">
       <section className="w-fit">
-        <h2 className="bg-slate-900 text-center font-semibold text-base">
+        <h2 className="bg-gray-900 text-center font-semibold text-base">
           {name}
         </h2>
         <DisplayWindow

@@ -185,7 +185,7 @@ const LyricsEditor = () => {
 
   return (
     <div className="lyrics-editor">
-      <div className="flex bg-slate-900 px-2 h-8">
+      <div className="flex bg-gray-900 px-2 h-8">
         <Button
           variant="tertiary"
           className="max-lg:hidden"

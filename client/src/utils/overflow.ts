@@ -167,7 +167,6 @@ export const formatLyrics = (item: ItemState) => {
   const selectedArrangement = item.selectedArrangement || 0;
   const arrangements = item.arrangements || [];
   let slides = arrangements[selectedArrangement].slides || [];
-  slides = [...slides];
 
   const boxes = slides[0].boxes;
   const lastSlide = slides.length - 1;
@@ -199,7 +198,7 @@ export const formatLyrics = (item: ItemState) => {
     );
   }
 
-  newSlides.push(createNewSlide({ type: "Blank", box: lastBoxes[0] }));
+  newSlides.push(createNewSlide({ type: "Blank", boxes: lastBoxes }));
   return newSlides;
 };
 

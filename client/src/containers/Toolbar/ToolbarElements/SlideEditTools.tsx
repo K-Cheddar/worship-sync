@@ -79,7 +79,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const controls = (
     <>
       <div className="flex gap-1 items-center">
-        <Icon svg={TextFieldSVG} />
+        <Icon svg={TextFieldSVG} className="border-b border-black" />
         <Button
           svg={MinusSVG}
           variant="tertiary"
@@ -104,7 +104,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       <div
         className={`flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4`}
       >
-        <Icon size="xl" svg={BrightnessSVG} />
+        <Icon size="xl" svg={BrightnessSVG} color="#fbbf24" />
         <Button
           svg={MinusSVG}
           variant="tertiary"
