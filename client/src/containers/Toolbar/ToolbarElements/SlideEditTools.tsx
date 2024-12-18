@@ -90,7 +90,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           type="number"
           value={fontSize}
           onChange={(val) => _updateFontSize(val as number)}
-          className="w-8"
+          className="w-8 2xl:w-10"
           inputTextSize="text-xs"
           hideLabel
           data-ignore-undo="true"
@@ -115,7 +115,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           type="number"
           value={brightness}
           onChange={(val) => _updateBrightness(val as number)}
-          className="w-8"
+          className="w-8 2xl:w-10"
           inputTextSize="text-xs"
           hideLabel
           data-ignore-undo="true"
