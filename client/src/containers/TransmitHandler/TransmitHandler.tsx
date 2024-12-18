@@ -81,7 +81,7 @@ const TransmitHandler = () => {
           >
             Clear All
           </Button>
-          <hr className="border-r border-slate-400 h-full" />
+          <hr className="border-r border-gray-400 h-full" />
           <Toggle
             label="Sending to all"
             value={isTransmitting}

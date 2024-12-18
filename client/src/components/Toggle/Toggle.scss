@@ -7,7 +7,7 @@
   }
 
   :focus-within, &:focus-visible, &:focus {
-    @apply outline-1 outline-slate-200;
+    @apply outline-1 outline-gray-200;
   }
 
   &:hover {

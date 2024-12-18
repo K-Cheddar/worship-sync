@@ -203,7 +203,7 @@ const SlideEditor = () => {
 
   return (
     <div>
-      <section className="flex justify-end w-full pr-2 bg-slate-900 h-8 mb-1 gap-1 overflow-hidden">
+      <section className="flex justify-end w-full pr-2 bg-gray-900 h-8 mb-1 gap-1 overflow-hidden">
         <span
           className={`slide-editor-song-name-container ${borderColorMap.get(
             type
@@ -280,20 +280,20 @@ const SlideEditor = () => {
           ref={slideInfoRef}
         >
           <p className="text-center font-semibold border-b-2 border-black text-sm flex items-center gap-1 justify-center pb-1">
-            <Icon svg={BoxSVG} />
+            <Icon svg={BoxSVG} color="#93c5fd" />
             Slide Boxes
           </p>
           {boxes.map((box, index) => {
             return (
               <span
                 key={box.id}
-                className={`flex gap-1 bg-slate-600 border-slate-300 ${
+                className={`flex gap-1 bg-gray-600 border-gray-300 ${
                   index !== boxes.length - 1 && "border-b"
-                } ${selectedBox === index && "bg-slate-800"}`}
+                } ${selectedBox === index && "bg-gray-800"}`}
               >
                 <Button
                   truncate
-                  className="flex-1 text-xs hover:bg-slate-500"
+                  className="flex-1 text-xs hover:bg-gray-500"
                   variant="none"
                   onClick={() => dispatch(setSelectedBox(index))}
                 >

@@ -335,7 +335,7 @@ const Bible = () => {
             ? "Got chapter from Bible Gateway!"
             : "Get chapter from Bible Gateway"}
         </Button>
-        <div className="flex w-full lg:hidden border border-slate-400 my-4 rounded-l-md rounded-r-md">
+        <div className="flex w-full lg:hidden border border-gray-400 my-4 rounded-l-md rounded-r-md">
           <Button
             onClick={() => setShowVersesDisplaySection(false)}
             className="justify-center rounded-r-none flex-1"

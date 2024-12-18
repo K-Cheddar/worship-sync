@@ -93,7 +93,7 @@ const BibleVersesList = ({
       {verses
         .filter(({ index }) => index >= startVerse && index <= endVerse)
         .map((verse, index) => {
-          const bg = index % 2 === 0 ? "bg-slate-600" : "bg-slate-800";
+          const bg = index % 2 === 0 ? "bg-gray-600" : "bg-gray-800";
           return verse.text?.trim() ? (
             <li
               key={verse.index}
