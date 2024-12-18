@@ -7,7 +7,7 @@ import SlideEditTools from "./ToolbarElements/SlideEditTools";
 import Undo from "./ToolbarElements/Undo";
 import UserSection from "./ToolbarElements/UserSection";
 import { useSelector } from "../../hooks";
-import { forwardRef, useEffect, useState } from "react";
+import { forwardRef, useEffect, useMemo, useState } from "react";
 import Button from "../../components/Button/Button";
 
 type sections = "outlines" | "slide-tools";
@@ -16,17 +16,21 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
   ({ className }, ref) => {
     const location = useLocation();
     const { isEditMode } = useSelector((state) => state.undoable.present.item);
+    const { shouldShowItemEditor } = useSelector((state) => state.preferences);
 
     const [section, setSection] = useState<sections>("outlines");
-    const onItemPage = location.pathname.includes("controller/item");
+    const onItemPage = useMemo(
+      () => location.pathname.includes("controller/item"),
+      [location.pathname]
+    );
 
     useEffect(() => {
-      if (!location.pathname.includes("controller/item")) {
-        setSection("outlines");
-      } else {
+      if (onItemPage && shouldShowItemEditor) {
         setSection("slide-tools");
+      } else {
+        setSection("outlines");
       }
-    }, [location.pathname]);
+    }, [onItemPage, shouldShowItemEditor]);
 
     return (
       <div ref={ref} className={className}>
@@ -48,7 +52,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
             </Button>
             <Button
               variant="none"
-              disabled={!onItemPage}
+              disabled={!onItemPage || !shouldShowItemEditor}
               svg={EditSquareSVG}
               onClick={() => setSection("slide-tools")}
               className={`text-xs rounded-none ${
@@ -66,7 +70,9 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
           >
             <Services className={`${section !== "outlines" && "hidden"}`} />
             <SlideEditTools
-              className={`${section !== "slide-tools" && "hidden"}`}
+              className={`${
+                (section !== "slide-tools" || !shouldShowItemEditor) && "hidden"
+              }`}
             />
           </div>
         </div>
