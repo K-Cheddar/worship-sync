@@ -1,7 +1,7 @@
 .display-window {
   width: var(--slide-editor-width);
   height: var(--slide-editor-height);
-
+  overflow-wrap: anywhere;
   font-family: Verdana;
 
   @apply relative overflow-hidden text-white;
@@ -21,10 +21,8 @@
   max-width: 70%;
   bottom: 8.5%;
   left: var(--overlay-participant-info-left);
-
   border-bottom-right-radius: 3% 10%;
   border-top-right-radius: 3% 10%;
-
 }
 
 .overlay-participant-info-name {
@@ -59,8 +57,6 @@
 
 .display-box-text {
   @apply w-full bg-transparent whitespace-pre-line absolute;
-  
-  overflow-wrap: anywhere;
 }
 
 .bible-info-container,
@@ -70,7 +66,6 @@
   width: 70%;
   margin: 0 15%;
   bottom: 10%;
-
 }
 
 .bible-info-title,
@@ -81,7 +76,6 @@
   border-top-right-radius: 5% 20%;
   padding: 0.5% 4% 0.5%;
   font-size: var(--bible-info-title-size);
-
 }
 
 .bible-info-text,
@@ -92,7 +86,6 @@
   border-top-right-radius: 2.5% 20%;
   border-bottom-right-radius: 2.5% 20%;
   border-bottom-left-radius: 2.5% 20%;
-
   font-size: var(--bible-info-text-size);
 }
 
@@ -106,7 +99,6 @@
   max-width: 60%;
   height: fit-content;
   bottom: 8.5%;
-
   border-radius: 2% / 8%;
 }
 
