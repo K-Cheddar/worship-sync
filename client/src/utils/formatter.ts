@@ -63,8 +63,8 @@ export const updateFontSize = ({
       if (index === 0) return slide;
       return {
         ...slide,
-        boxes: slide.boxes.map((box) => {
-          if (box.excludeFromOverflow) return box;
+        boxes: slide.boxes.map((box, boxIndex) => {
+          if (box.excludeFromOverflow || boxIndex !== selectedBox) return box;
           return {
             ...box,
             fontSize: fontSize,
@@ -93,7 +93,7 @@ export const updateFontSize = ({
   if (item.type === "bible" && selectedSlide !== 0)
     _item = formatBible({ item: _item, mode: "add" });
 
-  if (item.type === "song" && selectedSlide !== 0) {
+  if (item.type === "song") {
     _item = {
       ...item,
       arrangements: _item.arrangements.map((arr, index) => {
@@ -105,8 +105,6 @@ export const updateFontSize = ({
   }
 
   if (selectedSlide >= slides.length) selectedSlide = slides.length - 1;
-
-  // needsUpdate.updateItem = true;
 
   return {
     ..._item,

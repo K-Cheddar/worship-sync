@@ -35,6 +35,7 @@ export const itemSlice = createSlice({
       state.listId = action.payload.listId;
       state.selectedArrangement = action.payload.selectedArrangement || 0;
       state.selectedSlide = action.payload.selectedSlide || 0;
+      state.selectedBox = action.payload.selectedBox || 1;
       state.shouldSkipTitle = action.payload.shouldSkipTitle || false;
       state.arrangements = action.payload.arrangements || [];
       state.slides = action.payload.slides || [];
