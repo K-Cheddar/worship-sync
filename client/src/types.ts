@@ -224,27 +224,31 @@ export type PreferencesType = {
 
 export type ItemList = {
   name: string;
-  id: string;
-  isOutline?: boolean;
+  _id: string;
+};
+
+export type DBItemList = {
+  name: string;
+  _id: string;
+  _rev: string;
 };
 
 export type ItemListDetails = {
-  name: string;
   _id: string;
-  isOutline?: boolean;
+  name: string;
   items: ServiceItem[];
   overlays: OverlayInfo[];
 };
 
-export type DBItemList = {
-  id: string;
-  name: string;
-  outline?: boolean;
+export type ItemLists = {
+  itemLists: ItemList[];
+  selectedList: ItemList;
+  _id: string;
 };
 
 export type DBItemLists = {
-  itemLists: DBItemList[];
-  selectedList: DBItemList;
+  itemLists: ItemList[];
+  selectedList: ItemList;
   _id: string;
   _rev: string;
 };

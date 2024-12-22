@@ -87,7 +87,7 @@ const LyricBoxes = ({
               onChange={(val) => changeSectionType(val, index)}
               value={name}
               options={availableSections}
-              className=""
+              textColor="text-white"
             />
             <Button
               className="ml-auto"
@@ -123,6 +123,7 @@ const LyricBoxes = ({
           className={`formatted-lyrics-section ${itemSectionBgColorMap.get(
             newSectionType
           )}`}
+          textColor="text-white"
         />
         <Button
           key="lyrics-box-add-section"

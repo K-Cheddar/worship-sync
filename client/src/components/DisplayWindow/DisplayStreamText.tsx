@@ -62,7 +62,7 @@ const DisplayStreamText = ({
 
   const bFontSize = 1.1;
   const bWords = box.words || "";
-  const words = bWords.trim();
+  const words = bWords.replace(/(\n)+/g, "\n").trim();
   const fontSizeValue = bFontSize ? bFontSize / fontAdjustment : 1;
   const tSS = fontSizeValue / (width > 20 ? 32 : 10); // text shadow size
   const _fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size
@@ -82,6 +82,7 @@ const DisplayStreamText = ({
     textAlign: box.align || "center",
     lineHeight: 1.25,
   };
+
   return (
     <li
       key={box.id}

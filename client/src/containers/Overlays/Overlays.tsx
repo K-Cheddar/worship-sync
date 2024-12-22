@@ -5,6 +5,7 @@ import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   addOverlay,
+  updateInitialList,
   updateList,
   updateOverlay,
 } from "../../store/overlaysSlice";
@@ -138,6 +139,12 @@ const Overlays = () => {
     }
   }, []);
 
+  useEffect(() => {
+    return () => {
+      dispatch(updateInitialList());
+    };
+  }, [dispatch]);
+
   const commonInputProps = {
     className: "text-sm flex gap-2 items-center",
     labelClassName: "w-24",
@@ -155,6 +162,12 @@ const Overlays = () => {
         }
       >
         <h2 className="text-xl font-semibold text-center h-fit">Overlays</h2>
+        {!isLoading && list.length === 0 && (
+          <p className="text-sm px-2">
+            This outline doesn't have any overlays yet. Click the button below
+            to add some.
+          </p>
+        )}
         {isLoading ? (
           <h3 className="text-lg text-center">Loading overlays...</h3>
         ) : (
@@ -202,7 +215,7 @@ const Overlays = () => {
                   );
                   setTimeout(() => {
                     setJustAdded(false);
-                  }, 2000);
+                  }, 500);
                 }}
               >
                 {justAdded ? "Added!" : "Add Overlay"}

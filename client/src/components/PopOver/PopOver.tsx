@@ -24,6 +24,7 @@ const PopOver = ({ children, TriggeringButton }: PopOverProps) => {
   const { refs, floatingStyles, context } = useFloating({
     open: isOpen,
     onOpenChange: setIsOpen,
+    placement: "bottom-end",
     middleware: [flip({ fallbackAxisSideDirection: "end" }), shift()],
     whileElementsMounted: autoUpdate,
   });
