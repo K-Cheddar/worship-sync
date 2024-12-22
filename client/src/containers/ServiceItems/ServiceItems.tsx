@@ -55,6 +55,12 @@ const ServiceItems = () => {
       <h3 className="font-bold text-center p-1 text-base bg-gray-800">
         {selectedList?.name || "Service Items"}
       </h3>
+      {!isLoading && serviceItems.length === 0 && (
+        <p className="text-sm p-2">
+          This outline is empty. Create a new item or add an existing one using
+          the buttons above.
+        </p>
+      )}
       {isLoading ? (
         <div className="text-lg text-center mt-2">Loading items...</div>
       ) : (

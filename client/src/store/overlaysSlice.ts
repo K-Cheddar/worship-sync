@@ -2,155 +2,6 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { OverlayInfo } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
-const dummyOverlays: OverlayInfo[] = [
-  {
-    id: "1ie7ha1ps489fli2fm7",
-    name: "email address: pastor@church.org",
-    title: "",
-    event: "phone #: 123-456-7890",
-    heading: "pastor@church.org",
-    subHeading: "123-456-7890",
-    url: "",
-    description: "",
-    color: "Green",
-    duration: 7,
-    type: "stick-to-bottom",
-  },
-  {
-    id: "1ie7ha1pska4kie10au8",
-    name: "",
-    title: "",
-    event: "",
-    heading: "",
-    subHeading: "",
-    url: "www.worshipsync.net",
-    description: "Share a special link for your audience to scan here!",
-    color: "#2563eb",
-    duration: 30,
-    type: "qr-code",
-  },
-  {
-    id: "1ie7ha1pst26cpk1efq",
-    name: "Host Name",
-    title: "",
-    event: "Sabbath School Host",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1psml3hjvk5e98",
-    name: "Co-Host 1 Name",
-    title: "",
-    event: "Sabbath School Co-Host",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1psohr2ecrrn6g",
-    name: "Co-Host 2 Name",
-    title: "",
-    event: "Sabbath School Co-Host",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1ps86tfso8nu",
-    name: "Announcer Name!",
-    title: "",
-    event: "Announcements",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1psa0dkjatfkg8",
-    name: "Greeter Name",
-    title: "",
-    event: "Welcome ",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1psol07vae3g5",
-    name: "Praise Team",
-    title: "",
-    event: "Welcome Song",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1pskjkscor5eno",
-    name: "Reader Name",
-    title: "",
-    event: "Reading the Word",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1psb89cctrmjq",
-    name: "Treasurer Name",
-    title: "",
-    event: "Offertory",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1ps3ng0rhhmslo",
-    name: "Singer Name",
-    title: "",
-    event: "Special Song",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1psl4i0fnddrsg",
-    name: "Prayer Name",
-    title: "",
-    event: "Intercessory Prayer",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1ps19f1iv9ki98",
-    name: "Praise Team ",
-    title: "",
-    event: "Praise & Worship",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1ps001aqhnhoio",
-    name: "Pastor Name",
-    title: "",
-    event: 'Sermon - "Sermon Title"',
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1psbjcclb88uto",
-    name: "Praise Team",
-    title: "",
-    event: "Appeal Song",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1psucgaqnvlp68",
-    name: "Praise Team",
-    title: "",
-    event: "Afterglow",
-    duration: 7,
-    type: "participant",
-  },
-  {
-    id: "1ie7ha1psjnqrcp0r1ig",
-    name: "Pastor Name",
-    title: "",
-    event: "Appeal / Closing Prayer",
-    duration: 7,
-    type: "participant",
-  },
-];
-
 type OverlaysState = OverlayInfo & {
   list: OverlayInfo[];
   hasPendingUpdate: boolean;
@@ -223,7 +74,7 @@ export const overlaysSlice = createSlice({
       state.type = "participant";
 
       if (action.payload.length === 0) {
-        state.list = dummyOverlays;
+        state.list = [];
         return;
       }
       state.list = action.payload.map((overlay) => ({
@@ -237,7 +88,7 @@ export const overlaysSlice = createSlice({
       action: PayloadAction<OverlayInfo[]>
     ) => {
       if (action.payload.length === 0) {
-        state.list = dummyOverlays;
+        state.list = [];
         return;
       }
       state.list = action.payload.map((overlay) => ({
@@ -276,6 +127,9 @@ export const overlaysSlice = createSlice({
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
     },
+    updateInitialList: (state) => {
+      state.initialList = state.list.map((overlay) => overlay.id);
+    },
   },
 });
 
@@ -288,6 +142,7 @@ export const {
   initiateOverlayList,
   updateOverlayListFromRemote,
   setHasPendingUpdate,
+  updateInitialList,
 } = overlaysSlice.actions;
 
 export default overlaysSlice.reducer;

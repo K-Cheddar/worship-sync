@@ -28,17 +28,17 @@ export const itemListsSlice = createSlice({
     },
     removeFromItemLists: (state, action: PayloadAction<string>) => {
       state.currentLists = state.currentLists.filter((item) => {
-        return item.id !== action.payload;
+        return item._id !== action.payload;
       });
     },
     selectItemList: (state, action: PayloadAction<string>) => {
       state.selectedList = state.currentLists.find(
-        (item) => item.id === action.payload
+        (item) => item._id === action.payload
       );
     },
     setInitialItemList: (state, action: PayloadAction<string>) => {
       state.selectedList = state.currentLists.find(
-        (item) => item.id === action.payload
+        (item) => item._id === action.payload
       );
     },
   },

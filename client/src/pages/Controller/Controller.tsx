@@ -30,14 +30,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import FreeForms from "../../containers/FreeForms/FreeForms";
-import {
-  allDocsType,
-  DBAllItems,
-  DBItem,
-  DBItemListDetails,
-  DBItemLists,
-  ServiceItem,
-} from "../../types";
+import { DBAllItems, DBItemListDetails } from "../../types";
 import {
   initiateItemList,
   setItemListIsLoading,
@@ -126,7 +119,7 @@ const Controller = () => {
       dispatch(setItemListIsLoading(true));
       try {
         const response: DBItemListDetails | undefined = await db?.get(
-          selectedList.id
+          selectedList._id
         );
         const itemList = response?.items || [];
         const overlays = response?.overlays || [];
@@ -150,7 +143,7 @@ const Controller = () => {
         const updates = event.detail;
         for (const _update of updates) {
           // check if the list we have selected was updated
-          if (_update._id === selectedList.id) {
+          if (_update._id === selectedList._id) {
             console.log("updating selected item list from remote", event);
             const update = _update as DBItemListDetails;
             const itemList = update.items;

@@ -27,7 +27,7 @@ export const deleteUnusedBibleItems = async ({ db, allItems }: propsType) => {
   const bibleItemsInLists: ServiceItem[] = [];
 
   for (const itemList of itemLists) {
-    const listDetails: DBItemListDetails = await db.get(itemList.id);
+    const listDetails: DBItemListDetails = await db.get(itemList._id);
     const listItems = listDetails?.items || [];
     bibleItemsInLists.push(
       ...listItems.filter((item) => item.type === "bible")

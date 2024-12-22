@@ -11,6 +11,7 @@ type SelectProps = {
   labelClassName?: string;
   hideLabel?: boolean;
   selectClassName?: string;
+  textColor?: string;
 };
 
 const Select = ({
@@ -22,6 +23,7 @@ const Select = ({
   className,
   labelClassName,
   selectClassName,
+  textColor = "text-black",
   ...rest
 }: SelectProps) => {
   return (
@@ -38,7 +40,7 @@ const Select = ({
         </label>
       )}
       <select
-        className={cn(`select`, selectClassName)}
+        className={cn(`select`, selectClassName, textColor)}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         {...rest}

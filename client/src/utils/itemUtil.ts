@@ -8,12 +8,10 @@ import {
   Media,
   ServiceItem,
   DBItem,
-  DBAllItems,
   verseType,
   ItemList,
-  DBItemListDetails,
-  DBItemList,
   ItemListDetails,
+  DBItemListDetails,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatBible, formatSong } from "./overflow";
@@ -444,20 +442,22 @@ export const createNewItemList = async ({
     property: "name",
     list: currentLists,
   });
-  const list: ItemList = {
+  const list: ItemListDetails = {
     name: newName,
-    id: newName,
+    _id: newName,
+    items: [],
+    overlays: [],
   };
   if (!db) return list;
   try {
-    const response: DBItemListDetails = await db.get(list.id);
+    const response: DBItemListDetails = await db.get(list._id);
     return {
-      id: response._id,
+      _id: response._id,
       name: response.name,
     };
   } catch (error) {
     db.put(list);
-    return { id: list.id, name: list.name };
+    return { _id: list._id, name: list.name };
   }
 };
 
@@ -475,7 +475,7 @@ export const createItemListFromExisting = async ({
   if (!db) return null;
 
   try {
-    const response: DBItemListDetails = await db.get(selectedList.id);
+    const response: DBItemListDetails = await db.get(selectedList._id);
     const name = makeUnique({
       value: selectedList.name,
       property: "name",
@@ -488,7 +488,7 @@ export const createItemListFromExisting = async ({
       overlays: response.overlays,
     };
     db.put(list);
-    return { id: list._id, name: list.name };
+    return { _id: list._id, name: list.name };
   } catch (error) {
     console.error(error);
     return null;

@@ -2,7 +2,7 @@ import { useLocation } from "react-router-dom";
 import { ReactComponent as SettingsSVG } from "../../assets/icons/settings.svg";
 import { ReactComponent as EditSquareSVG } from "../../assets/icons/edit-square.svg";
 import Menu from "./ToolbarElements/Menu";
-import Services from "./ToolbarElements/Services";
+import Outlines from "./ToolbarElements/Outlines";
 import SlideEditTools from "./ToolbarElements/SlideEditTools";
 import Undo from "./ToolbarElements/Undo";
 import UserSection from "./ToolbarElements/UserSection";
@@ -68,7 +68,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
               isEditMode ? "hidden" : ""
             }`}
           >
-            <Services className={`${section !== "outlines" && "hidden"}`} />
+            <Outlines className={`${section !== "outlines" && "hidden"}`} />
             <SlideEditTools
               className={`${
                 (section !== "slide-tools" || !shouldShowItemEditor) && "hidden"

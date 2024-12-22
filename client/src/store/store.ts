@@ -61,6 +61,7 @@ const undoableReducers = undoable(
       overlaysSlice.actions.initiateOverlayList.toString(),
       overlaysSlice.actions.updateOverlayListFromRemote.toString(),
       overlaysSlice.actions.setHasPendingUpdate.toString(),
+      overlaysSlice.actions.updateInitialList.toString(),
       itemListSlice.actions.initiateItemList.toString(),
       itemListSlice.actions.updateItemListFromRemote.toString(),
       itemListSlice.actions.setItemListIsLoading.toString(),
@@ -155,7 +156,7 @@ listenerMiddleware.startListening({
     const { list } = state.undoable.present.itemList;
     const { selectedList } = state.undoable.present.itemLists;
     if (!db || !selectedList) return;
-    let db_itemList: DBItemListDetails = await db.get(selectedList.id);
+    let db_itemList: DBItemListDetails = await db.get(selectedList._id);
     db_itemList.items = [...list];
     db.put(db_itemList);
   },
@@ -226,6 +227,7 @@ listenerMiddleware.startListening({
       action.type !== "overlays/updateOverlayListFromRemote" &&
       action.type !== "overlays/selectOverlay" &&
       action.type !== "overlays/setHasPendingUpdate" &&
+      action.type !== "overlays/updateInitialList" &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
       action.type !== "RESET"
@@ -248,7 +250,7 @@ listenerMiddleware.startListening({
     const { selectedList } = state.undoable.present.itemLists;
 
     if (!db || !selectedList) return;
-    const db_itemList: DBItemListDetails = await db.get(selectedList.id);
+    const db_itemList: DBItemListDetails = await db.get(selectedList._id);
     db_itemList.overlays = [...list];
     db.put(db_itemList);
   },
