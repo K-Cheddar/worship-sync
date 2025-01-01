@@ -1,7 +1,7 @@
 import "./App.css";
 import { HashRouter as Router, Routes, Route } from "react-router-dom";
 import gsap from "gsap";
-import { useGSAP } from "@gsap/react"; // <-- import the hook from our React package
+import { useGSAP } from "@gsap/react";
 import Home from "./pages/Home";
 import Controller from "./pages/Controller/Controller";
 import Projector from "./pages/Projector";

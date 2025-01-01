@@ -29,6 +29,7 @@ export const getMaxLines = ({
   singleSpan.innerHTML = "Only Line";
   singleSpan.style.fontSize = newFontSize;
   singleSpan.style.fontFamily = "Verdana";
+  singleSpan.style.overflowWrap = "anywhere";
   singleSpan.style.position = "fixed";
   singleSpan.style.lineHeight = "1.25";
   document.body.appendChild(singleSpan);
@@ -68,12 +69,14 @@ export const getNumLines = ({
   textSpan.innerHTML = text;
   textSpan.style.fontSize = newFontSize;
   textSpan.style.fontFamily = "Verdana";
+  textSpan.style.overflowWrap = "anywhere";
   textSpan.style.whiteSpace = "pre-wrap";
   textSpan.style.width = width + "px";
   textSpan.style.position = "fixed";
   textSpan.style.wordBreak = "break-word";
   textSpan.style.lineHeight = "1.25";
-  // textSpan.style.zIndex = 10;
+  // textSpan.style.zIndex = "10";
+  // textSpan.style.top = "0";
   document.body.appendChild(textSpan);
   let textSpanHeight = textSpan.offsetHeight;
   document.body.removeChild(textSpan);

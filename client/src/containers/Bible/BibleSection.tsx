@@ -75,6 +75,7 @@ const BibleSection = ({
         className="bible-section-input"
         svg={searchValue ? CloseSVG : undefined}
         svgAction={() => setSearchValue("")}
+        svgPadding="max-lg:p-1 lg:p-0"
       />
       <ul className="bible-section" tabIndex={-1}>
         {filteredList.map(({ name, index }) => {

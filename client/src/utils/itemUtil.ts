@@ -442,9 +442,14 @@ export const createNewItemList = async ({
     property: "name",
     list: currentLists,
   });
+  const _id = makeUnique({
+    value: newName,
+    property: "_id",
+    list: currentLists,
+  });
   const list: ItemListDetails = {
     name: newName,
-    _id: newName,
+    _id,
     items: [],
     overlays: [],
   };
@@ -481,8 +486,13 @@ export const createItemListFromExisting = async ({
       property: "name",
       list: currentLists,
     });
+    const _id = makeUnique({
+      value: selectedList._id,
+      property: "_id",
+      list: currentLists,
+    });
     const list: ItemListDetails = {
-      _id: name,
+      _id,
       name,
       items: response.items,
       overlays: response.overlays,
