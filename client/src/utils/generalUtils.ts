@@ -12,32 +12,64 @@ const commonWords = [
   "by",
 ];
 
-export const punctuationRegex = new RegExp(/[.,/#!$%^&*;:{}=\-_`~()]/g, "");
+export const punctuationRegex = new RegExp(/[.,#!$%^&*;:{}=\-_`~()]/g);
 
 type getMatchType = {
   string: string;
-  searchTerms: string[];
+  searchValue: string;
+  allowPartial?: boolean;
 };
 
 export const getMatchForString = ({
   string,
-  searchTerms,
+  searchValue,
+  allowPartial = false,
 }: getMatchType): number => {
   let match = 0;
-  const stringWords = string.split(" ");
-  for (let j = 0; j < searchTerms.length; j++) {
-    const searchTerm = searchTerms[j].toLowerCase();
+  const searchTerms = searchValue.split(" ").filter((term) => term.trim()); // ignore spaces
+  const cleanString = string
+    .replace(punctuationRegex, "")
+    .replaceAll("\n", " ")
+    .trim()
+    .toLowerCase();
 
-    if (string === searchTerm) {
+  const stringWords = cleanString.split(" ");
+  for (let j = 0; j < searchTerms.length; j++) {
+    const searchTerm = searchTerms[j];
+    const lastSearchTerm = searchTerms[searchTerms.length - 1];
+    const remainingSearchValue = searchTerms.slice(j).join(" ");
+
+    if (cleanString === searchTerm) {
       // exact match
       match += searchTerms.length;
       break;
+    } else if (cleanString.includes(searchValue)) {
+      // whole phrase match
+      match += searchTerms.length;
+      break;
+    } else if (
+      remainingSearchValue !== lastSearchTerm &&
+      cleanString.includes(remainingSearchValue)
+    ) {
+      // partial phrase match
+      match += searchTerms.length - j;
+      break;
     } else if (stringWords.some((word) => word === searchTerm)) {
       // whole word match
-      match += commonWords.some((word) => word === searchTerm) ? 0.5 : 1; // give partial credit for common words
-    } else if (string.includes(searchTerms[searchTerms.length - 1])) {
+
+      const foundIndex = stringWords.findIndex((word) => word === searchTerm);
+      const indexRank = allowPartial ? 0.1 : 1 / (foundIndex + 1);
+
+      match += commonWords.some((word) => word === searchTerm)
+        ? 0.25 * indexRank // give partial credit for common words
+        : 0.5 * indexRank;
+    } else if (allowPartial && cleanString.includes(lastSearchTerm)) {
       // only allow partial match on last word
-      match += 0.25;
+      const foundIndex = stringWords.findIndex((word) =>
+        word.includes(lastSearchTerm)
+      );
+      const indexRank = 1 / (foundIndex + 1);
+      match += 0.125 * indexRank;
     }
   }
 

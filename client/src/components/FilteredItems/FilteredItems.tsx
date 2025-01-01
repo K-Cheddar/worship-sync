@@ -82,10 +82,10 @@ const FilteredItems = ({
   useEffect(() => {
     const getFilteredItems = async () => {
       return new Promise<void>((resolve) => {
-        const cleanSearchValue = debouncedSearchValue.replace(
-          punctuationRegex,
-          ""
-        );
+        const cleanSearchValue = debouncedSearchValue
+          .replace(punctuationRegex, "")
+          .toLowerCase()
+          .trim();
         if (cleanSearchValue.trim() === "") {
           setIsSearchLoading(false);
           setFilteredList(listOfType); // no search term
@@ -93,14 +93,15 @@ const FilteredItems = ({
           return;
         }
 
-        const searchTerms = cleanSearchValue
-          .split(" ")
-          .filter((term) => term.trim()); // ignore spaces
         const rankedList = [];
         for (let i = 0; i < listOfType.length; i++) {
           const name = listOfType[i].name.toLowerCase();
 
-          let match = getMatchForString({ string: name, searchTerms });
+          let match = getMatchForString({
+            string: name,
+            searchValue: cleanSearchValue,
+            allowPartial: true,
+          });
           let matchedWords = "";
           let wordMatches = [];
 
@@ -119,7 +120,7 @@ const FilteredItems = ({
                 const words = formattedLyrics[k].words;
                 const wordMatch = getMatchForString({
                   string: words,
-                  searchTerms,
+                  searchValue: cleanSearchValue,
                 });
                 if (wordMatch > 0) {
                   wordMatches.push({
@@ -151,12 +152,14 @@ const FilteredItems = ({
                 const words = boxes[k].words || "";
                 const wordMatch = getMatchForString({
                   string: words,
-                  searchTerms,
+                  searchValue: cleanSearchValue,
                 });
-                wordMatches.push({
-                  match: wordMatch,
-                  matchedWords: words,
-                });
+                if (wordMatch > 0) {
+                  wordMatches.push({
+                    match: wordMatch,
+                    matchedWords: words,
+                  });
+                }
               }
             }
             const { updatedMatchedWords, updatedMatch } = updateWordMatches({
@@ -171,17 +174,16 @@ const FilteredItems = ({
 
           rankedList.push({
             ...listOfType[i],
-            matchPercent: match / searchTerms.length,
+            matchRank: match,
             matchedWords,
           });
         }
 
         const matchedList = rankedList
-          .filter((item) => item.matchPercent >= 0.25) // filter out non-matched items
+          .filter((item) => item.matchRank > 0) // filter out non-matched items
           .sort(
             // sort by match percent, then name
-            (a, b) =>
-              b.matchPercent - a.matchPercent || a.name.localeCompare(b.name)
+            (a, b) => b.matchRank - a.matchRank || a.name.localeCompare(b.name)
           );
 
         setIsSearchLoading(false);
@@ -248,7 +250,7 @@ const FilteredItems = ({
   return (
     <div className="px-2 py-4 h-full flex flex-col items-center">
       {itemToBeDeleted && (
-        <div className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center">
+        <div className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center z-10">
           <div className="bg-gray-700 rounded px-8 py-4">
             <p className="text-xl">
               Are you sure you want to delete{" "}

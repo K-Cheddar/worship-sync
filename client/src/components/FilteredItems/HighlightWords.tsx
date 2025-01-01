@@ -21,19 +21,25 @@ const HighlightWords = ({
     () =>
       searchValue
         .toLowerCase()
+        .replace(punctuationRegex, "")
         .split(" ")
         .filter((e) => e.trim()),
     [searchValue]
   );
-  const words = useMemo(() => string.split(" "), [string]);
+  const words = useMemo(
+    () => string.replaceAll("\n", " ").split(" "),
+    [string]
+  );
 
   return (
-    <p className={cn("flex gap-1 flex-wrap", className)}>
+    <p className={cn("flex gap-[0.25rem] flex-wrap", className)}>
       {words.map((word, i) => {
+        const cleanWord = word.replace(punctuationRegex, "");
         const shouldHighlight = searchWords.some((val, i) => {
           return (
-            word.toLowerCase().replace(punctuationRegex, "") === val ||
-            (i === searchWords.length - 1 && word.toLowerCase().includes(val))
+            cleanWord.toLowerCase() === val ||
+            (i === searchWords.length - 1 &&
+              cleanWord.toLowerCase().includes(val))
           );
         });
 
