@@ -20,7 +20,7 @@ const DisplayStreamText = ({
   time,
   fontAdjustment,
 }: DisplayStreamTextProps) => {
-  const boxRef = useRef<HTMLLIElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline>();
 
   useGSAP(
@@ -73,8 +73,8 @@ const DisplayStreamText = ({
   const marginLeft = "15%";
   const marginRight = "15%";
   const marginTop = "auto";
-  const marginBottom = "10%";
-  const boxTop = "90%";
+  const marginBottom = "7.5%";
+  const boxTop = "92.5%";
   const boxLeft = "unset";
   const textStyles = {
     textShadow: `${tSS}vw ${tSS}vw ${tSS}vw #000, ${tSS}vw ${tSS}vw ${tSS}vw #000`,
@@ -84,7 +84,7 @@ const DisplayStreamText = ({
   };
 
   return (
-    <li
+    <div
       key={box.id}
       ref={boxRef}
       className="absolute leading-tight"
@@ -109,7 +109,7 @@ const DisplayStreamText = ({
       >
         {words}
       </p>
-    </li>
+    </div>
   );
 };
 
