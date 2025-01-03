@@ -281,7 +281,7 @@ const FilteredItems = ({
         {heading}
       </h2>
       {isLoading && (
-        <h3 className="text-lg text-center">{heading} is loading...</h3>
+        <h3 className="text-lg text-center">{heading} are loading...</h3>
       )}
       <div className="flex gap-2 max-2xl:w-full 2xl:w-2/3 mb-4 px-6">
         <Input
