@@ -14,7 +14,7 @@ export const useSensors = () => {
   });
   const touchSensor = useSensor(TouchSensor, {
     activationConstraint: {
-      delay: 150,
+      delay: 200,
       tolerance: 5,
     },
   });

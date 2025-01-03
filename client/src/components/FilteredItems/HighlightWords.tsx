@@ -8,6 +8,7 @@ type HighlightWordsProps = {
   className?: string;
   highlightWordColor?: string;
   nonHighlightWordColor?: string;
+  allowPartial?: boolean;
 };
 
 const HighlightWords = ({
@@ -16,6 +17,7 @@ const HighlightWords = ({
   className,
   highlightWordColor = "text-orange-400",
   nonHighlightWordColor = "text-gray-300",
+  allowPartial = false,
 }: HighlightWordsProps) => {
   const searchWords = useMemo(
     () =>
@@ -39,6 +41,7 @@ const HighlightWords = ({
           return (
             cleanWord.toLowerCase() === val ||
             (i === searchWords.length - 1 &&
+              allowPartial &&
               cleanWord.toLowerCase().includes(val))
           );
         });

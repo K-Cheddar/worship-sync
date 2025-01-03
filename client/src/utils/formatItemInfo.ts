@@ -46,6 +46,7 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
                 brightness: index !== 0 ? 100 : box.brightness,
                 width: box.width || 100,
                 height: box.height || 100,
+                fontColor: "rgb(255, 255, 255)",
               };
             }),
           ],

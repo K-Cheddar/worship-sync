@@ -33,6 +33,8 @@ const Services = ({ className }: { className: string }) => {
     (state) => state.undoable.present.itemLists
   );
 
+  const heading = `Current Outlines (${currentLists.length})`;
+
   const dispatch = useDispatch();
 
   const { db, updater } = useContext(ControllerInfoContext) || {};
@@ -135,7 +137,7 @@ const Services = ({ className }: { className: string }) => {
             <div className="services-container">
               <section className="flex-1 h-full p-1 flex flex-col">
                 <h3 className="text-lg font-semibold mb-2 text-center">
-                  Current Outlines
+                  {heading}
                 </h3>
                 <ul ref={setNodeRef} className="services-list">
                   <SortableContext
@@ -192,12 +194,14 @@ const Services = ({ className }: { className: string }) => {
               svg={justAdded ? CheckSVG : AddSVG}
               color={justAdded ? "#84cc16" : "#22d3ee"}
               className="w-full justify-center text-base"
+              disabled={justAdded}
               onClick={async () => {
                 const newList = await createNewItemList({
                   db,
                   name: "New Outline",
                   currentLists,
                 });
+                setJustAdded(true);
 
                 dispatch(updateItemLists([...currentLists, newList]));
                 setTimeout(() => setJustAdded(false), 2000);

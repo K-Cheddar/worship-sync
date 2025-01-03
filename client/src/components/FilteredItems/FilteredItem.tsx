@@ -64,6 +64,7 @@ const FilteredItem = ({
           className="text-base"
           highlightWordColor={showWords ? "text-white" : "text-orange-400"}
           nonHighlightWordColor={searchValue ? "text-gray-300" : "text-white"}
+          allowPartial
         />
         {matchedWords && (
           <Button
