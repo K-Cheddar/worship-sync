@@ -216,6 +216,7 @@ export type bibleType = {
 
 export type PreferencesType = {
   slidesPerRow: number;
+  slidesPerRowMobile: number;
   formattedLyricsPerRow: number;
   shouldShowItemEditor: boolean;
   isMediaExpanded: boolean;

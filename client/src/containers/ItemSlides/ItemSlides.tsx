@@ -13,6 +13,9 @@ import {
   increaseSlides,
   decreaseSlides,
   setSlides,
+  increaseSlidesMobile,
+  decreaseSlidesMobile,
+  setSlidesMobile,
 } from "../../store/preferencesSlice";
 import { useSelector } from "../../hooks";
 import { useDispatch } from "../../hooks";
@@ -79,8 +82,11 @@ const ItemSlides = () => {
     const _slides = arrangement?.slides || __slides || [];
     return isLoading ? [] : _slides;
   }, [isLoading, __slides, arrangement?.slides]);
-  const size = useSelector((state) => state.preferences.slidesPerRow);
+  const { slidesPerRow, slidesPerRowMobile } = useSelector(
+    (state) => state.preferences
+  );
   const { isMobile } = useContext(ControllerInfoContext) || {};
+  const size = isMobile ? slidesPerRowMobile : slidesPerRow;
 
   const debounceTime = useRef(0);
 
@@ -126,10 +132,12 @@ const ItemSlides = () => {
 
   useEffect(() => {
     if (isMobile) {
-      dispatch(setSlides(3));
+      dispatch(setSlidesMobile(slidesPerRowMobile));
     } else {
-      dispatch(setSlides(4));
+      dispatch(setSlides(slidesPerRow));
     }
+    // Only run if isMobile change
+    // eslint-disable-next-line
   }, [isMobile, dispatch]);
 
   useEffect(() => {
@@ -209,12 +217,24 @@ const ItemSlides = () => {
         <Button
           variant="tertiary"
           svg={ZoomOutSVG}
-          onClick={() => dispatch(increaseSlides())}
+          onClick={() => {
+            if (isMobile) {
+              dispatch(increaseSlidesMobile());
+            } else {
+              dispatch(increaseSlides());
+            }
+          }}
         />
         <Button
           variant="tertiary"
           svg={ZoomInSVG}
-          onClick={() => dispatch(decreaseSlides())}
+          onClick={() => {
+            if (isMobile) {
+              dispatch(decreaseSlidesMobile());
+            } else {
+              dispatch(decreaseSlides());
+            }
+          }}
         />
         {type === "free" && (
           <>

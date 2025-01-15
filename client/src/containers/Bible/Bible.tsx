@@ -160,10 +160,6 @@ const Bible = () => {
         dispatch(setVerses(data.verses));
         setJustGotChapter(true);
         setShowVersesDisplaySection(true);
-
-        setTimeout(() => {
-          setJustGotChapter(false);
-        }, 2000);
       }
     } catch (error) {
       setIsLoading(false);
@@ -178,6 +174,7 @@ const Bible = () => {
         setVerses(chapters[chapter]?.verses || chapters[0]?.verses || [])
       );
       setHasExternalVerses(false);
+      setJustGotChapter(false);
     }
   }, [chapter, chapters, dispatch]);
 
@@ -327,7 +324,7 @@ const Bible = () => {
           className="lg:h-fit max-lg:flex-1 max-lg:justify-center"
           onClick={getVersesFromGateway}
           isLoading={isLoadingChapter}
-          disabled={isLoadingChapter}
+          disabled={isLoadingChapter || justGotChapter}
           color={justGotChapter ? "#84cc16" : "#22d3ee"}
           svg={justGotChapter ? CheckSVG : DownloadSVG}
         >

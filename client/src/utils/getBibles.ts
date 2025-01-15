@@ -25,18 +25,18 @@ export const internalBibleVersions = [
   { value: "nlt", label: "New Living Translation" },
 ];
 
-const getBibles = (db: PouchDB.Database): Promise<boolean[]> => {
-  return Promise.all(
-    internalBibleVersions.map(async (version) => {
-      try {
-        const books = await getBiblesApi({ version: version.value });
-        db.put({ _id: version.value, ...books });
-        return true;
-      } catch (error) {
-        return false;
-      }
-    })
-  );
+const getBibles = async (db: PouchDB.Database) => {
+  for (const version of internalBibleVersions) {
+    const books = await getBiblesApi({ version: version.value });
+
+    try {
+      const doc = await db.get(version.value);
+      (doc as any).books = books.books;
+      await db.put(doc);
+    } catch (error) {
+      await db.put({ _id: version.value, ...books });
+    }
+  }
 };
 
 export const checkBibles = (db: PouchDB.Database) => {
