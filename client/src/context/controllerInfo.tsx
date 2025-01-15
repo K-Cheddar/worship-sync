@@ -111,7 +111,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     const setupDb = async () => {
-      const _db = new PouchDB("bibles");
+      const _db = new PouchDB("bibles-v2");
 
       let bibles = await checkBibles(_db);
 

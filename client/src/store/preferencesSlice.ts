@@ -3,6 +3,7 @@ import { PreferencesType } from "../types";
 
 const initialState: PreferencesType = {
   slidesPerRow: 4,
+  slidesPerRowMobile: 3,
   formattedLyricsPerRow: 4,
   mediaItemsPerRow: 4,
   shouldShowItemEditor: true,
@@ -14,13 +15,28 @@ export const preferencesSlice = createSlice({
   initialState,
   reducers: {
     increaseSlides: (state) => {
-      state.slidesPerRow = Math.min((state.slidesPerRow || 3) + 1, 7);
+      state.slidesPerRow = Math.min((state.slidesPerRow || 4) + 1, 7);
+    },
+    increaseSlidesMobile: (state) => {
+      state.slidesPerRowMobile = Math.min(
+        (state.slidesPerRowMobile || 4) + 1,
+        7
+      );
     },
     decreaseSlides: (state) => {
       state.slidesPerRow = Math.max((state.slidesPerRow || 3) - 1, 1);
     },
+    decreaseSlidesMobile: (state) => {
+      state.slidesPerRowMobile = Math.max(
+        (state.slidesPerRowMobile || 3) - 1,
+        1
+      );
+    },
     setSlides: (state, action: PayloadAction<number>) => {
       state.slidesPerRow = action.payload;
+    },
+    setSlidesMobile: (state, action: PayloadAction<number>) => {
+      state.slidesPerRowMobile = action.payload;
     },
     increaseFormattedLyrics: (state) => {
       state.formattedLyricsPerRow = Math.min(
@@ -57,8 +73,11 @@ export const preferencesSlice = createSlice({
 
 export const {
   increaseSlides,
+  increaseSlidesMobile,
   decreaseSlides,
+  decreaseSlidesMobile,
   setSlides,
+  setSlidesMobile,
   increaseFormattedLyrics,
   decreaseFormattedLyrics,
   setFormattedLyrics,

@@ -59,6 +59,8 @@ const parseData = async (textHtml: string, chapter: number, book: string) => {
       text: splitText[1]
         .replace(/\[[^\]]{1,2}\]/g, "")
         .replaceAll(" ", " ")
+        .replaceAll("’", "'")
+        .replaceAll("‘", "'")
         .replace("\n", "")
         .trim(),
     });
