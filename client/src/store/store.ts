@@ -39,11 +39,13 @@ import {
   Presentation,
 } from "../types";
 import { allDocsSlice } from "./allDocsSlice";
+// import { creditsSlice } from "./creditsSlice";
 
 const undoableReducers = undoable(
   combineReducers({
     item: itemSlice.reducer,
     overlays: overlaysSlice.reducer,
+    // credits: creditsSlice.reducer,
     itemList: itemListSlice.reducer,
     itemLists: itemListsSlice.reducer,
     media: mediaItemsSlice.reducer,
@@ -62,6 +64,11 @@ const undoableReducers = undoable(
       overlaysSlice.actions.updateOverlayListFromRemote.toString(),
       overlaysSlice.actions.setHasPendingUpdate.toString(),
       overlaysSlice.actions.updateInitialList.toString(),
+      // creditsSlice.actions.selectCredit.toString(),
+      // creditsSlice.actions.initiateCreditsList.toString(),
+      // creditsSlice.actions.updateCreditsListFromRemote.toString(),
+      // creditsSlice.actions.setHasPendingUpdate.toString(),
+      // creditsSlice.actions.updateInitialList.toString(),
       itemListSlice.actions.initiateItemList.toString(),
       itemListSlice.actions.updateItemListFromRemote.toString(),
       itemListSlice.actions.setItemListIsLoading.toString(),
@@ -199,6 +206,8 @@ listenerMiddleware.startListening({
         (previousState as RootState).allItems &&
       action.type !== "allItems/initiateAllItemsList" &&
       action.type !== "allItems/updateAllItemsListFromRemote" &&
+      action.type !== "allItems/setSongSearchValue" &&
+      action.type !== "allItems/setFreeFormSearchValue" &&
       action.type !== "RESET"
     );
   },

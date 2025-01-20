@@ -1,9 +1,13 @@
-import { useSelector } from "../../hooks";
+import { useDispatch, useSelector } from "../../hooks";
 import FilteredItems from "../../components/FilteredItems/FilteredItems";
+import { setSongSearchValue } from "../../store/allItemsSlice";
 
 const Songs = () => {
-  const { list, isAllItemsLoading } = useSelector((state) => state.allItems);
+  const { list, isAllItemsLoading, songSearchValue } = useSelector(
+    (state) => state.allItems
+  );
   const { allSongDocs } = useSelector((state) => state.allDocs);
+  const dispatch = useDispatch();
 
   return (
     <FilteredItems
@@ -13,6 +17,8 @@ const Songs = () => {
       label="song"
       isLoading={isAllItemsLoading}
       allDocs={allSongDocs}
+      searchValue={songSearchValue}
+      setSearchValue={(value) => dispatch(setSongSearchValue(value))}
     />
   );
 };
