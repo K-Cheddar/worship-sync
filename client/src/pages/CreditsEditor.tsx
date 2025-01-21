@@ -1,0 +1,89 @@
+import { useContext, useEffect, useState } from "react";
+import Credits from "../containers/Credits/Credits";
+import { default as CreditsEditorContainer } from "../containers/Credits/CreditsEditor";
+import { ReactComponent as BackArrowSVG } from "../assets/icons/arrow-back.svg";
+import { useDispatch, useSelector } from "../hooks";
+import { ControllerInfoContext } from "../context/controllerInfo";
+import { DBCredits } from "../types";
+import { initiateCreditsList, setIsLoading } from "../store/creditsSlice";
+import Spinner from "../components/Spinner/Spinner";
+import { GlobalInfoContext } from "../context/globalInfo";
+import Button from "../components/Button/Button";
+import cn from "classnames";
+import { Link } from "react-router-dom";
+
+const CreditsEditor = () => {
+  const { list } = useSelector((state) => state.undoable.present.credits);
+  const { db, dbProgress } = useContext(ControllerInfoContext) || {};
+  const { user } = useContext(GlobalInfoContext) || {};
+  const dispatch = useDispatch();
+
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+
+  useEffect(() => {
+    const getCredits = async () => {
+      if (!db) return;
+
+      try {
+        const response: DBCredits = await db.get("credits");
+        dispatch(initiateCreditsList(response.list));
+        dispatch(setIsLoading(false));
+      } catch (error: any) {
+        console.error(error);
+        if (error.name === "not_found") db.put({ _id: "credits", list: [] });
+        dispatch(setIsLoading(false));
+      }
+    };
+
+    getCredits();
+  }, [db, dispatch]);
+
+  return (
+    <div className="w-full h-screen bg-gray-700 text-white flex max-md:flex-col gap-2 overflow-hidden">
+      <div className="md:hidden flex items-center">
+        <Button
+          variant={isPreviewOpen ? "secondary" : "primary"}
+          onClick={() => setIsPreviewOpen(false)}
+          className="flex-1 justify-center rounded-r-none"
+        >
+          Show Editor
+        </Button>
+        <Button
+          variant={isPreviewOpen ? "primary" : "secondary"}
+          onClick={() => setIsPreviewOpen(true)}
+          className="flex-1 justify-center rounded-l-none"
+        >
+          Show Preview
+        </Button>
+      </div>
+      <Button svg={BackArrowSVG} variant="tertiary" className="w-fit md:hidden">
+        <Link to="/">Back</Link>
+      </Button>
+      {dbProgress !== 100 && (
+        <div className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8">
+          <p>
+            Setting up <span className="font-bold">Worship</span>
+            <span className="text-orange-500 font-semibold">Sync</span> for{" "}
+            <span className="font-semibold">{user}</span>
+          </p>
+          <Spinner />
+          <p>
+            Progress: <span className="text-orange-500">{dbProgress}%</span>
+          </p>
+        </div>
+      )}
+      <CreditsEditorContainer
+        className={isPreviewOpen ? "max-md:hidden" : ""}
+      />
+
+      <section
+        className={cn("flex-1 text-center", !isPreviewOpen && "max-md:hidden")}
+      >
+        <h2 className="text-lg font-semibold">Preview</h2>
+        <Credits isPreview credits={list} />
+      </section>
+    </div>
+  );
+};
+
+export default CreditsEditor;

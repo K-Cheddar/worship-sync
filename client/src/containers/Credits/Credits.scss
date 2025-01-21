@@ -1,0 +1,15 @@
+.credits-list-editor { 
+  scrollbar-width: thin;
+
+  @apply flex flex-col gap-2 w-full overflow-y-auto overflow-x-hidden;
+}
+
+.credits-list {
+  @apply flex flex-col gap-[2.5vh] w-full text-white text-center overflow-y-auto pb-[10%];
+}
+
+.published-credits-list {
+  @apply bg-black/50 h-screen;
+
+  scrollbar-width: none;
+}
