@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, HTMLProps } from "react";
 import "./TextArea.scss";
 
-type TextAreaProps = {
+type TextAreaProps = HTMLProps<HTMLTextAreaElement> & {
   className?: string;
   type?: string;
   value: string | number;

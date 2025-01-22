@@ -222,7 +222,7 @@ const CreateItem = () => {
             className="w-full h-72 mt-2"
             label="Paste Text Here"
             value={text}
-            onChange={(val) => setText(val)}
+            onChange={(val) => setText(val as string)}
             data-ignore-undo="true"
           />
         )}

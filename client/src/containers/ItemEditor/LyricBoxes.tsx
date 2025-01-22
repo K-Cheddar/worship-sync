@@ -106,7 +106,7 @@ const LyricBoxes = ({
             onChange={(val) => {
               const copiedFormattedLyrics = [...formattedLyrics];
               const lyric = { ...copiedFormattedLyrics[index] };
-              lyric.words = val;
+              lyric.words = val as string;
               copiedFormattedLyrics[index] = lyric;
               setFormattedLyrics(copiedFormattedLyrics);
             }}

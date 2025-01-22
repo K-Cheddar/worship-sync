@@ -69,6 +69,7 @@ const undoableReducers = undoable(
       overlaysSlice.actions.setHasPendingUpdate.toString(),
       overlaysSlice.actions.updateInitialList.toString(),
       creditsSlice.actions.initiateCreditsList.toString(),
+      creditsSlice.actions.initiateTransitionScene.toString(),
       creditsSlice.actions.initiatePublishedCreditsList.toString(),
       creditsSlice.actions.updateCreditsListFromRemote.toString(),
       creditsSlice.actions.updatePublishedCreditsListFromRemote.toString(),
@@ -282,6 +283,7 @@ listenerMiddleware.startListening({
       action.type !== "credits/setHasPendingUpdate" &&
       action.type !== "credits/updateInitialList" &&
       action.type !== "credits/setIsLoading" &&
+      action.type !== "credits/initiateTransitionScene" &&
       action.type !== "RESET"
     );
   },
@@ -292,7 +294,8 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     // update db with lists
-    const { list, publishedList } = state.undoable.present.credits;
+    const { list, publishedList, transitionScene } =
+      state.undoable.present.credits;
 
     if (
       action.type ===
@@ -303,9 +306,16 @@ listenerMiddleware.startListening({
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/published-credits"
+          "users/" + globalFireDbInfo.user + "/v2/credits/publishedList"
         ),
         cleanObject(publishedList)
+      );
+      set(
+        ref(
+          globalFireDbInfo.db,
+          "users/" + globalFireDbInfo.user + "/v2/credits/transitionScene"
+        ),
+        transitionScene
       );
     }
 

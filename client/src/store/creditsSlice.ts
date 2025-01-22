@@ -228,6 +228,7 @@ type CreditsState = {
   publishedList: CreditsInfo[];
   initialList: string[];
   isLoading: boolean;
+  transitionScene: string;
 };
 
 const initialState: CreditsState = {
@@ -235,6 +236,7 @@ const initialState: CreditsState = {
   publishedList: [],
   initialList: [],
   isLoading: true,
+  transitionScene: "",
 };
 
 export const creditsSlice = createSlice({
@@ -247,6 +249,12 @@ export const creditsSlice = createSlice({
         text: "",
         id: generateRandomId(),
       });
+    },
+    initiateTransitionScene: (state, action: PayloadAction<string>) => {
+      state.transitionScene = action.payload;
+    },
+    setTransitionScene: (state, action: PayloadAction<string>) => {
+      state.transitionScene = action.payload;
     },
     updateCreditsList: (state, action: PayloadAction<CreditsInfo[]>) => {
       state.list = action.payload;
@@ -326,6 +334,8 @@ export const creditsSlice = createSlice({
 
 export const {
   addCredit,
+  initiateTransitionScene,
+  setTransitionScene,
   updateCreditsList: updateList,
   updatePublishedCreditsList,
   deleteCredit,

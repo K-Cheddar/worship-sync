@@ -18,6 +18,7 @@ import ProjectorFull from "./pages/ProjectorFull";
 import CreditsEditor from "./pages/CreditsEditor";
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
+gsap.ticker.lagSmoothing(0);
 
 function App() {
   return (

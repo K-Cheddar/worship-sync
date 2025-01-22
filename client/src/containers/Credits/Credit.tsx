@@ -109,19 +109,22 @@ const Credit = ({ heading, text, id, initialList }: CreditProps) => {
         <Input
           label="Heading"
           className="flex flex-col gap-1"
+          hideLabel
+          placeholder="Heading"
           value={heading}
           onChange={(val) => {
             dispatch(updateCredit({ id, heading: val as string, text }));
           }}
         />
-
         <TextArea
           label="Text"
           value={text}
           className="flex flex-col gap-1"
+          hideLabel
+          placeholder="Text"
           autoResize
           onChange={(val) => {
-            dispatch(updateCredit({ id, heading, text: val }));
+            dispatch(updateCredit({ id, heading, text: val as string }));
           }}
         />
       </div>

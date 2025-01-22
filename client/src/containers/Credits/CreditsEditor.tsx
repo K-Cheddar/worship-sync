@@ -4,7 +4,11 @@ import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as BackArrowSVG } from "../../assets/icons/arrow-back.svg";
 import { useDispatch, useSelector } from "../../hooks";
-import { updateInitialList, updateList } from "../../store/creditsSlice";
+import {
+  setTransitionScene,
+  updateInitialList,
+  updateList,
+} from "../../store/creditsSlice";
 import "./Credits.scss";
 import { useEffect, useState } from "react";
 import Credit from "./Credit";
@@ -21,9 +25,10 @@ import {
   updatePublishedCreditsList,
 } from "../../store/creditsSlice";
 import { Link } from "react-router-dom";
+import Input from "../../components/Input/Input";
 
 const CreditsEditor = ({ className }: { className?: string }) => {
-  const { list, initialList, isLoading } = useSelector(
+  const { list, initialList, isLoading, transitionScene } = useSelector(
     (state) => state.undoable.present.credits
   );
   const dispatch = useDispatch();
@@ -69,13 +74,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
           className
         )}
       >
-        <Button
-          svg={BackArrowSVG}
-          variant="tertiary"
-          className="w-fit max-md:hidden"
-        >
-          <Link to="/">Back</Link>
-        </Button>
         <h2 className="text-xl font-semibold text-center h-fit">Credits</h2>
         {!isLoading && list.length === 0 && (
           <p className="text-sm px-2">
@@ -122,10 +120,15 @@ const CreditsEditor = ({ className }: { className?: string }) => {
               >
                 {justAdded ? "Added!" : "Add Credit"}
               </Button>
+              <Input
+                label="Scene to Transition to on Complete"
+                value={transitionScene}
+                onChange={(val) => dispatch(setTransitionScene(val as string))}
+              />
               <Button
                 className="text-sm w-full justify-center mt-2"
                 svg={justPublished ? CheckSVG : SaveSVG}
-                color={justPublished ? "#84cc16" : "#22d3ee"}
+                color={justPublished ? "#84cc16" : "#0284c7"}
                 variant="cta"
                 disabled={justPublished}
                 onClick={() => {
@@ -136,7 +139,9 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                   }, 5000);
                 }}
               >
-                {justPublished ? "Published Credits!" : "Publish Credits"}
+                {justPublished
+                  ? "Published Credits and Scene!"
+                  : "Publish Credits and Scene"}
               </Button>
             </section>
           </>

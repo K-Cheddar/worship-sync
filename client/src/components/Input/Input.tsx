@@ -1,10 +1,10 @@
-import { FunctionComponent } from "react";
+import { FunctionComponent, HTMLProps, SVGProps } from "react";
 import cn from "classnames";
 import "./Input.scss";
 import Button from "../Button/Button";
 import generateRandomId from "../../utils/generateRandomId";
 
-type InputProps = React.HTMLProps<HTMLInputElement> & {
+type InputProps = HTMLProps<HTMLInputElement> & {
   className?: string;
   type?: string;
   value: string | number;
@@ -13,7 +13,7 @@ type InputProps = React.HTMLProps<HTMLInputElement> & {
   onChange: (value: string | number | Date) => void;
   labelClassName?: string;
   labelFontSize?: string;
-  svg?: FunctionComponent<React.SVGProps<SVGSVGElement>>;
+  svg?: FunctionComponent<SVGProps<SVGSVGElement>>;
   svgAction?: () => void;
   color?: string;
   svgPadding?: string;

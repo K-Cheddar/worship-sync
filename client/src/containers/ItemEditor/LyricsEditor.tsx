@@ -214,7 +214,7 @@ const LyricsEditor = () => {
               className="w-40 h-72"
               label="Paste Lyrics Here"
               value={unformattedLyrics}
-              onChange={(val) => setUnformattedLyrics(val)}
+              onChange={(val) => setUnformattedLyrics(val as string)}
             />
             <Button className="text-sm mt-1 mx-auto" onClick={createSections}>
               Format Lyrics

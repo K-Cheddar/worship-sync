@@ -1,43 +1,70 @@
-import { useContext, useEffect } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { default as CreditsContainer } from "../containers/Credits/Credits";
 import { useDispatch, useSelector } from "../hooks";
-import { initiatePublishedCreditsList } from "../store/creditsSlice";
+import {
+  initiatePublishedCreditsList,
+  initiateTransitionScene,
+} from "../store/creditsSlice";
 import { onValue, ref } from "firebase/database";
 import { GlobalInfoContext } from "../context/globalInfo";
 
 const Credits = () => {
-  const { publishedList } = useSelector(
+  const { publishedList, transitionScene } = useSelector(
     (state) => state.undoable.present.credits
   );
   const dispatch = useDispatch();
   const { user, firebaseDb } = useContext(GlobalInfoContext) || {};
+  const [creditsTimeline, setCreditsTimeline] = useState<GSAPTimeline>();
+  const [isActive, setIsActive] = useState(false);
 
   useEffect(() => {
     if (!firebaseDb || user === "Demo") return;
 
-    const updateRef = ref(
+    const getPublishedRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/published-credits"
+      "users/" + user + "/v2/credits/publishedList"
     );
-    onValue(updateRef, (snapshot) => {
+    onValue(getPublishedRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
         dispatch(initiatePublishedCreditsList(data));
       }
     });
+
+    const getTransitionSceneRef = ref(
+      firebaseDb,
+      "users/" + user + "/v2/credits/transitionScene"
+    );
+    onValue(getTransitionSceneRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        dispatch(initiateTransitionScene(data));
+      }
+    });
   }, [dispatch, firebaseDb, user]);
 
   useEffect(() => {
-    const duration = publishedList.length * 2;
+    window.addEventListener("obsSourceActiveChanged", (event) => {
+      setIsActive(event.detail.active);
+      if (event.detail.active) {
+        creditsTimeline?.restart();
+      }
+    });
+  }, [creditsTimeline]);
 
-    if (!publishedList.length) return;
+  const runObsTransition = useCallback(() => {
+    if (isActive) {
+      window.obsstudio?.setCurrentScene(transitionScene);
+    }
+  }, [transitionScene, isActive]);
 
-    setTimeout(() => {
-      window.obsstudio?.setCurrentScene("Welcome Screen 2");
-    }, duration);
-  }, [publishedList]);
-
-  return <CreditsContainer credits={publishedList} />;
+  return (
+    <CreditsContainer
+      credits={publishedList}
+      runObsTransition={runObsTransition}
+      setCreditsTimeline={setCreditsTimeline}
+    />
+  );
 };
 
 export default Credits;
