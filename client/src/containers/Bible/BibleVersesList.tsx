@@ -36,7 +36,7 @@ const BibleVersesList = ({
 
   useEffect(() => {
     const verseElement = document.getElementById(
-      `bible-verse-${selectedVerse}`
+      `bible-verse-${selectedVerse + startVerse}`
     );
     const parentElement = document.getElementById("bible-verses-list");
     if (verseElement && parentElement) {
@@ -47,23 +47,23 @@ const BibleVersesList = ({
         keepNextInView: true,
       });
     }
-  }, [selectedVerse]);
+  }, [selectedVerse, startVerse]);
 
   const advanceVerse = () => {
     const nextVerseIndex = Math.min(selectedVerse + 1, endVerse);
     if (nextVerseIndex === selectedVerse) return;
     setSelectedVerse(nextVerseIndex);
-    const nextVerse = verses[nextVerseIndex];
+    const nextVerse = verses[nextVerseIndex + startVerse];
     if (nextVerse) {
       sendVerse(nextVerse);
     }
   };
 
   const previousVerse = () => {
-    const prevVerseIndex = Math.max(selectedVerse - 1, startVerse);
+    const prevVerseIndex = Math.max(selectedVerse - 1, 0);
     if (prevVerseIndex === selectedVerse) return;
     setSelectedVerse(prevVerseIndex);
-    const prevVerse = verses[prevVerseIndex];
+    const prevVerse = verses[prevVerseIndex + startVerse];
     if (prevVerse) {
       sendVerse(prevVerse);
     }

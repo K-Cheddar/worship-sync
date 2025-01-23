@@ -77,7 +77,7 @@ const DisplayStreamOverlay = forwardRef<
               xPercent: -105,
               duration: 2.5,
               opacity: 0,
-              ease: "power1.out",
+              ease: "none",
               delay: participantOverlayInfo.duration,
             });
         }

@@ -219,10 +219,10 @@ const CreateItem = () => {
 
         {selectedType === "song" && (
           <TextArea
-            className="w-full h-72 mt-2"
+            className="w-full h-72 mt-2 flex flex-col"
             label="Paste Text Here"
             value={text}
-            onChange={(val) => setText(val)}
+            onChange={(val) => setText(val as string)}
             data-ignore-undo="true"
           />
         )}

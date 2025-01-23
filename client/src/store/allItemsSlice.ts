@@ -4,11 +4,15 @@ import { ServiceItem } from "../types";
 type AllItems = {
   list: ServiceItem[];
   isAllItemsLoading: boolean;
+  songSearchValue: string;
+  freeFormSearchValue: string;
 };
 
 const initialState: AllItems = {
   list: [],
   isAllItemsLoading: true,
+  songSearchValue: "",
+  freeFormSearchValue: "",
 };
 
 export const allItemsSlice = createSlice({
@@ -34,6 +38,12 @@ export const allItemsSlice = createSlice({
     addItemToAllItemsList: (state, action: PayloadAction<ServiceItem>) => {
       state.list.push(action.payload);
     },
+    setSongSearchValue: (state, action: PayloadAction<string>) => {
+      state.songSearchValue = action.payload;
+    },
+    setFreeFormSearchValue: (state, action: PayloadAction<string>) => {
+      state.freeFormSearchValue = action.payload;
+    },
   },
 });
 
@@ -43,6 +53,8 @@ export const {
   addItemToAllItemsList,
   initiateAllItemsList,
   updateAllItemsListFromRemote,
+  setSongSearchValue,
+  setFreeFormSearchValue,
 } = allItemsSlice.actions;
 
 export default allItemsSlice.reducer;

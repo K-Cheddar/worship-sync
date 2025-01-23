@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch } from "../../hooks";
 import { ReactComponent as CreateSVG } from "../../assets/icons/create.svg";
 import { ReactComponent as MatchWordSVG } from "../../assets/icons/match-word.svg";
+import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 
 import Button from "../Button/Button";
 import Input from "../Input/Input";
@@ -30,6 +31,8 @@ type FilteredItemsProps = {
   label: string;
   isLoading: boolean;
   allDocs: DBItem[];
+  searchValue: string;
+  setSearchValue: (value: string) => void;
 };
 
 export type filteredItemsListType = ServiceItem & {
@@ -45,6 +48,8 @@ const FilteredItems = ({
   label,
   isLoading,
   allDocs,
+  searchValue,
+  setSearchValue,
 }: FilteredItemsProps) => {
   const dispatch = useDispatch();
   const loader = useRef(null);
@@ -56,7 +61,6 @@ const FilteredItems = ({
   const [filteredList, setFilteredList] =
     useState<filteredItemsListType[]>(listOfType);
   const [numShownItems, setNumShownItems] = useState(20);
-  const [searchValue, setSearchValue] = useState("");
   const [debouncedSearchValue, setDebouncedSearchValue] = useState("");
   const [itemToBeDeleted, setItemToBeDeleted] = useState<ServiceItem | null>(
     null
@@ -291,6 +295,8 @@ const FilteredItems = ({
           label="Search"
           className="text-base flex gap-2 items-center flex-1"
           data-ignore-undo="true"
+          svg={searchValue ? CloseSVG : undefined}
+          svgAction={() => setSearchValue("")}
         />
         <Button
           disabled={!searchValue}

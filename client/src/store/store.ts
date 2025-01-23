@@ -31,6 +31,7 @@ import { ref, set } from "firebase/database";
 import {
   BibleDisplayInfo,
   DBAllItems,
+  DBCredits,
   DBItem,
   DBItemListDetails,
   DBItemLists,
@@ -39,11 +40,16 @@ import {
   Presentation,
 } from "../types";
 import { allDocsSlice } from "./allDocsSlice";
+import { creditsSlice } from "./creditsSlice";
+
+const cleanObject = (obj: Object) =>
+  JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
 
 const undoableReducers = undoable(
   combineReducers({
     item: itemSlice.reducer,
     overlays: overlaysSlice.reducer,
+    credits: creditsSlice.reducer,
     itemList: itemListSlice.reducer,
     itemLists: itemListsSlice.reducer,
     media: mediaItemsSlice.reducer,
@@ -62,6 +68,13 @@ const undoableReducers = undoable(
       overlaysSlice.actions.updateOverlayListFromRemote.toString(),
       overlaysSlice.actions.setHasPendingUpdate.toString(),
       overlaysSlice.actions.updateInitialList.toString(),
+      creditsSlice.actions.initiateCreditsList.toString(),
+      creditsSlice.actions.initiateTransitionScene.toString(),
+      creditsSlice.actions.initiatePublishedCreditsList.toString(),
+      creditsSlice.actions.updateCreditsListFromRemote.toString(),
+      creditsSlice.actions.updatePublishedCreditsListFromRemote.toString(),
+      creditsSlice.actions.updateInitialList.toString(),
+      creditsSlice.actions.setIsLoading.toString(),
       itemListSlice.actions.initiateItemList.toString(),
       itemListSlice.actions.updateItemListFromRemote.toString(),
       itemListSlice.actions.setItemListIsLoading.toString(),
@@ -199,6 +212,8 @@ listenerMiddleware.startListening({
         (previousState as RootState).allItems &&
       action.type !== "allItems/initiateAllItemsList" &&
       action.type !== "allItems/updateAllItemsListFromRemote" &&
+      action.type !== "allItems/setSongSearchValue" &&
+      action.type !== "allItems/setFreeFormSearchValue" &&
       action.type !== "RESET"
     );
   },
@@ -256,6 +271,61 @@ listenerMiddleware.startListening({
   },
 });
 
+// handle updating credits
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).undoable.present.credits !==
+        (previousState as RootState).undoable.present.credits &&
+      action.type !== "credits/initiateCreditsList" &&
+      action.type !== "credits/initiatePublishedCreditsList" &&
+      action.type !== "credits/updateCreditsListFromRemote" &&
+      action.type !== "credits/setHasPendingUpdate" &&
+      action.type !== "credits/updateInitialList" &&
+      action.type !== "credits/setIsLoading" &&
+      action.type !== "credits/initiateTransitionScene" &&
+      action.type !== "RESET"
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    let state = listenerApi.getState() as RootState;
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(1500);
+
+    // update db with lists
+    const { list, publishedList, transitionScene } =
+      state.undoable.present.credits;
+
+    if (
+      action.type ===
+        creditsSlice.actions.updatePublishedCreditsList.toString() &&
+      globalFireDbInfo.db &&
+      globalFireDbInfo.user
+    ) {
+      set(
+        ref(
+          globalFireDbInfo.db,
+          "users/" + globalFireDbInfo.user + "/v2/credits/publishedList"
+        ),
+        cleanObject(publishedList)
+      );
+      set(
+        ref(
+          globalFireDbInfo.db,
+          "users/" + globalFireDbInfo.user + "/v2/credits/transitionScene"
+        ),
+        transitionScene
+      );
+    }
+
+    if (!db) return;
+    const db_credits: DBCredits = await db.get("credits");
+    db_credits.list = list;
+    db.put(db_credits);
+  },
+});
+
 // handle updating media
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
@@ -308,11 +378,6 @@ listenerMiddleware.startListening({
     if (!globalFireDbInfo.db) return;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
-
-    const cleanObject = (obj: Object) =>
-      JSON.parse(
-        JSON.stringify(obj, (_, val) => (val === undefined ? null : val))
-      );
 
     const { projectorInfo, monitorInfo, streamInfo } = (
       listenerApi.getState() as RootState

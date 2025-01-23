@@ -185,6 +185,12 @@ export type OverlayInfo = {
   id: string;
 };
 
+export type CreditsInfo = {
+  text: string;
+  heading: string;
+  id: string;
+};
+
 export type DisplayType =
   | "projector"
   | "monitor"
@@ -260,6 +266,12 @@ export type DBItemListDetails = {
   name: string;
   items: ServiceItem[];
   overlays: OverlayInfo[];
+};
+
+export type DBCredits = {
+  _id: string;
+  _rev: string;
+  list: CreditsInfo[];
 };
 
 export type DBAllItems = {

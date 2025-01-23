@@ -108,6 +108,6 @@
 }
 
 .overlay-qr-code-info-description {
-  @apply font-semibold;
+  @apply font-semibold whitespace-pre-line;
   font-size: var(--overlay-qr-code-info-description-size);
 }
