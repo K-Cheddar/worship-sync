@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, HTMLProps } from "react";
+import cn from "classnames";
 import "./TextArea.scss";
 
 type TextAreaProps = HTMLProps<HTMLTextAreaElement> & {
@@ -9,6 +10,7 @@ type TextAreaProps = HTMLProps<HTMLTextAreaElement> & {
   hideLabel?: boolean;
   autoResize?: boolean;
   onChange: (value: string) => void;
+  labelClassName?: string;
 };
 
 const TextArea = ({
@@ -19,6 +21,7 @@ const TextArea = ({
   label,
   hideLabel = false,
   autoResize = false,
+  labelClassName,
   ...rest
 }: TextAreaProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -46,10 +49,14 @@ const TextArea = ({
   }, [resizeTextArea]);
 
   return (
-    <div ref={containerRef} className={`${className} text-area-container`}>
+    <div ref={containerRef} className={cn("text-area-container", className)}>
       <label
         ref={labelRef}
-        className={`text-sm font-semibold ${hideLabel ? "sr-only" : ""}`}
+        className={cn(
+          "text-sm font-semibold",
+          hideLabel && "sr-only",
+          labelClassName
+        )}
       >
         {label}:
       </label>

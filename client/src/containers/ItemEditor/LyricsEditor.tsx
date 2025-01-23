@@ -211,7 +211,7 @@ const LyricsEditor = () => {
         {showLeftSection && (
           <div className="pl-4 pt-4 w-44 flex flex-col">
             <TextArea
-              className="w-40 h-72"
+              className="w-40 h-72 flex flex-col"
               label="Paste Lyrics Here"
               value={unformattedLyrics}
               onChange={(val) => setUnformattedLyrics(val as string)}

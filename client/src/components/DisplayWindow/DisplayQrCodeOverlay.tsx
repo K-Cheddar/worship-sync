@@ -75,7 +75,7 @@ const DisplayStreamOverlay = forwardRef<
       className="overlay-qr-code-info-container"
       style={
         {
-          "--overlay-qr-code-info-description-size": `${width / 40}vw`,
+          "--overlay-qr-code-info-description-size": `${width / 45}vw`,
           "--overlay-qr-code-info-url-width": `${width / 10}vw`,
           "--overlay-qr-code-info-gap": `${width / 40}vw`,
           "--overlay-qr-code-info-padding":

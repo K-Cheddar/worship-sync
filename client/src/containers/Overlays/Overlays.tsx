@@ -32,6 +32,7 @@ import RadioButton from "../../components/RadioButton/RadioButton";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import Select from "../../components/Select/Select";
 import generateRandomId from "../../utils/generateRandomId";
+import TextArea from "../../components/TextArea/TextArea";
 
 const colorOptions = [
   { label: "Red", value: "#dc2626" },
@@ -146,7 +147,7 @@ const Overlays = () => {
   }, [dispatch]);
 
   const commonInputProps = {
-    className: "text-sm flex gap-2 items-center",
+    className: "text-sm flex gap-2 items-center w-full",
     labelClassName: "w-24",
     "data-ignore-undo": "true",
   };
@@ -281,7 +282,7 @@ const Overlays = () => {
                       />
                     </div>
                   )}
-                  <section className="flex flex-col gap-2 bg-gray-800 p-2 rounded-md min-w-1/2 items-center">
+                  <section className="flex flex-col gap-2 bg-gray-800 p-4 rounded-md min-w-1/2 items-center">
                     {localType === "participant" && (
                       <>
                         <Input
@@ -328,9 +329,9 @@ const Overlays = () => {
                           value={localUrl}
                           onChange={(val) => setLocalUrl(val as string)}
                         />
-                        <Input
+                        <TextArea
                           {...commonInputProps}
-                          label="Description"
+                          label="Info"
                           value={localDescription}
                           onChange={(val) => setLocalDescription(val as string)}
                         />
