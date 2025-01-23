@@ -104,6 +104,7 @@ const Credit = ({ heading, text, id, initialList }: CreditProps) => {
         svg={DragHandleSVG}
         {...listeners}
         {...attributes}
+        tabIndex={-1}
       />
       <div className="flex flex-col flex-1 h-full leading-4 text-center px-2 py-1.5 gap-1">
         <Input
@@ -133,6 +134,7 @@ const Credit = ({ heading, text, id, initialList }: CreditProps) => {
         className="text-sm ml-auto h-full"
         padding="px-2 py-1"
         svg={DeleteSVG}
+        tabIndex={-1}
         onClick={deleteOverlayHandler}
       />
     </li>

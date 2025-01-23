@@ -36,6 +36,7 @@ const CreditsEditor = () => {
         dispatch(setIsLoading(false));
       } catch (error: any) {
         console.error(error);
+        dispatch(initiateCreditsList([]));
         if (error.name === "not_found") db.put({ _id: "credits", list: [] });
         dispatch(setIsLoading(false));
       }

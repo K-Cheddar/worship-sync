@@ -4,11 +4,7 @@ import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as BackArrowSVG } from "../../assets/icons/arrow-back.svg";
 import { useDispatch, useSelector } from "../../hooks";
-import {
-  setTransitionScene,
-  updateInitialList,
-  updateList,
-} from "../../store/creditsSlice";
+import { setTransitionScene, updateList } from "../../store/creditsSlice";
 import "./Credits.scss";
 import { useEffect, useState } from "react";
 import Credit from "./Credit";
@@ -59,12 +55,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     updatedCredits.splice(newIndex, 0, element);
     dispatch(updateList(updatedCredits));
   };
-
-  useEffect(() => {
-    return () => {
-      dispatch(updateInitialList());
-    };
-  }, [dispatch]);
 
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
