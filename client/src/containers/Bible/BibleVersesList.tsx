@@ -61,7 +61,6 @@ const BibleVersesList = ({
 
   const previousVerse = () => {
     const prevVerseIndex = Math.max(selectedVerse - 1, 0);
-    console.log({ selectedVerse, startVerse, prevVerseIndex });
     if (prevVerseIndex === selectedVerse) return;
     setSelectedVerse(prevVerseIndex);
     const prevVerse = verses[prevVerseIndex + startVerse];
