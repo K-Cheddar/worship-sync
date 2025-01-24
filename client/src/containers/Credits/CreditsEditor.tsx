@@ -2,11 +2,10 @@ import Button from "../../components/Button/Button";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
-import { ReactComponent as BackArrowSVG } from "../../assets/icons/arrow-back.svg";
 import { useDispatch, useSelector } from "../../hooks";
-import { setTransitionScene, updateList } from "../../store/creditsSlice";
+import { updateList } from "../../store/creditsSlice";
 import "./Credits.scss";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Credit from "./Credit";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import cn from "classnames";
@@ -20,11 +19,9 @@ import {
   addCredit,
   updatePublishedCreditsList,
 } from "../../store/creditsSlice";
-import { Link } from "react-router-dom";
-import Input from "../../components/Input/Input";
 
 const CreditsEditor = ({ className }: { className?: string }) => {
-  const { list, initialList, isLoading, transitionScene } = useSelector(
+  const { list, initialList, isLoading } = useSelector(
     (state) => state.undoable.present.credits
   );
   const dispatch = useDispatch();
@@ -110,11 +107,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
               >
                 {justAdded ? "Added!" : "Add Credit"}
               </Button>
-              <Input
-                label="Scene to Transition to on Complete"
-                value={transitionScene}
-                onChange={(val) => dispatch(setTransitionScene(val as string))}
-              />
               <Button
                 className="text-sm w-full justify-center mt-2"
                 svg={justPublished ? CheckSVG : SaveSVG}

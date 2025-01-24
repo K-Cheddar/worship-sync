@@ -116,6 +116,7 @@ const Credit = ({ heading, text, id, initialList }: CreditProps) => {
           onChange={(val) => {
             dispatch(updateCredit({ id, heading: val as string, text }));
           }}
+          data-ignore-undo="true"
         />
         <TextArea
           label="Text"
@@ -124,6 +125,7 @@ const Credit = ({ heading, text, id, initialList }: CreditProps) => {
           hideLabel
           placeholder="Text"
           autoResize
+          data-ignore-undo="true"
           onChange={(val) => {
             dispatch(updateCredit({ id, heading, text: val as string }));
           }}

@@ -2,10 +2,10 @@
   @apply flex flex-col gap-2 w-full overflow-y-auto h-full;
 
   scrollbar-width: thin;
-  max-height: (calc(100vh - clamp(15rem, 17vw, 19rem)));
+  max-height: (calc(100vh - clamp(12rem, 14vw, 16rem)));
 
   @media(max-width: 767px) {
-    max-height: calc(100vh - 16rem);
+    max-height: calc(100vh - 12rem);
   }
 }
 
