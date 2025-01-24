@@ -15,7 +15,7 @@ import ControllerContextWrapper from "./ControllerContextWrapper";
 import GlobalInfoProvider from "./context/globalInfo";
 import Credits from "./pages/Credits";
 import ProjectorFull from "./pages/ProjectorFull";
-import CreditsEditor from "./pages/CreditsEditor";
+import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);

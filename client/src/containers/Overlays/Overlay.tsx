@@ -196,7 +196,7 @@ const Overlay = ({
           <>
             {overlay.description && (
               <span className="flex text-sm items-center h-full">
-                {overlay.description}
+                {overlay.description.split("\n")[0]}
               </span>
             )}
           </>
