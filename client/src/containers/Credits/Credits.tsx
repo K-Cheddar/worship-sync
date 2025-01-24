@@ -48,7 +48,7 @@ const Credits = ({
           })
           .to(containerRef.current, {
             scrollTo: "#ending-credits",
-            duration: credits.length * 2,
+            duration: credits.length * 3,
             ease: "none",
           })
       );
