@@ -4,6 +4,7 @@ import { default as CreditsEditorContainer } from "../../containers/Credits/Cred
 import { ReactComponent as BackArrowSVG } from "../../assets/icons/arrow-back.svg";
 import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
 import { ReactComponent as SyncSVG } from "../../assets/icons/sync-alt.svg";
+import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { DBCredits } from "../../types";
@@ -12,6 +13,7 @@ import {
   initiateTransitionScene,
   setIsLoading,
   setTransitionScene,
+  updateCreditsListFromRemote,
   updateList,
 } from "../../store/creditsSlice";
 import Spinner from "../../components/Spinner/Spinner";
@@ -33,12 +35,13 @@ const CreditsEditor = () => {
   const { list: overlays } = useSelector(
     (state) => state.undoable.present.overlays
   );
-  const { db, dbProgress, setIsMobile } =
+  const { db, dbProgress, setIsMobile, updater } =
     useContext(ControllerInfoContext) || {};
   const { user, firebaseDb } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [justGenerated, setJustGenerated] = useState(false);
 
   useEffect(() => {
     const getCredits = async () => {
@@ -58,6 +61,29 @@ const CreditsEditor = () => {
 
     getCredits();
   }, [db, dispatch]);
+
+  useEffect(() => {
+    if (!updater) return;
+    const updateAllItemsAndList = async (event: CustomEventInit) => {
+      try {
+        const updates = event.detail;
+        for (const _update of updates) {
+          // check if the list we have selected was updated
+          if (_update._id === "credits") {
+            console.log("updating credits list from remote", event);
+            const creditsUpdate = _update as DBCredits;
+            dispatch(updateCreditsListFromRemote(creditsUpdate.list));
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    updater.addEventListener("update", updateAllItemsAndList);
+
+    return () => updater.removeEventListener("update", updateAllItemsAndList);
+  }, [updater, dispatch]);
 
   useEffect(() => {
     const getTransitionScene = async () => {
@@ -172,10 +198,16 @@ const CreditsEditor = () => {
       />
       <Button
         className="text-sm"
-        onClick={() => generateFromOverlays()}
-        svg={SyncSVG}
+        disabled={overlays.length === 0}
+        onClick={() => {
+          generateFromOverlays();
+          setJustGenerated(true);
+          setTimeout(() => setJustGenerated(false), 2000);
+        }}
+        color={justGenerated ? "#84cc16" : "#22d3ee"}
+        svg={justGenerated ? CheckSVG : SyncSVG}
       >
-        Generate From Overlays
+        {justGenerated ? "Generated From Overlays!" : "Generate From Overlays"}
       </Button>
     </>
   );

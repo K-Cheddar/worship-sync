@@ -48,7 +48,7 @@ const Credits = ({
           })
           .to(containerRef.current, {
             scrollTo: "#ending-credits",
-            duration: credits.length * 3,
+            duration: credits.length * 3.5,
             ease: "none",
           })
       );
@@ -94,10 +94,10 @@ const Credits = ({
 
             {!isStarting && !isEnding && (
               <>
-                <h2 className="text-[2vw] max-md:text-[3.5vw] font-semibold">
+                <h2 className="text-[2.25vw] max-md:text-[3.5vw] font-semibold">
                   {heading}
                 </h2>
-                <p className="text-[1.75vw] max-md:text-[3vw] whitespace-pre-line">
+                <p className="text-[2vw] max-md:text-[3vw] whitespace-pre-line">
                   {text}
                 </p>
               </>
