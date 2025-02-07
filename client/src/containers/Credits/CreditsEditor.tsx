@@ -122,8 +122,8 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                 }}
               >
                 {justPublished
-                  ? "Published Credits and Scene!"
-                  : "Publish Credits and Scene"}
+                  ? "Published Credits and Scenes!"
+                  : "Publish Credits and Scenes"}
               </Button>
             </section>
           </>

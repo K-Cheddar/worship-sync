@@ -10,7 +10,9 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { DBCredits } from "../../types";
 import {
   initiateCreditsList,
+  initiateCreditsScene,
   initiateTransitionScene,
+  setCreditsScene,
   setIsLoading,
   setTransitionScene,
   updateCreditsListFromRemote,
@@ -29,7 +31,7 @@ import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
 
 const CreditsEditor = () => {
-  const { list, transitionScene } = useSelector(
+  const { list, transitionScene, creditsScene } = useSelector(
     (state) => state.undoable.present.credits
   );
   const { list: overlays } = useSelector(
@@ -100,7 +102,22 @@ const CreditsEditor = () => {
       });
     };
 
+    const getCreditsScene = async () => {
+      if (!firebaseDb) return;
+      const updateRef = ref(
+        firebaseDb,
+        "users/" + user + "/v2/credits/creditsScene"
+      );
+      onValue(updateRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          dispatch(initiateCreditsScene(data));
+        }
+      });
+    };
+
     getTransitionScene();
+    getCreditsScene();
   }, [dispatch, firebaseDb, user]);
 
   const editorRef = useCallback(
@@ -195,6 +212,13 @@ const CreditsEditor = () => {
         value={transitionScene}
         data-ignore-undo="true"
         onChange={(val) => dispatch(setTransitionScene(val as string))}
+      />
+      <Input
+        label="Credits Scene"
+        className="credits-transition-input"
+        value={creditsScene}
+        data-ignore-undo="true"
+        onChange={(val) => dispatch(setCreditsScene(val as string))}
       />
       <Button
         className="text-sm"
