@@ -50,6 +50,13 @@ const Credits = () => {
         creditsTimeline?.restart();
       }
     });
+    window.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        creditsTimeline?.pause();
+      } else {
+        creditsTimeline?.restart();
+      }
+    });
   }, [creditsTimeline]);
 
   const runObsTransition = useCallback(() => {
