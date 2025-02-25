@@ -138,6 +138,7 @@ const Bible = () => {
           setVerses(bibleStructure.books[book].chapters[chapter].verses)
         );
       }
+      setJustGotChapter(false);
     };
     getBibles();
     // we only want this to update on version change, not book or chapter change
