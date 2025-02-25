@@ -10,6 +10,7 @@ export const bibleVersions = [
   { value: "amp", label: "Amplified Bible (External)" },
   { value: "ceb", label: "Common English Bible (External)" },
   { value: "cev", label: "Contemporary English Version (External)" },
+  { value: "csb", label: "Christian Study Bible (External)" },
   { value: "erv", label: "Easy to Read Version (External)" },
   { value: "gw", label: "God's Word (External)" },
   { value: "nasb", label: "New American Standard Bible (External)" },
