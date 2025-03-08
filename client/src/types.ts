@@ -158,6 +158,7 @@ export type Presentation = {
   stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
   qrCodeOverlayInfo?: OverlayInfo;
+  imageOverlayInfo?: OverlayInfo;
 };
 
 export type BibleDisplayInfo = {
@@ -178,9 +179,11 @@ export type OverlayInfo = {
   url?: string;
   description?: string;
   color?: string;
+  // image
+  imageUrl?: string;
   // shared
   duration?: number;
-  type?: "participant" | "stick-to-bottom" | "qr-code";
+  type?: "participant" | "stick-to-bottom" | "qr-code" | "image";
   time?: number;
   id: string;
 };

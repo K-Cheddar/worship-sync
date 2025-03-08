@@ -8,6 +8,7 @@ import DisplayStbOverlay from "./DisplayStbOverlay";
 import DisplayQrCodeOverlay from "./DisplayQrCodeOverlay";
 import DisplayEditor from "./DisplayEditor";
 import DisplayStreamText from "./DisplayStreamText";
+import DisplayImageOverlay from "./DisplayImageOverlay";
 
 type DisplayWindowProps = {
   prevBoxes?: Box[];
@@ -30,6 +31,7 @@ type DisplayWindowProps = {
   participantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
   qrCodeOverlayInfo?: OverlayInfo;
+  imageOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
   prevBibleDisplayInfo?: BibleDisplayInfo;
   shouldAnimate?: boolean;
@@ -58,6 +60,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       bibleDisplayInfo,
       prevBibleDisplayInfo,
       qrCodeOverlayInfo,
+      imageOverlayInfo,
       selectBox,
     }: DisplayWindowProps,
     ref
@@ -192,6 +195,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               width={width}
               shouldAnimate={shouldAnimate}
               qrCodeOverlayInfo={qrCodeOverlayInfo}
+              ref={containerRef}
+            />
+
+            <DisplayImageOverlay
+              width={width}
+              shouldAnimate={shouldAnimate}
+              imageOverlayInfo={imageOverlayInfo}
               ref={containerRef}
             />
           </>

@@ -4,15 +4,15 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import "./DisplayWindow.scss";
 
-type DisplayStreamOverlayProps = {
+type DisplayParticipantOverlayProps = {
   width: number;
   participantOverlayInfo?: OverlayInfo;
   shouldAnimate?: boolean;
 };
 
-const DisplayStreamOverlay = forwardRef<
+const DisplayParticipantOverlay = forwardRef<
   HTMLDivElement,
-  DisplayStreamOverlayProps
+  DisplayParticipantOverlayProps
 >(
   (
     { width, participantOverlayInfo = {}, shouldAnimate = false },
@@ -125,4 +125,4 @@ const DisplayStreamOverlay = forwardRef<
   }
 );
 
-export default DisplayStreamOverlay;
+export default DisplayParticipantOverlay;

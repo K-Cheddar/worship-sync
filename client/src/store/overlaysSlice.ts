@@ -20,6 +20,7 @@ const initialState: OverlaysState = {
   id: "",
   duration: 7,
   type: "participant",
+  imageUrl: "",
   hasPendingUpdate: false,
   list: [],
   initialList: [],
@@ -41,6 +42,7 @@ export const overlaysSlice = createSlice({
       state.id = action.payload.id;
       state.duration = action.payload.duration;
       state.type = action.payload.type;
+      state.imageUrl = action.payload.imageUrl;
     },
     addOverlay: (state, action: PayloadAction<OverlayInfo>) => {
       // get index of selected overlay
@@ -72,6 +74,7 @@ export const overlaysSlice = createSlice({
       state.description = "";
       state.duration = 7;
       state.type = "participant";
+      state.imageUrl = "";
 
       if (action.payload.length === 0) {
         state.list = [];
@@ -112,6 +115,7 @@ export const overlaysSlice = createSlice({
         state.description = "";
         state.duration = 7;
         state.type = "participant";
+        state.imageUrl = "";
       }
       state.hasPendingUpdate = true;
     },

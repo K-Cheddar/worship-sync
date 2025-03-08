@@ -73,6 +73,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_participantOverlayInfo: Unsubscribe | undefined;
     stream_stbOverlayInfo: Unsubscribe | undefined;
     stream_qrCodeOverlayInfo: Unsubscribe | undefined;
+    stream_imageOverlayInfo: Unsubscribe | undefined;
   }>({
     projectorInfo: undefined,
     monitorInfo: undefined,
@@ -81,6 +82,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_participantOverlayInfo: undefined,
     stream_stbOverlayInfo: undefined,
     stream_qrCodeOverlayInfo: undefined,
+    stream_imageOverlayInfo: undefined,
   });
 
   const navigate = useNavigate();
@@ -121,6 +123,10 @@ const GlobalInfoProvider = ({ children }: any) => {
         stream_qrCodeOverlayInfo: {
           info: data.stream_qrCodeOverlayInfo,
           updateAction: "debouncedUpdateQrCodeOverlayInfo",
+        },
+        stream_imageOverlayInfo: {
+          info: data.stream_imageOverlayInfo,
+          updateAction: "debouncedUpdateImageOverlayInfo",
         },
       };
 

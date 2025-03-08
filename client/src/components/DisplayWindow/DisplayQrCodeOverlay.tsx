@@ -6,15 +6,15 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import "./DisplayWindow.scss";
 
-type DisplayStreamOverlayProps = {
+type DisplayQRCodeOverlayProps = {
   width: number;
   qrCodeOverlayInfo?: OverlayInfo;
   shouldAnimate?: boolean;
 };
 
-const DisplayStreamOverlay = forwardRef<
+const DisplayQRCodeOverlay = forwardRef<
   HTMLDivElement,
-  DisplayStreamOverlayProps
+  DisplayQRCodeOverlayProps
 >(({ width, qrCodeOverlayInfo = {}, shouldAnimate = false }, containerRef) => {
   const qrCodeOverlayRef = useRef<HTMLDivElement | null>(null);
   const overlayTimeline = useRef<GSAPTimeline | null>();
@@ -103,4 +103,4 @@ const DisplayStreamOverlay = forwardRef<
   );
 });
 
-export default DisplayStreamOverlay;
+export default DisplayQRCodeOverlay;

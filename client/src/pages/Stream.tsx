@@ -30,6 +30,7 @@ const Stream = () => {
       prevBibleDisplayInfo={prevStreamInfo.bibleDisplayInfo}
       bibleDisplayInfo={streamInfo.bibleDisplayInfo}
       qrCodeOverlayInfo={streamInfo.qrCodeOverlayInfo}
+      imageOverlayInfo={streamInfo.imageOverlayInfo}
       shouldAnimate
       width={100}
     />
