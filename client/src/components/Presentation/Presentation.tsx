@@ -40,6 +40,7 @@ const Presentation = ({
           prevOverlayInfo={prevInfo.participantOverlayInfo}
           stbOverlayInfo={info.stbOverlayInfo}
           qrCodeOverlayInfo={info.qrCodeOverlayInfo}
+          imageOverlayInfo={info.imageOverlayInfo}
           prevBibleDisplayInfo={prevInfo.bibleDisplayInfo}
           bibleDisplayInfo={info.bibleDisplayInfo}
           time={info.time}

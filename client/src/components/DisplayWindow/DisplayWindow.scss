@@ -111,3 +111,10 @@
   @apply font-semibold whitespace-pre-line;
   font-size: var(--overlay-qr-code-info-description-size);
 }
+
+.overlay-image-container {
+  @apply w-fit absolute flex items-center mx-auto left-0 right-0 overflow-hidden;
+  max-height: 33%;
+  max-width: 85%;
+  bottom: 8.5%
+}

@@ -58,6 +58,7 @@ const Overlays = () => {
     color,
     duration,
     type,
+    imageUrl,
     initialList,
   } = useSelector((state) => state.undoable.present.overlays);
   const { isStreamTransmitting } = useSelector((state) => state.presentation);
@@ -71,6 +72,7 @@ const Overlays = () => {
   const [localDescription, setLocalDescription] = useState(description || "");
   const [localColor, setLocalColor] = useState(color || "");
   const [localDuration, setLocalDuration] = useState(duration || 7);
+  const [localImageUrl, setLocalImageUrl] = useState(imageUrl || "");
   const [localType, setLocalType] = useState(type);
   const dispatch = useDispatch();
   const { isMobile } = useContext(ControllerInfoContext) || {};
@@ -91,6 +93,7 @@ const Overlays = () => {
     setLocalColor(color || "#16a34a");
     setLocalDuration(duration || 7);
     setLocalType(type);
+    setLocalImageUrl(imageUrl || "");
   }, [
     name,
     title,
@@ -103,6 +106,7 @@ const Overlays = () => {
     id,
     duration,
     type,
+    imageUrl,
   ]);
 
   const { setNodeRef } = useDroppable({
@@ -211,6 +215,7 @@ const Overlays = () => {
                       color: localColor,
                       duration: localDuration,
                       type: localType,
+                      imageUrl: localImageUrl,
                       id: generateRandomId(),
                     })
                   );
@@ -272,6 +277,17 @@ const Overlays = () => {
                                 url: localUrl,
                                 description: localDescription,
                                 color: localColor,
+                                duration: localDuration,
+                                type: localType,
+                                id,
+                              }
+                            : undefined
+                        }
+                        imageOverlayInfo={
+                          localType === "image"
+                            ? {
+                                imageUrl: localImageUrl,
+                                name: localName,
                                 duration: localDuration,
                                 type: localType,
                                 id,
@@ -346,6 +362,22 @@ const Overlays = () => {
                         />
                       </>
                     )}
+                    {localType === "image" && ( // TODO - Select from image library
+                      <>
+                        <Input
+                          {...commonInputProps}
+                          label="Name"
+                          value={localName}
+                          onChange={(val) => setLocalName(val as string)}
+                        />
+                        <Input
+                          {...commonInputProps}
+                          label="Image URL"
+                          value={localImageUrl}
+                          onChange={(val) => setLocalImageUrl(val as string)}
+                        />
+                      </>
+                    )}
                     <Input
                       className="text-sm flex gap-2 items-center"
                       labelClassName="w-24"
@@ -375,6 +407,12 @@ const Overlays = () => {
                         value={localType === "qr-code"}
                         onChange={(val) => setLocalType("qr-code")}
                       />
+                      <RadioButton
+                        label="Image"
+                        className="w-full"
+                        value={localType === "image"}
+                        onChange={(val) => setLocalType("image")}
+                      />
                     </div>
 
                     <Button
@@ -397,6 +435,7 @@ const Overlays = () => {
                             color: localColor,
                             duration: localDuration,
                             type: localType,
+                            imageUrl: localImageUrl,
                           })
                         );
                         setTimeout(() => setJustUpdated(false), 2000);

@@ -13,6 +13,7 @@ import {
   updateParticipantOverlayInfoFromRemote,
   updateProjectorFromRemote,
   updateQrCodeOverlayInfoFromRemote,
+  updateImageOverlayInfoFromRemote,
   updateStbOverlayInfoFromRemote,
   updateStreamFromRemote,
 } from "./presentationSlice";
@@ -379,6 +380,7 @@ listenerMiddleware.startListening({
       action.type !== "presentation/updateStbOverlayInfoFromRemote" &&
       action.type !== "presentation/updateBibleDisplayInfoFromRemote" &&
       action.type !== "presentation/updateQrCodeOverlayInfoFromRemote" &&
+      action.type !== "presentation/updateImageOverlayInfoFromRemote" &&
       action.type !== "RESET"
     );
   },
@@ -403,6 +405,7 @@ listenerMiddleware.startListening({
       stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
       stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
       stream_qrCodeOverlayInfo: streamInfo.qrCodeOverlayInfo,
+      stream_imageOverlayInfo: streamInfo.imageOverlayInfo,
     };
 
     localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
@@ -423,6 +426,10 @@ listenerMiddleware.startListening({
     localStorage.setItem(
       "stream_qrCodeOverlayInfo",
       JSON.stringify(streamInfo.qrCodeOverlayInfo)
+    );
+    localStorage.setItem(
+      "stream_imageOverlayInfo",
+      JSON.stringify(streamInfo.imageOverlayInfo)
     );
 
     set(
@@ -613,6 +620,32 @@ listenerMiddleware.startListening({
 
     listenerApi.dispatch(
       updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo)
+    );
+  },
+});
+
+// handle updating from remote image overlay info
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    const state = (previousState as RootState).presentation;
+    const info = action.payload as OverlayInfo;
+    return (
+      action.type === "debouncedUpdateImageOverlayInfo" &&
+      !!(
+        (info.time &&
+          state.streamInfo.imageOverlayInfo?.time &&
+          info.time > state.streamInfo.imageOverlayInfo.time) ||
+        (info.time && !state.streamInfo.imageOverlayInfo?.time)
+      )
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(
+      updateImageOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });

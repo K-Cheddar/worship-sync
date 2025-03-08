@@ -6,6 +6,7 @@ import { deleteOverlay, selectOverlay } from "../../store/overlaysSlice";
 import "./Overlays.scss";
 import gsap from "gsap";
 import {
+  updateImageOverlayInfo,
   updateParticipantOverlayInfo,
   updateQrCodeOverlayInfo,
   updateStbOverlayInfo,
@@ -43,7 +44,8 @@ const Overlay = ({
     overlay.heading ||
     overlay.subHeading ||
     overlay.url ||
-    overlay.description;
+    overlay.description ||
+    overlay.imageUrl;
 
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
@@ -75,7 +77,8 @@ const Overlay = ({
           previousOverlay.current.description !== overlay.description ||
           previousOverlay.current.color !== overlay.color ||
           previousOverlay.current.type !== overlay.type ||
-          previousOverlay.current.duration !== overlay.duration)
+          previousOverlay.current.duration !== overlay.duration ||
+          previousOverlay.current.imageUrl !== overlay.imageUrl)
       ) {
         gsap
           .timeline()
@@ -202,6 +205,16 @@ const Overlay = ({
           </>
         )}
 
+        {overlay.type === "image" && (
+          <>
+            {overlay.name && (
+              <span className="flex text-sm items-center h-full">
+                {overlay.name}
+              </span>
+            )}
+          </>
+        )}
+
         {!hasData && (
           <span className="text-sm leading-7">
             Click to add overlay details
@@ -250,6 +263,15 @@ const Overlay = ({
                   url: overlay.url,
                   description: overlay.description,
                   color: overlay.color,
+                  duration: overlay.duration,
+                  type: overlay.type,
+                  id: overlay.id,
+                })
+              );
+            } else if (overlay.type === "image") {
+              dispatch(
+                updateImageOverlayInfo({
+                  imageUrl: overlay.imageUrl,
                   duration: overlay.duration,
                   type: overlay.type,
                   id: overlay.id,
