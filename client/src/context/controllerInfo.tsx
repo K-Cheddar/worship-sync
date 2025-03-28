@@ -4,7 +4,6 @@ import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
 import getBibles, { checkBibles } from "../utils/getBibles";
-import Spinner from "../components/Spinner/Spinner";
 import { useLocation } from "react-router-dom";
 
 type ControllerInfoContextType = {
@@ -51,7 +50,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const location = useLocation();
 
-  const { database, loginState, logout, setLoginState, user, login } =
+  const { database, loginState, logout, setLoginState, login } =
     useContext(GlobalInfoContext) || {};
 
   const updater = useRef(new EventTarget());

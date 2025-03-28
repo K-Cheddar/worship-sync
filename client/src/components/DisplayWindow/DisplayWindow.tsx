@@ -1,4 +1,4 @@
-import { forwardRef, MutableRefObject, useRef } from "react";
+import { forwardRef, useRef } from "react";
 import { BibleDisplayInfo, Box, DisplayType, OverlayInfo } from "../../types";
 import "./DisplayWindow.scss";
 import DisplayBox from "./DisplayBox";

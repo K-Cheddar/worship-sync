@@ -14,21 +14,15 @@ import textMidThird from "../../../assets/images/textbox_midThird.png";
 import { Box } from "../../../types";
 import { useDispatch, useSelector } from "../../../hooks";
 import { formatSong } from "../../../utils/overflow";
-import { updateArrangements, updateBoxes } from "../../../store/itemSlice";
+import { updateArrangements } from "../../../store/itemSlice";
 import { useMemo, useState } from "react";
 import RadioButton from "../../../components/RadioButton/RadioButton";
 import Icon from "../../../components/Icon/Icon";
 
 const BoxEditor = () => {
   const item = useSelector((state) => state.undoable.present.item);
-  const {
-    type,
-    arrangements,
-    selectedArrangement,
-    selectedSlide,
-    selectedBox,
-    slides,
-  } = item;
+  const { type, selectedArrangement, selectedSlide, selectedBox, slides } =
+    item;
 
   const boxes = useMemo(() => {
     return slides[selectedSlide].boxes;
@@ -36,7 +30,7 @@ const BoxEditor = () => {
 
   const dispatch = useDispatch();
 
-  const [shouldApplyToAll, setShouldApplyToAll] = useState(false);
+  const [shouldApplyToAll, setShouldApplyToAll] = useState(true);
 
   const updateBoxSize = ({
     width,
