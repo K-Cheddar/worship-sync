@@ -5,8 +5,6 @@ import { useGSAP } from "@gsap/react";
 import "./DisplayWindow.scss";
 import { checkMediaType } from "../../utils/generalUtils";
 
-const videoExtensions = ["mp4", "mov", "avi", "webm"];
-
 type DisplayImageOverlayProps = {
   width: number;
   imageOverlayInfo?: OverlayInfo;
