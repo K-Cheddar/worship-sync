@@ -312,22 +312,8 @@ const FilteredItems = ({
             <Spinner />
           </li>
         )}
-        {filteredList.slice(0, numShownItems).map((item, index) => {
-          return (
-            <FilteredItem
-              key={item._id}
-              item={item}
-              index={index}
-              showWords={item.showWords ?? showWords}
-              updateShowWords={updateShowWords}
-              addItemToList={(_item) => dispatch(addItemToItemList(_item))}
-              setItemToBeDeleted={setItemToBeDeleted}
-              searchValue={searchValue}
-            />
-          );
-        })}
-        {isFullListLoaded && (
-          <li className="text-sm flex gap-2 items-center mt-2 justify-center">
+        {searchValue && (
+          <li className="text-sm flex gap-2 items-center mt-1 mb-2 justify-center">
             <p>Can't find what you're looking for?</p>
             <Button
               variant="secondary"
@@ -346,6 +332,21 @@ const FilteredItems = ({
             </Button>
           </li>
         )}
+        {filteredList.slice(0, numShownItems).map((item, index) => {
+          return (
+            <FilteredItem
+              key={item._id}
+              item={item}
+              index={index}
+              showWords={item.showWords ?? showWords}
+              updateShowWords={updateShowWords}
+              addItemToList={(_item) => dispatch(addItemToItemList(_item))}
+              setItemToBeDeleted={setItemToBeDeleted}
+              searchValue={searchValue}
+            />
+          );
+        })}
+
         <li
           className={`w-full text-sm text-center py-1 rounded-md ${
             isFullListLoaded ? "bg-transparent" : "bg-black"
