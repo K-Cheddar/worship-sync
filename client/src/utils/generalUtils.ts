@@ -187,3 +187,19 @@ export const keepElementInView = ({
     console.error(error);
   }
 };
+
+export const checkMediaType = (mediaUrl?: string) => {
+  if (!mediaUrl) return "unknown";
+  const urlParts = mediaUrl.split(".");
+  const extension = urlParts[urlParts.length - 1];
+  const imageExtensions = ["jpg", "jpeg", "png", "gif", "webp"];
+  const videoExtensions = ["mp4", "mov", "avi", "webm"];
+
+  if (imageExtensions.includes(extension.toLowerCase())) {
+    return "image";
+  } else if (videoExtensions.includes(extension.toLowerCase())) {
+    return "video";
+  } else {
+    return "unknown";
+  }
+};

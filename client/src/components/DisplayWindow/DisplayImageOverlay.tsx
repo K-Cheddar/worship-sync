@@ -3,6 +3,7 @@ import { OverlayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import "./DisplayWindow.scss";
+import { checkMediaType } from "../../utils/generalUtils";
 
 type DisplayImageOverlayProps = {
   width: number;
@@ -16,6 +17,8 @@ const DisplayImageOverlay = forwardRef<
 >(({ width, imageOverlayInfo = {}, shouldAnimate = false }, containerRef) => {
   const imageOverlayRef = useRef<HTMLDivElement | null>(null);
   const overlayTimeline = useRef<GSAPTimeline | null>();
+
+  const isVideo = checkMediaType(imageOverlayInfo.imageUrl) === "video";
 
   useGSAP(
     () => {
@@ -53,13 +56,22 @@ const DisplayImageOverlay = forwardRef<
 
   return (
     <div ref={imageOverlayRef} className="overlay-image-container">
-      {imageOverlayInfo.imageUrl && (
-        <img
-          className="max-w-full max-h-full object-contain"
-          src={imageOverlayInfo.imageUrl}
-          alt={imageOverlayInfo.name}
-        />
-      )}
+      {imageOverlayInfo.imageUrl &&
+        (isVideo ? (
+          <video
+            className="max-w-full max-h-full object-contain"
+            src={imageOverlayInfo.imageUrl}
+            autoPlay
+            loop
+            muted
+          />
+        ) : (
+          <img
+            className="max-w-full max-h-full object-contain"
+            src={imageOverlayInfo.imageUrl}
+            alt={imageOverlayInfo.name}
+          />
+        ))}
     </div>
   );
 });
