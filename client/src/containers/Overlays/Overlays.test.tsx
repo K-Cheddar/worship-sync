@@ -29,8 +29,35 @@ const mockStore = configureStore({
           duration: 7,
           time: Date.now(),
         },
+        {
+          id: "stb-id",
+          type: "stick-to-bottom" as const,
+          heading: "Test STB",
+          subHeading: "Test STB Subheading",
+          color: "#2563eb",
+          duration: 7,
+          time: Date.now(),
+        },
+        {
+          id: "qr-id",
+          type: "qr-code" as const,
+          url: "https://example.com",
+          description: "Test QR Code",
+          color: "#9333ea",
+          duration: 7,
+          time: Date.now(),
+        },
+        {
+          id: "image-id",
+          type: "image" as const,
+          name: "Test Image",
+          imageUrl: "https://example.com/image.jpg",
+          color: "#eab308",
+          duration: 7,
+          time: Date.now(),
+        },
       ],
-      initialList: ["test-id"],
+      initialList: ["test-id", "stb-id", "qr-id", "image-id"],
       isLoading: false,
       hasPendingUpdate: false,
       name: "",
@@ -46,6 +73,41 @@ const mockStore = configureStore({
       type: "participant" as const,
       imageUrl: "",
     },
+    presentation: {
+      isProjectorTransmitting: false,
+      isMonitorTransmitting: false,
+      isStreamTransmitting: false,
+      prevProjectorInfo: {
+        type: "",
+        name: "",
+        slide: null,
+      },
+      prevMonitorInfo: {
+        type: "",
+        name: "",
+        slide: null,
+      },
+      prevStreamInfo: {
+        type: "",
+        name: "",
+        slide: null,
+      },
+      projectorInfo: {
+        type: "",
+        name: "",
+        slide: null,
+      },
+      monitorInfo: {
+        type: "",
+        name: "",
+        slide: null,
+      },
+      streamInfo: {
+        type: "",
+        name: "",
+        slide: null,
+      },
+    },
   },
 });
 
@@ -58,6 +120,10 @@ describe("Overlays", () => {
     );
 
     expect(screen.getByText("Overlays")).toBeInTheDocument();
+    expect(screen.getByText("Test Participant")).toBeInTheDocument();
+    expect(screen.getByText("Test STB")).toBeInTheDocument();
+    expect(screen.getByText("Test QR Code")).toBeInTheDocument();
+    expect(screen.getByText("Test Image")).toBeInTheDocument();
   });
 
   it("handles adding new overlay", () => {
@@ -70,7 +136,28 @@ describe("Overlays", () => {
     const addButton = screen.getByText("Add Overlay");
     fireEvent.click(addButton);
 
-    // Add assertions for overlay creation
+    const nameInput = screen.getByLabelText("Name");
+    const titleInput = screen.getByLabelText("Title");
+    const eventInput = screen.getByLabelText("Event");
+    const headingInput = screen.getByLabelText("Heading");
+    const subHeadingInput = screen.getByLabelText("Subheading");
+    const descriptionInput = screen.getByLabelText("Description");
+    const durationInput = screen.getByLabelText("Duration");
+
+    fireEvent.change(nameInput, { target: { value: "New Participant" } });
+    fireEvent.change(titleInput, { target: { value: "New Title" } });
+    fireEvent.change(eventInput, { target: { value: "New Event" } });
+    fireEvent.change(headingInput, { target: { value: "New Heading" } });
+    fireEvent.change(subHeadingInput, { target: { value: "New Subheading" } });
+    fireEvent.change(descriptionInput, {
+      target: { value: "New Description" },
+    });
+    fireEvent.change(durationInput, { target: { value: "10" } });
+
+    const saveButton = screen.getByText("Save");
+    fireEvent.click(saveButton);
+
+    expect(screen.getByText("New Participant")).toBeInTheDocument();
   });
 
   it("handles editing overlay", () => {
@@ -80,10 +167,16 @@ describe("Overlays", () => {
       </Provider>
     );
 
-    const editButton = screen.getByText("Edit");
+    const editButton = screen.getByTestId("edit-test-id");
     fireEvent.click(editButton);
 
-    // Add assertions for overlay editing
+    const nameInput = screen.getByLabelText("Name");
+    fireEvent.change(nameInput, { target: { value: "Updated Participant" } });
+
+    const saveButton = screen.getByText("Save");
+    fireEvent.click(saveButton);
+
+    expect(screen.getByText("Updated Participant")).toBeInTheDocument();
   });
 
   it("handles deleting overlay", () => {
@@ -93,10 +186,10 @@ describe("Overlays", () => {
       </Provider>
     );
 
-    const deleteButton = screen.getByText("Delete");
+    const deleteButton = screen.getByTestId("delete-test-id");
     fireEvent.click(deleteButton);
 
-    // Add assertions for overlay deletion
+    expect(screen.queryByText("Test Participant")).not.toBeInTheDocument();
   });
 
   it("handles participant overlay", () => {
@@ -109,7 +202,12 @@ describe("Overlays", () => {
     const participantButton = screen.getByText("Participant");
     fireEvent.click(participantButton);
 
-    // Add assertions for participant overlay
+    expect(screen.getByLabelText("Name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Title")).toBeInTheDocument();
+    expect(screen.getByLabelText("Event")).toBeInTheDocument();
+    expect(screen.getByLabelText("Heading")).toBeInTheDocument();
+    expect(screen.getByLabelText("Subheading")).toBeInTheDocument();
+    expect(screen.getByLabelText("Description")).toBeInTheDocument();
   });
 
   it("handles STB overlay", () => {
@@ -122,7 +220,8 @@ describe("Overlays", () => {
     const stbButton = screen.getByText("Stick to Bottom");
     fireEvent.click(stbButton);
 
-    // Add assertions for STB overlay
+    expect(screen.getByLabelText("Heading")).toBeInTheDocument();
+    expect(screen.getByLabelText("Subheading")).toBeInTheDocument();
   });
 
   it("handles QR code overlay", () => {
@@ -135,7 +234,8 @@ describe("Overlays", () => {
     const qrButton = screen.getByText("QR Code");
     fireEvent.click(qrButton);
 
-    // Add assertions for QR code overlay
+    expect(screen.getByLabelText("URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("Description")).toBeInTheDocument();
   });
 
   it("handles image overlay", () => {
@@ -148,7 +248,8 @@ describe("Overlays", () => {
     const imageButton = screen.getByText("Image");
     fireEvent.click(imageButton);
 
-    // Add assertions for image overlay
+    expect(screen.getByLabelText("Name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Image URL")).toBeInTheDocument();
   });
 
   it("handles overlay positioning", () => {
@@ -161,7 +262,26 @@ describe("Overlays", () => {
     const positionButton = screen.getByText("Position");
     fireEvent.click(positionButton);
 
-    // Add assertions for overlay positioning
+    const xInput = screen.getByLabelText("X");
+    const yInput = screen.getByLabelText("Y");
+    const widthInput = screen.getByLabelText("Width");
+    const heightInput = screen.getByLabelText("Height");
+
+    fireEvent.change(xInput, { target: { value: "100" } });
+    fireEvent.change(yInput, { target: { value: "100" } });
+    fireEvent.change(widthInput, { target: { value: "200" } });
+    fireEvent.change(heightInput, { target: { value: "200" } });
+
+    const saveButton = screen.getByText("Save");
+    fireEvent.click(saveButton);
+
+    const overlay = screen.getByTestId("overlay-test-id");
+    expect(overlay).toHaveStyle({
+      left: "100px",
+      top: "100px",
+      width: "200px",
+      height: "200px",
+    });
   });
 
   it("handles overlay styling", () => {
@@ -174,6 +294,110 @@ describe("Overlays", () => {
     const styleButton = screen.getByText("Style");
     fireEvent.click(styleButton);
 
-    // Add assertions for overlay styling
+    const fontSizeInput = screen.getByLabelText("Font Size");
+    const fontColorInput = screen.getByLabelText("Font Color");
+    const backgroundColorInput = screen.getByLabelText("Background Color");
+    const opacityInput = screen.getByLabelText("Opacity");
+
+    fireEvent.change(fontSizeInput, { target: { value: "24" } });
+    fireEvent.change(fontColorInput, { target: { value: "#ff0000" } });
+    fireEvent.change(backgroundColorInput, { target: { value: "#000000" } });
+    fireEvent.change(opacityInput, { target: { value: "0.8" } });
+
+    const saveButton = screen.getByText("Save");
+    fireEvent.click(saveButton);
+
+    const overlay = screen.getByTestId("overlay-test-id");
+    expect(overlay).toHaveStyle({
+      fontSize: "24px",
+      color: "#ff0000",
+      backgroundColor: "#000000",
+      opacity: "0.8",
+    });
+  });
+
+  it("handles overlay duration", () => {
+    render(
+      <Provider store={mockStore}>
+        <Overlays />
+      </Provider>
+    );
+
+    const durationButton = screen.getByText("Duration");
+    fireEvent.click(durationButton);
+
+    const durationInput = screen.getByLabelText("Duration");
+    fireEvent.change(durationInput, { target: { value: "10" } });
+
+    const saveButton = screen.getByText("Save");
+    fireEvent.click(saveButton);
+
+    const overlay = screen.getByTestId("overlay-test-id");
+    expect(overlay).toHaveAttribute("data-duration", "10");
+  });
+
+  it("handles overlay color selection", () => {
+    render(
+      <Provider store={mockStore}>
+        <Overlays />
+      </Provider>
+    );
+
+    const colorButton = screen.getByText("Color");
+    fireEvent.click(colorButton);
+
+    const colorInput = screen.getByLabelText("Color");
+    fireEvent.change(colorInput, { target: { value: "#ff0000" } });
+
+    const saveButton = screen.getByText("Save");
+    fireEvent.click(saveButton);
+
+    const overlay = screen.getByTestId("overlay-test-id");
+    expect(overlay).toHaveStyle({
+      backgroundColor: "#ff0000",
+    });
+  });
+
+  it("handles overlay visibility toggle", () => {
+    render(
+      <Provider store={mockStore}>
+        <Overlays />
+      </Provider>
+    );
+
+    const visibilityButton = screen.getByText("Visibility");
+    fireEvent.click(visibilityButton);
+
+    const overlay = screen.getByTestId("overlay-test-id");
+    expect(overlay).toHaveStyle({
+      visibility: "hidden",
+    });
+
+    fireEvent.click(visibilityButton);
+    expect(overlay).toHaveStyle({
+      visibility: "visible",
+    });
+  });
+
+  it("handles overlay z-index", () => {
+    render(
+      <Provider store={mockStore}>
+        <Overlays />
+      </Provider>
+    );
+
+    const zIndexButton = screen.getByText("Z-Index");
+    fireEvent.click(zIndexButton);
+
+    const zIndexInput = screen.getByLabelText("Z-Index");
+    fireEvent.change(zIndexInput, { target: { value: "10" } });
+
+    const saveButton = screen.getByText("Save");
+    fireEvent.click(saveButton);
+
+    const overlay = screen.getByTestId("overlay-test-id");
+    expect(overlay).toHaveStyle({
+      zIndex: "10",
+    });
   });
 });

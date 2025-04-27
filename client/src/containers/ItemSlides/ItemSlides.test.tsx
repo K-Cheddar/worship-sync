@@ -119,7 +119,7 @@ const mockStore = configureStore({
 });
 
 describe("ItemSlides", () => {
-  it("renders slides", () => {
+  it("renders slides with correct content", () => {
     render(
       <Provider store={mockStore}>
         <ItemSlides />
@@ -127,11 +127,27 @@ describe("ItemSlides", () => {
     );
 
     expect(screen.getByText("Test words")).toBeInTheDocument();
+    expect(screen.getByTestId("slide-container")).toBeInTheDocument();
   });
 
-  it("handles slide selection", () => {
+  it("handles slide selection and updates presentation state", () => {
+    const store = configureStore({
+      reducer: {
+        item: itemReducer,
+        presentation: presentationReducer,
+        preferences: preferencesReducer,
+      },
+      preloadedState: {
+        ...mockStore.getState(),
+        presentation: {
+          ...mockStore.getState().presentation,
+          isProjectorTransmitting: true,
+        },
+      },
+    });
+
     render(
-      <Provider store={mockStore}>
+      <Provider store={store}>
         <ItemSlides />
       </Provider>
     );
@@ -139,12 +155,24 @@ describe("ItemSlides", () => {
     const slide = screen.getByText("Test words");
     fireEvent.click(slide);
 
-    // Add assertions for slide selection
+    const state = store.getState();
+    expect(state.presentation.projectorInfo.slide).toBeDefined();
+    expect(state.presentation.projectorInfo.type).toBe("song");
+    expect(state.presentation.projectorInfo.name).toBe("Test Item");
   });
 
-  it("handles slide addition", () => {
+  it("handles slide addition and updates state", () => {
+    const store = configureStore({
+      reducer: {
+        item: itemReducer,
+        presentation: presentationReducer,
+        preferences: preferencesReducer,
+      },
+      preloadedState: mockStore.getState(),
+    });
+
     render(
-      <Provider store={mockStore}>
+      <Provider store={store}>
         <ItemSlides />
       </Provider>
     );
@@ -152,12 +180,24 @@ describe("ItemSlides", () => {
     const addButton = screen.getByText("Add Slide");
     fireEvent.click(addButton);
 
-    // Add assertions for slide addition
+    const state = store.getState();
+    expect(state.item.slides.length).toBe(2);
+    expect(state.item.slides[1].type).toBe("Section");
+    expect(state.item.slides[1].boxes).toHaveLength(1);
   });
 
-  it("handles slide deletion", () => {
+  it("handles slide deletion and updates state", () => {
+    const store = configureStore({
+      reducer: {
+        item: itemReducer,
+        presentation: presentationReducer,
+        preferences: preferencesReducer,
+      },
+      preloadedState: mockStore.getState(),
+    });
+
     render(
-      <Provider store={mockStore}>
+      <Provider store={store}>
         <ItemSlides />
       </Provider>
     );
@@ -165,23 +205,22 @@ describe("ItemSlides", () => {
     const deleteButton = screen.getByText("Delete Slide");
     fireEvent.click(deleteButton);
 
-    // Add assertions for slide deletion
+    const state = store.getState();
+    expect(state.item.slides).toHaveLength(0);
   });
 
-  it("handles slide reordering", () => {
-    render(
-      <Provider store={mockStore}>
-        <ItemSlides />
-      </Provider>
-    );
+  it("handles slide zoom and updates preferences", () => {
+    const store = configureStore({
+      reducer: {
+        item: itemReducer,
+        presentation: presentationReducer,
+        preferences: preferencesReducer,
+      },
+      preloadedState: mockStore.getState(),
+    });
 
-    // Add drag and drop test
-    // Note: This is a placeholder as we need to add drag and drop test cases
-  });
-
-  it("handles slide zoom", () => {
     render(
-      <Provider store={mockStore}>
+      <Provider store={store}>
         <ItemSlides />
       </Provider>
     );
@@ -190,30 +229,137 @@ describe("ItemSlides", () => {
     const zoomOutButton = screen.getByText("Zoom Out");
 
     fireEvent.click(zoomInButton);
+    expect(screen.getByTestId("slide-container")).toHaveStyle({
+      transform: "scale(1.1)",
+    });
+
     fireEvent.click(zoomOutButton);
-
-    // Add assertions for slide zoom
+    expect(screen.getByTestId("slide-container")).toHaveStyle({
+      transform: "scale(1)",
+    });
   });
 
-  it("handles mobile view", () => {
+  it("handles mobile view and updates layout", () => {
+    global.innerWidth = 500;
+    global.dispatchEvent(new Event("resize"));
+
     render(
       <Provider store={mockStore}>
         <ItemSlides />
       </Provider>
     );
 
-    // Add mobile view test
-    // Note: This is a placeholder as we need to add mobile view test cases
+    expect(screen.getByTestId("slides-grid")).toHaveStyle({
+      gridTemplateColumns: "repeat(3, 1fr)",
+    });
   });
 
-  it("handles slide updates", () => {
+  it("handles slide updates and syncs with transmitting displays", () => {
+    const store = configureStore({
+      reducer: {
+        item: itemReducer,
+        presentation: presentationReducer,
+        preferences: preferencesReducer,
+      },
+      preloadedState: {
+        ...mockStore.getState(),
+        presentation: {
+          ...mockStore.getState().presentation,
+          isProjectorTransmitting: true,
+          isMonitorTransmitting: true,
+          isStreamTransmitting: true,
+        },
+      },
+    });
+
     render(
-      <Provider store={mockStore}>
+      <Provider store={store}>
         <ItemSlides />
       </Provider>
     );
 
-    // Add slide update test
-    // Note: This is a placeholder as we need to add slide update test cases
+    const slide = screen.getByText("Test words");
+    fireEvent.click(slide);
+
+    const state = store.getState();
+    expect(state.presentation.projectorInfo.slide).toBeDefined();
+    expect(state.presentation.monitorInfo.slide).toBeDefined();
+    expect(state.presentation.streamInfo.slide).toBeDefined();
+  });
+
+  it("handles arrangement selection", () => {
+    const store = configureStore({
+      reducer: {
+        item: itemReducer,
+        presentation: presentationReducer,
+        preferences: preferencesReducer,
+      },
+      preloadedState: {
+        ...mockStore.getState(),
+        item: {
+          ...mockStore.getState().item,
+          arrangements: [
+            ...mockStore.getState().item.arrangements,
+            {
+              name: "Alternative",
+              formattedLyrics: [],
+              songOrder: [],
+              slides: [
+                {
+                  type: "Section",
+                  id: "slide-2",
+                  boxes: [
+                    {
+                      id: "box-2",
+                      words: "Alternative words",
+                      width: 100,
+                      height: 100,
+                      x: 0,
+                      y: 0,
+                    },
+                  ],
+                },
+              ],
+              id: "arrangement-2",
+            },
+          ],
+        },
+      },
+    });
+
+    render(
+      <Provider store={store}>
+        <ItemSlides />
+      </Provider>
+    );
+
+    const arrangementSelect = screen.getByLabelText("Arrangement");
+    fireEvent.change(arrangementSelect, { target: { value: "Alternative" } });
+
+    expect(screen.getByText("Alternative words")).toBeInTheDocument();
+  });
+
+  it("handles edit mode toggle", () => {
+    const store = configureStore({
+      reducer: {
+        item: itemReducer,
+        presentation: presentationReducer,
+        preferences: preferencesReducer,
+      },
+      preloadedState: mockStore.getState(),
+    });
+
+    render(
+      <Provider store={store}>
+        <ItemSlides />
+      </Provider>
+    );
+
+    const editButton = screen.getByText("Edit");
+    fireEvent.click(editButton);
+
+    const state = store.getState();
+    expect(state.item.isEditMode).toBe(true);
+    expect(screen.getByTestId("slide-container")).toHaveClass("edit-mode");
   });
 });
