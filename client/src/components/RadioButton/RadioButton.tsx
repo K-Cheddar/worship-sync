@@ -1,6 +1,7 @@
 import { ReactComponent as CheckedSVG } from "../../assets/icons/radio-button-checked.svg";
 import { ReactComponent as UncheckedSVG } from "../../assets/icons/radio-button-unchecked.svg";
 import Icon from "../Icon/Icon";
+import { useId } from "react";
 
 type RadioButtonProps = {
   label: string;
@@ -17,13 +18,18 @@ const RadioButton = ({
   className = "",
   textSize = "text-sm",
 }: RadioButtonProps) => {
+  const id = useId();
+
   return (
     <div
       className={`flex gap-2 items-center relative w-fit h-fit ${textSize} ${className}`}
     >
-      <label className="font-semibold">{label}:</label>
-      <div className=" h-4 w-4 flex items-center">
+      <label htmlFor={id} className="font-semibold">
+        {label}:
+      </label>
+      <div className="h-4 w-4 flex items-center">
         <input
+          id={id}
           type="radio"
           checked={value}
           onChange={(e) => onChange(e.target.checked)}

@@ -73,6 +73,7 @@ const DisplayQRCodeOverlay = forwardRef<
     <div
       ref={qrCodeOverlayRef}
       className="overlay-qr-code-info-container"
+      data-testid="qr-code-overlay"
       style={
         {
           "--overlay-qr-code-info-description-size": `${width / 45}vw`,
@@ -87,15 +88,19 @@ const DisplayQRCodeOverlay = forwardRef<
       }
     >
       {qrCodeOverlayInfo.url && (
-        <div className="overlay-qr-code-info-url">
+        <div className="overlay-qr-code-info-url" data-testid="qr-code-url">
           <QRCode
             style={{ width: "100%", maxWidth: "100%", height: "auto" }}
             value={qrCodeOverlayInfo.url}
+            data-testid="qr-code"
           />
         </div>
       )}
       {qrCodeOverlayInfo.description && (
-        <p className="overlay-qr-code-info-description">
+        <p
+          className="overlay-qr-code-info-description"
+          data-testid="qr-code-description"
+        >
           {qrCodeOverlayInfo.description}
         </p>
       )}

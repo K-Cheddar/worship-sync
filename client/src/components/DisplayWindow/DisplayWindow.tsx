@@ -83,13 +83,17 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       <div
         className={`display-window ${
           showBorder ? "border border-gray-500" : ""
-        } ${displayType !== "stream" ? "bg-black" : ""}`}
+        } ${displayType !== "stream" ? "bg-black" : ""} ${
+          shouldAnimate ? "animate" : ""
+        } ${displayType ? displayType : ""}`}
         ref={containerRef}
         id={isEditor ? "display-editor" : undefined}
+        data-testid="display-window"
         style={
           {
             "--slide-editor-height": `${width / aspectRatio}vw`,
             "--slide-editor-width": `${width}vw`,
+            width: "100%",
           } as React.CSSProperties
         }
       >
@@ -175,6 +179,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               bibleDisplayInfo={bibleDisplayInfo}
               prevBibleDisplayInfo={prevBibleDisplayInfo}
               ref={containerRef}
+              data-testid="bible-display"
             />
 
             <DisplayStbOverlay
@@ -182,6 +187,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               shouldAnimate={shouldAnimate}
               stbOverlayInfo={stbOverlayInfo}
               ref={containerRef}
+              data-testid="stb-overlay"
             />
 
             <DisplayParticipantOverlay
@@ -189,6 +195,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               shouldAnimate={shouldAnimate}
               participantOverlayInfo={participantOverlayInfo}
               ref={containerRef}
+              data-testid="participant-overlay"
             />
 
             <DisplayQrCodeOverlay
@@ -196,6 +203,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               shouldAnimate={shouldAnimate}
               qrCodeOverlayInfo={qrCodeOverlayInfo}
               ref={containerRef}
+              data-testid="qr-code-overlay"
             />
 
             <DisplayImageOverlay
@@ -203,6 +211,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               shouldAnimate={shouldAnimate}
               imageOverlayInfo={imageOverlayInfo}
               ref={containerRef}
+              data-testid="image-overlay"
             />
           </>
         )}

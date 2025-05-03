@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, HTMLProps } from "react";
 import cn from "classnames";
 import "./TextArea.scss";
+import generateRandomId from "../../utils/generateRandomId";
 
 type TextAreaProps = HTMLProps<HTMLTextAreaElement> & {
   className?: string;
@@ -11,6 +12,7 @@ type TextAreaProps = HTMLProps<HTMLTextAreaElement> & {
   autoResize?: boolean;
   onChange: (value: string) => void;
   labelClassName?: string;
+  id?: string;
 };
 
 const TextArea = ({
@@ -22,11 +24,13 @@ const TextArea = ({
   hideLabel = false,
   autoResize = false,
   labelClassName,
+  id,
   ...rest
 }: TextAreaProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const labelRef = useRef<HTMLLabelElement>(null);
+  const textAreaId = id || generateRandomId();
 
   const resizeTextArea = useCallback(() => {
     if (
@@ -52,6 +56,7 @@ const TextArea = ({
     <div ref={containerRef} className={cn("text-area-container", className)}>
       <label
         ref={labelRef}
+        htmlFor={textAreaId}
         className={cn(
           "text-sm font-semibold",
           hideLabel && "sr-only",
@@ -62,6 +67,7 @@ const TextArea = ({
       </label>
       <textarea
         ref={textAreaRef}
+        id={textAreaId}
         className="w-full h-full rounded px-2 py-1 select text-black resize-none text-sm"
         value={value}
         onChange={(e) => {

@@ -1,60 +1,25 @@
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
 import TransmitHandler from "./TransmitHandler";
-import { Provider } from "react-redux";
-import { configureStore } from "@reduxjs/toolkit";
-import presentationReducer from "../../store/presentationSlice";
-
-const mockStore = configureStore({
-  reducer: {
-    presentation: presentationReducer,
-  },
-  preloadedState: {
-    presentation: {
-      isProjectorTransmitting: false,
-      isMonitorTransmitting: false,
-      isStreamTransmitting: false,
-      prevProjectorInfo: {
-        type: "",
-        name: "",
-        slide: null,
-      },
-      prevMonitorInfo: {
-        type: "",
-        name: "",
-        slide: null,
-      },
-      prevStreamInfo: {
-        type: "",
-        name: "",
-        slide: null,
-      },
-      projectorInfo: {
-        type: "",
-        name: "",
-        slide: null,
-      },
-      monitorInfo: {
-        type: "",
-        name: "",
-        slide: null,
-      },
-      streamInfo: {
-        type: "",
-        name: "",
-        slide: null,
-      },
-    },
-  },
-});
+import { createMockStore, renderWithStore } from "../../utils/testUtils";
 
 describe("TransmitHandler", () => {
+  const createTransmitHandlerStore = () => {
+    return createMockStore({
+      preferences: {
+        isMediaExpanded: false,
+        slidesPerRow: 3,
+        slidesPerRowMobile: 1,
+        formattedLyricsPerRow: 1,
+        shouldShowItemEditor: false,
+        mediaItemsPerRow: 3,
+      },
+    });
+  };
+
   it("renders transmit buttons", () => {
-    render(
-      <Provider store={mockStore}>
-        <TransmitHandler />
-      </Provider>
-    );
+    const store = createTransmitHandlerStore();
+    renderWithStore(<TransmitHandler />, store);
 
     expect(screen.getByText("Projector")).toBeInTheDocument();
     expect(screen.getByText("Monitor")).toBeInTheDocument();
@@ -62,11 +27,8 @@ describe("TransmitHandler", () => {
   });
 
   it("handles projector transmission toggle", () => {
-    render(
-      <Provider store={mockStore}>
-        <TransmitHandler />
-      </Provider>
-    );
+    const store = createTransmitHandlerStore();
+    renderWithStore(<TransmitHandler />, store);
 
     const projectorButton = screen.getByText("Projector");
     fireEvent.click(projectorButton);
@@ -75,11 +37,8 @@ describe("TransmitHandler", () => {
   });
 
   it("handles monitor transmission toggle", () => {
-    render(
-      <Provider store={mockStore}>
-        <TransmitHandler />
-      </Provider>
-    );
+    const store = createTransmitHandlerStore();
+    renderWithStore(<TransmitHandler />, store);
 
     const monitorButton = screen.getByText("Monitor");
     fireEvent.click(monitorButton);
@@ -88,11 +47,8 @@ describe("TransmitHandler", () => {
   });
 
   it("handles stream transmission toggle", () => {
-    render(
-      <Provider store={mockStore}>
-        <TransmitHandler />
-      </Provider>
-    );
+    const store = createTransmitHandlerStore();
+    renderWithStore(<TransmitHandler />, store);
 
     const streamButton = screen.getByText("Stream");
     fireEvent.click(streamButton);
@@ -101,11 +57,8 @@ describe("TransmitHandler", () => {
   });
 
   it("handles multiple transmission toggles", () => {
-    render(
-      <Provider store={mockStore}>
-        <TransmitHandler />
-      </Provider>
-    );
+    const store = createTransmitHandlerStore();
+    renderWithStore(<TransmitHandler />, store);
 
     const projectorButton = screen.getByText("Projector");
     const monitorButton = screen.getByText("Monitor");
@@ -119,20 +72,13 @@ describe("TransmitHandler", () => {
   });
 
   it("handles transmission state persistence", () => {
-    const { rerender } = render(
-      <Provider store={mockStore}>
-        <TransmitHandler />
-      </Provider>
-    );
+    const store = createTransmitHandlerStore();
+    const { rerender } = renderWithStore(<TransmitHandler />, store);
 
     const projectorButton = screen.getByText("Projector");
     fireEvent.click(projectorButton);
 
-    rerender(
-      <Provider store={mockStore}>
-        <TransmitHandler />
-      </Provider>
-    );
+    rerender(<TransmitHandler />);
 
     // Add assertions for state persistence
   });

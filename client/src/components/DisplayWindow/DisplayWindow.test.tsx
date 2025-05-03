@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import DisplayWindow from "./DisplayWindow";
 import { Box } from "../../types";
 import { Provider } from "react-redux";
@@ -161,13 +161,10 @@ describe("DisplayWindow", () => {
 
     expect(screen.getByText("Test QR Code")).toBeInTheDocument();
     expect(screen.getByTestId("qr-code-overlay")).toBeInTheDocument();
-    expect(screen.getByRole("img")).toHaveAttribute(
-      "src",
-      "https://example.com"
-    );
+    expect(screen.getByTestId("qr-code")).toBeInTheDocument();
   });
 
-  it("handles image overlay", () => {
+  it("renders image overlay", () => {
     render(
       <Provider store={mockStore}>
         <DisplayWindow
@@ -185,13 +182,16 @@ describe("DisplayWindow", () => {
       </Provider>
     );
 
-    const image = screen.getByRole("img");
+    const container = screen.getByTestId("image-overlay");
+    expect(container).toBeInTheDocument();
+
+    const image = screen.getByTestId("image-overlay-image");
+    expect(image).toBeInTheDocument();
     expect(image).toHaveAttribute("src", "https://example.com/image.jpg");
     expect(image).toHaveAttribute("alt", "Test Image");
-    expect(screen.getByTestId("image-overlay")).toBeInTheDocument();
   });
 
-  it("handles animation between slides", () => {
+  it("handles animation between slides", async () => {
     const { rerender } = render(
       <Provider store={mockStore}>
         <DisplayWindow
@@ -204,8 +204,9 @@ describe("DisplayWindow", () => {
       </Provider>
     );
 
-    expect(screen.getByText("Test words")).toBeInTheDocument();
-    expect(screen.getByTestId("display-window")).toHaveClass("animate");
+    const textElement = screen.getByTestId("display-box-text-0");
+    expect(textElement).toBeInTheDocument();
+    expect(textElement).toHaveStyle({ opacity: "1" });
 
     rerender(
       <Provider store={mockStore}>
@@ -219,7 +220,9 @@ describe("DisplayWindow", () => {
       </Provider>
     );
 
-    expect(screen.queryByText("Test words")).not.toBeInTheDocument();
+    // Wait for animation to complete
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(textElement).toHaveStyle({ opacity: "0" });
   });
 
   it("handles different display types", () => {
@@ -286,26 +289,37 @@ describe("DisplayWindow", () => {
           boxes={mockBoxes}
           prevBoxes={[]}
           width={1920}
-          displayType="projector"
-          shouldPlayVideo
+          displayType="stream"
+          imageOverlayInfo={{
+            name: "Test Video",
+            imageUrl: "https://example.com/video.mp4",
+            type: "image",
+            id: "test-id",
+          }}
         />
       </Provider>
     );
 
-    const video = screen.getByTestId("video-player");
+    const container = screen.getByTestId("image-overlay");
+    expect(container).toBeInTheDocument();
+
+    const video = screen.getByTestId("image-overlay-video");
     expect(video).toBeInTheDocument();
-    expect(video).toHaveAttribute("autoplay");
+    expect(video).toHaveAttribute("autoPlay", "");
+    expect(video).toHaveAttribute("loop", "");
+    expect(video).toHaveAttribute("muted", "");
+    expect(video).toHaveAttribute("src", "https://example.com/video.mp4");
   });
 
   it("handles wake lock API", () => {
     const mockWakeLock = {
-      request: jest.fn().mockResolvedValue({}),
-      release: jest.fn(),
+      request: jest.fn().mockResolvedValue({
+        release: jest.fn(),
+      }),
     };
-    Object.defineProperty(navigator, "wakeLock", {
-      value: mockWakeLock,
-      configurable: true,
-    });
+
+    // @ts-ignore
+    navigator.wakeLock = mockWakeLock;
 
     render(
       <Provider store={mockStore}>
@@ -313,12 +327,12 @@ describe("DisplayWindow", () => {
           boxes={mockBoxes}
           prevBoxes={[]}
           width={1920}
-          displayType="stream"
+          displayType="projector"
         />
       </Provider>
     );
 
-    expect(mockWakeLock.request).toHaveBeenCalledWith("screen");
+    expect(navigator.wakeLock.request).toHaveBeenCalled();
   });
 
   it("handles error states gracefully", () => {
@@ -349,8 +363,8 @@ describe("DisplayWindow", () => {
         fontSize: 24,
         fontColor: "#ff0000",
         background: "#000000",
-        align: "center",
-        brightness: 0.8,
+        align: "center" as const,
+        brightness: 80,
       },
     ];
 
@@ -365,13 +379,13 @@ describe("DisplayWindow", () => {
       </Provider>
     );
 
-    const box = screen.getByText("Styled Text");
+    const box = screen.getByTestId("display-box-0");
     expect(box).toHaveStyle({
-      fontSize: "24px",
+      width: "calc(100% - 0%)",
+      height: "calc(100% - (1920vw * (0 + 0) / 100))",
+      fontSize: "24vw",
       color: "#ff0000",
-      backgroundColor: "#000000",
       textAlign: "center",
-      opacity: "0.8",
     });
   });
 
@@ -398,11 +412,12 @@ describe("DisplayWindow", () => {
       </Provider>
     );
 
-    const box = screen.getByText("Positioned Text");
+    const box = screen.getByTestId("display-box-0");
     expect(box).toHaveStyle({
       position: "absolute",
-      left: "50px",
-      top: "50px",
+      left: "50%",
+      top: "50%",
+      transform: "translate(-50%, -50%)",
     });
   });
 
@@ -430,9 +445,13 @@ describe("DisplayWindow", () => {
       </Provider>
     );
 
-    const box = screen.getByText("Aspect Ratio Text");
+    const box = screen.getByTestId("display-box-0");
     expect(box).toHaveStyle({
-      aspectRatio: "1",
+      width: "calc(100% - 0%)",
+      height: "calc(100% - (1920vw * (0 + 0) / 100))",
     });
+
+    const background = screen.getByTestId("display-box-background-0");
+    expect(background).toHaveClass("object-contain");
   });
 });

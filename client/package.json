@@ -1,7 +1,18 @@
 {
   "name": "worship-sync",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "private": true,
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test --coverage --watchAll=false",
+    "test:watch": "react-scripts test --coverage",
+    "test:ci": "react-scripts test --coverage --watchAll=false --ci --reporters=default --reporters=jest-junit",
+    "test:update": "react-scripts test --coverage --watchAll=false -u",
+    "eject": "react-scripts eject",
+    "lint": "eslint src/**/*.{ts,tsx}",
+    "format": "prettier --write src/**/*.{ts,tsx}"
+  },
   "dependencies": {
     "@cloudinary/react": "^1.13.1",
     "@cloudinary/url-gen": "^1.21.0",
@@ -52,12 +63,6 @@
   "overrides": {
     "resolve-url-loader": "5.0.0"
   },
-  "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
-  },
   "eslintConfig": {
     "extends": [
       "react-app",
@@ -84,6 +89,7 @@
   "type": "module",
   "homepage": ".",
   "devDependencies": {
-    "@babel/plugin-proposal-private-property-in-object": "^7.21.11"
+    "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
+    "jest-junit": "^16.0.0"
   }
 }

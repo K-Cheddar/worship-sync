@@ -55,7 +55,11 @@ const DisplayImageOverlay = forwardRef<
   );
 
   return (
-    <div ref={imageOverlayRef} className="overlay-image-container">
+    <div
+      ref={imageOverlayRef}
+      className="overlay-image-container"
+      data-testid="image-overlay"
+    >
       {imageOverlayInfo.imageUrl &&
         (isVideo ? (
           <video
@@ -64,12 +68,14 @@ const DisplayImageOverlay = forwardRef<
             autoPlay
             loop
             muted
+            data-testid="image-overlay-video"
           />
         ) : (
           <img
             className="max-w-full max-h-full object-contain"
             src={imageOverlayInfo.imageUrl}
             alt={imageOverlayInfo.name}
+            data-testid="image-overlay-image"
           />
         ))}
     </div>

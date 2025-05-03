@@ -50,6 +50,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       <div
         ref={stbOverlayRef}
         className="overlay-stb-info-container"
+        data-testid="stb-overlay"
         style={
           {
             "--overlay-stb-info-border-width": `${width / 150}vw`,

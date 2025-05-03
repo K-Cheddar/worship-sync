@@ -139,6 +139,7 @@ const DisplayBox = ({
       key={box.id}
       ref={boxRef}
       className="absolute leading-tight"
+      data-testid={`display-box-${index}`}
       style={{
         width: boxWidth,
         height: boxHeight,
@@ -162,9 +163,14 @@ const DisplayBox = ({
           )}
           src={box.background}
           alt={box.label}
+          data-testid={`display-box-background-${index}`}
         />
       )}
-      <p className={`display-box-text h-full`} style={textStyles}>
+      <p
+        className={`display-box-text h-full`}
+        style={textStyles}
+        data-testid={`display-box-text-${index}`}
+      >
         {words}
       </p>
     </div>

@@ -1,45 +1,52 @@
+import { useRef, HTMLProps } from "react";
 import { Option } from "../../types";
 import "./Select.scss";
 import cn from "classnames";
+import generateRandomId from "../../utils/generateRandomId";
 
-type SelectProps = {
-  options: Option[];
+type SelectProps = Omit<HTMLProps<HTMLSelectElement>, "onChange"> & {
   className?: string;
-  value: string;
-  onChange: (value: string) => void;
+  value: string | number;
   label?: string;
-  labelClassName?: string;
-  hideLabel?: boolean;
-  selectClassName?: string;
   textColor?: string;
+  hideLabel?: boolean;
+  onChange: (value: string) => void;
+  labelClassName?: string;
+  options: Option[];
+  selectClassName?: string;
 };
 
 const Select = ({
-  options,
+  className,
   value,
   onChange,
   label,
   hideLabel = false,
-  className,
   labelClassName,
+  options,
   selectClassName,
   textColor = "text-black",
+  id,
   ...rest
 }: SelectProps) => {
+  const selectRef = useRef<HTMLSelectElement>(null);
+  const selectId = id || generateRandomId();
+
   return (
-    <div className={className}>
-      {label && (
-        <label
-          className={cn(
-            "p-1 font-semibold",
-            hideLabel && "sr-only",
-            labelClassName
-          )}
-        >
-          {label}:
-        </label>
-      )}
+    <div className={cn("select-container", className)}>
+      <label
+        htmlFor={selectId}
+        className={cn(
+          "p-1 font-semibold",
+          hideLabel && "sr-only",
+          labelClassName
+        )}
+      >
+        {label}:
+      </label>
       <select
+        ref={selectRef}
+        id={selectId}
         className={cn(`select`, selectClassName, textColor)}
         value={value}
         onChange={(e) => onChange(e.target.value)}

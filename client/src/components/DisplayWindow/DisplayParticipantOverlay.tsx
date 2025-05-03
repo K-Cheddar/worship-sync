@@ -42,7 +42,8 @@ const DisplayParticipantOverlay = forwardRef<
         if (
           participantOverlayInfo.name ||
           participantOverlayInfo.title ||
-          participantOverlayInfo.event
+          participantOverlayInfo.event ||
+          participantOverlayInfo.duration
         ) {
           overlayTimeline.current
             .fromTo(
@@ -89,6 +90,7 @@ const DisplayParticipantOverlay = forwardRef<
       <div
         ref={participantOverlayRef}
         className="overlay-participant-info-container"
+        data-testid="participant-overlay"
         style={
           {
             "--overlay-participant-info-border-width": `${width / 71.4}vw`,
@@ -105,16 +107,14 @@ const DisplayParticipantOverlay = forwardRef<
           } as CSSProperties
         }
       >
-        {participantOverlayInfo.name && (
-          <p className="overlay-participant-info-name">
+        <div className="participant-content" data-testid="participant-content">
+          <div className="participant-name" data-testid="participant-name">
             {participantOverlayInfo.name}
-          </p>
-        )}
-        {participantOverlayInfo.title && (
-          <p className="overlay-participant-info-title">
+          </div>
+          <div className="participant-title" data-testid="participant-title">
             {participantOverlayInfo.title}
-          </p>
-        )}
+          </div>
+        </div>
         {participantOverlayInfo.event && (
           <p className="overlay-participant-info-event">
             {participantOverlayInfo.event}
