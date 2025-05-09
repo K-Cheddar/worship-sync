@@ -24,7 +24,7 @@ const Credits = ({
       ...(!isPreview
         ? [{ heading: "", id: "starting-credits", text: "" }]
         : []),
-      ...credits.map((credit) => credit),
+      ...credits.filter((credit) => !credit.hidden).map((credit) => credit),
       ...(!isPreview ? [{ heading: "", id: "ending-credits", text: "" }] : []),
     ],
     [credits, isPreview]
