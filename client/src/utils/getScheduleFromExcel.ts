@@ -73,13 +73,20 @@ const getNextSaturdaySchedule = (data: any) => {
 
 // Helper function to normalize names using the members list
 const normalizeName = (name: string, members: string[][]): string => {
-  // Extract the base name (without parentheses)
-  const baseName = name.split("(")[0].trim();
+  // Try to find an exact match first
+  const exactMatch = members.find(
+    (member) => member[0].toLowerCase() === name.toLowerCase()
+  );
+
+  if (exactMatch) {
+    return exactMatch[0];
+  }
 
   // If no exact match, try to match by first name
   const firstNameMatch = members.find((member) => {
     const memberFirstName = member[0].split(" ")[0].toLowerCase();
-    return baseName.toLowerCase() === memberFirstName;
+    const inputFirstName = name.split(" ")[0].toLowerCase();
+    return inputFirstName === memberFirstName;
   });
 
   if (firstNameMatch) {
@@ -142,20 +149,30 @@ export const transformSchedule = async (
         transformedSchedule[newHeading] = [];
       }
 
-      // Normalize the name using the members list
-      const normalizedName = normalizeName(name, members);
+      // First process any names in parentheses
+      const namesToProcess = name.match(/(.*?)\s*\((.*?)\)/)
+        ? [
+            name.match(/(.*?)\s*\((.*?)\)/)![1].trim(),
+            name.match(/(.*?)\s*\((.*?)\)/)![2].trim(),
+          ]
+        : [name];
 
-      // Add prefixes for audio engineers
-      if (newHeading === "Audio Engineers") {
-        if (position.toLowerCase().includes("front of house")) {
-          transformedSchedule[newHeading].push(
-            `Front of House - ${normalizedName}`
-          );
-        } else if (position.toLowerCase().includes("stream")) {
-          transformedSchedule[newHeading].push(`Online - ${normalizedName}`);
+      // Normalize each name and add to the schedule
+      for (const nameToProcess of namesToProcess) {
+        const normalizedName = normalizeName(nameToProcess, members);
+
+        // Add prefixes for audio engineers
+        if (newHeading === "Audio Engineers") {
+          if (position.toLowerCase().includes("front of house")) {
+            transformedSchedule[newHeading].push(
+              `Front of House - ${normalizedName}`
+            );
+          } else if (position.toLowerCase().includes("stream")) {
+            transformedSchedule[newHeading].push(`Online - ${normalizedName}`);
+          }
+        } else {
+          transformedSchedule[newHeading].push(normalizedName);
         }
-      } else {
-        transformedSchedule[newHeading].push(normalizedName);
       }
     }
   }
@@ -163,20 +180,9 @@ export const transformSchedule = async (
   // Convert to final list format
   const scheduleList: ScheduleEntry[] = [];
   Object.entries(transformedSchedule).forEach(([heading, names]) => {
-    // Split names that contain parentheses into separate lines
-    const processedNames = names
-      .map((name) => {
-        const match = name.match(/(.*?)\s*\((.*?)\)/);
-        if (match) {
-          return [match[1].trim(), match[2].trim()];
-        }
-        return [name];
-      })
-      .flat();
-
     scheduleList.push({
       heading,
-      names: processedNames.join("\n"),
+      names: names.join("\n"),
     });
   });
 
