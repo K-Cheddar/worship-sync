@@ -29,7 +29,6 @@ import Input from "../../components/Input/Input";
 import "./CreditsEditor.scss";
 import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
-import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
 
 const CreditsEditor = () => {
   const { list, transitionScene, creditsScene } = useSelector(
@@ -45,7 +44,6 @@ const CreditsEditor = () => {
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [justGenerated, setJustGenerated] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     const getCredits = async () => {
@@ -145,93 +143,65 @@ const CreditsEditor = () => {
     window.scrollTo(0, 0);
   }, []);
 
-  const generateFromOverlays = useCallback(async () => {
-    setIsGenerating(true);
-    try {
-      const eventNameMapping: { [key: string]: string } = {
-        "sabbath school": overlays
-          .filter((overlay) =>
-            overlay.event?.toLowerCase().includes("sabbath school")
-          )
-          .map((overlay) => overlay.name)
-          .join("\n")
-          .trim(),
-        welcome:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("welcome")
-          )?.name || "",
-        "call to praise":
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("call to praise")
-          )?.name || "",
-        invocation:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("invocation")
-          )?.name || "",
-        reading:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("reading")
-          )?.name || "",
-        intercessor:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("intercessor")
-          )?.name || "",
-        offertory:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("offertory")
-          )?.name || "",
-        special:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("special")
-          )?.name || "",
-        sermon:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("sermon")
-          )?.name || "",
-      };
+  const generateFromOverlays = useCallback(() => {
+    const eventNameMapping: { [key: string]: string } = {
+      "sabbath school": overlays
+        .filter((overlay) =>
+          overlay.event?.toLowerCase().includes("sabbath school")
+        )
+        .map((overlay) => overlay.name)
+        .join("\n")
+        .trim(),
+      welcome:
+        overlays.find((overlay) =>
+          overlay.event?.toLowerCase().includes("welcome")
+        )?.name || "",
+      "call to praise":
+        overlays.find((overlay) =>
+          overlay.event?.toLowerCase().includes("call to praise")
+        )?.name || "",
+      invocation:
+        overlays.find((overlay) =>
+          overlay.event?.toLowerCase().includes("invocation")
+        )?.name || "",
+      reading:
+        overlays.find((overlay) =>
+          overlay.event?.toLowerCase().includes("reading")
+        )?.name || "",
+      intercessor:
+        overlays.find((overlay) =>
+          overlay.event?.toLowerCase().includes("intercessor")
+        )?.name || "",
+      offertory:
+        overlays.find((overlay) =>
+          overlay.event?.toLowerCase().includes("offertory")
+        )?.name || "",
+      special:
+        overlays.find((overlay) =>
+          overlay.event?.toLowerCase().includes("special")
+        )?.name || "",
+      sermon:
+        overlays.find((overlay) =>
+          overlay.event?.toLowerCase().includes("sermon")
+        )?.name || "",
+    };
 
-      const schedule = await getScheduleFromExcel(
-        "2nd Quarter 2025 - Schedule.xlsx",
-        "/Media Team Positions.xlsx"
+    const updatedList = list.map((credit) => {
+      const eventKey = Object.keys(eventNameMapping).find((key) =>
+        credit.heading.toLowerCase().includes(key)
       );
 
-      const updatedList = list.map((credit) => {
-        // Find matching schedule entry
-        const scheduleEntry = schedule.find(
-          (entry) =>
-            entry.heading.toLowerCase() === credit.heading.toLowerCase()
-        );
+      if (eventKey) {
+        return {
+          ...credit,
+          text: eventNameMapping[eventKey],
+        };
+      }
 
-        if (scheduleEntry) {
-          return {
-            ...credit,
-            text: scheduleEntry.names,
-          };
-        }
+      return credit;
+    });
 
-        // If no schedule match, try overlay mapping
-        const eventKey = Object.keys(eventNameMapping).find((key) =>
-          credit.heading.toLowerCase().includes(key)
-        );
-
-        if (eventKey) {
-          return {
-            ...credit,
-            text: eventNameMapping[eventKey],
-          };
-        }
-
-        return credit;
-      });
-
-      dispatch(updateList(updatedList));
-      setJustGenerated(true);
-      setTimeout(() => setJustGenerated(false), 2000);
-    } catch (error) {
-      console.error("Error generating from overlays:", error);
-    } finally {
-      setIsGenerating(false);
-    }
+    dispatch(updateList(updatedList));
   }, [overlays, list, dispatch]);
 
   const controls = (
@@ -252,18 +222,16 @@ const CreditsEditor = () => {
       />
       <Button
         className="text-sm"
-        disabled={overlays.length === 0 || isGenerating}
+        disabled={overlays.length === 0}
         onClick={() => {
           generateFromOverlays();
+          setJustGenerated(true);
+          setTimeout(() => setJustGenerated(false), 2000);
         }}
         color={justGenerated ? "#84cc16" : "#22d3ee"}
         svg={justGenerated ? CheckSVG : SyncSVG}
       >
-        {isGenerating
-          ? "Generating Credits..."
-          : justGenerated
-          ? "Generated Credits!"
-          : "Generate Credits"}
+        {justGenerated ? "Generated From Overlays!" : "Generate From Overlays"}
       </Button>
     </>
   );

@@ -192,7 +192,6 @@ export type CreditsInfo = {
   text: string;
   heading: string;
   id: string;
-  hidden?: boolean;
 };
 
 export type DisplayType =

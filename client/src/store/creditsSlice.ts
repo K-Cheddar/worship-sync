@@ -268,9 +268,7 @@ export const creditsSlice = createSlice({
       state.list = action.payload;
     },
     updatePublishedCreditsList: (state) => {
-      state.publishedList = state.list
-        .filter((credit) => !credit.hidden)
-        .map((credit) => credit);
+      state.publishedList = state.list.map((credit) => credit);
     },
     initiateCreditsList: (state, action: PayloadAction<CreditsInfo[]>) => {
       if (action.payload.length === 0) {
