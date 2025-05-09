@@ -1,8 +1,6 @@
 import Button from "../../components/Button/Button";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import { ReactComponent as DragHandleSVG } from "../../assets/icons/drag-handle.svg";
-import { ReactComponent as EyeSVG } from "../../assets/icons/visible.svg";
-import { ReactComponent as EyeOffSVG } from "../../assets/icons/not-visible.svg";
 import { useDispatch } from "../../hooks";
 import "./Credits.scss";
 import gsap from "gsap";
@@ -20,7 +18,7 @@ type CreditProps = CreditsInfo & {
   initialList: string[];
 };
 
-const Credit = ({ heading, text, id, initialList, hidden }: CreditProps) => {
+const Credit = ({ heading, text, id, initialList }: CreditProps) => {
   const dispatch = useDispatch();
 
   const [isDeleting, setIsDeleting] = useState(false);
@@ -84,15 +82,9 @@ const Credit = ({ heading, text, id, initialList, hidden }: CreditProps) => {
     }, 500);
   };
 
-  const toggleHidden = () => {
-    dispatch(updateCredit({ id, heading, text, hidden: !hidden }));
-  };
-
   return (
     <li
-      className={`flex items-center rounded-lg w-full overflow-clip leading-3 bg-gray-800 ${
-        hidden ? "opacity-50" : ""
-      }`}
+      className={`flex items-center rounded-lg w-full overflow-clip leading-3 bg-gray-800`}
       ref={(element) => {
         setNodeRef(element);
         creditRef.current = element;
@@ -122,9 +114,7 @@ const Credit = ({ heading, text, id, initialList, hidden }: CreditProps) => {
           placeholder="Heading"
           value={heading}
           onChange={(val) => {
-            dispatch(
-              updateCredit({ id, heading: val as string, text, hidden })
-            );
+            dispatch(updateCredit({ id, heading: val as string, text }));
           }}
           data-ignore-undo="true"
         />
@@ -137,20 +127,10 @@ const Credit = ({ heading, text, id, initialList, hidden }: CreditProps) => {
           autoResize
           data-ignore-undo="true"
           onChange={(val) => {
-            dispatch(
-              updateCredit({ id, heading, text: val as string, hidden })
-            );
+            dispatch(updateCredit({ id, heading, text: val as string }));
           }}
         />
       </div>
-      <Button
-        variant="tertiary"
-        className="text-sm ml-auto h-full"
-        padding="px-2 py-1"
-        svg={hidden ? EyeOffSVG : EyeSVG}
-        tabIndex={-1}
-        onClick={toggleHidden}
-      />
       <Button
         variant="tertiary"
         className="text-sm ml-auto h-full"

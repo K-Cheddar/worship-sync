@@ -21,7 +21,7 @@ import {
 } from "../../store/creditsSlice";
 
 const CreditsEditor = ({ className }: { className?: string }) => {
-  const { list, publishedList, initialList, isLoading } = useSelector(
+  const { list, initialList, isLoading } = useSelector(
     (state) => state.undoable.present.credits
   );
   const dispatch = useDispatch();
@@ -61,12 +61,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
           className
         )}
       >
-        <h2 className="text-xl font-semibold text-center h-fit">
-          Credits
-          {JSON.stringify(publishedList) !== JSON.stringify(list) && (
-            <span className="text-yellow-500 ml-2">(Draft)</span>
-          )}
-        </h2>
+        <h2 className="text-xl font-semibold text-center h-fit">Credits</h2>
         {!isLoading && list.length === 0 && (
           <p className="text-sm px-2">
             This credits list is empty. Click the button below to add some
@@ -90,7 +85,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                       initialList={initialList}
                       heading={credit.heading}
                       text={credit.text}
-                      hidden={credit.hidden}
                       id={credit.id}
                     />
                   );
