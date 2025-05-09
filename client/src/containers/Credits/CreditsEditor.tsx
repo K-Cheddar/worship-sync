@@ -90,6 +90,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                       initialList={initialList}
                       heading={credit.heading}
                       text={credit.text}
+                      hidden={credit.hidden}
                       id={credit.id}
                     />
                   );

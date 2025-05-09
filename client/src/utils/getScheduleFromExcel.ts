@@ -66,8 +66,6 @@ const getNextSaturdaySchedule = (data: any) => {
     }
   }
 
-  console.log({ schedule });
-
   return schedule;
 };
 
