@@ -1,6 +1,7 @@
 import { useLocation } from "react-router-dom";
 import { ReactComponent as SettingsSVG } from "../../assets/icons/settings.svg";
 import { ReactComponent as EditSquareSVG } from "../../assets/icons/edit-square.svg";
+import { ReactComponent as UploadSVG } from "../../assets/icons/upload.svg";
 import Menu from "./ToolbarElements/Menu";
 import Outlines from "./ToolbarElements/Outlines";
 import SlideEditTools from "./ToolbarElements/SlideEditTools";
@@ -17,12 +18,54 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
     const location = useLocation();
     const { isEditMode } = useSelector((state) => state.undoable.present.item);
     const { shouldShowItemEditor } = useSelector((state) => state.preferences);
+    const [isUploading, setIsUploading] = useState(false);
 
     const [section, setSection] = useState<sections>("outlines");
     const onItemPage = useMemo(
       () => location.pathname.includes("controller/item"),
       [location.pathname]
     );
+
+    const handleFileUpload = async (
+      event: React.ChangeEvent<HTMLInputElement>
+    ) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      setIsUploading(true);
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const response = await fetch(
+          `${process.env.REACT_APP_API_BASE_PATH}process-program-outline`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(
+            errorData.details || errorData.error || "Failed to process file"
+          );
+        }
+
+        const data = await response.json();
+        console.log("Participants:", data.participants);
+        // TODO: Handle the participants data as needed
+      } catch (error) {
+        console.error("Error uploading file:", error);
+        alert(
+          error instanceof Error ? error.message : "Failed to process file"
+        );
+      } finally {
+        setIsUploading(false);
+        // Reset the file input
+        event.target.value = "";
+      }
+    };
 
     useEffect(() => {
       if (onItemPage && shouldShowItemEditor) {
@@ -69,6 +112,29 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
             }`}
           >
             <Outlines className={`${section !== "outlines" && "hidden"}`} />
+            {section === "outlines" && (
+              <div className="relative">
+                <input
+                  type="file"
+                  accept=".docx"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  id="docx-upload"
+                  disabled={isUploading}
+                />
+                <Button
+                  variant="secondary"
+                  svg={UploadSVG}
+                  onClick={() =>
+                    document.getElementById("docx-upload")?.click()
+                  }
+                  className="text-xs"
+                  disabled={isUploading}
+                >
+                  {isUploading ? "Uploading..." : "Upload Schedule"}
+                </Button>
+              </div>
+            )}
             <SlideEditTools
               className={`${
                 (section !== "slide-tools" || !shouldShowItemEditor) && "hidden"

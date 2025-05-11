@@ -11,12 +11,15 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
+import { Document, Packer, Paragraph, TextRun } from "docx";
+import mammoth from "mammoth";
 import bodyParser from "body-parser";
 import fs from "fs/promises";
 import axios from "axios";
 import qs from "qs";
 import * as XLSX from "xlsx";
 import dotenv from "dotenv";
+import multer from "multer";
 
 dotenv.config();
 // Validate required environment variables
@@ -329,9 +332,350 @@ app.get("/getMembers", async (req, res) => {
   res.send(members);
 });
 
+// Add multer for handling file uploads
+const upload = multer({ dest: "uploads/" });
+
+app.post(
+  "/process-program-outline",
+  upload.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      console.log("Processing file:", req.file.path);
+
+      const rawData = await extractTextFromDocx(req.file.path);
+      if (!rawData) {
+        throw new Error("Failed to extract text from DOCX file");
+      }
+
+      console.log("Extracted text:", rawData);
+
+      const participantsEvents = generateParticipantsEvents(rawData);
+      // console.log("Generated participants:", participantsEvents);
+
+      // Clean up the uploaded file
+      try {
+        await fs.unlink(req.file.path);
+      } catch (unlinkError) {
+        console.error("Error cleaning up file:", unlinkError);
+      }
+
+      res.json({ participants: participantsEvents });
+    } catch (error) {
+      console.error("Error processing DOCX file:", error);
+      // Clean up the file if it exists
+      if (req.file?.path) {
+        try {
+          await fs.unlink(req.file.path);
+        } catch (unlinkError) {
+          console.error("Error cleaning up file after error:", unlinkError);
+        }
+      }
+      res.status(500).json({
+        error: "Error processing file",
+        details: error.message,
+      });
+    }
+  }
+);
+
 // Serve any static files
 app.use(express.static(path.join(dirname, "/client/build")));
 // Handle React routing, return all requests to React app
 app.get("*", function (req, res) {
   res.sendFile(path.join(dirname, "/client/build", "index.html"));
 });
+
+const extractTextFromDocx = async (filePath) => {
+  try {
+    const { value } = await mammoth.extractRawText({ path: filePath });
+    return value;
+  } catch (err) {
+    console.error("Error reading DOCX file:", err);
+    return "";
+  }
+};
+
+// Add this function at the top level
+const capitalizeName = (name) => {
+  return name
+    .toLowerCase()
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+};
+
+const generateParticipantsEvents = (data) => {
+  // Split into lines and remove empty lines
+  const lines = data.split("\n").filter((line) => line.trim());
+
+  const result = [];
+  let currentEvent = "";
+  let currentTime = "";
+  let isInEventSection = false;
+  let isFirstSabbathSchoolHost = true; // Track if this is the first Sabbath School host
+
+  lines.forEach((line) => {
+    line = line.trim();
+
+    // Skip header lines and empty lines
+    if (
+      !line ||
+      line.includes("ELIATHAH SEVENTH DAY ADVENTIST CHURCH") ||
+      line.includes("WORSHIP EXPERIENCE") ||
+      line.includes("THEME") ||
+      line.includes("Min") ||
+      line.includes("Time") ||
+      line.includes("Event") ||
+      line.includes("PARTICIPANTS") ||
+      line.includes("ITEM/ADDITIONAL INFO") ||
+      line.includes("Instructions") ||
+      line.includes("Microphone Instructions")
+    ) {
+      return;
+    }
+
+    // Check if line contains a time (format: HH:MM-HH:MM or HH:MM - HH:MM)
+    const timeMatch = line.match(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
+    if (timeMatch) {
+      currentTime = line;
+      isInEventSection = true;
+      return;
+    }
+
+    // Skip duration lines
+    if (line.match(/^\d+\s*mins?$/)) {
+      return;
+    }
+
+    // If we're in an event section and the line isn't a time or duration
+    if (isInEventSection && line) {
+      // Check if this is an event (not a participant or other info)
+      if (
+        !line.includes("HOST") &&
+        !line.includes("CO-HOST") &&
+        !line.includes("ELDER") &&
+        !line.includes("PASTORAL") &&
+        !line.includes("PRAISE TEAM") &&
+        !line.includes("KEY") &&
+        !line.includes("HYMN") &&
+        !line.includes("Scripture:") &&
+        !line.includes("TOPIC:") &&
+        !line.includes('"') &&
+        !line.includes("Lapel") &&
+        !line.includes("Handheld") &&
+        !line.includes("mic") &&
+        !line.includes("Congregation") &&
+        !line.includes("Deacons") &&
+        !line.includes("Stage") &&
+        !line.includes("Prepare") &&
+        !line.includes("Must include") &&
+        !line.includes("The speaker") &&
+        !line.includes("Praise team") &&
+        !line.includes("STREAM") &&
+        !line.includes("Afterglow") &&
+        (line.includes("Special Music") ||
+          line.includes("Reading The Word") ||
+          line.includes("Intercessory Prayer") ||
+          line.includes("Call To Prayer") ||
+          line.includes("Prayer Song") ||
+          line.includes("Song of Praise") ||
+          line.includes("Congregational Hymn") ||
+          line.includes("Offertory") ||
+          line.includes("Welcome") ||
+          line.includes("Sabbath School") ||
+          line.includes("Sermon") ||
+          line.includes("Appeal") ||
+          line.includes("Praise and Worship"))
+      ) {
+        // Clean up event name
+        currentEvent = line
+          .replace(/and Welcome Song$/, "")
+          .replace(/\/.*$/, "")
+          .trim();
+
+        // Reset Sabbath School host flag when we find a new event
+        if (currentEvent !== "Sabbath School") {
+          isFirstSabbathSchoolHost = true;
+        }
+      }
+      // Check if this is a participant
+      else if (
+        (line.includes("HOST") ||
+          line.includes("CO-HOST") ||
+          line.includes("ELDER") ||
+          line.includes("PASTOR") ||
+          line.includes("PRAISE TEAM")) &&
+        !line.includes("KEY") &&
+        !line.includes("HYMN") &&
+        !line.includes("Scripture:") &&
+        !line.includes("TOPIC:") &&
+        !line.includes('"') &&
+        !line.includes("Lapel") &&
+        !line.includes("Handheld") &&
+        !line.includes("mic") &&
+        !line.includes("Congregation") &&
+        !line.includes("Deacons") &&
+        !line.includes("Stage") &&
+        !line.includes("Prepare") &&
+        !line.includes("Must include") &&
+        !line.includes("The speaker") &&
+        !line.includes("Praise team") &&
+        !line.includes("STREAM") &&
+        !line.includes("Afterglow")
+      ) {
+        // Clean up the participant name
+        let participant = line
+          .replace(/^HOST\s*–\s*/, "")
+          .replace(/^CO-HOST\s*–\s*/, "")
+          .replace(/^ELDER\s*/, "")
+          .replace(/^PASTOR\s*/, "")
+          .replace(/\s*\/.*$/, "") // Remove anything after a forward slash
+          .replace(/\s*AND\s*/, " & ") // Replace "AND" with &
+          .trim();
+
+        // Capitalize the participant name properly
+        participant = capitalizeName(participant);
+
+        // Handle special cases for Sabbath School
+        if (currentEvent === "Sabbath School") {
+          if (line.includes("HOST")) {
+            if (isFirstSabbathSchoolHost) {
+              result.push({
+                participants: participant,
+                event: "Sabbath School - Host",
+              });
+              isFirstSabbathSchoolHost = false;
+            } else {
+              result.push({
+                participants: participant,
+                event: "Sabbath School - Co-Host",
+              });
+            }
+          } else if (line.includes("CO-HOST")) {
+            result.push({
+              participants: participant,
+              event: "Sabbath School - Co-Host",
+            });
+          }
+        } else {
+          // Handle Praise Team cases
+          if (line.includes("PRAISE TEAM")) {
+            result.push({
+              participants: "Praise Team",
+              event: currentEvent,
+            });
+          } else {
+            // Only add if we have both a valid participant and event
+            if (
+              participant &&
+              currentEvent &&
+              !participant.includes('"') &&
+              !participant.includes("KEY") &&
+              !participant.includes("HYMN") &&
+              !participant.includes("Scripture:") &&
+              !participant.includes("TOPIC:")
+            ) {
+              result.push({
+                participants: participant,
+                event: currentEvent,
+              });
+            }
+          }
+        }
+      }
+    }
+  });
+
+  return result;
+};
+
+const demoArray = [
+  {
+    participants: "Rashaun Baldeo",
+    event: "Sabbath School - Host",
+  },
+  {
+    participants: "Javar Baldeo",
+    event: "Sabbath School - Co-Host",
+  },
+  {
+    participants: "Jacob Hall",
+    event: "Sabbath School - Co-Host",
+  },
+  {
+    participants: "Bertie Hall",
+    event: "Sabbath School - Co-Host",
+  },
+  {
+    participants: "Courtney Stephens & Nelih Morgan",
+    event: "Welcome",
+  },
+  {
+    participants: "Nelih Morgan",
+    event: "Call To Praise",
+  },
+  {
+    participants: "Praise Team",
+    event: "Song of Praise",
+  },
+  {
+    participants: "Courtney Stephens",
+    event: "Invocation",
+  },
+  {
+    participants: "Praise Team",
+    event: "Congregational Hymn",
+  },
+  {
+    participants: "Kandyce Mullings",
+    event: "Reading The Word",
+  },
+  {
+    participants: "Clarence Jones",
+    event: "Offertory",
+  },
+  {
+    participants: "Sherian Jordon",
+    event: "Special Music",
+  },
+  {
+    participants: "Praise Team",
+    event: "Call to Prayer",
+  },
+  {
+    participants: "Praise Team",
+    event: "Prayer Song",
+  },
+  {
+    participants: "Roy Ebanks",
+    event: "Intercessory Prayer",
+  },
+  {
+    participants: "Praise Team",
+    event: "Praise and Worship",
+  },
+  {
+    participants: "Desmond Dunkley",
+    event: "Sermon",
+  },
+  {
+    participants: "Praise Team",
+    event: "Appeal Song",
+  },
+  {
+    participants: "Desmond Dunkley",
+    event: "Appeal",
+  },
+  {
+    participants: "Desmond Dunkley",
+    event: "CLosing Prayer",
+  },
+  {
+    participants: "Praise Team",
+    event: "Afterglow",
+  },
+];
