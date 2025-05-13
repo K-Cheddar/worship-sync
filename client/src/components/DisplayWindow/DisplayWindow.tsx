@@ -1,5 +1,11 @@
 import { forwardRef, useRef } from "react";
-import { BibleDisplayInfo, Box, DisplayType, OverlayInfo } from "../../types";
+import {
+  BibleDisplayInfo,
+  Box,
+  DisplayType,
+  OverlayInfo,
+  TimerInfo,
+} from "../../types";
 import "./DisplayWindow.scss";
 import DisplayBox from "./DisplayBox";
 import DisplayStreamBible from "./DisplayStreamBible";
@@ -34,6 +40,8 @@ type DisplayWindowProps = {
   imageOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
   prevBibleDisplayInfo?: BibleDisplayInfo;
+  timerInfo?: TimerInfo;
+  prevTimerInfo?: TimerInfo;
   shouldAnimate?: boolean;
   shouldPlayVideo?: boolean;
   time?: number;
@@ -61,6 +69,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       prevBibleDisplayInfo,
       qrCodeOverlayInfo,
       imageOverlayInfo,
+      timerInfo,
+      prevTimerInfo,
       selectBox,
     }: DisplayWindowProps,
     ref
@@ -131,6 +141,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 shouldPlayVideo={shouldPlayVideo}
                 prevBox={prevBoxes[index]}
                 time={time}
+                timerInfo={timerInfo}
               />
             );
           return null;

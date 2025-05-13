@@ -19,6 +19,7 @@ import { ItemState } from "../../../types";
 import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
 import BoxEditor from "./BoxEditor";
+import TimerControls from "../../../components/TimerControls/TimerControls";
 
 const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
@@ -28,7 +29,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const [shouldKeepAspectRatio, setShouldKeepAspectRatio] = useState(false);
 
   const item = useSelector((state) => state.undoable.present.item);
-  const { slides, selectedSlide } = item;
+  const { slides, selectedSlide, type } = item;
 
   const slide = slides[selectedSlide];
 
@@ -128,7 +129,10 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
-      {item.type === "song" && <BoxEditor />}
+      {type === "timer" && (
+        <TimerControls timerId={item._id} status={item.timerInfo?.status} />
+      )}
+      {type === "song" && <BoxEditor />}
       {canChangeAspectRatio && (
         <Toggle
           label="Keep Aspect Ratio"

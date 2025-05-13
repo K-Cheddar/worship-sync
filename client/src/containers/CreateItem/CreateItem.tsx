@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import RadioButton from "../../components/RadioButton/RadioButton";
 import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
@@ -183,8 +183,6 @@ const CreateItem = () => {
     setJustAdded(true);
     setTimeout(() => setJustAdded(false), 2000);
   };
-
-  console.log(time, duration);
 
   return (
     <div>

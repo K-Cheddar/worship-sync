@@ -47,8 +47,28 @@ export type Box = {
   slideIndex?: number;
 };
 
+export type SlideType =
+  | "Title"
+  | "Reprise"
+  | "Interlude"
+  | "Verse"
+  | "Chorus"
+  | "Refrain"
+  | "Bridge"
+  | "Outro"
+  | "Ending"
+  | "Intro"
+  | "Pre-Chorus"
+  | "Pre-Bridge"
+  | "Blank"
+  | "Section"
+  | "Timer"
+  | "Announcement"
+  | "Image";
+
 export type ItemSlide = {
-  type: string;
+  type: SlideType;
+  name: string;
   id?: string;
   boxes: Box[];
 };
@@ -86,6 +106,12 @@ export type DBItem = {
 export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";
 export type TimerStatus = "running" | "paused" | "stopped";
 export type TimerType = "timer" | "countdown";
+export type TimerInfo = {
+  duration?: number;
+  countdownTime?: string;
+  timerType: TimerType;
+  status: TimerStatus;
+};
 
 export type ItemState = {
   name: string;
@@ -109,12 +135,7 @@ export type ItemState = {
   };
   isLoading?: boolean;
   hasPendingUpdate?: boolean;
-  timerInfo?: {
-    duration?: number;
-    countdownTime?: string;
-    timerType: TimerType;
-    status: TimerStatus;
-  };
+  timerInfo?: TimerInfo;
 };
 
 export type OptionalItemState = {
@@ -167,6 +188,7 @@ export type Presentation = {
   participantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
+  timerInfo?: TimerInfo;
   qrCodeOverlayInfo?: OverlayInfo;
   imageOverlayInfo?: OverlayInfo;
 };

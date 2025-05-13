@@ -342,7 +342,11 @@ export const createNewTimer = async ({
     selectedSlide: 0,
     selectedBox: 1,
     slides: [
-      createNewSlide({ type: "Section", fontSize: 4.5, words: ["", name] }),
+      createNewSlide({
+        type: "Section",
+        fontSize: 4.5,
+        words: ["", "{{timer}}"],
+      }),
     ],
     arrangements: [],
     timerInfo: {

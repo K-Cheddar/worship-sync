@@ -1,10 +1,11 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { Arrangment, Box, ItemSlide, ItemState } from "../types";
+import { Arrangment, Box, ItemSlide, ItemState, TimerInfo } from "../types";
 import { createAsyncThunk } from "../hooks/reduxHooks";
 import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
 import { updateItemInList } from "../utils/itemUtil";
 import { AppDispatch, RootState } from "./store";
+import { syncTimers } from "./timersSlice";
 
 const initialState: ItemState = {
   isEditMode: false,
@@ -80,6 +81,12 @@ export const itemSlice = createSlice({
     },
     setSelectedBox: (state, action: PayloadAction<number>) => {
       state.selectedBox = action.payload;
+    },
+    updateTimerInfo: (state, action: PayloadAction<TimerInfo>) => {
+      if (state.type === "timer") {
+        state.timerInfo = action.payload;
+        state.hasPendingUpdate = true;
+      }
     },
   },
 });
@@ -340,6 +347,7 @@ export const {
   setBackground,
   setHasPendingUpdate,
   setSelectedBox,
+  updateTimerInfo,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

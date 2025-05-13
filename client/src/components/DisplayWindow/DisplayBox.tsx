@@ -1,4 +1,4 @@
-import { Box, DisplayType } from "../../types";
+import { Box, DisplayType, TimerInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
@@ -17,6 +17,7 @@ type DisplayBoxProps = {
   isPrev?: boolean;
   time?: number;
   shouldPlayVideo?: boolean;
+  timerInfo?: TimerInfo;
 };
 
 const DisplayBox = ({
@@ -31,6 +32,7 @@ const DisplayBox = ({
   shouldPlayVideo,
   isPrev,
   time,
+  timerInfo,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline>();

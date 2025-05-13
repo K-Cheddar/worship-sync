@@ -42,6 +42,7 @@ import {
 } from "../types";
 import { allDocsSlice } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
+import { timersSlice } from "./timersSlice";
 
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
@@ -667,6 +668,7 @@ const combinedReducers = combineReducers({
   createItem: createItemSlice.reducer,
   preferences: preferencesSlice.reducer,
   allDocs: allDocsSlice.reducer,
+  timers: timersSlice.reducer,
 });
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {

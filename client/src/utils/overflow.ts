@@ -88,6 +88,7 @@ export const getNumLines = ({
 type FormatSectionType = {
   text: string;
   type: string;
+  name: string;
   slides: ItemSlide[];
   newSlides: ItemSlide[];
   lastBoxes: Box[];
@@ -97,6 +98,7 @@ type FormatSectionType = {
 export const formatSection = ({
   text,
   type,
+  name,
   slides,
   newSlides,
   lastBoxes,
@@ -156,7 +158,8 @@ export const formatSection = ({
     i += counter - 1;
     fLyrics.push(
       createNewSlide({
-        type: type,
+        type: "Section",
+        name: name,
         boxes: boxes,
         fontSize: fontSize,
         slideIndex: fLyrics.length,
@@ -177,6 +180,7 @@ export const formatLyrics = (item: ItemState) => {
   const newSlides = [
     createNewSlide({
       type: "Title",
+      name: "Title",
       boxes,
       words: ["", boxes[1].words || " "],
       fontSize: boxes[1].fontSize || 4.5,
@@ -193,6 +197,7 @@ export const formatLyrics = (item: ItemState) => {
       ...formatSection({
         text: lyrics,
         type: songOrder[i].name,
+        name: songOrder[i].name,
         slides,
         newSlides,
         lastBoxes,
@@ -402,7 +407,8 @@ const formatBibleVerses = ({
           slide = slide.replace(/\s+/g, " ").trim();
           formattedVerses.push(
             createNewSlide({
-              type: "Verse " + verse.name,
+              type: "Verse",
+              name: "Verse " + verse.name,
               itemType: "bible",
               boxes: currentBoxes,
               words: [
@@ -418,7 +424,8 @@ const formatBibleVerses = ({
       formattedVerses.push(
         createNewSlide({
           itemType: "bible",
-          type: "Verse " + verse.name,
+          type: "Verse",
+          name: "Verse " + verse.name,
           boxes: currentBoxes,
           words: [
             "",
@@ -464,7 +471,8 @@ const formatBibleVerses = ({
         formattedVerses.push(
           createNewSlide({
             itemType: "bible",
-            type: "Verse " + verse.name,
+            type: "Verse",
+            name: "Verse " + verse.name,
             boxes: currentBoxes,
             words: [
               "",

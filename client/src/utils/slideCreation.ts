@@ -1,8 +1,9 @@
-import { Box } from "../types";
+import { Box, SlideType } from "../types";
 import generateRandomId from "./generateRandomId";
 
 type CreateNewSlideType = {
-  type: string;
+  type: SlideType;
+  name?: string;
   itemType?: string;
   box?: Box;
   words?: string[];
@@ -16,6 +17,7 @@ type CreateNewSlideType = {
 
 export const createNewSlide = ({
   type,
+  name = type,
   itemType,
   box,
   words = [],
@@ -112,7 +114,7 @@ export const createNewSlide = ({
     obj.excludeFromOverflow = true;
     obj.words = words ? words[1] : " ";
     boxes.push(obj);
-  } else if (type === "timer" && !boxes.length) {
+  } else if (type === "Timer" && !boxes.length) {
     let obj = Object.assign({}, box);
     obj.words = " ";
     obj.excludeFromOverflow = true;
@@ -143,6 +145,7 @@ export const createNewSlide = ({
 
   let obj = {
     type: type,
+    name: name,
     boxes: JSON.parse(JSON.stringify(boxes)),
     id: generateRandomId(),
   };
