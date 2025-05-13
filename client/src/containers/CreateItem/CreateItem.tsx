@@ -1,4 +1,4 @@
-import { useContext, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import RadioButton from "../../components/RadioButton/RadioButton";
 import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
@@ -15,18 +15,19 @@ import { useSelector } from "react-redux";
 import {
   createNewFreeForm,
   createNewSong,
+  createNewTimer,
   createSections,
   updateFormattedSections,
 } from "../../utils/itemUtil";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
-import { ItemState, ServiceItem } from "../../types";
+import { ItemState, ItemType, ServiceItem } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 
 type ItemTypesType = {
-  type: string;
+  type: ItemType;
   selected: boolean;
   label: string;
 };
@@ -46,6 +47,11 @@ const types: ItemTypesType[] = [
     type: "free",
     selected: false,
     label: "Free Form",
+  },
+  {
+    type: "timer",
+    selected: false,
+    label: "Timer",
   },
 ];
 
@@ -70,6 +76,9 @@ const CreateItem = () => {
     types.map((type) => ({ ...type, selected: type.type === initialType }))
   );
   const [itemName, setItemName] = useState<string>(initialName);
+  const [duration, setDuration] = useState<number>(60);
+  const [time, setTime] = useState<string>("00:00");
+  const [timerType, setTimerType] = useState<"countdown" | "timer">("timer");
   const [justAdded, setJustAdded] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
 
@@ -148,6 +157,20 @@ const CreateItem = () => {
       naviagte(`/controller/bible?name=${encodeURI(itemName)}`);
     }
 
+    if (selectedType === "timer") {
+      const newItem = await createNewTimer({
+        name: itemName,
+        list,
+        db,
+        selectedList,
+        duration,
+        countdownTime: time,
+        timerType,
+      });
+
+      dispatchNewItem(newItem);
+    }
+
     setItemName("");
     setText("");
     setJustCreated(true);
@@ -160,6 +183,8 @@ const CreateItem = () => {
     setJustAdded(true);
     setTimeout(() => setJustAdded(false), 2000);
   };
+
+  console.log(time, duration);
 
   return (
     <div>
@@ -225,6 +250,89 @@ const CreateItem = () => {
             onChange={(val) => setText(val as string)}
             data-ignore-undo="true"
           />
+        )}
+
+        {selectedType === "timer" && (
+          <div className="flex flex-col gap-2 mt-2">
+            <div className="flex gap-4">
+              <RadioButton
+                label="Timer"
+                value={timerType === "timer"}
+                textSize="text-base"
+                onChange={() => setTimerType("timer")}
+                data-ignore-undo="true"
+              />
+              <RadioButton
+                label="Countdown"
+                value={timerType === "countdown"}
+                textSize="text-base"
+                onChange={() => setTimerType("countdown")}
+                data-ignore-undo="true"
+              />
+            </div>
+            {timerType === "countdown" && (
+              <div className="flex gap-2">
+                <Input
+                  type="time"
+                  label="Countdown To"
+                  value={time}
+                  onChange={(val) => setTime(val as string)}
+                  data-ignore-undo="true"
+                />
+              </div>
+            )}
+            {timerType === "timer" && (
+              <div className="flex gap-2">
+                <Input
+                  label="Hours"
+                  type="number"
+                  hideSpinButtons
+                  min={0}
+                  value={Math.floor(duration / 3600)}
+                  onChange={(val) =>
+                    setDuration(
+                      Number(val) * 3600 +
+                        Math.floor((duration % 3600) / 60) * 60 +
+                        (duration % 60)
+                    )
+                  }
+                  data-ignore-undo="true"
+                />
+                <Input
+                  label="Minutes"
+                  type="number"
+                  min={0}
+                  max={59}
+                  hideSpinButtons
+                  value={Math.floor((duration % 3600) / 60)}
+                  onChange={(val) =>
+                    setDuration(
+                      Math.floor(duration / 3600) * 3600 +
+                        Number(val) * 60 +
+                        (duration % 60)
+                    )
+                  }
+                  data-ignore-undo="true"
+                />
+                <Input
+                  label="Seconds"
+                  type="number"
+                  min={0}
+                  max={59}
+                  hideSpinButtons
+                  value={duration % 60}
+                  onChange={(val) =>
+                    setDuration(
+                      Math.floor(duration / 3600) * 3600 +
+                        Math.floor((duration % 3600) / 60) * 60 +
+                        Number(val)
+                    )
+                  }
+                  data-ignore-undo="true"
+                />
+              </div>
+            )}
+          </div>
         )}
 
         <Button

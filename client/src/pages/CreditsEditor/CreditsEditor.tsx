@@ -252,6 +252,7 @@ const CreditsEditor = () => {
       />
       <Button
         className="text-sm"
+        data-testid="generate-credits-button"
         disabled={overlays.length === 0 || isGenerating}
         onClick={() => {
           generateFromOverlays();
@@ -320,7 +321,10 @@ const CreditsEditor = () => {
       </div>
 
       {dbProgress !== 100 && (
-        <div className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8">
+        <div
+          data-testid="loading-overlay"
+          className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8"
+        >
           <p>
             Setting up <span className="font-bold">Worship</span>
             <span className="text-orange-500 font-semibold">Sync</span> for{" "}
@@ -334,15 +338,16 @@ const CreditsEditor = () => {
       )}
 
       <div className="flex gap-2 px-4 pb-4">
-        <CreditsEditorContainer
-          className={isPreviewOpen ? "max-md:hidden" : ""}
-        />
+        <div
+          data-testid="credits-editor-container"
+          className={isPreviewOpen ? "hidden" : ""}
+        >
+          <CreditsEditorContainer />
+        </div>
 
         <section
-          className={cn(
-            "flex-1 text-center",
-            !isPreviewOpen && "max-md:hidden"
-          )}
+          data-testid="credits-preview-container"
+          className={cn("flex-1 text-center", !isPreviewOpen && "hidden")}
         >
           <h2 className="text-lg font-semibold">Preview</h2>
           <Credits isPreview credits={list} />

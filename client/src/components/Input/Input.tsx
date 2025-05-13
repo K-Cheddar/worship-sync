@@ -19,6 +19,7 @@ type InputProps = HTMLProps<HTMLInputElement> & {
   svgPadding?: string;
   svgClassName?: string;
   inputTextSize?: string;
+  hideSpinButtons?: boolean;
 };
 
 const Input = ({
@@ -38,11 +39,18 @@ const Input = ({
   svgPadding = "p-1",
   svgClassName = "right-px",
   inputTextSize = "text-sm",
+  hideSpinButtons = true,
   ...rest
 }: InputProps) => {
   const inputId = id || generateRandomId();
   return (
-    <div className={`${className || ""} input-container`}>
+    <div
+      className={cn(
+        className,
+        "input-container",
+        hideSpinButtons && "hide-spin-buttons"
+      )}
+    >
       <label
         htmlFor={inputId}
         className={cn(

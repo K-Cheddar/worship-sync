@@ -209,7 +209,8 @@ const ItemSlides = () => {
     selectSlide(nextSlide);
   };
 
-  if (!arrangement && !slides.length && type !== "free") return null;
+  if (!arrangement && !slides.length && type !== "free" && type !== "timer")
+    return null;
 
   return (
     <DndContext sensors={sensors} onDragEnd={onDragEnd}>
@@ -236,7 +237,7 @@ const ItemSlides = () => {
             }
           }}
         />
-        {type === "free" && (
+        {(type === "free" || type === "timer") && (
           <>
             <Button
               variant="tertiary"

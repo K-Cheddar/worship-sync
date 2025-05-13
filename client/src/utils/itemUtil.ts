@@ -12,6 +12,7 @@ import {
   ItemList,
   ItemListDetails,
   DBItemListDetails,
+  TimerType,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatBible, formatSong } from "./overflow";
@@ -305,6 +306,51 @@ export const createNewFreeForm = async ({
       createNewSlide({ type: "Section", fontSize: 2.5, words: [""] }),
     ],
     arrangements: [],
+  };
+
+  const item = await createNewItemInDb({ item: newItem, db, selectedList });
+
+  return item;
+};
+
+type CreateNewTimerType = {
+  name: string;
+  list: ServiceItem[];
+  db: PouchDB.Database | undefined;
+  selectedList: ItemList;
+  duration?: number;
+  countdownTime?: string;
+  timerType: TimerType;
+};
+
+export const createNewTimer = async ({
+  name,
+  list,
+  db,
+  duration,
+  countdownTime,
+  selectedList,
+  timerType,
+}: CreateNewTimerType): Promise<ItemState> => {
+  const _name = makeUnique({ value: name, property: "name", list });
+
+  const newItem: ItemState = {
+    name: _name,
+    type: "timer",
+    _id: _name,
+    selectedArrangement: 0,
+    selectedSlide: 0,
+    selectedBox: 1,
+    slides: [
+      createNewSlide({ type: "Section", fontSize: 4.5, words: ["", name] }),
+    ],
+    arrangements: [],
+    timerInfo: {
+      duration: duration,
+      countdownTime: countdownTime,
+      timerType: timerType,
+      status: "stopped",
+    },
   };
 
   const item = await createNewItemInDb({ item: newItem, db, selectedList });

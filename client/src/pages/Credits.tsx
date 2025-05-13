@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { default as CreditsContainer } from "../containers/Credits/Credits";
 import { useDispatch, useSelector } from "../hooks";
 import {
@@ -54,15 +54,6 @@ const Credits = () => {
       }
     });
   }, [dispatch, firebaseDb, user]);
-
-  // useEffect(() => {
-  //   // window.addEventListener("obsSourceActiveChanged", (event) => {
-  //   //   setIsActive(event.detail.active);
-  //   //   if (event.detail.active) {
-  //   //     creditsTimeline?.restart();
-  //   //   }
-  //   // });
-  // }, [creditsTimeline]);
 
   const runObsTransition = useCallback(() => {
     if (isActive) {

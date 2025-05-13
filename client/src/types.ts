@@ -67,7 +67,7 @@ export type DBItem = {
   selectedArrangement: number;
   skipTitle?: boolean;
   background?: string;
-  type: string;
+  type: ItemType;
   slides: ItemSlide[];
   bibleInfo?: {
     book: string;
@@ -83,9 +83,13 @@ export type DBItem = {
   }[];
 };
 
+export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";
+export type TimerStatus = "running" | "paused" | "stopped";
+export type TimerType = "timer" | "countdown";
+
 export type ItemState = {
   name: string;
-  type: string;
+  type: ItemType;
   _id: string;
   listId?: string;
   selectedArrangement: number;
@@ -105,11 +109,17 @@ export type ItemState = {
   };
   isLoading?: boolean;
   hasPendingUpdate?: boolean;
+  timerInfo?: {
+    duration?: number;
+    countdownTime?: string;
+    timerType: TimerType;
+    status: TimerStatus;
+  };
 };
 
 export type OptionalItemState = {
   name: string;
-  type: string;
+  type: ItemType;
   _id?: string;
   listId?: string;
   selectedArrangement?: number;

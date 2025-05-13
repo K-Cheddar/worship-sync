@@ -56,6 +56,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <div
+        data-testid="credits-editor-container"
         className={cn(
           "flex flex-col p-2 gap-2 max-md:w-full md:w-1/2 h-full",
           className
@@ -63,8 +64,10 @@ const CreditsEditor = ({ className }: { className?: string }) => {
       >
         <h2 className="text-xl font-semibold text-center h-fit">
           Credits
-          {JSON.stringify(publishedList) !== JSON.stringify(list) && (
+          {JSON.stringify(publishedList) !== JSON.stringify(list) ? (
             <span className="text-yellow-500 ml-2">(Draft)</span>
+          ) : (
+            <span className="text-green-500 ml-2">(Published)</span>
           )}
         </h2>
         {!isLoading && list.length === 0 && (
