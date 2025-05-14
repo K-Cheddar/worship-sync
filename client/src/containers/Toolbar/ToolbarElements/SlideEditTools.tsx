@@ -129,9 +129,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
-      {type === "timer" && (
-        <TimerControls timerId={item._id} status={item.timerInfo?.status} />
-      )}
+      {type === "timer" && <TimerControls />}
       {type === "song" && <BoxEditor />}
       {canChangeAspectRatio && (
         <Toggle

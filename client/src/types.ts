@@ -95,6 +95,7 @@ export type DBItem = {
     version: string;
     verses: verseType[];
   };
+  timerInfo?: TimerInfo;
   arrangements: {
     name: string;
     formattedLyrics: FormattedLyrics[];

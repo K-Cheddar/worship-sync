@@ -2,7 +2,7 @@ import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import "./ItemSlides.scss";
 
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
-import { ItemSlide as ItemSlideType } from "../../types";
+import { ItemSlide as ItemSlideType, TimerInfo } from "../../types";
 import { sizeMap } from "./ItemSlides";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
@@ -15,6 +15,7 @@ type ItemSlideProps = {
   size: number;
   itemType: string;
   isMobile: boolean;
+  timerInfo?: TimerInfo;
 };
 
 const ItemSlide = ({
@@ -25,6 +26,7 @@ const ItemSlide = ({
   size,
   itemType,
   isMobile,
+  timerInfo,
 }: ItemSlideProps) => {
   const width =
     (isMobile ? sizeMap.get(size)?.mobileWidth : sizeMap.get(size)?.width) ||
@@ -70,6 +72,7 @@ const ItemSlide = ({
         boxes={slide.boxes}
         width={width}
         displayType="slide"
+        timerInfo={timerInfo}
       />
     </li>
   );

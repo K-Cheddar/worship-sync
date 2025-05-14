@@ -161,6 +161,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 shouldPlayVideo={shouldPlayVideo}
                 prevBox={prevBoxes[index]}
                 time={time}
+                timerInfo={timerInfo}
                 isPrev
               />
             );

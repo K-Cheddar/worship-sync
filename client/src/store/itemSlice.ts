@@ -82,9 +82,10 @@ export const itemSlice = createSlice({
     setSelectedBox: (state, action: PayloadAction<number>) => {
       state.selectedBox = action.payload;
     },
-    updateTimerInfo: (state, action: PayloadAction<TimerInfo>) => {
+    _updateTimerInfo: (state, action: PayloadAction<TimerInfo>) => {
       if (state.type === "timer") {
         state.timerInfo = action.payload;
+        console.log("updating timer info", state.timerInfo, action.payload);
         state.hasPendingUpdate = true;
       }
     },
@@ -335,6 +336,13 @@ export const updateSlides = createAsyncThunk(
   }
 );
 
+export const updateTimerInfo = createAsyncThunk(
+  "item/updateTimerInfo",
+  async (args: { timerInfo: TimerInfo }, { dispatch }) => {
+    dispatch(_updateTimerInfo(args.timerInfo));
+  }
+);
+
 export const {
   setSelectedSlide,
   _setSelectedArrangement,
@@ -347,7 +355,7 @@ export const {
   setBackground,
   setHasPendingUpdate,
   setSelectedBox,
-  updateTimerInfo,
+  _updateTimerInfo,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

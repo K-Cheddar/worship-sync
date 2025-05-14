@@ -4,6 +4,7 @@ import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
 import { Rnd } from "react-rnd";
 import cn from "classnames";
+import TimerDisplay from "../TimerDisplay/TimerDisplay";
 
 type DisplayBoxProps = {
   prevBox?: Box;
@@ -136,6 +137,22 @@ const DisplayBox = ({
     textAlign: box.align || "center",
     lineHeight: 1.25,
   };
+
+  const renderContent = () => {
+    if (words.includes("{{timer}}") && timerInfo) {
+      return (
+        <p className={`display-box-text h-full`} style={textStyles}>
+          <TimerDisplay timerInfo={timerInfo} words={words} />
+        </p>
+      );
+    }
+    return (
+      <p className={`display-box-text h-full`} style={textStyles}>
+        {words}
+      </p>
+    );
+  };
+
   return (
     <div
       key={box.id}
@@ -166,9 +183,7 @@ const DisplayBox = ({
           alt={box.label}
         />
       )}
-      <p className={`display-box-text h-full`} style={textStyles}>
-        {words}
-      </p>
+      {renderContent()}
     </div>
   );
 };

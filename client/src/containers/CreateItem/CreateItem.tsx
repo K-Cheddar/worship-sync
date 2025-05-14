@@ -25,6 +25,7 @@ import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { ItemState, ItemType, ServiceItem } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { syncTimers } from "../../store/timersSlice";
 
 type ItemTypesType = {
   type: ItemType;
@@ -169,6 +170,7 @@ const CreateItem = () => {
       });
 
       dispatchNewItem(newItem);
+      dispatch(syncTimers([newItem]));
     }
 
     setItemName("");

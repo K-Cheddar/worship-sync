@@ -203,3 +203,20 @@ export const checkMediaType = (mediaUrl?: string) => {
     return "unknown";
   }
 };
+
+export const getTimeDifference = (timeString: string) => {
+  const now = new Date();
+  const [hours, minutes] = timeString.split(":").map(Number);
+
+  // Create a new Date object for today with the specified time
+  const targetTime = new Date(now);
+  targetTime.setHours(hours, minutes, 0, 0);
+
+  // If the target time has already passed today, set it to tomorrow
+  if (targetTime < now) {
+    targetTime.setDate(targetTime.getDate() + 1);
+  }
+
+  const secondsDiff = Math.floor((targetTime.getTime() - now.getTime()) / 1000);
+  return secondsDiff;
+};

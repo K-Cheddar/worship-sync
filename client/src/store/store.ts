@@ -126,6 +126,8 @@ listenerMiddleware.startListening({
     if (!db) return;
     let db_item: DBItem = await db.get(item._id);
 
+    console.log(item);
+
     db_item = {
       ...db_item,
       name: item.name,
