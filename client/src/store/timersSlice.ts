@@ -29,7 +29,6 @@ export const timersSlice = createSlice({
       const newTimers = action.payload
         .filter((item) => item.type === "timer")
         .map((item) => {
-          console.log("inside syncTimers", item);
           return {
             id: item._id,
             name: item.name,

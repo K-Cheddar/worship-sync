@@ -1,16 +1,14 @@
 import { useDispatch, useSelector } from "../../hooks";
 import { TimerStatus, TimerInfo } from "../../types";
-import { syncTimers, updateTimer } from "../../store/timersSlice";
+import { syncTimers } from "../../store/timersSlice";
 import { updateTimerInfo } from "../../store/itemSlice";
-import Button from "../Button/Button";
-import { ReactComponent as PlaySVG } from "../../assets/icons/play.svg";
-import { ReactComponent as PauseSVG } from "../../assets/icons/pause.svg";
-import { ReactComponent as StopSVG } from "../../assets/icons/stop.svg";
-import "./TimerControls.scss";
 import { RootState } from "../../store/store";
-import RadioButton from "../RadioButton/RadioButton";
-import Input from "../Input/Input";
 import { useState, useEffect } from "react";
+import TimerTypeSelector from "./TimerTypeSelector";
+import CountdownTimeInput from "./CountdownTimeInput";
+import DurationInputs from "./DurationInputs";
+import TimerControlButtons from "./TimerControlButtons";
+import "./TimerControls.scss";
 
 const TimerControls = () => {
   const dispatch = useDispatch();
@@ -48,7 +46,7 @@ const TimerControls = () => {
         status: "stopped",
       };
       dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
-      dispatch(updateTimer({ id: _id, status: "stopped" }));
+      dispatch(syncTimers([{ ...item, timerInfo: updatedTimerInfo }]));
     }
   };
 
@@ -62,22 +60,20 @@ const TimerControls = () => {
         countdownTime: timerType === "countdown" ? countdownTime : undefined,
       };
       dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
+      dispatch(syncTimers([{ ...item, timerInfo: updatedTimerInfo }]));
     }
   };
 
   const handlePlay = () => {
     updateItemTimerInfo("running");
-    dispatch(updateTimer({ id: _id, status: "running" }));
   };
 
   const handlePause = () => {
     updateItemTimerInfo("paused");
-    dispatch(updateTimer({ id: _id, status: "paused" }));
   };
 
   const handleStop = () => {
     updateItemTimerInfo("stopped");
-    dispatch(updateTimer({ id: _id, status: "stopped" }));
   };
 
   const handleDurationChange = (newDuration: number) => {
@@ -89,7 +85,6 @@ const TimerControls = () => {
         status: "stopped",
       };
       dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
-      dispatch(updateTimer({ id: _id, status: "stopped" }));
       dispatch(syncTimers([{ ...item, timerInfo: updatedTimerInfo }]));
     }
   };
@@ -103,117 +98,38 @@ const TimerControls = () => {
         status: "stopped",
       };
       dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
-      dispatch(updateTimer({ id: _id, status: "stopped" }));
       dispatch(syncTimers([{ ...item, timerInfo: updatedTimerInfo }]));
     }
   };
 
   return (
     <div className="timer-controls flex gap-2">
-      <div className="flex gap-4 items-center lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4">
-        <RadioButton
-          label="Timer"
-          value={timerType === "timer"}
-          onChange={() => handleTypeChange("timer")}
-        />
-        <RadioButton
-          label="Countdown"
-          value={timerType === "countdown"}
-          onChange={() => handleTypeChange("countdown")}
-        />
-      </div>
+      <TimerTypeSelector
+        timerType={timerType}
+        onTypeChange={handleTypeChange}
+        className="lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4"
+      />
 
       {timerType === "countdown" && (
-        <div className="flex gap-2">
-          <Input
-            type="time"
-            label="Countdown To"
-            className="flex gap-1 items-center w-72"
-            labelClassName="w-44"
-            value={countdownTime}
-            onChange={(val) => handleCountdownTimeChange(val as string)}
-          />
-        </div>
+        <CountdownTimeInput
+          countdownTime={countdownTime}
+          onTimeChange={handleCountdownTimeChange}
+        />
       )}
 
       {timerType === "timer" && (
-        <div className="flex gap-2">
-          <Input
-            label="Hours"
-            type="number"
-            hideSpinButtons
-            min={0}
-            value={Math.floor(duration / 3600)}
-            onChange={(val) => {
-              const newDuration =
-                Number(val) * 3600 +
-                Math.floor((duration % 3600) / 60) * 60 +
-                (duration % 60);
-              handleDurationChange(newDuration);
-            }}
-          />
-          <Input
-            label="Minutes"
-            type="number"
-            min={0}
-            max={59}
-            hideSpinButtons
-            value={Math.floor((duration % 3600) / 60)}
-            onChange={(val) => {
-              const newDuration =
-                Math.floor(duration / 3600) * 3600 +
-                Number(val) * 60 +
-                (duration % 60);
-              handleDurationChange(newDuration);
-            }}
-          />
-          <Input
-            label="Seconds"
-            type="number"
-            min={0}
-            max={59}
-            hideSpinButtons
-            value={duration % 60}
-            onChange={(val) => {
-              const newDuration =
-                Math.floor(duration / 3600) * 3600 +
-                Math.floor((duration % 3600) / 60) * 60 +
-                Number(val);
-              handleDurationChange(newDuration);
-            }}
-          />
-        </div>
+        <DurationInputs
+          duration={duration}
+          onDurationChange={handleDurationChange}
+        />
       )}
 
-      <div className="flex gap-2 items-center px-2">
-        <Button
-          variant="tertiary"
-          svg={PlaySVG}
-          onClick={handlePlay}
-          disabled={timerInfo?.status === "running"}
-          title="Play"
-          color="#48bb78"
-          className="timer-control-btn play"
-        />
-        <Button
-          variant="tertiary"
-          svg={PauseSVG}
-          onClick={handlePause}
-          disabled={timerInfo?.status !== "running"}
-          title="Pause"
-          color="#ecc94b"
-          className="timer-control-btn pause"
-        />
-        <Button
-          variant="tertiary"
-          svg={StopSVG}
-          onClick={handleStop}
-          disabled={timerInfo?.status === "stopped"}
-          title="Stop"
-          color="#f56565"
-          className="timer-control-btn stop"
-        />
-      </div>
+      <TimerControlButtons
+        status={timerInfo?.status || "stopped"}
+        onPlay={handlePlay}
+        onPause={handlePause}
+        onStop={handleStop}
+      />
     </div>
   );
 };

@@ -5,7 +5,6 @@ import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
 import { updateItemInList } from "../utils/itemUtil";
 import { AppDispatch, RootState } from "./store";
-import { syncTimers } from "./timersSlice";
 
 const initialState: ItemState = {
   isEditMode: false,
@@ -21,6 +20,7 @@ const initialState: ItemState = {
   slides: [],
   selectedBox: 1,
   bibleInfo: { book: "", chapter: "", version: "", verses: [] },
+  timerInfo: { timerType: "timer", duration: 60, status: "stopped" },
   isLoading: true,
   hasPendingUpdate: false,
 };
@@ -46,6 +46,7 @@ export const itemSlice = createSlice({
         version: "",
         verses: [],
       };
+      state.timerInfo = action.payload.timerInfo;
     },
     toggleEditMode: (state) => {
       state.isEditMode = !state.isEditMode;
@@ -83,11 +84,8 @@ export const itemSlice = createSlice({
       state.selectedBox = action.payload;
     },
     _updateTimerInfo: (state, action: PayloadAction<TimerInfo>) => {
-      if (state.type === "timer") {
-        state.timerInfo = action.payload;
-        console.log("updating timer info", state.timerInfo, action.payload);
-        state.hasPendingUpdate = true;
-      }
+      state.timerInfo = action.payload;
+      state.hasPendingUpdate = true;
     },
   },
 });

@@ -2,7 +2,6 @@ import { Box, DisplayType, TimerInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
-import { Rnd } from "react-rnd";
 import cn from "classnames";
 import TimerDisplay from "../TimerDisplay/TimerDisplay";
 
