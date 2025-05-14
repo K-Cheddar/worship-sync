@@ -9,7 +9,7 @@ interface TimerDisplayProps {
 
 const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   const timer = useSelector((state: RootState) =>
-    state.timers.timers.find((t) => t.timerInfo === timerInfo)
+    state.timers.timers.find((t) => t.id === timerInfo.id)
   );
 
   const formatTime = (seconds: number) => {

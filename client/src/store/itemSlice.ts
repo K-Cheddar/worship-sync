@@ -20,7 +20,15 @@ const initialState: ItemState = {
   slides: [],
   selectedBox: 1,
   bibleInfo: { book: "", chapter: "", version: "", verses: [] },
-  timerInfo: { timerType: "timer", duration: 60, status: "stopped" },
+  timerInfo: {
+    id: "",
+    name: "",
+    isActive: false,
+    timerType: "timer",
+    duration: 60,
+    status: "stopped",
+    remainingTime: 0,
+  },
   isLoading: true,
   hasPendingUpdate: false,
 };

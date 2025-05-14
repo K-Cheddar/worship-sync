@@ -1,17 +1,9 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { TimerInfo, TimerStatus, DBItem } from "../types";
+import { TimerStatus, DBItem, TimerType, TimerInfo } from "../types";
 import { getTimeDifference } from "../utils/generalUtils";
 
-interface TimerState {
-  id: string;
-  name: string;
-  timerInfo?: TimerInfo;
-  isActive: boolean;
-  remainingTime: number;
-}
-
 interface TimersState {
-  timers: TimerState[];
+  timers: TimerInfo[];
   intervalId: NodeJS.Timeout | null;
 }
 
@@ -32,8 +24,11 @@ export const timersSlice = createSlice({
           return {
             id: item._id,
             name: item.name,
-            timerInfo: item.timerInfo,
+            timerType: item.timerInfo?.timerType || "timer",
+            status: item.timerInfo?.status || "stopped",
             isActive: item.timerInfo?.status === "running",
+            countdownTime: item.timerInfo?.countdownTime || "00:00",
+            duration: item.timerInfo?.duration || 0,
             remainingTime: (() => {
               if (item.timerInfo?.timerType === "timer") {
                 return item.timerInfo?.duration || 0;
@@ -67,21 +62,16 @@ export const timersSlice = createSlice({
         if (timer.id === action.payload.id) {
           return {
             ...timer,
-            timerInfo: {
-              ...timer.timerInfo!,
-              status: action.payload.status,
-            },
+            status: action.payload.status,
             isActive: action.payload.status === "running",
             remainingTime: (() => {
-              if (timer.timerInfo!.timerType === "timer") {
+              if (timer.timerType === "timer") {
                 return action.payload.status === "stopped"
-                  ? timer.timerInfo!.duration || 0
+                  ? timer.remainingTime
                   : timer.remainingTime;
               } else {
                 // For countdown timers, always recalculate when status changes
-                return getTimeDifference(
-                  timer.timerInfo?.countdownTime || "00:00"
-                );
+                return getTimeDifference(timer.countdownTime || "00:00");
               }
             })(),
           };
@@ -91,7 +81,7 @@ export const timersSlice = createSlice({
     },
     tickTimers: (state) => {
       state.timers.forEach((timer) => {
-        if (timer.isActive && timer.timerInfo!.status === "running") {
+        if (timer.isActive && timer.status === "running") {
           if (timer.remainingTime > 0) {
             timer.remainingTime -= 1;
           }

@@ -124,6 +124,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 fontAdjustment={fontAdjustment}
                 width={width}
                 time={time}
+                timerInfo={timerInfo}
               />
             );
 
@@ -173,6 +174,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 box={box}
                 width={width}
                 time={time}
+                timerInfo={timerInfo}
                 isPrev
               />
             );

@@ -17,7 +17,7 @@ const TimerControls = () => {
   const { _id } = item;
 
   const timer = timers.find((timer) => timer.id === _id);
-  const timerInfo = timer?.timerInfo;
+  const timerInfo = timer;
 
   const [duration, setDuration] = useState<number>(timerInfo?.duration || 60);
   const [countdownTime, setCountdownTime] = useState<string>(

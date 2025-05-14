@@ -139,17 +139,9 @@ const DisplayBox = ({
 
   const renderContent = () => {
     if (words.includes("{{timer}}") && timerInfo) {
-      return (
-        <p className={`display-box-text h-full`} style={textStyles}>
-          <TimerDisplay timerInfo={timerInfo} words={words} />
-        </p>
-      );
+      return <TimerDisplay timerInfo={timerInfo} words={words} />;
     }
-    return (
-      <p className={`display-box-text h-full`} style={textStyles}>
-        {words}
-      </p>
-    );
+    return words;
   };
 
   return (
@@ -182,7 +174,9 @@ const DisplayBox = ({
           alt={box.label}
         />
       )}
-      {renderContent()}
+      <p className="display-box-text h-full" style={textStyles}>
+        {renderContent()}
+      </p>
     </div>
   );
 };

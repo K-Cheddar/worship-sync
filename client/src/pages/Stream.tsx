@@ -7,6 +7,11 @@ const Stream = () => {
     (state) => state.presentation
   );
 
+  const timers = useSelector((state) => state.timers.timers);
+  const streamTimer = timers.find(
+    (timer) => timer.id === streamInfo.timerInfo?.id
+  );
+
   useEffect(() => {
     const keepScreenOn = async () => {
       try {
@@ -33,6 +38,7 @@ const Stream = () => {
       imageOverlayInfo={streamInfo.imageOverlayInfo}
       shouldAnimate
       width={100}
+      timerInfo={streamTimer}
     />
   );
 };

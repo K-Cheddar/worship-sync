@@ -108,10 +108,14 @@ export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";
 export type TimerStatus = "running" | "paused" | "stopped";
 export type TimerType = "timer" | "countdown";
 export type TimerInfo = {
+  id: string;
+  name: string;
   duration?: number;
   countdownTime?: string;
   timerType: TimerType;
   status: TimerStatus;
+  isActive: boolean;
+  remainingTime: number;
 };
 
 export type ItemState = {

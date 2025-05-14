@@ -354,6 +354,10 @@ export const createNewTimer = async ({
       countdownTime: countdownTime,
       timerType: timerType,
       status: "stopped",
+      isActive: false,
+      remainingTime: 0,
+      id: _name,
+      name: _name,
     },
   };
 

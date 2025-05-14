@@ -80,7 +80,7 @@ const ItemSlides = () => {
 
   const timers = useSelector((state: RootState) => state.timers.timers);
   const timer = timers.find((timer) => timer.id === _id);
-  const timerInfo = timer?.timerInfo;
+  const timerInfo = timer;
 
   const arrangement = arrangements[selectedArrangement];
 
@@ -176,6 +176,7 @@ const ItemSlides = () => {
         slide: slides[index],
         type,
         name,
+        timerInfo: timerInfo,
       })
     );
   };

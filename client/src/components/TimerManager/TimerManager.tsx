@@ -9,7 +9,7 @@ const TimerManager = () => {
     (state: RootState) => state.timers
   );
   const hasRunningTimers = timers.some(
-    (timer) => timer.isActive && timer.timerInfo?.status === "running"
+    (timer) => timer.isActive && timer.status === "running"
   );
 
   useEffect(() => {
