@@ -569,9 +569,15 @@ export const presentationSlice = createSlice({
         },
       };
     },
-    updateProjector: (state, action: PayloadAction<Presentation>) => {
+    updateProjector: (
+      state,
+      action: PayloadAction<Presentation & { skipTransmissionCheck?: boolean }>
+    ) => {
       // set previous info for cross animation
-      if (state.isProjectorTransmitting) {
+      if (
+        state.isProjectorTransmitting ||
+        action.payload.skipTransmissionCheck
+      ) {
         state.prevProjectorInfo.slide = state.projectorInfo.slide;
         state.prevProjectorInfo.name = state.projectorInfo.name;
         state.prevProjectorInfo.type = state.projectorInfo.type;
@@ -599,9 +605,12 @@ export const presentationSlice = createSlice({
       state.projectorInfo.time = action.payload.time;
       state.projectorInfo.timerInfo = action.payload.timerInfo;
     },
-    updateMonitor: (state, action: PayloadAction<Presentation>) => {
+    updateMonitor: (
+      state,
+      action: PayloadAction<Presentation & { skipTransmissionCheck?: boolean }>
+    ) => {
       // set previous info for cross animation
-      if (state.isMonitorTransmitting) {
+      if (state.isMonitorTransmitting || action.payload.skipTransmissionCheck) {
         state.prevMonitorInfo.slide = state.monitorInfo.slide;
         state.prevMonitorInfo.name = state.monitorInfo.name;
         state.prevMonitorInfo.type = state.monitorInfo.type;
@@ -629,9 +638,12 @@ export const presentationSlice = createSlice({
       state.monitorInfo.time = action.payload.time;
       state.monitorInfo.timerInfo = action.payload.timerInfo;
     },
-    updateStream: (state, action: PayloadAction<Presentation>) => {
+    updateStream: (
+      state,
+      action: PayloadAction<Presentation & { skipTransmissionCheck?: boolean }>
+    ) => {
       // set previous info for cross animation
-      if (state.isStreamTransmitting) {
+      if (state.isStreamTransmitting || action.payload.skipTransmissionCheck) {
         state.prevStreamInfo.slide = state.streamInfo.slide;
         state.prevStreamInfo.name = state.streamInfo.name;
         state.prevStreamInfo.type = state.streamInfo.type;

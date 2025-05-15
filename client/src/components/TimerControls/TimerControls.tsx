@@ -9,14 +9,22 @@ import CountdownTimeInput from "./CountdownTimeInput";
 import DurationInputs from "./DurationInputs";
 import TimerControlButtons from "./TimerControlButtons";
 import "./TimerControls.scss";
+import {
+  updateMonitor,
+  updateProjector,
+  updateStream,
+} from "../../store/presentationSlice";
 
 const TimerControls = () => {
   const dispatch = useDispatch();
   const item = useSelector((state: RootState) => state.undoable.present.item);
   const timers = useSelector((state: RootState) => state.timers.timers);
   const { _id } = item;
-
   const timer = timers.find((timer) => timer.id === _id);
+
+  const { monitorInfo, projectorInfo, streamInfo } = useSelector(
+    (state) => state.presentation
+  );
 
   const [duration, setDuration] = useState<number>(timer?.duration || 60);
   const [countdownTime, setCountdownTime] = useState<string>(
@@ -34,71 +42,63 @@ const TimerControls = () => {
     }
   }, [timer]);
 
+  const updatePresentationStates = (updatedTimerInfo: TimerInfo) => {
+    const updates = [
+      { info: monitorInfo, action: updateMonitor },
+      { info: projectorInfo, action: updateProjector },
+      { info: streamInfo, action: updateStream },
+    ];
+
+    updates.forEach(({ info, action }) => {
+      if (info.timerInfo?.id === _id) {
+        dispatch(
+          action({
+            ...info,
+            timerInfo: updatedTimerInfo,
+            skipTransmissionCheck: true,
+          })
+        );
+      }
+    });
+  };
+
+  const updateTimerState = (updates: Partial<TimerInfo>) => {
+    if (!timer) return;
+
+    const updatedTimerInfo: TimerInfo = {
+      ...timer,
+      ...updates,
+      timerType,
+      duration: timerType === "timer" ? duration : undefined,
+      countdownTime: timerType === "countdown" ? countdownTime : undefined,
+    };
+
+    dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
+    dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
+    updatePresentationStates(updatedTimerInfo);
+  };
+
   const handleTypeChange = (type: "timer" | "countdown") => {
     setTimerType(type);
-    if (timer) {
-      const updatedTimerInfo: TimerInfo = {
-        ...timer,
-        timerType: type,
-        duration: type === "timer" ? duration : undefined,
-        countdownTime: type === "countdown" ? countdownTime : undefined,
-        status: "stopped",
-      };
-      dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
-      dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
-    }
+    updateTimerState({ timerType: type, status: "stopped" });
   };
 
-  const updateItemTimerInfo = (newStatus: TimerStatus) => {
-    if (timer) {
-      const updatedTimerInfo: TimerInfo = {
-        ...timer,
-        status: newStatus,
-        timerType,
-        duration: timerType === "timer" ? duration : undefined,
-        countdownTime: timerType === "countdown" ? countdownTime : undefined,
-      };
-      dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
-      dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
-    }
-  };
-
-  const handlePlay = () => {
-    updateItemTimerInfo("running");
-  };
-
-  const handlePause = () => {
-    updateItemTimerInfo("paused");
-  };
-
-  const handleStop = () => {
-    updateItemTimerInfo("stopped");
-  };
+  const handlePlay = () =>
+    updateTimerState({
+      status: "running",
+      startedAt: new Date().toISOString(),
+    });
+  const handlePause = () => updateTimerState({ status: "paused" });
+  const handleStop = () => updateTimerState({ status: "stopped" });
 
   const handleDurationChange = (newDuration: number) => {
     setDuration(newDuration);
-    if (timer) {
-      const updatedTimerInfo: TimerInfo = {
-        ...timer,
-        duration: newDuration,
-        status: "stopped",
-      };
-      dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
-      dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
-    }
+    updateTimerState({ duration: newDuration, status: "stopped" });
   };
 
   const handleCountdownTimeChange = (newTime: string) => {
     setCountdownTime(newTime);
-    if (timer) {
-      const updatedTimerInfo: TimerInfo = {
-        ...timer,
-        countdownTime: newTime,
-        status: "stopped",
-      };
-      dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
-      dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
-    }
+    updateTimerState({ countdownTime: newTime, status: "stopped" });
   };
 
   return (

@@ -1,6 +1,9 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { TimerInfo } from "../types";
-import { getTimeDifference } from "../utils/generalUtils";
+import {
+  getTimeDifference,
+  calculateRemainingTime,
+} from "../utils/generalUtils";
 
 interface TimersState {
   timers: TimerInfo[];
@@ -23,7 +26,11 @@ export const timersSlice = createSlice({
       );
 
       const newTimers = action.payload.map((timerInfo) => {
+        const existingTimer = state.timers.find(
+          (timer) => timer.id === timerInfo?.id
+        );
         if (!timerInfo) return null;
+
         return {
           id: timerInfo.id,
           name: timerInfo.name,
@@ -33,15 +40,10 @@ export const timersSlice = createSlice({
           countdownTime: timerInfo.countdownTime || "00:00",
           duration: timerInfo.duration || 0,
           startedAt: timerInfo.startedAt,
-          remainingTime: (() => {
-            if (timerInfo.timerType === "timer") {
-              return timerInfo.duration || 0;
-            }
-            if (timerInfo.countdownTime) {
-              return getTimeDifference(timerInfo.countdownTime);
-            }
-            return 0;
-          })(),
+          remainingTime: calculateRemainingTime({
+            timerInfo,
+            previousStatus: existingTimer?.status,
+          }),
         };
       });
 
@@ -59,43 +61,21 @@ export const timersSlice = createSlice({
       state,
       action: PayloadAction<{ id: string; timerInfo: TimerInfo }>
     ) => {
+      const { id, timerInfo } = action.payload;
       state.timers = state.timers.map((timer) => {
-        if (timer.id === action.payload.id) {
+        if (timer.id === id) {
           return {
             ...timer,
-            status: action.payload.timerInfo.status,
-            isActive: action.payload.timerInfo.status === "running",
-            countdownTime: action.payload.timerInfo.countdownTime,
-            duration: action.payload.timerInfo.duration,
-            timerType: action.payload.timerInfo.timerType,
-            startedAt:
-              action.payload.timerInfo.status === "running"
-                ? new Date().toISOString()
-                : timer.startedAt,
-            remainingTime: (() => {
-              if (timer.timerType === "timer") {
-                const isStopping =
-                  action.payload.timerInfo.status === "stopped";
-                const isStartingFromStopped =
-                  action.payload.timerInfo.status === "running" &&
-                  timer.status === "stopped";
-
-                // Reset timer to full duration when:
-                // 1. Timer is explicitly stopped
-                // 2. Timer is started from a stopped state
-                if (isStopping || isStartingFromStopped) {
-                  return timer.duration || 0;
-                }
-
-                // Keep current time when:
-                // 1. Pausing the timer
-                // 2. Resuming from paused state
-                return timer.remainingTime;
-              } else {
-                // For countdown timers, always recalculate based on target time
-                return getTimeDifference(timer.countdownTime || "00:00");
-              }
-            })(),
+            status: timerInfo.status,
+            isActive: timerInfo.status === "running",
+            countdownTime: timerInfo.countdownTime,
+            duration: timerInfo.duration,
+            timerType: timerInfo.timerType,
+            startedAt: timerInfo.startedAt,
+            remainingTime: calculateRemainingTime({
+              timerInfo,
+              previousStatus: timer.status,
+            }),
           };
         }
         return timer;

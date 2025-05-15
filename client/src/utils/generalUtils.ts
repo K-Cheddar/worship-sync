@@ -220,3 +220,58 @@ export const getTimeDifference = (timeString: string) => {
   const secondsDiff = Math.floor((targetTime.getTime() - now.getTime()) / 1000);
   return secondsDiff;
 };
+
+type CalculateRemainingTimeParams = {
+  timerInfo: {
+    timerType: "timer" | "countdown";
+    status: "running" | "paused" | "stopped";
+    duration?: number;
+    countdownTime?: string;
+    remainingTime?: number;
+    startedAt?: string;
+  };
+  previousStatus?: "running" | "paused" | "stopped";
+};
+
+export const calculateRemainingTime = ({
+  timerInfo,
+  previousStatus,
+}: CalculateRemainingTimeParams): number => {
+  if (timerInfo.timerType === "timer") {
+    const isStopping = timerInfo.status === "stopped";
+    const isStartingFromStopped =
+      timerInfo.status === "running" && previousStatus === "stopped";
+    const isResumingFromPaused =
+      timerInfo.status === "running" && previousStatus === "paused";
+
+    // Reset timer to full duration when:
+    // 1. Timer is explicitly stopped
+    // 2. Timer is started from a stopped state
+    if (isStopping || isStartingFromStopped) {
+      return timerInfo.duration || 0;
+    }
+
+    // Keep current time when:
+    // 1. Pausing the timer
+    // 2. Resuming from paused state
+    if (timerInfo.status === "paused" || isResumingFromPaused) {
+      return timerInfo.remainingTime || 0;
+    }
+
+    // If timer is running and has a startedAt time, calculate elapsed time
+    if (timerInfo.status === "running" && timerInfo.startedAt) {
+      const startedAt = new Date(timerInfo.startedAt);
+      const now = new Date();
+      const elapsedSeconds = Math.floor(
+        (now.getTime() - startedAt.getTime()) / 1000
+      );
+      const remainingTime = (timerInfo.duration || 0) - elapsedSeconds;
+      return Math.max(0, remainingTime); // Ensure we don't return negative time
+    }
+
+    return timerInfo.remainingTime || 0;
+  } else {
+    // For countdown timers, always recalculate based on target time
+    return getTimeDifference(timerInfo.countdownTime || "00:00");
+  }
+};
