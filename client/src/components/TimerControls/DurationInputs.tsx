@@ -17,7 +17,8 @@ const DurationInputs: React.FC<DurationInputsProps> = ({
       <Input
         label="Hours"
         type="number"
-        className="flex gap-1 items-center w-24"
+        className="flex gap-1 items-center"
+        inputWidth="w-12"
         min={0}
         value={Math.floor(duration / 3600)}
         onChange={(val) => {
@@ -31,7 +32,8 @@ const DurationInputs: React.FC<DurationInputsProps> = ({
       <Input
         label="Minutes"
         type="number"
-        className="flex gap-1 items-center w-24"
+        className="flex gap-1 items-center"
+        inputWidth="w-12"
         min={0}
         max={59}
         value={Math.floor((duration % 3600) / 60)}
@@ -46,7 +48,8 @@ const DurationInputs: React.FC<DurationInputsProps> = ({
       <Input
         label="Seconds"
         type="number"
-        className="flex gap-1 items-center w-24"
+        className="flex gap-1 items-center"
+        inputWidth="w-12"
         min={0}
         max={59}
         value={duration % 60}

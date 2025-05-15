@@ -1,8 +1,10 @@
-import { useSelector } from "../hooks";
+import { useDispatch, useSelector } from "../hooks";
 import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
 import { useEffect } from "react";
+import { syncTimers } from "../store/timersSlice";
 
 const Stream = () => {
+  const dispatch = useDispatch();
   const { streamInfo, prevStreamInfo } = useSelector(
     (state) => state.presentation
   );
@@ -11,6 +13,12 @@ const Stream = () => {
   const streamTimer = timers.find(
     (timer) => timer.id === streamInfo.timerInfo?.id
   );
+
+  useEffect(() => {
+    if (streamInfo.timerInfo) {
+      dispatch(syncTimers([streamInfo.timerInfo]));
+    }
+  }, [streamInfo.timerInfo, dispatch]);
 
   useEffect(() => {
     const keepScreenOn = async () => {

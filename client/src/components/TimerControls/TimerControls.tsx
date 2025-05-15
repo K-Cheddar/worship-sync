@@ -1,6 +1,6 @@
 import { useDispatch, useSelector } from "../../hooks";
 import { TimerStatus, TimerInfo } from "../../types";
-import { syncTimers } from "../../store/timersSlice";
+import { updateTimer } from "../../store/timersSlice";
 import { updateTimerInfo } from "../../store/itemSlice";
 import { RootState } from "../../store/store";
 import { useState, useEffect } from "react";
@@ -17,50 +17,49 @@ const TimerControls = () => {
   const { _id } = item;
 
   const timer = timers.find((timer) => timer.id === _id);
-  const timerInfo = timer;
 
-  const [duration, setDuration] = useState<number>(timerInfo?.duration || 60);
+  const [duration, setDuration] = useState<number>(timer?.duration || 60);
   const [countdownTime, setCountdownTime] = useState<string>(
-    timerInfo?.countdownTime || "00:00"
+    timer?.countdownTime || "00:00"
   );
   const [timerType, setTimerType] = useState<"timer" | "countdown">(
-    timerInfo?.timerType || "timer"
+    timer?.timerType || "timer"
   );
 
   useEffect(() => {
-    if (timerInfo) {
-      setTimerType(timerInfo.timerType);
-      setDuration(timerInfo.duration || 60);
-      setCountdownTime(timerInfo.countdownTime || "00:00");
+    if (timer) {
+      setTimerType(timer.timerType);
+      setDuration(timer.duration || 60);
+      setCountdownTime(timer.countdownTime || "00:00");
     }
-  }, [timerInfo]);
+  }, [timer]);
 
   const handleTypeChange = (type: "timer" | "countdown") => {
     setTimerType(type);
-    if (item.timerInfo) {
+    if (timer) {
       const updatedTimerInfo: TimerInfo = {
-        ...item.timerInfo,
+        ...timer,
         timerType: type,
         duration: type === "timer" ? duration : undefined,
         countdownTime: type === "countdown" ? countdownTime : undefined,
         status: "stopped",
       };
       dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
-      dispatch(syncTimers([{ ...item, timerInfo: updatedTimerInfo }]));
+      dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
     }
   };
 
   const updateItemTimerInfo = (newStatus: TimerStatus) => {
-    if (item.timerInfo) {
+    if (timer) {
       const updatedTimerInfo: TimerInfo = {
-        ...item.timerInfo,
+        ...timer,
         status: newStatus,
         timerType,
         duration: timerType === "timer" ? duration : undefined,
         countdownTime: timerType === "countdown" ? countdownTime : undefined,
       };
       dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
-      dispatch(syncTimers([{ ...item, timerInfo: updatedTimerInfo }]));
+      dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
     }
   };
 
@@ -78,32 +77,32 @@ const TimerControls = () => {
 
   const handleDurationChange = (newDuration: number) => {
     setDuration(newDuration);
-    if (item.timerInfo) {
+    if (timer) {
       const updatedTimerInfo: TimerInfo = {
-        ...item.timerInfo,
+        ...timer,
         duration: newDuration,
         status: "stopped",
       };
       dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
-      dispatch(syncTimers([{ ...item, timerInfo: updatedTimerInfo }]));
+      dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
     }
   };
 
   const handleCountdownTimeChange = (newTime: string) => {
     setCountdownTime(newTime);
-    if (item.timerInfo) {
+    if (timer) {
       const updatedTimerInfo: TimerInfo = {
-        ...item.timerInfo,
+        ...timer,
         countdownTime: newTime,
         status: "stopped",
       };
       dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
-      dispatch(syncTimers([{ ...item, timerInfo: updatedTimerInfo }]));
+      dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
     }
   };
 
   return (
-    <div className="timer-controls flex gap-2">
+    <div className="timer-controls flex gap-2 items-center max-lg:flex-col max-lg:gap-4">
       <TimerTypeSelector
         timerType={timerType}
         onTypeChange={handleTypeChange}
@@ -125,7 +124,7 @@ const TimerControls = () => {
       )}
 
       <TimerControlButtons
-        status={timerInfo?.status || "stopped"}
+        status={timer?.status || "stopped"}
         onPlay={handlePlay}
         onPause={handlePause}
         onStop={handleStop}

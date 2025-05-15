@@ -79,7 +79,8 @@ export const updateAllDocs = async (dispatch: Function) => {
       .filter((row) => (row.doc as any)?.type === "timer")
       .map((row) => row.doc as DBItem);
 
-    dispatch(syncTimers(allTimers));
+    const allTimersInfo = allTimers.map((timer) => timer.timerInfo);
+    dispatch(syncTimers(allTimersInfo));
 
     dispatch(updateAllSongDocs(allSongs));
     dispatch(updateAllFreeFormDocs(allFreeFormDocs));

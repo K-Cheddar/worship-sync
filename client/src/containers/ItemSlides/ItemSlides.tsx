@@ -79,8 +79,7 @@ const ItemSlides = () => {
   } = useSelector((state: RootState) => state.undoable.present.item);
 
   const timers = useSelector((state: RootState) => state.timers.timers);
-  const timer = timers.find((timer) => timer.id === _id);
-  const timerInfo = timer;
+  const timerInfo = timers.find((timer) => timer.id === _id);
 
   const arrangement = arrangements[selectedArrangement];
 
@@ -176,7 +175,7 @@ const ItemSlides = () => {
         slide: slides[index],
         type,
         name,
-        timerInfo: timerInfo,
+        timerInfo,
       })
     );
   };

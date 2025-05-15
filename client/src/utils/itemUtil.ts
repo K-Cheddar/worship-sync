@@ -358,6 +358,7 @@ export const createNewTimer = async ({
       remainingTime: 0,
       id: _name,
       name: _name,
+      startedAt: undefined,
     },
   };
 

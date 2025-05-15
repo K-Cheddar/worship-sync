@@ -170,7 +170,7 @@ const CreateItem = () => {
       });
 
       dispatchNewItem(newItem);
-      dispatch(syncTimers([newItem]));
+      dispatch(syncTimers([newItem.timerInfo]));
     }
 
     setItemName("");

@@ -20,6 +20,7 @@ type InputProps = HTMLProps<HTMLInputElement> & {
   svgClassName?: string;
   inputTextSize?: string;
   hideSpinButtons?: boolean;
+  inputWidth?: string;
 };
 
 const Input = ({
@@ -40,6 +41,7 @@ const Input = ({
   svgClassName = "right-px",
   inputTextSize = "text-sm",
   hideSpinButtons = true,
+  inputWidth = "w-full",
   ...rest
 }: InputProps) => {
   const inputId = id || generateRandomId();
@@ -64,10 +66,11 @@ const Input = ({
       <span className="relative w-full">
         <input
           className={cn(
-            "w-full rounded py-1 pl-2 text-black",
+            "rounded py-1 pl-2 text-black",
             svg ? "pr-6" : "pr-2",
             disabled && "opacity-50",
-            inputTextSize
+            inputTextSize,
+            inputWidth
           )}
           type={type}
           value={value}

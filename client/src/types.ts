@@ -116,6 +116,7 @@ export type TimerInfo = {
   status: TimerStatus;
   isActive: boolean;
   remainingTime: number;
+  startedAt?: string;
 };
 
 export type ItemState = {

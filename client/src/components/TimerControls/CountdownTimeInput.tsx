@@ -18,7 +18,7 @@ const CountdownTimeInput: React.FC<CountdownTimeInputProps> = ({
         type="time"
         label="Countdown To"
         className="flex gap-1 items-center"
-        labelClassName="w-44"
+        labelClassName="w-48"
         value={countdownTime}
         onChange={(val) => onTimeChange(val as string)}
       />

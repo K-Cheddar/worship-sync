@@ -1,8 +1,10 @@
-import { useSelector } from "../hooks";
+import { useDispatch, useSelector } from "../hooks";
 import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
 import { useEffect } from "react";
+import { syncTimers } from "../store/timersSlice";
 
 const ProjectorFull = () => {
+  const dispatch = useDispatch();
   const { projectorInfo, prevProjectorInfo } = useSelector(
     (state) => state.presentation
   );
@@ -11,6 +13,12 @@ const ProjectorFull = () => {
   const projectorTimer = timers.find(
     (timer) => timer.id === projectorInfo.timerInfo?.id
   );
+
+  useEffect(() => {
+    if (projectorInfo.timerInfo) {
+      dispatch(syncTimers([projectorInfo.timerInfo]));
+    }
+  }, [projectorInfo.timerInfo, dispatch]);
 
   useEffect(() => {
     const keepScreenOn = async () => {

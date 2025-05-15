@@ -45,6 +45,7 @@ const TransmitHandler = () => {
     (timer) => timer.id === streamInfo.timerInfo?.id
   );
 
+  console.log({ streamTimer });
   const dispatch = useDispatch();
 
   const { isMediaExpanded } = useSelector((state) => state.preferences);

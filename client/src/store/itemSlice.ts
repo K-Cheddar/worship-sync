@@ -28,6 +28,7 @@ const initialState: ItemState = {
     duration: 60,
     status: "stopped",
     remainingTime: 0,
+    startedAt: undefined,
   },
   isLoading: true,
   hasPendingUpdate: false,

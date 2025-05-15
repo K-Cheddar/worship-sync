@@ -1,8 +1,10 @@
-import { useSelector } from "../hooks";
+import { useDispatch, useSelector } from "../hooks";
 import Presentation from "../containers/PresentationPage";
 import { useEffect } from "react";
+import { syncTimers } from "../store/timersSlice";
 
 const Monitor = () => {
+  const dispatch = useDispatch();
   const { monitorInfo, prevMonitorInfo } = useSelector(
     (state) => state.presentation
   );
@@ -11,6 +13,12 @@ const Monitor = () => {
   const monitorTimer = timers.find(
     (timer) => timer.id === monitorInfo.timerInfo?.id
   );
+
+  useEffect(() => {
+    if (monitorInfo.timerInfo) {
+      dispatch(syncTimers([monitorInfo.timerInfo]));
+    }
+  }, [monitorInfo.timerInfo, dispatch]);
 
   useEffect(() => {
     const keepScreenOn = async () => {
