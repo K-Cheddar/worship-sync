@@ -3,14 +3,16 @@ import { TimerInfo } from "../../types";
 import { RootState } from "../../store/store";
 
 interface TimerDisplayProps {
-  timerInfo: TimerInfo;
+  timerInfo?: TimerInfo;
   words: string;
 }
 
 const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   const timer = useSelector((state: RootState) =>
-    state.timers.timers.find((t) => t.id === timerInfo.id)
+    state.timers.timers.find((t) => t.id === timerInfo?.id)
   );
+
+  if (!timerInfo) return <>{words.replace("{{timer}}", "")}</>;
 
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);

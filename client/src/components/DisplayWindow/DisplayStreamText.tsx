@@ -87,7 +87,7 @@ const DisplayStreamText = ({
   };
 
   const renderContent = () => {
-    if (words.includes("{{timer}}") && timerInfo) {
+    if (words.includes("{{timer}}")) {
       return <TimerDisplay timerInfo={timerInfo} words={words} />;
     }
     return words;
