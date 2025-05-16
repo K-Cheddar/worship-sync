@@ -1,7 +1,6 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { ServiceItem } from "../types";
 import generateRandomId from "../utils/generateRandomId";
-import { syncTimers } from "./timersSlice";
 
 type ItemListState = {
   list: ServiceItem[];

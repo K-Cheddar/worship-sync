@@ -4,7 +4,6 @@ import {
   updateAllSongDocs,
   updateAllTimerDocs,
 } from "../store/allDocsSlice";
-import { syncTimers } from "../store/timersSlice";
 import {
   allDocsType,
   DBAllItems,
@@ -78,9 +77,6 @@ export const updateAllDocs = async (dispatch: Function) => {
     const allTimers = allDocs.rows
       .filter((row) => (row.doc as any)?.type === "timer")
       .map((row) => row.doc as DBItem);
-
-    const allTimersInfo = allTimers.map((timer) => timer.timerInfo);
-    dispatch(syncTimers(allTimersInfo));
 
     dispatch(updateAllSongDocs(allSongs));
     dispatch(updateAllFreeFormDocs(allFreeFormDocs));

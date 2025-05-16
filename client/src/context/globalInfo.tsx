@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 import { getDatabase, Database } from "firebase/database";
 import PouchDB from "pouchdb";
-import { DBLogin } from "../types";
+import { DBLogin, TimerInfo } from "../types";
 import { useNavigate } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import { ref, onValue, Unsubscribe } from "firebase/database";
@@ -74,6 +74,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_stbOverlayInfo: Unsubscribe | undefined;
     stream_qrCodeOverlayInfo: Unsubscribe | undefined;
     stream_imageOverlayInfo: Unsubscribe | undefined;
+    timerInfo: Unsubscribe | undefined;
   }>({
     projectorInfo: undefined,
     monitorInfo: undefined,
@@ -83,6 +84,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_stbOverlayInfo: undefined,
     stream_qrCodeOverlayInfo: undefined,
     stream_imageOverlayInfo: undefined,
+    timerInfo: undefined,
   });
 
   const navigate = useNavigate();
@@ -91,7 +93,7 @@ const GlobalInfoProvider = ({ children }: any) => {
   const updateFromRemote = useCallback(
     (data: any) => {
       type updateInfoChildType = {
-        info: PresentationType | BibleDisplayInfo | OverlayInfo;
+        info: PresentationType | BibleDisplayInfo | OverlayInfo | TimerInfo;
         updateAction: string;
       };
 
@@ -127,6 +129,10 @@ const GlobalInfoProvider = ({ children }: any) => {
         stream_imageOverlayInfo: {
           info: data.stream_imageOverlayInfo,
           updateAction: "debouncedUpdateImageOverlayInfo",
+        },
+        timerInfo: {
+          info: data.timerInfo,
+          updateAction: "debouncedUpdateTimerInfo",
         },
       };
 

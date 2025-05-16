@@ -95,7 +95,7 @@ export type DBItem = {
     version: string;
     verses: verseType[];
   };
-  timerInfo?: TimerInfo;
+  timerId?: string;
   arrangements: {
     name: string;
     formattedLyrics: FormattedLyrics[];
@@ -108,6 +108,8 @@ export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";
 export type TimerStatus = "running" | "paused" | "stopped";
 export type TimerType = "timer" | "countdown";
 export type TimerInfo = {
+  hostId: string;
+  time?: number;
   id: string;
   name: string;
   duration?: number;
@@ -141,7 +143,7 @@ export type ItemState = {
   };
   isLoading?: boolean;
   hasPendingUpdate?: boolean;
-  timerInfo?: TimerInfo;
+  timerId?: string;
 };
 
 export type OptionalItemState = {
@@ -194,7 +196,7 @@ export type Presentation = {
   participantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
-  timerInfo?: TimerInfo;
+  timerId?: string;
   qrCodeOverlayInfo?: OverlayInfo;
   imageOverlayInfo?: OverlayInfo;
 };

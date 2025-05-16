@@ -1,7 +1,6 @@
 import { useDispatch, useSelector } from "../../hooks";
-import { TimerStatus, TimerInfo } from "../../types";
+import { TimerInfo } from "../../types";
 import { updateTimer } from "../../store/timersSlice";
-import { updateTimerInfo } from "../../store/itemSlice";
 import { RootState } from "../../store/store";
 import { useState, useEffect } from "react";
 import TimerTypeSelector from "./TimerTypeSelector";
@@ -9,11 +8,6 @@ import CountdownTimeInput from "./CountdownTimeInput";
 import DurationInputs from "./DurationInputs";
 import TimerControlButtons from "./TimerControlButtons";
 import "./TimerControls.scss";
-import {
-  updateMonitor,
-  updateProjector,
-  updateStream,
-} from "../../store/presentationSlice";
 
 const TimerControls = () => {
   const dispatch = useDispatch();
@@ -21,10 +15,6 @@ const TimerControls = () => {
   const timers = useSelector((state: RootState) => state.timers.timers);
   const { _id } = item;
   const timer = timers.find((timer) => timer.id === _id);
-
-  const { monitorInfo, projectorInfo, streamInfo } = useSelector(
-    (state) => state.presentation
-  );
 
   const [duration, setDuration] = useState<number>(timer?.duration || 60);
   const [countdownTime, setCountdownTime] = useState<string>(
@@ -42,26 +32,6 @@ const TimerControls = () => {
     }
   }, [timer]);
 
-  const updatePresentationStates = (updatedTimerInfo: TimerInfo) => {
-    const updates = [
-      { info: monitorInfo, action: updateMonitor },
-      { info: projectorInfo, action: updateProjector },
-      { info: streamInfo, action: updateStream },
-    ];
-
-    updates.forEach(({ info, action }) => {
-      if (info.timerInfo?.id === _id) {
-        dispatch(
-          action({
-            ...info,
-            timerInfo: updatedTimerInfo,
-            skipTransmissionCheck: true,
-          })
-        );
-      }
-    });
-  };
-
   const updateTimerState = (updates: Partial<TimerInfo>) => {
     if (!timer) return;
 
@@ -73,9 +43,7 @@ const TimerControls = () => {
       countdownTime: timerType === "countdown" ? countdownTime : undefined,
     };
 
-    dispatch(updateTimerInfo({ timerInfo: updatedTimerInfo }));
     dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
-    updatePresentationStates(updatedTimerInfo);
   };
 
   const handleTypeChange = (type: "timer" | "countdown") => {

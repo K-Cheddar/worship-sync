@@ -20,16 +20,7 @@ const initialState: ItemState = {
   slides: [],
   selectedBox: 1,
   bibleInfo: { book: "", chapter: "", version: "", verses: [] },
-  timerInfo: {
-    id: "",
-    name: "",
-    isActive: false,
-    timerType: "timer",
-    duration: 60,
-    status: "stopped",
-    remainingTime: 0,
-    startedAt: undefined,
-  },
+  timerId: "",
   isLoading: true,
   hasPendingUpdate: false,
 };
@@ -55,7 +46,7 @@ export const itemSlice = createSlice({
         version: "",
         verses: [],
       };
-      state.timerInfo = action.payload.timerInfo;
+      state.timerId = action.payload.timerId;
     },
     toggleEditMode: (state) => {
       state.isEditMode = !state.isEditMode;
@@ -91,10 +82,6 @@ export const itemSlice = createSlice({
     },
     setSelectedBox: (state, action: PayloadAction<number>) => {
       state.selectedBox = action.payload;
-    },
-    _updateTimerInfo: (state, action: PayloadAction<TimerInfo>) => {
-      state.timerInfo = action.payload;
-      state.hasPendingUpdate = true;
     },
   },
 });
@@ -343,13 +330,6 @@ export const updateSlides = createAsyncThunk(
   }
 );
 
-export const updateTimerInfo = createAsyncThunk(
-  "item/updateTimerInfo",
-  async (args: { timerInfo: TimerInfo }, { dispatch }) => {
-    dispatch(_updateTimerInfo(args.timerInfo));
-  }
-);
-
 export const {
   setSelectedSlide,
   _setSelectedArrangement,
@@ -362,7 +342,6 @@ export const {
   setBackground,
   setHasPendingUpdate,
   setSelectedBox,
-  _updateTimerInfo,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

@@ -22,10 +22,10 @@ import {
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
-import { ItemState, ItemType, ServiceItem } from "../../types";
+import { ItemState, ItemType, ServiceItem, TimerStatus } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { syncTimers } from "../../store/timersSlice";
+import { addTimer } from "../../store/timersSlice";
 
 type ItemTypesType = {
   type: ItemType;
@@ -66,6 +66,7 @@ const CreateItem = () => {
   const { selectedList } = useSelector(
     (state: any) => state.undoable.present.itemLists
   );
+  const { hostId } = useSelector((state: any) => state.timers);
   const [searchParams] = useSearchParams();
   const initialType = decodeURI(
     searchParams.get("type") || savedType || "song"
@@ -164,13 +165,23 @@ const CreateItem = () => {
         list,
         db,
         selectedList,
+      });
+
+      const timerInfo = {
+        hostId: hostId,
         duration,
         countdownTime: time,
         timerType,
-      });
+        status: "stopped" as TimerStatus,
+        isActive: false,
+        remainingTime: 0,
+        id: newItem._id,
+        name: itemName,
+        startedAt: undefined,
+      };
 
       dispatchNewItem(newItem);
-      dispatch(syncTimers([newItem.timerInfo]));
+      dispatch(addTimer(timerInfo));
     }
 
     setItemName("");

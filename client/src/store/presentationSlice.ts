@@ -55,12 +55,12 @@ export const presentationSlice = createSlice({
         state.prevProjectorInfo.name = state.projectorInfo.name;
         state.prevProjectorInfo.type = state.projectorInfo.type;
         state.prevProjectorInfo.time = state.projectorInfo.time;
-        state.prevProjectorInfo.timerInfo = state.projectorInfo.timerInfo;
+        state.prevProjectorInfo.timerId = state.projectorInfo.timerId;
 
         state.projectorInfo.slide = action.payload.slide;
         state.projectorInfo.name = action.payload.name;
         state.projectorInfo.type = action.payload.type;
-        state.projectorInfo.timerInfo = action.payload.timerInfo;
+        state.projectorInfo.timerId = action.payload.timerId;
         state.projectorInfo.time = Date.now();
       }
       if (state.isMonitorTransmitting) {
@@ -69,12 +69,12 @@ export const presentationSlice = createSlice({
         state.prevMonitorInfo.name = state.monitorInfo.name;
         state.prevMonitorInfo.type = state.monitorInfo.type;
         state.prevMonitorInfo.time = state.monitorInfo.time;
-        state.prevMonitorInfo.timerInfo = state.monitorInfo.timerInfo;
+        state.prevMonitorInfo.timerId = state.monitorInfo.timerId;
 
         state.monitorInfo.slide = action.payload.slide;
         state.monitorInfo.name = action.payload.name;
         state.monitorInfo.type = action.payload.type;
-        state.monitorInfo.timerInfo = action.payload.timerInfo;
+        state.monitorInfo.timerId = action.payload.timerId;
         state.monitorInfo.time = Date.now();
       }
       if (state.isStreamTransmitting) {
@@ -83,14 +83,14 @@ export const presentationSlice = createSlice({
         state.prevStreamInfo.name = state.streamInfo.name;
         state.prevStreamInfo.type = state.streamInfo.type;
         state.prevStreamInfo.time = state.streamInfo.time;
-        state.prevStreamInfo.timerInfo = state.streamInfo.timerInfo;
+        state.prevStreamInfo.timerId = state.streamInfo.timerId;
         if (action.payload.type !== "bible") {
           state.streamInfo.slide = action.payload.slide;
         }
 
         state.streamInfo.name = action.payload.name;
         state.streamInfo.type = action.payload.type;
-        state.streamInfo.timerInfo = action.payload.timerInfo;
+        state.streamInfo.timerId = action.payload.timerId;
         state.streamInfo.time = Date.now();
       }
     },
@@ -445,7 +445,7 @@ export const presentationSlice = createSlice({
       state.prevProjectorInfo.name = state.projectorInfo.name;
       state.prevProjectorInfo.type = state.projectorInfo.type;
       state.prevProjectorInfo.time = state.projectorInfo.time;
-      state.prevProjectorInfo.timerInfo = state.projectorInfo.timerInfo;
+      state.prevProjectorInfo.timerId = state.projectorInfo.timerId;
 
       state.projectorInfo = {
         ...initialState.projectorInfo,
@@ -458,7 +458,7 @@ export const presentationSlice = createSlice({
       state.prevMonitorInfo.name = state.monitorInfo.name;
       state.prevMonitorInfo.type = state.monitorInfo.type;
       state.prevMonitorInfo.time = state.monitorInfo.time;
-      state.prevMonitorInfo.timerInfo = state.monitorInfo.timerInfo;
+      state.prevMonitorInfo.timerId = state.monitorInfo.timerId;
 
       state.monitorInfo = {
         ...initialState.monitorInfo,
@@ -471,7 +471,7 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.name = state.streamInfo.name;
       state.prevStreamInfo.type = state.streamInfo.type;
       state.prevStreamInfo.time = state.streamInfo.time;
-      state.prevStreamInfo.timerInfo = state.streamInfo.timerInfo;
+      state.prevStreamInfo.timerId = state.streamInfo.timerId;
       state.prevStreamInfo.participantOverlayInfo =
         state.streamInfo.participantOverlayInfo;
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
@@ -513,19 +513,19 @@ export const presentationSlice = createSlice({
       state.prevProjectorInfo.name = state.projectorInfo.name;
       state.prevProjectorInfo.type = state.projectorInfo.type;
       state.prevProjectorInfo.time = state.projectorInfo.time;
-      state.prevProjectorInfo.timerInfo = state.projectorInfo.timerInfo;
+      state.prevProjectorInfo.timerId = state.projectorInfo.timerId;
 
       state.prevMonitorInfo.slide = state.monitorInfo.slide;
       state.prevMonitorInfo.name = state.monitorInfo.name;
       state.prevMonitorInfo.type = state.monitorInfo.type;
       state.prevMonitorInfo.time = state.monitorInfo.time;
-      state.prevMonitorInfo.timerInfo = state.monitorInfo.timerInfo;
+      state.prevMonitorInfo.timerId = state.monitorInfo.timerId;
 
       state.prevStreamInfo.slide = state.streamInfo.slide;
       state.prevStreamInfo.name = state.streamInfo.name;
       state.prevStreamInfo.type = state.streamInfo.type;
       state.prevStreamInfo.time = state.streamInfo.time;
-      state.prevStreamInfo.timerInfo = state.streamInfo.timerInfo;
+      state.prevStreamInfo.timerId = state.streamInfo.timerId;
       state.prevStreamInfo.participantOverlayInfo =
         state.streamInfo.participantOverlayInfo;
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
@@ -582,12 +582,12 @@ export const presentationSlice = createSlice({
         state.prevProjectorInfo.name = state.projectorInfo.name;
         state.prevProjectorInfo.type = state.projectorInfo.type;
         state.prevProjectorInfo.time = state.projectorInfo.time;
-        state.prevProjectorInfo.timerInfo = state.projectorInfo.timerInfo;
+        state.prevProjectorInfo.timerId = state.projectorInfo.timerId;
 
         state.projectorInfo.slide = action.payload.slide;
         state.projectorInfo.type = action.payload.type;
         state.projectorInfo.name = action.payload.name;
-        state.projectorInfo.timerInfo = action.payload.timerInfo;
+        state.projectorInfo.timerId = action.payload.timerId;
         state.projectorInfo.time = Date.now();
       }
     },
@@ -597,13 +597,13 @@ export const presentationSlice = createSlice({
       state.prevProjectorInfo.name = state.projectorInfo.name;
       state.prevProjectorInfo.type = state.projectorInfo.type;
       state.prevProjectorInfo.time = state.projectorInfo.time;
-      state.prevProjectorInfo.timerInfo = state.projectorInfo.timerInfo;
+      state.prevProjectorInfo.timerId = state.projectorInfo.timerId;
 
       state.projectorInfo.slide = action.payload.slide;
       state.projectorInfo.name = action.payload.name;
       state.projectorInfo.type = action.payload.type;
       state.projectorInfo.time = action.payload.time;
-      state.projectorInfo.timerInfo = action.payload.timerInfo;
+      state.projectorInfo.timerId = action.payload.timerId;
     },
     updateMonitor: (
       state,
@@ -615,12 +615,12 @@ export const presentationSlice = createSlice({
         state.prevMonitorInfo.name = state.monitorInfo.name;
         state.prevMonitorInfo.type = state.monitorInfo.type;
         state.prevMonitorInfo.time = state.monitorInfo.time;
-        state.prevMonitorInfo.timerInfo = state.monitorInfo.timerInfo;
+        state.prevMonitorInfo.timerId = state.monitorInfo.timerId;
 
         state.monitorInfo.slide = action.payload.slide;
         state.monitorInfo.name = action.payload.name;
         state.monitorInfo.type = action.payload.type;
-        state.monitorInfo.timerInfo = action.payload.timerInfo;
+        state.monitorInfo.timerId = action.payload.timerId;
         state.monitorInfo.time = Date.now();
       }
     },
@@ -630,13 +630,13 @@ export const presentationSlice = createSlice({
       state.prevMonitorInfo.name = state.monitorInfo.name;
       state.prevMonitorInfo.type = state.monitorInfo.type;
       state.prevMonitorInfo.time = state.monitorInfo.time;
-      state.prevMonitorInfo.timerInfo = state.monitorInfo.timerInfo;
+      state.prevMonitorInfo.timerId = state.monitorInfo.timerId;
 
       state.monitorInfo.slide = action.payload.slide;
       state.monitorInfo.name = action.payload.name;
       state.monitorInfo.type = action.payload.type;
       state.monitorInfo.time = action.payload.time;
-      state.monitorInfo.timerInfo = action.payload.timerInfo;
+      state.monitorInfo.timerId = action.payload.timerId;
     },
     updateStream: (
       state,
@@ -648,14 +648,14 @@ export const presentationSlice = createSlice({
         state.prevStreamInfo.name = state.streamInfo.name;
         state.prevStreamInfo.type = state.streamInfo.type;
         state.prevStreamInfo.time = state.streamInfo.time;
-        state.prevStreamInfo.timerInfo = state.streamInfo.timerInfo;
+        state.prevStreamInfo.timerId = state.streamInfo.timerId;
         if (action.payload.type !== "bible") {
           state.streamInfo.slide = action.payload.slide;
         }
 
         state.streamInfo.name = action.payload.name;
         state.streamInfo.type = action.payload.type;
-        state.streamInfo.timerInfo = action.payload.timerInfo;
+        state.streamInfo.timerId = action.payload.timerId;
         state.streamInfo.time = Date.now();
       }
     },
@@ -665,7 +665,7 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.name = state.streamInfo.name;
       state.prevStreamInfo.type = state.streamInfo.type;
       state.prevStreamInfo.time = state.streamInfo.time;
-      state.prevStreamInfo.timerInfo = state.streamInfo.timerInfo;
+      state.prevStreamInfo.timerId = state.streamInfo.timerId;
 
       if (action.payload.type !== "bible") {
         state.streamInfo.slide = action.payload.slide;
@@ -674,7 +674,7 @@ export const presentationSlice = createSlice({
       state.streamInfo.name = action.payload.name;
       state.streamInfo.type = action.payload.type;
       state.streamInfo.time = action.payload.time;
-      state.streamInfo.timerInfo = action.payload.timerInfo;
+      state.streamInfo.timerId = action.payload.timerId;
     },
   },
 });

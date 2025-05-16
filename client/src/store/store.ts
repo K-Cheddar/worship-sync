@@ -28,7 +28,7 @@ import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
 import { globalDb as db } from "../context/controllerInfo";
 import { globalFireDbInfo } from "../context/globalInfo";
-import { ref, set } from "firebase/database";
+import { ref, set, get } from "firebase/database";
 import {
   BibleDisplayInfo,
   DBAllItems,
@@ -39,10 +39,11 @@ import {
   DBMedia,
   OverlayInfo,
   Presentation,
+  TimerInfo,
 } from "../types";
 import { allDocsSlice } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
-import { timersSlice } from "./timersSlice";
+import { timersSlice, updateTimerFromRemote } from "./timersSlice";
 
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
@@ -134,7 +135,7 @@ listenerMiddleware.startListening({
       arrangements: item.arrangements,
       selectedArrangement: item.selectedArrangement,
       bibleInfo: item.bibleInfo,
-      timerInfo: item.timerInfo,
+      timerId: item.timerId,
     };
     db.put(db_item);
   },
@@ -272,6 +273,55 @@ listenerMiddleware.startListening({
     const db_itemList: DBItemListDetails = await db.get(selectedList._id);
     db_itemList.overlays = [...list];
     db.put(db_itemList);
+  },
+});
+
+// handle updating timers
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).timers !==
+        (previousState as RootState).timers &&
+      action.type !== "timers/updateTimerFromRemote" &&
+      action.type !== "timers/syncTimers" &&
+      action.type !== "timers/syncTimersFromRemote" &&
+      action.type !== "timers/setIntervalId" &&
+      action.type !== "timers/setHostId" &&
+      action.type !== "RESET"
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    let state = listenerApi.getState() as RootState;
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(250);
+
+    // update firebase with timers
+    const { timers, hostId } = state.timers;
+
+    const ownTimers = timers.filter((timer) => timer.hostId === hostId);
+    if (ownTimers.length > 0) {
+      localStorage.setItem("timerInfo", JSON.stringify(ownTimers));
+      console.log("Updating", ownTimers, hostId);
+
+      if (globalFireDbInfo.db && globalFireDbInfo.user) {
+        // Get current timers from Firebase
+        const timersRef = ref(
+          globalFireDbInfo.db,
+          "users/" + globalFireDbInfo.user + "/v2/timers"
+        );
+
+        // Get current timers and merge with own timers
+        const snapshot = await get(timersRef);
+        const currentTimers = snapshot.val() || [];
+        const otherTimers = currentTimers.filter(
+          (timer: TimerInfo) => timer.hostId !== hostId
+        );
+        const mergedTimers = [...otherTimers, ...ownTimers];
+
+        set(timersRef, cleanObject(mergedTimers));
+      }
+    }
   },
 });
 
@@ -649,6 +699,32 @@ listenerMiddleware.startListening({
     listenerApi.dispatch(
       updateImageOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
+  },
+});
+
+// handle updating from remote timer info
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    const { timers, hostId } = (previousState as RootState).timers;
+    const info = action.payload as TimerInfo;
+    const timer = timers.find((timer) => timer.id === info?.id);
+    const isHost = hostId === info?.hostId;
+    return (
+      action.type === "debouncedUpdateTimerInfo" &&
+      !isHost &&
+      !!(
+        (info.time && timer?.time && info.time > timer.time) ||
+        (info.time && !timer?.time)
+      )
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    console.log("Updating timer from remote", action.payload);
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(updateTimerFromRemote(action.payload as TimerInfo));
   },
 });
 

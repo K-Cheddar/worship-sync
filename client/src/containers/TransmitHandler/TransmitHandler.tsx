@@ -36,14 +36,10 @@ const TransmitHandler = () => {
 
   const timers = useSelector((state) => state.timers.timers);
   const projectorTimer = timers.find(
-    (timer) => timer.id === projectorInfo.timerInfo?.id
+    (timer) => timer.id === projectorInfo.timerId
   );
-  const monitorTimer = timers.find(
-    (timer) => timer.id === monitorInfo.timerInfo?.id
-  );
-  const streamTimer = timers.find(
-    (timer) => timer.id === streamInfo.timerInfo?.id
-  );
+  const monitorTimer = timers.find((timer) => timer.id === monitorInfo.timerId);
+  const streamTimer = timers.find((timer) => timer.id === streamInfo.timerId);
 
   const dispatch = useDispatch();
 

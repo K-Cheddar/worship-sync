@@ -175,7 +175,7 @@ const ItemSlides = () => {
         slide: slides[index],
         type,
         name,
-        timerInfo,
+        timerId: timerInfo?.id,
       })
     );
   };

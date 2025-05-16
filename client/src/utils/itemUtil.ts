@@ -318,19 +318,13 @@ type CreateNewTimerType = {
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
   selectedList: ItemList;
-  duration?: number;
-  countdownTime?: string;
-  timerType: TimerType;
 };
 
 export const createNewTimer = async ({
   name,
   list,
   db,
-  duration,
-  countdownTime,
   selectedList,
-  timerType,
 }: CreateNewTimerType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
 
@@ -349,17 +343,7 @@ export const createNewTimer = async ({
       }),
     ],
     arrangements: [],
-    timerInfo: {
-      duration: duration,
-      countdownTime: countdownTime,
-      timerType: timerType,
-      status: "stopped",
-      isActive: false,
-      remainingTime: 0,
-      id: _name,
-      name: _name,
-      startedAt: undefined,
-    },
+    timerId: _name,
   };
 
   const item = await createNewItemInDb({ item: newItem, db, selectedList });

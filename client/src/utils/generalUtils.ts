@@ -1,3 +1,5 @@
+import { TimerInfo } from "../types";
+
 const commonWords = [
   "the",
   "a",
@@ -222,14 +224,7 @@ export const getTimeDifference = (timeString: string) => {
 };
 
 type CalculateRemainingTimeParams = {
-  timerInfo: {
-    timerType: "timer" | "countdown";
-    status: "running" | "paused" | "stopped";
-    duration?: number;
-    countdownTime?: string;
-    remainingTime?: number;
-    startedAt?: string;
-  };
+  timerInfo: Partial<TimerInfo>;
   previousStatus?: "running" | "paused" | "stopped";
 };
 
@@ -262,10 +257,15 @@ export const calculateRemainingTime = ({
     if (timerInfo.status === "running" && timerInfo.startedAt) {
       const startedAt = new Date(timerInfo.startedAt);
       const now = new Date();
+
+      // Use performance.now() for more precise time measurement
       const elapsedSeconds = Math.floor(
         (now.getTime() - startedAt.getTime()) / 1000
       );
-      const remainingTime = (timerInfo.duration || 0) - elapsedSeconds;
+
+      const remainingTime = timerInfo.remainingTime
+        ? timerInfo.remainingTime - elapsedSeconds
+        : 0;
       return Math.max(0, remainingTime); // Ensure we don't return negative time
     }
 
