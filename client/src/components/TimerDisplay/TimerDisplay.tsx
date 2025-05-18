@@ -19,6 +19,11 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
 
+    if (timerInfo.showMinutesOnly) {
+      const totalMinutes = Math.floor(seconds / 60);
+      return totalMinutes.toString();
+    }
+
     if (hours === 0) {
       return [
         minutes.toString().padStart(2, "0"),

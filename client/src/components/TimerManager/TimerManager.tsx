@@ -71,7 +71,7 @@ const TimerManager = () => {
       ].filter((timer) => timer !== undefined);
 
       dispatch(setShouldUpdateTimers(true));
-      set(timersRef, timersWithActiveHosts);
+      set(timersRef, mergedTimers);
       dispatch(syncTimers(mergedTimers));
     };
     removeInactiveTimers();

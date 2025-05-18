@@ -51,6 +51,7 @@ export const timersSlice = createSlice({
           countdownTime: timerInfo.countdownTime || "00:00",
           duration: timerInfo.duration || 0,
           startedAt: timerInfo.startedAt,
+          showMinutesOnly: timerInfo.showMinutesOnly || false,
           remainingTime: calculateRemainingTime({
             timerInfo,
             previousStatus: existingTimer?.status,
@@ -97,6 +98,7 @@ export const timersSlice = createSlice({
             duration: timerInfo.duration,
             timerType: timerInfo.timerType,
             startedAt: timerInfo.startedAt,
+            showMinutesOnly: timerInfo.showMinutesOnly,
             remainingTime: calculateRemainingTime({
               timerInfo,
               previousStatus: timer.status,

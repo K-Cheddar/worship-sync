@@ -295,7 +295,7 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
+    await listenerApi.delay(250);
 
     // update firebase with timers
     const { timers, shouldUpdateTimers } = state.timers;

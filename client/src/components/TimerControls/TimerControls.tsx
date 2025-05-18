@@ -7,6 +7,7 @@ import TimerTypeSelector from "./TimerTypeSelector";
 import CountdownTimeInput from "./CountdownTimeInput";
 import DurationInputs from "./DurationInputs";
 import TimerControlButtons from "./TimerControlButtons";
+import RadioButton from "../RadioButton/RadioButton";
 import "./TimerControls.scss";
 import { GlobalInfoContext } from "../../context/globalInfo";
 
@@ -25,12 +26,16 @@ const TimerControls = () => {
   const [timerType, setTimerType] = useState<"timer" | "countdown">(
     timer?.timerType || "timer"
   );
+  const [showMinutesOnly, setShowMinutesOnly] = useState<boolean>(
+    timer?.showMinutesOnly || false
+  );
 
   useEffect(() => {
     if (timer) {
       setTimerType(timer.timerType);
       setDuration(timer.duration || 60);
       setCountdownTime(timer.countdownTime || "00:00");
+      setShowMinutesOnly(timer.showMinutesOnly || false);
     }
   }, [timer]);
 
@@ -41,9 +46,16 @@ const TimerControls = () => {
       ...timer,
       ...updates,
       hostId: hostId || "",
-      timerType,
-      duration: timerType === "timer" ? duration : undefined,
-      countdownTime: timerType === "countdown" ? countdownTime : undefined,
+      timerType: updates.timerType || timerType,
+      duration:
+        (updates.timerType || timer?.timerType) === "timer"
+          ? updates.duration || duration
+          : undefined,
+      countdownTime:
+        (updates.timerType || timer?.timerType) === "countdown"
+          ? updates.countdownTime || timer?.countdownTime
+          : undefined,
+      showMinutesOnly: updates.showMinutesOnly || false,
     };
 
     dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
@@ -72,6 +84,11 @@ const TimerControls = () => {
     updateTimerState({ countdownTime: newTime, status: "stopped" });
   };
 
+  const handleShowMinutesOnlyChange = (checked: boolean) => {
+    setShowMinutesOnly(checked);
+    updateTimerState({ showMinutesOnly: checked });
+  };
+
   return (
     <div className="timer-controls flex gap-2 items-center max-lg:flex-col max-lg:gap-4">
       <TimerTypeSelector
@@ -93,6 +110,19 @@ const TimerControls = () => {
           onDurationChange={handleDurationChange}
         />
       )}
+
+      <div className="flex gap-4 items-center">
+        <RadioButton
+          label="Full timer"
+          value={!showMinutesOnly}
+          onChange={() => handleShowMinutesOnlyChange(false)}
+        />
+        <RadioButton
+          label="Minutes only"
+          value={showMinutesOnly}
+          onChange={() => handleShowMinutesOnlyChange(true)}
+        />
+      </div>
 
       <TimerControlButtons
         status={timer?.status || "stopped"}
