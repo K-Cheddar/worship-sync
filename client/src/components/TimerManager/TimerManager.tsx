@@ -7,26 +7,19 @@ import {
   tickTimers,
   setIntervalId,
   syncTimers,
-  setHostId,
-  updateTimerFromRemote,
   syncTimersFromRemote,
 } from "../../store/timersSlice";
-import generateRandomId from "../../utils/generateRandomId";
 import { TimerInfo } from "../../types";
 
 const TimerManager = () => {
   const dispatch = useDispatch();
-  const { user, firebaseDb } = useContext(GlobalInfoContext) || {};
-  const { intervalId, timers, hostId } = useSelector(
+  const { user, firebaseDb, hostId } = useContext(GlobalInfoContext) || {};
+  const { intervalId, timers } = useSelector(
     (state: RootState) => state.timers
   );
   const hasRunningTimers = timers.some(
     (timer) => timer.isActive && timer.status === "running"
   );
-
-  useEffect(() => {
-    dispatch(setHostId(generateRandomId()));
-  }, [dispatch]);
 
   useEffect(() => {
     if (!firebaseDb || user === "Demo") return;

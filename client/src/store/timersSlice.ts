@@ -5,22 +5,17 @@ import { calculateRemainingTime } from "../utils/generalUtils";
 interface TimersState {
   timers: TimerInfo[];
   intervalId: NodeJS.Timeout | null;
-  hostId: string;
 }
 
 const initialState: TimersState = {
   timers: [],
   intervalId: null,
-  hostId: "",
 };
 
 export const timersSlice = createSlice({
   name: "timers",
   initialState,
   reducers: {
-    setHostId: (state, action: PayloadAction<string>) => {
-      state.hostId = action.payload;
-    },
     syncTimers: (state, action: PayloadAction<(TimerInfo | undefined)[]>) => {
       // Create a map of existing timers for quick lookup
       const existingTimersMap = new Map(
@@ -81,7 +76,6 @@ export const timersSlice = createSlice({
         if (timer.id === id) {
           return {
             ...timer,
-            hostId: state.hostId,
             status: timerInfo.status,
             isActive: timerInfo.status === "running",
             countdownTime: timerInfo.countdownTime,
@@ -129,7 +123,6 @@ export const timersSlice = createSlice({
 });
 
 export const {
-  setHostId,
   syncTimers,
   syncTimersFromRemote,
   addTimer,

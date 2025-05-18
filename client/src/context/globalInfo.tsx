@@ -1,12 +1,20 @@
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
-import { getDatabase, Database } from "firebase/database";
+import {
+  getDatabase,
+  Database,
+  ref,
+  onValue,
+  Unsubscribe,
+  set,
+  onDisconnect,
+} from "firebase/database";
 import PouchDB from "pouchdb";
 import { DBLogin, TimerInfo } from "../types";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
-import { ref, onValue, Unsubscribe } from "firebase/database";
+import generateRandomId from "../utils/generateRandomId";
 
 import {
   BibleDisplayInfo,
@@ -32,6 +40,8 @@ type GlobalInfoContextType = {
   uploadPreset: string;
   setLoginState: (val: LoginStateType) => void;
   firebaseDb: Database | undefined;
+  hostId: string;
+  activeInstances: number;
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
@@ -58,12 +68,21 @@ export let globalFireDbInfo: globalFireBaseInfoType = {
   user: "Demo",
 };
 
+export let globalHostId: string = "";
+
 const GlobalInfoProvider = ({ children }: any) => {
   const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
   const [loginState, setLoginState] = useState<LoginStateType>("idle");
   const [user, setUser] = useState("Demo");
   const [database, setDatabase] = useState("demo");
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
+  const [hostId] = useState(() => {
+    const id = generateRandomId();
+    globalHostId = id;
+    return id;
+  });
+  const [activeInstances, setActiveInstances] = useState(0);
+  const location = useLocation();
 
   const onValueRef = useRef<{
     projectorInfo: Unsubscribe | undefined;
@@ -225,6 +244,48 @@ const GlobalInfoProvider = ({ children }: any) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Track active instances
+  useEffect(() => {
+    if (!firebaseDb || loginState !== "success") return;
+
+    const activeInstancesRef = ref(firebaseDb, "activeInstances");
+
+    // Listen for changes in active instances
+    const unsubscribe = onValue(activeInstancesRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        // Only count instances that are on the controller page
+        const count = Object.values(data).filter(
+          (instance: any) => instance.isOnController
+        ).length;
+        setActiveInstances(count);
+      } else {
+        setActiveInstances(0);
+      }
+    });
+
+    // Set this instance as active only if on controller page
+    const instanceRef = ref(firebaseDb, `activeInstances/${hostId}`);
+    const isOnController = location.pathname.startsWith("/controller");
+
+    set(instanceRef, {
+      lastActive: new Date().toISOString(),
+      user: user,
+      database: database,
+      hostId: hostId,
+      isOnController,
+    });
+
+    // Remove this instance when the user disconnects
+    onDisconnect(instanceRef).remove();
+
+    // Cleanup function
+    return () => {
+      unsubscribe();
+      set(instanceRef, null);
+    };
+  }, [firebaseDb, loginState, user, database, hostId, location.pathname]);
+
   const login = async ({
     username,
     password,
@@ -290,6 +351,8 @@ const GlobalInfoProvider = ({ children }: any) => {
         setLoginState,
         logout,
         firebaseDb,
+        hostId,
+        activeInstances,
       }}
     >
       {children}

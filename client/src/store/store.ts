@@ -27,7 +27,7 @@ import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
 import { globalDb as db } from "../context/controllerInfo";
-import { globalFireDbInfo } from "../context/globalInfo";
+import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
 import { ref, set, get } from "firebase/database";
 import {
   BibleDisplayInfo,
@@ -286,23 +286,22 @@ listenerMiddleware.startListening({
       action.type !== "timers/syncTimers" &&
       action.type !== "timers/syncTimersFromRemote" &&
       action.type !== "timers/setIntervalId" &&
-      action.type !== "timers/setHostId" &&
       action.type !== "RESET"
     );
   },
 
   effect: async (action, listenerApi) => {
-    let state = listenerApi.getState() as RootState;
+    const state = listenerApi.getState() as RootState;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(250);
 
     // update firebase with timers
-    const { timers, hostId } = state.timers;
+    const { timers } = state.timers;
 
-    const ownTimers = timers.filter((timer) => timer.hostId === hostId);
+    const ownTimers = timers.filter((timer) => timer.hostId === globalHostId);
     if (ownTimers.length > 0) {
       localStorage.setItem("timerInfo", JSON.stringify(ownTimers));
-      console.log("Updating", ownTimers, hostId);
+      console.log("Updating", ownTimers, globalHostId);
 
       if (globalFireDbInfo.db && globalFireDbInfo.user) {
         // Get current timers from Firebase
@@ -315,7 +314,7 @@ listenerMiddleware.startListening({
         const snapshot = await get(timersRef);
         const currentTimers = snapshot.val() || [];
         const otherTimers = currentTimers.filter(
-          (timer: TimerInfo) => timer.hostId !== hostId
+          (timer: TimerInfo) => timer.hostId !== globalHostId
         );
         const mergedTimers = [...otherTimers, ...ownTimers];
 
@@ -705,10 +704,10 @@ listenerMiddleware.startListening({
 // handle updating from remote timer info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    const { timers, hostId } = (previousState as RootState).timers;
+    const { timers } = (previousState as RootState).timers;
     const info = action.payload as TimerInfo;
     const timer = timers.find((timer) => timer.id === info?.id);
-    const isHost = hostId === info?.hostId;
+    const isHost = globalHostId === info?.hostId;
     return (
       action.type === "debouncedUpdateTimerInfo" &&
       !isHost &&
