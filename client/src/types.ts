@@ -95,7 +95,7 @@ export type DBItem = {
     version: string;
     verses: verseType[];
   };
-  timerId?: string;
+  timerInfo?: TimerInfo;
   arrangements: {
     name: string;
     formattedLyrics: FormattedLyrics[];
@@ -143,7 +143,7 @@ export type ItemState = {
   };
   isLoading?: boolean;
   hasPendingUpdate?: boolean;
-  timerId?: string;
+  timerInfo?: TimerInfo;
 };
 
 export type OptionalItemState = {

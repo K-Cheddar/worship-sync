@@ -14,7 +14,7 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
     selectedBox: 1,
     selectedSlide: 0,
     bibleInfo: item.bibleInfo,
-    timerId: item.timerId,
+    timerInfo: item.timerInfo,
   };
 
   let updatedArrangements;

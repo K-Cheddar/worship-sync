@@ -1,4 +1,11 @@
-import { createContext, useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 import {
@@ -83,6 +90,9 @@ const GlobalInfoProvider = ({ children }: any) => {
   });
   const [activeInstances, setActiveInstances] = useState(0);
   const location = useLocation();
+  const isOnController = useMemo(() => {
+    return location.pathname.startsWith("/controller");
+  }, [location.pathname]);
 
   const onValueRef = useRef<{
     projectorInfo: Unsubscribe | undefined;
@@ -248,7 +258,10 @@ const GlobalInfoProvider = ({ children }: any) => {
   useEffect(() => {
     if (!firebaseDb || loginState !== "success") return;
 
-    const activeInstancesRef = ref(firebaseDb, "activeInstances");
+    const activeInstancesRef = ref(
+      firebaseDb,
+      "users/" + user + "/v2/activeInstances"
+    );
 
     // Listen for changes in active instances
     const unsubscribe = onValue(activeInstancesRef, (snapshot) => {
@@ -265,8 +278,10 @@ const GlobalInfoProvider = ({ children }: any) => {
     });
 
     // Set this instance as active only if on controller page
-    const instanceRef = ref(firebaseDb, `activeInstances/${hostId}`);
-    const isOnController = location.pathname.startsWith("/controller");
+    const instanceRef = ref(
+      firebaseDb,
+      `users/${user}/v2/activeInstances/${hostId}`
+    );
 
     set(instanceRef, {
       lastActive: new Date().toISOString(),
@@ -284,7 +299,7 @@ const GlobalInfoProvider = ({ children }: any) => {
       unsubscribe();
       set(instanceRef, null);
     };
-  }, [firebaseDb, loginState, user, database, hostId, location.pathname]);
+  }, [firebaseDb, loginState, user, database, hostId, isOnController]);
 
   const login = async ({
     username,

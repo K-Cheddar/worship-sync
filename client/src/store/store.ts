@@ -135,7 +135,7 @@ listenerMiddleware.startListening({
       arrangements: item.arrangements,
       selectedArrangement: item.selectedArrangement,
       bibleInfo: item.bibleInfo,
-      timerId: item.timerId,
+      timerInfo: item.timerInfo,
     };
     db.put(db_item);
   },
@@ -283,9 +283,11 @@ listenerMiddleware.startListening({
       (currentState as RootState).timers !==
         (previousState as RootState).timers &&
       action.type !== "timers/updateTimerFromRemote" &&
-      action.type !== "timers/syncTimers" &&
+      // action.type !== "timers/syncTimers" &&
       action.type !== "timers/syncTimersFromRemote" &&
       action.type !== "timers/setIntervalId" &&
+      action.type !== "timers/setShouldUpdateTimers" &&
+      action.type !== "timers/tickTimers" &&
       action.type !== "RESET"
     );
   },
@@ -296,7 +298,13 @@ listenerMiddleware.startListening({
     await listenerApi.delay(250);
 
     // update firebase with timers
-    const { timers } = state.timers;
+    const { timers, shouldUpdateTimers } = state.timers;
+
+    console.log("shouldUpdateTimers", shouldUpdateTimers);
+    console.log("timers", timers);
+    console.log("hostId", globalHostId);
+
+    if (!shouldUpdateTimers) return;
 
     const ownTimers = timers.filter((timer) => timer.hostId === globalHostId);
     if (ownTimers.length > 0) {
@@ -318,7 +326,10 @@ listenerMiddleware.startListening({
         );
         const mergedTimers = [...otherTimers, ...ownTimers];
 
+        console.log("mergedTimers", mergedTimers);
+
         set(timersRef, cleanObject(mergedTimers));
+        listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
       }
     }
   },

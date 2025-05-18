@@ -13,6 +13,7 @@ import {
   ItemListDetails,
   DBItemListDetails,
   TimerType,
+  TimerStatus,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatBible, formatSong } from "./overflow";
@@ -318,6 +319,10 @@ type CreateNewTimerType = {
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
   selectedList: ItemList;
+  hostId: string;
+  duration: number;
+  countdownTime: string;
+  timerType: TimerType;
 };
 
 export const createNewTimer = async ({
@@ -325,6 +330,10 @@ export const createNewTimer = async ({
   list,
   db,
   selectedList,
+  hostId,
+  duration,
+  countdownTime,
+  timerType,
 }: CreateNewTimerType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
 
@@ -343,7 +352,18 @@ export const createNewTimer = async ({
       }),
     ],
     arrangements: [],
-    timerId: _name,
+    timerInfo: {
+      hostId: hostId,
+      duration,
+      countdownTime,
+      timerType,
+      status: "stopped" as TimerStatus,
+      isActive: false,
+      remainingTime: 0,
+      id: _name,
+      name: name,
+      startedAt: undefined,
+    },
   };
 
   const item = await createNewItemInDb({ item: newItem, db, selectedList });

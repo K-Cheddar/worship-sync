@@ -4,18 +4,31 @@ import { calculateRemainingTime } from "../utils/generalUtils";
 
 interface TimersState {
   timers: TimerInfo[];
-  intervalId: NodeJS.Timeout | null;
+  timersFromDocs: TimerInfo[];
+  shouldUpdateTimers: boolean;
 }
 
 const initialState: TimersState = {
   timers: [],
-  intervalId: null,
+  timersFromDocs: [],
+  shouldUpdateTimers: false,
 };
 
 export const timersSlice = createSlice({
   name: "timers",
   initialState,
   reducers: {
+    setShouldUpdateTimers: (state, action: PayloadAction<boolean>) => {
+      state.shouldUpdateTimers = action.payload;
+    },
+    setTimersFromDocs: (
+      state,
+      action: PayloadAction<(TimerInfo | undefined)[]>
+    ) => {
+      state.timersFromDocs = action.payload.filter(
+        (timer) => timer !== undefined
+      ) as TimerInfo[];
+    },
     syncTimers: (state, action: PayloadAction<(TimerInfo | undefined)[]>) => {
       // Create a map of existing timers for quick lookup
       const existingTimersMap = new Map(
@@ -66,6 +79,7 @@ export const timersSlice = createSlice({
     },
     addTimer: (state, action: PayloadAction<TimerInfo>) => {
       state.timers.push(action.payload);
+      state.shouldUpdateTimers = true;
     },
     updateTimer: (
       state,
@@ -90,6 +104,7 @@ export const timersSlice = createSlice({
         }
         return timer;
       });
+      state.shouldUpdateTimers = true;
     },
     updateTimerFromRemote: (state, action: PayloadAction<TimerInfo>) => {
       const { id, ...timerInfo } = action.payload;
@@ -116,20 +131,18 @@ export const timersSlice = createSlice({
         }
       });
     },
-    setIntervalId: (state, action: PayloadAction<NodeJS.Timeout | null>) => {
-      state.intervalId = action.payload;
-    },
   },
 });
 
 export const {
+  setTimersFromDocs,
   syncTimers,
   syncTimersFromRemote,
   addTimer,
   updateTimer,
   updateTimerFromRemote,
   tickTimers,
-  setIntervalId,
+  setShouldUpdateTimers,
 } = timersSlice.actions;
 
 export default timersSlice.reducer;

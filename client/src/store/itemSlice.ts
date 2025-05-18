@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { Arrangment, Box, ItemSlide, ItemState, TimerInfo } from "../types";
+import { Arrangment, Box, ItemSlide, ItemState } from "../types";
 import { createAsyncThunk } from "../hooks/reduxHooks";
 import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
@@ -20,7 +20,7 @@ const initialState: ItemState = {
   slides: [],
   selectedBox: 1,
   bibleInfo: { book: "", chapter: "", version: "", verses: [] },
-  timerId: "",
+  timerInfo: undefined,
   isLoading: true,
   hasPendingUpdate: false,
 };
@@ -46,7 +46,7 @@ export const itemSlice = createSlice({
         version: "",
         verses: [],
       };
-      state.timerId = action.payload.timerId;
+      state.timerInfo = action.payload.timerInfo;
     },
     toggleEditMode: (state) => {
       state.isEditMode = !state.isEditMode;
