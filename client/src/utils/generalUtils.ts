@@ -257,11 +257,11 @@ export const calculateRemainingTime = ({
     if (timerInfo.status === "running" && timerInfo.startedAt) {
       const startedAt = new Date(timerInfo.startedAt);
       const now = new Date();
+      const startTime = startedAt.getTime();
+      const currentTime = now.getTime();
 
       // Use performance.now() for more precise time measurement
-      const elapsedSeconds = Math.floor(
-        (now.getTime() - startedAt.getTime()) / 1000
-      );
+      const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
 
       const remainingTime = timerInfo.remainingTime
         ? timerInfo.remainingTime - elapsedSeconds

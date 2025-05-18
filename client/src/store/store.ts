@@ -295,21 +295,16 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     listenerApi.cancelActiveListeners();
-    await listenerApi.delay(250);
+    await listenerApi.delay(10);
 
     // update firebase with timers
     const { timers, shouldUpdateTimers } = state.timers;
-
-    console.log("shouldUpdateTimers", shouldUpdateTimers);
-    console.log("timers", timers);
-    console.log("hostId", globalHostId);
 
     if (!shouldUpdateTimers) return;
 
     const ownTimers = timers.filter((timer) => timer.hostId === globalHostId);
     if (ownTimers.length > 0) {
       localStorage.setItem("timerInfo", JSON.stringify(ownTimers));
-      console.log("Updating", ownTimers, globalHostId);
 
       if (globalFireDbInfo.db && globalFireDbInfo.user) {
         // Get current timers from Firebase
@@ -321,12 +316,24 @@ listenerMiddleware.startListening({
         // Get current timers and merge with own timers
         const snapshot = await get(timersRef);
         const currentTimers = snapshot.val() || [];
-        const otherTimers = currentTimers.filter(
-          (timer: TimerInfo) => timer.hostId !== globalHostId
-        );
-        const mergedTimers = [...otherTimers, ...ownTimers];
 
-        console.log("mergedTimers", mergedTimers);
+        // Create a map to store timers by ID, prioritizing global host ID
+        const timerMap = new Map();
+
+        // First add other timers to the map
+        currentTimers.forEach((timer: TimerInfo) => {
+          if (timer.hostId !== globalHostId) {
+            timerMap.set(timer.id, timer);
+          }
+        });
+
+        // Then add own timers, which will override any existing timers with the same ID
+        ownTimers.forEach((timer: TimerInfo) => {
+          timerMap.set(timer.id, timer);
+        });
+
+        // Convert map back to array
+        const mergedTimers = Array.from(timerMap.values());
 
         set(timersRef, cleanObject(mergedTimers));
         listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));

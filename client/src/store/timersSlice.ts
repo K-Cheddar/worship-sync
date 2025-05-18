@@ -90,6 +90,7 @@ export const timersSlice = createSlice({
         if (timer.id === id) {
           return {
             ...timer,
+            hostId: timerInfo.hostId,
             status: timerInfo.status,
             isActive: timerInfo.status === "running",
             countdownTime: timerInfo.countdownTime,

@@ -98,9 +98,15 @@ const TimerManager = () => {
     // Set up new intervals for running timers
     timers.forEach((timer) => {
       if (timer.isActive && timer.status === "running") {
+        let startTime = performance.now();
         const intervalId = setInterval(() => {
-          dispatch(tickTimers());
-        }, 1000);
+          const currentTime = performance.now();
+          const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
+          if (elapsedSeconds >= 1) {
+            dispatch(tickTimers());
+            startTime = currentTime;
+          }
+        }, 100); // Check more frequently but only update when a full second has passed
         intervalRefs.current[timer.id] = intervalId;
       }
     });
