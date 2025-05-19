@@ -63,7 +63,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         `credit-editor-${selectedCreditId}`
       );
       const creditsList = document.getElementById("credits-list");
-      console.log(creditElement, creditsList);
       if (creditElement && creditsList) {
         keepElementInView({
           child: creditElement,

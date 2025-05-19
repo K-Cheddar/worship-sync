@@ -195,7 +195,7 @@ const CreditsEditor = () => {
         "/Media Team Positions.xlsx"
       );
 
-      const updatedList = list.map((credit) => {
+      let updatedList = list.map((credit) => {
         // Find matching schedule entry
         const scheduleEntry = schedule.find(
           (entry) =>
@@ -222,6 +222,17 @@ const CreditsEditor = () => {
         }
 
         return credit;
+      });
+
+      // Replace & and , with new lines, then trim spaces
+      updatedList = updatedList.map((credit) => {
+        return {
+          ...credit,
+          text: credit.text
+            .split(/,|&/)
+            .map((item: string) => item.trim())
+            .join("\n"),
+        };
       });
 
       dispatch(updateList(updatedList));
