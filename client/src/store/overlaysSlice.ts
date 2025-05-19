@@ -119,10 +119,25 @@ export const overlaysSlice = createSlice({
       }
       state.hasPendingUpdate = true;
     },
-    updateOverlay: (state, action: PayloadAction<OverlayInfo>) => {
+    updateOverlay: (state, action: PayloadAction<Partial<OverlayInfo>>) => {
+      const updatedOverlayInfo = {
+        id: action.payload.id || state.id,
+        name: action.payload.name || state.name,
+        title: action.payload.title || state.title,
+        event: action.payload.event || state.event,
+        heading: action.payload.heading || state.heading,
+        subHeading: action.payload.subHeading || state.subHeading,
+        url: action.payload.url || state.url,
+        description: action.payload.description || state.description,
+        color: action.payload.color || state.color,
+        duration: action.payload.duration || state.duration,
+        type: action.payload.type || state.type,
+        imageUrl: action.payload.imageUrl || state.imageUrl,
+      };
+      state.imageUrl = updatedOverlayInfo.imageUrl;
       state.list = state.list.map((overlay) => {
         if (overlay.id === action.payload.id) {
-          return { ...action.payload };
+          return { ...updatedOverlayInfo };
         }
         return overlay;
       });

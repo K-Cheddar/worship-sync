@@ -14,6 +14,7 @@ import { useGSAP } from "@gsap/react";
 import cn from "classnames";
 
 type ServiceItemsProps = {
+  isActive: boolean;
   selectedItemListId: string | undefined;
   location: Location;
   item: ServiceItemType;
@@ -21,6 +22,7 @@ type ServiceItemsProps = {
 };
 
 const ServiceItem = ({
+  isActive,
   item,
   selectedItemListId,
   location,
@@ -143,8 +145,9 @@ const ServiceItem = ({
       }}
       title={item.name}
       className={cn(
-        "border-b-2 overflow-hidden",
-        isSelected ? "border-cyan-500" : "border-transparent"
+        "border-b-2 border-r-4 overflow-hidden",
+        isSelected ? "border-l-cyan-500" : "border-transparent",
+        isActive ? "border-r-cyan-500" : "border-r-transparent"
       )}
       isSelected={isSelected && location.pathname.includes("item")}
       to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(
