@@ -119,6 +119,7 @@ export type TimerInfo = {
   isActive: boolean;
   remainingTime: number;
   startedAt?: string;
+  endTime?: string;
   showMinutesOnly?: boolean;
 };
 

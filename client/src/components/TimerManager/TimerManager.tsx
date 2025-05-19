@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { RootState } from "../../store/store";
-import { ref, get, onValue, set } from "firebase/database";
+import { ref, get, onValue } from "firebase/database";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
   tickTimers,
@@ -10,6 +10,7 @@ import {
   setShouldUpdateTimers,
 } from "../../store/timersSlice";
 import { TimerInfo } from "../../types";
+import { mergeTimers } from "../../utils/timerUtils";
 
 const TimerManager = () => {
   const dispatch = useDispatch();
@@ -17,10 +18,13 @@ const TimerManager = () => {
   const { timers, timersFromDocs } = useSelector(
     (state: RootState) => state.timers
   );
-  const intervalRefs = useRef<{ [key: string]: NodeJS.Timeout }>({});
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTickRef = useRef<number>(Date.now());
+
+  console.log("timers", timers);
 
   useEffect(() => {
-    if (!firebaseDb || user === "Demo") return;
+    if (!firebaseDb || user === "Demo" || !hostId) return;
 
     const getTimersRef = ref(firebaseDb, "users/" + user + "/v2/timers");
     onValue(getTimersRef, (snapshot) => {
@@ -28,52 +32,41 @@ const TimerManager = () => {
       const remoteTimers = data?.filter(
         (timer: TimerInfo) => timer?.hostId !== hostId
       );
+
       if (remoteTimers?.length > 0) {
         dispatch(syncTimersFromRemote(remoteTimers));
       }
     });
   }, [firebaseDb, user, dispatch, hostId]);
 
-  // on start, remove timers that don't have active hosts
-  // then sync timers
   useEffect(() => {
     const removeInactiveTimers = async () => {
-      if (!firebaseDb || user === "Demo") return;
+      if (!firebaseDb || user === "Demo" || !hostId) return;
+
       const activeInstancesRef = ref(
         firebaseDb,
         "users/" + user + "/v2/activeInstances"
       );
       const timersRef = ref(firebaseDb, "users/" + user + "/v2/timers");
-      const timers = await get(timersRef).then((snapshot) => {
-        const data = snapshot.val();
-        return data;
-      });
-      const hostIds = await get(activeInstancesRef).then((snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-          return Object.keys(data);
-        }
-        return [];
-      });
+      const timers = await get(timersRef).then((snapshot) => snapshot.val());
+      const hostIds = await get(activeInstancesRef).then((snapshot) =>
+        snapshot.val() ? Object.keys(snapshot.val()) : []
+      );
 
       const timersWithActiveHosts =
         timers?.filter((timer: TimerInfo) => hostIds.includes(timer.hostId)) ||
         [];
 
-      const mergedTimers = [
-        ...timersWithActiveHosts,
-        ...timersFromDocs.filter(
-          (docTimer: TimerInfo) =>
-            !timersWithActiveHosts.some(
-              (activeTimer: TimerInfo) => activeTimer.id === docTimer.id
-            )
-        ),
-      ].filter((timer) => timer !== undefined);
+      const mergedTimers = mergeTimers(
+        timersWithActiveHosts,
+        timersFromDocs,
+        hostId
+      );
 
       dispatch(setShouldUpdateTimers(true));
-      set(timersRef, mergedTimers);
       dispatch(syncTimers(mergedTimers));
     };
+
     removeInactiveTimers();
   }, [firebaseDb, user, dispatch, hostId, timersFromDocs]);
 
@@ -91,32 +84,22 @@ const TimerManager = () => {
   }, [firebaseDb, user, dispatch]);
 
   useEffect(() => {
-    // Clear all existing intervals
-    Object.values(intervalRefs.current).forEach(clearInterval);
-    intervalRefs.current = {};
+    if (intervalRef.current) clearInterval(intervalRef.current);
 
-    // Set up new intervals for running timers
-    timers.forEach((timer) => {
-      if (timer.isActive && timer.status === "running") {
-        let startTime = performance.now();
-        const intervalId = setInterval(() => {
-          const currentTime = performance.now();
-          const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
-          if (elapsedSeconds >= 1) {
-            dispatch(tickTimers());
-            startTime = currentTime;
-          }
-        }, 100); // Check more frequently but only update when a full second has passed
-        intervalRefs.current[timer.id] = intervalId;
+    intervalRef.current = setInterval(() => {
+      const now = Date.now();
+      const elapsedTime = now - lastTickRef.current;
+
+      if (elapsedTime >= 1000) {
+        dispatch(tickTimers());
+        lastTickRef.current = now;
       }
-    });
+    }, 100);
 
-    // Cleanup function
     return () => {
-      Object.values(intervalRefs.current).forEach(clearInterval);
-      intervalRefs.current = {};
+      if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [timers, dispatch]);
+  }, [timers, dispatch, firebaseDb, user, hostId]);
 
   return null;
 };

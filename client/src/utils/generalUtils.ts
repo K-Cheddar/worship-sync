@@ -253,20 +253,14 @@ export const calculateRemainingTime = ({
       return timerInfo.remainingTime || 0;
     }
 
-    // If timer is running and has a startedAt time, calculate elapsed time
-    if (timerInfo.status === "running" && timerInfo.startedAt) {
-      const startedAt = new Date(timerInfo.startedAt);
+    // If timer is running and has an end time, calculate remaining time
+    if (timerInfo.status === "running" && timerInfo.endTime) {
+      const endTime = new Date(timerInfo.endTime);
       const now = new Date();
-      const startTime = startedAt.getTime();
-      const currentTime = now.getTime();
-
-      // Use performance.now() for more precise time measurement
-      const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
-
-      const remainingTime = timerInfo.remainingTime
-        ? timerInfo.remainingTime - elapsedSeconds
-        : 0;
-      return Math.max(0, remainingTime); // Ensure we don't return negative time
+      const remainingSeconds = Math.floor(
+        (endTime.getTime() - now.getTime()) / 1000
+      );
+      return Math.max(0, remainingSeconds); // Ensure we don't return negative time
     }
 
     return timerInfo.remainingTime || 0;

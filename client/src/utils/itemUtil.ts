@@ -337,6 +337,12 @@ export const createNewTimer = async ({
 }: CreateNewTimerType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
 
+  // Calculate end time for timer type
+  const endTime =
+    timerType === "timer" && duration
+      ? new Date(Date.now() + duration * 1000).toISOString()
+      : undefined;
+
   const newItem: ItemState = {
     name: _name,
     type: "timer",
@@ -359,10 +365,11 @@ export const createNewTimer = async ({
       timerType,
       status: "stopped" as TimerStatus,
       isActive: false,
-      remainingTime: 0,
+      remainingTime: duration || 0,
       id: _name,
       name: name,
       startedAt: undefined,
+      endTime,
       showMinutesOnly: false,
     },
   };

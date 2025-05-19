@@ -41,7 +41,34 @@ export const timersSlice = createSlice({
         );
         if (!timerInfo) return null;
 
-        return {
+        // Set endTime when starting or resuming a timer
+        const isStarting =
+          timerInfo.status === "running" &&
+          (!existingTimer || existingTimer.status === "stopped");
+        const isResuming =
+          timerInfo.status === "running" && existingTimer?.status === "paused";
+
+        let endTime = timerInfo.endTime;
+        if (isStarting && timerInfo.duration) {
+          // For new timers, set endTime based on full duration
+          endTime = new Date(
+            Date.now() + timerInfo.duration * 1000
+          ).toISOString();
+        } else if (isResuming && existingTimer?.remainingTime) {
+          // For resuming timers, set endTime based on remaining time
+          endTime = new Date(
+            Date.now() + existingTimer.remainingTime * 1000
+          ).toISOString();
+        } else if (
+          existingTimer?.endTime &&
+          existingTimer.status === "running"
+        ) {
+          // Preserve existing endTime for running timers
+          endTime = existingTimer.endTime;
+        }
+
+        // Preserve existing timer state if available
+        const timerState = existingTimer || {
           hostId: timerInfo.hostId,
           id: timerInfo.id,
           name: timerInfo.name,
@@ -51,9 +78,14 @@ export const timersSlice = createSlice({
           countdownTime: timerInfo.countdownTime || "00:00",
           duration: timerInfo.duration || 0,
           startedAt: timerInfo.startedAt,
+          endTime,
           showMinutesOnly: timerInfo.showMinutesOnly || false,
+        };
+
+        return {
+          ...timerState,
           remainingTime: calculateRemainingTime({
-            timerInfo,
+            timerInfo: { ...timerInfo, endTime },
             previousStatus: existingTimer?.status,
           }),
         };
@@ -89,6 +121,25 @@ export const timersSlice = createSlice({
       const { id, timerInfo } = action.payload;
       state.timers = state.timers.map((timer) => {
         if (timer.id === id) {
+          // Set endTime when starting or resuming a timer
+          const isStarting =
+            timerInfo.status === "running" && timer.status === "stopped";
+          const isResuming =
+            timerInfo.status === "running" && timer.status === "paused";
+
+          let endTime = timerInfo.endTime;
+          if (isStarting && timerInfo.duration) {
+            // For new timers, set endTime based on full duration
+            endTime = new Date(
+              Date.now() + timerInfo.duration * 1000
+            ).toISOString();
+          } else if (isResuming && timer.remainingTime) {
+            // For resuming timers, set endTime based on remaining time
+            endTime = new Date(
+              Date.now() + timer.remainingTime * 1000
+            ).toISOString();
+          }
+
           return {
             ...timer,
             hostId: timerInfo.hostId,
@@ -98,9 +149,10 @@ export const timersSlice = createSlice({
             duration: timerInfo.duration,
             timerType: timerInfo.timerType,
             startedAt: timerInfo.startedAt,
+            endTime,
             showMinutesOnly: timerInfo.showMinutesOnly,
             remainingTime: calculateRemainingTime({
-              timerInfo,
+              timerInfo: { ...timerInfo, endTime },
               previousStatus: timer.status,
             }),
           };
@@ -127,12 +179,16 @@ export const timersSlice = createSlice({
     },
     tickTimers: (state) => {
       state.timers.forEach((timer) => {
-        if (timer.isActive && timer.status === "running") {
-          if (timer.remainingTime > 0) {
-            timer.remainingTime -= 1;
-          }
+        if (timer.isActive && timer.status === "running" && timer.endTime) {
+          const endTime = new Date(timer.endTime);
+          const now = new Date();
+          const remainingSeconds = Math.floor(
+            (endTime.getTime() - now.getTime()) / 1000
+          );
+          timer.remainingTime = Math.max(0, remainingSeconds);
         }
       });
+      state.shouldUpdateTimers = true;
     },
   },
 });

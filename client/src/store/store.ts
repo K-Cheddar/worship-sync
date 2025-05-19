@@ -44,6 +44,7 @@ import {
 import { allDocsSlice } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
 import { timersSlice, updateTimerFromRemote } from "./timersSlice";
+import { mergeTimers } from "../utils/timerUtils";
 
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
@@ -317,23 +318,13 @@ listenerMiddleware.startListening({
         const snapshot = await get(timersRef);
         const currentTimers = snapshot.val() || [];
 
-        // Create a map to store timers by ID, prioritizing global host ID
-        const timerMap = new Map();
-
         // First add other timers to the map
-        currentTimers.forEach((timer: TimerInfo) => {
-          if (timer.hostId !== globalHostId) {
-            timerMap.set(timer.id, timer);
-          }
-        });
-
-        // Then add own timers, which will override any existing timers with the same ID
-        ownTimers.forEach((timer: TimerInfo) => {
-          timerMap.set(timer.id, timer);
-        });
-
-        // Convert map back to array
-        const mergedTimers = Array.from(timerMap.values());
+        // Merge timers, prioritizing own timers over remote ones
+        const mergedTimers = mergeTimers(
+          currentTimers,
+          ownTimers,
+          globalHostId
+        );
 
         set(timersRef, cleanObject(mergedTimers));
         listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
