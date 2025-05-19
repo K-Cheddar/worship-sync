@@ -47,7 +47,7 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   };
 
   const getDisplayTime = () => {
-    if (timerInfo.timerType === "countdown" && timerInfo.status !== "running") {
+    if (timerInfo.timerType === "countdown" && timerInfo.status === "stopped") {
       return formatTime12Hour(timerInfo.countdownTime || "00:00");
     }
     return formatTime(timer?.remainingTime || 0);

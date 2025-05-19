@@ -19,9 +19,6 @@ const TimerManager = () => {
     (state: RootState) => state.timers
   );
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const lastTickRef = useRef<number>(Date.now());
-
-  console.log("timers", timers);
 
   useEffect(() => {
     if (!firebaseDb || user === "Demo" || !hostId) return;
@@ -86,20 +83,41 @@ const TimerManager = () => {
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
 
-    intervalRef.current = setInterval(() => {
-      const now = Date.now();
-      const elapsedTime = now - lastTickRef.current;
+    // Only set up interval if there are running timers
+    const hasRunningTimers = timers.some(
+      (timer) => timer.isActive && timer.status === "running"
+    );
 
-      if (elapsedTime >= 1000) {
-        dispatch(tickTimers());
-        lastTickRef.current = now;
-      }
-    }, 100);
+    if (hasRunningTimers) {
+      const currentInterval = setInterval(() => {
+        const now = Date.now();
+        const runningTimers = timers.filter(
+          (timer) =>
+            timer.isActive && timer.status === "running" && timer.endTime
+        );
+
+        // Check if any timer needs updating
+        const shouldUpdate = runningTimers.some((timer) => {
+          const endTime = new Date(timer.endTime!).getTime();
+          const remainingSeconds = Math.floor((endTime - now) / 1000);
+          return remainingSeconds !== timer.remainingTime;
+        });
+
+        if (shouldUpdate) {
+          dispatch(tickTimers());
+        }
+      }, 16); // ~60fps for smoother updates
+
+      intervalRef.current = currentInterval;
+    }
 
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     };
-  }, [timers, dispatch, firebaseDb, user, hostId]);
+  }, [timers, dispatch]);
 
   return null;
 };

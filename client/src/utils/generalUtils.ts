@@ -1,5 +1,3 @@
-import { TimerInfo } from "../types";
-
 const commonWords = [
   "the",
   "a",
@@ -203,69 +201,5 @@ export const checkMediaType = (mediaUrl?: string) => {
     return "video";
   } else {
     return "unknown";
-  }
-};
-
-export const getTimeDifference = (timeString: string) => {
-  const now = new Date();
-  const [hours, minutes] = timeString.split(":").map(Number);
-
-  // Create a new Date object for today with the specified time
-  const targetTime = new Date(now);
-  targetTime.setHours(hours, minutes, 0, 0);
-
-  // If the target time has already passed today, set it to tomorrow
-  if (targetTime < now) {
-    targetTime.setDate(targetTime.getDate() + 1);
-  }
-
-  const secondsDiff = Math.floor((targetTime.getTime() - now.getTime()) / 1000);
-  return secondsDiff;
-};
-
-type CalculateRemainingTimeParams = {
-  timerInfo: Partial<TimerInfo>;
-  previousStatus?: "running" | "paused" | "stopped";
-};
-
-export const calculateRemainingTime = ({
-  timerInfo,
-  previousStatus,
-}: CalculateRemainingTimeParams): number => {
-  if (timerInfo.timerType === "timer") {
-    const isStopping = timerInfo.status === "stopped";
-    const isStartingFromStopped =
-      timerInfo.status === "running" && previousStatus === "stopped";
-    const isResumingFromPaused =
-      timerInfo.status === "running" && previousStatus === "paused";
-
-    // Reset timer to full duration when:
-    // 1. Timer is explicitly stopped
-    // 2. Timer is started from a stopped state
-    if (isStopping || isStartingFromStopped) {
-      return timerInfo.duration || 0;
-    }
-
-    // Keep current time when:
-    // 1. Pausing the timer
-    // 2. Resuming from paused state
-    if (timerInfo.status === "paused" || isResumingFromPaused) {
-      return timerInfo.remainingTime || 0;
-    }
-
-    // If timer is running and has an end time, calculate remaining time
-    if (timerInfo.status === "running" && timerInfo.endTime) {
-      const endTime = new Date(timerInfo.endTime);
-      const now = new Date();
-      const remainingSeconds = Math.floor(
-        (endTime.getTime() - now.getTime()) / 1000
-      );
-      return Math.max(0, remainingSeconds); // Ensure we don't return negative time
-    }
-
-    return timerInfo.remainingTime || 0;
-  } else {
-    // For countdown timers, always recalculate based on target time
-    return getTimeDifference(timerInfo.countdownTime || "00:00");
   }
 };
