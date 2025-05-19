@@ -460,6 +460,7 @@ listenerMiddleware.startListening({
         displayType: streamInfo.displayType,
         time: streamInfo.time,
         slide: streamInfo.slide,
+        timerId: streamInfo.timerId,
       },
       stream_bibleInfo: streamInfo.bibleDisplayInfo,
       stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
