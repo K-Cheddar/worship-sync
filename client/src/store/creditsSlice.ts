@@ -256,7 +256,11 @@ export const creditsSlice = createSlice({
       const selectedIndex = state.list.findIndex(
         (credit) => credit.id === state.selectedCreditId
       );
-      state.list.splice(selectedIndex + 1, 0, newCredit);
+      if (selectedIndex === -1) {
+        state.list.push(newCredit);
+      } else {
+        state.list.splice(selectedIndex + 1, 0, newCredit);
+      }
       state.selectedCreditId = newCredit.id;
     },
     selectCredit: (state, action: PayloadAction<string>) => {

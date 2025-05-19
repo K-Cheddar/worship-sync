@@ -5,7 +5,7 @@ import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import { selectCredit, updateList } from "../../store/creditsSlice";
 import "./Credits.scss";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Credit from "./Credit";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import cn from "classnames";
@@ -19,6 +19,7 @@ import {
   addCredit,
   updatePublishedCreditsList,
 } from "../../store/creditsSlice";
+import { keepElementInView } from "../../utils/generalUtils";
 
 const CreditsEditor = ({ className }: { className?: string }) => {
   const { list, publishedList, initialList, isLoading, selectedCreditId } =
@@ -52,6 +53,26 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     dispatch(updateList(updatedCredits));
   };
 
+  // keep the selected credit in view
+  useEffect(() => {
+    const selectedCredit = list.find(
+      (credit) => credit.id === selectedCreditId
+    );
+    if (selectedCredit) {
+      const creditElement = document.getElementById(
+        `credit-editor-${selectedCreditId}`
+      );
+      const creditsList = document.getElementById("credits-list");
+      console.log(creditElement, creditsList);
+      if (creditElement && creditsList) {
+        keepElementInView({
+          child: creditElement,
+          parent: creditsList,
+        });
+      }
+    }
+  }, [selectedCreditId, list]);
+
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <div
@@ -80,7 +101,11 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         )}
         {!isLoading && (
           <>
-            <ul className="credits-list-editor" ref={setNodeRef}>
+            <ul
+              className="credits-list-editor"
+              id="credits-list"
+              ref={setNodeRef}
+            >
               <SortableContext
                 items={list.map((credit) => credit.id)}
                 strategy={verticalListSortingStrategy}

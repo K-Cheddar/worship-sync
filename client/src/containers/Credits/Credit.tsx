@@ -112,13 +112,7 @@ const Credit = ({
       }}
       style={style}
       id={`credit-editor-${id}`}
-      onClick={() => {
-        const creditElement = document.getElementById(`credit-${id}`);
-        if (creditElement) {
-          creditElement.scrollIntoView({ behavior: "smooth" });
-        }
-        selectCredit();
-      }}
+      onClick={selectCredit}
     >
       <Button
         variant="tertiary"

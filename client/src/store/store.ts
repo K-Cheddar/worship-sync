@@ -348,6 +348,7 @@ listenerMiddleware.startListening({
       action.type !== "credits/setIsLoading" &&
       action.type !== "credits/initiateTransitionScene" &&
       action.type !== "credits/initiateCreditsScene" &&
+      action.type !== "credits/selectCredit" &&
       action.type !== "RESET"
     );
   },
