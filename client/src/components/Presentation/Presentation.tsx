@@ -1,7 +1,11 @@
 import DisplayWindow from "../DisplayWindow/DisplayWindow";
 import Toggle from "../Toggle/Toggle";
 import QuickLink from "../QuickLink/QuickLink";
-import { Presentation as PresentationType, QuickLinkType } from "../../types";
+import {
+  Presentation as PresentationType,
+  QuickLinkType,
+  TimerInfo,
+} from "../../types";
 
 type PresentationProps = {
   name: string;
@@ -12,6 +16,7 @@ type PresentationProps = {
   quickLinks: QuickLinkType[];
   showBorder?: boolean;
   isMobile?: boolean;
+  timerInfo?: TimerInfo;
 };
 
 const Presentation = ({
@@ -23,6 +28,7 @@ const Presentation = ({
   quickLinks,
   showBorder = true,
   isMobile,
+  timerInfo,
 }: PresentationProps) => {
   return (
     <div className="flex gap-2">
@@ -43,6 +49,7 @@ const Presentation = ({
           imageOverlayInfo={info.imageOverlayInfo}
           prevBibleDisplayInfo={prevInfo.bibleDisplayInfo}
           bibleDisplayInfo={info.bibleDisplayInfo}
+          timerInfo={timerInfo}
           time={info.time}
           prevTime={prevInfo.time}
           shouldAnimate

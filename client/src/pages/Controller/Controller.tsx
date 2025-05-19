@@ -46,6 +46,7 @@ import Spinner from "../../components/Spinner/Spinner";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { sortNamesInList } from "../../utils/sort";
 import { deleteUnusedBibleItems, updateAllDocs } from "../../utils/dbUtils";
+import Timers from "../../containers/Timers/Timers";
 
 // Here for future to implement resizable
 
@@ -278,6 +279,7 @@ const Controller = () => {
               <Route path="bible" element={<Bible />} />
               <Route path="songs" element={<Songs />} />
               <Route path="free" element={<FreeForms />} />
+              <Route path="timers" element={<Timers />} />
               <Route path="create" element={<CreateItem />} />
             </Routes>
           </div>

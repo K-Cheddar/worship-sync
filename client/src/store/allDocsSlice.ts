@@ -4,11 +4,13 @@ import { DBItem } from "../types";
 type UserState = {
   allSongDocs: DBItem[];
   allFreeFormDocs: DBItem[];
+  allTimerDocs: DBItem[];
 };
 
 const initialState: UserState = {
   allSongDocs: [],
   allFreeFormDocs: [],
+  allTimerDocs: [],
 };
 
 export const allDocsSlice = createSlice({
@@ -21,10 +23,13 @@ export const allDocsSlice = createSlice({
     updateAllFreeFormDocs: (state, action: PayloadAction<DBItem[]>) => {
       state.allFreeFormDocs = action.payload;
     },
+    updateAllTimerDocs: (state, action: PayloadAction<DBItem[]>) => {
+      state.allTimerDocs = action.payload;
+    },
   },
 });
 
-export const { updateAllSongDocs, updateAllFreeFormDocs } =
+export const { updateAllSongDocs, updateAllFreeFormDocs, updateAllTimerDocs } =
   allDocsSlice.actions;
 
 export default allDocsSlice.reducer;

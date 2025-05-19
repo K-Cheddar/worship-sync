@@ -37,6 +37,7 @@ import {
   handleKeyDownTraverse,
   keepElementInView,
 } from "../../utils/generalUtils";
+import { RootState } from "../../store/store";
 
 export const sizeMap: Map<
   number,
@@ -74,7 +75,11 @@ const ItemSlides = () => {
     name,
     slides: __slides,
     isLoading,
-  } = useSelector((state) => state.undoable.present.item);
+    _id,
+  } = useSelector((state: RootState) => state.undoable.present.item);
+
+  const timers = useSelector((state: RootState) => state.timers.timers);
+  const timerInfo = timers.find((timer) => timer.id === _id);
 
   const arrangement = arrangements[selectedArrangement];
 
@@ -170,6 +175,7 @@ const ItemSlides = () => {
         slide: slides[index],
         type,
         name,
+        timerId: timerInfo?.id,
       })
     );
   };
@@ -271,6 +277,7 @@ const ItemSlides = () => {
         >
           {debouncedSlides.map((slide, index) => (
             <ItemSlide
+              timerInfo={timerInfo}
               key={slide.id}
               slide={slide}
               index={index}

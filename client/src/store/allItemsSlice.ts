@@ -6,6 +6,7 @@ type AllItems = {
   isAllItemsLoading: boolean;
   songSearchValue: string;
   freeFormSearchValue: string;
+  timerSearchValue: string;
 };
 
 const initialState: AllItems = {
@@ -13,6 +14,7 @@ const initialState: AllItems = {
   isAllItemsLoading: true,
   songSearchValue: "",
   freeFormSearchValue: "",
+  timerSearchValue: "",
 };
 
 export const allItemsSlice = createSlice({
@@ -44,6 +46,9 @@ export const allItemsSlice = createSlice({
     setFreeFormSearchValue: (state, action: PayloadAction<string>) => {
       state.freeFormSearchValue = action.payload;
     },
+    setTimerSearchValue: (state, action: PayloadAction<string>) => {
+      state.timerSearchValue = action.payload;
+    },
   },
 });
 
@@ -55,6 +60,7 @@ export const {
   updateAllItemsListFromRemote,
   setSongSearchValue,
   setFreeFormSearchValue,
+  setTimerSearchValue,
 } = allItemsSlice.actions;
 
 export default allItemsSlice.reducer;

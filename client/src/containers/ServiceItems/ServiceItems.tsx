@@ -25,6 +25,10 @@ const ServiceItems = () => {
     (state) => state.undoable.present.itemLists
   );
 
+  const activeTimers = useSelector((state) => state.timers.timers).filter(
+    (timer) => timer.status !== "stopped" && timer.remainingTime > 0
+  );
+
   const { setNodeRef } = useDroppable({
     id: "service-items-list",
   });
@@ -72,6 +76,7 @@ const ServiceItems = () => {
             {serviceItems.map((item) => {
               return (
                 <ServiceItem
+                  isActive={activeTimers.some((timer) => timer.id === item._id)}
                   key={item.listId}
                   item={item}
                   selectedItemListId={selectedItemListId}

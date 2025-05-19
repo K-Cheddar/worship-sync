@@ -16,6 +16,7 @@ import GlobalInfoProvider from "./context/globalInfo";
 import Credits from "./pages/Credits";
 import ProjectorFull from "./pages/ProjectorFull";
 import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
+import TimerManager from "./components/TimerManager/TimerManager";
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
@@ -25,6 +26,7 @@ function App() {
     <Provider store={store}>
       <Router>
         <GlobalInfoProvider>
+          <TimerManager />
           <Routes>
             <Route element={<ControllerContextWrapper />}>
               <Route path="/" element={<Home />} />

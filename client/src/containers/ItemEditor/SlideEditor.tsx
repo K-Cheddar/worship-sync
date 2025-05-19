@@ -109,7 +109,7 @@ const SlideEditor = () => {
           }
         : b
     );
-    if (type === "free") {
+    if (type === "free" || type === "timer") {
       dispatch(updateBoxes({ boxes: newBoxes }));
       return;
     }

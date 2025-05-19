@@ -47,8 +47,28 @@ export type Box = {
   slideIndex?: number;
 };
 
+export type SlideType =
+  | "Title"
+  | "Reprise"
+  | "Interlude"
+  | "Verse"
+  | "Chorus"
+  | "Refrain"
+  | "Bridge"
+  | "Outro"
+  | "Ending"
+  | "Intro"
+  | "Pre-Chorus"
+  | "Pre-Bridge"
+  | "Blank"
+  | "Section"
+  | "Timer"
+  | "Announcement"
+  | "Image";
+
 export type ItemSlide = {
-  type: string;
+  type: SlideType;
+  name: string;
   id?: string;
   boxes: Box[];
 };
@@ -67,7 +87,7 @@ export type DBItem = {
   selectedArrangement: number;
   skipTitle?: boolean;
   background?: string;
-  type: string;
+  type: ItemType;
   slides: ItemSlide[];
   bibleInfo?: {
     book: string;
@@ -75,6 +95,7 @@ export type DBItem = {
     version: string;
     verses: verseType[];
   };
+  timerInfo?: TimerInfo;
   arrangements: {
     name: string;
     formattedLyrics: FormattedLyrics[];
@@ -83,9 +104,28 @@ export type DBItem = {
   }[];
 };
 
+export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";
+export type TimerStatus = "running" | "paused" | "stopped";
+export type TimerType = "timer" | "countdown";
+export type TimerInfo = {
+  hostId: string;
+  time?: number;
+  id: string;
+  name: string;
+  duration?: number;
+  countdownTime?: string;
+  timerType: TimerType;
+  status: TimerStatus;
+  isActive: boolean;
+  remainingTime: number;
+  startedAt?: string;
+  endTime?: string;
+  showMinutesOnly?: boolean;
+};
+
 export type ItemState = {
   name: string;
-  type: string;
+  type: ItemType;
   _id: string;
   listId?: string;
   selectedArrangement: number;
@@ -105,11 +145,12 @@ export type ItemState = {
   };
   isLoading?: boolean;
   hasPendingUpdate?: boolean;
+  timerInfo?: TimerInfo;
 };
 
 export type OptionalItemState = {
   name: string;
-  type: string;
+  type: ItemType;
   _id?: string;
   listId?: string;
   selectedArrangement?: number;
@@ -157,6 +198,7 @@ export type Presentation = {
   participantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
+  timerId?: string;
   qrCodeOverlayInfo?: OverlayInfo;
   imageOverlayInfo?: OverlayInfo;
 };

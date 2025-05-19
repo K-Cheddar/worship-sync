@@ -20,6 +20,7 @@ const initialState: ItemState = {
   slides: [],
   selectedBox: 1,
   bibleInfo: { book: "", chapter: "", version: "", verses: [] },
+  timerInfo: undefined,
   isLoading: true,
   hasPendingUpdate: false,
 };
@@ -45,6 +46,7 @@ export const itemSlice = createSlice({
         version: "",
         verses: [],
       };
+      state.timerInfo = action.payload.timerInfo;
     },
     toggleEditMode: (state) => {
       state.isEditMode = !state.isEditMode;

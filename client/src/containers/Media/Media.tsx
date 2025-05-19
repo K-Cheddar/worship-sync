@@ -32,6 +32,8 @@ import {
   setMediaItems,
 } from "../../store/preferencesSlice";
 import { useLocation } from "react-router-dom";
+import cn from "classnames";
+import { updateOverlay } from "../../store/overlaysSlice";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -50,6 +52,9 @@ const Media = () => {
 
   const { list } = useSelector((state) => state.undoable.present.media);
   const { isLoading } = useSelector((state) => state.undoable.present.item);
+  const { type: selectedOverlayType, id: selectedOverlayId } = useSelector(
+    (state) => state.undoable.present.overlays
+  );
   const { isMediaExpanded, mediaItemsPerRow } = useSelector(
     (state) => state.preferences
   );
@@ -148,12 +153,11 @@ const Media = () => {
       >
         <Button
           variant="tertiary"
-          disabled={
-            selectedMedia.id === "" ||
-            isLoading ||
-            !location.pathname.includes("item")
-          }
-          className="mr-2"
+          disabled={selectedMedia.id === "" || isLoading}
+          className={cn(
+            "mr-2",
+            !location.pathname.includes("item") && "hidden"
+          )}
           svg={BgAll}
           onClick={() => {
             if (selectedMedia.background && db) {
@@ -169,11 +173,8 @@ const Media = () => {
         </Button>
         <Button
           variant="tertiary"
-          disabled={
-            selectedMedia.id === "" ||
-            isLoading ||
-            !location.pathname.includes("item")
-          }
+          disabled={selectedMedia.id === "" || isLoading}
+          className={cn(!location.pathname.includes("item") && "hidden")}
           svg={BGOne}
           onClick={() => {
             if (selectedMedia.background && db) {
@@ -184,6 +185,29 @@ const Media = () => {
           }}
         >
           {isMobile ? "" : "Set Slide"}
+        </Button>
+        <Button
+          variant="tertiary"
+          disabled={selectedMedia.id === ""}
+          className={cn(
+            !(
+              location.pathname.includes("overlays") &&
+              selectedOverlayType === "image"
+            ) && "hidden"
+          )}
+          svg={BGOne}
+          onClick={() => {
+            if (selectedMedia.background && db) {
+              dispatch(
+                updateOverlay({
+                  imageUrl: selectedMedia.background,
+                  id: selectedOverlayId,
+                })
+              );
+            }
+          }}
+        >
+          {isMobile ? "" : "Set Image Overlay"}
         </Button>
         <Button
           className="lg:ml-2 max-lg:mx-auto"

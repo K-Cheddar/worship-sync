@@ -12,6 +12,8 @@ import {
   ItemList,
   ItemListDetails,
   DBItemListDetails,
+  TimerType,
+  TimerStatus,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatBible, formatSong } from "./overflow";
@@ -305,6 +307,71 @@ export const createNewFreeForm = async ({
       createNewSlide({ type: "Section", fontSize: 2.5, words: [""] }),
     ],
     arrangements: [],
+  };
+
+  const item = await createNewItemInDb({ item: newItem, db, selectedList });
+
+  return item;
+};
+
+type CreateNewTimerType = {
+  name: string;
+  list: ServiceItem[];
+  db: PouchDB.Database | undefined;
+  selectedList: ItemList;
+  hostId: string;
+  duration: number;
+  countdownTime: string;
+  timerType: TimerType;
+};
+
+export const createNewTimer = async ({
+  name,
+  list,
+  db,
+  selectedList,
+  hostId,
+  duration,
+  countdownTime,
+  timerType,
+}: CreateNewTimerType): Promise<ItemState> => {
+  const _name = makeUnique({ value: name, property: "name", list });
+
+  // Calculate end time for timer type
+  const endTime =
+    timerType === "timer" && duration
+      ? new Date(Date.now() + duration * 1000).toISOString()
+      : undefined;
+
+  const newItem: ItemState = {
+    name: _name,
+    type: "timer",
+    _id: _name,
+    selectedArrangement: 0,
+    selectedSlide: 0,
+    selectedBox: 1,
+    slides: [
+      createNewSlide({
+        type: "Section",
+        fontSize: 4.5,
+        words: ["", "{{timer}}"],
+      }),
+    ],
+    arrangements: [],
+    timerInfo: {
+      hostId: hostId,
+      duration,
+      countdownTime,
+      timerType,
+      status: "stopped" as TimerStatus,
+      isActive: false,
+      remainingTime: duration || 0,
+      id: _name,
+      name: name,
+      startedAt: undefined,
+      endTime,
+      showMinutesOnly: false,
+    },
   };
 
   const item = await createNewItemInDb({ item: newItem, db, selectedList });

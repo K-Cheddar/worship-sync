@@ -33,16 +33,16 @@ const ToolbarMenu = () => {
       text: "Home",
       to: "/",
     },
-    {
-      text: isLoggedIn ? "Logout" : "Login",
-      onClick: async () => {
-        if (isLoggedIn && logout) {
-          logout();
-        } else {
-          navigate("/login");
-        }
-      },
-    },
+    // {
+    //   text: isLoggedIn ? "Logout" : "Login",
+    //   onClick: async () => {
+    //     if (isLoggedIn && logout) {
+    //       logout();
+    //     } else {
+    //       navigate("/login");
+    //     }
+    //   },
+    // },
   ];
 
   return (

@@ -118,7 +118,7 @@ export const transformSchedule = async (
     Graphics: "In House",
     "Text Master": "Text Master",
     "Audio Engineers": ["Front of House Audio", "Stream Audio"],
-    "Production Coordinators": ["Coordinator 1", "Coordinator 2"],
+    "Worship Coordinators": ["Coordinator 1", "Coordinator 2"],
   };
 
   // Create a reverse mapping for easier lookup

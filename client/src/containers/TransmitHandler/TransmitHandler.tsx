@@ -33,6 +33,14 @@ const TransmitHandler = () => {
     streamInfo,
   } = useSelector((state) => state.presentation);
   const [isTransmitting, setIsTransmitting] = useState(false);
+
+  const timers = useSelector((state) => state.timers.timers);
+  const projectorTimer = timers.find(
+    (timer) => timer.id === projectorInfo.timerId
+  );
+  const monitorTimer = timers.find((timer) => timer.id === monitorInfo.timerId);
+  const streamTimer = timers.find((timer) => timer.id === streamInfo.timerId);
+
   const dispatch = useDispatch();
 
   const { isMediaExpanded } = useSelector((state) => state.preferences);
@@ -91,6 +99,7 @@ const TransmitHandler = () => {
         <Presentation
           name="Projector"
           prevInfo={prevProjectorInfo}
+          timerInfo={projectorTimer}
           info={projectorInfo}
           isTransmitting={isProjectorTransmitting}
           toggleIsTransmitting={() => dispatch(toggleProjectorTransmitting())}
@@ -100,6 +109,7 @@ const TransmitHandler = () => {
         <Presentation
           name="Monitor"
           prevInfo={prevMonitorInfo}
+          timerInfo={monitorTimer}
           info={monitorInfo}
           isTransmitting={isMonitorTransmitting}
           toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
@@ -109,6 +119,7 @@ const TransmitHandler = () => {
         <Presentation
           name="Stream"
           prevInfo={prevStreamInfo}
+          timerInfo={streamTimer}
           info={streamInfo}
           isTransmitting={isStreamTransmitting}
           toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}

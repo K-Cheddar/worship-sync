@@ -1,14 +1,19 @@
 import { useEffect, useState } from "react";
 import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
 import Button from "../components/Button/Button";
-import { Presentation as PresentationType } from "../types";
+import { Presentation as PresentationType, TimerInfo } from "../types";
 
 type PresentationProps = {
   displayInfo: PresentationType;
   prevDisplayInfo: PresentationType;
+  timerInfo?: TimerInfo;
 };
 
-const Presentation = ({ displayInfo, prevDisplayInfo }: PresentationProps) => {
+const Presentation = ({
+  displayInfo,
+  prevDisplayInfo,
+  timerInfo,
+}: PresentationProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const handleClick = () => {
@@ -31,6 +36,7 @@ const Presentation = ({ displayInfo, prevDisplayInfo }: PresentationProps) => {
       boxes={displayInfo.slide?.boxes || []}
       prevBoxes={prevDisplayInfo.slide?.boxes || []}
       displayType={displayInfo.displayType}
+      timerInfo={timerInfo}
       shouldAnimate
       width={100}
     />
