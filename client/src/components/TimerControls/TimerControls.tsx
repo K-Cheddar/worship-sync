@@ -1,4 +1,5 @@
 import { useDispatch, useSelector } from "../../hooks";
+import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
 import { TimerInfo } from "../../types";
 import { updateTimer } from "../../store/timersSlice";
 import { RootState } from "../../store/store";
@@ -10,8 +11,11 @@ import TimerControlButtons from "./TimerControlButtons";
 import RadioButton from "../RadioButton/RadioButton";
 import "./TimerControls.scss";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import cn from "classnames";
+import PopOver from "../PopOver/PopOver";
+import Button from "../Button/Button";
 
-const TimerControls = () => {
+const TimerControls = ({ className }: { className?: string }) => {
   const dispatch = useDispatch();
   const { hostId } = useContext(GlobalInfoContext) || {};
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -89,8 +93,13 @@ const TimerControls = () => {
     updateTimerState({ showMinutesOnly: checked });
   };
 
-  return (
-    <div className="timer-controls flex gap-2 items-center max-lg:flex-col max-lg:gap-4">
+  const controls = (
+    <div
+      className={cn(
+        "timer-controls flex gap-2 items-center max-lg:flex-col max-lg:gap-4",
+        className
+      )}
+    >
       <TimerTypeSelector
         timerType={timerType}
         onTypeChange={handleTypeChange}
@@ -130,6 +139,23 @@ const TimerControls = () => {
         onPause={handlePause}
         onStop={handleStop}
       />
+    </div>
+  );
+
+  return (
+    <div className={`flex gap-2 items-center ${className || ""}`}>
+      {/* leaving this outer div in case more tools are added */}
+
+      <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>
+      <PopOver
+        TriggeringButton={
+          <Button className="lg:hidden" variant="tertiary" svg={ExpandSVG}>
+            Timer Controls
+          </Button>
+        }
+      >
+        <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
+      </PopOver>
     </div>
   );
 };

@@ -285,7 +285,6 @@ listenerMiddleware.startListening({
       (currentState as RootState).timers !==
         (previousState as RootState).timers &&
       action.type !== "timers/updateTimerFromRemote" &&
-      // action.type !== "timers/syncTimers" &&
       action.type !== "timers/syncTimersFromRemote" &&
       action.type !== "timers/setIntervalId" &&
       action.type !== "timers/setShouldUpdateTimers" &&

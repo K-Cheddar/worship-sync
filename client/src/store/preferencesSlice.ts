@@ -7,6 +7,7 @@ const initialState: PreferencesType = {
   formattedLyricsPerRow: 4,
   mediaItemsPerRow: 4,
   shouldShowItemEditor: true,
+  shouldShowTimerControls: true,
   isMediaExpanded: false,
 };
 

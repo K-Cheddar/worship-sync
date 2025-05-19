@@ -271,6 +271,7 @@ export type PreferencesType = {
   slidesPerRowMobile: number;
   formattedLyricsPerRow: number;
   shouldShowItemEditor: boolean;
+  shouldShowTimerControls: boolean;
   isMediaExpanded: boolean;
   mediaItemsPerRow: number;
 };

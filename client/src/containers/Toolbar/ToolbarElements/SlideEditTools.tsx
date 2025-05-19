@@ -19,7 +19,6 @@ import { ItemState } from "../../../types";
 import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
 import BoxEditor from "./BoxEditor";
-import TimerControls from "../../../components/TimerControls/TimerControls";
 
 const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
@@ -129,7 +128,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
-      {type === "timer" && <TimerControls />}
       {type === "song" && <BoxEditor />}
       {canChangeAspectRatio && (
         <Toggle

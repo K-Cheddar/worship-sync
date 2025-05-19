@@ -125,7 +125,16 @@ export const calculateRemainingTime = ({
 
     return timerInfo.remainingTime || 0;
   } else {
-    // For countdown timers, always recalculate based on target time
+    // For countdown timers
+    const isResumingFromPaused =
+      timerInfo.status === "running" && previousStatus === "paused";
+
+    // If resuming from paused state, use the stored remaining time
+    if (isResumingFromPaused && timerInfo.remainingTime !== undefined) {
+      return timerInfo.remainingTime;
+    }
+
+    // Otherwise, calculate new time difference to target time
     return getTimeDifference(timerInfo.countdownTime || "00:00");
   }
 };
