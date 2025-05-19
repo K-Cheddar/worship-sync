@@ -5,6 +5,7 @@ import { ReactComponent as EyeSVG } from "../../assets/icons/visible.svg";
 import { ReactComponent as EyeOffSVG } from "../../assets/icons/not-visible.svg";
 import { useDispatch } from "../../hooks";
 import "./Credits.scss";
+import cn from "classnames";
 import gsap from "gsap";
 
 import { CreditsInfo } from "../../types";
@@ -18,9 +19,19 @@ import TextArea from "../../components/TextArea/TextArea";
 
 type CreditProps = CreditsInfo & {
   initialList: string[];
+  selectCredit: () => void;
+  selectedCreditId: string;
 };
 
-const Credit = ({ heading, text, id, initialList, hidden }: CreditProps) => {
+const Credit = ({
+  heading,
+  text,
+  id,
+  initialList,
+  hidden,
+  selectCredit,
+  selectedCreditId,
+}: CreditProps) => {
   const dispatch = useDispatch();
 
   const [isDeleting, setIsDeleting] = useState(false);
@@ -90,9 +101,11 @@ const Credit = ({ heading, text, id, initialList, hidden }: CreditProps) => {
 
   return (
     <li
-      className={`flex items-center rounded-lg w-full overflow-clip leading-3 bg-gray-800 ${
-        hidden ? "opacity-50" : ""
-      }`}
+      className={cn(
+        "flex items-center rounded-lg w-full overflow-clip leading-3 bg-gray-800",
+        hidden ? "opacity-50" : "",
+        selectedCreditId === id && "bg-gray-950"
+      )}
       ref={(element) => {
         setNodeRef(element);
         creditRef.current = element;
@@ -100,9 +113,11 @@ const Credit = ({ heading, text, id, initialList, hidden }: CreditProps) => {
       style={style}
       id={`credit-editor-${id}`}
       onClick={() => {
-        document
-          .getElementById(`credit-${id}`)
-          ?.scrollIntoView({ behavior: "smooth" });
+        const creditElement = document.getElementById(`credit-${id}`);
+        if (creditElement) {
+          creditElement.scrollIntoView({ behavior: "smooth" });
+        }
+        selectCredit();
       }}
     >
       <Button

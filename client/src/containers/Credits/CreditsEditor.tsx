@@ -3,7 +3,7 @@ import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { useDispatch, useSelector } from "../../hooks";
-import { updateList } from "../../store/creditsSlice";
+import { selectCredit, updateList } from "../../store/creditsSlice";
 import "./Credits.scss";
 import { useState } from "react";
 import Credit from "./Credit";
@@ -21,9 +21,8 @@ import {
 } from "../../store/creditsSlice";
 
 const CreditsEditor = ({ className }: { className?: string }) => {
-  const { list, publishedList, initialList, isLoading } = useSelector(
-    (state) => state.undoable.present.credits
-  );
+  const { list, publishedList, initialList, isLoading, selectedCreditId } =
+    useSelector((state) => state.undoable.present.credits);
   const dispatch = useDispatch();
   // const { isMobile } = useContext(ControllerInfoContext) || {};
 
@@ -89,6 +88,8 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                 {list.map((credit) => {
                   return (
                     <Credit
+                      selectCredit={() => dispatch(selectCredit(credit.id))}
+                      selectedCreditId={selectedCreditId}
                       key={credit.id}
                       initialList={initialList}
                       heading={credit.heading}

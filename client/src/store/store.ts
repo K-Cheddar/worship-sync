@@ -80,6 +80,7 @@ const undoableReducers = undoable(
       creditsSlice.actions.updatePublishedCreditsListFromRemote.toString(),
       creditsSlice.actions.updateInitialList.toString(),
       creditsSlice.actions.setIsLoading.toString(),
+      creditsSlice.actions.selectCredit.toString(),
       itemListSlice.actions.initiateItemList.toString(),
       itemListSlice.actions.updateItemListFromRemote.toString(),
       itemListSlice.actions.setItemListIsLoading.toString(),

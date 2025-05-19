@@ -338,16 +338,16 @@ const CreditsEditor = () => {
       )}
 
       <div className="flex gap-2 px-4 pb-4">
-        <div
-          data-testid="credits-editor-container"
-          className={isPreviewOpen ? "hidden" : ""}
-        >
-          <CreditsEditorContainer />
-        </div>
+        <CreditsEditorContainer
+          className={isPreviewOpen ? "max-md:hidden" : ""}
+        />
 
         <section
           data-testid="credits-preview-container"
-          className={cn("flex-1 text-center", !isPreviewOpen && "hidden")}
+          className={cn(
+            "flex-1 text-center",
+            !isPreviewOpen && "max-md:hidden"
+          )}
         >
           <h2 className="text-lg font-semibold">Preview</h2>
           <Credits isPreview credits={list} />
