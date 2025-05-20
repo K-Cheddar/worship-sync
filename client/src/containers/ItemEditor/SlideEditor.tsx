@@ -47,7 +47,9 @@ const SlideEditor = () => {
     isLoading,
   } = item;
 
-  const { shouldShowItemEditor } = useSelector((state) => state.preferences);
+  const { shouldShowItemEditor } = useSelector(
+    (state) => state.undoable.present.preferences
+  );
 
   const [isEditingName, setIsEditingName] = useState(false);
 

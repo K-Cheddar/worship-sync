@@ -38,21 +38,6 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
     ].join(":");
   };
 
-  const formatTime12Hour = (timeString: string) => {
-    const [hours, minutes] = timeString.split(":");
-    const hour = parseInt(hours);
-    const ampm = hour >= 12 ? "PM" : "AM";
-    const hour12 = hour % 12 || 12;
-    return `${hour12}:${minutes} ${ampm}`;
-  };
-
-  const getDisplayTime = () => {
-    if (timerInfo.timerType === "countdown" && timerInfo.status === "stopped") {
-      return formatTime12Hour(timerInfo.countdownTime || "00:00");
-    }
-    return formatTime(timer?.remainingTime || 0);
-  };
-
   const parts = words.split("{{timer}}");
 
   return (
@@ -61,7 +46,9 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
         <span key={index}>
           {part}
           {index < parts.length - 1 && (
-            <span className="inline-block">{getDisplayTime()}</span>
+            <span className="inline-block">
+              {formatTime(timer?.remainingTime || 0)}
+            </span>
           )}
         </span>
       ))}
@@ -70,3 +57,20 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
 };
 
 export default TimerDisplay;
+
+// MAY use in future
+
+// const formatTime12Hour = (timeString: string) => {
+//   const [hours, minutes] = timeString.split(":");
+//   const hour = parseInt(hours);
+//   const ampm = hour >= 12 ? "PM" : "AM";
+//   const hour12 = hour % 12 || 12;
+//   return `${hour12}:${minutes} ${ampm}`;
+// };
+
+// const getDisplayTime = () => {
+//   if (timerInfo.timerType === "countdown" && timerInfo.status === "stopped") {
+//     return formatTime12Hour(timerInfo.countdownTime || "00:00");
+//   }
+//   return formatTime(timer?.remainingTime || 0);
+// };

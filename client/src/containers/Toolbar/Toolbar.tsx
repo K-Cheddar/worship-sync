@@ -1,4 +1,4 @@
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { ReactComponent as SettingsSVG } from "../../assets/icons/settings.svg";
 import { ReactComponent as EditSquareSVG } from "../../assets/icons/edit-square.svg";
 import Menu from "./ToolbarElements/Menu";
@@ -9,28 +9,31 @@ import UserSection from "./ToolbarElements/UserSection";
 import { useSelector } from "../../hooks";
 import { forwardRef, useEffect, useMemo, useState } from "react";
 import Button from "../../components/Button/Button";
-
-type sections = "outlines" | "slide-tools";
+import { ReactComponent as TimerSVG } from "../../assets/icons/timer.svg";
+import TimerControls from "../../components/TimerControls/TimerControls";
+type sections = "settings" | "slide-tools" | "timer-manager";
 
 const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
   ({ className }, ref) => {
     const location = useLocation();
-    const { isEditMode } = useSelector((state) => state.undoable.present.item);
-    const { shouldShowItemEditor } = useSelector((state) => state.preferences);
-
-    const [section, setSection] = useState<sections>("outlines");
+    const { isEditMode, type } = useSelector(
+      (state) => state.undoable.present.item
+    );
+    const [section, setSection] = useState<sections>("settings");
     const onItemPage = useMemo(
       () => location.pathname.includes("controller/item"),
       [location.pathname]
     );
 
     useEffect(() => {
-      if (onItemPage && shouldShowItemEditor) {
+      if (onItemPage && type === "timer") {
+        setSection("timer-manager");
+      } else if (onItemPage) {
         setSection("slide-tools");
       } else {
-        setSection("outlines");
+        setSection("settings");
       }
-    }, [onItemPage, shouldShowItemEditor]);
+    }, [onItemPage, type]);
 
     return (
       <div ref={ref} className={className}>
@@ -43,16 +46,16 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
             <Button
               variant="none"
               svg={SettingsSVG}
-              onClick={() => setSection("outlines")}
+              onClick={() => setSection("settings")}
               className={`text-xs rounded-none ${
-                section === "outlines" && "bg-gray-800"
+                section === "settings" && "bg-gray-800"
               }`}
             >
               Settings
             </Button>
             <Button
               variant="none"
-              disabled={!onItemPage || !shouldShowItemEditor}
+              disabled={!onItemPage}
               svg={EditSquareSVG}
               onClick={() => setSection("slide-tools")}
               className={`text-xs rounded-none ${
@@ -61,6 +64,17 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
             >
               Slide Tools
             </Button>
+            <Button
+              variant="none"
+              svg={TimerSVG}
+              disabled={!onItemPage || type !== "timer"}
+              onClick={() => setSection("timer-manager")}
+              className={`text-xs rounded-none ${
+                section === "timer-manager" && "bg-gray-800"
+              }`}
+            >
+              Timer Manager
+            </Button>
           </div>
 
           <div
@@ -68,10 +82,22 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
               isEditMode ? "hidden" : ""
             }`}
           >
-            <Outlines className={`${section !== "outlines" && "hidden"}`} />
+            <Outlines className={`${section !== "settings" && "hidden"}`} />
+            <Button
+              className={`${section !== "settings" && "hidden"}`}
+              variant="none"
+              svg={SettingsSVG}
+            >
+              <Link className="h-full w-full" to="/controller/preferences">
+                Preferences
+              </Link>
+            </Button>
             <SlideEditTools
+              className={`${section !== "slide-tools" && "hidden"}`}
+            />
+            <TimerControls
               className={`${
-                (section !== "slide-tools" || !shouldShowItemEditor) && "hidden"
+                (section !== "timer-manager" || type !== "timer") && "hidden"
               }`}
             />
           </div>

@@ -267,12 +267,20 @@ export type bibleType = {
 };
 
 export type PreferencesType = {
-  slidesPerRow: number;
-  slidesPerRowMobile: number;
-  formattedLyricsPerRow: number;
-  shouldShowItemEditor: boolean;
-  isMediaExpanded: boolean;
-  mediaItemsPerRow: number;
+  defaultSongBackground: string;
+  defaultTimerBackground: string;
+  defaultBibleBackground: string;
+  defaultFreeFormBackground: string;
+  defaultSongBackgroundBrightness: number;
+  defaultTimerBackgroundBrightness: number;
+  defaultBibleBackgroundBrightness: number;
+  defaultFreeFormBackgroundBrightness: number;
+  defaultSlidesPerRow: number;
+  defaultSlidesPerRowMobile: number;
+  defaultFormattedLyricsPerRow: number;
+  defaultMediaItemsPerRow: number;
+  defaultShouldShowItemEditor: boolean;
+  defaultIsMediaExpanded: boolean;
 };
 
 export type ItemList = {
@@ -312,6 +320,12 @@ export type DBItemListDetails = {
   name: string;
   items: ServiceItem[];
   overlays: OverlayInfo[];
+};
+
+export type DBPreferences = {
+  _id: string;
+  _rev: string;
+  preferences: PreferencesType;
 };
 
 export type DBCredits = {

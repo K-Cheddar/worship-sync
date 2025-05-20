@@ -71,6 +71,10 @@ const Bible = () => {
     isStreamTransmitting,
   } = useSelector((state) => state.presentation);
 
+  const {
+    preferences: { defaultBibleBackground, defaultBibleBackgroundBrightness },
+  } = useSelector((state) => state.undoable.present.preferences);
+
   const { list } = useSelector((state) => state.allItems);
 
   const [showVersesDisplaySection, setShowVersesDisplaySection] =
@@ -201,6 +205,8 @@ const Bible = () => {
       db,
       list,
       selectedList,
+      background: defaultBibleBackground,
+      brightness: defaultBibleBackgroundBrightness,
     });
 
     const itemForList = {

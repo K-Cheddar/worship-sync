@@ -36,7 +36,9 @@ const LyricBoxes = ({
   onFormattedLyricsDelete,
   isMobile,
 }: FormattedLyricsProps) => {
-  const { formattedLyricsPerRow } = useSelector((state) => state.preferences);
+  const { formattedLyricsPerRow } = useSelector(
+    (state) => state.undoable.present.preferences
+  );
 
   const [newSectionType, setNewSectionType] = useState("Verse");
 

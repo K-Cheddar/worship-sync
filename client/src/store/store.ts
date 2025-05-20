@@ -37,6 +37,7 @@ import {
   DBItemListDetails,
   DBItemLists,
   DBMedia,
+  DBPreferences,
   OverlayInfo,
   Presentation,
   TimerInfo,
@@ -57,6 +58,7 @@ const undoableReducers = undoable(
     itemList: itemListSlice.reducer,
     itemLists: itemListsSlice.reducer,
     media: mediaItemsSlice.reducer,
+    preferences: preferencesSlice.reducer,
   }),
   {
     filter: excludeAction([
@@ -90,6 +92,23 @@ const undoableReducers = undoable(
       itemListsSlice.actions.setInitialItemList.toString(),
       mediaItemsSlice.actions.initiateMediaList.toString(),
       mediaItemsSlice.actions.updateMediaListFromRemote.toString(),
+      preferencesSlice.actions.initiatePreferences.toString(),
+      preferencesSlice.actions.setIsLoading.toString(),
+      preferencesSlice.actions.setSelectedPreference.toString(),
+      preferencesSlice.actions.setShouldShowItemEditor.toString(),
+      preferencesSlice.actions.setIsMediaExpanded.toString(),
+      preferencesSlice.actions.increaseSlides.toString(),
+      preferencesSlice.actions.decreaseSlides.toString(),
+      preferencesSlice.actions.setSlides.toString(),
+      preferencesSlice.actions.increaseSlidesMobile.toString(),
+      preferencesSlice.actions.decreaseSlidesMobile.toString(),
+      preferencesSlice.actions.setSlidesMobile.toString(),
+      preferencesSlice.actions.increaseFormattedLyrics.toString(),
+      preferencesSlice.actions.decreaseFormattedLyrics.toString(),
+      preferencesSlice.actions.setFormattedLyrics.toString(),
+      preferencesSlice.actions.increaseMediaItems.toString(),
+      preferencesSlice.actions.decreaseMediaItems.toString(),
+      preferencesSlice.actions.setMediaItems.toString(),
     ]),
     limit: 100,
   }
@@ -285,7 +304,6 @@ listenerMiddleware.startListening({
       (currentState as RootState).timers !==
         (previousState as RootState).timers &&
       action.type !== "timers/updateTimerFromRemote" &&
-      // action.type !== "timers/syncTimers" &&
       action.type !== "timers/syncTimersFromRemote" &&
       action.type !== "timers/setIntervalId" &&
       action.type !== "timers/setShouldUpdateTimers" &&
@@ -422,6 +440,56 @@ listenerMiddleware.startListening({
     const db_backgrounds: DBMedia = await db.get("images");
     db_backgrounds.backgrounds = [...list];
     db.put(db_backgrounds);
+  },
+});
+
+// handle updating preferences
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).undoable.present.preferences !==
+        (previousState as RootState).undoable.present.preferences &&
+      action.type !== "preferences/initiatePreferences" &&
+      action.type !== "preferences/increaseSlides" &&
+      action.type !== "preferences/increaseSlidesMobile" &&
+      action.type !== "preferences/decreaseSlides" &&
+      action.type !== "preferences/decreaseSlidesMobile" &&
+      action.type !== "preferences/setSlides" &&
+      action.type !== "preferences/setSlidesMobile" &&
+      action.type !== "preferences/increaseFormattedLyrics" &&
+      action.type !== "preferences/decreaseFormattedLyrics" &&
+      action.type !== "preferences/setFormattedLyrics" &&
+      action.type !== "preferences/setMediaItems" &&
+      action.type !== "preferences/setShouldShowItemEditor" &&
+      action.type !== "preferences/setIsMediaExpanded" &&
+      action.type !== "preferences/setIsLoading" &&
+      action.type !== "preferences/setSelectedPreference" &&
+      action.type !== "RESET"
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(1500);
+
+    // update ItemList
+    const { preferences } = (listenerApi.getState() as RootState).undoable
+      .present.preferences;
+
+    if (!db) return;
+    try {
+      const db_preferences: DBPreferences = await db.get("preferences");
+      db_preferences.preferences = preferences;
+      db.put(db_preferences);
+    } catch (error) {
+      // if the preferences are not found, create a new one
+      console.error(error);
+      const db_preferences = {
+        preferences: preferences,
+        _id: "preferences",
+      };
+      db.put(db_preferences);
+    }
   },
 });
 
@@ -754,7 +822,6 @@ const combinedReducers = combineReducers({
   bible: bibleSlice.reducer,
   allItems: allItemsSlice.reducer,
   createItem: createItemSlice.reducer,
-  preferences: preferencesSlice.reducer,
   allDocs: allDocsSlice.reducer,
   timers: timersSlice.reducer,
 });

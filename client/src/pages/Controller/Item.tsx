@@ -4,7 +4,7 @@ import ItemSlides from "../../containers/ItemSlides/ItemSlides";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { DBItem } from "../../types";
 import { formatItemInfo } from "../../utils/formatItemInfo";
-import { useDispatch, useSelector } from "../../hooks";
+import { useDispatch } from "../../hooks";
 import { setActiveItem, setItemIsLoading } from "../../store/itemSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setActiveItemInList } from "../../store/itemListSlice";

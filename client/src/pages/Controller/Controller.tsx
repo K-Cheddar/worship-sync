@@ -30,7 +30,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import FreeForms from "../../containers/FreeForms/FreeForms";
-import { DBAllItems, DBItemListDetails } from "../../types";
+import { DBAllItems, DBItemListDetails, DBPreferences } from "../../types";
 import {
   initiateItemList,
   setItemListIsLoading,
@@ -47,6 +47,11 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { sortNamesInList } from "../../utils/sort";
 import { deleteUnusedBibleItems, updateAllDocs } from "../../utils/dbUtils";
 import Timers from "../../containers/Timers/Timers";
+import Preferences from "./Preferences";
+import {
+  initiatePreferences,
+  setIsLoading,
+} from "../../store/preferencesSlice";
 
 // Here for future to implement resizable
 
@@ -112,6 +117,23 @@ const Controller = () => {
       deleteUnusedBibleItems({ db, allItems });
     };
     getAllItems();
+  }, [dispatch, db]);
+
+  useEffect(() => {
+    if (!db) return;
+    const getPreferences = async () => {
+      try {
+        const preferences: DBPreferences | undefined = await db.get(
+          "preferences"
+        );
+        dispatch(initiatePreferences(preferences.preferences));
+      } catch (e) {
+        console.error(e);
+      } finally {
+        dispatch(setIsLoading(false));
+      }
+    };
+    getPreferences();
   }, [dispatch, db]);
 
   useEffect(() => {
@@ -281,6 +303,7 @@ const Controller = () => {
               <Route path="free" element={<FreeForms />} />
               <Route path="timers" element={<Timers />} />
               <Route path="create" element={<CreateItem />} />
+              <Route path="preferences" element={<Preferences />} />
             </Routes>
           </div>
 
