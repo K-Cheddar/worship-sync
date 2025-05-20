@@ -59,7 +59,7 @@ const TimerControls = ({ className }: { className?: string }) => {
         (updates.timerType || timer?.timerType) === "countdown"
           ? updates.countdownTime || timer?.countdownTime
           : undefined,
-      showMinutesOnly: updates.showMinutesOnly || false,
+      showMinutesOnly: updates.showMinutesOnly ?? showMinutesOnly,
     };
 
     dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
