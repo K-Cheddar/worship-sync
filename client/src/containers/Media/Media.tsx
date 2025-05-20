@@ -28,6 +28,7 @@ import generateRandomId from "../../utils/generateRandomId";
 import {
   decreaseMediaItems,
   increaseMediaItems,
+  setDefaultPreferences,
   setIsMediaExpanded,
   setMediaItems,
 } from "../../store/preferencesSlice";
@@ -55,8 +56,8 @@ const Media = () => {
   const { type: selectedOverlayType, id: selectedOverlayId } = useSelector(
     (state) => state.undoable.present.overlays
   );
-  const { isMediaExpanded, mediaItemsPerRow } = useSelector(
-    (state) => state.preferences
+  const { isMediaExpanded, mediaItemsPerRow, selectedPreference } = useSelector(
+    (state) => state.undoable.present.preferences
   );
 
   const [selectedMedia, setSelectedMedia] = useState<{
@@ -208,6 +209,21 @@ const Media = () => {
           }}
         >
           {isMobile ? "" : "Set Image Overlay"}
+        </Button>
+        <Button
+          variant="tertiary"
+          disabled={selectedMedia.id === "" || !selectedPreference}
+          className={cn(!location.pathname.includes("preferences") && "hidden")}
+          svg={BGOne}
+          onClick={() => {
+            dispatch(
+              setDefaultPreferences({
+                [selectedPreference]: selectedMedia.background,
+              })
+            );
+          }}
+        >
+          {isMobile ? "" : "Set Background"}
         </Button>
         <Button
           className="lg:ml-2 max-lg:mx-auto"

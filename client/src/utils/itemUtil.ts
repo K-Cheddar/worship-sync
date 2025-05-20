@@ -21,10 +21,6 @@ import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
 import { fill } from "@cloudinary/url-gen/actions/resize";
 
-const DEFAULT_SONG_BACKGROUND =
-  "https://res.cloudinary.com/portable-media/image/upload/v1/eliathah/WorshipBackground_ycr280?_a=DATAg1AAZAA0";
-const DEFAULT_SONG_BRIGHTNESS = 50;
-
 type CreateSectionsType = {
   formattedLyrics?: FormattedLyrics[];
   songOrder?: SongOrder[];
@@ -75,6 +71,8 @@ type CreateNewSongType = {
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
   selectedList: ItemList;
+  background: string;
+  brightness: number;
 };
 
 export const createNewSong = async ({
@@ -84,6 +82,8 @@ export const createNewSong = async ({
   list,
   db,
   selectedList,
+  background,
+  brightness,
 }: CreateNewSongType): Promise<ItemState> => {
   const arrangements: Arrangment[] = [
     {
@@ -96,15 +96,15 @@ export const createNewSong = async ({
           type: "Title",
           fontSize: 4.5,
           words: ["", name],
-          background: DEFAULT_SONG_BACKGROUND,
-          brightness: DEFAULT_SONG_BRIGHTNESS,
+          background,
+          brightness,
         }),
         createNewSlide({
           type: "Blank",
           fontSize: 2.5,
           words: [""],
-          background: DEFAULT_SONG_BACKGROUND,
-          brightness: DEFAULT_SONG_BRIGHTNESS,
+          background,
+          brightness,
         }),
       ],
     },
@@ -116,7 +116,7 @@ export const createNewSong = async ({
     name: _name,
     type: "song",
     _id: _name,
-    background: DEFAULT_SONG_BACKGROUND,
+    background,
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,
@@ -167,6 +167,8 @@ type CreateNewBibleType = {
   db: PouchDB.Database | undefined;
   list: ServiceItem[];
   selectedList: ItemList;
+  background: string;
+  brightness: number;
 };
 
 export const createNewBible = async ({
@@ -178,6 +180,8 @@ export const createNewBible = async ({
   db,
   list,
   selectedList,
+  background,
+  brightness,
 }: CreateNewBibleType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
 
@@ -200,6 +204,8 @@ export const createNewBible = async ({
     chapter,
     version,
     verses,
+    background,
+    brightness,
   });
 
   const _item = await createNewItemInDb({ item, db, selectedList });
@@ -286,6 +292,8 @@ type CreateNewFreeFormType = {
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
   selectedList: ItemList;
+  background: string;
+  brightness: number;
 };
 
 export const createNewFreeForm = async ({
@@ -293,6 +301,8 @@ export const createNewFreeForm = async ({
   list,
   db,
   selectedList,
+  background,
+  brightness,
 }: CreateNewFreeFormType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
   const newItem: ItemState = {
@@ -303,8 +313,20 @@ export const createNewFreeForm = async ({
     selectedSlide: 0,
     selectedBox: 1,
     slides: [
-      createNewSlide({ type: "Section", fontSize: 4.5, words: ["", name] }),
-      createNewSlide({ type: "Section", fontSize: 2.5, words: [""] }),
+      createNewSlide({
+        type: "Section",
+        fontSize: 4.5,
+        words: ["", name],
+        background,
+        brightness,
+      }),
+      createNewSlide({
+        type: "Section",
+        fontSize: 2.5,
+        words: [""],
+        background,
+        brightness,
+      }),
     ],
     arrangements: [],
   };
@@ -323,6 +345,8 @@ type CreateNewTimerType = {
   duration: number;
   countdownTime: string;
   timerType: TimerType;
+  background: string;
+  brightness: number;
 };
 
 export const createNewTimer = async ({
@@ -334,6 +358,8 @@ export const createNewTimer = async ({
   duration,
   countdownTime,
   timerType,
+  background,
+  brightness,
 }: CreateNewTimerType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
 
@@ -355,6 +381,8 @@ export const createNewTimer = async ({
         type: "Section",
         fontSize: 4.5,
         words: ["", "{{timer}}"],
+        background,
+        brightness,
       }),
     ],
     arrangements: [],

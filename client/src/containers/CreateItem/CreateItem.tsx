@@ -67,6 +67,14 @@ const CreateItem = () => {
   const { selectedList } = useSelector(
     (state: any) => state.undoable.present.itemLists
   );
+  const {
+    defaultSongBackground,
+    defaultTimerBackground,
+    defaultFreeFormBackground,
+    defaultSongBackgroundBrightness,
+    defaultTimerBackgroundBrightness,
+    defaultFreeFormBackgroundBrightness,
+  } = useSelector((state: any) => state.undoable.present.preferences);
   const { hostId } = useContext(GlobalInfoContext) || {};
 
   const [searchParams] = useSearchParams();
@@ -134,6 +142,8 @@ const CreateItem = () => {
         list,
         db,
         selectedList,
+        background: defaultSongBackground,
+        brightness: defaultSongBackgroundBrightness,
       });
 
       dispatchNewItem(newItem);
@@ -145,6 +155,8 @@ const CreateItem = () => {
         list,
         db,
         selectedList,
+        background: defaultFreeFormBackground,
+        brightness: defaultFreeFormBackgroundBrightness,
       });
 
       dispatchNewItem(newItem);
@@ -171,6 +183,8 @@ const CreateItem = () => {
         duration,
         countdownTime: time,
         timerType,
+        background: defaultTimerBackground,
+        brightness: defaultTimerBackgroundBrightness,
       });
 
       dispatchNewItem(newItem);

@@ -43,7 +43,9 @@ const TransmitHandler = () => {
 
   const dispatch = useDispatch();
 
-  const { isMediaExpanded } = useSelector((state) => state.preferences);
+  const { isMediaExpanded } = useSelector(
+    (state) => state.undoable.present.preferences
+  );
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
 
