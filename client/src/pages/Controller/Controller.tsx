@@ -50,6 +50,7 @@ import Timers from "../../containers/Timers/Timers";
 import Preferences from "./Preferences";
 import {
   initiatePreferences,
+  initiateQuickLinks,
   setIsLoading,
 } from "../../store/preferencesSlice";
 
@@ -127,6 +128,7 @@ const Controller = () => {
           "preferences"
         );
         dispatch(initiatePreferences(preferences.preferences));
+        dispatch(initiateQuickLinks(preferences.quickLinks));
       } catch (e) {
         console.error(e);
       } finally {

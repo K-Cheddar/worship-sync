@@ -4,42 +4,54 @@ import {
   clearProjector,
   clearStream,
   updateProjector,
+  updateMonitor,
+  updateStream,
 } from "../../store/presentationSlice";
-import { QuickLinkType } from "../../types";
-import generateRandomId from "../../utils/generateRandomId";
+import { QuickLinkType, TimerInfo } from "../../types";
 import Button from "../Button/Button";
 import "./QuickLink.scss";
+import DisplayWindow from "../DisplayWindow/DisplayWindow";
+import { useMemo } from "react";
 
-const QuickLink = ({ title, url, displayType, action }: QuickLinkType) => {
+type QuickLinkProps = QuickLinkType & {
+  isMobile?: boolean;
+  timers: TimerInfo[];
+};
+
+const QuickLink = ({
+  label,
+  presentationInfo,
+  displayType,
+  action,
+  isMobile,
+  timers,
+}: QuickLinkProps) => {
   const dispatch = useDispatch();
+
+  const timerInfo = useMemo(() => {
+    return timers.find((t) => t.id === presentationInfo?.timerId);
+  }, [timers, presentationInfo]);
 
   const handleClick = () => {
     if (action === "clear") {
       if (displayType === "stream") dispatch(clearStream());
       if (displayType === "monitor") dispatch(clearMonitor());
       if (displayType === "projector") dispatch(clearProjector());
-    } else if (url) {
-      if (displayType === "projector")
-        dispatch(
-          updateProjector({
-            type: "image",
-            name: "",
-            slide: {
-              type: "Image",
-              name: "Image",
-              boxes: [
-                {
-                  id: generateRandomId(),
-                  width: 100,
-                  height: 100,
-                  background: url,
-                },
-              ],
-            },
-          })
-        );
+    } else if (presentationInfo) {
+      if (displayType === "projector") {
+        dispatch(updateProjector(presentationInfo));
+      } else if (displayType === "monitor") {
+        dispatch(updateMonitor(presentationInfo));
+      } else if (displayType === "stream") {
+        dispatch(updateStream(presentationInfo));
+      }
     }
   };
+
+  console.log("presentationInfo", presentationInfo);
+
+  if (!presentationInfo && !action) return null;
+
   return (
     <li className="quick-link">
       <Button
@@ -48,10 +60,25 @@ const QuickLink = ({ title, url, displayType, action }: QuickLinkType) => {
         padding="p-0"
         className="w-full h-full flex-col"
       >
-        {!url && <div className="quick-link-image bg-black" />}
-        {url && <img className="quick-link-image" src={url} alt={title} />}
-        <p className="text-center text-xs font-semibold whitespace-break-spaces w-full">
-          {title}
+        {!presentationInfo && (
+          <div className="w-[3vw] max-lg:w-[8vw] aspect-video bg-black" />
+        )}
+        {presentationInfo && (
+          <DisplayWindow
+            boxes={presentationInfo.slide?.boxes || []}
+            width={isMobile ? 9 : 3}
+            displayType={displayType}
+            participantOverlayInfo={presentationInfo.participantOverlayInfo}
+            stbOverlayInfo={presentationInfo.stbOverlayInfo}
+            qrCodeOverlayInfo={presentationInfo.qrCodeOverlayInfo}
+            imageOverlayInfo={presentationInfo.imageOverlayInfo}
+            prevBibleDisplayInfo={presentationInfo.bibleDisplayInfo}
+            bibleDisplayInfo={presentationInfo.bibleDisplayInfo}
+            timerInfo={timerInfo}
+          />
+        )}
+        <p className="text-center text-xs font-semibold whitespace-break-spaces w-full overflow-hidden text-ellipsis">
+          {label}
         </p>
       </Button>
     </li>

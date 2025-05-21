@@ -73,12 +73,16 @@ export type ItemSlide = {
   boxes: Box[];
 };
 
+export type LinkType = "image" | "slide" | "overlay";
+
 export type QuickLinkType = {
-  title: string;
-  url?: string;
+  label: string;
+  presentationInfo?: Presentation;
   id: string;
   action?: "clear";
   displayType?: DisplayType;
+  linkType?: LinkType;
+  canDelete: boolean;
 };
 
 export type DBItem = {
@@ -326,6 +330,7 @@ export type DBPreferences = {
   _id: string;
   _rev: string;
   preferences: PreferencesType;
+  quickLinks: QuickLinkType[];
 };
 
 export type DBCredits = {

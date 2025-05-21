@@ -17,6 +17,7 @@ import {
   setDefaultFormattedLyricsPerRow,
   setDefaultMediaItemsPerRow,
   setDefaultPreferences,
+  setTab,
 } from "../../store/preferencesSlice";
 import cn from "classnames";
 import Icon from "../../components/Icon/Icon";
@@ -24,6 +25,7 @@ import Input from "../../components/Input/Input";
 
 import "./Preferences.scss";
 import RadioButton from "../../components/RadioButton/RadioButton";
+import QuickLinks from "./QuickLinks";
 
 const Preferences = () => {
   const dispatch = useDispatch();
@@ -46,6 +48,7 @@ const Preferences = () => {
       defaultIsMediaExpanded,
     },
     selectedPreference,
+    tab,
   } = useSelector((state) => state.undoable.present.preferences);
 
   const backgroundPreferences = [
@@ -126,153 +129,180 @@ const Preferences = () => {
   return (
     <div className="preferences-container">
       <h2 className="text-2xl font-semibold text-center mb-4">Preferences</h2>
-      <ul className="flex flex-wrap gap-6 justify-center">
-        {backgroundPreferences.map(
-          ({ label, preference, background, brightness, setBrightness }) => (
-            <li
-              key={preference}
-              className={cn("flex flex-col gap-2 p-2 w-fit")}
-            >
-              <p className="font-semibold text-center border-b-2 border-gray-400 pb-2 text-lg">
-                {label}
-              </p>
-              <section className="flex gap-2 items-center flex-wrap">
-                <p className="font-semibold">Background:</p>
-                <Button
-                  variant="none"
-                  padding="p-0"
-                  className={cn(
-                    "w-48 self-center border-4 flex gap-2 items-center justify-center aspect-video",
-                    selectedPreference === preference
-                      ? "border-cyan-400"
-                      : "border-gray-500 hover:border-gray-300"
-                  )}
-                  onClick={() => {
-                    dispatch(
-                      setSelectedPreference(
-                        preference as SelectedPreferenceType
-                      )
-                    );
-                  }}
+      <section className="flex justify-center  border border-gray-400 my-4 rounded-l-md rounded-r-md">
+        <Button
+          variant={tab === "defaults" ? "secondary" : "tertiary"}
+          onClick={() => dispatch(setTab("defaults"))}
+          className="justify-center rounded-r-none flex-1"
+        >
+          Defaults
+        </Button>
+        <Button
+          variant={tab === "quickLinks" ? "secondary" : "tertiary"}
+          onClick={() => dispatch(setTab("quickLinks"))}
+          className="justify-center rounded-l-none flex-1"
+        >
+          Quick Links
+        </Button>
+      </section>
+      {tab === "defaults" && (
+        <>
+          <ul className="flex flex-wrap gap-6 justify-center">
+            {backgroundPreferences.map(
+              ({
+                label,
+                preference,
+                background,
+                brightness,
+                setBrightness,
+              }) => (
+                <li
+                  key={preference}
+                  className={cn("flex flex-col gap-2 p-2 w-fit")}
                 >
-                  {background ? (
-                    <img
-                      className="max-w-full max-h-full"
-                      alt="Default Song Background"
-                      src={background}
-                      loading="lazy"
-                      style={{
-                        filter: `brightness(${brightness}%)`,
+                  <p className="font-semibold text-center border-b-2 border-gray-400 pb-2 text-lg">
+                    {label}
+                  </p>
+                  <section className="flex gap-2 items-center flex-wrap">
+                    <p className="font-semibold">Background:</p>
+                    <Button
+                      variant="none"
+                      padding="p-0"
+                      className={cn(
+                        "w-48 self-center border-4 flex gap-2 items-center justify-center aspect-video",
+                        selectedPreference === preference
+                          ? "border-cyan-400"
+                          : "border-gray-500 hover:border-gray-300"
+                      )}
+                      onClick={() => {
+                        dispatch(
+                          setSelectedPreference(
+                            preference as SelectedPreferenceType
+                          )
+                        );
                       }}
+                    >
+                      {background ? (
+                        <img
+                          className="max-w-full max-h-full"
+                          alt="Default Song Background"
+                          src={background}
+                          loading="lazy"
+                          style={{
+                            filter: `brightness(${brightness}%)`,
+                          }}
+                        />
+                      ) : (
+                        <p>None</p>
+                      )}
+                    </Button>
+                    <Button
+                      variant="primary"
+                      svg={RemoveSVG}
+                      onClick={() => {
+                        dispatch(setDefaultPreferences({ [preference]: "" }));
+                      }}
+                    ></Button>
+                  </section>
+                  <section className="flex gap-2 items-center">
+                    <p className="font-semibold">Background Brightness:</p>
+                    <Icon size="xl" svg={BrightnessSVG} color="#fbbf24" />
+                    <Button
+                      svg={MinusSVG}
+                      variant="tertiary"
+                      onClick={() => dispatch(setBrightness(brightness - 10))}
                     />
-                  ) : (
-                    <p>None</p>
-                  )}
-                </Button>
-                <Button
-                  variant="primary"
-                  svg={RemoveSVG}
-                  onClick={() => {
-                    dispatch(setDefaultPreferences({ [preference]: "" }));
-                  }}
-                ></Button>
-              </section>
-              <section className="flex gap-2 items-center">
-                <p className="font-semibold">Background Brightness:</p>
-                <Icon size="xl" svg={BrightnessSVG} color="#fbbf24" />
-                <Button
-                  svg={MinusSVG}
-                  variant="tertiary"
-                  onClick={() => dispatch(setBrightness(brightness - 10))}
-                />
-                <Input
-                  label="Brightness"
-                  type="number"
-                  value={brightness}
-                  onChange={(val) => dispatch(setBrightness(val as number))}
-                  className="w-8 2xl:w-10"
-                  inputTextSize="text-xs"
-                  hideLabel
-                  data-ignore-undo="true"
-                  max={100}
-                  min={1}
-                />
-                <Button
-                  svg={AddSVG}
-                  variant="tertiary"
-                  onClick={() => dispatch(setBrightness(brightness + 10))}
-                />
-              </section>
-            </li>
-          )
-        )}
-      </ul>
-      <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
-        Default Items Per Row
-      </h2>
-      <ul className="flex flex-col gap-6 items-center">
-        {perRowPreferences.map(({ label, value, setValue, max, min }) => (
-          <li
-            key={label}
-            className={cn("grid grid-cols-2 gap-2 items-center p-2")}
-          >
-            <p className="font-semibold">{label}:</p>
-            <section className="flex gap-2 items-center">
-              <Button
-                svg={MinusSVG}
-                variant="tertiary"
-                onClick={() => dispatch(setValue(value - 1))}
-              />
-              <Input
-                label={label}
-                type="number"
-                value={value}
-                onChange={(val) => dispatch(setValue(val as number))}
-                className="w-8 2xl:w-10"
-                inputTextSize="text-xs"
-                hideLabel
-                data-ignore-undo="true"
-                max={max}
-                min={min}
-              />
-              <Button
-                svg={AddSVG}
-                variant="tertiary"
-                onClick={() => dispatch(setValue(value + 1))}
-              />
-            </section>
-          </li>
-        ))}
-      </ul>
-      <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
-        Default Visibility
-      </h2>
-      <ul className="flex flex-col gap-6 items-center">
-        {visibilityPreferences.map(({ label, value, property }) => (
-          <li
-            key={label}
-            className={cn("grid grid-cols-2 gap-2 items-center p-2")}
-          >
-            <p className="font-semibold">{label}:</p>
-            <section className="flex gap-2 items-center px-2">
-              <RadioButton
-                label="Shown"
-                value={value}
-                onChange={() =>
-                  dispatch(setDefaultPreferences({ [property]: true }))
-                }
-              />
-              <RadioButton
-                label="Hidden"
-                value={!value}
-                onChange={() =>
-                  dispatch(setDefaultPreferences({ [property]: false }))
-                }
-              />
-            </section>
-          </li>
-        ))}
-      </ul>
+                    <Input
+                      label="Brightness"
+                      type="number"
+                      value={brightness}
+                      onChange={(val) => dispatch(setBrightness(val as number))}
+                      className="w-8 2xl:w-10"
+                      inputTextSize="text-xs"
+                      hideLabel
+                      data-ignore-undo="true"
+                      max={100}
+                      min={1}
+                    />
+                    <Button
+                      svg={AddSVG}
+                      variant="tertiary"
+                      onClick={() => dispatch(setBrightness(brightness + 10))}
+                    />
+                  </section>
+                </li>
+              )
+            )}
+          </ul>
+          <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
+            Default Items Per Row
+          </h2>
+          <ul className="flex flex-col gap-6 items-center">
+            {perRowPreferences.map(({ label, value, setValue, max, min }) => (
+              <li
+                key={label}
+                className={cn("grid grid-cols-2 gap-2 items-center p-2")}
+              >
+                <p className="font-semibold">{label}:</p>
+                <section className="flex gap-2 items-center">
+                  <Button
+                    svg={MinusSVG}
+                    variant="tertiary"
+                    onClick={() => dispatch(setValue(value - 1))}
+                  />
+                  <Input
+                    label={label}
+                    type="number"
+                    value={value}
+                    onChange={(val) => dispatch(setValue(val as number))}
+                    className="w-8 2xl:w-10"
+                    inputTextSize="text-xs"
+                    hideLabel
+                    data-ignore-undo="true"
+                    max={max}
+                    min={min}
+                  />
+                  <Button
+                    svg={AddSVG}
+                    variant="tertiary"
+                    onClick={() => dispatch(setValue(value + 1))}
+                  />
+                </section>
+              </li>
+            ))}
+          </ul>
+          <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
+            Default Visibility
+          </h2>
+          <ul className="flex flex-col gap-6 items-center">
+            {visibilityPreferences.map(({ label, value, property }) => (
+              <li
+                key={label}
+                className={cn("grid grid-cols-2 gap-2 items-center p-2")}
+              >
+                <p className="font-semibold">{label}:</p>
+                <section className="flex gap-2 items-center px-2">
+                  <RadioButton
+                    label="Shown"
+                    value={value}
+                    onChange={() =>
+                      dispatch(setDefaultPreferences({ [property]: true }))
+                    }
+                  />
+                  <RadioButton
+                    label="Hidden"
+                    value={!value}
+                    onChange={() =>
+                      dispatch(setDefaultPreferences({ [property]: false }))
+                    }
+                  />
+                </section>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {tab === "quickLinks" && <QuickLinks />}
     </div>
   );
 };

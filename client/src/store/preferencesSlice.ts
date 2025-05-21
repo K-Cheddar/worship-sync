@@ -1,5 +1,13 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { PreferencesType } from "../types";
+import {
+  ItemSlide,
+  PreferencesType,
+  Presentation,
+  QuickLinkType,
+} from "../types";
+import generateRandomId from "../utils/generateRandomId";
+
+export type PreferencesTabType = "defaults" | "quickLinks";
 
 export type SelectedPreferenceType =
   | "defaultSongBackground"
@@ -28,6 +36,10 @@ type PreferencesState = {
   mediaItemsPerRow: number;
   shouldShowItemEditor: boolean;
   isMediaExpanded: boolean;
+  quickLinks: QuickLinkType[];
+  defaultQuickLinks: QuickLinkType[];
+  selectedQuickLink: QuickLinkType | null;
+  tab: PreferencesTabType;
 };
 
 const initialState: PreferencesState = {
@@ -58,6 +70,32 @@ const initialState: PreferencesState = {
   isMediaExpanded: false,
   isLoading: true,
   selectedPreference: "",
+  defaultQuickLinks: [
+    {
+      id: generateRandomId(),
+      label: "Clear",
+      canDelete: false,
+      displayType: "projector",
+      action: "clear",
+    },
+    {
+      id: generateRandomId(),
+      label: "Clear",
+      canDelete: false,
+      displayType: "monitor",
+      action: "clear",
+    },
+    {
+      id: generateRandomId(),
+      label: "Clear",
+      canDelete: false,
+      displayType: "stream",
+      action: "clear",
+    },
+  ],
+  quickLinks: [],
+  selectedQuickLink: null,
+  tab: "defaults",
 };
 
 export const preferencesSlice = createSlice({
@@ -131,6 +169,58 @@ export const preferencesSlice = createSlice({
         Math.max(action.payload, 1),
         7
       );
+    },
+
+    // Quick Links
+
+    setQuickLinks: (state, action: PayloadAction<QuickLinkType[]>) => {
+      state.quickLinks = action.payload;
+    },
+    initiateQuickLinks: (state, action: PayloadAction<QuickLinkType[]>) => {
+      state.quickLinks = action.payload || [];
+    },
+    setSelectedQuickLink: (state, action: PayloadAction<string>) => {
+      state.selectedQuickLink =
+        state.quickLinks.find((ql) => ql.id === action.payload) || null;
+    },
+    setSelectedQuickLinkImage: (state, action: PayloadAction<string>) => {
+      state.quickLinks.map((ql) => {
+        if (ql.id === state.selectedQuickLink?.id) {
+          ql.presentationInfo = {
+            type: "image",
+            name: state.selectedQuickLink?.label || "",
+            slide: {
+              type: "Image",
+              name: "",
+              boxes: [
+                {
+                  id: generateRandomId(),
+                  background: action.payload,
+                  height: 100,
+                  width: 100,
+                },
+              ],
+            },
+          };
+        }
+        return ql;
+      });
+    },
+    setSelectedQuickLinkPresentation: (
+      state,
+      action: PayloadAction<Presentation>
+    ) => {
+      state.quickLinks.map((ql) => {
+        if (ql.id === state.selectedQuickLink?.id) {
+          ql.presentationInfo = action.payload;
+        }
+        return ql;
+      });
+      state.selectedQuickLink = null;
+    },
+
+    setTab: (state, action: PayloadAction<PreferencesTabType>) => {
+      state.tab = action.payload;
     },
 
     // Initiate Preferences
@@ -276,6 +366,12 @@ export const {
   setDefaultSlidesPerRowMobile,
   setDefaultFormattedLyricsPerRow,
   setDefaultMediaItemsPerRow,
+  setQuickLinks,
+  initiateQuickLinks,
+  setSelectedQuickLink,
+  setSelectedQuickLinkImage,
+  setSelectedQuickLinkPresentation,
+  setTab,
   initiatePreferences,
   increaseSlides,
   increaseSlidesMobile,

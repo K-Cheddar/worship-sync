@@ -450,6 +450,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.preferences !==
         (previousState as RootState).undoable.present.preferences &&
       action.type !== "preferences/initiatePreferences" &&
+      action.type !== "preferences/initiateQuickLinks" &&
       action.type !== "preferences/increaseSlides" &&
       action.type !== "preferences/increaseSlidesMobile" &&
       action.type !== "preferences/decreaseSlides" &&
@@ -464,6 +465,8 @@ listenerMiddleware.startListening({
       action.type !== "preferences/setIsMediaExpanded" &&
       action.type !== "preferences/setIsLoading" &&
       action.type !== "preferences/setSelectedPreference" &&
+      action.type !== "preferences/setSelectedQuickLink" &&
+      action.type !== "preferences/setTab" &&
       action.type !== "RESET"
     );
   },
@@ -473,19 +476,21 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     // update ItemList
-    const { preferences } = (listenerApi.getState() as RootState).undoable
-      .present.preferences;
+    const { preferences, quickLinks } = (listenerApi.getState() as RootState)
+      .undoable.present.preferences;
 
     if (!db) return;
     try {
       const db_preferences: DBPreferences = await db.get("preferences");
       db_preferences.preferences = preferences;
+      db_preferences.quickLinks = quickLinks;
       db.put(db_preferences);
     } catch (error) {
       // if the preferences are not found, create a new one
       console.error(error);
       const db_preferences = {
         preferences: preferences,
+        quickLinks: quickLinks,
         _id: "preferences",
       };
       db.put(db_preferences);

@@ -31,6 +31,7 @@ import {
   setDefaultPreferences,
   setIsMediaExpanded,
   setMediaItems,
+  setSelectedQuickLinkImage,
 } from "../../store/preferencesSlice";
 import { useLocation } from "react-router-dom";
 import cn from "classnames";
@@ -56,9 +57,13 @@ const Media = () => {
   const { type: selectedOverlayType, id: selectedOverlayId } = useSelector(
     (state) => state.undoable.present.overlays
   );
-  const { isMediaExpanded, mediaItemsPerRow, selectedPreference } = useSelector(
-    (state) => state.undoable.present.preferences
-  );
+  const {
+    isMediaExpanded,
+    mediaItemsPerRow,
+    selectedPreference,
+    tab,
+    selectedQuickLink,
+  } = useSelector((state) => state.undoable.present.preferences);
 
   const [selectedMedia, setSelectedMedia] = useState<{
     id: string;
@@ -213,7 +218,11 @@ const Media = () => {
         <Button
           variant="tertiary"
           disabled={selectedMedia.id === "" || !selectedPreference}
-          className={cn(!location.pathname.includes("preferences") && "hidden")}
+          className={cn(
+            (!location.pathname.includes("preferences") ||
+              tab !== "defaults") &&
+              "hidden"
+          )}
           svg={BGOne}
           onClick={() => {
             dispatch(
@@ -224,6 +233,22 @@ const Media = () => {
           }}
         >
           {isMobile ? "" : "Set Background"}
+        </Button>
+        <Button
+          variant="tertiary"
+          disabled={!selectedQuickLink || selectedMedia.id === ""}
+          className={cn(
+            (!location.pathname.includes("preferences") ||
+              tab !== "quickLinks" ||
+              selectedQuickLink?.linkType !== "image") &&
+              "hidden"
+          )}
+          svg={BGOne}
+          onClick={() => {
+            dispatch(setSelectedQuickLinkImage(selectedMedia.background));
+          }}
+        >
+          {isMobile ? "" : "Set Quick Link Background"}
         </Button>
         <Button
           className="lg:ml-2 max-lg:mx-auto"
