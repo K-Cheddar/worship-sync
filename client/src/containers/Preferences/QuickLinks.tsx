@@ -13,6 +13,8 @@ import { useState } from "react";
 import QuickLink from "./QuickLink";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 
+const maxQuickLinks = 5;
+
 const QuickLinks = () => {
   const dispatch = useDispatch();
   const { quickLinks, selectedQuickLink } = useSelector(
@@ -38,13 +40,13 @@ const QuickLinks = () => {
 
   const newQuickLinkOptions = useMemo(() => {
     const options: Option[] = [];
-    if (projectorQuickLinks.length < 3) {
+    if (projectorQuickLinks.length < maxQuickLinks) {
       options.push({ label: "Projector", value: "projector" });
     }
-    if (monitorQuickLinks.length < 3) {
+    if (monitorQuickLinks.length < maxQuickLinks) {
       options.push({ label: "Monitor", value: "monitor" });
     }
-    if (streamQuickLinks.length < 3) {
+    if (streamQuickLinks.length < maxQuickLinks) {
       options.push({ label: "Stream", value: "stream" });
     }
     return options;
@@ -78,23 +80,23 @@ const QuickLinks = () => {
     );
 
     if (
-      projectorQuickLinks.length < 3 &&
-      monitorQuickLinks.length === 3 &&
-      streamQuickLinks.length === 3
+      projectorQuickLinks.length < maxQuickLinks &&
+      monitorQuickLinks.length === maxQuickLinks &&
+      streamQuickLinks.length === maxQuickLinks
     ) {
       newDisplayType = "projector";
     }
     if (
-      projectorQuickLinks.length === 3 &&
-      monitorQuickLinks.length < 3 &&
-      streamQuickLinks.length === 3
+      projectorQuickLinks.length === maxQuickLinks &&
+      monitorQuickLinks.length < maxQuickLinks &&
+      streamQuickLinks.length === maxQuickLinks
     ) {
       newDisplayType = "monitor";
     }
     if (
-      projectorQuickLinks.length === 3 &&
-      monitorQuickLinks.length === 3 &&
-      streamQuickLinks.length < 3
+      projectorQuickLinks.length === maxQuickLinks &&
+      monitorQuickLinks.length === maxQuickLinks &&
+      streamQuickLinks.length < maxQuickLinks
     ) {
       newDisplayType = "stream";
     }

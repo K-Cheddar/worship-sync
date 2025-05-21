@@ -116,7 +116,6 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
               <>
                 <Button
                   variant="cta"
-                  className="animate-pulse"
                   disabled={!slides?.[selectedSlide]}
                   svg={DoneAllSVG}
                   onClick={() => {
@@ -165,7 +164,6 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
               <>
                 <Button
                   variant="cta"
-                  className="animate-pulse"
                   disabled={!overlayInfo?.id}
                   svg={DoneAllSVG}
                   onClick={() => {

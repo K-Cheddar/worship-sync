@@ -642,7 +642,6 @@ export const presentationSlice = createSlice({
       state,
       action: PayloadAction<Presentation & { skipTransmissionCheck?: boolean }>
     ) => {
-      console.log("updateStream", action.payload);
       // set previous info for cross animation
       if (state.isStreamTransmitting || action.payload.skipTransmissionCheck) {
         state.prevStreamInfo.slide = state.streamInfo.slide;

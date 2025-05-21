@@ -1,10 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import {
-  ItemSlide,
-  PreferencesType,
-  Presentation,
-  QuickLinkType,
-} from "../types";
+import { PreferencesType, Presentation, QuickLinkType } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
 export type PreferencesTabType = "defaults" | "quickLinks";

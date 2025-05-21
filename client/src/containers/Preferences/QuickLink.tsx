@@ -6,6 +6,7 @@ import { DisplayType, LinkType, QuickLinkType, TimerInfo } from "../../types";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import cn from "classnames";
 import { useMemo, useState } from "react";
+import QuickLinkButton from "./QuickLinkButton";
 
 const baseImgUrl =
   "https://res.cloudinary.com/portable-media/image/upload/v1/backgrounds";
@@ -119,57 +120,38 @@ const QuickLink = ({
       />
 
       {linkType === "image" && (
-        <Button
-          variant="tertiary"
-          className={cn(
-            "flex flex-col gap-2 items-center border-2",
-            isSelected ? "border-cyan-500" : "border-transparent"
-          )}
-          onClick={setSelectedQuickLink}
-        >
-          <p className="text-sm">Image:</p>
-          <p className="text-xs w-48 overflow-hidden text-ellipsis whitespace-nowrap bg-gray-200 p-2 rounded-md text-black">
-            {presentationInfo?.slide?.boxes[0]?.background?.replace(
+        <QuickLinkButton
+          title="Image"
+          content={
+            presentationInfo?.slide?.boxes[0]?.background?.replace(
               baseImgUrl,
               ""
-            )}
-          </p>
-          <p className="text-xs">Select image from media.</p>
-        </Button>
+            ) || ""
+          }
+          helpText="Select image from media."
+          isSelected={isSelected}
+          onClick={setSelectedQuickLink}
+        />
       )}
 
       {linkType === "slide" && (
-        <Button
-          variant="tertiary"
-          className={cn(
-            "flex flex-col gap-2 items-center border-2",
-            isSelected ? "border-cyan-500" : "border-transparent"
-          )}
+        <QuickLinkButton
+          title="Slide"
+          content={presentationInfo?.name || ""}
+          helpText="Select slide from item"
+          isSelected={isSelected}
           onClick={setSelectedQuickLink}
-        >
-          <p className="text-sm">Slide:</p>
-          <p className="text-xs w-48 overflow-hidden text-ellipsis whitespace-nowrap bg-gray-200 p-2 rounded-md text-black">
-            {presentationInfo?.name}
-          </p>
-          <p className="text-xs">Select slide from item</p>
-        </Button>
+        />
       )}
 
       {linkType === "overlay" && (
-        <Button
-          variant="tertiary"
-          className={cn(
-            "flex flex-col gap-2 items-center border-2",
-            isSelected ? "border-cyan-500" : "border-transparent"
-          )}
+        <QuickLinkButton
+          title="Overlay"
+          content={presentationInfo?.name || ""}
+          helpText="Select overlay"
+          isSelected={isSelected}
           onClick={setSelectedQuickLink}
-        >
-          <p className="text-sm">Overlay:</p>
-          <p className="text-xs w-48 overflow-hidden text-ellipsis whitespace-nowrap bg-gray-200 p-2 rounded-md text-black">
-            {presentationInfo?.name}
-          </p>
-          <p className="text-xs">Select overlay</p>
-        </Button>
+        />
       )}
 
       <section className="flex flex-col gap-2 items-center">

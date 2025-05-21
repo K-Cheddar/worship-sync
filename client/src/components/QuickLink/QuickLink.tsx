@@ -48,8 +48,6 @@ const QuickLink = ({
     }
   };
 
-  console.log("presentationInfo", presentationInfo);
-
   if (!presentationInfo && !action) return null;
 
   return (
