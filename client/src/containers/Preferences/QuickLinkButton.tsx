@@ -7,6 +7,7 @@ type QuickLinkButtonProps = {
   helpText: string;
   isSelected: boolean;
   onClick: () => void;
+  selectedText?: string;
 };
 
 const QuickLinkButton = ({
@@ -15,6 +16,7 @@ const QuickLinkButton = ({
   helpText,
   isSelected,
   onClick,
+  selectedText,
 }: QuickLinkButtonProps) => (
   <Button
     variant="tertiary"
@@ -28,7 +30,8 @@ const QuickLinkButton = ({
     <p className="text-xs w-48 overflow-hidden text-ellipsis whitespace-nowrap bg-gray-200 p-2 rounded-md text-black">
       {content}
     </p>
-    <p className="text-xs">{helpText}</p>
+    {isSelected && <p className="text-xs">{selectedText}</p>}
+    {!isSelected && <p className="text-xs">{helpText}</p>}
   </Button>
 );
 

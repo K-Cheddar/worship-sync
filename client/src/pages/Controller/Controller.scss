@@ -3,3 +3,9 @@
 
   @apply flex flex-1 relative;
 }
+
+.preferences-container {
+  @apply px-4 py-2 overflow-y-auto;
+
+  scrollbar-width: thin;
+}
