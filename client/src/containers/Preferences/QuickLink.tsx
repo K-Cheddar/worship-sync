@@ -24,6 +24,7 @@ type QuickLinkProps = QuickLinkType & {
   isSelected: boolean;
   setSelectedQuickLink: () => void;
   timers: TimerInfo[];
+  index: number;
 };
 
 const QuickLink = ({
@@ -33,11 +34,13 @@ const QuickLink = ({
   presentationInfo,
   updateQuickLink,
   removeQuickLink,
+  index,
   isMobile,
   isSelected,
   setSelectedQuickLink,
   linkType: _linkType,
   timers,
+  id,
 }: QuickLinkProps) => {
   const [linkType, setLinkType] = useState<LinkType>(() => {
     if (displayType === "projector") {
@@ -75,12 +78,14 @@ const QuickLink = ({
   return (
     <li
       className={cn(
-        "flex gap-4 items-center justify-around flex-wrap",
-        "border-b-2 border-gray-400 pb-2 max-lg:pb-6"
+        "flex gap-4 items-center justify-around flex-wrap border-b-2 border-gray-400 p-2 max-lg:pb-6 rounded-md",
+        index % 2 === 0 && "bg-gray-600"
       )}
+      id={`quick-link-${id}`}
     >
       <Select
         className="flex flex-col"
+        selectClassName="bg-gray-900 text-white"
         label="Display Type"
         disabled={!canDelete}
         options={[
@@ -110,7 +115,7 @@ const QuickLink = ({
       />
       <Select
         className="flex flex-col"
-        label="Link Type"
+        label="Type"
         options={linkTypeOptions}
         value={linkType}
         onChange={(val) => {
@@ -128,7 +133,8 @@ const QuickLink = ({
               ""
             ) || ""
           }
-          helpText="Select image from media."
+          helpText="Click to select image from media."
+          selectedText="Now select an image and click set."
           isSelected={isSelected}
           onClick={setSelectedQuickLink}
         />
@@ -138,7 +144,8 @@ const QuickLink = ({
         <QuickLinkButton
           title="Slide"
           content={presentationInfo?.name || ""}
-          helpText="Select slide from item"
+          helpText="Click to select slide from item."
+          selectedText="Now select a slide and click select."
           isSelected={isSelected}
           onClick={setSelectedQuickLink}
         />
@@ -148,7 +155,8 @@ const QuickLink = ({
         <QuickLinkButton
           title="Overlay"
           content={presentationInfo?.name || ""}
-          helpText="Select overlay"
+          helpText="Click to select overlay."
+          selectedText="Now select an overlay and click select."
           isSelected={isSelected}
           onClick={setSelectedQuickLink}
         />
@@ -159,7 +167,7 @@ const QuickLink = ({
         <DisplayWindow
           displayType={displayType}
           showBorder
-          width={isMobile ? 12 : 8}
+          width={isMobile ? 24 : 12}
           boxes={presentationInfo?.slide?.boxes}
           bibleDisplayInfo={presentationInfo?.bibleDisplayInfo}
           participantOverlayInfo={presentationInfo?.participantOverlayInfo}
@@ -170,7 +178,13 @@ const QuickLink = ({
         />
       </section>
       {canDelete && (
-        <Button variant="tertiary" svg={DeleteSVG} onClick={removeQuickLink} />
+        <Button
+          variant="tertiary"
+          iconSize="lg"
+          svg={DeleteSVG}
+          color="red"
+          onClick={removeQuickLink}
+        />
       )}
     </li>
   );

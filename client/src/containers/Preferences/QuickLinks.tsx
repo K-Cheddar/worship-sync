@@ -4,7 +4,7 @@ import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import generateRandomId from "../../utils/generateRandomId";
 import Select from "../../components/Select/Select";
 import Button from "../../components/Button/Button";
-import { useMemo, useContext } from "react";
+import { useMemo, useContext, useEffect } from "react";
 import {
   setQuickLinks,
   setSelectedQuickLink,
@@ -104,6 +104,8 @@ const QuickLinks = () => {
     setNewQuickLinkDisplayType(newDisplayType);
   };
 
+  useEffect(() => {}, []);
+
   return (
     <>
       <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
@@ -114,12 +116,13 @@ const QuickLinks = () => {
           ...projectorQuickLinks,
           ...monitorQuickLinks,
           ...streamQuickLinks,
-        ].map((quickLinkInfo) => {
+        ].map((quickLinkInfo, index) => {
           const { id } = quickLinkInfo;
           return (
             <QuickLink
               timers={timers}
               key={id}
+              index={index}
               isSelected={selectedQuickLink?.id === id}
               setSelectedQuickLink={() => dispatch(setSelectedQuickLink(id))}
               isMobile={isMobile}
@@ -136,47 +139,48 @@ const QuickLinks = () => {
           );
         })}
       </ul>
-      <section className="flex items-center justify-center gap-4 mt-4">
-        {newQuickLinkOptions.length > 0 ? (
-          <>
-            <Select
-              label="New Quick Link Display Type"
-              options={newQuickLinkOptions}
-              value={newQuickLinkDisplayType}
-              onChange={(val) => setNewQuickLinkDisplayType(val as DisplayType)}
-            />
-            <Button
-              variant="primary"
-              svg={AddSVG}
-              onClick={() => {
-                let linkType: LinkType = "image";
-                if (newQuickLinkDisplayType === "monitor") {
-                  linkType = "slide";
-                }
-                if (newQuickLinkDisplayType === "stream") {
-                  linkType = "overlay";
-                }
-                const updatedQuickLinks = [
-                  ...quickLinks,
-                  {
-                    id: generateRandomId(),
-                    label: "",
-                    canDelete: true,
-                    displayType: newQuickLinkDisplayType,
-                    linkType,
-                  },
-                ];
-                dispatch(setQuickLinks(updatedQuickLinks));
-                updateNewQuickLinkDisplayType(updatedQuickLinks);
-              }}
-            >
-              Add Quick Link
-            </Button>
-          </>
-        ) : (
-          <p className="text-center">Max Quick Links Reached</p>
-        )}
-      </section>
+      {newQuickLinkOptions.length > 0 ? (
+        <section className="flex items-center justify-center gap-4 my-8">
+          <Select
+            className="flex gap-2"
+            selectClassName="bg-gray-900 text-white"
+            label="New Quick Link Display Type"
+            options={newQuickLinkOptions}
+            value={newQuickLinkDisplayType}
+            onChange={(val) => setNewQuickLinkDisplayType(val as DisplayType)}
+          />
+          <Button
+            variant="primary"
+            padding="px-4 py-1"
+            svg={AddSVG}
+            onClick={() => {
+              let linkType: LinkType = "image";
+              if (newQuickLinkDisplayType === "monitor") {
+                linkType = "slide";
+              }
+              if (newQuickLinkDisplayType === "stream") {
+                linkType = "overlay";
+              }
+              const updatedQuickLinks = [
+                ...quickLinks,
+                {
+                  id: generateRandomId(),
+                  label: "",
+                  canDelete: true,
+                  displayType: newQuickLinkDisplayType,
+                  linkType,
+                },
+              ];
+              dispatch(setQuickLinks(updatedQuickLinks));
+              updateNewQuickLinkDisplayType(updatedQuickLinks);
+            }}
+          >
+            Add Quick Link
+          </Button>
+        </section>
+      ) : (
+        <p className="text-center">Max Quick Links Reached</p>
+      )}
     </>
   );
 };

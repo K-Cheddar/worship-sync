@@ -18,7 +18,7 @@ import {
   setSelectedQuickLink,
   setSelectedQuickLinkPresentation,
 } from "../../store/preferencesSlice";
-import { OverlayInfo } from "../../types";
+import { OverlayInfo, Presentation } from "../../types";
 
 type sections = "settings" | "slide-tools" | "timer-manager";
 
@@ -113,9 +113,10 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
               </Link>
             </Button>
             {selectedQuickLink && selectedQuickLink.linkType === "slide" && (
-              <>
+              <section className="flex justify-center rounded-l-md rounded-r-md mr-2">
                 <Button
                   variant="cta"
+                  className="justify-center rounded-r-none"
                   disabled={!slides?.[selectedSlide]}
                   svg={DoneAllSVG}
                   onClick={() => {
@@ -147,10 +148,11 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
                     );
                   }}
                 >
-                  {isMobile ? "" : "Select Slide"}
+                  {isMobile ? "Select" : "Select Slide"}
                 </Button>
                 <Button
                   variant="secondary"
+                  className="justify-center rounded-l-none"
                   svg={CloseSVG}
                   onClick={() => {
                     dispatch(setSelectedQuickLink(""));
@@ -158,83 +160,83 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
                 >
                   {isMobile ? "" : "Cancel Selection"}
                 </Button>
-              </>
+              </section>
             )}
             {selectedQuickLink && selectedQuickLink.linkType === "overlay" && (
-              <>
+              <section className="flex justify-center rounded-l-md rounded-r-md">
                 <Button
                   variant="cta"
+                  className="justify-center rounded-r-none"
                   disabled={!overlayInfo?.id}
                   svg={DoneAllSVG}
                   onClick={() => {
-                    let presentationInfo: OverlayInfo | undefined;
+                    let presentationInfo: Presentation = {
+                      name: overlayInfo.name || overlayInfo.description || "",
+                      slide: null,
+                      type: "overlay",
+                    };
+
+                    const info: OverlayInfo = {
+                      id: overlayInfo.id,
+                      type: overlayInfo.type,
+                      duration: overlayInfo.duration,
+                    };
 
                     if (overlayInfo.type === "participant") {
                       presentationInfo = {
-                        name: overlayInfo.name,
-                        event: overlayInfo.event,
-                        title: overlayInfo.title,
-                        type: "participant",
-                        duration: overlayInfo.duration,
-                        id: overlayInfo.id,
+                        ...presentationInfo,
+                        participantOverlayInfo: {
+                          ...info,
+                          name: overlayInfo.name,
+                          event: overlayInfo.event,
+                          title: overlayInfo.title,
+                        },
                       };
                     }
 
                     if (overlayInfo.type === "stick-to-bottom") {
                       presentationInfo = {
-                        subHeading: overlayInfo.subHeading,
-                        title: overlayInfo.title,
-                        type: "stick-to-bottom",
-                        duration: overlayInfo.duration,
-                        id: overlayInfo.id,
+                        ...presentationInfo,
+                        stbOverlayInfo: {
+                          ...info,
+                          subHeading: overlayInfo.subHeading,
+                          title: overlayInfo.title,
+                        },
                       };
                     }
 
                     if (overlayInfo.type === "qr-code") {
                       presentationInfo = {
-                        url: overlayInfo.url,
-                        description: overlayInfo.description,
-                        color: overlayInfo.color,
-                        type: "qr-code",
-                        duration: overlayInfo.duration,
-                        id: overlayInfo.id,
+                        ...presentationInfo,
+                        qrCodeOverlayInfo: {
+                          ...info,
+                          url: overlayInfo.url,
+                          description: overlayInfo.description,
+                          color: overlayInfo.color,
+                        },
                       };
                     }
 
                     if (overlayInfo.type === "image") {
                       presentationInfo = {
-                        imageUrl: overlayInfo.imageUrl,
-                        type: "image",
-                        duration: overlayInfo.duration,
-                        id: overlayInfo.id,
+                        ...presentationInfo,
+                        imageOverlayInfo: {
+                          ...info,
+                          imageUrl: overlayInfo.imageUrl,
+                        },
                       };
                     }
 
                     dispatch(
-                      setSelectedQuickLinkPresentation({
-                        name: overlayInfo.name || overlayInfo.description || "",
-                        slide: null,
-                        type: "overlay",
-                        ...(overlayInfo.type === "participant" && {
-                          participantOverlayInfo: presentationInfo,
-                        }),
-                        ...(overlayInfo.type === "stick-to-bottom" && {
-                          stickToBottomOverlayInfo: presentationInfo,
-                        }),
-                        ...(overlayInfo.type === "qr-code" && {
-                          qrCodeOverlayInfo: presentationInfo,
-                        }),
-                        ...(overlayInfo.type === "image" && {
-                          imageOverlayInfo: presentationInfo,
-                        }),
-                      })
+                      setSelectedQuickLinkPresentation(presentationInfo)
                     );
                   }}
                 >
-                  {isMobile ? "" : "Select Overlay"}
+                  {isMobile ? "Select" : "Select Overlay"}
                 </Button>
                 <Button
                   variant="secondary"
+                  className="justify-center rounded-l-none"
                   svg={CloseSVG}
                   onClick={() => {
                     dispatch(setSelectedQuickLink(""));
@@ -242,7 +244,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
                 >
                   {isMobile ? "" : "Cancel Selection"}
                 </Button>
-              </>
+              </section>
             )}
             <SlideEditTools
               className={`${section !== "slide-tools" && "hidden"}`}
