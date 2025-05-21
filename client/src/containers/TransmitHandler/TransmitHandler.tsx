@@ -15,10 +15,13 @@ import {
   clearAll,
 } from "../../store/presentationSlice";
 import Presentation from "../../components/Presentation/Presentation";
-import { monitorLinks, projectorLinks, streamLinks } from "./dummyLinks";
 import Button from "../../components/Button/Button";
 import "./TransmitHandler.scss";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+
+// Keeping this as previous urls
+// https://res.cloudinary.com/portable-media/image/upload/v1729199662/eliathah/Welcome_To_Eliathah.jpg
+// https://res.cloudinary.com/portable-media/image/upload/v1/eliathah/psalm-145-5-1292446461_j02gov
 
 const TransmitHandler = () => {
   const {
@@ -43,7 +46,7 @@ const TransmitHandler = () => {
 
   const dispatch = useDispatch();
 
-  const { isMediaExpanded } = useSelector(
+  const { isMediaExpanded, quickLinks, defaultQuickLinks } = useSelector(
     (state) => state.undoable.present.preferences
   );
 
@@ -72,6 +75,8 @@ const TransmitHandler = () => {
     dispatch(setTransmitToAll(!isTransmitting));
   };
 
+  const allQuickLinks = [...defaultQuickLinks, ...quickLinks];
+
   return (
     <div
       className="transmit-handler-container"
@@ -99,33 +104,42 @@ const TransmitHandler = () => {
           />
         </div>
         <Presentation
+          timers={timers}
           name="Projector"
           prevInfo={prevProjectorInfo}
           timerInfo={projectorTimer}
           info={projectorInfo}
           isTransmitting={isProjectorTransmitting}
           toggleIsTransmitting={() => dispatch(toggleProjectorTransmitting())}
-          quickLinks={projectorLinks}
+          quickLinks={allQuickLinks.filter(
+            (link) => link.displayType === "projector"
+          )}
           isMobile={isMobile}
         />
         <Presentation
+          timers={timers}
           name="Monitor"
           prevInfo={prevMonitorInfo}
           timerInfo={monitorTimer}
           info={monitorInfo}
           isTransmitting={isMonitorTransmitting}
           toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
-          quickLinks={monitorLinks}
+          quickLinks={allQuickLinks.filter(
+            (link) => link.displayType === "monitor"
+          )}
           isMobile={isMobile}
         />
         <Presentation
+          timers={timers}
           name="Stream"
           prevInfo={prevStreamInfo}
           timerInfo={streamTimer}
           info={streamInfo}
           isTransmitting={isStreamTransmitting}
           toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
-          quickLinks={streamLinks}
+          quickLinks={allQuickLinks.filter(
+            (link) => link.displayType === "stream"
+          )}
           isMobile={isMobile}
         />
       </section>

@@ -9,9 +9,11 @@ type SelectProps = {
   onChange: (value: string) => void;
   label?: string;
   labelClassName?: string;
+  labelFontSize?: string;
   hideLabel?: boolean;
   selectClassName?: string;
   textColor?: string;
+  disabled?: boolean;
 };
 
 const Select = ({
@@ -22,8 +24,10 @@ const Select = ({
   hideLabel = false,
   className,
   labelClassName,
+  labelFontSize = "text-sm",
   selectClassName,
   textColor = "text-black",
+  disabled = false,
   ...rest
 }: SelectProps) => {
   return (
@@ -33,7 +37,8 @@ const Select = ({
           className={cn(
             "p-1 font-semibold",
             hideLabel && "sr-only",
-            labelClassName
+            labelClassName,
+            labelFontSize
           )}
         >
           {label}:
@@ -44,6 +49,7 @@ const Select = ({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         {...rest}
+        disabled={disabled}
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>

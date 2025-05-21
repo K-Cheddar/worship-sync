@@ -1,25 +1,45 @@
 import { Link, useLocation } from "react-router-dom";
 import { ReactComponent as SettingsSVG } from "../../assets/icons/settings.svg";
 import { ReactComponent as EditSquareSVG } from "../../assets/icons/edit-square.svg";
+import { ReactComponent as DoneAllSVG } from "../../assets/icons/done-all.svg";
+import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import Menu from "./ToolbarElements/Menu";
 import Outlines from "./ToolbarElements/Outlines";
 import SlideEditTools from "./ToolbarElements/SlideEditTools";
 import Undo from "./ToolbarElements/Undo";
 import UserSection from "./ToolbarElements/UserSection";
-import { useSelector } from "../../hooks";
-import { forwardRef, useEffect, useMemo, useState } from "react";
+import { useSelector, useDispatch } from "../../hooks";
+import { forwardRef, useContext, useEffect, useMemo, useState } from "react";
 import Button from "../../components/Button/Button";
 import { ReactComponent as TimerSVG } from "../../assets/icons/timer.svg";
 import TimerControls from "../../components/TimerControls/TimerControls";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import {
+  setSelectedQuickLink,
+  setSelectedQuickLinkPresentation,
+} from "../../store/preferencesSlice";
+import { OverlayInfo } from "../../types";
+
 type sections = "settings" | "slide-tools" | "timer-manager";
 
 const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
   ({ className }, ref) => {
     const location = useLocation();
-    const { isEditMode, type } = useSelector(
-      (state) => state.undoable.present.item
+    const dispatch = useDispatch();
+
+    const { isEditMode, type, selectedSlide, slides, name, timerInfo } =
+      useSelector((state) => state.undoable.present.item);
+
+    const { selectedQuickLink } = useSelector(
+      (state) => state.undoable.present.preferences
     );
+
+    const overlayInfo = useSelector((state) => state.undoable.present.overlays);
+
     const [section, setSection] = useState<sections>("settings");
+
+    const { isMobile } = useContext(ControllerInfoContext) || {};
+
     const onItemPage = useMemo(
       () => location.pathname.includes("controller/item"),
       [location.pathname]
@@ -92,6 +112,138 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
                 Preferences
               </Link>
             </Button>
+            {selectedQuickLink && selectedQuickLink.linkType === "slide" && (
+              <>
+                <Button
+                  variant="cta"
+                  disabled={!slides?.[selectedSlide]}
+                  svg={DoneAllSVG}
+                  onClick={() => {
+                    let title = "";
+                    let text = "";
+
+                    if (type === "bible") {
+                      title =
+                        selectedSlide > 0
+                          ? slides[selectedSlide].boxes[2]?.words || ""
+                          : slides[selectedSlide].boxes[1]?.words || "";
+                      text =
+                        selectedSlide > 0
+                          ? slides[selectedSlide].boxes[1]?.words || ""
+                          : "";
+                    }
+
+                    dispatch(
+                      setSelectedQuickLinkPresentation({
+                        name,
+                        slide: slides[selectedSlide],
+                        type: "slide",
+                        timerId: timerInfo?.id,
+                        bibleDisplayInfo: {
+                          title,
+                          text,
+                        },
+                      })
+                    );
+                  }}
+                >
+                  {isMobile ? "" : "Select Slide"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  svg={CloseSVG}
+                  onClick={() => {
+                    dispatch(setSelectedQuickLink(""));
+                  }}
+                >
+                  {isMobile ? "" : "Cancel Selection"}
+                </Button>
+              </>
+            )}
+            {selectedQuickLink && selectedQuickLink.linkType === "overlay" && (
+              <>
+                <Button
+                  variant="cta"
+                  disabled={!overlayInfo?.id}
+                  svg={DoneAllSVG}
+                  onClick={() => {
+                    let presentationInfo: OverlayInfo | undefined;
+
+                    if (overlayInfo.type === "participant") {
+                      presentationInfo = {
+                        name: overlayInfo.name,
+                        event: overlayInfo.event,
+                        title: overlayInfo.title,
+                        type: "participant",
+                        duration: overlayInfo.duration,
+                        id: overlayInfo.id,
+                      };
+                    }
+
+                    if (overlayInfo.type === "stick-to-bottom") {
+                      presentationInfo = {
+                        subHeading: overlayInfo.subHeading,
+                        title: overlayInfo.title,
+                        type: "stick-to-bottom",
+                        duration: overlayInfo.duration,
+                        id: overlayInfo.id,
+                      };
+                    }
+
+                    if (overlayInfo.type === "qr-code") {
+                      presentationInfo = {
+                        url: overlayInfo.url,
+                        description: overlayInfo.description,
+                        color: overlayInfo.color,
+                        type: "qr-code",
+                        duration: overlayInfo.duration,
+                        id: overlayInfo.id,
+                      };
+                    }
+
+                    if (overlayInfo.type === "image") {
+                      presentationInfo = {
+                        imageUrl: overlayInfo.imageUrl,
+                        type: "image",
+                        duration: overlayInfo.duration,
+                        id: overlayInfo.id,
+                      };
+                    }
+
+                    dispatch(
+                      setSelectedQuickLinkPresentation({
+                        name: overlayInfo.name || overlayInfo.description || "",
+                        slide: null,
+                        type: "overlay",
+                        ...(overlayInfo.type === "participant" && {
+                          participantOverlayInfo: presentationInfo,
+                        }),
+                        ...(overlayInfo.type === "stick-to-bottom" && {
+                          stickToBottomOverlayInfo: presentationInfo,
+                        }),
+                        ...(overlayInfo.type === "qr-code" && {
+                          qrCodeOverlayInfo: presentationInfo,
+                        }),
+                        ...(overlayInfo.type === "image" && {
+                          imageOverlayInfo: presentationInfo,
+                        }),
+                      })
+                    );
+                  }}
+                >
+                  {isMobile ? "" : "Select Overlay"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  svg={CloseSVG}
+                  onClick={() => {
+                    dispatch(setSelectedQuickLink(""));
+                  }}
+                >
+                  {isMobile ? "" : "Cancel Selection"}
+                </Button>
+              </>
+            )}
             <SlideEditTools
               className={`${section !== "slide-tools" && "hidden"}`}
             />

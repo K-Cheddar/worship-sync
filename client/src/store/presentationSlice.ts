@@ -652,6 +652,44 @@ export const presentationSlice = createSlice({
         if (action.payload.type !== "bible") {
           state.streamInfo.slide = action.payload.slide;
         }
+        if (action.payload.participantOverlayInfo) {
+          state.streamInfo.participantOverlayInfo =
+            action.payload.participantOverlayInfo;
+        } else {
+          state.streamInfo.participantOverlayInfo = {
+            name: "",
+            time: Date.now(),
+            id: generateRandomId(),
+          };
+        }
+        if (action.payload.stbOverlayInfo) {
+          state.streamInfo.stbOverlayInfo = action.payload.stbOverlayInfo;
+        } else {
+          state.streamInfo.stbOverlayInfo = {
+            heading: "",
+            time: Date.now(),
+            id: generateRandomId(),
+          };
+        }
+        if (action.payload.qrCodeOverlayInfo) {
+          state.streamInfo.qrCodeOverlayInfo = action.payload.qrCodeOverlayInfo;
+        } else {
+          state.streamInfo.qrCodeOverlayInfo = {
+            description: "",
+            time: Date.now(),
+            id: generateRandomId(),
+          };
+        }
+        if (action.payload.imageOverlayInfo) {
+          state.streamInfo.imageOverlayInfo = action.payload.imageOverlayInfo;
+        } else {
+          state.streamInfo.imageOverlayInfo = {
+            name: "",
+            imageUrl: "",
+            time: Date.now(),
+            id: generateRandomId(),
+          };
+        }
 
         state.streamInfo.name = action.payload.name;
         state.streamInfo.type = action.payload.type;
