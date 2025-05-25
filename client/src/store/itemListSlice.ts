@@ -32,7 +32,7 @@ export const itemListSlice = createSlice({
     initiateItemList: (state, action: PayloadAction<ServiceItem[]>) => {
       state.list = action.payload.map((item) => ({
         ...item,
-        listId: generateRandomId(),
+        listId: item.listId || generateRandomId(),
       }));
       state.initialItems = state.list.map((item) => item.listId);
     },
@@ -73,6 +73,9 @@ export const itemListSlice = createSlice({
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
     },
+    addToInitialItems: (state, action: PayloadAction<string[]>) => {
+      state.initialItems = [...state.initialItems, ...action.payload];
+    },
   },
 });
 
@@ -86,6 +89,7 @@ export const {
   removeItemFromListById,
   updateItemListFromRemote,
   setHasPendingUpdate,
+  addToInitialItems,
 } = itemListSlice.actions;
 
 export default itemListSlice.reducer;

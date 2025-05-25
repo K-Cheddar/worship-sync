@@ -2,7 +2,11 @@ import Button from "../../components/Button/Button";
 import { ReactComponent as OverlaysSVG } from "../../assets/icons/overlays.svg";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import { useDispatch } from "../../hooks";
-import { deleteOverlay, selectOverlay } from "../../store/overlaysSlice";
+import {
+  addToInitialList,
+  deleteOverlay,
+  selectOverlay,
+} from "../../store/overlaysSlice";
 import "./Overlays.scss";
 import gsap from "gsap";
 import {
@@ -113,19 +117,24 @@ const Overlay = ({
         );
       } else if (!initialList.includes(overlay.id)) {
         // initial animation for new items
-        gsap.timeline().fromTo(
-          overlayRef.current,
-          {
-            height: 0,
-            opacity: 0,
-          },
-          {
-            height: "auto",
-            opacity: 1,
-            duration: 0.5,
-            ease: "power1.inOut",
-          }
-        );
+        gsap
+          .timeline()
+          .fromTo(
+            overlayRef.current,
+            {
+              height: 0,
+              opacity: 0,
+            },
+            {
+              height: "auto",
+              opacity: 1,
+              duration: 0.5,
+              ease: "power1.inOut",
+            }
+          )
+          .then(() => {
+            dispatch(addToInitialList([overlay.id]));
+          });
       }
     },
     { scope: overlayRef, dependencies: [overlay, isDeleting] }

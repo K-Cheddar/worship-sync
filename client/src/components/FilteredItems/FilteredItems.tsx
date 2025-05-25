@@ -234,8 +234,6 @@ const FilteredItems = ({
     }
   };
 
-  console.log(filteredList);
-
   return (
     <div className="px-2 py-4 h-full flex flex-col items-center">
       {itemToBeDeleted && (

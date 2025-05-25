@@ -4,7 +4,10 @@ import "./ServiceItems.scss";
 import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import generateRandomId from "../../utils/generateRandomId";
 import { useDispatch } from "../../hooks";
-import { removeItemFromList } from "../../store/itemListSlice";
+import {
+  addToInitialItems,
+  removeItemFromList,
+} from "../../store/itemListSlice";
 import gsap from "gsap";
 import { Location } from "react-router-dom";
 import { ServiceItem as ServiceItemType } from "../../types";
@@ -112,23 +115,28 @@ const ServiceItem = ({
         );
       } else if (!initialItems.includes(item.listId)) {
         // initial animation for new items
-        gsap.timeline().fromTo(
-          serviceItemRef.current,
-          {
-            height: 0,
-            minHeight: 0,
-            opacity: 0,
-            borderBottomWidth: 0,
-          },
-          {
-            height: "auto",
-            minHeight: "auto",
-            opacity: 1,
-            duration: 0.5,
-            borderBottomWidth: "2px",
-            ease: "power1.inOut",
-          }
-        );
+        gsap
+          .timeline()
+          .fromTo(
+            serviceItemRef.current,
+            {
+              height: 0,
+              minHeight: 0,
+              opacity: 0,
+              borderBottomWidth: 0,
+            },
+            {
+              height: "auto",
+              minHeight: "auto",
+              opacity: 1,
+              duration: 0.5,
+              borderBottomWidth: "2px",
+              ease: "power1.inOut",
+            }
+          )
+          .then(() => {
+            dispatch(addToInitialItems([item.listId]));
+          });
       }
     },
     { scope: serviceItemRef, dependencies: [item, isDeleting] }

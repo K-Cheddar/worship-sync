@@ -174,6 +174,7 @@ listenerMiddleware.startListening({
       action.type !== "itemList/updateItemListFromRemote" &&
       action.type !== "itemList/setHasPendingUpdate" &&
       action.type !== "itemList/setHighlightedItems" &&
+      action.type !== "itemList/addToInitialItems" &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
       action.type !== "RESET"
@@ -269,6 +270,7 @@ listenerMiddleware.startListening({
       action.type !== "overlays/selectOverlay" &&
       action.type !== "overlays/setHasPendingUpdate" &&
       action.type !== "overlays/updateInitialList" &&
+      action.type !== "overlays/addToInitialList" &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
       action.type !== "RESET"
