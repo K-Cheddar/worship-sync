@@ -283,13 +283,22 @@ const GlobalInfoProvider = ({ children }: any) => {
       `users/${user}/v2/activeInstances/${hostId}`
     );
 
-    set(instanceRef, {
-      lastActive: new Date().toISOString(),
-      user: user,
-      database: database,
-      hostId: hostId,
-      isOnController,
-    });
+    // Function to update the instance
+    const updateInstance = () => {
+      set(instanceRef, {
+        lastActive: new Date().toISOString(),
+        user: user,
+        database: database,
+        hostId: hostId,
+        isOnController,
+      });
+    };
+
+    // Initial setup
+    updateInstance();
+
+    // Set up periodic updates to keep the connection alive
+    const updateInterval = setInterval(updateInstance, 30000); // Update every 30 seconds
 
     // Remove this instance when the user disconnects
     onDisconnect(instanceRef).remove();
@@ -297,6 +306,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     // Cleanup function
     return () => {
       unsubscribe();
+      clearInterval(updateInterval);
       set(instanceRef, null);
     };
   }, [firebaseDb, loginState, user, database, hostId, isOnController]);
