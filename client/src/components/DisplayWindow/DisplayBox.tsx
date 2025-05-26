@@ -3,7 +3,8 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
 import cn from "classnames";
-import TimerDisplay from "../TimerDisplay/TimerDisplay";
+import TimerDisplay from "./TimerDisplay";
+import VerseDisplay from "./VerseDisplay";
 
 type DisplayBoxProps = {
   prevBox?: Box;
@@ -141,6 +142,11 @@ const DisplayBox = ({
     if (words.includes("{{timer}}")) {
       return <TimerDisplay timerInfo={timerInfo} words={words} />;
     }
+
+    if (words.includes("\u200B")) {
+      return <VerseDisplay words={words} />;
+    }
+
     return words;
   };
 

@@ -450,7 +450,7 @@ const formatBibleVerses = ({
               boxes: currentBoxes,
               words: [
                 "",
-                slide,
+                "\u200B" + verse.name + ".\u200B " + slide,
                 getBibleName({ book, chapter, verse: verse.name, version }),
               ],
             })
@@ -466,7 +466,7 @@ const formatBibleVerses = ({
           boxes: currentBoxes,
           words: [
             "",
-            slide,
+            "\u200B" + verse.name + ".\u200B " + slide,
             getBibleName({ book, chapter, verse: verse.name, version }),
           ],
         })
@@ -529,11 +529,168 @@ const formatBibleVerses = ({
               ],
           words: [
             "",
-            slide,
+            "\u200B" + verse.name + ".\u200B " + slide,
             getBibleName({ book, chapter, verse: verse.name, version }),
           ],
         })
       );
+    }
+  }
+
+  const formatVerseRange = (verses: verseType[]): string => {
+    if (verses.length === 0) return "";
+    if (verses.length === 1) return verses[0].name;
+
+    const numbers = verses.map((v) => parseInt(v.name));
+    const ranges: string[] = [];
+    let start = numbers[0];
+    let prev = numbers[0];
+
+    for (let i = 1; i <= numbers.length; i++) {
+      if (i === numbers.length || numbers[i] !== prev + 1) {
+        ranges.push(start === prev ? start.toString() : `${start}-${prev}`);
+        if (i < numbers.length) {
+          start = numbers[i];
+        }
+      }
+      if (i < numbers.length) {
+        prev = numbers[i];
+      }
+    }
+
+    return ranges.join(", ");
+  };
+
+  if (mode === "multiple" && verses) {
+    let currentSlide = "";
+    let currentVerses: verseType[] = [];
+    let currentFontSize = currentBoxes[1]?.fontSize || 2.5;
+
+    for (let i = 0; i < verses.length; ++i) {
+      const verse = verses[i];
+      if (!verse?.text) continue; // Skip verses without text
+
+      let words = verse.text.split(" ");
+      let tempSlide =
+        currentSlide +
+        (currentSlide ? " " : "") +
+        "\u200B" +
+        verse.name +
+        ".\u200B " +
+        words.join(" ");
+      let fitProcessing = true;
+
+      while (fitProcessing) {
+        try {
+          if (
+            getNumLines({
+              text: tempSlide,
+              fontSize: currentFontSize,
+              lineHeight,
+              width: currentBoxes[1]?.width || 95,
+            }) <= maxLines
+          ) {
+            currentSlide = tempSlide;
+            currentVerses.push(verse);
+            fitProcessing = false;
+          } else {
+            if (currentSlide) {
+              // If we already have verses on this slide, create a new slide
+              formattedVerses.push(
+                createNewSlide({
+                  itemType: "bible",
+                  type: "Verse",
+                  name: "Verses " + formatVerseRange(currentVerses),
+                  boxes: isNew
+                    ? [
+                        currentBoxes[0],
+                        { ...currentBoxes[1], fontSize: currentFontSize },
+                      ]
+                    : [
+                        currentBoxes[0],
+                        { ...currentBoxes[1], fontSize: currentFontSize },
+                        currentBoxes[2],
+                      ],
+                  words: [
+                    "",
+                    currentSlide,
+                    getBibleName({
+                      book,
+                      chapter,
+                      verse: formatVerseRange(currentVerses),
+                      version,
+                    }),
+                  ],
+                })
+              );
+              currentSlide =
+                "\u200B" + verse.name + ".\u200B " + words.join(" ");
+              currentVerses = [verse];
+              currentFontSize = currentBoxes[1]?.fontSize || 2.5;
+              ({ maxLines, lineHeight } = getMaxLines({
+                fontSize: currentFontSize,
+                height: 95,
+              }));
+              fitProcessing = false;
+            } else {
+              // If this is the first verse, try reducing font size
+              currentFontSize = Math.max(1.0, currentFontSize - 0.1); // Don't go below 1.0
+              if (currentFontSize <= 1.0) {
+                // If we've hit the minimum font size, force it to fit
+                currentSlide = tempSlide;
+                currentVerses.push(verse);
+                fitProcessing = false;
+              } else {
+                ({ maxLines, lineHeight } = getMaxLines({
+                  fontSize: currentFontSize,
+                  height: 95,
+                }));
+                tempSlide =
+                  "\u200B" + verse.name + ".\u200B " + words.join(" ");
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Error processing verse:", error);
+          fitProcessing = false;
+          break;
+        }
+      }
+    }
+
+    // Add the last slide if there are remaining verses
+    if (currentSlide && currentVerses.length > 0) {
+      try {
+        formattedVerses.push(
+          createNewSlide({
+            itemType: "bible",
+            type: "Verse",
+            name: "Verses " + formatVerseRange(currentVerses),
+            boxes: isNew
+              ? [
+                  currentBoxes[0],
+                  { ...currentBoxes[1], fontSize: currentFontSize },
+                ]
+              : [
+                  currentBoxes[0],
+                  { ...currentBoxes[1], fontSize: currentFontSize },
+                  currentBoxes[2],
+                ],
+            words: [
+              "",
+              currentSlide,
+              getBibleName({
+                book,
+                chapter,
+                verse: formatVerseRange(currentVerses),
+                version,
+              }),
+            ],
+          })
+        );
+      } catch (error) {
+        console.error("Error creating final slide:", error);
+      }
     }
   }
 

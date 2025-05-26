@@ -127,7 +127,7 @@ const Preferences = () => {
       label: "Bible Font Mode",
       value: defaultBibleFontMode,
       property: "defaultBibleFontMode",
-      options: ["equal", "fit"],
+      options: ["equal", "fit", "multiple"],
     },
   ];
 

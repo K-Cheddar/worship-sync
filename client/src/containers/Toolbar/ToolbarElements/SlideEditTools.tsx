@@ -240,6 +240,11 @@ const SlideEditTools = ({ className }: { className?: string }) => {
             value={item.bibleInfo?.fontMode === "equal"}
             label="Equal"
           />
+          <RadioButton
+            onChange={() => _updateBibleFontMode("multiple")}
+            value={item.bibleInfo?.fontMode === "multiple"}
+            label="Multiple"
+          />
         </>
       )}
       <div

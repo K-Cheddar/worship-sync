@@ -2,7 +2,7 @@ import { Box, TimerInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
-import TimerDisplay from "../TimerDisplay/TimerDisplay";
+import TimerDisplay from "./TimerDisplay";
 
 type DisplayStreamTextProps = {
   prevBox?: Box;
@@ -90,6 +90,7 @@ const DisplayStreamText = ({
     if (words.includes("{{timer}}")) {
       return <TimerDisplay timerInfo={timerInfo} words={words} />;
     }
+
     return words;
   };
   return (
