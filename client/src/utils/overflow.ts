@@ -126,8 +126,11 @@ export const getNumLines = ({
     const textHeight = measureSpan.offsetHeight;
     document.body.removeChild(measureSpan);
 
+    // Calculate number of lines with a small buffer to account for rounding
+    const numLines = Math.ceil((textHeight + 1) / lineHeight);
+
     // Ensure at least 1 line is returned
-    return Math.max(1, Math.round(textHeight / lineHeight));
+    return Math.max(1, numLines);
   } catch (error) {
     console.error("Error calculating number of lines:", error);
     // Return safe default value
@@ -304,6 +307,7 @@ export const formatSong = (_item: ItemState) => {
         })
       : [],
   };
+
   const selectedArrangement = item.selectedArrangement || 0;
 
   let slides = item.arrangements[selectedArrangement].slides;
@@ -610,28 +614,62 @@ const formatBibleVerses = ({
     let currentSlide = "";
     let currentVerses: verseType[] = [];
     let currentFontSize = currentBoxes[1]?.fontSize || 2.5;
+    let previousVerse: verseType | null = null;
 
     for (let i = 0; i < verses.length; ++i) {
       const verse = verses[i];
       if (!verse?.text) continue; // Skip verses without text
 
       let verseText = "\u200B" + verse.name + ".\u200B " + verse.text;
-      let testSlide = currentSlide ? currentSlide + " " + verseText : verseText;
 
-      // Check if the entire verse fits on the current slide
-      if (
-        getNumLines({
-          text: testSlide,
+      // First check if this verse can fit on its own
+      let singleVerseLines = getNumLines({
+        text: verseText,
+        fontSize: currentFontSize,
+        lineHeight,
+        width: currentBoxes[1]?.width || 95,
+      });
+
+      // Then check if it can fit with the current slide
+      let combinedText = currentSlide
+        ? currentSlide + " " + verseText
+        : verseText;
+      let combinedLines = getNumLines({
+        text: combinedText,
+        fontSize: currentFontSize,
+        lineHeight,
+        width: currentBoxes[1]?.width || 95,
+      });
+
+      // If we have a previous verse on its own slide, check if we can combine with it
+      let canCombineWithPrevious = false;
+      if (previousVerse && !currentSlide) {
+        let previousText =
+          "\u200B" + previousVerse.name + ".\u200B " + previousVerse.text;
+        let combinedWithPrevious = previousText + " " + verseText;
+        let combinedWithPreviousLines = getNumLines({
+          text: combinedWithPrevious,
           fontSize: currentFontSize,
           lineHeight,
           width: currentBoxes[1]?.width || 95,
-        }) <= maxLines
-      ) {
-        // Verse fits, add it to current slide
-        currentSlide = testSlide;
+        });
+        canCombineWithPrevious = combinedWithPreviousLines <= maxLines;
+      }
+
+      if (combinedLines <= maxLines) {
+        // Verse fits with current slide, add it
+        currentSlide = combinedText;
         currentVerses.push(verse);
+        previousVerse = null;
+      } else if (canCombineWithPrevious) {
+        // Can combine with previous verse
+        let previousText =
+          "\u200B" + previousVerse!.name + ".\u200B " + previousVerse!.text;
+        currentSlide = previousText + " " + verseText;
+        currentVerses = [previousVerse!, verse];
+        previousVerse = null;
       } else {
-        // Verse doesn't fit, create new slide with current content
+        // If we have a current slide, create it first
         if (currentSlide) {
           formattedVerses.push(
             createNewSlide({
@@ -661,9 +699,117 @@ const formatBibleVerses = ({
             })
           );
         }
-        // Start new slide with the verse that didn't fit
-        currentSlide = verseText;
-        currentVerses = [verse];
+
+        // If this verse can fit on its own, start a new slide with it
+        if (singleVerseLines <= maxLines) {
+          currentSlide = verseText;
+          currentVerses = [verse];
+          previousVerse = null;
+        } else {
+          // Handle the verse that didn't fit
+          let words = verseText.split(" ");
+          let tempSlide = "";
+          let remainingWords = [...words];
+          let verseStart = true;
+
+          while (remainingWords.length > 0) {
+            let word = remainingWords[0];
+            let testText = tempSlide ? tempSlide + " " + word : word;
+
+            if (
+              getNumLines({
+                text: testText,
+                fontSize: currentFontSize,
+                lineHeight,
+                width: currentBoxes[1]?.width || 95,
+              }) <= maxLines
+            ) {
+              tempSlide = testText;
+              remainingWords.shift();
+            } else {
+              if (tempSlide) {
+                formattedVerses.push(
+                  createNewSlide({
+                    itemType: "bible",
+                    type: "Verse",
+                    name: verseStart
+                      ? "Verse " + verse.name
+                      : "Verses " + formatVerseRange([verse]),
+                    boxes: isNew
+                      ? [
+                          currentBoxes[0],
+                          { ...currentBoxes[1], fontSize: currentFontSize },
+                        ]
+                      : [
+                          currentBoxes[0],
+                          { ...currentBoxes[1], fontSize: currentFontSize },
+                          currentBoxes[2],
+                        ],
+                    words: [
+                      "",
+                      tempSlide,
+                      getBibleName({
+                        book,
+                        chapter,
+                        verse: verseStart
+                          ? verse.name
+                          : formatVerseRange([verse]),
+                        version,
+                      }),
+                    ],
+                  })
+                );
+                tempSlide = "";
+                verseStart = false;
+              } else {
+                // If even a single word doesn't fit, we need to reduce font size
+                currentFontSize -= 0.1;
+                ({ maxLines, lineHeight } = getMaxLines({
+                  fontSize: currentFontSize,
+                  height: 95,
+                }));
+              }
+            }
+          }
+
+          // Add any remaining text as a new slide
+          if (tempSlide) {
+            formattedVerses.push(
+              createNewSlide({
+                itemType: "bible",
+                type: "Verse",
+                name: verseStart
+                  ? "Verse " + verse.name
+                  : "Verses " + formatVerseRange([verse]),
+                boxes: isNew
+                  ? [
+                      currentBoxes[0],
+                      { ...currentBoxes[1], fontSize: currentFontSize },
+                    ]
+                  : [
+                      currentBoxes[0],
+                      { ...currentBoxes[1], fontSize: currentFontSize },
+                      currentBoxes[2],
+                    ],
+                words: [
+                  "",
+                  tempSlide,
+                  getBibleName({
+                    book,
+                    chapter,
+                    verse: verseStart ? verse.name : formatVerseRange([verse]),
+                    version,
+                  }),
+                ],
+              })
+            );
+          }
+
+          // Reset for next verse
+          currentSlide = "";
+          currentVerses = [];
+          previousVerse = verse;
+        }
       }
     }
 
