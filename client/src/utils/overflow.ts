@@ -496,7 +496,6 @@ const formatBibleVerses = ({
     height: 95,
   });
   let formattedVerses = [];
-  let slide = "";
   // let type = currentSlide.type;
 
   if (mode === "separate" && verses) {
