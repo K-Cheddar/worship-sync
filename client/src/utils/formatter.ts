@@ -113,6 +113,52 @@ export const updateFontSize = ({
   };
 };
 
+type UpdateFontColorType = {
+  fontColor: string;
+  item: ItemState;
+};
+
+export const updateFontColor = ({
+  fontColor,
+  item,
+}: UpdateFontColorType): ItemState => {
+  let { selectedSlide, selectedBox } = item;
+  let _item = { ...item };
+
+  let { slides, slide } = getSlidesFromItem(item);
+
+  if (!slide) return item;
+
+  slides = slides.map((slide, slideIndex) => {
+    if (slideIndex !== selectedSlide) return slide;
+    return {
+      ...slide,
+      boxes: slide.boxes.map((box, boxIndex) => {
+        if (boxIndex !== selectedBox) return box;
+        console.log({ box, fontColor });
+        return {
+          ...box,
+          fontColor: fontColor,
+        };
+      }),
+    };
+  });
+
+  if (item.type === "song") {
+    _item = {
+      ...item,
+      arrangements: _item.arrangements.map((arr, index) => {
+        if (index !== item.selectedArrangement) return arr;
+        return { ...arr, slides: [...slides] };
+      }),
+    };
+  }
+
+  _item = { ..._item, slides: [...slides] };
+
+  return _item;
+};
+
 type UpdateBrightnessType = {
   brightness: number;
   item: ItemState;

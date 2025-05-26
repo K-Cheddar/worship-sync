@@ -13,6 +13,7 @@ type CreateNewSlideType = {
   brightness?: number;
   boxes?: Box[];
   textFontSize?: number;
+  fontColor?: string;
 };
 
 export const createNewSlide = ({
@@ -27,6 +28,7 @@ export const createNewSlide = ({
   brightness,
   boxes: _boxes,
   textFontSize,
+  fontColor,
 }: CreateNewSlideType) => {
   if (!box)
     box = {
@@ -41,7 +43,7 @@ export const createNewSlide = ({
       id: generateRandomId(),
       isLocked: true,
       background: "",
-      fontColor: "rgba(255, 255, 255, 1)",
+      fontColor: fontColor || "rgba(255, 255, 255, 1)",
       shouldKeepAspectRatio: false,
     };
 
@@ -74,7 +76,7 @@ export const createNewSlide = ({
     });
     boxes.push({
       ...box,
-      fontColor: "rgb(253 224 71)",
+      fontColor: fontColor || "rgb(253 224 71)",
       fontSize: 2,
       height: 20,
       width: 100,
@@ -96,7 +98,7 @@ export const createNewSlide = ({
     obj = Object.assign({}, box);
     obj.height = 23;
     obj.fontSize = 2.1;
-    obj.fontColor = "rgba(255, 251, 43, 1)";
+    obj.fontColor = fontColor || "rgba(255, 251, 43, 1)";
     obj.transparent = true;
     obj.topMargin = 1;
     obj.sideMargin = 2.5;

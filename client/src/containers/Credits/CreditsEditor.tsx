@@ -36,6 +36,12 @@ const CreditsEditor = ({ className }: { className?: string }) => {
 
   const sensors = useSensors();
 
+  const hasUnpublishedChanges = () => {
+    const visibleList = list.filter((credit) => !credit.hidden);
+    const visiblePublishedList = publishedList;
+    return JSON.stringify(visiblePublishedList) !== JSON.stringify(visibleList);
+  };
+
   const onDragEnd = (event: DragEndEvent) => {
     const { over, active } = event;
     if (!over || !active) return;
@@ -83,7 +89,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
       >
         <h2 className="text-xl font-semibold text-center h-fit">
           Credits
-          {JSON.stringify(publishedList) !== JSON.stringify(list) ? (
+          {hasUnpublishedChanges() ? (
             <span className="text-yellow-500 ml-2">(Draft)</span>
           ) : (
             <span className="text-green-500 ml-2">(Published)</span>

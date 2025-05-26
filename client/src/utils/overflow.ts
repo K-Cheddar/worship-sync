@@ -89,6 +89,7 @@ type FormatSectionType = {
   newSlides: ItemSlide[];
   lastBoxes: Box[];
   fontSize: number;
+  fontColor?: string;
 };
 
 export const formatSection = ({
@@ -99,6 +100,7 @@ export const formatSection = ({
   newSlides,
   lastBoxes,
   fontSize,
+  fontColor,
 }: FormatSectionType) => {
   let lines = text.split("\n");
   let fLyrics = [];
@@ -158,6 +160,7 @@ export const formatSection = ({
         name: name,
         boxes: boxes,
         fontSize: fontSize,
+        fontColor: fontColor,
         slideIndex: fLyrics.length,
       })
     );
@@ -180,11 +183,15 @@ export const formatLyrics = (item: ItemState) => {
       boxes,
       words: ["", boxes[1].words || " "],
       fontSize: boxes[1].fontSize || 4.5,
+      fontColor: boxes[1].fontColor || "rgb(255, 255, 255)",
     }),
   ];
   const songOrder = arrangements[selectedArrangement].songOrder;
   const formattedLyrics = arrangements[selectedArrangement].formattedLyrics;
   const fontSize: number = slides[1] ? slides[1].boxes[1].fontSize || 2.5 : 2.5;
+  const fontColor: string = slides[1]
+    ? slides[1].boxes[1].fontColor || "rgb(255, 255, 255)"
+    : "rgb(255, 255, 255)";
 
   for (let i = 0; i < songOrder.length; ++i) {
     let lyrics =
@@ -198,6 +205,7 @@ export const formatLyrics = (item: ItemState) => {
         newSlides,
         lastBoxes,
         fontSize,
+        fontColor,
       })
     );
   }
