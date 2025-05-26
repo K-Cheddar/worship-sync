@@ -269,7 +269,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
-      <BoxEditor />
+      {type !== "bible" && <BoxEditor />}
       {canChangeAspectRatio && (
         <Toggle
           label="Keep Aspect Ratio"

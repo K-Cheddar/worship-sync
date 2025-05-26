@@ -61,11 +61,11 @@ const ItemSlide = ({
         className={`${
           sizeMap.get(size)?.hSize
         } rounded-t-md truncate px-2 text-center ${itemSectionBgColorMap.get(
-          slide.type
+          slide.type.split(" ")[0] || slide.name.split(" ")[0]
         )}`}
         style={{ width: `${width}vw` }}
       >
-        {slide.name}
+        {slide.name || slide.type}
       </h4>
       <DisplayWindow
         showBorder

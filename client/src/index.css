@@ -19,3 +19,15 @@ code {
 button {
   text-wrap: nowrap;
 }
+
+input[type="password"]::-webkit-textfield-decoration-container {
+  display: none;
+}
+input[type="password"] {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+input[type="password"]::-ms-reveal {
+  display: none;
+}
