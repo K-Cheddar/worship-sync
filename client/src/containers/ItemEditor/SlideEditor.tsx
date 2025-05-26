@@ -8,6 +8,8 @@ import { ReactComponent as EditTextSVG } from "../../assets/icons/edit-text.svg"
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import { ReactComponent as BoxSVG } from "../../assets/icons/box.svg";
+import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
+import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 
 import Input from "../../components/Input/Input";
 import "./ItemEditor.scss";
@@ -16,6 +18,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -33,6 +36,7 @@ import { Box } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
 import Icon from "../../components/Icon/Icon";
+import { createBox } from "../../utils/slideCreation";
 
 const SlideEditor = () => {
   const item = useSelector((state) => state.undoable.present.item);
@@ -128,7 +132,7 @@ const SlideEditor = () => {
           item.arrangements[item.selectedArrangement].formattedLyrics;
         const slides = item.arrangements[item.selectedArrangement].slides;
         const _index = formattedLyrics.findIndex(
-          (e) => e.name === slides[selectedSlide].type
+          (e) => e.name === slides[selectedSlide].name
         );
 
         const start =
@@ -202,6 +206,25 @@ const SlideEditor = () => {
     [];
 
   const boxes = isLoading ? [] : _boxes;
+
+  const canDeleteBox = useCallback(
+    (index: number) => {
+      if (type === "bible") {
+        return index > 2;
+      }
+
+      if (type === "song") {
+        return index > 1;
+      }
+
+      if (type === "free" || type === "timer") {
+        return index > 0;
+      }
+
+      return false;
+    },
+    [type]
+  );
 
   return (
     <div>
@@ -322,9 +345,36 @@ const SlideEditor = () => {
                     );
                   }}
                 />
+                {canDeleteBox(index) && (
+                  <Button
+                    svg={DeleteSVG}
+                    variant="tertiary"
+                    color="red"
+                    onClick={() => {
+                      dispatch(
+                        updateBoxes({
+                          boxes: boxes.filter((b, i) => i !== index),
+                        })
+                      );
+                    }}
+                  />
+                )}
               </span>
             );
           })}
+          <Button
+            className="text-xs w-full justify-center"
+            svg={AddSVG}
+            onClick={() =>
+              dispatch(
+                updateBoxes({
+                  boxes: [...boxes, createBox({ width: 25, height: 25 })],
+                })
+              )
+            }
+          >
+            Add Box
+          </Button>
         </section>
         <DisplayWindow
           showBorder
@@ -336,6 +386,7 @@ const SlideEditor = () => {
           }}
           width={isMobile ? 84 : 42}
           displayType="editor"
+          selectedBox={selectedBox}
         />
       </div>
     </div>

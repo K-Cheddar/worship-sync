@@ -160,7 +160,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
-      {type === "song" && <BoxEditor />}
+      {type !== "bible" && <BoxEditor />}
       {canChangeAspectRatio && (
         <Toggle
           label="Keep Aspect Ratio"
@@ -183,7 +183,9 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           </Button>
         }
       >
-        <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
+        <div className="flex flex-col gap-4 items-center p-4 w-[75vw]">
+          {controls}
+        </div>
       </PopOver>
     </div>
   );

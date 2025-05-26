@@ -25,6 +25,7 @@ type DisplayEditorProps = {
   onChange?: Function;
   index: number;
   selectBox?: Function;
+  isSelected?: boolean;
 };
 
 const DisplayEditor = ({
@@ -34,6 +35,7 @@ const DisplayEditor = ({
   onChange,
   selectBox,
   index,
+  isSelected,
 }: DisplayEditorProps) => {
   const [boxWidth, setBoxWidth] = useState(`${box.width}%`);
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
@@ -202,7 +204,7 @@ const DisplayEditor = ({
     <Rnd
       size={{ width: boxWidth, height: boxHeight }}
       className={`${
-        box.isLocked
+        box.isLocked && !isSelected
           ? ""
           : "outline outline-1 outline-gray-300 -outline-offset-2"
       }`}
@@ -250,7 +252,7 @@ const DisplayEditor = ({
             className={`display-editor ${
               showOverflow ? "overflow-y-visible" : "overflow-y-clip"
             } ${
-              box.isLocked
+              box.isLocked && !isSelected
                 ? "focus-visible:outline-1 focus-visible:outline focus-visible:outline-gray-300"
                 : ""
             }`}

@@ -255,3 +255,17 @@ export const checkMediaType = (mediaUrl?: string) => {
     return "unknown";
   }
 };
+
+export const getLetterFromIndex = (index: number) => {
+  if (index < 26) {
+    return String.fromCharCode(97 + index); // 97 is the ASCII code for 'a'
+  }
+
+  // For indices >= 26, we'll use a base-26 system
+  let result = "";
+  while (index >= 0) {
+    result = String.fromCharCode(97 + (index % 26)) + result;
+    index = Math.floor(index / 26) - 1;
+  }
+  return result;
+};

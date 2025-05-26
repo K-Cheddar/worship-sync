@@ -1,4 +1,12 @@
-import { Arrangment, Box, ItemSlide, ItemState, verseType } from "../types";
+import {
+  Arrangment,
+  Box,
+  ItemSlide,
+  ItemState,
+  SlideType,
+  verseType,
+} from "../types";
+import { getLetterFromIndex } from "./generalUtils";
 import { createNewSlide } from "./slideCreation";
 
 type getMaxLinesProps = {
@@ -156,7 +164,7 @@ export const formatSection = ({
     i += counter - 1;
     fLyrics.push(
       createNewSlide({
-        type: "Section",
+        type: type as SlideType,
         name: name,
         boxes: boxes,
         fontSize: fontSize,
@@ -199,7 +207,7 @@ export const formatLyrics = (item: ItemState) => {
     newSlides.push(
       ...formatSection({
         text: lyrics,
-        type: songOrder[i].name,
+        type: songOrder[i].name?.split(" ")[0] as SlideType,
         name: songOrder[i].name,
         slides,
         newSlides,
@@ -244,7 +252,7 @@ export const formatSong = (_item: ItemState) => {
       if (type === songOrder[j].name) ++songOrderCounter;
     }
     for (let j = 0; j < slides.length; j++) {
-      if (type === slides[j].type) ++counter;
+      if (type === slides[j].name) ++counter;
     }
     if (songOrderCounter !== 0) {
       slideSpan = counter / songOrderCounter;
@@ -252,14 +260,30 @@ export const formatSong = (_item: ItemState) => {
     return { ...ele, slideSpan };
   });
 
+  const updatedSlides = slides.map((slide, index) => {
+    const formattedLyric = formattedLyrics.find((e) => e.name === slide.name);
+    if (!formattedLyric || formattedLyric.slideSpan < 2) return slide;
+
+    // Count how many times this slide name has appeared before this index
+    const occurrenceIndex =
+      slides.slice(0, index + 1).filter((s) => s.name === slide.name).length -
+      1;
+
+    return {
+      ...slide,
+      name: `${slide.name}${getLetterFromIndex(occurrenceIndex)}`,
+    };
+  });
+
   item.arrangements[selectedArrangement] = {
     ...item.arrangements[selectedArrangement],
     formattedLyrics,
+    slides: updatedSlides,
   };
 
-  item.slides = [...slides];
+  console.log({ item });
 
-  return item;
+  return { ...item, slides: updatedSlides };
 };
 
 type formatBibleType = {
