@@ -16,35 +16,62 @@ type getMaxLinesProps = {
   topMargin?: number;
 };
 
+type MaxLinesResult = {
+  maxLines: number;
+  lineHeight: number;
+};
+
+/**
+ * Calculates the maximum number of lines that can fit in a container based on font size and height
+ * @param props.fontSize - Font size in viewport width units (vw)
+ * @param props.height - Container height percentage (0-100)
+ * @param props.topMargin - Optional top margin percentage
+ * @returns Object containing maxLines and lineHeight
+ */
 export const getMaxLines = ({
   fontSize,
   height,
   topMargin: _topMargin,
-}: getMaxLinesProps) => {
-  const newFontSize = fontSize + "vw";
-  let windowWidth = window.innerWidth;
-  let verticalMargin = _topMargin ? (_topMargin * 2) / 100 : 0.06;
-  const containerHeight = windowWidth * 0.23625;
-  const marginCalc = windowWidth * 0.42 * verticalMargin; // use window width to calculate margin
+}: getMaxLinesProps): MaxLinesResult => {
+  try {
+    const fontSizeVw = `${fontSize}vw`;
+    const windowWidth = window.innerWidth;
+    const verticalMargin = _topMargin ? (_topMargin * 2) / 100 : 0.06;
+    const containerHeight = windowWidth * 0.23625;
+    const marginCalc = windowWidth * 0.42 * verticalMargin;
 
-  if (!height) height = 90;
-  const calcHeight = containerHeight * (height / 100) - marginCalc;
+    const containerHeightPx = containerHeight * (height / 100) - marginCalc;
 
-  let singleSpan = document.createElement("singleSpan");
-  singleSpan.innerHTML = "Only Line";
-  singleSpan.style.fontSize = newFontSize;
-  singleSpan.style.fontFamily = "Verdana";
-  singleSpan.style.overflowWrap = "anywhere";
-  singleSpan.style.position = "fixed";
-  singleSpan.style.lineHeight = "1.25";
-  document.body.appendChild(singleSpan);
-  let lineHeight = singleSpan.offsetHeight;
-  document.body.removeChild(singleSpan);
+    // Create a temporary span to measure line height
+    const measureSpan = document.createElement("span");
+    measureSpan.style.cssText = `
+      font-size: ${fontSizeVw};
+      font-family: Verdana;
+      overflow-wrap: anywhere;
+      position: fixed;
+      line-height: 1.25;
+      visibility: hidden;
+    `;
+    measureSpan.textContent = "Only Line";
 
-  let maxLines = Math.floor(calcHeight / lineHeight);
-  let obj = { maxLines: maxLines, lineHeight: lineHeight };
+    document.body.appendChild(measureSpan);
+    const lineHeight = measureSpan.offsetHeight;
+    document.body.removeChild(measureSpan);
 
-  return obj;
+    const maxLines = Math.floor(containerHeightPx / lineHeight);
+
+    return {
+      maxLines: Math.max(1, maxLines), // Ensure at least 1 line
+      lineHeight,
+    };
+  } catch (error) {
+    console.error("Error calculating max lines:", error);
+    // Return safe default values
+    return {
+      maxLines: 1,
+      lineHeight: fontSize * 1.25, // Approximate line height based on font size
+    };
+  }
 };
 
 type getNumLinesProps = {
@@ -55,39 +82,81 @@ type getNumLinesProps = {
   sideMargin?: number;
 };
 
+/**
+ * Calculates the number of lines a text will occupy based on its content and container properties
+ * @param props.text - The text content to measure
+ * @param props.fontSize - Font size in viewport width units (vw)
+ * @param props.lineHeight - Line height in pixels
+ * @param props.width - Container width percentage (0-100)
+ * @param props.sideMargin - Optional side margin percentage
+ * @returns Number of lines the text will occupy
+ */
 export const getNumLines = ({
   text,
   fontSize,
   lineHeight,
   width,
   sideMargin: _sideMargin,
-}: getNumLinesProps) => {
-  const newFontSize = fontSize + "vw";
-  let windowWidth = window.innerWidth;
-  let sideMargin = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.92;
-  if (!width) width = 95;
-  else width *= sideMargin;
-  width /= 100;
-  width = width * windowWidth * 0.42; //Width of Display Editor = 42vw
+}: getNumLinesProps): number => {
+  try {
+    const fontSizeVw = `${fontSize}vw`;
+    const windowWidth = window.innerWidth;
+    const sideMargin = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.92;
 
-  let textSpan = document.createElement("textSpan");
-  textSpan.innerHTML = text;
-  textSpan.style.fontSize = newFontSize;
-  textSpan.style.fontFamily = "Verdana";
-  textSpan.style.overflowWrap = "anywhere";
-  textSpan.style.whiteSpace = "pre-wrap";
-  textSpan.style.width = width + "px";
-  textSpan.style.position = "fixed";
-  textSpan.style.wordBreak = "break-word";
-  textSpan.style.lineHeight = "1.25";
-  // textSpan.style.zIndex = "10";
-  // textSpan.style.top = "0";
-  document.body.appendChild(textSpan);
-  let textSpanHeight = textSpan.offsetHeight;
-  document.body.removeChild(textSpan);
+    // Calculate container width in pixels
+    const containerWidth =
+      (((width || 95) * sideMargin) / 100) * windowWidth * 0.42;
 
-  let lines = Math.round(textSpanHeight / lineHeight);
-  return lines;
+    // Create a temporary span to measure text height
+    const measureSpan = document.createElement("span");
+    measureSpan.style.cssText = `
+      font-size: ${fontSizeVw};
+      font-family: Verdana;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+      width: ${containerWidth}px;
+      position: fixed;
+      word-break: break-word;
+      line-height: 1.25;
+      visibility: hidden;
+    `;
+    measureSpan.textContent = text;
+
+    document.body.appendChild(measureSpan);
+    const textHeight = measureSpan.offsetHeight;
+    document.body.removeChild(measureSpan);
+
+    // Ensure at least 1 line is returned
+    return Math.max(1, Math.round(textHeight / lineHeight));
+  } catch (error) {
+    console.error("Error calculating number of lines:", error);
+    // Return safe default value
+    return 1;
+  }
+};
+
+const formatVerseRange = (verses: verseType[]): string => {
+  if (verses.length === 0) return "";
+  if (verses.length === 1) return verses[0].name;
+
+  const numbers = verses.map((v) => parseInt(v.name));
+  const ranges: string[] = [];
+  let start = numbers[0];
+  let prev = numbers[0];
+
+  for (let i = 1; i <= numbers.length; i++) {
+    if (i === numbers.length || numbers[i] !== prev + 1) {
+      ranges.push(start === prev ? start.toString() : `${start}-${prev}`);
+      if (i < numbers.length) {
+        start = numbers[i];
+      }
+    }
+    if (i < numbers.length) {
+      prev = numbers[i];
+    }
+  }
+
+  return ranges.join(", ");
 };
 
 type FormatSectionType = {
@@ -537,30 +606,6 @@ const formatBibleVerses = ({
     }
   }
 
-  const formatVerseRange = (verses: verseType[]): string => {
-    if (verses.length === 0) return "";
-    if (verses.length === 1) return verses[0].name;
-
-    const numbers = verses.map((v) => parseInt(v.name));
-    const ranges: string[] = [];
-    let start = numbers[0];
-    let prev = numbers[0];
-
-    for (let i = 1; i <= numbers.length; i++) {
-      if (i === numbers.length || numbers[i] !== prev + 1) {
-        ranges.push(start === prev ? start.toString() : `${start}-${prev}`);
-        if (i < numbers.length) {
-          start = numbers[i];
-        }
-      }
-      if (i < numbers.length) {
-        prev = numbers[i];
-      }
-    }
-
-    return ranges.join(", ");
-  };
-
   if (mode === "multiple" && verses) {
     let currentSlide = "";
     let currentVerses: verseType[] = [];
@@ -570,127 +615,87 @@ const formatBibleVerses = ({
       const verse = verses[i];
       if (!verse?.text) continue; // Skip verses without text
 
-      let words = verse.text.split(" ");
-      let tempSlide =
-        currentSlide +
-        (currentSlide ? " " : "") +
-        "\u200B" +
-        verse.name +
-        ".\u200B " +
-        words.join(" ");
-      let fitProcessing = true;
+      let verseText = "\u200B" + verse.name + ".\u200B " + verse.text;
+      let testSlide = currentSlide ? currentSlide + " " + verseText : verseText;
 
-      while (fitProcessing) {
-        try {
-          if (
-            getNumLines({
-              text: tempSlide,
-              fontSize: currentFontSize,
-              lineHeight,
-              width: currentBoxes[1]?.width || 95,
-            }) <= maxLines
-          ) {
-            currentSlide = tempSlide;
-            currentVerses.push(verse);
-            fitProcessing = false;
-          } else {
-            if (currentSlide) {
-              // If we already have verses on this slide, create a new slide
-              formattedVerses.push(
-                createNewSlide({
-                  itemType: "bible",
-                  type: "Verse",
-                  name: "Verses " + formatVerseRange(currentVerses),
-                  boxes: isNew
-                    ? [
-                        currentBoxes[0],
-                        { ...currentBoxes[1], fontSize: currentFontSize },
-                      ]
-                    : [
-                        currentBoxes[0],
-                        { ...currentBoxes[1], fontSize: currentFontSize },
-                        currentBoxes[2],
-                      ],
-                  words: [
-                    "",
-                    currentSlide,
-                    getBibleName({
-                      book,
-                      chapter,
-                      verse: formatVerseRange(currentVerses),
-                      version,
-                    }),
+      // Check if the entire verse fits on the current slide
+      if (
+        getNumLines({
+          text: testSlide,
+          fontSize: currentFontSize,
+          lineHeight,
+          width: currentBoxes[1]?.width || 95,
+        }) <= maxLines
+      ) {
+        // Verse fits, add it to current slide
+        currentSlide = testSlide;
+        currentVerses.push(verse);
+      } else {
+        // Verse doesn't fit, create new slide with current content
+        if (currentSlide) {
+          formattedVerses.push(
+            createNewSlide({
+              itemType: "bible",
+              type: "Verse",
+              name: "Verses " + formatVerseRange(currentVerses),
+              boxes: isNew
+                ? [
+                    currentBoxes[0],
+                    { ...currentBoxes[1], fontSize: currentFontSize },
+                  ]
+                : [
+                    currentBoxes[0],
+                    { ...currentBoxes[1], fontSize: currentFontSize },
+                    currentBoxes[2],
                   ],
-                })
-              );
-              currentSlide =
-                "\u200B" + verse.name + ".\u200B " + words.join(" ");
-              currentVerses = [verse];
-              currentFontSize = currentBoxes[1]?.fontSize || 2.5;
-              ({ maxLines, lineHeight } = getMaxLines({
-                fontSize: currentFontSize,
-                height: 95,
-              }));
-              fitProcessing = false;
-            } else {
-              // If this is the first verse, try reducing font size
-              currentFontSize = Math.max(1.0, currentFontSize - 0.1); // Don't go below 1.0
-              if (currentFontSize <= 1.0) {
-                // If we've hit the minimum font size, force it to fit
-                currentSlide = tempSlide;
-                currentVerses.push(verse);
-                fitProcessing = false;
-              } else {
-                ({ maxLines, lineHeight } = getMaxLines({
-                  fontSize: currentFontSize,
-                  height: 95,
-                }));
-                tempSlide =
-                  "\u200B" + verse.name + ".\u200B " + words.join(" ");
-              }
-            }
-          }
-        } catch (error) {
-          console.error("Error processing verse:", error);
-          fitProcessing = false;
-          break;
+              words: [
+                "",
+                currentSlide,
+                getBibleName({
+                  book,
+                  chapter,
+                  verse: formatVerseRange(currentVerses),
+                  version,
+                }),
+              ],
+            })
+          );
         }
+        // Start new slide with the verse that didn't fit
+        currentSlide = verseText;
+        currentVerses = [verse];
       }
     }
 
     // Add the last slide if there are remaining verses
     if (currentSlide && currentVerses.length > 0) {
-      try {
-        formattedVerses.push(
-          createNewSlide({
-            itemType: "bible",
-            type: "Verse",
-            name: "Verses " + formatVerseRange(currentVerses),
-            boxes: isNew
-              ? [
-                  currentBoxes[0],
-                  { ...currentBoxes[1], fontSize: currentFontSize },
-                ]
-              : [
-                  currentBoxes[0],
-                  { ...currentBoxes[1], fontSize: currentFontSize },
-                  currentBoxes[2],
-                ],
-            words: [
-              "",
-              currentSlide,
-              getBibleName({
-                book,
-                chapter,
-                verse: formatVerseRange(currentVerses),
-                version,
-              }),
-            ],
-          })
-        );
-      } catch (error) {
-        console.error("Error creating final slide:", error);
-      }
+      formattedVerses.push(
+        createNewSlide({
+          itemType: "bible",
+          type: "Verse",
+          name: "Verses " + formatVerseRange(currentVerses),
+          boxes: isNew
+            ? [
+                currentBoxes[0],
+                { ...currentBoxes[1], fontSize: currentFontSize },
+              ]
+            : [
+                currentBoxes[0],
+                { ...currentBoxes[1], fontSize: currentFontSize },
+                currentBoxes[2],
+              ],
+          words: [
+            "",
+            currentSlide,
+            getBibleName({
+              book,
+              chapter,
+              verse: formatVerseRange(currentVerses),
+              version,
+            }),
+          ],
+        })
+      );
     }
   }
 
