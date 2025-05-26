@@ -63,7 +63,7 @@ const initialState: PreferencesState = {
     defaultMediaItemsPerRow: 4,
     defaultShouldShowItemEditor: true,
     defaultIsMediaExpanded: false,
-    defaultBibleFontMode: "equal",
+    defaultBibleFontMode: "separate",
   },
   slidesPerRow: 4,
   slidesPerRowMobile: 3,
@@ -99,7 +99,7 @@ const initialState: PreferencesState = {
   quickLinks: [],
   selectedQuickLink: null,
   tab: "defaults",
-  bibleFontMode: "equal",
+  bibleFontMode: "separate",
 };
 
 export const preferencesSlice = createSlice({

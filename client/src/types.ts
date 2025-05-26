@@ -123,7 +123,7 @@ export type TimerInfo = {
   showMinutesOnly?: boolean;
 };
 
-export type BibleFontMode = "fit" | "equal" | "multiple";
+export type BibleFontMode = "fit" | "separate" | "multiple";
 
 export type BibleInfo = {
   book: string;

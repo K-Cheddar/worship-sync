@@ -47,10 +47,12 @@ export const getMaxLines = ({
     measureSpan.style.cssText = `
       font-size: ${fontSizeVw};
       font-family: Verdana;
-      overflow-wrap: anywhere;
+      overflow-wrap: break-word;
       position: fixed;
       line-height: 1.25;
       visibility: hidden;
+      padding: 0;
+      margin: 0;
     `;
     measureSpan.textContent = "Only Line";
 
@@ -58,7 +60,8 @@ export const getMaxLines = ({
     const lineHeight = measureSpan.offsetHeight;
     document.body.removeChild(measureSpan);
 
-    const maxLines = Math.floor(containerHeightPx / lineHeight);
+    // Calculate max lines with a small buffer to account for rounding
+    const maxLines = Math.floor((containerHeightPx - 1) / lineHeight);
 
     return {
       maxLines: Math.max(1, maxLines), // Ensure at least 1 line
@@ -112,12 +115,11 @@ export const getNumLines = ({
     measureSpan.style.cssText = `
       font-size: ${fontSizeVw};
       font-family: Verdana;
-      overflow-wrap: anywhere;
+      overflow-wrap: break-word;
       white-space: pre-wrap;
       width: ${containerWidth}px;
       position: fixed;
-      word-break: break-word;
-      line-height: 1.25;
+      line-height: ${lineHeight}px;
       visibility: hidden;
     `;
     measureSpan.textContent = text;
@@ -126,8 +128,8 @@ export const getNumLines = ({
     const textHeight = measureSpan.offsetHeight;
     document.body.removeChild(measureSpan);
 
-    // Calculate number of lines with a small buffer to account for rounding
-    const numLines = Math.ceil((textHeight + 1) / lineHeight);
+    // Calculate number of lines without the buffer
+    const numLines = Math.ceil(textHeight / lineHeight);
 
     // Ensure at least 1 line is returned
     return Math.max(1, numLines);
@@ -497,54 +499,150 @@ const formatBibleVerses = ({
   let slide = "";
   // let type = currentSlide.type;
 
-  if (mode === "equal" && verses) {
+  if (mode === "separate" && verses) {
     for (let i = 0; i < verses.length; ++i) {
       const verse = verses[i];
       let words = verse.text?.split(" ") || [];
+      let slide = "";
+      let verseSplitCounts: { [key: string]: number } = {}; // Track splits per verse
+      let needsLetters = false; // Track if this verse will be split
 
+      // First pass to check if we need letters
+      let tempSlide = "";
       for (let j = 0; j < words.length; j++) {
-        let update = slide + words[j];
+        let testSlide = tempSlide + (tempSlide ? " " : "") + words[j];
+        let versePrefix = "\u200B" + verse.name + ".\u200B ";
+        let fullText = versePrefix + testSlide;
+
         if (
           getNumLines({
-            text: update,
+            text: fullText,
             fontSize: currentBoxes[1].fontSize || 1,
             lineHeight,
             width: currentBoxes[1].width,
           }) <= maxLines
-        )
-          slide = update + " ";
-        else {
-          slide = slide.replace(/\s+/g, " ").trim();
-          formattedVerses.push(
-            createNewSlide({
-              type: "Verse",
-              name: "Verse " + verse.name,
-              itemType: "bible",
-              boxes: currentBoxes,
-              words: [
-                "",
-                "\u200B" + verse.name + ".\u200B " + slide,
-                getBibleName({ book, chapter, verse: verse.name, version }),
-              ],
-            })
-          );
-          slide = words[j] + " ";
+        ) {
+          tempSlide = testSlide;
+        } else {
+          needsLetters = true;
+          break;
         }
       }
-      formattedVerses.push(
-        createNewSlide({
-          itemType: "bible",
-          type: "Verse",
-          name: "Verse " + verse.name,
-          boxes: currentBoxes,
-          words: [
-            "",
-            "\u200B" + verse.name + ".\u200B " + slide,
-            getBibleName({ book, chapter, verse: verse.name, version }),
-          ],
-        })
-      );
-      slide = " ";
+
+      // Reset for actual processing
+      tempSlide = "";
+      for (let j = 0; j < words.length; j++) {
+        let testSlide = slide + (slide ? " " : "") + words[j];
+        let versePrefix =
+          "\u200B" +
+          verse.name +
+          (needsLetters
+            ? getLetterFromIndex(verseSplitCounts[verse.name])
+            : "") +
+          ".\u200B ";
+        let fullText = versePrefix + testSlide;
+
+        if (
+          getNumLines({
+            text: fullText,
+            fontSize: currentBoxes[1].fontSize || 1,
+            lineHeight,
+            width: currentBoxes[1].width,
+          }) <= maxLines
+        ) {
+          slide = testSlide;
+        } else {
+          // Create slide with current words
+          if (slide) {
+            if (!verseSplitCounts[verse.name]) {
+              verseSplitCounts[verse.name] = 0;
+            }
+            const currentPrefix =
+              "\u200B" +
+              verse.name +
+              (needsLetters
+                ? getLetterFromIndex(verseSplitCounts[verse.name])
+                : "") +
+              ".\u200B ";
+            const cleanText = slide.replace(/^\u200B\d+\.\u200B\s*/, "");
+
+            formattedVerses.push(
+              createNewSlide({
+                type: "Verse",
+                name:
+                  "Verse " +
+                  verse.name +
+                  (needsLetters
+                    ? getLetterFromIndex(verseSplitCounts[verse.name])
+                    : ""),
+                itemType: "bible",
+                boxes: currentBoxes,
+                words: [
+                  "",
+                  currentPrefix + cleanText,
+                  getBibleName({
+                    book,
+                    chapter,
+                    verse:
+                      verse.name +
+                      (needsLetters
+                        ? getLetterFromIndex(verseSplitCounts[verse.name])
+                        : ""),
+                    version,
+                  }),
+                ],
+              })
+            );
+            verseSplitCounts[verse.name]++;
+          }
+          // Start new slide with current word
+          slide = words[j];
+        }
+      }
+
+      // Add remaining text if any
+      if (slide) {
+        if (!verseSplitCounts[verse.name]) {
+          verseSplitCounts[verse.name] = 0;
+        }
+        const currentPrefix =
+          "\u200B" +
+          verse.name +
+          (needsLetters
+            ? getLetterFromIndex(verseSplitCounts[verse.name])
+            : "") +
+          ".\u200B ";
+        const cleanText = slide.replace(/^\u200B\d+\.\u200B\s*/, "");
+
+        formattedVerses.push(
+          createNewSlide({
+            itemType: "bible",
+            type: "Verse",
+            name:
+              "Verse " +
+              verse.name +
+              (needsLetters
+                ? getLetterFromIndex(verseSplitCounts[verse.name])
+                : ""),
+            boxes: currentBoxes,
+            words: [
+              "",
+              currentPrefix + cleanText,
+              getBibleName({
+                book,
+                chapter,
+                verse:
+                  verse.name +
+                  (needsLetters
+                    ? getLetterFromIndex(verseSplitCounts[verse.name])
+                    : ""),
+                version,
+              }),
+            ],
+          })
+        );
+        verseSplitCounts[verse.name]++;
+      }
     }
   }
 
@@ -585,6 +683,12 @@ const formatBibleVerses = ({
         }
       }
 
+      // Update maxLines and lineHeight for the final slide
+      ({ maxLines, lineHeight } = getMaxLines({
+        fontSize: currentFontSize,
+        height: 95,
+      }));
+
       formattedVerses.push(
         createNewSlide({
           itemType: "bible",
@@ -615,6 +719,7 @@ const formatBibleVerses = ({
     let currentVerses: verseType[] = [];
     let currentFontSize = currentBoxes[1]?.fontSize || 2.5;
     let previousVerse: verseType | null = null;
+    let verseSplitCounts: { [key: string]: number } = {}; // Track splits per verse
 
     for (let i = 0; i < verses.length; ++i) {
       const verse = verses[i];
@@ -675,7 +780,9 @@ const formatBibleVerses = ({
             createNewSlide({
               itemType: "bible",
               type: "Verse",
-              name: "Verses " + formatVerseRange(currentVerses),
+              name:
+                (currentVerses.length > 1 ? "Verses " : "Verse ") +
+                formatVerseRange(currentVerses),
               boxes: isNew
                 ? [
                     currentBoxes[0],
@@ -710,7 +817,6 @@ const formatBibleVerses = ({
           let words = verseText.split(" ");
           let tempSlide = "";
           let remainingWords = [...words];
-          let verseStart = true;
 
           while (remainingWords.length > 0) {
             let word = remainingWords[0];
@@ -728,13 +834,30 @@ const formatBibleVerses = ({
               remainingWords.shift();
             } else {
               if (tempSlide) {
+                // Initialize split count for this verse if not exists
+                if (!verseSplitCounts[verse.name]) {
+                  verseSplitCounts[verse.name] = 0;
+                }
+
+                const versePrefix =
+                  "\u200B" +
+                  verse.name +
+                  getLetterFromIndex(verseSplitCounts[verse.name]) +
+                  ".\u200B ";
+                // Remove the existing verse number from the text
+                const cleanText = tempSlide.replace(
+                  /^\u200B\d+\.\u200B\s*/,
+                  ""
+                );
+
                 formattedVerses.push(
                   createNewSlide({
                     itemType: "bible",
                     type: "Verse",
-                    name: verseStart
-                      ? "Verse " + verse.name
-                      : "Verses " + formatVerseRange([verse]),
+                    name:
+                      "Verse " +
+                      verse.name +
+                      getLetterFromIndex(verseSplitCounts[verse.name]),
                     boxes: isNew
                       ? [
                           currentBoxes[0],
@@ -747,20 +870,20 @@ const formatBibleVerses = ({
                         ],
                     words: [
                       "",
-                      tempSlide,
+                      versePrefix + cleanText,
                       getBibleName({
                         book,
                         chapter,
-                        verse: verseStart
-                          ? verse.name
-                          : formatVerseRange([verse]),
+                        verse:
+                          verse.name +
+                          getLetterFromIndex(verseSplitCounts[verse.name]),
                         version,
                       }),
                     ],
                   })
                 );
+                verseSplitCounts[verse.name]++; // Increment split count for this verse
                 tempSlide = "";
-                verseStart = false;
               } else {
                 // If even a single word doesn't fit, we need to reduce font size
                 currentFontSize -= 0.1;
@@ -774,13 +897,27 @@ const formatBibleVerses = ({
 
           // Add any remaining text as a new slide
           if (tempSlide) {
+            // Initialize split count for this verse if not exists
+            if (!verseSplitCounts[verse.name]) {
+              verseSplitCounts[verse.name] = 0;
+            }
+
+            const versePrefix =
+              "\u200B" +
+              verse.name +
+              getLetterFromIndex(verseSplitCounts[verse.name]) +
+              ".\u200B ";
+            // Remove the existing verse number from the text
+            const cleanText = tempSlide.replace(/^\u200B\d+\.\u200B\s*/, "");
+
             formattedVerses.push(
               createNewSlide({
                 itemType: "bible",
                 type: "Verse",
-                name: verseStart
-                  ? "Verse " + verse.name
-                  : "Verses " + formatVerseRange([verse]),
+                name:
+                  "Verse " +
+                  verse.name +
+                  getLetterFromIndex(verseSplitCounts[verse.name]),
                 boxes: isNew
                   ? [
                       currentBoxes[0],
@@ -793,16 +930,19 @@ const formatBibleVerses = ({
                     ],
                 words: [
                   "",
-                  tempSlide,
+                  versePrefix + cleanText,
                   getBibleName({
                     book,
                     chapter,
-                    verse: verseStart ? verse.name : formatVerseRange([verse]),
+                    verse:
+                      verse.name +
+                      getLetterFromIndex(verseSplitCounts[verse.name]),
                     version,
                   }),
                 ],
               })
             );
+            verseSplitCounts[verse.name]++; // Increment split count for this verse
           }
 
           // Reset for next verse

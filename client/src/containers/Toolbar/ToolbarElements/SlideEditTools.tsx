@@ -171,6 +171,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         <Input
           label="Font Size"
           type="number"
+          disabled={item.type === "bible" && item.bibleInfo?.fontMode === "fit"}
           value={fontSize}
           onChange={(val) => _updateFontSize(val as number)}
           className="w-8 2xl:w-10"
@@ -236,9 +237,9 @@ const SlideEditTools = ({ className }: { className?: string }) => {
             label="Fit"
           />
           <RadioButton
-            onChange={() => _updateBibleFontMode("equal")}
-            value={item.bibleInfo?.fontMode === "equal"}
-            label="Equal"
+            onChange={() => _updateBibleFontMode("separate")}
+            value={item.bibleInfo?.fontMode === "separate"}
+            label="Separate"
           />
           <RadioButton
             onChange={() => _updateBibleFontMode("multiple")}

@@ -127,7 +127,7 @@ const Preferences = () => {
       label: "Bible Font Mode",
       value: defaultBibleFontMode,
       property: "defaultBibleFontMode",
-      options: ["equal", "fit", "multiple"],
+      options: ["fit", "separate", "multiple"],
     },
   ];
 
@@ -260,7 +260,7 @@ const Preferences = () => {
             key={label}
             className={cn("grid grid-cols-2 gap-2 items-center p-2")}
           >
-            <p className="font-semibold">{label}:</p>
+            <p className="font-semibold text-right">{label}:</p>
             <section className="flex gap-2 items-center px-2">
               <RadioButton
                 label="Shown"
@@ -289,7 +289,7 @@ const Preferences = () => {
             key={label}
             className={cn("grid grid-cols-2 gap-2 items-center p-2")}
           >
-            <p className="font-semibold">{label}:</p>
+            <p className="font-semibold text-right">{label}:</p>
             <section className="flex gap-2 items-center px-2">
               {options.map((option) => (
                 <RadioButton

@@ -93,7 +93,7 @@ export const updateFontSize = ({
   if (item.type === "bible" && selectedSlide !== 0)
     _item = formatBible({
       item: _item,
-      mode: item.bibleInfo?.fontMode || "equal",
+      mode: item.bibleInfo?.fontMode || "separate",
     });
 
   if (item.type === "song") {

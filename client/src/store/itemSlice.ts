@@ -24,7 +24,7 @@ const initialState: ItemState = {
     chapter: "",
     version: "",
     verses: [],
-    fontMode: "equal",
+    fontMode: "separate",
   },
   timerInfo: undefined,
   isLoading: true,
@@ -51,7 +51,7 @@ export const itemSlice = createSlice({
         chapter: "",
         version: "",
         verses: [],
-        fontMode: "equal",
+        fontMode: "separate",
       };
       state.timerInfo = action.payload.timerInfo;
     },
