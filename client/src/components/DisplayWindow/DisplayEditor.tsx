@@ -203,11 +203,11 @@ const DisplayEditor = ({
   return (
     <Rnd
       size={{ width: boxWidth, height: boxHeight }}
-      className={`${
-        box.isLocked && !isSelected
-          ? ""
-          : "outline outline-1 outline-gray-300 -outline-offset-2"
-      }`}
+      className={cn(
+        (!box.isLocked || isSelected) &&
+          "outline outline-1 outline-gray-300 -outline-offset-2",
+        isSelected && !box.background && "z-10"
+      )}
       position={{ x, y }}
       disableDragging={box.isLocked}
       onDragStop={handleDragStop}
@@ -249,13 +249,10 @@ const DisplayEditor = ({
       {typeof onChange === "function" && index !== 0 && (
         <>
           <textarea
-            className={`display-editor ${
+            className={cn(
+              "display-editor",
               showOverflow ? "overflow-y-visible" : "overflow-y-clip"
-            } ${
-              box.isLocked && !isSelected
-                ? "focus-visible:outline-1 focus-visible:outline focus-visible:outline-gray-300"
-                : ""
-            }`}
+            )}
             id={`display-box-text-${index}`}
             ref={textAreaRef}
             value={words}

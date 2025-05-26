@@ -135,7 +135,6 @@ export const updateFontColor = ({
       ...slide,
       boxes: slide.boxes.map((box, boxIndex) => {
         if (boxIndex !== selectedBox) return box;
-        console.log({ box, fontColor });
         return {
           ...box,
           fontColor: fontColor,
@@ -215,4 +214,18 @@ export const updateKeepAspectRatio = ({
     ...item,
     slides: [...slides],
   };
+};
+
+type UpdateItemTimerColorType = {
+  timerColor: string;
+  item: ItemState;
+};
+
+export const updateItemTimerColor = ({
+  timerColor,
+  item,
+}: UpdateItemTimerColorType): ItemState => {
+  if (!item.timerInfo) return item;
+
+  return { ...item, timerInfo: { ...item.timerInfo, color: timerColor } };
 };

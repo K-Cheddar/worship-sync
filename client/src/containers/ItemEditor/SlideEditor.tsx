@@ -368,7 +368,14 @@ const SlideEditor = () => {
             onClick={() =>
               dispatch(
                 updateBoxes({
-                  boxes: [...boxes, createBox({ width: 25, height: 25 })],
+                  boxes: [
+                    ...boxes,
+                    createBox({
+                      width: 25,
+                      height: 25,
+                      excludeFromOverflow: true,
+                    }),
+                  ],
                 })
               )
             }

@@ -274,54 +274,54 @@ const BoxEditor = () => {
           </div>
         </div>
       </PopOver>
-      <Input
-        disabled={currentBox.isLocked}
-        type="number"
-        value={currentBox.x || 0}
-        onChange={(value) => handleInputChange("x", value.toString())}
-        label="X"
-        labelClassName="lg:mr-2 max-lg:mb-2"
-        min={0}
-        max={100}
-        inputWidth="w-12"
-        hideSpinButtons={false}
-      />
-      <Input
-        disabled={currentBox.isLocked}
-        type="number"
-        value={currentBox.y || 0}
-        onChange={(value) => handleInputChange("y", value.toString())}
-        label="Y"
-        labelClassName="lg:mr-2 max-lg:mb-2"
-        min={0}
-        max={100}
-        inputWidth="w-12"
-        hideSpinButtons={false}
-      />
-      <Input
-        disabled={currentBox.isLocked}
-        type="number"
-        value={currentBox.width}
-        onChange={(value) => handleInputChange("width", value.toString())}
-        label="Width"
-        labelClassName="lg:mr-2 max-lg:mb-2"
-        min={0}
-        max={100}
-        inputWidth="w-12"
-        hideSpinButtons={false}
-      />
-      <Input
-        disabled={currentBox.isLocked}
-        type="number"
-        value={currentBox.height}
-        onChange={(value) => handleInputChange("height", value.toString())}
-        label="Height"
-        labelClassName="lg:mr-2 max-lg:mb-2"
-        min={0}
-        max={100}
-        inputWidth="w-12"
-        hideSpinButtons={false}
-      />
+      {!currentBox.isLocked && (
+        <>
+          <Input
+            type="number"
+            value={currentBox.x || 0}
+            onChange={(value) => handleInputChange("x", value.toString())}
+            label="X"
+            labelClassName="lg:mr-2 max-lg:mb-2"
+            min={0}
+            max={100}
+            inputWidth="w-16"
+            hideSpinButtons={false}
+          />
+          <Input
+            type="number"
+            value={currentBox.y || 0}
+            onChange={(value) => handleInputChange("y", value.toString())}
+            label="Y"
+            labelClassName="lg:mr-2 max-lg:mb-2"
+            min={0}
+            max={100}
+            inputWidth="w-16"
+            hideSpinButtons={false}
+          />
+          <Input
+            type="number"
+            value={currentBox.width}
+            onChange={(value) => handleInputChange("width", value.toString())}
+            label="Width"
+            labelClassName="lg:mr-2 max-lg:mb-2"
+            min={0}
+            max={100}
+            inputWidth="w-16"
+            hideSpinButtons={false}
+          />
+          <Input
+            type="number"
+            value={currentBox.height}
+            onChange={(value) => handleInputChange("height", value.toString())}
+            label="Height"
+            labelClassName="lg:mr-2 max-lg:mb-2"
+            min={0}
+            max={100}
+            inputWidth="w-16"
+            hideSpinButtons={false}
+          />
+        </>
+      )}
     </section>
   );
 };

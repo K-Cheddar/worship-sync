@@ -5,8 +5,9 @@ import { ReactComponent as ExpandSVG } from "../../../assets/icons/expand.svg";
 import { ReactComponent as TextFieldSVG } from "../../../assets/icons/text-field.svg";
 import { ReactComponent as BrightnessSVG } from "../../../assets/icons/brightness.svg";
 import { ReactComponent as ColorSVG } from "../../../assets/icons/text-color.svg";
+import { ReactComponent as TimerSVG } from "../../../assets/icons/timer.svg";
 import Input from "../../../components/Input/Input";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useLocation } from "react-router-dom";
 import {
@@ -14,6 +15,7 @@ import {
   updateBrightness,
   updateKeepAspectRatio,
   updateFontColor,
+  updateItemTimerColor,
 } from "../../../utils/formatter";
 import { updateArrangements, updateSlides } from "../../../store/itemSlice";
 import Toggle from "../../../components/Toggle/Toggle";
@@ -22,6 +24,7 @@ import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
 import BoxEditor from "./BoxEditor";
 import { HexColorPicker, HexColorInput } from "react-colorful";
+import { updateTimerColor } from "../../../store/timersSlice";
 
 const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
@@ -30,26 +33,37 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const [brightness, setBrightness] = useState(50);
   const [shouldKeepAspectRatio, setShouldKeepAspectRatio] = useState(false);
   const [fontColor, setFontColor] = useState("#ffffff");
+  const [timerColor, setTimerColor] = useState("#ffffff");
+  const timeoutRef = useRef<NodeJS.Timeout>();
 
   const item = useSelector((state) => state.undoable.present.item);
-  const { slides, selectedSlide, type } = item;
+  const { slides, selectedSlide, selectedBox, timerInfo } = item;
+  const { timers } = useSelector((state) => state.timers);
+
+  const timer = timers.find((t) => t.id === timerInfo?.id);
 
   const slide = slides[selectedSlide];
 
   useEffect(() => {
-    const fSize = (slide?.boxes?.[1]?.fontSize || 2.5) * 10;
+    const fSize = (slide?.boxes?.[selectedBox]?.fontSize || 2.5) * 10;
     setFontSize(fSize);
     setBrightness(slide?.boxes?.[0]?.brightness || 100);
     setShouldKeepAspectRatio(slide?.boxes?.[0]?.shouldKeepAspectRatio || false);
-    setFontColor(slide?.boxes?.[1]?.fontColor || "#ffffff");
-  }, [slide]);
+    setFontColor(slide?.boxes?.[selectedBox]?.fontColor || "#ffffff");
+    setTimerColor(timer?.color || "#ffffff");
+  }, [slide, selectedBox, timer]);
 
-  const updateItem = (updatedItem: ItemState) => {
-    dispatch(updateSlides({ slides: updatedItem.slides }));
-    if (updatedItem.arrangements.length > 0) {
-      dispatch(updateArrangements({ arrangements: updatedItem.arrangements }));
-    }
-  };
+  const updateItem = useCallback(
+    (updatedItem: ItemState) => {
+      dispatch(updateSlides({ slides: updatedItem.slides }));
+      if (updatedItem.arrangements.length > 0) {
+        dispatch(
+          updateArrangements({ arrangements: updatedItem.arrangements })
+        );
+      }
+    },
+    [dispatch]
+  );
 
   const _updateFontSize = (val: number) => {
     const _val = Math.max(Math.min(val, 48), 1);
@@ -77,9 +91,51 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const _updateFontColor = (val: string) => {
     setFontColor(val);
-    const updatedItem = updateFontColor({ fontColor: val, item });
-    updateItem(updatedItem);
+
+    if (val.includes("NaN")) {
+      return;
+    }
+
+    // Clear any existing timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+
+    // Set new timeout
+    timeoutRef.current = setTimeout(() => {
+      const updatedItem = updateFontColor({ fontColor: val, item });
+      updateItem(updatedItem);
+    }, 250);
   };
+
+  const _updateTimerColor = (val: string) => {
+    setTimerColor(val);
+
+    if (val.includes("NaN")) {
+      return;
+    }
+
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+
+    timeoutRef.current = setTimeout(() => {
+      const updatedItem = updateItemTimerColor({ timerColor: val, item });
+      if (timerInfo?.id) {
+        dispatch(updateTimerColor({ id: timerInfo?.id, color: val }));
+      }
+      updateItem(updatedItem);
+    }, 250);
+  };
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
 
   if (!location.pathname.includes("controller/item") || !slide) {
     return null;
@@ -112,27 +168,42 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateFontSize(fontSize + 1)}
         />
       </div>
-      <div className="flex gap-1 items-center">
-        <PopOver
-          TriggeringButton={
-            <Button
-              variant="tertiary"
-              className="border-b-2"
-              svg={ColorSVG}
-              style={{ borderColor: fontColor }}
-            />
-          }
-        >
-          <HexColorPicker color={fontColor} onChange={_updateFontColor} />
-          <HexColorInput
-            color={fontColor}
-            alpha
-            prefixed
-            onChange={_updateFontColor}
-            className="text-black w-full mt-2"
+      <PopOver
+        TriggeringButton={
+          <Button
+            variant="tertiary"
+            className="border-b-2"
+            svg={ColorSVG}
+            style={{ borderColor: fontColor }}
           />
-        </PopOver>
-      </div>
+        }
+      >
+        <HexColorPicker color={fontColor} onChange={_updateFontColor} />
+        <HexColorInput
+          color={fontColor}
+          prefixed
+          onChange={_updateFontColor}
+          className="text-black w-full mt-2"
+        />
+      </PopOver>
+      <PopOver
+        TriggeringButton={
+          <Button
+            variant="tertiary"
+            className="border-b-2"
+            svg={TimerSVG}
+            style={{ borderColor: timerColor }}
+          />
+        }
+      >
+        <HexColorPicker color={timerColor} onChange={_updateTimerColor} />
+        <HexColorInput
+          color={timerColor}
+          prefixed
+          onChange={_updateTimerColor}
+          className="text-black w-full mt-2"
+        />
+      </PopOver>
       <div
         className={`flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4`}
       >
@@ -160,7 +231,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
-      {type !== "bible" && <BoxEditor />}
+      <BoxEditor />
       {canChangeAspectRatio && (
         <Toggle
           label="Keep Aspect Ratio"
@@ -183,9 +254,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           </Button>
         }
       >
-        <div className="flex flex-col gap-4 items-center p-4 w-[75vw]">
-          {controls}
-        </div>
+        <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
       </PopOver>
     </div>
   );

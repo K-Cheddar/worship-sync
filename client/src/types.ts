@@ -116,6 +116,7 @@ export type TimerInfo = {
   time?: number;
   id: string;
   name: string;
+  color?: string;
   duration?: number;
   countdownTime?: string;
   timerType: TimerType;

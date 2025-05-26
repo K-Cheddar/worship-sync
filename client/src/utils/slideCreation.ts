@@ -131,7 +131,7 @@ export const createNewSlide = ({
     boxes.push(
       createBox({
         ...box,
-        fontColor: fontColor || "rgb(253 224 71)",
+        fontColor: fontColor || "#fde047",
         fontSize: 2,
         height: 20,
         width: 100,
