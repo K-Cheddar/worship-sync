@@ -1,4 +1,4 @@
-import { ItemSlide, ItemState } from "../types";
+import { BibleFontMode, ItemSlide, ItemState } from "../types";
 import { formatBible, formatSong } from "./overflow";
 
 type UpdateSlideBgPropertyType = {
@@ -91,7 +91,10 @@ export const updateFontSize = ({
   _item = { ...item, slides: [...slides] };
 
   if (item.type === "bible" && selectedSlide !== 0)
-    _item = formatBible({ item: _item, mode: "add" });
+    _item = formatBible({
+      item: _item,
+      mode: item.bibleInfo?.fontMode || "equal",
+    });
 
   if (item.type === "song") {
     _item = {
@@ -228,4 +231,20 @@ export const updateItemTimerColor = ({
   if (!item.timerInfo) return item;
 
   return { ...item, timerInfo: { ...item.timerInfo, color: timerColor } };
+};
+
+type UpdateBibleFontModeType = {
+  fontMode: BibleFontMode;
+  item: ItemState;
+};
+
+export const updateBibleFontMode = ({
+  fontMode,
+  item,
+}: UpdateBibleFontModeType): ItemState => {
+  const updatedItem = formatBible({
+    item,
+    mode: fontMode,
+  });
+  return updatedItem;
 };

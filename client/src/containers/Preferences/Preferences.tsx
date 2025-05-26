@@ -42,6 +42,7 @@ const Preferences = () => {
       defaultMediaItemsPerRow,
       defaultShouldShowItemEditor,
       defaultIsMediaExpanded,
+      defaultBibleFontMode,
     },
     selectedPreference,
   } = useSelector((state) => state.undoable.present.preferences);
@@ -118,6 +119,15 @@ const Preferences = () => {
       label: "Is Media Expanded",
       value: defaultIsMediaExpanded,
       property: "defaultIsMediaExpanded",
+    },
+  ];
+
+  const itemPreferences = [
+    {
+      label: "Bible Font Mode",
+      value: defaultBibleFontMode,
+      property: "defaultBibleFontMode",
+      options: ["equal", "fit"],
     },
   ];
 
@@ -266,6 +276,32 @@ const Preferences = () => {
                   dispatch(setDefaultPreferences({ [property]: false }))
                 }
               />
+            </section>
+          </li>
+        ))}
+      </ul>
+      <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
+        Item Preferences
+      </h2>
+      <ul className="flex flex-col gap-6 items-center">
+        {itemPreferences.map(({ label, value, property, options }) => (
+          <li
+            key={label}
+            className={cn("grid grid-cols-2 gap-2 items-center p-2")}
+          >
+            <p className="font-semibold">{label}:</p>
+            <section className="flex gap-2 items-center px-2">
+              {options.map((option) => (
+                <RadioButton
+                  key={option}
+                  label={option}
+                  labelClassName="capitalize"
+                  value={value === option}
+                  onChange={() =>
+                    dispatch(setDefaultPreferences({ [property]: option }))
+                  }
+                />
+              ))}
             </section>
           </li>
         ))}

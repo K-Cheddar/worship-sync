@@ -6,6 +6,7 @@ import { ReactComponent as TextFieldSVG } from "../../../assets/icons/text-field
 import { ReactComponent as BrightnessSVG } from "../../../assets/icons/brightness.svg";
 import { ReactComponent as ColorSVG } from "../../../assets/icons/text-color.svg";
 import { ReactComponent as TimerSVG } from "../../../assets/icons/timer.svg";
+import { ReactComponent as BibleSVG } from "../../../assets/icons/book.svg";
 import Input from "../../../components/Input/Input";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useDispatch, useSelector } from "../../../hooks";
@@ -16,15 +17,22 @@ import {
   updateKeepAspectRatio,
   updateFontColor,
   updateItemTimerColor,
+  updateBibleFontMode,
 } from "../../../utils/formatter";
-import { updateArrangements, updateSlides } from "../../../store/itemSlice";
+import {
+  updateArrangements,
+  updateBibleInfo,
+  updateSlides,
+} from "../../../store/itemSlice";
 import Toggle from "../../../components/Toggle/Toggle";
-import { ItemState } from "../../../types";
+import { BibleFontMode, ItemState } from "../../../types";
 import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
 import BoxEditor from "./BoxEditor";
 import { HexColorPicker, HexColorInput } from "react-colorful";
 import { updateTimerColor } from "../../../store/timersSlice";
+import RadioButton from "../../../components/RadioButton/RadioButton";
+import { iconColorMap } from "../../../utils/itemTypeMaps";
 
 const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
@@ -37,7 +45,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const timeoutRef = useRef<NodeJS.Timeout>();
 
   const item = useSelector((state) => state.undoable.present.item);
-  const { slides, selectedSlide, selectedBox, timerInfo } = item;
+  const { slides, selectedSlide, selectedBox, timerInfo, type } = item;
   const { timers } = useSelector((state) => state.timers);
 
   const timer = timers.find((t) => t.id === timerInfo?.id);
@@ -60,6 +68,9 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         dispatch(
           updateArrangements({ arrangements: updatedItem.arrangements })
         );
+      }
+      if (updatedItem.bibleInfo) {
+        dispatch(updateBibleInfo({ bibleInfo: updatedItem.bibleInfo }));
       }
     },
     [dispatch]
@@ -137,6 +148,11 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     };
   }, []);
 
+  const _updateBibleFontMode = (mode: BibleFontMode) => {
+    const updatedItem = updateBibleFontMode({ fontMode: mode, item });
+    updateItem(updatedItem);
+  };
+
   if (!location.pathname.includes("controller/item") || !slide) {
     return null;
   }
@@ -186,24 +202,46 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           className="text-black w-full mt-2"
         />
       </PopOver>
-      <PopOver
-        TriggeringButton={
-          <Button
-            variant="tertiary"
-            className="border-b-2"
-            svg={TimerSVG}
-            style={{ borderColor: timerColor }}
+      {type === "timer" && (
+        <PopOver
+          TriggeringButton={
+            <Button
+              variant="tertiary"
+              className="border-b-2"
+              svg={TimerSVG}
+              style={{ borderColor: timerColor }}
+            />
+          }
+        >
+          <HexColorPicker color={timerColor} onChange={_updateTimerColor} />
+          <HexColorInput
+            color={timerColor}
+            prefixed
+            onChange={_updateTimerColor}
+            className="text-black w-full mt-2"
           />
-        }
-      >
-        <HexColorPicker color={timerColor} onChange={_updateTimerColor} />
-        <HexColorInput
-          color={timerColor}
-          prefixed
-          onChange={_updateTimerColor}
-          className="text-black w-full mt-2"
-        />
-      </PopOver>
+        </PopOver>
+      )}
+      {type === "bible" && (
+        <>
+          <Icon
+            className=" lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4"
+            color={iconColorMap.get("bible")}
+            svg={BibleSVG}
+          />
+          <p className="text-sm font-semibold">Mode:</p>
+          <RadioButton
+            onChange={() => _updateBibleFontMode("fit")}
+            value={item.bibleInfo?.fontMode === "fit"}
+            label="Fit"
+          />
+          <RadioButton
+            onChange={() => _updateBibleFontMode("equal")}
+            value={item.bibleInfo?.fontMode === "equal"}
+            label="Equal"
+          />
+        </>
+      )}
       <div
         className={`flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4`}
       >

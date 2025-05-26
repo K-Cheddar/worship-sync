@@ -1,5 +1,10 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { PreferencesType, Presentation, QuickLinkType } from "../types";
+import {
+  BibleFontMode,
+  PreferencesType,
+  Presentation,
+  QuickLinkType,
+} from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
 export type PreferencesTabType = "defaults" | "quickLinks";
@@ -19,6 +24,7 @@ export type SelectedPreferenceType =
   | "defaultMediaItemsPerRow"
   | "defaultShouldShowItemEditor"
   | "defaultIsMediaExpanded"
+  | "defaultBibleFontMode"
   | "";
 
 type PreferencesState = {
@@ -35,6 +41,7 @@ type PreferencesState = {
   defaultQuickLinks: QuickLinkType[];
   selectedQuickLink: QuickLinkType | null;
   tab: PreferencesTabType;
+  bibleFontMode: BibleFontMode;
 };
 
 const initialState: PreferencesState = {
@@ -56,6 +63,7 @@ const initialState: PreferencesState = {
     defaultMediaItemsPerRow: 4,
     defaultShouldShowItemEditor: true,
     defaultIsMediaExpanded: false,
+    defaultBibleFontMode: "equal",
   },
   slidesPerRow: 4,
   slidesPerRowMobile: 3,
@@ -91,6 +99,7 @@ const initialState: PreferencesState = {
   quickLinks: [],
   selectedQuickLink: null,
   tab: "defaults",
+  bibleFontMode: "equal",
 };
 
 export const preferencesSlice = createSlice({
@@ -264,6 +273,9 @@ export const preferencesSlice = createSlice({
         defaultIsMediaExpanded:
           action.payload.defaultIsMediaExpanded ||
           initialState.preferences.defaultIsMediaExpanded,
+        defaultBibleFontMode:
+          action.payload.defaultBibleFontMode ||
+          initialState.preferences.defaultBibleFontMode,
       };
 
       state.slidesPerRow =
@@ -281,6 +293,8 @@ export const preferencesSlice = createSlice({
         initialState.shouldShowItemEditor;
       state.isMediaExpanded =
         action.payload.defaultIsMediaExpanded || initialState.isMediaExpanded;
+      state.bibleFontMode =
+        action.payload.defaultBibleFontMode || initialState.bibleFontMode;
     },
 
     // Temporary Preferences Below
@@ -342,6 +356,9 @@ export const preferencesSlice = createSlice({
     setIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
     },
+    setBibleFontMode: (state, action: PayloadAction<BibleFontMode>) => {
+      state.bibleFontMode = action.payload;
+    },
     setSelectedPreference: (
       state,
       action: PayloadAction<SelectedPreferenceType>
@@ -384,6 +401,7 @@ export const {
   setMediaItems,
   setIsLoading,
   setSelectedPreference,
+  setBibleFontMode,
 } = preferencesSlice.actions;
 
 export default preferencesSlice.reducer;

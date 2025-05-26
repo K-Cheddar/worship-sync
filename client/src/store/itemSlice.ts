@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { Arrangment, Box, ItemSlide, ItemState } from "../types";
+import { Arrangment, BibleInfo, Box, ItemSlide, ItemState } from "../types";
 import { createAsyncThunk } from "../hooks/reduxHooks";
 import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
@@ -19,7 +19,13 @@ const initialState: ItemState = {
   selectedSlide: 0,
   slides: [],
   selectedBox: 1,
-  bibleInfo: { book: "", chapter: "", version: "", verses: [] },
+  bibleInfo: {
+    book: "",
+    chapter: "",
+    version: "",
+    verses: [],
+    fontMode: "equal",
+  },
   timerInfo: undefined,
   isLoading: true,
   hasPendingUpdate: false,
@@ -45,6 +51,7 @@ export const itemSlice = createSlice({
         chapter: "",
         version: "",
         verses: [],
+        fontMode: "equal",
       };
       state.timerInfo = action.payload.timerInfo;
     },
@@ -68,6 +75,10 @@ export const itemSlice = createSlice({
     },
     _updateSlides: (state, action: PayloadAction<ItemSlide[]>) => {
       state.slides = [...action.payload];
+      state.hasPendingUpdate = true;
+    },
+    _updateBibleInfo: (state, action: PayloadAction<BibleInfo>) => {
+      state.bibleInfo = action.payload;
       state.hasPendingUpdate = true;
     },
     setItemIsLoading: (state, action: PayloadAction<boolean>) => {
@@ -330,6 +341,13 @@ export const updateSlides = createAsyncThunk(
   }
 );
 
+export const updateBibleInfo = createAsyncThunk(
+  "item/updateBibleInfo",
+  async (args: { bibleInfo: BibleInfo }, { dispatch }) => {
+    dispatch(_updateBibleInfo(args.bibleInfo));
+  }
+);
+
 export const {
   setSelectedSlide,
   _setSelectedArrangement,
@@ -339,6 +357,7 @@ export const {
   setActiveItem,
   setItemIsLoading,
   _updateSlides,
+  _updateBibleInfo,
   setBackground,
   setHasPendingUpdate,
   setSelectedBox,

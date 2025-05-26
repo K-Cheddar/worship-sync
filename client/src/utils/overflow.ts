@@ -5,6 +5,7 @@ import {
   ItemState,
   SlideType,
   verseType,
+  BibleFontMode,
 } from "../types";
 import { getLetterFromIndex } from "./generalUtils";
 import { createNewSlide } from "./slideCreation";
@@ -281,20 +282,19 @@ export const formatSong = (_item: ItemState) => {
     slides: updatedSlides,
   };
 
-  console.log({ item });
-
   return { ...item, slides: updatedSlides };
 };
 
 type formatBibleType = {
   item: ItemState;
-  mode: "add" | "fit";
+  mode: BibleFontMode;
   verses?: verseType[];
   book?: string;
   chapter?: string;
   version?: string;
   background?: string;
   brightness?: number;
+  isNew?: boolean;
 };
 export const formatBible = ({
   item,
@@ -305,6 +305,7 @@ export const formatBible = ({
   version,
   background,
   brightness,
+  isNew,
 }: formatBibleType): ItemState => {
   let slides = item.slides.length
     ? item.slides
@@ -353,6 +354,7 @@ export const formatBible = ({
         book: _book,
         chapter: _chapter,
         version: _version,
+        isNew,
       })
     );
   else
@@ -364,6 +366,7 @@ export const formatBible = ({
         book: _book,
         chapter: _chapter,
         version: _version,
+        isNew,
       })
     );
 
@@ -376,6 +379,7 @@ export const formatBible = ({
       chapter: _chapter,
       version: _version,
       verses: _verses,
+      fontMode: mode,
     },
   };
 };
@@ -392,7 +396,8 @@ const getBibleName = ({ book, chapter, verse, version }: GetBibleNameType) =>
 type formatBibleVersesType = {
   verses?: verseType[];
   item: ItemState;
-  mode: "add" | "fit";
+  mode: BibleFontMode;
+  isNew?: boolean;
   book?: string;
   chapter?: string;
   version?: string;
@@ -404,6 +409,7 @@ const formatBibleVerses = ({
   book,
   chapter,
   version,
+  isNew,
 }: formatBibleVersesType) => {
   let slides = item.slides || [];
   let currentSlide: ItemSlide = slides[1] || {};
@@ -417,9 +423,8 @@ const formatBibleVerses = ({
   let formattedVerses = [];
   let slide = "";
   // let type = currentSlide.type;
-  let fitProcessing = true;
 
-  if (mode === "add" && verses) {
+  if (mode === "equal" && verses) {
     for (let i = 0; i < verses.length; ++i) {
       const verse = verses[i];
       let words = verse.text?.split(" ") || [];
@@ -471,50 +476,64 @@ const formatBibleVerses = ({
   }
 
   if (mode === "fit" && verses) {
-    while (fitProcessing) {
-      verseLoop: for (let i = 0; i < verses.length; ++i) {
-        const verse = verses[i];
-        let words = verse.text?.split(" ") || [];
-        if (slide[slide.length - 1] === " ")
-          slide = slide.substring(0, slide.length - 1);
+    for (let i = 0; i < verses.length; ++i) {
+      const verse = verses[i];
+      let words = verse.text?.split(" ") || [];
+      let slide = "";
+      let currentFontSize = 2.5;
+      let fitProcessing = true;
 
+      while (fitProcessing) {
+        let tempSlide = "";
         for (let j = 0; j < words.length; j++) {
-          let update = slide + words[j];
+          let update = tempSlide + words[j];
           if (
             getNumLines({
               text: update,
-              fontSize: currentBoxes[1].fontSize || 1,
+              fontSize: currentFontSize,
               lineHeight,
               width: currentBoxes[1].width,
             }) <= maxLines
           )
-            slide = update + " ";
+            tempSlide = update + " ";
           else {
-            currentBoxes[1].fontSize = (currentBoxes[1].fontSize || 1) - 0.1;
+            currentFontSize -= 0.1;
             ({ maxLines, lineHeight } = getMaxLines({
-              fontSize: currentBoxes[1].fontSize,
+              fontSize: currentFontSize,
               height: 95,
             }));
-            formattedVerses = [];
-            slide = "";
-            break verseLoop;
+            tempSlide = "";
+            break;
           }
         }
-        formattedVerses.push(
-          createNewSlide({
-            itemType: "bible",
-            type: "Verse",
-            name: "Verse " + verse.name,
-            boxes: currentBoxes,
-            words: [
-              "",
-              slide,
-              getBibleName({ book, chapter, verse: verse.name, version }),
-            ],
-          })
-        );
-        fitProcessing = false;
+        if (tempSlide) {
+          slide = tempSlide;
+          fitProcessing = false;
+        }
       }
+
+      formattedVerses.push(
+        createNewSlide({
+          itemType: "bible",
+          type: "Verse",
+          name: "Verse " + verse.name,
+          boxes: isNew
+            ? [
+                currentBoxes[0],
+                { ...currentBoxes[1], fontSize: currentFontSize },
+              ]
+            : [
+                currentBoxes[0],
+                { ...currentBoxes[1], fontSize: currentFontSize },
+                currentBoxes[2],
+              ],
+          words: [
+            "",
+            slide,
+            getBibleName({ book, chapter, verse: verse.name, version }),
+          ],
+        })
+      );
     }
   }
 

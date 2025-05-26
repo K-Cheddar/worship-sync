@@ -93,12 +93,7 @@ export type DBItem = {
   background?: string;
   type: ItemType;
   slides: ItemSlide[];
-  bibleInfo?: {
-    book: string;
-    chapter: string;
-    version: string;
-    verses: verseType[];
-  };
+  bibleInfo?: BibleInfo;
   timerInfo?: TimerInfo;
   arrangements: {
     name: string;
@@ -128,6 +123,16 @@ export type TimerInfo = {
   showMinutesOnly?: boolean;
 };
 
+export type BibleFontMode = "fit" | "equal";
+
+export type BibleInfo = {
+  book: string;
+  chapter: string;
+  version: string;
+  verses: verseType[];
+  fontMode: BibleFontMode;
+};
+
 export type ItemState = {
   name: string;
   type: ItemType;
@@ -142,12 +147,7 @@ export type ItemState = {
   selectedBox: number;
   slides: ItemSlide[];
   isEditMode?: boolean;
-  bibleInfo?: {
-    book: string;
-    chapter: string;
-    version: string;
-    verses: verseType[];
-  };
+  bibleInfo?: BibleInfo;
   isLoading?: boolean;
   hasPendingUpdate?: boolean;
   timerInfo?: TimerInfo;
@@ -286,6 +286,7 @@ export type PreferencesType = {
   defaultMediaItemsPerRow: number;
   defaultShouldShowItemEditor: boolean;
   defaultIsMediaExpanded: boolean;
+  defaultBibleFontMode: BibleFontMode;
 };
 
 export type ItemList = {
