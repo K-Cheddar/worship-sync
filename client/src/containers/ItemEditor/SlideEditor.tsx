@@ -26,6 +26,7 @@ import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   setSelectedBox,
+  setSelectedSlide,
   toggleEditMode,
   updateArrangements,
 } from "../../store/itemSlice";
@@ -38,6 +39,8 @@ import Icon from "../../components/Icon/Icon";
 import { createBox } from "../../utils/slideCreation";
 
 const SlideEditor = () => {
+  const dispatch = useDispatch();
+
   const item = useSelector((state) => state.undoable.present.item);
   const {
     name,
@@ -67,6 +70,12 @@ const SlideEditor = () => {
     isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
   );
 
+  useEffect(() => {
+    if (!slides?.[selectedSlide] && selectedSlide !== 0) {
+      dispatch(setSelectedSlide(Math.max(slides.length - 2, 0)));
+    }
+  }, [selectedSlide, slides, dispatch]);
+
   const editorRef = useCallback((node: HTMLDivElement) => {
     if (node) {
       const resizeObserver = new ResizeObserver((entries) => {
@@ -76,8 +85,6 @@ const SlideEditor = () => {
       resizeObserver.observe(node);
     }
   }, []);
-
-  const dispatch = useDispatch();
 
   useEffect(() => {
     setLocalName(name);

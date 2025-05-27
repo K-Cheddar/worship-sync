@@ -123,7 +123,6 @@ export const getNumLines = ({
     const textHeight = measureSpan.getBoundingClientRect().height;
     document.body.removeChild(measureSpan);
 
-    // Small buffer for safety margin
     const numLines = Math.round(textHeight / lineHeight);
 
     return Math.max(1, numLines);
