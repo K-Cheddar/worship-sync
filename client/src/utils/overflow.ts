@@ -21,13 +21,6 @@ type MaxLinesResult = {
   lineHeight: number;
 };
 
-/**
- * Calculates the maximum number of lines that can fit in a container based on font size and height
- * @param props.fontSize - Font size in viewport width units (vw)
- * @param props.height - Container height percentage (0-100)
- * @param props.topMargin - Optional top margin percentage
- * @returns Object containing maxLines and lineHeight
- */
 export const getMaxLines = ({
   fontSize,
   height,
@@ -39,10 +32,9 @@ export const getMaxLines = ({
     const verticalMargin = _topMargin ? (_topMargin * 2) / 100 : 0.06;
     const containerHeight = windowWidth * 0.23625;
     const marginCalc = windowWidth * 0.42 * verticalMargin;
-
     const containerHeightPx = containerHeight * (height / 100) - marginCalc;
 
-    // Create a temporary span to measure line height with realistic text
+    // Create a hidden span once for measuring
     const measureSpan = document.createElement("span");
     measureSpan.style.cssText = `
       font-size: ${fontSizeVw};
@@ -58,38 +50,30 @@ export const getMaxLines = ({
       box-sizing: border-box;
     `;
 
-    // Use a more realistic text sample with varying content
-    measureSpan.textContent =
-      "Sample Text\nWith Multiple Lines\nAnd Some Longer Words";
-
+    measureSpan.textContent = "Sample Text";
     document.body.appendChild(measureSpan);
 
-    // Get the height of a single line by measuring with a single line first
-    const singleLineSpan = document.createElement("span");
-    singleLineSpan.style.cssText = measureSpan.style.cssText;
-    singleLineSpan.textContent = "Sample Text";
-    document.body.appendChild(singleLineSpan);
-    const singleLineHeight = singleLineSpan.offsetHeight;
-    document.body.removeChild(singleLineSpan);
+    // Use `getBoundingClientRect()` for more precise height
+    const singleLineHeight = measureSpan.getBoundingClientRect().height;
 
-    // Calculate line height from the multi-line sample
-    const multiLineHeight = measureSpan.offsetHeight;
-    const lineHeight = Math.max(singleLineHeight, multiLineHeight / 3); // Use max of single line or multi-line divided by number of lines
+    measureSpan.textContent =
+      "Sample Text\nWith Multiple Lines\nAnd Some Longer Words";
+    const multiLineHeight = measureSpan.getBoundingClientRect().height;
+
     document.body.removeChild(measureSpan);
 
-    // Calculate max lines with a small buffer to prevent overflow
-    const maxLines = Math.floor(containerHeightPx / lineHeight); // Subtract 2px for safety margin
+    const lineHeight = Math.max(singleLineHeight, multiLineHeight / 3);
+    const maxLines = Math.floor(containerHeightPx / lineHeight);
 
     return {
-      maxLines: Math.max(1, maxLines), // Ensure at least 1 line
+      maxLines: Math.max(1, maxLines),
       lineHeight,
     };
   } catch (error) {
     console.error("Error calculating max lines:", error);
-    // Return safe default values
     return {
       maxLines: 1,
-      lineHeight: fontSize * 1.25, // Approximate line height based on font size
+      lineHeight: fontSize * 1.25,
     };
   }
 };
@@ -102,15 +86,6 @@ type getNumLinesProps = {
   sideMargin?: number;
 };
 
-/**
- * Calculates the number of lines a text will occupy based on its content and container properties
- * @param props.text - The text content to measure
- * @param props.fontSize - Font size in viewport width units (vw)
- * @param props.lineHeight - Line height in pixels
- * @param props.width - Container width percentage (0-100)
- * @param props.sideMargin - Optional side margin percentage
- * @returns Number of lines the text will occupy
- */
 export const getNumLines = ({
   text,
   fontSize,
@@ -122,13 +97,11 @@ export const getNumLines = ({
     const fontSizeVw = `${fontSize}vw`;
     const windowWidth = window.innerWidth;
     const sideMargin = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.92;
-
-    // Calculate container width in pixels with precise rounding
     const containerWidth = Math.floor(
       (((width || 95) * sideMargin) / 100) * windowWidth * 0.42
     );
 
-    // Create a temporary span to measure text height with realistic settings
+    // Reusable span for measurement
     const measureSpan = document.createElement("span");
     measureSpan.style.cssText = `
       font-size: ${fontSizeVw};
@@ -145,19 +118,17 @@ export const getNumLines = ({
       word-break: break-word;
     `;
     measureSpan.textContent = text;
-
     document.body.appendChild(measureSpan);
-    const textHeight = measureSpan.offsetHeight;
+
+    const textHeight = measureSpan.getBoundingClientRect().height;
     document.body.removeChild(measureSpan);
 
-    // Calculate number of lines with a small buffer for safety
-    const numLines = Math.round((textHeight * 1.1) / lineHeight); // Use 5% buffer instead of 10%
+    // Small buffer for safety margin
+    const numLines = Math.round(textHeight / lineHeight);
 
-    // Ensure at least 1 line is returned
     return Math.max(1, numLines);
   } catch (error) {
     console.error("Error calculating number of lines:", error);
-    // Return safe default value
     return 1;
   }
 };
@@ -558,7 +529,7 @@ const formatBibleVerses = ({
           "\u200B" +
           verse.name +
           (needsLetters
-            ? getLetterFromIndex(verseSplitCounts[verse.name])
+            ? getLetterFromIndex(verseSplitCounts[verse.name] || 0)
             : "") +
           ".\u200B ";
         let fullText = versePrefix + testSlide;
@@ -756,6 +727,18 @@ const formatBibleVerses = ({
         width: currentBoxes[1]?.width || 95,
       });
 
+      // If it doesn't fit, check if adding a letter suffix would make it fit
+      if (singleVerseLines > maxLines) {
+        let verseTextWithLetter =
+          "\u200B" + verse.name + "a.\u200B " + verse.text;
+        singleVerseLines = getNumLines({
+          text: verseTextWithLetter,
+          fontSize: currentFontSize,
+          lineHeight,
+          width: currentBoxes[1]?.width || 95,
+        });
+      }
+
       // Then check if it can fit with the current slide
       let combinedText = currentSlide
         ? currentSlide + " " + verseText
@@ -766,6 +749,21 @@ const formatBibleVerses = ({
         lineHeight,
         width: currentBoxes[1]?.width || 95,
       });
+
+      // If it doesn't fit with current slide, check if adding a letter suffix would make it fit
+      if (combinedLines > maxLines) {
+        let verseTextWithLetter =
+          "\u200B" + verse.name + "a.\u200B " + verse.text;
+        let combinedTextWithLetter = currentSlide
+          ? currentSlide + " " + verseTextWithLetter
+          : verseTextWithLetter;
+        combinedLines = getNumLines({
+          text: combinedTextWithLetter,
+          fontSize: currentFontSize,
+          lineHeight,
+          width: currentBoxes[1]?.width || 95,
+        });
+      }
 
       // If we have a previous verse on its own slide, check if we can combine with it
       let canCombineWithPrevious = false;
@@ -780,6 +778,22 @@ const formatBibleVerses = ({
           width: currentBoxes[1]?.width || 95,
         });
         canCombineWithPrevious = combinedWithPreviousLines <= maxLines;
+
+        // If it doesn't fit with previous verse, check if adding a letter suffix would make it fit
+        if (!canCombineWithPrevious) {
+          let verseTextWithLetter =
+            "\u200B" + verse.name + "a.\u200B " + verse.text;
+          let combinedWithPreviousWithLetter =
+            previousText + " " + verseTextWithLetter;
+          let combinedWithPreviousWithLetterLines = getNumLines({
+            text: combinedWithPreviousWithLetter,
+            fontSize: currentFontSize,
+            lineHeight,
+            width: currentBoxes[1]?.width || 95,
+          });
+          canCombineWithPrevious =
+            combinedWithPreviousWithLetterLines <= maxLines;
+        }
       }
 
       if (combinedLines <= maxLines) {
@@ -842,10 +856,16 @@ const formatBibleVerses = ({
           while (remainingWords.length > 0) {
             let word = remainingWords[0];
             let testText = tempSlide ? tempSlide + " " + word : word;
+            let versePrefix =
+              "\u200B" +
+              verse.name +
+              getLetterFromIndex(verseSplitCounts[verse.name] || 0) +
+              ".\u200B ";
+            let fullText = versePrefix + testText;
 
             if (
               getNumLines({
-                text: testText,
+                text: fullText,
                 fontSize: currentFontSize,
                 lineHeight,
                 width: currentBoxes[1]?.width || 95,
