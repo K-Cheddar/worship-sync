@@ -42,7 +42,7 @@ export const getMaxLines = ({
 
     const containerHeightPx = containerHeight * (height / 100) - marginCalc;
 
-    // Create a temporary span to measure line height
+    // Create a temporary span to measure line height with realistic text
     const measureSpan = document.createElement("span");
     measureSpan.style.cssText = `
       font-size: ${fontSizeVw};
@@ -53,15 +53,32 @@ export const getMaxLines = ({
       visibility: hidden;
       padding: 0;
       margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      box-sizing: border-box;
     `;
-    measureSpan.textContent = "Only Line";
+
+    // Use a more realistic text sample with varying content
+    measureSpan.textContent =
+      "Sample Text\nWith Multiple Lines\nAnd Some Longer Words";
 
     document.body.appendChild(measureSpan);
-    const lineHeight = measureSpan.offsetHeight;
+
+    // Get the height of a single line by measuring with a single line first
+    const singleLineSpan = document.createElement("span");
+    singleLineSpan.style.cssText = measureSpan.style.cssText;
+    singleLineSpan.textContent = "Sample Text";
+    document.body.appendChild(singleLineSpan);
+    const singleLineHeight = singleLineSpan.offsetHeight;
+    document.body.removeChild(singleLineSpan);
+
+    // Calculate line height from the multi-line sample
+    const multiLineHeight = measureSpan.offsetHeight;
+    const lineHeight = Math.max(singleLineHeight, multiLineHeight / 3); // Use max of single line or multi-line divided by number of lines
     document.body.removeChild(measureSpan);
 
-    // Calculate max lines with a small buffer to account for rounding
-    const maxLines = Math.floor((containerHeightPx - 1) / lineHeight);
+    // Calculate max lines with a small buffer to account for rounding and potential overflow
+    const maxLines = Math.floor((containerHeightPx - 2) / lineHeight); // Subtract 2px for safety margin
 
     return {
       maxLines: Math.max(1, maxLines), // Ensure at least 1 line
@@ -106,11 +123,12 @@ export const getNumLines = ({
     const windowWidth = window.innerWidth;
     const sideMargin = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.92;
 
-    // Calculate container width in pixels
-    const containerWidth =
-      (((width || 95) * sideMargin) / 100) * windowWidth * 0.42;
+    // Calculate container width in pixels with precise rounding
+    const containerWidth = Math.floor(
+      (((width || 95) * sideMargin) / 100) * windowWidth * 0.42
+    );
 
-    // Create a temporary span to measure text height
+    // Create a temporary span to measure text height with realistic settings
     const measureSpan = document.createElement("span");
     measureSpan.style.cssText = `
       font-size: ${fontSizeVw};
@@ -121,6 +139,10 @@ export const getNumLines = ({
       position: fixed;
       line-height: ${lineHeight}px;
       visibility: hidden;
+      padding: 0;
+      margin: 0;
+      box-sizing: border-box;
+      word-break: break-word;
     `;
     measureSpan.textContent = text;
 
@@ -128,8 +150,8 @@ export const getNumLines = ({
     const textHeight = measureSpan.offsetHeight;
     document.body.removeChild(measureSpan);
 
-    // Calculate number of lines without the buffer
-    const numLines = Math.ceil(textHeight / lineHeight);
+    // Calculate number of lines with precise rounding
+    const numLines = Math.round(textHeight / lineHeight);
 
     // Ensure at least 1 line is returned
     return Math.max(1, numLines);

@@ -131,8 +131,8 @@ const SlideEditor = () => {
         const formattedLyrics =
           item.arrangements[item.selectedArrangement].formattedLyrics;
         const slides = item.arrangements[item.selectedArrangement].slides;
-        const _index = formattedLyrics.findIndex(
-          (e) => e.name === slides[selectedSlide].name
+        const _index = formattedLyrics.findIndex((e) =>
+          slides[selectedSlide].name.includes(e.name)
         );
 
         const start =
