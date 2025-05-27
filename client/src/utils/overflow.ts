@@ -77,8 +77,8 @@ export const getMaxLines = ({
     const lineHeight = Math.max(singleLineHeight, multiLineHeight / 3); // Use max of single line or multi-line divided by number of lines
     document.body.removeChild(measureSpan);
 
-    // Calculate max lines with a small buffer to account for rounding and potential overflow
-    const maxLines = Math.floor((containerHeightPx - 2) / lineHeight); // Subtract 2px for safety margin
+    // Calculate max lines with a small buffer to prevent overflow
+    const maxLines = Math.floor(containerHeightPx / lineHeight); // Subtract 2px for safety margin
 
     return {
       maxLines: Math.max(1, maxLines), // Ensure at least 1 line
@@ -150,8 +150,8 @@ export const getNumLines = ({
     const textHeight = measureSpan.offsetHeight;
     document.body.removeChild(measureSpan);
 
-    // Calculate number of lines with precise rounding
-    const numLines = Math.round(textHeight / lineHeight);
+    // Calculate number of lines with a small buffer for safety
+    const numLines = Math.round((textHeight * 1.1) / lineHeight); // Use 5% buffer instead of 10%
 
     // Ensure at least 1 line is returned
     return Math.max(1, numLines);
