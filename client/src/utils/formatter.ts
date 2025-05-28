@@ -1,5 +1,5 @@
 import { BibleFontMode, ItemSlide, ItemState } from "../types";
-import { formatBible, formatSong } from "./overflow";
+import { formatBible, formatFree, formatSong } from "./overflow";
 
 type UpdateSlideBgPropertyType = {
   property: string;
@@ -79,6 +79,12 @@ export const updateFontSize = ({
       item: _item,
       mode: item.bibleInfo?.fontMode || "separate",
     });
+
+  if (item.type === "free") {
+    _item = formatFree({
+      ..._item,
+    });
+  }
 
   if (item.type === "song") {
     _item = {

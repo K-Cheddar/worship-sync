@@ -198,6 +198,7 @@ const ItemSlides = () => {
       fontSize: 2.5,
       words: [""],
       name: `Section ${newSectionNum}`,
+      overflow: "separate",
     });
     dispatch(addSlideAction({ slide }));
   };

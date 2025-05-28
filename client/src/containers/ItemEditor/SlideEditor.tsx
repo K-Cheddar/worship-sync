@@ -132,14 +132,12 @@ const SlideEditor = () => {
             y: box.y,
             width: box.width,
             height: box.height,
-            words: value,
+            words: type === "bible" ? box.words : value,
           }
         : b
     );
     if (type === "bible" || type === "timer") {
       dispatch(updateBoxes({ boxes: newBoxes }));
-
-      return;
     }
 
     if (type === "free") {
@@ -153,7 +151,6 @@ const SlideEditor = () => {
         }),
       });
       dispatch(updateSlides({ slides: _item.slides }));
-      return;
     }
 
     if (type === "song") {
@@ -221,19 +218,20 @@ const SlideEditor = () => {
           });
 
           dispatch(updateArrangements({ arrangements: _item.arrangements }));
-          setTimeout(() => {
-            const textBoxElement = document.getElementById(
-              `display-box-text-${index}`
-            ) as HTMLTextAreaElement;
-            if (textBoxElement && typeof cursorPosition === "number") {
-              textBoxElement.selectionEnd = cursorPosition;
-              textBoxElement.selectionStart = cursorPosition;
-              textBoxElement.scrollTop = 0;
-            }
-          }, 10);
         }
       }
     }
+
+    setTimeout(() => {
+      const textBoxElement = document.getElementById(
+        `display-box-text-${index}`
+      ) as HTMLTextAreaElement;
+      if (textBoxElement && typeof cursorPosition === "number") {
+        textBoxElement.selectionEnd = cursorPosition;
+        textBoxElement.selectionStart = cursorPosition;
+        textBoxElement.scrollTop = 0;
+      }
+    }, 10);
   };
 
   let _boxes =

@@ -25,7 +25,7 @@ import {
   updateSlides,
 } from "../../../store/itemSlice";
 import Toggle from "../../../components/Toggle/Toggle";
-import { BibleFontMode, ItemState } from "../../../types";
+import { BibleFontMode, ItemState, OverflowMode } from "../../../types";
 import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
 import BoxEditor from "./BoxEditor";
@@ -33,6 +33,7 @@ import { HexColorPicker, HexColorInput } from "react-colorful";
 import { updateTimerColor } from "../../../store/timersSlice";
 import RadioButton from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
+import { formatFree } from "../../../utils/overflow";
 
 const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
@@ -77,7 +78,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   );
 
   const _updateFontSize = (val: number) => {
-    const _val = Math.max(Math.min(val, 48), 1);
+    const _val = Math.round(Math.max(Math.min(val, 48), 1));
     setFontSize(_val);
     const fSize = _val / 10;
     const updatedItem = updateFontSize({ fontSize: fSize, item });
@@ -185,6 +186,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateFontSize(fontSize + 1)}
         />
       </div>
+
       <PopOver
         TriggeringButton={
           <Button
@@ -222,6 +224,39 @@ const SlideEditTools = ({ className }: { className?: string }) => {
             className="text-black w-full mt-2"
           />
         </PopOver>
+      )}
+      {type === "free" && (
+        <>
+          <p className="text-sm font-semibold lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4">
+            Overflow:
+          </p>
+          <RadioButton
+            label="Fit"
+            value={slide.overflow === "fit"}
+            onChange={() => {
+              const updatedItem = formatFree({
+                ...item,
+                slides: slides.map((s, index) =>
+                  index === selectedSlide ? { ...s, overflow: "fit" } : s
+                ),
+              });
+              updateItem(updatedItem);
+            }}
+          />
+          <RadioButton
+            label="Separate"
+            value={slide.overflow === "separate"}
+            onChange={() => {
+              const updatedItem = formatFree({
+                ...item,
+                slides: slides.map((s, index) =>
+                  index === selectedSlide ? { ...s, overflow: "separate" } : s
+                ),
+              });
+              updateItem(updatedItem);
+            }}
+          />
+        </>
       )}
       {type === "bible" && (
         <>

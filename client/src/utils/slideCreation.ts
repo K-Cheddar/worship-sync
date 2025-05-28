@@ -1,4 +1,4 @@
-import { Box, SlideType } from "../types";
+import { Box, SlideType, OverflowMode } from "../types";
 import generateRandomId from "./generateRandomId";
 
 type CreateBoxType = {
@@ -80,6 +80,7 @@ type CreateNewSlideType = {
   boxes?: Box[];
   textFontSize?: number;
   fontColor?: string;
+  overflow?: OverflowMode;
 };
 
 export const createNewSlide = ({
@@ -95,6 +96,7 @@ export const createNewSlide = ({
   boxes: _boxes,
   textFontSize,
   fontColor,
+  overflow,
 }: CreateNewSlideType) => {
   const defaultBox = createBox({});
 
@@ -201,6 +203,7 @@ export const createNewSlide = ({
     name: name,
     boxes: JSON.parse(JSON.stringify(boxes)),
     id: generateRandomId(),
+    ...(overflow && { overflow }),
   };
 
   if (typeof slideIndex === "number" && slideIndex >= 0)

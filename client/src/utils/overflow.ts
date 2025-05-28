@@ -381,6 +381,7 @@ export const formatFree = (item: ItemState) => {
 
   const fontSize = slide.boxes[selectedBox].fontSize || 2.5;
   const fontColor = slide.boxes[selectedBox].fontColor || "rgb(255, 255, 255)";
+  let minFontSize = 0.5; // Minimum font size to try
 
   // Get the current section number from the slide name
   const currentSectionMatch = slide.name.match(/Section (\d+)/);
@@ -394,17 +395,76 @@ export const formatFree = (item: ItemState) => {
     .map((slide) => slide.boxes[selectedBox].words)
     .join("");
 
-  // Format the text and get new slides
-  const _formattedSlides = formatSection({
-    text: sectionWords,
-    type: slide.type,
-    name: slide.name,
-    slides,
-    newSlides,
-    lastBoxes: slide.boxes,
-    fontSize,
-    fontColor,
-  });
+  let _formattedSlides;
+  if (slide.overflow === "fit") {
+    // Try to fit all words in one slide by adjusting font size
+    let currentFontSize = fontSize;
+    let maxLines = 0;
+    let lineHeight = 0;
+    let numLines = 0;
+
+    while (currentFontSize >= minFontSize) {
+      ({ maxLines, lineHeight } = getMaxLines({
+        fontSize: currentFontSize,
+        height: slide.boxes[1].height,
+      }));
+
+      numLines = getNumLines({
+        text: sectionWords,
+        fontSize: currentFontSize,
+        lineHeight,
+        width: slide.boxes[1].width,
+      });
+
+      if (numLines <= maxLines) {
+        break;
+      }
+      currentFontSize -= 0.1;
+    }
+
+    if (currentFontSize < minFontSize) {
+      // If we couldn't fit with minimum font size, use formatSection to split into multiple slides
+      _formattedSlides = formatSection({
+        text: sectionWords,
+        type: slide.type,
+        name: slide.name,
+        slides,
+        newSlides,
+        lastBoxes: slide.boxes,
+        fontSize: minFontSize,
+        fontColor,
+      });
+    } else {
+      // Create a single slide with the adjusted font size
+      _formattedSlides = [
+        createNewSlide({
+          type: slide.type,
+          name: `Section ${currentSectionNum}`,
+          boxes: slide.boxes.map((box, index) => ({
+            ...box,
+            fontSize: index === 1 ? currentFontSize : box.fontSize,
+            words: index === 1 ? sectionWords : box.words,
+          })),
+          fontSize: currentFontSize,
+          fontColor,
+          slideIndex: 0,
+          overflow: "fit",
+        }),
+      ];
+    }
+  } else {
+    // Use the original formatting logic
+    _formattedSlides = formatSection({
+      text: sectionWords,
+      type: slide.type,
+      name: slide.name,
+      slides,
+      newSlides,
+      lastBoxes: slide.boxes,
+      fontSize,
+      fontColor,
+    });
+  }
 
   const formattedSlides = _formattedSlides.map((newSlide, index) => {
     // Update slide names with section numbers and letters
@@ -415,6 +475,7 @@ export const formatFree = (item: ItemState) => {
         ...newSlide,
         name: `Section ${currentSectionNum}${getLetterFromIndex(index)}`,
         id,
+        overflow: slide.overflow,
       };
     }
     // If only one slide, keep the original section number
@@ -422,6 +483,7 @@ export const formatFree = (item: ItemState) => {
       ...newSlide,
       name: `Section ${currentSectionNum}`,
       id,
+      overflow: slide.overflow,
     };
   });
 

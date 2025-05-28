@@ -66,11 +66,14 @@ export type SlideType =
   | "Announcement"
   | "Image";
 
+export type OverflowMode = "fit" | "separate";
+
 export type ItemSlide = {
   type: SlideType;
   name: string;
   id: string;
   boxes: Box[];
+  overflow?: OverflowMode;
 };
 
 export type LinkType = "image" | "slide" | "overlay";
