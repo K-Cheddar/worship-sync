@@ -7,6 +7,9 @@ import { ReactComponent as BrightnessSVG } from "../../../assets/icons/brightnes
 import { ReactComponent as ColorSVG } from "../../../assets/icons/text-color.svg";
 import { ReactComponent as TimerSVG } from "../../../assets/icons/timer.svg";
 import { ReactComponent as BibleSVG } from "../../../assets/icons/book.svg";
+import { ReactComponent as AlignLeftSVG } from "../../../assets/icons/align-left.svg";
+import { ReactComponent as AlignCenterSVG } from "../../../assets/icons/align-center.svg";
+import { ReactComponent as AlignRightSVG } from "../../../assets/icons/align-right.svg";
 import Input from "../../../components/Input/Input";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useDispatch, useSelector } from "../../../hooks";
@@ -25,7 +28,7 @@ import {
   updateSlides,
 } from "../../../store/itemSlice";
 import Toggle from "../../../components/Toggle/Toggle";
-import { BibleFontMode, ItemState, OverflowMode } from "../../../types";
+import { BibleFontMode, ItemState } from "../../../types";
 import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
 import BoxEditor from "./BoxEditor";
@@ -43,6 +46,9 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const [shouldKeepAspectRatio, setShouldKeepAspectRatio] = useState(false);
   const [fontColor, setFontColor] = useState("#ffffff");
   const [timerColor, setTimerColor] = useState("#ffffff");
+  const [alignment, setAlignment] = useState<"left" | "center" | "right">(
+    "left"
+  );
   const timeoutRef = useRef<NodeJS.Timeout>();
 
   const item = useSelector((state) => state.undoable.present.item);
@@ -60,6 +66,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     setShouldKeepAspectRatio(slide?.boxes?.[0]?.shouldKeepAspectRatio || false);
     setFontColor(slide?.boxes?.[selectedBox]?.fontColor || "#ffffff");
     setTimerColor(timer?.color || "#ffffff");
+    setAlignment(slide?.boxes?.[selectedBox]?.align || "left");
   }, [slide, selectedBox, timer]);
 
   const updateItem = useCallback(
@@ -140,6 +147,26 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     }, 250);
   };
 
+  const _updateAlignment = (align: "left" | "center" | "right") => {
+    setAlignment(align);
+    const updatedSlides = slides.map((s, index) => {
+      if (index === selectedSlide) {
+        return {
+          ...s,
+          boxes: s.boxes.map((box, boxIndex) => {
+            if (boxIndex === selectedBox) {
+              return { ...box, align };
+            }
+            return box;
+          }),
+        };
+      }
+      return s;
+    });
+    const updatedItem = { ...item, slides: updatedSlides };
+    updateItem(updatedItem);
+  };
+
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
@@ -185,104 +212,121 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           variant="tertiary"
           onClick={() => _updateFontSize(fontSize + 1)}
         />
-      </div>
 
-      <PopOver
-        TriggeringButton={
-          <Button
-            variant="tertiary"
-            className="border-b-2"
-            svg={ColorSVG}
-            style={{ borderColor: fontColor }}
-          />
-        }
-      >
-        <HexColorPicker color={fontColor} onChange={_updateFontColor} />
-        <HexColorInput
-          color={fontColor}
-          prefixed
-          onChange={_updateFontColor}
-          className="text-black w-full mt-2"
-        />
-      </PopOver>
-      {type === "timer" && (
         <PopOver
           TriggeringButton={
             <Button
               variant="tertiary"
               className="border-b-2"
-              svg={TimerSVG}
-              style={{ borderColor: timerColor }}
+              svg={ColorSVG}
+              style={{ borderColor: fontColor }}
             />
           }
         >
-          <HexColorPicker color={timerColor} onChange={_updateTimerColor} />
+          <HexColorPicker color={fontColor} onChange={_updateFontColor} />
           <HexColorInput
-            color={timerColor}
+            color={fontColor}
             prefixed
-            onChange={_updateTimerColor}
+            onChange={_updateFontColor}
             className="text-black w-full mt-2"
           />
         </PopOver>
-      )}
-      {type === "free" && (
-        <>
-          <p className="text-sm font-semibold lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4">
-            Overflow:
-          </p>
-          <RadioButton
-            label="Fit"
-            value={slide.overflow === "fit"}
-            onChange={() => {
-              const updatedItem = formatFree({
-                ...item,
-                slides: slides.map((s, index) =>
-                  index === selectedSlide ? { ...s, overflow: "fit" } : s
-                ),
-              });
-              updateItem(updatedItem);
-            }}
-          />
-          <RadioButton
-            label="Separate"
-            value={slide.overflow === "separate"}
-            onChange={() => {
-              const updatedItem = formatFree({
-                ...item,
-                slides: slides.map((s, index) =>
-                  index === selectedSlide ? { ...s, overflow: "separate" } : s
-                ),
-              });
-              updateItem(updatedItem);
-            }}
-          />
-        </>
-      )}
-      {type === "bible" && (
-        <>
-          <Icon
-            className=" lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4"
-            color={iconColorMap.get("bible")}
-            svg={BibleSVG}
-          />
-          <p className="text-sm font-semibold">Mode:</p>
-          <RadioButton
-            onChange={() => _updateBibleFontMode("fit")}
-            value={item.bibleInfo?.fontMode === "fit"}
-            label="Fit"
-          />
-          <RadioButton
-            onChange={() => _updateBibleFontMode("separate")}
-            value={item.bibleInfo?.fontMode === "separate"}
-            label="Separate"
-          />
-          <RadioButton
-            onChange={() => _updateBibleFontMode("multiple")}
-            value={item.bibleInfo?.fontMode === "multiple"}
-            label="Multiple"
-          />
-        </>
-      )}
+
+        <Button
+          variant="tertiary"
+          svg={AlignLeftSVG}
+          onClick={() => _updateAlignment("left")}
+          className={alignment === "left" ? "bg-gray-200" : ""}
+        />
+        <Button
+          variant="tertiary"
+          svg={AlignCenterSVG}
+          onClick={() => _updateAlignment("center")}
+          className={alignment === "center" ? "bg-gray-200" : ""}
+        />
+        <Button
+          variant="tertiary"
+          svg={AlignRightSVG}
+          onClick={() => _updateAlignment("right")}
+          className={alignment === "right" ? "bg-gray-200" : ""}
+        />
+      </div>
+
+      <div className="flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4">
+        {type === "timer" && (
+          <PopOver
+            TriggeringButton={
+              <Button
+                variant="tertiary"
+                className="border-b-2"
+                svg={TimerSVG}
+                style={{ borderColor: timerColor }}
+              />
+            }
+          >
+            <HexColorPicker color={timerColor} onChange={_updateTimerColor} />
+            <HexColorInput
+              color={timerColor}
+              prefixed
+              onChange={_updateTimerColor}
+              className="text-black w-full mt-2"
+            />
+          </PopOver>
+        )}
+        {type === "free" && (
+          <>
+            <p className="text-sm font-semibold">Overflow:</p>
+            <RadioButton
+              label="Fit"
+              value={slide.overflow === "fit"}
+              onChange={() => {
+                const updatedItem = formatFree({
+                  ...item,
+                  slides: slides.map((s, index) =>
+                    index === selectedSlide ? { ...s, overflow: "fit" } : s
+                  ),
+                });
+                updateItem(updatedItem);
+              }}
+            />
+            <RadioButton
+              label="Separate"
+              value={slide.overflow === "separate"}
+              onChange={() => {
+                const updatedItem = formatFree({
+                  ...item,
+                  slides: slides.map((s, index) =>
+                    index === selectedSlide ? { ...s, overflow: "separate" } : s
+                  ),
+                });
+                updateItem(updatedItem);
+              }}
+            />
+          </>
+        )}
+        {type === "bible" && (
+          <>
+            <Icon color={iconColorMap.get("bible")} svg={BibleSVG} />
+            <p className="text-sm font-semibold">Mode:</p>
+            <RadioButton
+              onChange={() => _updateBibleFontMode("fit")}
+              value={item.bibleInfo?.fontMode === "fit"}
+              label="Fit"
+            />
+            <RadioButton
+              onChange={() => _updateBibleFontMode("separate")}
+              value={item.bibleInfo?.fontMode === "separate"}
+              label="Separate"
+            />
+            <RadioButton
+              onChange={() => _updateBibleFontMode("multiple")}
+              value={item.bibleInfo?.fontMode === "multiple"}
+              label="Multiple"
+            />
+          </>
+        )}
+      </div>
+
       <div
         className={`flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4`}
       >
