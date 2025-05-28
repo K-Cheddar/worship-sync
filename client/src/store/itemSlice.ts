@@ -173,6 +173,7 @@ export const updateBoxes = createAsyncThunk(
           ],
         };
       });
+      dispatch(_updateArrangements(arrangements));
     }
 
     const slides = item.slides.map((slide, index) => {
@@ -180,7 +181,6 @@ export const updateBoxes = createAsyncThunk(
       return { ...slide, boxes: [...args.boxes] };
     });
 
-    dispatch(_updateArrangements(arrangements));
     dispatch(_updateSlides(slides));
   }
 );

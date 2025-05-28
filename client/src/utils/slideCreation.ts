@@ -176,24 +176,6 @@ export const createNewSlide = ({
         words: words ? words[1] : " ",
       })
     );
-  } else if (type === "Timer" && !boxes.length) {
-    boxes.push(
-      createBox({
-        ...box,
-        excludeFromOverflow: true,
-      })
-    );
-    boxes.push(
-      createBox({
-        ...box,
-        transparent: true,
-        y: 30,
-        height: 35,
-        topMargin: 3,
-        sideMargin: 4,
-        words: words[0] || " ",
-      })
-    );
   } else if (!boxes.length) {
     boxes.push(
       createBox({
@@ -206,7 +188,7 @@ export const createNewSlide = ({
         ...box,
         background: "",
         transparent: true,
-        isLocked: false,
+        isLocked: true,
         topMargin: 3,
         sideMargin: 4,
         words: words[1] || " ",

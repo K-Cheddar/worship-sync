@@ -69,7 +69,7 @@ export type SlideType =
 export type ItemSlide = {
   type: SlideType;
   name: string;
-  id?: string;
+  id: string;
   boxes: Box[];
 };
 

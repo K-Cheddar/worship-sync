@@ -1,4 +1,5 @@
 import Button from "../../components/Button/Button";
+import cn from "classnames";
 import { ReactComponent as LockSVG } from "../../assets/icons/lock.svg";
 import { ReactComponent as UnlockSVG } from "../../assets/icons/unlock.svg";
 import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
@@ -29,9 +30,10 @@ import {
   setSelectedSlide,
   toggleEditMode,
   updateArrangements,
+  updateSlides,
 } from "../../store/itemSlice";
 import { setName, updateBoxes } from "../../store/itemSlice";
-import { formatSong } from "../../utils/overflow";
+import { formatFree, formatSong } from "../../utils/overflow";
 import { Box } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
@@ -70,6 +72,10 @@ const SlideEditor = () => {
     isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
   );
 
+  const [emptySlideHeight, setEmptySlideHeight] = useState(
+    isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
+  );
+
   useEffect(() => {
     if (!slides?.[selectedSlide] && selectedSlide !== 0) {
       dispatch(setSelectedSlide(Math.max(slides.length - 2, 0)));
@@ -80,6 +86,16 @@ const SlideEditor = () => {
     if (node) {
       const resizeObserver = new ResizeObserver((entries) => {
         setEditorHeight(`${entries[0].borderBoxSize[0].blockSize}px`);
+      });
+
+      resizeObserver.observe(node);
+    }
+  }, []);
+
+  const emptySlideRef = useCallback((node: HTMLDivElement) => {
+    if (node) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        setEmptySlideHeight(`${entries[0].borderBoxSize[0].blockSize}px`);
       });
 
       resizeObserver.observe(node);
@@ -108,7 +124,6 @@ const SlideEditor = () => {
     box: Box;
     cursorPosition?: number;
   }) => {
-    if (type === "bible") return;
     const newBoxes = boxes.map((b, i) =>
       i === index
         ? {
@@ -121,8 +136,23 @@ const SlideEditor = () => {
           }
         : b
     );
-    if (type === "free" || type === "timer") {
+    if (type === "bible" || type === "timer") {
       dispatch(updateBoxes({ boxes: newBoxes }));
+
+      return;
+    }
+
+    if (type === "free") {
+      const _item = formatFree({
+        ...item,
+        slides: item.slides.map((slide, index) => {
+          if (index === selectedSlide) {
+            return { ...slide, boxes: newBoxes };
+          }
+          return slide;
+        }),
+      });
+      dispatch(updateSlides({ slides: _item.slides }));
       return;
     }
 
@@ -232,6 +262,8 @@ const SlideEditor = () => {
     [type]
   );
 
+  const isEmpty = _boxes.length === 0;
+
   return (
     <div>
       <section className="flex justify-end w-full pr-2 bg-gray-900 h-8 mb-1 gap-1 overflow-hidden">
@@ -302,12 +334,15 @@ const SlideEditor = () => {
           {
             "--slide-editor-height": isMobile
               ? "fit-content"
-              : `${editorHeight}`,
+              : `${isEmpty ? emptySlideHeight : editorHeight}`,
           } as CSSProperties
         }
       >
         <section
-          className="ml-1 lg:w-[12vw] max-lg:w-[100%]"
+          className={cn(
+            "ml-1 lg:w-[12vw] max-lg:w-[100%]",
+            isEmpty && "hidden"
+          )}
           ref={slideInfoRef}
         >
           <p className="text-center font-semibold border-b-2 border-black text-sm flex items-center gap-1 justify-center pb-1">
@@ -389,18 +424,28 @@ const SlideEditor = () => {
             Add Box
           </Button>
         </section>
-        <DisplayWindow
-          showBorder
-          boxes={boxes}
-          selectBox={(val) => dispatch(setSelectedBox(val))}
-          ref={editorRef}
-          onChange={(onChangeInfo) => {
-            onChange(onChangeInfo);
-          }}
-          width={isMobile ? 84 : 42}
-          displayType="editor"
-          selectedBox={selectedBox}
-        />
+        {!isEmpty ? (
+          <DisplayWindow
+            showBorder
+            boxes={boxes}
+            selectBox={(val) => dispatch(setSelectedBox(val))}
+            ref={editorRef}
+            onChange={(onChangeInfo) => {
+              onChange(onChangeInfo);
+            }}
+            width={isMobile ? 84 : 42}
+            displayType="editor"
+            selectedBox={selectedBox}
+          />
+        ) : (
+          <p
+            id="slide-editor-empty"
+            ref={emptySlideRef}
+            className="slide-editor-empty"
+          >
+            No slide selected
+          </p>
+        )}
       </div>
     </div>
   );

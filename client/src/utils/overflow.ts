@@ -9,6 +9,7 @@ import {
 } from "../types";
 import { getLetterFromIndex } from "./generalUtils";
 import { createNewSlide } from "./slideCreation";
+import generateRandomId from "./generateRandomId";
 
 type getMaxLinesProps = {
   fontSize: number;
@@ -178,7 +179,7 @@ export const formatSection = ({
   fontColor,
 }: FormatSectionType) => {
   let lines = text.split("\n");
-  let fLyrics = [];
+  let formattedText = [];
   let currentBoxes = [];
   let boxes: Box[] = [];
   let box: Box = { width: 100, height: 100 };
@@ -195,8 +196,8 @@ export const formatSection = ({
     boxWords = "";
     boxes = [];
 
-    if (slides[newSlides.length + fLyrics.length])
-      currentBoxes = slides[newSlides.length + fLyrics.length].boxes;
+    if (slides[newSlides.length + formattedText.length])
+      currentBoxes = slides[newSlides.length + formattedText.length].boxes;
     else currentBoxes = lastBoxes;
 
     for (let j = 0; j < currentBoxes.length; ++j) {
@@ -229,18 +230,215 @@ export const formatSection = ({
     boxes[1].brightness = 100; // todo fix brightness on added slides without this line
 
     i += counter - 1;
-    fLyrics.push(
+    formattedText.push(
       createNewSlide({
         type: type as SlideType,
         name: name,
         boxes: boxes,
         fontSize: fontSize,
         fontColor: fontColor,
-        slideIndex: fLyrics.length,
+        slideIndex: formattedText.length,
       })
     );
   }
-  return fLyrics;
+  return formattedText;
+};
+
+export const formatSectionByWords = ({
+  text,
+  type,
+  name,
+  slides,
+  newSlides,
+  lastBoxes,
+  fontSize,
+  fontColor,
+}: FormatSectionType) => {
+  // Handle empty text case
+  if (!text || text.trim() === "") {
+    return [
+      createNewSlide({
+        type: type as SlideType,
+        name: name,
+        boxes: lastBoxes.map((box) => ({
+          ...box,
+          words: box === lastBoxes[0] ? " " : " ",
+        })),
+        fontSize: fontSize,
+        fontColor: fontColor,
+        slideIndex: 0,
+      }),
+    ];
+  }
+
+  let words = text.split(" ");
+  let formattedText = [];
+  let currentBoxes = [];
+  let boxes: Box[] = [];
+  let box: Box = { width: 100, height: 100 };
+  let maxLines = 0,
+    lineHeight = 0,
+    lineCounter = 0,
+    counter = 0;
+  let boxWords = "";
+
+  for (let i = 0; i < words.length; ++i) {
+    counter = 0;
+    lineCounter = 0;
+    boxWords = "";
+    boxes = [];
+
+    if (slides[newSlides.length + formattedText.length])
+      currentBoxes = slides[newSlides.length + formattedText.length].boxes;
+    else currentBoxes = lastBoxes;
+
+    for (let j = 0; j < currentBoxes.length; ++j) {
+      ({ maxLines, lineHeight } = getMaxLines({
+        fontSize,
+        height: currentBoxes[1].height,
+      }));
+
+      // Handle case where we're at the last word
+      if (i === words.length - 1) {
+        boxWords = words[i];
+        break;
+      }
+
+      while (i + counter < words.length && lineCounter < maxLines) {
+        let testWords = boxWords + (boxWords ? " " : "") + words[i + counter];
+        let lineCount = getNumLines({
+          text: testWords,
+          fontSize,
+          lineHeight,
+          width: currentBoxes[1].width,
+        });
+
+        // If even a single word doesn't fit, force it to fit
+        if (counter === 0 && lineCount > maxLines) {
+          boxWords = words[i];
+          lineCounter = lineCount;
+          counter = 1;
+          break;
+        }
+
+        if (lineCount <= maxLines) {
+          boxWords = testWords;
+          lineCounter = lineCount;
+          counter++;
+        } else {
+          break;
+        }
+      }
+
+      box = Object.assign({}, currentBoxes[j]);
+      if (boxWords === "") boxWords = " ";
+      box.words = boxWords;
+      boxes.push(box);
+    }
+
+    boxes[0].words = " ";
+    boxes[1].excludeFromOverflow = false;
+    boxes[1].brightness = 100;
+
+    i += counter - 1;
+    formattedText.push(
+      createNewSlide({
+        type: type as SlideType,
+        name: name,
+        boxes: boxes,
+        fontSize: fontSize,
+        fontColor: fontColor,
+        slideIndex: formattedText.length,
+      })
+    );
+  }
+
+  // If no slides were created (e.g., empty text), create a default slide
+  if (formattedText.length === 0) {
+    formattedText.push(
+      createNewSlide({
+        type: type as SlideType,
+        name: name,
+        boxes: lastBoxes.map((box) => ({
+          ...box,
+          words: box === lastBoxes[0] ? " " : " ",
+        })),
+        fontSize: fontSize,
+        fontColor: fontColor,
+        slideIndex: 0,
+      })
+    );
+  }
+
+  return formattedText;
+};
+
+export const formatFree = (item: ItemState) => {
+  const { selectedSlide, selectedBox } = item;
+  let slides = item.slides;
+  const slide = slides[selectedSlide];
+  let newSlides: ItemSlide[] = [];
+
+  const fontSize = slide.boxes[selectedBox].fontSize || 2.5;
+  const fontColor = slide.boxes[selectedBox].fontColor || "rgb(255, 255, 255)";
+
+  // Get the current section number from the slide name
+  const currentSectionMatch = slide.name.match(/Section (\d+)/);
+  const currentSectionNum = currentSectionMatch
+    ? parseInt(currentSectionMatch[1])
+    : 1;
+
+  // Get words from all slides of section
+  const sectionWords = slides
+    .filter((slide) => slide.name.includes(`Section ${currentSectionNum}`))
+    .map((slide) => slide.boxes[selectedBox].words)
+    .join("");
+
+  // Format the text and get new slides
+  const _formattedSlides = formatSection({
+    text: sectionWords,
+    type: slide.type,
+    name: slide.name,
+    slides,
+    newSlides,
+    lastBoxes: slide.boxes,
+    fontSize,
+    fontColor,
+  });
+
+  const formattedSlides = _formattedSlides.map((newSlide, index) => {
+    // Update slide names with section numbers and letters
+    const id = newSlide.id ?? generateRandomId();
+    if (_formattedSlides.length > 1) {
+      // If more than one slide, get letter suffixes
+      return {
+        ...newSlide,
+        name: `Section ${currentSectionNum}${getLetterFromIndex(index)}`,
+        id,
+      };
+    }
+    // If only one slide, keep the original section number
+    return {
+      ...newSlide,
+      name: `Section ${currentSectionNum}`,
+      id,
+    };
+  });
+
+  // Remove all slides from current section and save location
+  const firstSlideLocation = slides.findIndex((slide) =>
+    slide.name.includes(`Section ${currentSectionNum}`)
+  );
+  const updatedSlides = slides.filter(
+    (slide) => !slide.name.includes(`Section ${currentSectionNum}`)
+  );
+
+  // Replace all slides of section with updated slides
+  updatedSlides.splice(firstSlideLocation, 0, ...formattedSlides);
+  return {
+    ...item,
+    slides: updatedSlides,
+  };
 };
 
 export const formatLyrics = (item: ItemState) => {
@@ -485,7 +683,7 @@ const formatBibleVerses = ({
   let currentBoxes = [...currentSlide.boxes];
   let { maxLines, lineHeight } = getMaxLines({
     fontSize: currentBoxes[1].fontSize || 1,
-    height: 95,
+    height: currentBoxes[1].height || 95,
   });
   let formattedVerses = [];
   // let type = currentSlide.type;
@@ -662,7 +860,7 @@ const formatBibleVerses = ({
             currentFontSize -= 0.1;
             ({ maxLines, lineHeight } = getMaxLines({
               fontSize: currentFontSize,
-              height: 95,
+              height: currentBoxes[1].height || 95,
             }));
             tempSlide = "";
             break;
@@ -677,7 +875,7 @@ const formatBibleVerses = ({
       // Update maxLines and lineHeight for the final slide
       ({ maxLines, lineHeight } = getMaxLines({
         fontSize: currentFontSize,
-        height: 95,
+        height: currentBoxes[1].height || 95,
       }));
 
       formattedVerses.push(
@@ -929,7 +1127,7 @@ const formatBibleVerses = ({
                 currentFontSize -= 0.1;
                 ({ maxLines, lineHeight } = getMaxLines({
                   fontSize: currentFontSize,
-                  height: 95,
+                  height: currentBoxes[1].height || 95,
                 }));
               }
             }

@@ -99,6 +99,8 @@ const ItemSlides = () => {
 
   const [debouncedSlides, setDebouncedSlides] = useState(slides);
 
+  const hasSlides = slides.length > 0;
+
   useEffect(() => {
     const timeout = setTimeout(() => {
       setDebouncedSlides(slides);
@@ -181,10 +183,21 @@ const ItemSlides = () => {
   };
 
   const addSlide = () => {
+    // Find the highest section number among existing slides
+    const sectionNumbers = slides
+      .map((slide) => {
+        const match = slide.name.match(/Section (\d+)/);
+        return match ? parseInt(match[1]) : null;
+      })
+      .filter((n) => n !== null) as number[];
+    const maxSection =
+      sectionNumbers.length > 0 ? Math.max(...sectionNumbers) : 0;
+    const newSectionNum = maxSection + 1;
     const slide = createNewSlide({
       type: "Section",
       fontSize: 2.5,
       words: [""],
+      name: `Section ${newSectionNum}`,
     });
     dispatch(addSlideAction({ slide }));
   };
@@ -215,7 +228,7 @@ const ItemSlides = () => {
     selectSlide(nextSlide);
   };
 
-  if (!arrangement && !slides.length && type !== "free") return null;
+  // if (!arrangement && !hasSlides && type !== "free") return null;
 
   return (
     <DndContext sensors={sensors} onDragEnd={onDragEnd}>
@@ -258,38 +271,44 @@ const ItemSlides = () => {
           </>
         )}
       </div>
-      <ul
-        ref={setNodeRef}
-        tabIndex={0}
-        id="item-slides-container"
-        onKeyDown={(e) =>
-          handleKeyDownTraverse({
-            event: e,
-            advance: advanceSlide,
-            previous: previousSlide,
-          })
-        }
-        className={`item-slides-container ${sizeMap.get(size)?.cols}`}
-      >
-        <SortableContext
-          items={slides.map((slide) => slide.id || "")}
-          strategy={rectSortingStrategy}
+      {hasSlides ? (
+        <ul
+          ref={setNodeRef}
+          tabIndex={0}
+          id="item-slides-container"
+          onKeyDown={(e) =>
+            handleKeyDownTraverse({
+              event: e,
+              advance: advanceSlide,
+              previous: previousSlide,
+            })
+          }
+          className={`item-slides-container ${sizeMap.get(size)?.cols}`}
         >
-          {debouncedSlides.map((slide, index) => (
-            <ItemSlide
-              timerInfo={timerInfo}
-              key={slide.id}
-              slide={slide}
-              index={index}
-              selectSlide={selectSlide}
-              selectedSlide={selectedSlide}
-              size={size}
-              itemType={type}
-              isMobile={isMobile || false}
-            />
-          ))}
-        </SortableContext>
-      </ul>
+          <SortableContext
+            items={slides.map((slide) => slide.id || "")}
+            strategy={rectSortingStrategy}
+          >
+            {debouncedSlides.map((slide, index) => (
+              <ItemSlide
+                timerInfo={timerInfo}
+                key={slide.id}
+                slide={slide}
+                index={index}
+                selectSlide={selectSlide}
+                selectedSlide={selectedSlide}
+                size={size}
+                itemType={type}
+                isMobile={isMobile || false}
+              />
+            ))}
+          </SortableContext>
+        </ul>
+      ) : (
+        <div className="flex w-full items-center justify-center h-6 mb-2 gap-1">
+          <p className="text-gray-300">No slides for selected item</p>
+        </div>
+      )}
     </DndContext>
   );
 };

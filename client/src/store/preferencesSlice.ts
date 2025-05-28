@@ -196,6 +196,7 @@ export const preferencesSlice = createSlice({
             slide: {
               type: "Image",
               name: "",
+              id: generateRandomId(),
               boxes: [
                 {
                   id: generateRandomId(),

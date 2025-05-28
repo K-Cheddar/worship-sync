@@ -65,7 +65,7 @@ const BoxEditor = () => {
           }
         : b
     );
-    if (type === "free" || type === "timer") {
+    if (type !== "song") {
       dispatch(updateBoxes({ boxes: newBoxes }));
       return;
     }

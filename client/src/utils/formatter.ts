@@ -58,35 +58,19 @@ export const updateFontSize = ({
 
   if (!slide) return item;
 
-  if (selectedSlide !== 0 && item.type !== "free") {
-    slides = slides.map((slide, index) => {
-      if (index === 0) return slide;
-      return {
-        ...slide,
-        boxes: slide.boxes.map((box, boxIndex) => {
-          if (box.excludeFromOverflow || boxIndex !== selectedBox) return box;
-          return {
-            ...box,
-            fontSize: fontSize,
-          };
-        }),
-      };
-    });
-  } else {
-    slides = slides.map((slide, slideIndex) => {
-      if (slideIndex !== selectedSlide) return slide;
-      return {
-        ...slide,
-        boxes: slide.boxes.map((box, boxIndex) => {
-          if (boxIndex !== selectedBox) return box;
-          return {
-            ...box,
-            fontSize: fontSize,
-          };
-        }),
-      };
-    });
-  }
+  slides = slides.map((slide, slideIndex) => {
+    if (slideIndex !== selectedSlide) return slide;
+    return {
+      ...slide,
+      boxes: slide.boxes.map((box, boxIndex) => {
+        if (boxIndex !== selectedBox) return box;
+        return {
+          ...box,
+          fontSize: fontSize,
+        };
+      }),
+    };
+  });
 
   _item = { ...item, slides: [...slides] };
 
