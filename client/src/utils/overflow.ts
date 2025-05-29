@@ -177,7 +177,7 @@ export const formatSection = ({
   lastBoxes,
   fontSize,
   fontColor,
-}: FormatSectionType) => {
+}: FormatSectionType): ItemSlide[] => {
   let lines = text.split("\n");
   let formattedText = [];
   let currentBoxes = [];
@@ -253,7 +253,7 @@ export const formatSectionByWords = ({
   lastBoxes,
   fontSize,
   fontColor,
-}: FormatSectionType) => {
+}: FormatSectionType): ItemSlide[] => {
   // Handle empty text case
   if (!text || text.trim() === "") {
     return [
@@ -389,13 +389,16 @@ export const formatFree = (item: ItemState) => {
     ? parseInt(currentSectionMatch[1])
     : 1;
 
-  // Get words from all slides of section
-  const sectionWords = slides
-    .filter((slide) => slide.name.includes(`Section ${currentSectionNum}`))
-    .map((slide) => slide.boxes[selectedBox].words)
+  const currentSectionSlides = slides.filter((slide) =>
+    slide.name.includes(`Section ${currentSectionNum}`)
+  );
+
+  // Get words from selected box of all slides of section
+  const sectionWords = currentSectionSlides
+    .map((slide) => slide.boxes[selectedBox]?.words)
     .join("");
 
-  let _formattedSlides;
+  let _formattedSlides: ItemSlide[] = [];
   if (slide.overflow === "fit") {
     // Try to fit all words in one slide by adjusting font size
     let currentFontSize = fontSize;
@@ -406,14 +409,14 @@ export const formatFree = (item: ItemState) => {
     while (currentFontSize >= minFontSize) {
       ({ maxLines, lineHeight } = getMaxLines({
         fontSize: currentFontSize,
-        height: slide.boxes[1].height,
+        height: slide.boxes[selectedBox].height,
       }));
 
       numLines = getNumLines({
         text: sectionWords,
         fontSize: currentFontSize,
         lineHeight,
-        width: slide.boxes[1].width,
+        width: slide.boxes[selectedBox].width,
       });
 
       if (numLines <= maxLines) {
@@ -440,11 +443,16 @@ export const formatFree = (item: ItemState) => {
         createNewSlide({
           type: slide.type,
           name: `Section ${currentSectionNum}`,
-          boxes: slide.boxes.map((box, index) => ({
-            ...box,
-            fontSize: index === 1 ? currentFontSize : box.fontSize,
-            words: index === 1 ? sectionWords : box.words,
-          })),
+          boxes: slide.boxes.map((box, index) => {
+            if (index === selectedBox) {
+              return {
+                ...box,
+                fontSize: currentFontSize,
+                words: sectionWords,
+              };
+            }
+            return box;
+          }),
           fontSize: currentFontSize,
           fontColor,
           slideIndex: 0,
@@ -469,6 +477,23 @@ export const formatFree = (item: ItemState) => {
   const formattedSlides = _formattedSlides.map((newSlide, index) => {
     // Update slide names with section numbers and letters
     const id = newSlide.id ?? generateRandomId();
+
+    // Get the corresponding current section slide if it exists
+    const currentSectionSlide = currentSectionSlides[index];
+
+    // Combine boxes from both slides, prioritizing the selected box from formatted slides
+    const combinedBoxes = newSlide.boxes.map((box, boxIndex) => {
+      if (boxIndex === selectedBox) {
+        // Keep the box from formatted slides for the selected box
+        return box;
+      } else if (currentSectionSlide?.boxes?.[boxIndex]) {
+        // Use box from current section slide for other indices
+        return currentSectionSlide.boxes[boxIndex];
+      }
+      // Fallback to formatted slide box if no current section box exists
+      return box;
+    });
+
     if (_formattedSlides.length > 1) {
       // If more than one slide, get letter suffixes
       return {
@@ -476,6 +501,7 @@ export const formatFree = (item: ItemState) => {
         name: `Section ${currentSectionNum}${getLetterFromIndex(index)}`,
         id,
         overflow: slide.overflow,
+        boxes: combinedBoxes,
       };
     }
     // If only one slide, keep the original section number
@@ -484,8 +510,24 @@ export const formatFree = (item: ItemState) => {
       name: `Section ${currentSectionNum}`,
       id,
       overflow: slide.overflow,
+      boxes: combinedBoxes,
     };
   });
+
+  // Add any remaining current section slides that weren't covered by formatted slides
+  const remainingSlides = currentSectionSlides
+    .slice(_formattedSlides.length)
+    .map((currentSlide, index) => {
+      const id = currentSlide.id ?? generateRandomId();
+      return {
+        ...currentSlide,
+        id,
+        name: `Section ${currentSectionNum}${getLetterFromIndex(
+          _formattedSlides.length + index
+        )}`,
+        overflow: slide.overflow,
+      };
+    });
 
   // Remove all slides from current section and save location
   const firstSlideLocation = slides.findIndex((slide) =>
@@ -496,7 +538,12 @@ export const formatFree = (item: ItemState) => {
   );
 
   // Replace all slides of section with updated slides
-  updatedSlides.splice(firstSlideLocation, 0, ...formattedSlides);
+  updatedSlides.splice(
+    firstSlideLocation,
+    0,
+    ...formattedSlides,
+    ...remainingSlides
+  );
   return {
     ...item,
     slides: updatedSlides,

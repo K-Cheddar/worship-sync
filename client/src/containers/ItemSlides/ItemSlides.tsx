@@ -3,6 +3,7 @@ import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
 import Button from "../../components/Button/Button";
 import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
+import { ReactComponent as CopySVG } from "../../assets/icons/copy.svg";
 import "./ItemSlides.scss";
 import {
   removeSlide,
@@ -38,6 +39,7 @@ import {
   keepElementInView,
 } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
+import generateRandomId from "../../utils/generateRandomId";
 
 export const sizeMap: Map<
   number,
@@ -203,6 +205,30 @@ const ItemSlides = () => {
     dispatch(addSlideAction({ slide }));
   };
 
+  const copySlide = () => {
+    if (selectedSlide === -1 || !slides[selectedSlide]) return;
+
+    // Find the highest section number among existing slides
+    const sectionNumbers = slides
+      .map((slide) => {
+        const match = slide.name.match(/Section (\d+)/);
+        return match ? parseInt(match[1]) : null;
+      })
+      .filter((n) => n !== null) as number[];
+    const maxSection =
+      sectionNumbers.length > 0 ? Math.max(...sectionNumbers) : 0;
+    const newSectionNum = maxSection + 1;
+
+    const slideToCopy = slides[selectedSlide];
+    const newSlide = {
+      ...slideToCopy,
+      id: generateRandomId(), // Generate a temporary ID
+      name: `Section ${newSectionNum}`,
+    };
+
+    dispatch(addSlideAction({ slide: newSlide }));
+  };
+
   const onDragEnd = (event: DragEndEvent) => {
     const { over, active } = event;
     if (!over || !active) return;
@@ -264,6 +290,7 @@ const ItemSlides = () => {
               svg={AddSVG}
               onClick={() => addSlide()}
             />
+            <Button variant="tertiary" svg={CopySVG} onClick={copySlide} />
             <Button
               variant="tertiary"
               svg={DeleteSVG}
