@@ -27,7 +27,12 @@ import {
 import { createNewSlide } from "../../utils/slideCreation";
 import { addSlide as addSlideAction } from "../../store/itemSlice";
 import ItemSlide from "./ItemSlide";
-import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
+import {
+  DndContext,
+  useDroppable,
+  DragEndEvent,
+  DragStartEvent,
+} from "@dnd-kit/core";
 
 import { useSensors } from "../../utils/dndUtils";
 
@@ -100,6 +105,7 @@ const ItemSlides = () => {
   const dispatch = useDispatch();
 
   const [debouncedSlides, setDebouncedSlides] = useState(slides);
+  const [draggedSection, setDraggedSection] = useState<string | null>(null);
 
   const hasSlides = slides.length > 0;
 
@@ -229,18 +235,91 @@ const ItemSlides = () => {
     dispatch(addSlideAction({ slide: newSlide }));
   };
 
+  const onDragStart = (event: DragStartEvent) => {
+    const { active } = event;
+    const draggedSlide = slides.find((slide) => slide.id === active.id);
+    if (draggedSlide) {
+      const sectionMatch = draggedSlide.name.match(/Section (\d+)/);
+      if (sectionMatch) {
+        setDraggedSection(sectionMatch[1]);
+      }
+    }
+  };
+
   const onDragEnd = (event: DragEndEvent) => {
+    setDraggedSection(null);
     const { over, active } = event;
     if (!over || !active) return;
 
     const { id: overId } = over;
     const { id: activeId } = active;
     const updatedSlides = [...slides];
-    const newIndex = updatedSlides.findIndex((slide) => slide.id === overId);
-    const oldIndex = updatedSlides.findIndex((slide) => slide.id === activeId);
-    const element = slides[oldIndex];
-    updatedSlides.splice(oldIndex, 1);
-    updatedSlides.splice(newIndex, 0, element);
+
+    // Find the dragged slide and its section
+    const draggedSlide = slides.find((slide) => slide.id === activeId);
+    if (!draggedSlide) return;
+
+    // Extract section number from the dragged slide's name
+    const sectionMatch = draggedSlide.name.match(/Section (\d+)/);
+    if (!sectionMatch) return;
+    const sectionNum = sectionMatch[1];
+
+    // Find all slides in the same section
+    const sectionSlides = slides.filter((slide) =>
+      slide.name.includes(`Section ${sectionNum}`)
+    );
+
+    // Find the target position
+    const targetSlide = slides.find((slide) => slide.id === overId);
+    if (!targetSlide) return;
+
+    // Get the target index
+    const targetIndex = slides.findIndex((slide) => slide.id === overId);
+
+    // Check if target position is within another section
+    const targetSectionMatch = targetSlide.name.match(/Section (\d+)/);
+    if (targetSectionMatch) {
+      const targetSectionNum = targetSectionMatch[1];
+      if (targetSectionNum !== sectionNum) {
+        // Find the boundaries of the target section
+        const targetSectionStart = slides.findIndex((slide) =>
+          slide.name.includes(`Section ${targetSectionNum}`)
+        );
+        const targetSectionEnd = slides.findIndex(
+          (slide, index) =>
+            index > targetSectionStart &&
+            !slide.name.includes(`Section ${targetSectionNum}`)
+        );
+
+        // If target is within another section, adjust the target index to be before or after that section
+        if (
+          targetIndex > targetSectionStart &&
+          targetIndex < targetSectionEnd
+        ) {
+          // If we're closer to the start of the target section, place before it
+          if (
+            targetIndex - targetSectionStart <
+            targetSectionEnd - targetIndex
+          ) {
+            return; // Don't allow dropping in the middle of another section
+          } else {
+            return; // Don't allow dropping in the middle of another section
+          }
+        }
+      }
+    }
+
+    // Get the indices of the first and last slides in the section
+    const firstSectionIndex = slides.findIndex((slide) =>
+      slide.name.includes(`Section ${sectionNum}`)
+    );
+
+    // Remove all slides in the section
+    updatedSlides.splice(firstSectionIndex, sectionSlides.length);
+
+    // Insert the section slides at the target position
+    updatedSlides.splice(targetIndex, 0, ...sectionSlides);
+
     setDebouncedSlides(updatedSlides);
     dispatch(updateSlides({ slides: updatedSlides }));
   };
@@ -258,7 +337,11 @@ const ItemSlides = () => {
   // if (!arrangement && !hasSlides && type !== "free") return null;
 
   return (
-    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+    <DndContext
+      sensors={sensors}
+      onDragEnd={onDragEnd}
+      onDragStart={onDragStart}
+    >
       <div className="flex w-full px-2 bg-gray-900 h-6 mb-2 gap-1">
         <Button
           variant="tertiary"
@@ -328,6 +411,7 @@ const ItemSlides = () => {
                 size={size}
                 itemType={type}
                 isMobile={isMobile || false}
+                draggedSection={draggedSection}
               />
             ))}
           </SortableContext>
