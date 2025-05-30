@@ -70,6 +70,12 @@ const DisplayEditor = ({
     }
   }, [box, textAreaRef]);
 
+  useEffect(() => {
+    if (isSelected && textAreaRef.current) {
+      textAreaRef.current.focus();
+    }
+  }, [isSelected]);
+
   const updateBoxSize = useCallback(() => {
     const parent = document.getElementById("display-editor");
     const width = parent?.offsetWidth || 0;
@@ -265,13 +271,17 @@ const DisplayEditor = ({
               height: textBoxHeight,
               ...textStyles,
             }}
-            onFocus={() => setIsTextAreaFocused(true)}
-            onBlur={() =>
-              (textAreaFocusTimeout = setTimeout(
-                () => setIsTextAreaFocused(false),
-                500
-              ))
-            }
+            onFocus={() => {
+              if (textAreaFocusTimeout) {
+                clearTimeout(textAreaFocusTimeout);
+              }
+              setIsTextAreaFocused(true);
+            }}
+            onBlur={() => {
+              textAreaFocusTimeout = setTimeout(() => {
+                setIsTextAreaFocused(false);
+              }, 500);
+            }}
             onChange={(e) => {
               e.preventDefault();
               onChange({
