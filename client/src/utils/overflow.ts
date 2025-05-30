@@ -166,6 +166,7 @@ type FormatSectionType = {
   lastBoxes: Box[];
   fontSize: number;
   fontColor?: string;
+  background?: string;
 };
 
 export const formatSection = ({
@@ -177,6 +178,7 @@ export const formatSection = ({
   lastBoxes,
   fontSize,
   fontColor,
+  background,
 }: FormatSectionType): ItemSlide[] => {
   let lines = text.split("\n");
   let formattedText = [];
@@ -238,6 +240,7 @@ export const formatSection = ({
         fontSize: fontSize,
         fontColor: fontColor,
         slideIndex: formattedText.length,
+        background: background || undefined,
       })
     );
   }
@@ -398,6 +401,11 @@ export const formatFree = (item: ItemState) => {
     .map((slide) => slide.boxes[selectedBox]?.words)
     .join("");
 
+  // Get the background from the last slide in the section
+  const lastSlideInSection =
+    currentSectionSlides[currentSectionSlides.length - 1];
+  const background = lastSlideInSection?.boxes[0]?.background || undefined;
+
   let _formattedSlides: ItemSlide[] = [];
   if (slide.overflow === "fit") {
     // Try to fit all words in one slide by adjusting font size
@@ -436,6 +444,7 @@ export const formatFree = (item: ItemState) => {
         lastBoxes: slide.boxes,
         fontSize: minFontSize,
         fontColor,
+        background,
       });
     } else {
       // Create a single slide with the adjusted font size
@@ -457,6 +466,7 @@ export const formatFree = (item: ItemState) => {
           fontColor,
           slideIndex: 0,
           overflow: "fit",
+          background,
         }),
       ];
     }
@@ -471,6 +481,7 @@ export const formatFree = (item: ItemState) => {
       lastBoxes: slide.boxes,
       fontSize,
       fontColor,
+      background,
     });
   }
 
@@ -494,40 +505,21 @@ export const formatFree = (item: ItemState) => {
       return box;
     });
 
-    if (_formattedSlides.length > 1) {
-      // If more than one slide, get letter suffixes
-      return {
-        ...newSlide,
-        name: `Section ${currentSectionNum}${getLetterFromIndex(index)}`,
-        id,
-        overflow: slide.overflow,
-        boxes: combinedBoxes,
-      };
-    }
-    // If only one slide, keep the original section number
-    return {
+    // Create the new slide with the background from the last slide
+    const newSlideWithBackground = {
       ...newSlide,
-      name: `Section ${currentSectionNum}`,
+      name:
+        _formattedSlides.length > 1
+          ? `Section ${currentSectionNum}${getLetterFromIndex(index)}`
+          : `Section ${currentSectionNum}`,
       id,
       overflow: slide.overflow,
       boxes: combinedBoxes,
+      background,
     };
-  });
 
-  // Add any remaining current section slides that weren't covered by formatted slides
-  const remainingSlides = currentSectionSlides
-    .slice(_formattedSlides.length)
-    .map((currentSlide, index) => {
-      const id = currentSlide.id ?? generateRandomId();
-      return {
-        ...currentSlide,
-        id,
-        name: `Section ${currentSectionNum}${getLetterFromIndex(
-          _formattedSlides.length + index
-        )}`,
-        overflow: slide.overflow,
-      };
-    });
+    return newSlideWithBackground;
+  });
 
   // Remove all slides from current section and save location
   const firstSlideLocation = slides.findIndex((slide) =>
@@ -538,12 +530,7 @@ export const formatFree = (item: ItemState) => {
   );
 
   // Replace all slides of section with updated slides
-  updatedSlides.splice(
-    firstSlideLocation,
-    0,
-    ...formattedSlides,
-    ...remainingSlides
-  );
+  updatedSlides.splice(firstSlideLocation, 0, ...formattedSlides);
   return {
     ...item,
     slides: updatedSlides,

@@ -76,6 +76,10 @@ const SlideEditor = () => {
     isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
   );
 
+  const [cursorPositions, setCursorPositions] = useState<
+    Record<number, number>
+  >({});
+
   useEffect(() => {
     if (!slides?.[selectedSlide] && selectedSlide !== 0) {
       dispatch(setSelectedSlide(Math.max(slides.length - 2, 0)));
@@ -106,6 +110,19 @@ const SlideEditor = () => {
     setLocalName(name);
   }, [name]);
 
+  useEffect(() => {
+    Object.entries(cursorPositions).forEach(([index, position]) => {
+      const textBoxElement = document.getElementById(
+        `display-box-text-${index}`
+      ) as HTMLTextAreaElement;
+      if (textBoxElement && typeof position === "number") {
+        textBoxElement.selectionEnd = position;
+        textBoxElement.selectionStart = position;
+        textBoxElement.scrollTop = 0;
+      }
+    });
+  }, [cursorPositions]);
+
   const saveName = () => {
     setIsEditingName(false);
     if (db) {
@@ -124,6 +141,10 @@ const SlideEditor = () => {
     box: Box;
     cursorPosition?: number;
   }) => {
+    if (typeof cursorPosition === "number") {
+      setCursorPositions((prev) => ({ ...prev, [index]: cursorPosition }));
+    }
+
     const newBoxes = boxes.map((b, i) =>
       i === index
         ? {
@@ -221,17 +242,6 @@ const SlideEditor = () => {
         }
       }
     }
-
-    setTimeout(() => {
-      const textBoxElement = document.getElementById(
-        `display-box-text-${index}`
-      ) as HTMLTextAreaElement;
-      if (textBoxElement && typeof cursorPosition === "number") {
-        textBoxElement.selectionEnd = cursorPosition;
-        textBoxElement.selectionStart = cursorPosition;
-        textBoxElement.scrollTop = 0;
-      }
-    }, 10);
   };
 
   let _boxes =

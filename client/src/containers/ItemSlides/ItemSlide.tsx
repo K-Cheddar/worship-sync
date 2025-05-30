@@ -69,15 +69,18 @@ const ItemSlide = ({
   return (
     <li
       ref={setNodeRef}
-      style={
-        isFree
-          ? isDragging
-            ? style
-            : isInDraggedSection
-            ? sectionStyle
-            : undefined
-          : undefined
-      }
+      style={(() => {
+        if (!isFree) {
+          return undefined;
+        }
+        if (isDragging) {
+          return style;
+        }
+        if (isInDraggedSection) {
+          return sectionStyle;
+        }
+        return undefined;
+      })()}
       {...(isFree && attributes)}
       {...(isFree && listeners)}
       key={slide.id}
