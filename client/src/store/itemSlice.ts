@@ -203,7 +203,7 @@ export const updateArrangements = createAsyncThunk(
     }
     dispatch(
       _updateSlides(
-        arrangements[selectedArrangement || currentArrangement].slides
+        arrangements[selectedArrangement ?? currentArrangement].slides
       )
     );
   }
