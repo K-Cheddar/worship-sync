@@ -85,7 +85,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   );
 
   const _updateFontSize = (val: number) => {
-    const _val = Math.round(Math.max(Math.min(val, 48), 1));
+    const _val = Math.round(Math.max(Math.min(val, 150), 1));
     setFontSize(_val);
     const fSize = _val / 10;
     const updatedItem = updateFontSize({ fontSize: fSize, item });
