@@ -53,7 +53,7 @@ const ItemSlide = ({
   const isFree = itemType === "free";
 
   // Check if this slide is in the same section as the dragged slide
-  const sectionMatch = slide.name.match(/Section (\d+)/);
+  const sectionMatch = slide.name?.match(/Section (\d+)/);
   const isInDraggedSection = sectionMatch && sectionMatch[1] === draggedSection;
 
   // Apply transform to all slides in the same section while preserving the dragged slide's animation
