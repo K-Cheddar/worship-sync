@@ -1,7 +1,11 @@
 import DisplayWindow from "../DisplayWindow/DisplayWindow";
 import Toggle from "../Toggle/Toggle";
 import QuickLink from "../QuickLink/QuickLink";
-import { Presentation as PresentationType, QuickLinkType } from "../../types";
+import {
+  Presentation as PresentationType,
+  QuickLinkType,
+  TimerInfo,
+} from "../../types";
 
 type PresentationProps = {
   name: string;
@@ -12,6 +16,8 @@ type PresentationProps = {
   quickLinks: QuickLinkType[];
   showBorder?: boolean;
   isMobile?: boolean;
+  timerInfo?: TimerInfo;
+  timers: TimerInfo[];
 };
 
 const Presentation = ({
@@ -23,6 +29,8 @@ const Presentation = ({
   quickLinks,
   showBorder = true,
   isMobile,
+  timerInfo,
+  timers,
 }: PresentationProps) => {
   return (
     <div className="flex gap-2">
@@ -43,21 +51,28 @@ const Presentation = ({
           imageOverlayInfo={info.imageOverlayInfo}
           prevBibleDisplayInfo={prevInfo.bibleDisplayInfo}
           bibleDisplayInfo={info.bibleDisplayInfo}
+          timerInfo={timerInfo}
           time={info.time}
           prevTime={prevInfo.time}
           shouldAnimate
           shouldPlayVideo
         />
       </section>
-      <section className="gap-2 flex flex-col pt-2">
+      <section className="gap-2 max-lg:gap-6 flex flex-col pt-2">
         <Toggle
           label="Sending"
           value={isTransmitting}
           onChange={toggleIsTransmitting}
         />
-        <section className="grid grid-cols-2">
+        <section className="grid grid-cols-2 gap-2">
           {quickLinks.map((link) => (
-            <QuickLink displayType={info.displayType} {...link} key={link.id} />
+            <QuickLink
+              timers={timers}
+              displayType={info.displayType}
+              isMobile={isMobile}
+              {...link}
+              key={link.id}
+            />
           ))}
         </section>
       </section>

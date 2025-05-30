@@ -3,9 +3,9 @@ import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { useDispatch, useSelector } from "../../hooks";
-import { updateList } from "../../store/creditsSlice";
+import { selectCredit, updateList } from "../../store/creditsSlice";
 import "./Credits.scss";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Credit from "./Credit";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import cn from "classnames";
@@ -19,11 +19,11 @@ import {
   addCredit,
   updatePublishedCreditsList,
 } from "../../store/creditsSlice";
+import { keepElementInView } from "../../utils/generalUtils";
 
 const CreditsEditor = ({ className }: { className?: string }) => {
-  const { list, publishedList, initialList, isLoading } = useSelector(
-    (state) => state.undoable.present.credits
-  );
+  const { list, publishedList, initialList, isLoading, selectedCreditId } =
+    useSelector((state) => state.undoable.present.credits);
   const dispatch = useDispatch();
   // const { isMobile } = useContext(ControllerInfoContext) || {};
 
@@ -35,6 +35,12 @@ const CreditsEditor = ({ className }: { className?: string }) => {
   });
 
   const sensors = useSensors();
+
+  const hasUnpublishedChanges = () => {
+    const visibleList = list.filter((credit) => !credit.hidden);
+    const visiblePublishedList = publishedList;
+    return JSON.stringify(visiblePublishedList) !== JSON.stringify(visibleList);
+  };
 
   const onDragEnd = (event: DragEndEvent) => {
     const { over, active } = event;
@@ -53,9 +59,29 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     dispatch(updateList(updatedCredits));
   };
 
+  // keep the selected credit in view
+  useEffect(() => {
+    const selectedCredit = list.find(
+      (credit) => credit.id === selectedCreditId
+    );
+    if (selectedCredit) {
+      const creditElement = document.getElementById(
+        `credit-editor-${selectedCreditId}`
+      );
+      const creditsList = document.getElementById("credits-list");
+      if (creditElement && creditsList) {
+        keepElementInView({
+          child: creditElement,
+          parent: creditsList,
+        });
+      }
+    }
+  }, [selectedCreditId, list]);
+
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <div
+        data-testid="credits-editor-container"
         className={cn(
           "flex flex-col p-2 gap-2 max-md:w-full md:w-1/2 h-full",
           className
@@ -63,8 +89,10 @@ const CreditsEditor = ({ className }: { className?: string }) => {
       >
         <h2 className="text-xl font-semibold text-center h-fit">
           Credits
-          {JSON.stringify(publishedList) !== JSON.stringify(list) && (
+          {hasUnpublishedChanges() ? (
             <span className="text-yellow-500 ml-2">(Draft)</span>
+          ) : (
+            <span className="text-green-500 ml-2">(Published)</span>
           )}
         </h2>
         {!isLoading && list.length === 0 && (
@@ -78,7 +106,11 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         )}
         {!isLoading && (
           <>
-            <ul className="credits-list-editor" ref={setNodeRef}>
+            <ul
+              className="credits-list-editor"
+              id="credits-list"
+              ref={setNodeRef}
+            >
               <SortableContext
                 items={list.map((credit) => credit.id)}
                 strategy={verticalListSortingStrategy}
@@ -86,6 +118,8 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                 {list.map((credit) => {
                   return (
                     <Credit
+                      selectCredit={() => dispatch(selectCredit(credit.id))}
+                      selectedCreditId={selectedCreditId}
                       key={credit.id}
                       initialList={initialList}
                       heading={credit.heading}

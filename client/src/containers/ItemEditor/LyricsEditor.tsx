@@ -162,6 +162,7 @@ const LyricsEditor = () => {
       arrangements: _arrangements,
       selectedArrangement: localSelectedArrangement,
     });
+
     dispatch(
       updateArrangements({
         arrangements: _item.arrangements,

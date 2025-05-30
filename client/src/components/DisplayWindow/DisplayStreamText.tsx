@@ -1,7 +1,8 @@
-import { Box } from "../../types";
+import { Box, TimerInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
+import TimerDisplay from "./TimerDisplay";
 
 type DisplayStreamTextProps = {
   prevBox?: Box;
@@ -10,6 +11,7 @@ type DisplayStreamTextProps = {
   isPrev?: boolean;
   time?: number;
   fontAdjustment: number;
+  timerInfo?: TimerInfo;
 };
 
 const DisplayStreamText = ({
@@ -19,6 +21,7 @@ const DisplayStreamText = ({
   isPrev,
   time,
   fontAdjustment,
+  timerInfo,
 }: DisplayStreamTextProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline>();
@@ -83,6 +86,13 @@ const DisplayStreamText = ({
     lineHeight: 1.25,
   };
 
+  const renderContent = () => {
+    if (words.includes("{{timer}}")) {
+      return <TimerDisplay timerInfo={timerInfo} words={words} />;
+    }
+
+    return words;
+  };
   return (
     <div
       key={box.id}
@@ -107,7 +117,7 @@ const DisplayStreamText = ({
         className={`display-box-text h-fit bottom-0 text-center`}
         style={textStyles}
       >
-        {words}
+        {renderContent()}
       </p>
     </div>
   );

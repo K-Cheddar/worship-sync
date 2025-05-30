@@ -47,18 +47,45 @@ export type Box = {
   slideIndex?: number;
 };
 
+export type SlideType =
+  | "Title"
+  | "Reprise"
+  | "Interlude"
+  | "Verse"
+  | "Chorus"
+  | "Refrain"
+  | "Bridge"
+  | "Outro"
+  | "Ending"
+  | "Intro"
+  | "Pre-Chorus"
+  | "Pre-Bridge"
+  | "Blank"
+  | "Section"
+  | "Timer"
+  | "Announcement"
+  | "Image";
+
+export type OverflowMode = "fit" | "separate";
+
 export type ItemSlide = {
-  type: string;
-  id?: string;
+  type: SlideType;
+  name: string;
+  id: string;
   boxes: Box[];
+  overflow?: OverflowMode;
 };
 
+export type LinkType = "image" | "slide" | "overlay";
+
 export type QuickLinkType = {
-  title: string;
-  url?: string;
+  label: string;
+  presentationInfo?: Presentation;
   id: string;
   action?: "clear";
   displayType?: DisplayType;
+  linkType?: LinkType;
+  canDelete: boolean;
 };
 
 export type DBItem = {
@@ -67,14 +94,10 @@ export type DBItem = {
   selectedArrangement: number;
   skipTitle?: boolean;
   background?: string;
-  type: string;
+  type: ItemType;
   slides: ItemSlide[];
-  bibleInfo?: {
-    book: string;
-    chapter: string;
-    version: string;
-    verses: verseType[];
-  };
+  bibleInfo?: BibleInfo;
+  timerInfo?: TimerInfo;
   arrangements: {
     name: string;
     formattedLyrics: FormattedLyrics[];
@@ -83,9 +106,39 @@ export type DBItem = {
   }[];
 };
 
+export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";
+export type TimerStatus = "running" | "paused" | "stopped";
+export type TimerType = "timer" | "countdown";
+export type TimerInfo = {
+  hostId: string;
+  time?: number;
+  id: string;
+  name: string;
+  color?: string;
+  duration?: number;
+  countdownTime?: string;
+  timerType: TimerType;
+  status: TimerStatus;
+  isActive: boolean;
+  remainingTime: number;
+  startedAt?: string;
+  endTime?: string;
+  showMinutesOnly?: boolean;
+};
+
+export type BibleFontMode = "fit" | "separate" | "multiple";
+
+export type BibleInfo = {
+  book: string;
+  chapter: string;
+  version: string;
+  verses: verseType[];
+  fontMode: BibleFontMode;
+};
+
 export type ItemState = {
   name: string;
-  type: string;
+  type: ItemType;
   _id: string;
   listId?: string;
   selectedArrangement: number;
@@ -97,19 +150,15 @@ export type ItemState = {
   selectedBox: number;
   slides: ItemSlide[];
   isEditMode?: boolean;
-  bibleInfo?: {
-    book: string;
-    chapter: string;
-    version: string;
-    verses: verseType[];
-  };
+  bibleInfo?: BibleInfo;
   isLoading?: boolean;
   hasPendingUpdate?: boolean;
+  timerInfo?: TimerInfo;
 };
 
 export type OptionalItemState = {
   name: string;
-  type: string;
+  type: ItemType;
   _id?: string;
   listId?: string;
   selectedArrangement?: number;
@@ -157,6 +206,7 @@ export type Presentation = {
   participantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
+  timerId?: string;
   qrCodeOverlayInfo?: OverlayInfo;
   imageOverlayInfo?: OverlayInfo;
 };
@@ -225,12 +275,21 @@ export type bibleType = {
 };
 
 export type PreferencesType = {
-  slidesPerRow: number;
-  slidesPerRowMobile: number;
-  formattedLyricsPerRow: number;
-  shouldShowItemEditor: boolean;
-  isMediaExpanded: boolean;
-  mediaItemsPerRow: number;
+  defaultSongBackground: string;
+  defaultTimerBackground: string;
+  defaultBibleBackground: string;
+  defaultFreeFormBackground: string;
+  defaultSongBackgroundBrightness: number;
+  defaultTimerBackgroundBrightness: number;
+  defaultBibleBackgroundBrightness: number;
+  defaultFreeFormBackgroundBrightness: number;
+  defaultSlidesPerRow: number;
+  defaultSlidesPerRowMobile: number;
+  defaultFormattedLyricsPerRow: number;
+  defaultMediaItemsPerRow: number;
+  defaultShouldShowItemEditor: boolean;
+  defaultIsMediaExpanded: boolean;
+  defaultBibleFontMode: BibleFontMode;
 };
 
 export type ItemList = {
@@ -270,6 +329,13 @@ export type DBItemListDetails = {
   name: string;
   items: ServiceItem[];
   overlays: OverlayInfo[];
+};
+
+export type DBPreferences = {
+  _id: string;
+  _rev: string;
+  preferences: PreferencesType;
+  quickLinks: QuickLinkType[];
 };
 
 export type DBCredits = {

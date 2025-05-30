@@ -7,6 +7,11 @@ const ProjectorFull = () => {
     (state) => state.presentation
   );
 
+  const timers = useSelector((state) => state.timers.timers);
+  const projectorTimer = timers.find(
+    (timer) => timer.id === projectorInfo.timerId
+  );
+
   useEffect(() => {
     const keepScreenOn = async () => {
       try {
@@ -26,6 +31,7 @@ const ProjectorFull = () => {
       displayType={projectorInfo.displayType}
       shouldAnimate
       width={100}
+      timerInfo={projectorTimer}
     />
   );
 };

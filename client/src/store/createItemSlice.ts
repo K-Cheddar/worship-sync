@@ -1,9 +1,10 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-
+import { ItemType } from "../types";
 type CreateItemState = {
   name: string;
-  type: string;
+  type: ItemType;
   text: string;
+  duration?: number;
 };
 
 const initialState: CreateItemState = {
@@ -20,6 +21,7 @@ export const createItemSlice = createSlice({
       state.name = action.payload.name;
       state.type = action.payload.type;
       state.text = action.payload.text;
+      state.duration = action.payload.duration;
     },
   },
 });

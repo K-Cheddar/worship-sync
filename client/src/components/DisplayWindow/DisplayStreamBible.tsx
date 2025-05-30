@@ -3,6 +3,7 @@ import { BibleDisplayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import "./DisplayWindow.scss";
+import VerseDisplay from "./VerseDisplay";
 
 type DisplayStreamBibleProps = {
   width: number;
@@ -110,6 +111,14 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
       { scope: prevBibleRef, dependencies: [prevBibleDisplayInfo] }
     );
 
+    const renderContent = (text: string) => {
+      if (text.includes("\u200B")) {
+        return <VerseDisplay words={text} className="text-yellow-400" />;
+      }
+
+      return text;
+    };
+
     return (
       <>
         <div
@@ -126,7 +135,9 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
             <p className="bible-info-title">{bibleDisplayInfo.title}</p>
           )}
           {bibleDisplayInfo?.text?.trim() && (
-            <p className="bible-info-text">{bibleDisplayInfo.text}</p>
+            <p className="bible-info-text">
+              {renderContent(bibleDisplayInfo.text)}
+            </p>
           )}
         </div>
 
@@ -146,7 +157,9 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
             </p>
           )}
           {prevBibleDisplayInfo?.text?.trim() && (
-            <p className="prev-bible-info-text">{prevBibleDisplayInfo.text}</p>
+            <p className="prev-bible-info-text">
+              {renderContent(prevBibleDisplayInfo.text)}
+            </p>
           )}
         </div>
       </>

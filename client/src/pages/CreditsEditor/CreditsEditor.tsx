@@ -195,7 +195,7 @@ const CreditsEditor = () => {
         "/Media Team Positions.xlsx"
       );
 
-      const updatedList = list.map((credit) => {
+      let updatedList = list.map((credit) => {
         // Find matching schedule entry
         const scheduleEntry = schedule.find(
           (entry) =>
@@ -222,6 +222,17 @@ const CreditsEditor = () => {
         }
 
         return credit;
+      });
+
+      // Replace & and , with new lines, then trim spaces
+      updatedList = updatedList.map((credit) => {
+        return {
+          ...credit,
+          text: credit.text
+            .split(/,|&/)
+            .map((item: string) => item.trim())
+            .join("\n"),
+        };
       });
 
       dispatch(updateList(updatedList));
@@ -252,6 +263,7 @@ const CreditsEditor = () => {
       />
       <Button
         className="text-sm"
+        data-testid="generate-credits-button"
         disabled={overlays.length === 0 || isGenerating}
         onClick={() => {
           generateFromOverlays();
@@ -320,7 +332,10 @@ const CreditsEditor = () => {
       </div>
 
       {dbProgress !== 100 && (
-        <div className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8">
+        <div
+          data-testid="loading-overlay"
+          className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8"
+        >
           <p>
             Setting up <span className="font-bold">Worship</span>
             <span className="text-orange-500 font-semibold">Sync</span> for{" "}
@@ -339,6 +354,7 @@ const CreditsEditor = () => {
         />
 
         <section
+          data-testid="credits-preview-container"
           className={cn(
             "flex-1 text-center",
             !isPreviewOpen && "max-md:hidden"

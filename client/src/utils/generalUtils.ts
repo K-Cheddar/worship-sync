@@ -20,6 +20,33 @@ type getMatchType = {
   allowPartial?: boolean;
 };
 
+// Levenshtein distance calculation for fuzzy matching
+export const levenshteinDistance = (str1: string, str2: string): number => {
+  const m = str1.length;
+  const n = str2.length;
+  const dp: number[][] = Array(m + 1)
+    .fill(0)
+    .map(() => Array(n + 1).fill(0));
+
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (str1[i - 1] === str2[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1];
+      } else {
+        dp[i][j] = Math.min(
+          dp[i - 1][j - 1] + 1, // substitution
+          dp[i - 1][j] + 1, // deletion
+          dp[i][j - 1] + 1 // insertion
+        );
+      }
+    }
+  }
+  return dp[m][n];
+};
+
 export const getMatchForString = ({
   string,
   searchValue,
@@ -34,6 +61,23 @@ export const getMatchForString = ({
     .toLowerCase();
 
   const stringWords = cleanString.split(" ");
+
+  // Early return for empty search
+  if (searchTerms.length === 0) return 0;
+
+  // Exact match bonus
+  if (cleanString === searchValue) {
+    return searchTerms.length * 2;
+  }
+
+  // Whole phrase match bonus
+  if (cleanString.includes(searchValue)) {
+    return searchTerms.length * 1.5;
+  }
+
+  // Track matched words to avoid double counting
+  const matchedWords = new Set<string>();
+
   for (let j = 0; j < searchTerms.length; j++) {
     const searchTerm = searchTerms[j];
     const lastSearchTerm = searchTerms[searchTerms.length - 1];
@@ -56,13 +100,16 @@ export const getMatchForString = ({
       break;
     } else if (stringWords.some((word) => word === searchTerm)) {
       // whole word match
-
       const foundIndex = stringWords.findIndex((word) => word === searchTerm);
       const indexRank = allowPartial ? 0.1 : 1 / (foundIndex + 1);
 
-      match += commonWords.some((word) => word === searchTerm)
-        ? 0.25 * indexRank // give partial credit for common words
-        : 0.5 * indexRank;
+      // Check if this word was already matched
+      if (!matchedWords.has(searchTerm)) {
+        matchedWords.add(searchTerm);
+        match += commonWords.some((word) => word === searchTerm)
+          ? 0.25 * indexRank // give partial credit for common words
+          : 0.5 * indexRank;
+      }
     } else if (allowPartial && cleanString.includes(lastSearchTerm)) {
       // only allow partial match on last word
       const foundIndex = stringWords.findIndex((word) =>
@@ -71,6 +118,11 @@ export const getMatchForString = ({
       const indexRank = 1 / (foundIndex + 1);
       match += 0.125 * indexRank;
     }
+  }
+
+  // Bonus for matching multiple search terms
+  if (matchedWords.size > 1) {
+    match *= 1.2; // 20% bonus for matching multiple terms
   }
 
   return match;
@@ -202,4 +254,18 @@ export const checkMediaType = (mediaUrl?: string) => {
   } else {
     return "unknown";
   }
+};
+
+export const getLetterFromIndex = (index: number) => {
+  if (index < 26) {
+    return String.fromCharCode(97 + index); // 97 is the ASCII code for 'a'
+  }
+
+  // For indices >= 26, we'll use a base-26 system
+  let result = "";
+  while (index >= 0) {
+    result = String.fromCharCode(97 + (index % 26)) + result;
+    index = Math.floor(index / 26) - 1;
+  }
+  return result;
 };

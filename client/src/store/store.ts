@@ -27,8 +27,8 @@ import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
 import { globalDb as db } from "../context/controllerInfo";
-import { globalFireDbInfo } from "../context/globalInfo";
-import { ref, set } from "firebase/database";
+import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
+import { ref, set, get } from "firebase/database";
 import {
   BibleDisplayInfo,
   DBAllItems,
@@ -37,11 +37,15 @@ import {
   DBItemListDetails,
   DBItemLists,
   DBMedia,
+  DBPreferences,
   OverlayInfo,
   Presentation,
+  TimerInfo,
 } from "../types";
 import { allDocsSlice } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
+import { timersSlice, updateTimerFromRemote } from "./timersSlice";
+import { mergeTimers } from "../utils/timerUtils";
 
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
@@ -54,6 +58,7 @@ const undoableReducers = undoable(
     itemList: itemListSlice.reducer,
     itemLists: itemListsSlice.reducer,
     media: mediaItemsSlice.reducer,
+    preferences: preferencesSlice.reducer,
   }),
   {
     filter: excludeAction([
@@ -77,6 +82,7 @@ const undoableReducers = undoable(
       creditsSlice.actions.updatePublishedCreditsListFromRemote.toString(),
       creditsSlice.actions.updateInitialList.toString(),
       creditsSlice.actions.setIsLoading.toString(),
+      creditsSlice.actions.selectCredit.toString(),
       itemListSlice.actions.initiateItemList.toString(),
       itemListSlice.actions.updateItemListFromRemote.toString(),
       itemListSlice.actions.setItemListIsLoading.toString(),
@@ -86,6 +92,23 @@ const undoableReducers = undoable(
       itemListsSlice.actions.setInitialItemList.toString(),
       mediaItemsSlice.actions.initiateMediaList.toString(),
       mediaItemsSlice.actions.updateMediaListFromRemote.toString(),
+      preferencesSlice.actions.initiatePreferences.toString(),
+      preferencesSlice.actions.setIsLoading.toString(),
+      preferencesSlice.actions.setSelectedPreference.toString(),
+      preferencesSlice.actions.setShouldShowItemEditor.toString(),
+      preferencesSlice.actions.setIsMediaExpanded.toString(),
+      preferencesSlice.actions.increaseSlides.toString(),
+      preferencesSlice.actions.decreaseSlides.toString(),
+      preferencesSlice.actions.setSlides.toString(),
+      preferencesSlice.actions.increaseSlidesMobile.toString(),
+      preferencesSlice.actions.decreaseSlidesMobile.toString(),
+      preferencesSlice.actions.setSlidesMobile.toString(),
+      preferencesSlice.actions.increaseFormattedLyrics.toString(),
+      preferencesSlice.actions.decreaseFormattedLyrics.toString(),
+      preferencesSlice.actions.setFormattedLyrics.toString(),
+      preferencesSlice.actions.increaseMediaItems.toString(),
+      preferencesSlice.actions.decreaseMediaItems.toString(),
+      preferencesSlice.actions.setMediaItems.toString(),
     ]),
     limit: 100,
   }
@@ -133,6 +156,7 @@ listenerMiddleware.startListening({
       arrangements: item.arrangements,
       selectedArrangement: item.selectedArrangement,
       bibleInfo: item.bibleInfo,
+      timerInfo: item.timerInfo,
     };
     db.put(db_item);
   },
@@ -150,6 +174,7 @@ listenerMiddleware.startListening({
       action.type !== "itemList/updateItemListFromRemote" &&
       action.type !== "itemList/setHasPendingUpdate" &&
       action.type !== "itemList/setHighlightedItems" &&
+      action.type !== "itemList/addToInitialItems" &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
       action.type !== "RESET"
@@ -245,6 +270,7 @@ listenerMiddleware.startListening({
       action.type !== "overlays/selectOverlay" &&
       action.type !== "overlays/setHasPendingUpdate" &&
       action.type !== "overlays/updateInitialList" &&
+      action.type !== "overlays/addToInitialList" &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
       action.type !== "RESET"
@@ -273,6 +299,61 @@ listenerMiddleware.startListening({
   },
 });
 
+// handle updating timers
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).timers !==
+        (previousState as RootState).timers &&
+      action.type !== "timers/updateTimerFromRemote" &&
+      action.type !== "timers/syncTimersFromRemote" &&
+      action.type !== "timers/setIntervalId" &&
+      action.type !== "timers/setShouldUpdateTimers" &&
+      action.type !== "timers/tickTimers" &&
+      action.type !== "RESET"
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    const state = listenerApi.getState() as RootState;
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    // update firebase with timers
+    const { timers, shouldUpdateTimers } = state.timers;
+
+    if (!shouldUpdateTimers) return;
+
+    const ownTimers = timers.filter((timer) => timer.hostId === globalHostId);
+    if (ownTimers.length > 0) {
+      localStorage.setItem("timerInfo", JSON.stringify(ownTimers));
+
+      if (globalFireDbInfo.db && globalFireDbInfo.user) {
+        // Get current timers from Firebase
+        const timersRef = ref(
+          globalFireDbInfo.db,
+          "users/" + globalFireDbInfo.user + "/v2/timers"
+        );
+
+        // Get current timers and merge with own timers
+        const snapshot = await get(timersRef);
+        const currentTimers = snapshot.val() || [];
+
+        // First add other timers to the map
+        // Merge timers, prioritizing own timers over remote ones
+        const mergedTimers = mergeTimers(
+          currentTimers,
+          ownTimers,
+          globalHostId
+        );
+
+        set(timersRef, cleanObject(mergedTimers));
+        listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
+      }
+    }
+  },
+});
+
 // handle updating credits
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
@@ -287,6 +368,7 @@ listenerMiddleware.startListening({
       action.type !== "credits/setIsLoading" &&
       action.type !== "credits/initiateTransitionScene" &&
       action.type !== "credits/initiateCreditsScene" &&
+      action.type !== "credits/selectCredit" &&
       action.type !== "RESET"
     );
   },
@@ -363,6 +445,61 @@ listenerMiddleware.startListening({
   },
 });
 
+// handle updating preferences
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).undoable.present.preferences !==
+        (previousState as RootState).undoable.present.preferences &&
+      action.type !== "preferences/initiatePreferences" &&
+      action.type !== "preferences/initiateQuickLinks" &&
+      action.type !== "preferences/increaseSlides" &&
+      action.type !== "preferences/increaseSlidesMobile" &&
+      action.type !== "preferences/decreaseSlides" &&
+      action.type !== "preferences/decreaseSlidesMobile" &&
+      action.type !== "preferences/setSlides" &&
+      action.type !== "preferences/setSlidesMobile" &&
+      action.type !== "preferences/increaseFormattedLyrics" &&
+      action.type !== "preferences/decreaseFormattedLyrics" &&
+      action.type !== "preferences/setFormattedLyrics" &&
+      action.type !== "preferences/setMediaItems" &&
+      action.type !== "preferences/setShouldShowItemEditor" &&
+      action.type !== "preferences/setIsMediaExpanded" &&
+      action.type !== "preferences/setIsLoading" &&
+      action.type !== "preferences/setSelectedPreference" &&
+      action.type !== "preferences/setSelectedQuickLink" &&
+      action.type !== "preferences/setTab" &&
+      action.type !== "RESET"
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(1500);
+
+    // update ItemList
+    const { preferences, quickLinks } = (listenerApi.getState() as RootState)
+      .undoable.present.preferences;
+
+    if (!db) return;
+    try {
+      const db_preferences: DBPreferences = await db.get("preferences");
+      db_preferences.preferences = preferences;
+      db_preferences.quickLinks = quickLinks;
+      db.put(db_preferences);
+    } catch (error) {
+      // if the preferences are not found, create a new one
+      console.error(error);
+      const db_preferences = {
+        preferences: preferences,
+        quickLinks: quickLinks,
+        _id: "preferences",
+      };
+      db.put(db_preferences);
+    }
+  },
+});
+
 // handle updating presentation
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
@@ -400,6 +537,7 @@ listenerMiddleware.startListening({
         displayType: streamInfo.displayType,
         time: streamInfo.time,
         slide: streamInfo.slide,
+        timerId: streamInfo.timerId,
       },
       stream_bibleInfo: streamInfo.bibleDisplayInfo,
       stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
@@ -650,6 +788,32 @@ listenerMiddleware.startListening({
   },
 });
 
+// handle updating from remote timer info
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    const { timers } = (previousState as RootState).timers;
+    const info = action.payload as TimerInfo;
+    const timer = timers.find((timer) => timer.id === info?.id);
+    const isHost = globalHostId === info?.hostId;
+    return (
+      action.type === "debouncedUpdateTimerInfo" &&
+      !isHost &&
+      !!(
+        (info.time && timer?.time && info.time > timer.time) ||
+        (info.time && !timer?.time)
+      )
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    console.log("Updating timer from remote", action.payload);
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(updateTimerFromRemote(action.payload as TimerInfo));
+  },
+});
+
 // listenerMiddleware.startListening({
 //   predicate: (action, currentState, previousState) => {
 //     return currentState !== previousState;
@@ -665,8 +829,8 @@ const combinedReducers = combineReducers({
   bible: bibleSlice.reducer,
   allItems: allItemsSlice.reducer,
   createItem: createItemSlice.reducer,
-  preferences: preferencesSlice.reducer,
   allDocs: allDocsSlice.reducer,
+  timers: timersSlice.reducer,
 });
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {
@@ -679,7 +843,9 @@ const rootReducer: Reducer = (state: RootState, action: Action) => {
 const store = configureStore({
   reducer: rootReducer,
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().prepend(listenerMiddleware.middleware),
+    getDefaultMiddleware({
+      serializableCheck: false,
+    }).prepend(listenerMiddleware.middleware),
 });
 
 export default store;

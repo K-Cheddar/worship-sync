@@ -1,9 +1,10 @@
-import { Box, DisplayType } from "../../types";
+import { Box, DisplayType, TimerInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
-import { Rnd } from "react-rnd";
 import cn from "classnames";
+import TimerDisplay from "./TimerDisplay";
+import VerseDisplay from "./VerseDisplay";
 
 type DisplayBoxProps = {
   prevBox?: Box;
@@ -17,6 +18,7 @@ type DisplayBoxProps = {
   isPrev?: boolean;
   time?: number;
   shouldPlayVideo?: boolean;
+  timerInfo?: TimerInfo;
 };
 
 const DisplayBox = ({
@@ -31,6 +33,7 @@ const DisplayBox = ({
   shouldPlayVideo,
   isPrev,
   time,
+  timerInfo,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline>();
@@ -134,6 +137,19 @@ const DisplayBox = ({
     textAlign: box.align || "center",
     lineHeight: 1.25,
   };
+
+  const renderContent = () => {
+    if (words.includes("{{timer}}")) {
+      return <TimerDisplay timerInfo={timerInfo} words={words} />;
+    }
+
+    if (words.includes("\u200B")) {
+      return <VerseDisplay words={words} />;
+    }
+
+    return words;
+  };
+
   return (
     <div
       key={box.id}
@@ -164,8 +180,8 @@ const DisplayBox = ({
           alt={box.label}
         />
       )}
-      <p className={`display-box-text h-full`} style={textStyles}>
-        {words}
+      <p className="display-box-text h-full" style={textStyles}>
+        {renderContent()}
       </p>
     </div>
   );

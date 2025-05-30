@@ -28,10 +28,14 @@ import generateRandomId from "../../utils/generateRandomId";
 import {
   decreaseMediaItems,
   increaseMediaItems,
+  setDefaultPreferences,
   setIsMediaExpanded,
   setMediaItems,
+  setSelectedQuickLinkImage,
 } from "../../store/preferencesSlice";
 import { useLocation } from "react-router-dom";
+import cn from "classnames";
+import { updateOverlay } from "../../store/overlaysSlice";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -50,9 +54,16 @@ const Media = () => {
 
   const { list } = useSelector((state) => state.undoable.present.media);
   const { isLoading } = useSelector((state) => state.undoable.present.item);
-  const { isMediaExpanded, mediaItemsPerRow } = useSelector(
-    (state) => state.preferences
+  const { type: selectedOverlayType, id: selectedOverlayId } = useSelector(
+    (state) => state.undoable.present.overlays
   );
+  const {
+    isMediaExpanded,
+    mediaItemsPerRow,
+    selectedPreference,
+    tab,
+    selectedQuickLink,
+  } = useSelector((state) => state.undoable.present.preferences);
 
   const [selectedMedia, setSelectedMedia] = useState<{
     id: string;
@@ -148,12 +159,11 @@ const Media = () => {
       >
         <Button
           variant="tertiary"
-          disabled={
-            selectedMedia.id === "" ||
-            isLoading ||
-            !location.pathname.includes("item")
-          }
-          className="mr-2"
+          disabled={selectedMedia.id === "" || isLoading}
+          className={cn(
+            "mr-2",
+            !location.pathname.includes("item") && "hidden"
+          )}
           svg={BgAll}
           onClick={() => {
             if (selectedMedia.background && db) {
@@ -169,11 +179,8 @@ const Media = () => {
         </Button>
         <Button
           variant="tertiary"
-          disabled={
-            selectedMedia.id === "" ||
-            isLoading ||
-            !location.pathname.includes("item")
-          }
+          disabled={selectedMedia.id === "" || isLoading}
+          className={cn(!location.pathname.includes("item") && "hidden")}
           svg={BGOne}
           onClick={() => {
             if (selectedMedia.background && db) {
@@ -184,6 +191,64 @@ const Media = () => {
           }}
         >
           {isMobile ? "" : "Set Slide"}
+        </Button>
+        <Button
+          variant="tertiary"
+          disabled={selectedMedia.id === ""}
+          className={cn(
+            !(
+              location.pathname.includes("overlays") &&
+              selectedOverlayType === "image"
+            ) && "hidden"
+          )}
+          svg={BGOne}
+          onClick={() => {
+            if (selectedMedia.background && db) {
+              dispatch(
+                updateOverlay({
+                  imageUrl: selectedMedia.background,
+                  id: selectedOverlayId,
+                })
+              );
+            }
+          }}
+        >
+          {isMobile ? "" : "Set Image Overlay"}
+        </Button>
+        <Button
+          variant="tertiary"
+          disabled={selectedMedia.id === "" || !selectedPreference}
+          className={cn(
+            (!location.pathname.includes("preferences") ||
+              tab !== "defaults") &&
+              "hidden"
+          )}
+          svg={BGOne}
+          onClick={() => {
+            dispatch(
+              setDefaultPreferences({
+                [selectedPreference]: selectedMedia.background,
+              })
+            );
+          }}
+        >
+          {isMobile ? "" : "Set Background"}
+        </Button>
+        <Button
+          variant="tertiary"
+          disabled={!selectedQuickLink || selectedMedia.id === ""}
+          className={cn(
+            (!location.pathname.includes("preferences") ||
+              tab !== "quickLinks" ||
+              selectedQuickLink?.linkType !== "image") &&
+              "hidden"
+          )}
+          svg={BGOne}
+          onClick={() => {
+            dispatch(setSelectedQuickLinkImage(selectedMedia.background));
+          }}
+        >
+          {isMobile ? "" : "Set Quick Link Background"}
         </Button>
         <Button
           className="lg:ml-2 max-lg:mx-auto"

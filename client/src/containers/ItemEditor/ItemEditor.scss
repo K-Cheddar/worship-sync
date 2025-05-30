@@ -96,3 +96,13 @@
 
   max-height: calc(100% - clamp(2.5rem, 2.5vw, 3.5rem));
 }
+
+.slide-editor-empty {
+  @apply flex items-center justify-center text-gray-300 w-full;
+
+  height: calc(42vw / (16 / 9));
+
+  @media (max-width: 1023px) {
+    height: calc(84vw / (16 / 9));
+  }
+}

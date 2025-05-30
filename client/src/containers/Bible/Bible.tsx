@@ -71,6 +71,14 @@ const Bible = () => {
     isStreamTransmitting,
   } = useSelector((state) => state.presentation);
 
+  const {
+    preferences: {
+      defaultBibleBackground,
+      defaultBibleBackgroundBrightness,
+      defaultBibleFontMode,
+    },
+  } = useSelector((state) => state.undoable.present.preferences);
+
   const { list } = useSelector((state) => state.allItems);
 
   const [showVersesDisplaySection, setShowVersesDisplaySection] =
@@ -191,6 +199,7 @@ const Bible = () => {
 
   const submitVerses = async () => {
     const item = await createNewBible({
+      fontMode: defaultBibleFontMode,
       name: createItemName || bibleItemName,
       book: books[book].name,
       chapter: chapters[chapter].name,
@@ -201,6 +210,8 @@ const Bible = () => {
       db,
       list,
       selectedList,
+      background: defaultBibleBackground,
+      brightness: defaultBibleBackgroundBrightness,
     });
 
     const itemForList = {
@@ -228,6 +239,7 @@ const Bible = () => {
     const item = formatBible({
       item: _item,
       mode: "fit",
+      isNew: true,
       book: books[book].name,
       chapter: chapters[chapter].name,
       version,

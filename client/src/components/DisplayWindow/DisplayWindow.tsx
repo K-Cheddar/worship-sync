@@ -1,5 +1,11 @@
 import { forwardRef, useRef } from "react";
-import { BibleDisplayInfo, Box, DisplayType, OverlayInfo } from "../../types";
+import {
+  BibleDisplayInfo,
+  Box,
+  DisplayType,
+  OverlayInfo,
+  TimerInfo,
+} from "../../types";
 import "./DisplayWindow.scss";
 import DisplayBox from "./DisplayBox";
 import DisplayStreamBible from "./DisplayStreamBible";
@@ -34,11 +40,14 @@ type DisplayWindowProps = {
   imageOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
   prevBibleDisplayInfo?: BibleDisplayInfo;
+  timerInfo?: TimerInfo;
+  prevTimerInfo?: TimerInfo;
   shouldAnimate?: boolean;
   shouldPlayVideo?: boolean;
   time?: number;
   prevTime?: number;
   selectBox?: (index: number) => void;
+  selectedBox?: number;
 };
 
 const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
@@ -61,7 +70,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       prevBibleDisplayInfo,
       qrCodeOverlayInfo,
       imageOverlayInfo,
+      timerInfo,
+      prevTimerInfo,
       selectBox,
+      selectedBox,
     }: DisplayWindowProps,
     ref
   ) => {
@@ -104,6 +116,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 onChange={onChange}
                 index={index}
                 selectBox={selectBox}
+                isSelected={selectedBox === index}
               />
             );
           if (isStream)
@@ -114,6 +127,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 fontAdjustment={fontAdjustment}
                 width={width}
                 time={time}
+                timerInfo={timerInfo}
               />
             );
 
@@ -131,6 +145,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 shouldPlayVideo={shouldPlayVideo}
                 prevBox={prevBoxes[index]}
                 time={time}
+                timerInfo={timerInfo}
               />
             );
           return null;
@@ -150,6 +165,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 shouldPlayVideo={shouldPlayVideo}
                 prevBox={prevBoxes[index]}
                 time={time}
+                timerInfo={timerInfo}
                 isPrev
               />
             );
@@ -161,6 +177,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 box={box}
                 width={width}
                 time={time}
+                timerInfo={timerInfo}
                 isPrev
               />
             );

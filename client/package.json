@@ -15,7 +15,6 @@
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
     "@types/dom-screen-wake-lock": "^1.0.3",
-    "@types/jest": "^27.5.2",
     "@types/node": "^17.0.45",
     "@types/node-sass": "^4.11.7",
     "@types/react": "^18.3.11",
@@ -26,7 +25,9 @@
     "node-sass": "^7.0.3",
     "re-resizable": "^6.10.0",
     "react": "^18.3.1",
+    "react-colorful": "^5.6.1",
     "react-dom": "^18.3.1",
+    "react-qr-code": "^2.0.15",
     "react-redux": "^9.1.2",
     "react-rnd": "^10.4.13",
     "react-router-dom": "^6.27.0",
@@ -84,6 +85,9 @@
   "type": "module",
   "homepage": ".",
   "devDependencies": {
-    "@babel/plugin-proposal-private-property-in-object": "^7.21.11"
+    "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
+    "@types/jest": "^29.5.14",
+    "identity-obj-proxy": "^3.0.0",
+    "ts-jest": "^29.3.2"
   }
 }

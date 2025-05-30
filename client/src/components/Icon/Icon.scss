@@ -1,4 +1,5 @@
 .icon {
+  @apply flex items-center justify-center;
   svg {
     fill: var(--icon-color, currentColor);
   }

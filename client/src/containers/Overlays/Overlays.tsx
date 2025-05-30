@@ -33,6 +33,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import Select from "../../components/Select/Select";
 import generateRandomId from "../../utils/generateRandomId";
 import TextArea from "../../components/TextArea/TextArea";
+import { keepElementInView } from "../../utils/generalUtils";
 
 const colorOptions = [
   { label: "Red", value: "#dc2626" },
@@ -145,6 +146,21 @@ const Overlays = () => {
   }, []);
 
   useEffect(() => {
+    const selectedOverlayId = list.find((overlay) => overlay.id === id)?.id;
+    const overlayElement = document.getElementById(
+      `overlay-${selectedOverlayId}`
+    );
+    const parentElement = document.getElementById("overlays-list");
+
+    if (selectedOverlayId && overlayElement && parentElement) {
+      keepElementInView({
+        child: overlayElement,
+        parent: parentElement,
+      });
+    }
+  }, [id, list]);
+
+  useEffect(() => {
     return () => {
       dispatch(updateInitialList());
     };
@@ -178,7 +194,7 @@ const Overlays = () => {
         ) : (
           <div className="flex gap-2 lg:h-full max-lg:flex-col-reverse">
             <section className="flex-1 flex flex-col gap-2">
-              <ul className="overlays-list" ref={setNodeRef}>
+              <ul id="overlays-list" className="overlays-list" ref={setNodeRef}>
                 <SortableContext
                   items={list.map((overlay) => overlay.id)}
                   strategy={verticalListSortingStrategy}
