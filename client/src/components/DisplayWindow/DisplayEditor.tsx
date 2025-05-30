@@ -25,6 +25,7 @@ type DisplayEditorProps = {
   onChange?: Function;
   index: number;
   selectBox?: Function;
+  isSelected?: boolean;
 };
 
 const DisplayEditor = ({
@@ -34,6 +35,7 @@ const DisplayEditor = ({
   onChange,
   selectBox,
   index,
+  isSelected,
 }: DisplayEditorProps) => {
   const [boxWidth, setBoxWidth] = useState(`${box.width}%`);
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
@@ -67,6 +69,12 @@ const DisplayEditor = ({
       );
     }
   }, [box, textAreaRef]);
+
+  useEffect(() => {
+    if (isSelected && textAreaRef.current) {
+      textAreaRef.current.focus();
+    }
+  }, [isSelected]);
 
   const updateBoxSize = useCallback(() => {
     const parent = document.getElementById("display-editor");
@@ -201,11 +209,11 @@ const DisplayEditor = ({
   return (
     <Rnd
       size={{ width: boxWidth, height: boxHeight }}
-      className={`${
-        box.isLocked
-          ? ""
-          : "outline outline-1 outline-gray-300 -outline-offset-2"
-      }`}
+      className={cn(
+        (!box.isLocked || isSelected) &&
+          "outline outline-1 outline-gray-300 -outline-offset-2",
+        isSelected && !box.background && "z-10"
+      )}
       position={{ x, y }}
       disableDragging={box.isLocked}
       onDragStop={handleDragStop}
@@ -247,13 +255,10 @@ const DisplayEditor = ({
       {typeof onChange === "function" && index !== 0 && (
         <>
           <textarea
-            className={`display-editor ${
+            className={cn(
+              "display-editor",
               showOverflow ? "overflow-y-visible" : "overflow-y-clip"
-            } ${
-              box.isLocked
-                ? "focus-visible:outline-1 focus-visible:outline focus-visible:outline-gray-300"
-                : ""
-            }`}
+            )}
             id={`display-box-text-${index}`}
             ref={textAreaRef}
             value={words}
@@ -266,13 +271,17 @@ const DisplayEditor = ({
               height: textBoxHeight,
               ...textStyles,
             }}
-            onFocus={() => setIsTextAreaFocused(true)}
-            onBlur={() =>
-              (textAreaFocusTimeout = setTimeout(
-                () => setIsTextAreaFocused(false),
-                500
-              ))
-            }
+            onFocus={() => {
+              if (textAreaFocusTimeout) {
+                clearTimeout(textAreaFocusTimeout);
+              }
+              setIsTextAreaFocused(true);
+            }}
+            onBlur={() => {
+              textAreaFocusTimeout = setTimeout(() => {
+                setIsTextAreaFocused(false);
+              }, 500);
+            }}
             onChange={(e) => {
               e.preventDefault();
               onChange({

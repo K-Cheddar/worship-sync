@@ -47,6 +47,7 @@ type DisplayWindowProps = {
   time?: number;
   prevTime?: number;
   selectBox?: (index: number) => void;
+  selectedBox?: number;
 };
 
 const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
@@ -72,6 +73,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       timerInfo,
       prevTimerInfo,
       selectBox,
+      selectedBox,
     }: DisplayWindowProps,
     ref
   ) => {
@@ -114,6 +116,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 onChange={onChange}
                 index={index}
                 selectBox={selectBox}
+                isSelected={selectedBox === index}
               />
             );
           if (isStream)

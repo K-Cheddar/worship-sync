@@ -1,5 +1,5 @@
-import { ItemSlide, ItemState } from "../types";
-import { formatBible, formatSong } from "./overflow";
+import { BibleFontMode, ItemSlide, ItemState } from "../types";
+import { formatBible, formatFree, formatSong } from "./overflow";
 
 type UpdateSlideBgPropertyType = {
   property: string;
@@ -58,40 +58,33 @@ export const updateFontSize = ({
 
   if (!slide) return item;
 
-  if (selectedSlide !== 0 && item.type !== "free") {
-    slides = slides.map((slide, index) => {
-      if (index === 0) return slide;
-      return {
-        ...slide,
-        boxes: slide.boxes.map((box, boxIndex) => {
-          if (box.excludeFromOverflow || boxIndex !== selectedBox) return box;
-          return {
-            ...box,
-            fontSize: fontSize,
-          };
-        }),
-      };
-    });
-  } else {
-    slides = slides.map((slide, slideIndex) => {
-      if (slideIndex !== selectedSlide) return slide;
-      return {
-        ...slide,
-        boxes: slide.boxes.map((box, boxIndex) => {
-          if (boxIndex !== selectedBox) return box;
-          return {
-            ...box,
-            fontSize: fontSize,
-          };
-        }),
-      };
-    });
-  }
+  slides = slides.map((slide, slideIndex) => {
+    if (slideIndex !== selectedSlide) return slide;
+    return {
+      ...slide,
+      boxes: slide.boxes.map((box, boxIndex) => {
+        if (boxIndex !== selectedBox) return box;
+        return {
+          ...box,
+          fontSize: fontSize,
+        };
+      }),
+    };
+  });
 
   _item = { ...item, slides: [...slides] };
 
   if (item.type === "bible" && selectedSlide !== 0)
-    _item = formatBible({ item: _item, mode: "add" });
+    _item = formatBible({
+      item: _item,
+      mode: item.bibleInfo?.fontMode || "separate",
+    });
+
+  if (item.type === "free") {
+    _item = formatFree({
+      ..._item,
+    });
+  }
 
   if (item.type === "song") {
     _item = {
@@ -111,6 +104,51 @@ export const updateFontSize = ({
     selectedSlide: selectedSlide,
     selectedBox,
   };
+};
+
+type UpdateFontColorType = {
+  fontColor: string;
+  item: ItemState;
+};
+
+export const updateFontColor = ({
+  fontColor,
+  item,
+}: UpdateFontColorType): ItemState => {
+  let { selectedSlide, selectedBox } = item;
+  let _item = { ...item };
+
+  let { slides, slide } = getSlidesFromItem(item);
+
+  if (!slide) return item;
+
+  slides = slides.map((slide, slideIndex) => {
+    if (slideIndex !== selectedSlide) return slide;
+    return {
+      ...slide,
+      boxes: slide.boxes.map((box, boxIndex) => {
+        if (boxIndex !== selectedBox) return box;
+        return {
+          ...box,
+          fontColor: fontColor,
+        };
+      }),
+    };
+  });
+
+  if (item.type === "song") {
+    _item = {
+      ...item,
+      arrangements: _item.arrangements.map((arr, index) => {
+        if (index !== item.selectedArrangement) return arr;
+        return { ...arr, slides: [...slides] };
+      }),
+    };
+  }
+
+  _item = { ..._item, slides: [...slides] };
+
+  return _item;
 };
 
 type UpdateBrightnessType = {
@@ -169,4 +207,34 @@ export const updateKeepAspectRatio = ({
     ...item,
     slides: [...slides],
   };
+};
+
+type UpdateItemTimerColorType = {
+  timerColor: string;
+  item: ItemState;
+};
+
+export const updateItemTimerColor = ({
+  timerColor,
+  item,
+}: UpdateItemTimerColorType): ItemState => {
+  if (!item.timerInfo) return item;
+
+  return { ...item, timerInfo: { ...item.timerInfo, color: timerColor } };
+};
+
+type UpdateBibleFontModeType = {
+  fontMode: BibleFontMode;
+  item: ItemState;
+};
+
+export const updateBibleFontMode = ({
+  fontMode,
+  item,
+}: UpdateBibleFontModeType): ItemState => {
+  const updatedItem = formatBible({
+    item,
+    mode: fontMode,
+  });
+  return updatedItem;
 };

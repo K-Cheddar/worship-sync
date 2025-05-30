@@ -73,131 +73,114 @@ const FilteredItems = ({
 
   const { db } = useContext(ControllerInfoContext) || {};
 
+  // Memoize the search function
+  const searchItems = useMemo(() => {
+    return async (searchValue: string) => {
+      const cleanSearchValue = searchValue
+        .replace(punctuationRegex, "")
+        .toLowerCase()
+        .trim();
+
+      if (cleanSearchValue.trim() === "") {
+        return listOfType;
+      }
+
+      const searchPromises = listOfType.map(async (item) => {
+        const name = item.name.toLowerCase();
+        let match = getMatchForString({
+          string: name,
+          searchValue: cleanSearchValue,
+          allowPartial: true,
+        });
+        let matchedWords = "";
+        let wordMatches = [];
+        let hasLyricMatch = false;
+
+        if (type === "song") {
+          const arrangements =
+            allDocs.find((song) => song.name.toLowerCase() === name)
+              ?.arrangements || [];
+
+          for (const arrangement of arrangements) {
+            for (const lyric of arrangement.formattedLyrics) {
+              const wordMatch = getMatchForString({
+                string: lyric.words,
+                searchValue: cleanSearchValue,
+              });
+              if (wordMatch > 0) {
+                hasLyricMatch = true;
+                wordMatches.push({
+                  match: wordMatch,
+                  matchedWords: lyric.words,
+                });
+              }
+            }
+          }
+        } else if (type === "free") {
+          const slides =
+            allDocs.find((free) => free.name.toLowerCase() === name)?.slides ||
+            [];
+
+          for (const slide of slides) {
+            for (const box of slide.boxes) {
+              const wordMatch = getMatchForString({
+                string: box.words || "",
+                searchValue: cleanSearchValue,
+              });
+              if (wordMatch > 0) {
+                hasLyricMatch = true;
+                wordMatches.push({
+                  match: wordMatch,
+                  matchedWords: box.words || "",
+                });
+              }
+            }
+          }
+        }
+
+        const { updatedMatchedWords, updatedMatch } = updateWordMatches({
+          matchedWords,
+          match,
+          wordMatches,
+        });
+
+        return {
+          ...item,
+          matchRank: match + updatedMatch,
+          matchedWords: updatedMatchedWords,
+          showWords: hasLyricMatch && match === 0, // Auto-expand if there's a lyric match but no title match
+        };
+      });
+
+      const results = await Promise.all(searchPromises);
+      return results
+        .filter((item) => item.matchRank > 0)
+        .sort(
+          (a, b) => b.matchRank - a.matchRank || a.name.localeCompare(b.name)
+        );
+    };
+  }, [listOfType, allDocs, type]);
+
+  // Debounced search effect
   useEffect(() => {
     const timeout = setTimeout(() => {
       setDebouncedSearchValue(searchValue);
     }, 250);
     setIsSearchLoading(searchValue !== debouncedSearchValue);
-    return () => {
-      clearTimeout(timeout);
-    };
+    return () => clearTimeout(timeout);
   }, [searchValue, debouncedSearchValue]);
 
+  // Search effect
   useEffect(() => {
-    const getFilteredItems = async () => {
-      return new Promise<void>((resolve) => {
-        const cleanSearchValue = debouncedSearchValue
-          .replace(punctuationRegex, "")
-          .toLowerCase()
-          .trim();
-        if (cleanSearchValue.trim() === "") {
-          setIsSearchLoading(false);
-          setFilteredList(listOfType); // no search term
-          resolve();
-          return;
-        }
-
-        const rankedList = [];
-        for (let i = 0; i < listOfType.length; i++) {
-          const name = listOfType[i].name.toLowerCase();
-
-          let match = getMatchForString({
-            string: name,
-            searchValue: cleanSearchValue,
-            allowPartial: true,
-          });
-          let matchedWords = "";
-          let wordMatches = [];
-
-          // add match points for lyrics
-
-          if (type === "song") {
-            // search lyrics in songs
-            const arrangements =
-              allDocs.find((song) => song.name.toLowerCase() === name)
-                ?.arrangements || [];
-
-            for (let j = 0; j < arrangements.length; j++) {
-              const { formattedLyrics } = arrangements[j];
-
-              for (let k = 0; k < formattedLyrics.length; k++) {
-                const words = formattedLyrics[k].words;
-                const wordMatch = getMatchForString({
-                  string: words,
-                  searchValue: cleanSearchValue,
-                });
-                if (wordMatch > 0) {
-                  wordMatches.push({
-                    match: wordMatch,
-                    matchedWords: words,
-                  });
-                }
-              }
-            }
-
-            const { updatedMatchedWords, updatedMatch } = updateWordMatches({
-              matchedWords,
-              match,
-              wordMatches,
-            });
-
-            matchedWords = updatedMatchedWords;
-            match += updatedMatch;
-          } else if (type === "free") {
-            // search slides in free form
-            const slides =
-              allDocs.find((free) => free.name.toLowerCase() === name)
-                ?.slides || [];
-
-            for (let j = 0; j < slides.length; j++) {
-              const { boxes } = slides[j];
-
-              for (let k = 0; k < boxes.length; k++) {
-                const words = boxes[k].words || "";
-                const wordMatch = getMatchForString({
-                  string: words,
-                  searchValue: cleanSearchValue,
-                });
-                if (wordMatch > 0) {
-                  wordMatches.push({
-                    match: wordMatch,
-                    matchedWords: words,
-                  });
-                }
-              }
-            }
-            const { updatedMatchedWords, updatedMatch } = updateWordMatches({
-              matchedWords,
-              match,
-              wordMatches,
-            });
-
-            matchedWords = updatedMatchedWords;
-            match += updatedMatch;
-          }
-
-          rankedList.push({
-            ...listOfType[i],
-            matchRank: match,
-            matchedWords,
-          });
-        }
-
-        const matchedList = rankedList
-          .filter((item) => item.matchRank > 0) // filter out non-matched items
-          .sort(
-            // sort by match percent, then name
-            (a, b) => b.matchRank - a.matchRank || a.name.localeCompare(b.name)
-          );
-
-        setIsSearchLoading(false);
-        setFilteredList(matchedList);
-        setNumShownItems(30); // reset shown items
-        resolve();
-      });
+    const performSearch = async () => {
+      const results = await searchItems(debouncedSearchValue);
+      setFilteredList(results);
+      setNumShownItems(30);
+      setIsSearchLoading(false);
     };
-    getFilteredItems();
-  }, [debouncedSearchValue, listOfType, allDocs, type]);
+
+    performSearch();
+  }, [debouncedSearchValue, searchItems]);
 
   useEffect(() => {
     const observer = new IntersectionObserver((entries) => {

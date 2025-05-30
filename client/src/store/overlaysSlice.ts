@@ -82,7 +82,7 @@ export const overlaysSlice = createSlice({
       }
       state.list = action.payload.map((overlay) => ({
         ...overlay,
-        id: generateRandomId(),
+        id: overlay.id || generateRandomId(),
       }));
       state.initialList = state.list.map((overlay) => overlay.id);
     },
@@ -149,6 +149,9 @@ export const overlaysSlice = createSlice({
     updateInitialList: (state) => {
       state.initialList = state.list.map((overlay) => overlay.id);
     },
+    addToInitialList: (state, action: PayloadAction<string[]>) => {
+      state.initialList = [...state.initialList, ...action.payload];
+    },
   },
 });
 
@@ -162,6 +165,7 @@ export const {
   updateOverlayListFromRemote,
   setHasPendingUpdate,
   updateInitialList,
+  addToInitialList,
 } = overlaysSlice.actions;
 
 export default overlaysSlice.reducer;

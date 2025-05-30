@@ -1,4 +1,5 @@
 import Button from "../../components/Button/Button";
+import cn from "classnames";
 import { ReactComponent as LockSVG } from "../../assets/icons/lock.svg";
 import { ReactComponent as UnlockSVG } from "../../assets/icons/unlock.svg";
 import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
@@ -8,6 +9,8 @@ import { ReactComponent as EditTextSVG } from "../../assets/icons/edit-text.svg"
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import { ReactComponent as BoxSVG } from "../../assets/icons/box.svg";
+import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
+import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 
 import Input from "../../components/Input/Input";
 import "./ItemEditor.scss";
@@ -24,17 +27,22 @@ import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   setSelectedBox,
+  setSelectedSlide,
   toggleEditMode,
   updateArrangements,
+  updateSlides,
 } from "../../store/itemSlice";
 import { setName, updateBoxes } from "../../store/itemSlice";
-import { formatSong } from "../../utils/overflow";
+import { formatFree, formatSong } from "../../utils/overflow";
 import { Box } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
 import Icon from "../../components/Icon/Icon";
+import { createBox } from "../../utils/slideCreation";
 
 const SlideEditor = () => {
+  const dispatch = useDispatch();
+
   const item = useSelector((state) => state.undoable.present.item);
   const {
     name,
@@ -64,6 +72,20 @@ const SlideEditor = () => {
     isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
   );
 
+  const [emptySlideHeight, setEmptySlideHeight] = useState(
+    isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
+  );
+
+  const [cursorPositions, setCursorPositions] = useState<
+    Record<number, number>
+  >({});
+
+  useEffect(() => {
+    if (!slides?.[selectedSlide] && selectedSlide !== 0) {
+      dispatch(setSelectedSlide(Math.max(slides.length - 2, 0)));
+    }
+  }, [selectedSlide, slides, dispatch]);
+
   const editorRef = useCallback((node: HTMLDivElement) => {
     if (node) {
       const resizeObserver = new ResizeObserver((entries) => {
@@ -74,11 +96,32 @@ const SlideEditor = () => {
     }
   }, []);
 
-  const dispatch = useDispatch();
+  const emptySlideRef = useCallback((node: HTMLDivElement) => {
+    if (node) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        setEmptySlideHeight(`${entries[0].borderBoxSize[0].blockSize}px`);
+      });
+
+      resizeObserver.observe(node);
+    }
+  }, []);
 
   useEffect(() => {
     setLocalName(name);
   }, [name]);
+
+  useEffect(() => {
+    Object.entries(cursorPositions).forEach(([index, position]) => {
+      const textBoxElement = document.getElementById(
+        `display-box-text-${index}`
+      ) as HTMLTextAreaElement;
+      if (textBoxElement && typeof position === "number") {
+        textBoxElement.selectionEnd = position;
+        textBoxElement.selectionStart = position;
+        textBoxElement.scrollTop = 0;
+      }
+    });
+  }, [cursorPositions]);
 
   const saveName = () => {
     setIsEditingName(false);
@@ -98,7 +141,10 @@ const SlideEditor = () => {
     box: Box;
     cursorPosition?: number;
   }) => {
-    if (type === "bible") return;
+    if (typeof cursorPosition === "number") {
+      setCursorPositions((prev) => ({ ...prev, [index]: cursorPosition }));
+    }
+
     const newBoxes = boxes.map((b, i) =>
       i === index
         ? {
@@ -107,13 +153,25 @@ const SlideEditor = () => {
             y: box.y,
             width: box.width,
             height: box.height,
-            words: value,
+            words: type === "bible" ? box.words : value,
           }
         : b
     );
-    if (type === "free" || type === "timer") {
+    if (type === "bible" || type === "timer") {
       dispatch(updateBoxes({ boxes: newBoxes }));
-      return;
+    }
+
+    if (type === "free") {
+      const _item = formatFree({
+        ...item,
+        slides: item.slides.map((slide, index) => {
+          if (index === selectedSlide) {
+            return { ...slide, boxes: newBoxes };
+          }
+          return slide;
+        }),
+      });
+      dispatch(updateSlides({ slides: _item.slides }));
     }
 
     if (type === "song") {
@@ -127,8 +185,8 @@ const SlideEditor = () => {
         const formattedLyrics =
           item.arrangements[item.selectedArrangement].formattedLyrics;
         const slides = item.arrangements[item.selectedArrangement].slides;
-        const _index = formattedLyrics.findIndex(
-          (e) => e.name === slides[selectedSlide].type
+        const _index = formattedLyrics.findIndex((e) =>
+          slides[selectedSlide].name.includes(e.name)
         );
 
         const start =
@@ -181,16 +239,6 @@ const SlideEditor = () => {
           });
 
           dispatch(updateArrangements({ arrangements: _item.arrangements }));
-          setTimeout(() => {
-            const textBoxElement = document.getElementById(
-              `display-box-text-${index}`
-            ) as HTMLTextAreaElement;
-            if (textBoxElement && typeof cursorPosition === "number") {
-              textBoxElement.selectionEnd = cursorPosition;
-              textBoxElement.selectionStart = cursorPosition;
-              textBoxElement.scrollTop = 0;
-            }
-          }, 10);
         }
       }
     }
@@ -202,6 +250,27 @@ const SlideEditor = () => {
     [];
 
   const boxes = isLoading ? [] : _boxes;
+
+  const canDeleteBox = useCallback(
+    (index: number) => {
+      if (type === "bible") {
+        return index > 2;
+      }
+
+      if (type === "song") {
+        return index > 1;
+      }
+
+      if (type === "free" || type === "timer") {
+        return index > 0;
+      }
+
+      return false;
+    },
+    [type]
+  );
+
+  const isEmpty = _boxes.length === 0;
 
   return (
     <div>
@@ -273,12 +342,15 @@ const SlideEditor = () => {
           {
             "--slide-editor-height": isMobile
               ? "fit-content"
-              : `${editorHeight}`,
+              : `${isEmpty ? emptySlideHeight : editorHeight}`,
           } as CSSProperties
         }
       >
         <section
-          className="ml-1 lg:w-[12vw] max-lg:w-[100%]"
+          className={cn(
+            "ml-1 lg:w-[12vw] max-lg:w-[100%]",
+            isEmpty && "hidden"
+          )}
           ref={slideInfoRef}
         >
           <p className="text-center font-semibold border-b-2 border-black text-sm flex items-center gap-1 justify-center pb-1">
@@ -322,21 +394,66 @@ const SlideEditor = () => {
                     );
                   }}
                 />
+                {canDeleteBox(index) && (
+                  <Button
+                    svg={DeleteSVG}
+                    variant="tertiary"
+                    color="red"
+                    onClick={() => {
+                      dispatch(
+                        updateBoxes({
+                          boxes: boxes.filter((b, i) => i !== index),
+                        })
+                      );
+                    }}
+                  />
+                )}
               </span>
             );
           })}
+          <Button
+            className="text-xs w-full justify-center"
+            svg={AddSVG}
+            onClick={() =>
+              dispatch(
+                updateBoxes({
+                  boxes: [
+                    ...boxes,
+                    createBox({
+                      width: 25,
+                      height: 25,
+                      excludeFromOverflow: true,
+                    }),
+                  ],
+                })
+              )
+            }
+          >
+            Add Box
+          </Button>
         </section>
-        <DisplayWindow
-          showBorder
-          boxes={boxes}
-          selectBox={(val) => dispatch(setSelectedBox(val))}
-          ref={editorRef}
-          onChange={(onChangeInfo) => {
-            onChange(onChangeInfo);
-          }}
-          width={isMobile ? 84 : 42}
-          displayType="editor"
-        />
+        {!isEmpty ? (
+          <DisplayWindow
+            showBorder
+            boxes={boxes}
+            selectBox={(val) => dispatch(setSelectedBox(val))}
+            ref={editorRef}
+            onChange={(onChangeInfo) => {
+              onChange(onChangeInfo);
+            }}
+            width={isMobile ? 84 : 42}
+            displayType="editor"
+            selectedBox={selectedBox}
+          />
+        ) : (
+          <p
+            id="slide-editor-empty"
+            ref={emptySlideRef}
+            className="slide-editor-empty"
+          >
+            No slide selected
+          </p>
+        )}
       </div>
     </div>
   );

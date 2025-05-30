@@ -66,11 +66,14 @@ export type SlideType =
   | "Announcement"
   | "Image";
 
+export type OverflowMode = "fit" | "separate";
+
 export type ItemSlide = {
   type: SlideType;
   name: string;
-  id?: string;
+  id: string;
   boxes: Box[];
+  overflow?: OverflowMode;
 };
 
 export type LinkType = "image" | "slide" | "overlay";
@@ -93,12 +96,7 @@ export type DBItem = {
   background?: string;
   type: ItemType;
   slides: ItemSlide[];
-  bibleInfo?: {
-    book: string;
-    chapter: string;
-    version: string;
-    verses: verseType[];
-  };
+  bibleInfo?: BibleInfo;
   timerInfo?: TimerInfo;
   arrangements: {
     name: string;
@@ -116,6 +114,7 @@ export type TimerInfo = {
   time?: number;
   id: string;
   name: string;
+  color?: string;
   duration?: number;
   countdownTime?: string;
   timerType: TimerType;
@@ -125,6 +124,16 @@ export type TimerInfo = {
   startedAt?: string;
   endTime?: string;
   showMinutesOnly?: boolean;
+};
+
+export type BibleFontMode = "fit" | "separate" | "multiple";
+
+export type BibleInfo = {
+  book: string;
+  chapter: string;
+  version: string;
+  verses: verseType[];
+  fontMode: BibleFontMode;
 };
 
 export type ItemState = {
@@ -141,12 +150,7 @@ export type ItemState = {
   selectedBox: number;
   slides: ItemSlide[];
   isEditMode?: boolean;
-  bibleInfo?: {
-    book: string;
-    chapter: string;
-    version: string;
-    verses: verseType[];
-  };
+  bibleInfo?: BibleInfo;
   isLoading?: boolean;
   hasPendingUpdate?: boolean;
   timerInfo?: TimerInfo;
@@ -285,6 +289,7 @@ export type PreferencesType = {
   defaultMediaItemsPerRow: number;
   defaultShouldShowItemEditor: boolean;
   defaultIsMediaExpanded: boolean;
+  defaultBibleFontMode: BibleFontMode;
 };
 
 export type ItemList = {

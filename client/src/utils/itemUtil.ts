@@ -14,6 +14,7 @@ import {
   DBItemListDetails,
   TimerType,
   TimerStatus,
+  BibleFontMode,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatBible, formatSong } from "./overflow";
@@ -169,6 +170,7 @@ type CreateNewBibleType = {
   selectedList: ItemList;
   background: string;
   brightness: number;
+  fontMode: BibleFontMode;
 };
 
 export const createNewBible = async ({
@@ -182,6 +184,7 @@ export const createNewBible = async ({
   selectedList,
   background,
   brightness,
+  fontMode,
 }: CreateNewBibleType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
 
@@ -199,13 +202,14 @@ export const createNewBible = async ({
 
   const item = formatBible({
     item: newItem,
-    mode: "add",
+    mode: fontMode,
     book,
     chapter,
     version,
     verses,
     background,
     brightness,
+    isNew: true,
   });
 
   const _item = await createNewItemInDb({ item, db, selectedList });

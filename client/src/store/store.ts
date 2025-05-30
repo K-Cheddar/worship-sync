@@ -174,6 +174,7 @@ listenerMiddleware.startListening({
       action.type !== "itemList/updateItemListFromRemote" &&
       action.type !== "itemList/setHasPendingUpdate" &&
       action.type !== "itemList/setHighlightedItems" &&
+      action.type !== "itemList/addToInitialItems" &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
       action.type !== "RESET"
@@ -269,6 +270,7 @@ listenerMiddleware.startListening({
       action.type !== "overlays/selectOverlay" &&
       action.type !== "overlays/setHasPendingUpdate" &&
       action.type !== "overlays/updateInitialList" &&
+      action.type !== "overlays/addToInitialList" &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
       action.type !== "RESET"
@@ -841,7 +843,9 @@ const rootReducer: Reducer = (state: RootState, action: Action) => {
 const store = configureStore({
   reducer: rootReducer,
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().prepend(listenerMiddleware.middleware),
+    getDefaultMiddleware({
+      serializableCheck: false,
+    }).prepend(listenerMiddleware.middleware),
 });
 
 export default store;

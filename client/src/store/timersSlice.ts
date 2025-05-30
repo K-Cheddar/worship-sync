@@ -141,6 +141,19 @@ export const timersSlice = createSlice({
       });
       state.shouldUpdateTimers = true;
     },
+    updateTimerColor: (
+      state,
+      action: PayloadAction<{ id: string; color: string }>
+    ) => {
+      const { id, color } = action.payload;
+      state.timers = state.timers.map((timer) => {
+        if (timer.id === id) {
+          return { ...timer, color };
+        }
+        return timer;
+      });
+    },
+
     updateTimerFromRemote: (state, action: PayloadAction<TimerInfo>) => {
       const { id, ...timerInfo } = action.payload;
       state.timers = state.timers.map((timer) => {
@@ -180,6 +193,7 @@ export const {
   updateTimerFromRemote,
   tickTimers,
   setShouldUpdateTimers,
+  updateTimerColor,
 } = timersSlice.actions;
 
 export default timersSlice.reducer;

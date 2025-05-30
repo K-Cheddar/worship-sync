@@ -46,7 +46,7 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
         <span key={index}>
           {part}
           {index < parts.length - 1 && (
-            <span className="inline-block">
+            <span className="inline-block" style={{ color: timer?.color }}>
               {formatTime(timer?.remainingTime || 0)}
             </span>
           )}

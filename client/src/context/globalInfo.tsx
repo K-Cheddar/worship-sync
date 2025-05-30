@@ -89,6 +89,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     return id;
   });
   const [activeInstances, setActiveInstances] = useState(0);
+  const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const location = useLocation();
   const isOnController = useMemo(() => {
     return location.pathname.startsWith("/controller");
@@ -278,28 +279,58 @@ const GlobalInfoProvider = ({ children }: any) => {
     });
 
     // Set this instance as active only if on controller page
-    const instanceRef = ref(
+    instanceRef.current = ref(
       firebaseDb,
       `users/${user}/v2/activeInstances/${hostId}`
     );
 
-    set(instanceRef, {
-      lastActive: new Date().toISOString(),
-      user: user,
-      database: database,
-      hostId: hostId,
-      isOnController,
-    });
+    // Function to update the instance
+    const updateInstance = () => {
+      if (instanceRef.current) {
+        set(instanceRef.current, {
+          lastActive: new Date().toISOString(),
+          user: user,
+          database: database,
+          hostId: hostId,
+          isOnController,
+        });
+      }
+    };
+
+    // Initial setup
+    updateInstance();
+
+    // Set up periodic updates to keep the connection alive
+    const updateInterval = setInterval(updateInstance, 30000); // Update every 30 seconds
 
     // Remove this instance when the user disconnects
-    onDisconnect(instanceRef).remove();
+    if (instanceRef.current) {
+      onDisconnect(instanceRef.current).remove();
+    }
 
     // Cleanup function
     return () => {
       unsubscribe();
-      set(instanceRef, null);
+      clearInterval(updateInterval);
+      if (instanceRef.current) {
+        set(instanceRef.current, null);
+      }
     };
   }, [firebaseDb, loginState, user, database, hostId, isOnController]);
+
+  // Handle navigation away from the app - set up once when component mounts
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (instanceRef.current) {
+        set(instanceRef.current, null);
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, []); // Empty dependency array means this only runs once on mount
 
   const login = async ({
     username,
