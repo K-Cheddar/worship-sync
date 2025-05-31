@@ -35,7 +35,7 @@ import {
 } from "../../store/preferencesSlice";
 import { useLocation } from "react-router-dom";
 import cn from "classnames";
-import { updateOverlay } from "../../store/overlaysSlice";
+import { updateOverlayPartial } from "../../store/overlaysSlice";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -206,7 +206,7 @@ const Media = () => {
           onClick={() => {
             if (selectedMedia.background && db) {
               dispatch(
-                updateOverlay({
+                updateOverlayPartial({
                   imageUrl: selectedMedia.background,
                   id: selectedOverlayId,
                 })

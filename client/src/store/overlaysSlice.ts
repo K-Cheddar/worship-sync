@@ -119,7 +119,34 @@ export const overlaysSlice = createSlice({
       }
       state.hasPendingUpdate = true;
     },
-    updateOverlay: (state, action: PayloadAction<Partial<OverlayInfo>>) => {
+    updateOverlay: (state, action: PayloadAction<OverlayInfo>) => {
+      const updatedOverlayInfo = {
+        id: action.payload.id,
+        name: action.payload.name,
+        title: action.payload.title,
+        event: action.payload.event,
+        heading: action.payload.heading,
+        subHeading: action.payload.subHeading,
+        url: action.payload.url,
+        description: action.payload.description,
+        color: action.payload.color,
+        duration: action.payload.duration,
+        type: action.payload.type,
+        imageUrl: action.payload.imageUrl,
+      };
+      state.imageUrl = updatedOverlayInfo.imageUrl;
+      state.list = state.list.map((overlay) => {
+        if (overlay.id === action.payload.id) {
+          return { ...updatedOverlayInfo };
+        }
+        return overlay;
+      });
+      state.hasPendingUpdate = true;
+    },
+    updateOverlayPartial: (
+      state,
+      action: PayloadAction<Partial<OverlayInfo>>
+    ) => {
       const updatedOverlayInfo = {
         id: action.payload.id || state.id,
         name: action.payload.name || state.name,
@@ -161,6 +188,7 @@ export const {
   updateOverlayList: updateList,
   deleteOverlay,
   updateOverlay,
+  updateOverlayPartial,
   initiateOverlayList,
   updateOverlayListFromRemote,
   setHasPendingUpdate,
