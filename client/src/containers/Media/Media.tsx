@@ -46,7 +46,7 @@ const sizeMap: Map<number, string> = new Map([
   [2, "grid-cols-2"],
 ]);
 
-const emptyMedia = { id: "", background: "", type: "" };
+const emptyMedia = { id: "", background: "" };
 
 const Media = () => {
   const dispatch = useDispatch();
@@ -68,7 +68,6 @@ const Media = () => {
   const [selectedMedia, setSelectedMedia] = useState<{
     id: string;
     background: string;
-    type: string;
   }>(emptyMedia);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
 
@@ -297,7 +296,7 @@ const Media = () => {
             isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : defaultItemsPerRow
           }`}
         >
-          {list.map(({ id, thumbnail, background, type }) => {
+          {list.map(({ id, thumbnail, background }) => {
             const isSelected = id === selectedMedia.id;
             return (
               <li
@@ -313,21 +312,7 @@ const Media = () => {
                   padding="p-0"
                   className="w-full h-full justify-center"
                   onClick={() => {
-                    if (type === "video") {
-                      // add mp4 extension to the url
-                      // Insert before the ?
-                      // Comes in the format:
-                      // https://res.cloudinary.com/portable-media/video/upload/v1/backgrounds/Lower_thirds_1_1920_x_300_px_y9g3pq?_a=DATAg1AAZAA0
-                      const updatedBackground =
-                        background.slice(0, background.indexOf("?")) + ".mp4";
-                      setSelectedMedia({
-                        id,
-                        background: updatedBackground,
-                        type,
-                      });
-                    } else {
-                      setSelectedMedia({ id, background, type });
-                    }
+                    setSelectedMedia({ id, background });
                   }}
                 >
                   <img
