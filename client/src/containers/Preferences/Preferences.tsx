@@ -198,7 +198,7 @@ const Preferences = () => {
                   type="number"
                   value={brightness}
                   onChange={(val) => dispatch(setBrightness(val as number))}
-                  className="w-8 2xl:w-10"
+                  className="w-8 2xl:w-12"
                   inputTextSize="text-xs"
                   hideLabel
                   data-ignore-undo="true"
@@ -236,7 +236,7 @@ const Preferences = () => {
                 type="number"
                 value={value}
                 onChange={(val) => dispatch(setValue(val as number))}
-                className="w-8 2xl:w-10"
+                className="w-8 2xl:w-12"
                 inputTextSize="text-xs"
                 hideLabel
                 data-ignore-undo="true"
