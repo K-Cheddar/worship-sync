@@ -3,7 +3,6 @@ import SlideEditor from "../../containers/ItemEditor/SlideEditor";
 import ItemSlides from "../../containers/ItemSlides/ItemSlides";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { DBItem } from "../../types";
-import { formatItemInfo } from "../../utils/formatItemInfo";
 import { useDispatch } from "../../hooks";
 import { setActiveItem, setItemIsLoading } from "../../store/itemSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -42,8 +41,7 @@ const Item = () => {
         const response: DBItem | undefined = await db?.get(decodedItemId);
         const item = response;
         if (!item) return setStatus("error");
-        const formattedItem = formatItemInfo(item, cloud);
-        dispatch(setActiveItem({ ...formattedItem, listId: decodedListId }));
+        dispatch(setActiveItem({ ...item, listId: decodedListId }));
         dispatch(setActiveItemInList(decodedListId));
         setStatus("success");
         dispatch(setItemIsLoading(false));

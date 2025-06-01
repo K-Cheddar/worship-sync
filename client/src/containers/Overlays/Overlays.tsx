@@ -34,6 +34,7 @@ import Select from "../../components/Select/Select";
 import generateRandomId from "../../utils/generateRandomId";
 import TextArea from "../../components/TextArea/TextArea";
 import { keepElementInView } from "../../utils/generalUtils";
+import { RootState } from "../../store/store";
 
 const colorOptions = [
   { label: "Red", value: "#dc2626" },
@@ -61,9 +62,13 @@ const Overlays = () => {
     type,
     imageUrl,
     initialList,
-  } = useSelector((state) => state.undoable.present.overlays);
-  const { isStreamTransmitting } = useSelector((state) => state.presentation);
-  const { isLoading } = useSelector((state) => state.undoable.present.itemList);
+  } = useSelector((state: RootState) => state.undoable.present.overlays);
+  const { isStreamTransmitting } = useSelector(
+    (state: RootState) => state.presentation
+  );
+  const { isLoading } = useSelector(
+    (state: RootState) => state.undoable.present.itemList
+  );
   const [localName, setLocalName] = useState(name || "#16a34a");
   const [localTitle, setLocalTitle] = useState(title || "");
   const [localEvent, setLocalEvent] = useState(event || "");

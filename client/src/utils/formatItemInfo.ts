@@ -1,6 +1,7 @@
 import { Cloudinary } from "@cloudinary/url-gen";
 import { SongOrder, ItemState, DBItem } from "../types";
 import generateRandomId from "./generateRandomId";
+import { formatSong } from "./overflow";
 
 export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
   const _item: ItemState = {
@@ -24,7 +25,7 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
     updatedArrangements = item.arrangements.map((arrangement, arrIndex) => {
       let { formattedLyrics, slides, songOrder } = { ...arrangement };
 
-      if (!formattedLyrics[0].id) {
+      if (!formattedLyrics[0]?.id) {
         formattedLyrics = formattedLyrics.map((el) => {
           return { ...el, id: generateRandomId() };
         });
@@ -57,7 +58,7 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
       let songOrderWIds: SongOrder[] = [];
 
       if (typeof songOrder[0] === "string") {
-        songOrderWIds = (songOrder as string[]).map((el) => {
+        songOrderWIds = (songOrder as unknown as string[]).map((el) => {
           return { name: el, id: generateRandomId() };
         });
       } else {
@@ -97,5 +98,8 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
 
   _item.arrangements = updatedArrangements || [];
   _item.slides = slides || [];
+  if (item.type === "song") {
+    return formatSong(_item);
+  }
   return _item;
 };

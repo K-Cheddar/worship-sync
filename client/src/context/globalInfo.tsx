@@ -217,6 +217,31 @@ const GlobalInfoProvider = ({ children }: any) => {
     );
   }, [loginState]);
 
+  // Monitor connection state and handle reconnection
+  useEffect(() => {
+    if (!firebaseDb || loginState !== "success") return;
+
+    const connectedRef = ref(firebaseDb, ".info/connected");
+    const unsubscribe = onValue(connectedRef, (snap) => {
+      if (snap.val() === true) {
+        // When we reconnect, re-establish the active instance if we're on the controller page
+        if (isOnController && instanceRef.current) {
+          set(instanceRef.current, {
+            lastActive: new Date().toISOString(),
+            user: user,
+            database: database,
+            hostId: hostId,
+            isOnController,
+          });
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [firebaseDb, loginState, isOnController, user, database, hostId]);
+
   // get updates from firebase - realtime changes from others
   useEffect(() => {
     if (!firebaseDb) return;
@@ -300,9 +325,6 @@ const GlobalInfoProvider = ({ children }: any) => {
     // Initial setup
     updateInstance();
 
-    // Set up periodic updates to keep the connection alive
-    const updateInterval = setInterval(updateInstance, 30000); // Update every 30 seconds
-
     // Remove this instance when the user disconnects
     if (instanceRef.current) {
       onDisconnect(instanceRef.current).remove();
@@ -311,7 +333,6 @@ const GlobalInfoProvider = ({ children }: any) => {
     // Cleanup function
     return () => {
       unsubscribe();
-      clearInterval(updateInterval);
       if (instanceRef.current) {
         set(instanceRef.current, null);
       }

@@ -256,16 +256,20 @@ export const checkMediaType = (mediaUrl?: string) => {
   }
 };
 
-export const getLetterFromIndex = (index: number) => {
+export const getLetterFromIndex = (
+  index: number,
+  shouldWrapInZeroWidth = false
+) => {
+  let letter = "";
   if (index < 26) {
-    return String.fromCharCode(97 + index); // 97 is the ASCII code for 'a'
+    letter = String.fromCharCode(97 + index); // 97 is the ASCII code for 'a'
+  } else {
+    // For indices >= 26, we'll use a base-26 system
+    while (index >= 0) {
+      letter = String.fromCharCode(97 + (index % 26)) + letter;
+      index = Math.floor(index / 26) - 1;
+    }
   }
 
-  // For indices >= 26, we'll use a base-26 system
-  let result = "";
-  while (index >= 0) {
-    result = String.fromCharCode(97 + (index % 26)) + result;
-    index = Math.floor(index / 26) - 1;
-  }
-  return result;
+  return shouldWrapInZeroWidth ? "\u200B" + letter + "\u200B" : letter;
 };

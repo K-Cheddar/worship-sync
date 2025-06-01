@@ -35,11 +35,11 @@ export const itemSlice = createSlice({
   name: "item",
   initialState,
   reducers: {
-    setActiveItem: (state, action: PayloadAction<ItemState>) => {
-      state.name = action.payload.name;
-      state.type = action.payload.type;
-      state._id = action.payload._id;
-      state.listId = action.payload.listId;
+    setActiveItem: (state, action: PayloadAction<Partial<ItemState>>) => {
+      state.name = action.payload.name || state.name;
+      state.type = action.payload.type || state.type;
+      state._id = action.payload._id || state._id;
+      state.listId = action.payload.listId || state.listId;
       state.selectedArrangement = action.payload.selectedArrangement || 0;
       state.selectedSlide = action.payload.selectedSlide || 0;
       state.selectedBox = action.payload.selectedBox || 1;

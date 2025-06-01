@@ -6,6 +6,7 @@ import { ItemSlide as ItemSlideType, TimerInfo } from "../../types";
 import { sizeMap } from "./ItemSlides";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
+import cn from "classnames";
 
 type ItemSlideProps = {
   slide: ItemSlideType;
@@ -84,21 +85,40 @@ const ItemSlide = ({
       {...(isFree && attributes)}
       {...(isFree && listeners)}
       key={slide.id}
-      className={`item-slide ${
-        selectedSlide === index ? "border-cyan-500" : "border-transparent"
-      } ${isInDraggedSection ? "z-10" : ""}`}
+      className={cn(
+        "item-slide",
+        selectedSlide === index ? "border-cyan-500" : "border-transparent",
+        isInDraggedSection && "z-10"
+      )}
       onClick={() => selectSlide(index)}
       id={`item-slide-${index}`}
     >
       <h4
-        className={`${
-          sizeMap.get(size)?.hSize
-        } rounded-t-md truncate px-2 text-center ${itemSectionBgColorMap.get(
-          slide.type.split(" ")[0] || slide.name.split(" ")[0]
-        )}`}
+        className={cn(
+          "rounded-t-md truncate px-2 text-center flex",
+          sizeMap.get(size)?.hSize,
+          itemSectionBgColorMap.get(slide.type)
+        )}
         style={{ width: `${width}vw` }}
       >
-        {slide.name || slide.type}
+        {slide.name?.split(/\u200B(.*?)\u200B/).map((part, index) => {
+          // Even indices are regular text, odd indices are special parts
+          if (index % 2 === 1) {
+            return (
+              <span key={index} className="text-gray-400">
+                {part}
+              </span>
+            );
+          }
+          if (part.trim()) {
+            return (
+              <span className="flex-1" key={index}>
+                {part}
+              </span>
+            );
+          }
+          return null;
+        })}
       </h4>
       <DisplayWindow
         showBorder

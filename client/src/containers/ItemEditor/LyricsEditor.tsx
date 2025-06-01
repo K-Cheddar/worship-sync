@@ -26,9 +26,10 @@ import { sortList } from "../../utils/sort";
 import { formatSong } from "../../utils/overflow";
 import { createSections as createSectionsUtil } from "../../utils/itemUtil";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { RootState } from "../../store/store";
 
 const LyricsEditor = () => {
-  const item = useSelector((state) => state.undoable.present.item);
+  const item = useSelector((state: RootState) => state.undoable.present.item);
   const { isEditMode, arrangements, selectedArrangement } = item;
   const [unformattedLyrics, setUnformattedLyrics] = useState("");
   const [localArrangements, setLocalArrangements] = useState([...arrangements]);

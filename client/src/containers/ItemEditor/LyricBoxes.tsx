@@ -8,6 +8,7 @@ import { useSelector } from "../../hooks";
 import { sectionTypes, itemSectionBgColorMap } from "../../utils/slideColorMap";
 import { FormattedLyrics as FormattedLyricsType } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
+import { RootState } from "../../store/store";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -37,7 +38,7 @@ const LyricBoxes = ({
   isMobile,
 }: FormattedLyricsProps) => {
   const { formattedLyricsPerRow } = useSelector(
-    (state) => state.undoable.present.preferences
+    (state: RootState) => state.undoable.present.preferences
   );
 
   const [newSectionType, setNewSectionType] = useState("Verse");

@@ -43,6 +43,7 @@ import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { setCreateItem } from "../../store/createItemSlice";
+import { RootState } from "../../store/store";
 
 const Bible = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -63,13 +64,13 @@ const Bible = () => {
     startVerse,
     endVerse,
     searchValues,
-  } = useSelector((state) => state.bible);
+  } = useSelector((state: RootState) => state.bible);
 
   const {
     isMonitorTransmitting,
     isProjectorTransmitting,
     isStreamTransmitting,
-  } = useSelector((state) => state.presentation);
+  } = useSelector((state: RootState) => state.presentation);
 
   const {
     preferences: {
@@ -77,9 +78,9 @@ const Bible = () => {
       defaultBibleBackgroundBrightness,
       defaultBibleFontMode,
     },
-  } = useSelector((state) => state.undoable.present.preferences);
+  } = useSelector((state: RootState) => state.undoable.present.preferences);
 
-  const { list } = useSelector((state) => state.allItems);
+  const { list } = useSelector((state: RootState) => state.allItems);
 
   const [showVersesDisplaySection, setShowVersesDisplaySection] =
     useState(false);
@@ -88,10 +89,6 @@ const Bible = () => {
   const [justAdded, setJustAdded] = useState(false);
   const [justGotChapter, setJustGotChapter] = useState(false);
   const [isLoadingChapter, setIsLoadingChapter] = useState(false);
-
-  const { selectedList } = useSelector(
-    (state: any) => state.undoable.present.itemLists
-  );
 
   const createItemName = decodeURI(searchParams.get("name") || "");
 
@@ -209,7 +206,6 @@ const Bible = () => {
       ),
       db,
       list,
-      selectedList,
       background: defaultBibleBackground,
       brightness: defaultBibleBackgroundBrightness,
     });

@@ -20,10 +20,11 @@ import {
   updatePublishedCreditsList,
 } from "../../store/creditsSlice";
 import { keepElementInView } from "../../utils/generalUtils";
+import { RootState } from "../../store/store";
 
 const CreditsEditor = ({ className }: { className?: string }) => {
   const { list, publishedList, initialList, isLoading, selectedCreditId } =
-    useSelector((state) => state.undoable.present.credits);
+    useSelector((state: RootState) => state.undoable.present.credits);
   const dispatch = useDispatch();
   // const { isMobile } = useContext(ControllerInfoContext) || {};
 

@@ -27,6 +27,7 @@ import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { RootState } from "../../store/store";
 
 type ItemTypesType = {
   type: ItemType;
@@ -62,19 +63,19 @@ const CreateItem = () => {
     name: savedName,
     type: savedType,
     text: savedText,
-  } = useSelector((state: any) => state.createItem);
-  const { list } = useSelector((state: any) => state.allItems);
-  const { selectedList } = useSelector(
-    (state: any) => state.undoable.present.itemLists
-  );
+  } = useSelector((state: RootState) => state.createItem);
+  const { list } = useSelector((state: RootState) => state.allItems);
+
   const {
-    defaultSongBackground,
-    defaultTimerBackground,
-    defaultFreeFormBackground,
-    defaultSongBackgroundBrightness,
-    defaultTimerBackgroundBrightness,
-    defaultFreeFormBackgroundBrightness,
-  } = useSelector((state: any) => state.undoable.present.preferences);
+    preferences: {
+      defaultSongBackground,
+      defaultTimerBackground,
+      defaultFreeFormBackground,
+      defaultSongBackgroundBrightness,
+      defaultTimerBackgroundBrightness,
+      defaultFreeFormBackgroundBrightness,
+    },
+  } = useSelector((state: RootState) => state.undoable.present.preferences);
   const { hostId } = useContext(GlobalInfoContext) || {};
 
   const [searchParams] = useSearchParams();
@@ -141,7 +142,6 @@ const CreateItem = () => {
         songOrder,
         list,
         db,
-        selectedList,
         background: defaultSongBackground,
         brightness: defaultSongBackgroundBrightness,
       });
@@ -154,9 +154,9 @@ const CreateItem = () => {
         name: itemName,
         list,
         db,
-        selectedList,
         background: defaultFreeFormBackground,
         brightness: defaultFreeFormBackgroundBrightness,
+        text,
       });
 
       dispatchNewItem(newItem);
@@ -178,7 +178,6 @@ const CreateItem = () => {
         name: itemName,
         list,
         db,
-        selectedList,
         hostId: hostId || "",
         duration,
         countdownTime: time,
@@ -262,7 +261,7 @@ const CreateItem = () => {
           ))}
         </ul>
 
-        {selectedType === "song" && (
+        {(selectedType === "song" || selectedType === "free") && (
           <TextArea
             className="w-full h-72 mt-2 flex flex-col"
             label="Paste Text Here"

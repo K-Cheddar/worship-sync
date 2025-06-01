@@ -36,6 +36,7 @@ import {
 import { useLocation } from "react-router-dom";
 import cn from "classnames";
 import { updateOverlayPartial } from "../../store/overlaysSlice";
+import { RootState } from "../../store/store";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -52,10 +53,14 @@ const Media = () => {
   const dispatch = useDispatch();
   const location = useLocation();
 
-  const { list } = useSelector((state) => state.undoable.present.media);
-  const { isLoading } = useSelector((state) => state.undoable.present.item);
+  const { list } = useSelector(
+    (state: RootState) => state.undoable.present.media
+  );
+  const { isLoading } = useSelector(
+    (state: RootState) => state.undoable.present.item
+  );
   const { type: selectedOverlayType, id: selectedOverlayId } = useSelector(
-    (state) => state.undoable.present.overlays
+    (state: RootState) => state.undoable.present.overlays
   );
   const {
     isMediaExpanded,
@@ -63,7 +68,7 @@ const Media = () => {
     selectedPreference,
     tab,
     selectedQuickLink,
-  } = useSelector((state) => state.undoable.present.preferences);
+  } = useSelector((state: RootState) => state.undoable.present.preferences);
 
   const [selectedMedia, setSelectedMedia] = useState<{
     id: string;
