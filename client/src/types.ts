@@ -98,12 +98,7 @@ export type DBItem = {
   slides: ItemSlide[];
   bibleInfo?: BibleInfo;
   timerInfo?: TimerInfo;
-  arrangements: {
-    name: string;
-    formattedLyrics: FormattedLyrics[];
-    songOrder: string[] | SongOrder[];
-    slides: ItemSlide[];
-  }[];
+  arrangements: Arrangment[];
 };
 
 export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";

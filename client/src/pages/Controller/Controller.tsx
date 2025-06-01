@@ -46,7 +46,11 @@ import Button from "../../components/Button/Button";
 import Spinner from "../../components/Spinner/Spinner";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { sortNamesInList } from "../../utils/sort";
-import { deleteUnusedBibleItems, updateAllDocs } from "../../utils/dbUtils";
+import {
+  deleteUnusedBibleItems,
+  // formatAllSongs,
+  updateAllDocs,
+} from "../../utils/dbUtils";
 import Timers from "../../containers/Timers/Timers";
 import Preferences from "./Preferences";
 import {
@@ -120,6 +124,12 @@ const Controller = () => {
     };
     getAllItems();
   }, [dispatch, db]);
+
+  // Leaving this in case we need to reformat all songs in the db
+  // useEffect(() => {
+  //   if (!db || !cloud) return;
+  //   formatAllSongs(db, cloud);
+  // }, [db, cloud]);
 
   useEffect(() => {
     if (!db) return;

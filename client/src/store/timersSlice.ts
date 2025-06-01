@@ -143,15 +143,16 @@ export const timersSlice = createSlice({
     },
     updateTimerColor: (
       state,
-      action: PayloadAction<{ id: string; color: string }>
+      action: PayloadAction<{ id: string; color: string; hostId?: string }>
     ) => {
-      const { id, color } = action.payload;
+      const { id, color, hostId } = action.payload;
       state.timers = state.timers.map((timer) => {
         if (timer.id === id) {
-          return { ...timer, color };
+          return { ...timer, color, hostId: hostId || timer.hostId };
         }
         return timer;
       });
+      state.shouldUpdateTimers = true;
     },
 
     updateTimerFromRemote: (state, action: PayloadAction<TimerInfo>) => {

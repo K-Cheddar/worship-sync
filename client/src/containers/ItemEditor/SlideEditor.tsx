@@ -39,11 +39,12 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
 import Icon from "../../components/Icon/Icon";
 import { createBox } from "../../utils/slideCreation";
+import { RootState } from "../../store/store";
 
 const SlideEditor = () => {
   const dispatch = useDispatch();
 
-  const item = useSelector((state) => state.undoable.present.item);
+  const item = useSelector((state: RootState) => state.undoable.present.item);
   const {
     name,
     type,
@@ -56,7 +57,7 @@ const SlideEditor = () => {
   } = item;
 
   const { shouldShowItemEditor } = useSelector(
-    (state) => state.undoable.present.preferences
+    (state: RootState) => state.undoable.present.preferences
   );
 
   const [isEditingName, setIsEditingName] = useState(false);
@@ -186,7 +187,7 @@ const SlideEditor = () => {
           item.arrangements[item.selectedArrangement].formattedLyrics;
         const slides = item.arrangements[item.selectedArrangement].slides;
         const _index = formattedLyrics.findIndex((e) =>
-          slides[selectedSlide].name.includes(e.name)
+          slides[selectedSlide].name.startsWith(e.name)
         );
 
         const start =

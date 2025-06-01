@@ -20,6 +20,7 @@ const SongSections = ({
   currentSections,
 }: SongSectionsProps) => {
   const [section, setSection] = useState(currentSections[0]?.value || "");
+  const [selectedIndex, setSelectedIndex] = useState(songOrder.length - 1);
 
   useEffect(() => {
     setSection(currentSections[0]?.value || "");
@@ -60,6 +61,8 @@ const SongSections = ({
               setSongOrder={setSongOrder}
               songOrder={songOrder}
               id={id}
+              selectedIndex={selectedIndex}
+              setSelectedIndex={setSelectedIndex}
             />
           ))}
         </SortableContext>
@@ -75,12 +78,14 @@ const SongSections = ({
           onChange={(value) => setSection(value)}
         />
         <Button
-          onClick={() =>
-            setSongOrder([
-              ...songOrder,
-              { id: generateRandomId(), name: section || songOrder[0]?.name },
-            ])
-          }
+          onClick={() => {
+            const updatedSongOrder = [...songOrder];
+            updatedSongOrder.splice(selectedIndex + 1, 0, {
+              id: generateRandomId(),
+              name: section || songOrder[0]?.name,
+            });
+            setSongOrder(updatedSongOrder);
+          }}
           className="text-base mt-2 w-full justify-center h-7"
           disabled={!section}
         >

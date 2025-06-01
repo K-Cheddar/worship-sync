@@ -1,3 +1,4 @@
+import { Cloudinary } from "@cloudinary/url-gen";
 import { globalDb } from "../context/controllerInfo";
 import { globalHostId } from "../context/globalInfo";
 import {
@@ -15,6 +16,8 @@ import {
   ServiceItem,
   TimerInfo,
 } from "../types";
+import { formatItemInfo } from "./formatItemInfo";
+import { formatSong } from "./overflow";
 
 type propsType = {
   db: PouchDB.Database;
@@ -95,5 +98,42 @@ export const updateAllDocs = async (dispatch: Function) => {
     dispatch(updateAllTimerDocs(allTimers));
   } catch (error) {
     console.error("Failed to save all songs", error);
+  }
+};
+
+export const formatAllSongs = async (
+  db: PouchDB.Database,
+  cloud: Cloudinary
+) => {
+  if (!db) return;
+  try {
+    const allDocs: allDocsType = (await db.allDocs({
+      include_docs: true,
+    })) as allDocsType;
+    const allSongs = allDocs.rows
+      .filter((row) => (row.doc as any)?.type === "song")
+      .map((row) => row.doc as DBItem);
+
+    for (const song of allSongs) {
+      const retrievedSong: DBItem | undefined = await db.get(song._id);
+      const formattedItem = formatItemInfo(retrievedSong, cloud);
+      const formattedSong = formatSong(formattedItem);
+      const updatedItem = {
+        ...retrievedSong,
+        name: formattedSong.name,
+        background: formattedSong.background,
+        arrangements: formattedSong.arrangements,
+        selectedArrangement: formattedSong.selectedArrangement,
+        slides: formattedSong.slides,
+        timerInfo: formattedSong.timerInfo,
+        bibleInfo: formattedSong.bibleInfo,
+      };
+      if (retrievedSong) {
+        await db.put(updatedItem);
+      }
+      console.log("formattedSong", formattedSong);
+    }
+  } catch (error) {
+    console.error("Failed to format all songs", error);
   }
 };

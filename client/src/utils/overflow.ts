@@ -159,7 +159,7 @@ const formatVerseRange = (verses: verseType[]): string => {
 
 type FormatSectionType = {
   text: string;
-  type: string;
+  type: SlideType;
   name: string;
   slides: ItemSlide[];
   newSlides: ItemSlide[];
@@ -234,11 +234,11 @@ export const formatSection = ({
     i += counter - 1;
     formattedText.push(
       createNewSlide({
-        type: type as SlideType,
-        name: name,
-        boxes: boxes,
-        fontSize: fontSize,
-        fontColor: fontColor,
+        type,
+        name,
+        boxes,
+        fontSize,
+        fontColor,
         slideIndex: formattedText.length,
         background: background || undefined,
       })
@@ -510,7 +510,7 @@ export const formatFree = (item: ItemState) => {
       ...newSlide,
       name:
         _formattedSlides.length > 1
-          ? `Section ${currentSectionNum}${getLetterFromIndex(index)}`
+          ? `Section ${currentSectionNum}${getLetterFromIndex(index, true)}`
           : `Section ${currentSectionNum}`,
       id,
       overflow: slide.overflow,
@@ -551,7 +551,7 @@ export const formatLyrics = (item: ItemState) => {
       name: "Title",
       boxes,
       words: ["", boxes[1].words || " "],
-      fontSize: boxes[1].fontSize || 4.5,
+      fontSize: boxes[1].fontSize || 3.5,
       fontColor: boxes[1].fontColor || "rgb(255, 255, 255)",
     }),
   ];
@@ -565,10 +565,11 @@ export const formatLyrics = (item: ItemState) => {
   for (let i = 0; i < songOrder.length; ++i) {
     let lyrics =
       formattedLyrics.find((e) => e.name === songOrder[i].name)?.words || "";
+
     newSlides.push(
       ...formatSection({
         text: lyrics,
-        type: songOrder[i].name?.split(" ")[0] as SlideType,
+        type: songOrder[i].name.split(" ")[0] as SlideType,
         name: songOrder[i].name,
         slides,
         newSlides,
@@ -626,14 +627,21 @@ export const formatSong = (_item: ItemState) => {
     const formattedLyric = formattedLyrics.find((e) => e.name === slide.name);
     if (!formattedLyric || formattedLyric.slideSpan < 2) return slide;
 
-    // Count how many times this slide name has appeared before this index
-    const occurrenceIndex =
-      slides.slice(0, index + 1).filter((s) => s.name === slide.name).length -
-      1;
+    // Find the start of the current consecutive section
+    let sectionStartIndex = index;
+    while (
+      sectionStartIndex > 0 &&
+      slides[sectionStartIndex - 1].name === slide.name
+    ) {
+      sectionStartIndex--;
+    }
+
+    // Count occurrences only within the current consecutive section
+    const occurrenceIndex = index - sectionStartIndex;
 
     return {
       ...slide,
-      name: `${slide.name}${getLetterFromIndex(occurrenceIndex)}`,
+      name: `${slide.name}${getLetterFromIndex(occurrenceIndex, true)}`,
     };
   });
 
@@ -673,7 +681,7 @@ export const formatBible = ({
     : [
         createNewSlide({
           type: "Title",
-          fontSize: 4.5,
+          fontSize: 3.5,
           words: ["", item.name],
           background,
           brightness,
@@ -689,7 +697,7 @@ export const formatBible = ({
   let newSlides = [
     createNewSlide({
       type: "Title",
-      fontSize: boxes[1]?.fontSize || 4.5,
+      fontSize: boxes[1]?.fontSize || 3.5,
       words: ["", boxes[1]?.words || " "],
       background: boxes[0]?.background || background,
       brightness: boxes[0]?.brightness || brightness,
@@ -858,7 +866,7 @@ const formatBibleVerses = ({
                   "Verse " +
                   verse.name +
                   (needsLetters
-                    ? getLetterFromIndex(verseSplitCounts[verse.name])
+                    ? getLetterFromIndex(verseSplitCounts[verse.name], true)
                     : ""),
                 itemType: "bible",
                 boxes: currentBoxes,
@@ -907,7 +915,7 @@ const formatBibleVerses = ({
               "Verse " +
               verse.name +
               (needsLetters
-                ? getLetterFromIndex(verseSplitCounts[verse.name])
+                ? getLetterFromIndex(verseSplitCounts[verse.name], true)
                 : ""),
             boxes: currentBoxes,
             words: [
@@ -1191,7 +1199,7 @@ const formatBibleVerses = ({
                     name:
                       "Verse " +
                       verse.name +
-                      getLetterFromIndex(verseSplitCounts[verse.name]),
+                      getLetterFromIndex(verseSplitCounts[verse.name], true),
                     boxes: isNew
                       ? [
                           currentBoxes[0],
@@ -1251,7 +1259,7 @@ const formatBibleVerses = ({
                 name:
                   "Verse " +
                   verse.name +
-                  getLetterFromIndex(verseSplitCounts[verse.name]),
+                  getLetterFromIndex(verseSplitCounts[verse.name], true),
                 boxes: isNew
                   ? [
                       currentBoxes[0],

@@ -1,12 +1,13 @@
 import { useDispatch, useSelector } from "../../hooks";
 import FilteredItems from "../../components/FilteredItems/FilteredItems";
 import { setFreeFormSearchValue } from "../../store/allItemsSlice";
+import { RootState } from "../../store/store";
 
 const FreeForms = () => {
   const { list, isAllItemsLoading, freeFormSearchValue } = useSelector(
-    (state) => state.allItems
+    (state: RootState) => state.allItems
   );
-  const { allFreeFormDocs } = useSelector((state) => state.allDocs);
+  const { allFreeFormDocs } = useSelector((state: RootState) => state.allDocs);
   const dispatch = useDispatch();
 
   return (

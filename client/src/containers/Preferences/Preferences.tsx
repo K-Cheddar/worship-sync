@@ -22,6 +22,7 @@ import cn from "classnames";
 import Icon from "../../components/Icon/Icon";
 import Input from "../../components/Input/Input";
 import RadioButton from "../../components/RadioButton/RadioButton";
+import { RootState } from "../../store/store";
 
 const Preferences = () => {
   const dispatch = useDispatch();
@@ -45,7 +46,7 @@ const Preferences = () => {
       defaultBibleFontMode,
     },
     selectedPreference,
-  } = useSelector((state) => state.undoable.present.preferences);
+  } = useSelector((state: RootState) => state.undoable.present.preferences);
 
   const backgroundPreferences = [
     {

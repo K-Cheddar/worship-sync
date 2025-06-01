@@ -95,7 +95,7 @@ const ItemSlides = () => {
     return isLoading ? [] : _slides;
   }, [isLoading, __slides, arrangement?.slides]);
   const { slidesPerRow, slidesPerRowMobile } = useSelector(
-    (state) => state.undoable.present.preferences
+    (state: RootState) => state.undoable.present.preferences
   );
   const { isMobile } = useContext(ControllerInfoContext) || {};
   const size = isMobile ? slidesPerRowMobile : slidesPerRow;

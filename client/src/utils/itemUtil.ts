@@ -17,7 +17,7 @@ import {
   BibleFontMode,
 } from "../types";
 import generateRandomId from "./generateRandomId";
-import { formatBible, formatSong } from "./overflow";
+import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
 import { fill } from "@cloudinary/url-gen/actions/resize";
@@ -71,7 +71,6 @@ type CreateNewSongType = {
   name: string;
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
-  selectedList: ItemList;
   background: string;
   brightness: number;
 };
@@ -82,7 +81,6 @@ export const createNewSong = async ({
   songOrder,
   list,
   db,
-  selectedList,
   background,
   brightness,
 }: CreateNewSongType): Promise<ItemState> => {
@@ -128,7 +126,7 @@ export const createNewSong = async ({
 
   const item = formatSong(newItem);
 
-  const _item = await createNewItemInDb({ item, db, selectedList });
+  const _item = await createNewItemInDb({ item, db });
 
   return _item;
 };
@@ -167,7 +165,6 @@ type CreateNewBibleType = {
   verses: verseType[];
   db: PouchDB.Database | undefined;
   list: ServiceItem[];
-  selectedList: ItemList;
   background: string;
   brightness: number;
   fontMode: BibleFontMode;
@@ -181,7 +178,6 @@ export const createNewBible = async ({
   verses,
   db,
   list,
-  selectedList,
   background,
   brightness,
   fontMode,
@@ -195,7 +191,7 @@ export const createNewBible = async ({
     selectedArrangement: 0,
     shouldSkipTitle: false,
     arrangements: [],
-    selectedSlide: 0,
+    selectedSlide: 1,
     selectedBox: 1,
     slides: [],
   };
@@ -212,7 +208,7 @@ export const createNewBible = async ({
     isNew: true,
   });
 
-  const _item = await createNewItemInDb({ item, db, selectedList });
+  const _item = await createNewItemInDb({ item, db });
   return _item;
 };
 
@@ -293,18 +289,18 @@ export const updateFormattedSections = ({
 
 type CreateNewFreeFormType = {
   name: string;
+  text: string;
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
-  selectedList: ItemList;
   background: string;
   brightness: number;
 };
 
 export const createNewFreeForm = async ({
   name,
+  text,
   list,
   db,
-  selectedList,
   background,
   brightness,
 }: CreateNewFreeFormType): Promise<ItemState> => {
@@ -319,23 +315,20 @@ export const createNewFreeForm = async ({
     slides: [
       createNewSlide({
         type: "Section",
+        name: "Section 1",
         fontSize: 4.5,
-        words: ["", name],
+        words: ["", text || name],
         background,
         brightness,
-      }),
-      createNewSlide({
-        type: "Section",
-        fontSize: 2.5,
-        words: [""],
-        background,
-        brightness,
+        overflow: "fit",
       }),
     ],
     arrangements: [],
   };
 
-  const item = await createNewItemInDb({ item: newItem, db, selectedList });
+  const formattedItem = formatFree(newItem);
+
+  const item = await createNewItemInDb({ item: formattedItem, db });
 
   return item;
 };
@@ -344,7 +337,6 @@ type CreateNewTimerType = {
   name: string;
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
-  selectedList: ItemList;
   hostId: string;
   duration: number;
   countdownTime: string;
@@ -357,7 +349,6 @@ export const createNewTimer = async ({
   name,
   list,
   db,
-  selectedList,
   hostId,
   duration,
   countdownTime,
@@ -406,7 +397,7 @@ export const createNewTimer = async ({
     },
   };
 
-  const item = await createNewItemInDb({ item: newItem, db, selectedList });
+  const item = await createNewItemInDb({ item: newItem, db });
 
   return item;
 };
@@ -473,12 +464,10 @@ export const makeUnique = ({ value, property, list }: MakeUniqueType) => {
 type CreateNewItemInDbType = {
   item: ItemState;
   db: PouchDB.Database | undefined;
-  selectedList: ItemList;
 };
 export const createNewItemInDb = async ({
   item,
   db,
-  selectedList,
 }: CreateNewItemInDbType): Promise<ItemState> => {
   if (!db) return item;
   try {
