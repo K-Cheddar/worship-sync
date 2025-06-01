@@ -200,15 +200,15 @@ const Media = () => {
               );
             }
           }}
-          ref={(el) => {
-            if (el) {
-              handleButtonVisibility(
-                "setItem",
-                location.pathname.includes("item"),
-                selectedMedia.id === "" || isLoading
-              );
-            }
-          }}
+          // ref={(el) => {
+          //   if (el) {
+          //     handleButtonVisibility(
+          //       "setItem",
+          //       location.pathname.includes("item"),
+          //       selectedMedia.id === "" || isLoading
+          //     );
+          //   }
+          // }}
         >
           {isMobile ? "" : "Set Item"}
         </Button>
@@ -227,15 +227,15 @@ const Media = () => {
               );
             }
           }}
-          ref={(el) => {
-            if (el) {
-              handleButtonVisibility(
-                "setSlide",
-                location.pathname.includes("item"),
-                selectedMedia.id === "" || isLoading
-              );
-            }
-          }}
+          // ref={(el) => {
+          //   if (el) {
+          //     handleButtonVisibility(
+          //       "setSlide",
+          //       location.pathname.includes("item"),
+          //       selectedMedia.id === "" || isLoading
+          //     );
+          //   }
+          // }}
         >
           {isMobile ? "" : "Set Slide"}
         </Button>
