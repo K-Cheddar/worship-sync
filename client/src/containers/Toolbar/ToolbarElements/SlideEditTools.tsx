@@ -11,7 +11,7 @@ import { ReactComponent as AlignLeftSVG } from "../../../assets/icons/align-left
 import { ReactComponent as AlignCenterSVG } from "../../../assets/icons/align-center.svg";
 import { ReactComponent as AlignRightSVG } from "../../../assets/icons/align-right.svg";
 import Input from "../../../components/Input/Input";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useContext } from "react";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useLocation } from "react-router-dom";
 import {
@@ -37,6 +37,7 @@ import { updateTimerColor } from "../../../store/timersSlice";
 import RadioButton from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
 import { formatFree } from "../../../utils/overflow";
+import { GlobalInfoContext } from "../../../context/globalInfo";
 
 const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
@@ -50,6 +51,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     "left"
   );
   const timeoutRef = useRef<NodeJS.Timeout>();
+  const { hostId } = useContext(GlobalInfoContext) || {};
 
   const item = useSelector((state) => state.undoable.present.item);
   const { slides, selectedSlide, selectedBox, timerInfo, type } = item;
@@ -109,8 +111,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   };
 
   const _updateFontColor = (val: string) => {
-    setFontColor(val);
-
     if (val.includes("NaN")) {
       return;
     }
@@ -122,14 +122,14 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
     // Set new timeout
     timeoutRef.current = setTimeout(() => {
+      setFontColor(val);
+
       const updatedItem = updateFontColor({ fontColor: val, item });
       updateItem(updatedItem);
     }, 250);
   };
 
   const _updateTimerColor = (val: string) => {
-    setTimerColor(val);
-
     if (val.includes("NaN")) {
       return;
     }
@@ -139,9 +139,11 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     }
 
     timeoutRef.current = setTimeout(() => {
+      setTimerColor(val);
+
       const updatedItem = updateItemTimerColor({ timerColor: val, item });
       if (timerInfo?.id) {
-        dispatch(updateTimerColor({ id: timerInfo?.id, color: val }));
+        dispatch(updateTimerColor({ id: timerInfo?.id, color: val, hostId }));
       }
       updateItem(updatedItem);
     }, 250);
