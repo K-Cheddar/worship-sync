@@ -7,3 +7,37 @@
 
   @apply grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-2 z-10;
 }
+
+@keyframes border-glow {
+  0% {
+    border-color: rgba(22, 163, 74, 0); /* Fully Transparent */
+  }
+  10% {
+    border-color: rgba(22, 163, 74, 0.2); /* Slightly Visible */
+  }
+  25% {
+    border-color: rgba(22, 163, 74, 0.5); /* More Intense */
+  }
+  40% {
+    border-color: rgba(22, 163, 74, 0.8); /* Almost Full */
+  }
+  50% {
+    border-color: rgba(22, 163, 74, 1); /* Bright Green */
+  }
+  60% {
+    border-color: rgba(22, 163, 74, 0.8); /* Start Fading */
+  }
+  75% {
+    border-color: rgba(22, 163, 74, 0.5); /* More Transparent */
+  }
+  90% {
+    border-color: rgba(22, 163, 74, 0.2); /* Barely Visible */
+  }
+  100% {
+    border-color: rgba(22, 163, 74, 0); /* Fully Transparent */
+  }
+}
+
+.button-appear {
+  animation: border-glow 1.5s 4;
+}

@@ -82,6 +82,10 @@ const Media = () => {
 
   const defaultItemsPerRow = isMobile ? "grid-cols-3" : "grid-cols-5";
 
+  const [visibleButtons, setVisibleButtons] = useState<{
+    [key: string]: boolean;
+  }>({});
+
   useEffect(() => {
     if (isMobile) {
       dispatch(setMediaItems(3));
@@ -129,6 +133,21 @@ const Media = () => {
     return () => updater.removeEventListener("update", updateMediaList);
   }, [updater, dispatch, cloud]);
 
+  useEffect(() => {
+    // Reset visibility states when pathname changes
+    setVisibleButtons({});
+  }, [location.pathname]);
+
+  const handleButtonVisibility = (
+    buttonId: string,
+    isVisible: boolean,
+    isDisabled?: boolean
+  ) => {
+    if (isVisible && !isDisabled && !visibleButtons[buttonId]) {
+      setVisibleButtons((prev) => ({ ...prev, [buttonId]: true }));
+    }
+  };
+
   const deleteBackground = async () => {
     if (!db) return;
     const updatedList = list.filter((item) => item.id !== selectedMedia.id);
@@ -168,7 +187,8 @@ const Media = () => {
           disabled={selectedMedia.id === "" || isLoading}
           className={cn(
             "mr-2",
-            !location.pathname.includes("item") && "hidden"
+            !location.pathname.includes("item") && "hidden",
+            visibleButtons["setItem"] && "button-appear"
           )}
           svg={BgAll}
           onClick={() => {
@@ -180,13 +200,25 @@ const Media = () => {
               );
             }
           }}
+          // ref={(el) => {
+          //   if (el) {
+          //     handleButtonVisibility(
+          //       "setItem",
+          //       location.pathname.includes("item"),
+          //       selectedMedia.id === "" || isLoading
+          //     );
+          //   }
+          // }}
         >
           {isMobile ? "" : "Set Item"}
         </Button>
         <Button
           variant="tertiary"
           disabled={selectedMedia.id === "" || isLoading}
-          className={cn(!location.pathname.includes("item") && "hidden")}
+          className={cn(
+            !location.pathname.includes("item") && "hidden",
+            visibleButtons["setSlide"] && "button-appear"
+          )}
           svg={BGOne}
           onClick={() => {
             if (selectedMedia.background && db) {
@@ -195,6 +227,15 @@ const Media = () => {
               );
             }
           }}
+          // ref={(el) => {
+          //   if (el) {
+          //     handleButtonVisibility(
+          //       "setSlide",
+          //       location.pathname.includes("item"),
+          //       selectedMedia.id === "" || isLoading
+          //     );
+          //   }
+          // }}
         >
           {isMobile ? "" : "Set Slide"}
         </Button>
@@ -205,7 +246,8 @@ const Media = () => {
             !(
               location.pathname.includes("overlays") &&
               selectedOverlayType === "image"
-            ) && "hidden"
+            ) && "hidden",
+            visibleButtons["setImageOverlay"] && "button-appear"
           )}
           svg={BGOne}
           onClick={() => {
@@ -218,6 +260,16 @@ const Media = () => {
               );
             }
           }}
+          ref={(el) => {
+            if (el) {
+              handleButtonVisibility(
+                "setImageOverlay",
+                location.pathname.includes("overlays") &&
+                  selectedOverlayType === "image",
+                selectedMedia.id === ""
+              );
+            }
+          }}
         >
           {isMobile ? "" : "Set Image Overlay"}
         </Button>
@@ -227,7 +279,8 @@ const Media = () => {
           className={cn(
             (!location.pathname.includes("preferences") ||
               tab !== "defaults") &&
-              "hidden"
+              "hidden",
+            visibleButtons["setBackground"] && "button-appear"
           )}
           svg={BGOne}
           onClick={() => {
@@ -236,6 +289,15 @@ const Media = () => {
                 [selectedPreference]: selectedMedia.background,
               })
             );
+          }}
+          ref={(el) => {
+            if (el) {
+              handleButtonVisibility(
+                "setBackground",
+                location.pathname.includes("preferences") && tab === "defaults",
+                selectedMedia.id === "" || !selectedPreference
+              );
+            }
           }}
         >
           {isMobile ? "" : "Set Background"}
@@ -247,11 +309,27 @@ const Media = () => {
             (!location.pathname.includes("preferences") ||
               tab !== "quickLinks" ||
               selectedQuickLink?.linkType !== "image") &&
-              "hidden"
+              "hidden",
+            visibleButtons["setQuickLink"] && "button-appear"
           )}
           svg={BGOne}
           onClick={() => {
             dispatch(setSelectedQuickLinkImage(selectedMedia.background));
+          }}
+          ref={(el) => {
+            if (el) {
+              const isVisible = Boolean(
+                location.pathname.includes("preferences") &&
+                  tab === "quickLinks" &&
+                  selectedQuickLink?.linkType === "image"
+              );
+              const isDisabled = Boolean(
+                !selectedQuickLink ||
+                  selectedMedia.id === "" ||
+                  selectedQuickLink?.linkType !== "image"
+              );
+              handleButtonVisibility("setQuickLink", isVisible, isDisabled);
+            }
           }}
         >
           {isMobile ? "" : "Set Quick Link Background"}
