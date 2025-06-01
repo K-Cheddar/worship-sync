@@ -1,0 +1,2 @@
+npm test
+#!/usr/bin/env PATH="/usr/bin:$PATH" bash
