@@ -44,7 +44,6 @@ const DisplayParticipantOverlay = forwardRef<
         ];
         const targets = [participantOverlayRef.current, ...innerElements];
 
-        // Set initial state based on current animation state
         overlayTimeline.current = gsap
           .timeline()
           .set(targets, { xPercent: -105, opacity: 0 });

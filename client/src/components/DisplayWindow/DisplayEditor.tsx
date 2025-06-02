@@ -70,12 +70,6 @@ const DisplayEditor = ({
     }
   }, [box, textAreaRef]);
 
-  // useEffect(() => {
-  //   if (isSelected && textAreaRef.current) {
-  //     textAreaRef.current.focus();
-  //   }
-  // }, [isSelected]);
-
   const updateBoxSize = useCallback(() => {
     const parent = document.getElementById("display-editor");
     const width = parent?.offsetWidth || 0;
