@@ -48,7 +48,8 @@ const DisplayBox = ({
 
       boxTimeline.current?.clear();
 
-      const skipTextAnimation = prevBox && prevBox.words === box.words;
+      const skipTextAnimation =
+        prevBox && prevBox.words?.trim() === box.words?.trim();
       const skipBackgroundAnimation =
         prevBox && prevBox.background === box.background;
       const textDuration = skipTextAnimation ? 0 : 0.35;
