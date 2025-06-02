@@ -21,7 +21,7 @@ import TimerManager from "./components/TimerManager/TimerManager";
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
 
-function App() {
+const App: React.FC = () => {
   return (
     <Provider store={store}>
       <Router>
@@ -44,6 +44,6 @@ function App() {
       </Router>
     </Provider>
   );
-}
+};
 
 export default App;

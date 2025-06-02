@@ -25,16 +25,19 @@
   border-top-right-radius: 3% 10%;
 }
 
-.overlay-participant-info-name {
+.overlay-participant-info-name,
+.prev-overlay-participant-info-name {
   font-size: var(--overlay-participant-info-name-size);
 }
 
-.overlay-participant-info-title {
+.overlay-participant-info-title,
+.prev-overlay-participant-info-title {
   font-size: var(--overlay-participant-info-title-size);
   font-style: italic;
 }
 
-.overlay-participant-info-event {
+.overlay-participant-info-event,
+.prev-overlay-participant-info-event {
   font-size: var(--overlay-participant-info-event-size);
 }
 
