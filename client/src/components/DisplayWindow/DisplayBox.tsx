@@ -61,9 +61,9 @@ const DisplayBox = ({
       //   targets.push('.display-box-background')
       // }
 
-      if (isPrev) {
-        boxTimeline.current = gsap.timeline();
+      boxTimeline.current = gsap.timeline();
 
+      if (isPrev) {
         if (!skipBackgroundAnimation && shouldShowBackground) {
           boxTimeline.current.set(".display-box-background", { opacity: 1 });
         }
@@ -85,8 +85,6 @@ const DisplayBox = ({
           );
         }
       } else {
-        boxTimeline.current = gsap.timeline();
-
         if (!skipBackgroundAnimation && shouldShowBackground) {
           boxTimeline.current.set(".display-box-background", { opacity: 0 });
         }
