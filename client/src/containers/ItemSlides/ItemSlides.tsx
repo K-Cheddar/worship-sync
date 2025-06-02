@@ -129,7 +129,7 @@ const ItemSlides = () => {
     } else {
       timeout = setTimeout(() => {
         debounceTime.current = 150;
-      }, 500);
+      }, 250);
     }
 
     return () => {

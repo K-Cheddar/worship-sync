@@ -48,7 +48,8 @@ const DisplayBox = ({
 
       boxTimeline.current?.clear();
 
-      const skipTextAnimation = prevBox && prevBox.words === box.words;
+      const skipTextAnimation =
+        prevBox && prevBox.words?.trim() === box.words?.trim();
       const skipBackgroundAnimation =
         prevBox && prevBox.background === box.background;
       const textDuration = skipTextAnimation ? 0 : 0.35;
@@ -61,9 +62,9 @@ const DisplayBox = ({
       //   targets.push('.display-box-background')
       // }
 
-      if (isPrev) {
-        boxTimeline.current = gsap.timeline();
+      boxTimeline.current = gsap.timeline();
 
+      if (isPrev) {
         if (!skipBackgroundAnimation && shouldShowBackground) {
           boxTimeline.current.set(".display-box-background", { opacity: 1 });
         }
@@ -85,8 +86,6 @@ const DisplayBox = ({
           );
         }
       } else {
-        boxTimeline.current = gsap.timeline();
-
         if (!skipBackgroundAnimation && shouldShowBackground) {
           boxTimeline.current.set(".display-box-background", { opacity: 0 });
         }

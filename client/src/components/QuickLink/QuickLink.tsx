@@ -6,6 +6,11 @@ import {
   updateProjector,
   updateMonitor,
   updateStream,
+  updateBibleDisplayInfo,
+  updateParticipantOverlayInfo,
+  updateStbOverlayInfo,
+  updateImageOverlayInfo,
+  updateQrCodeOverlayInfo,
 } from "../../store/presentationSlice";
 import { QuickLinkType, TimerInfo } from "../../types";
 import Button from "../Button/Button";
@@ -43,7 +48,23 @@ const QuickLink = ({
       } else if (displayType === "monitor") {
         dispatch(updateMonitor(presentationInfo));
       } else if (displayType === "stream") {
-        dispatch(updateStream(presentationInfo));
+        if (presentationInfo.slide) {
+          dispatch(updateStream(presentationInfo));
+        } else if (presentationInfo.bibleDisplayInfo) {
+          dispatch(updateBibleDisplayInfo(presentationInfo.bibleDisplayInfo));
+        } else if (presentationInfo.imageOverlayInfo) {
+          dispatch(updateImageOverlayInfo(presentationInfo.imageOverlayInfo));
+        } else if (presentationInfo.participantOverlayInfo) {
+          dispatch(
+            updateParticipantOverlayInfo(
+              presentationInfo.participantOverlayInfo
+            )
+          );
+        } else if (presentationInfo.stbOverlayInfo) {
+          dispatch(updateStbOverlayInfo(presentationInfo.stbOverlayInfo));
+        } else if (presentationInfo.qrCodeOverlayInfo) {
+          dispatch(updateQrCodeOverlayInfo(presentationInfo.qrCodeOverlayInfo));
+        }
       }
     }
   };

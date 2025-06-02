@@ -32,7 +32,10 @@ const DisplayStreamText = ({
 
       boxTimeline.current?.clear();
 
-      const skipTextAnimation = prevBox && prevBox.words === box.words;
+      const skipTextAnimation = prevBox
+        ? prevBox.words?.trim() === box.words?.trim()
+        : false;
+
       const textDuration = skipTextAnimation ? 0 : 0.35;
 
       if (isPrev) {

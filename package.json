@@ -6,7 +6,12 @@
     "heroku-postbuild": "cd client && npm install && npm install --only=dev --no-shrinkwrap && npm run build",
     "client": "cd client && npm start ",
     "server": "npx nodemon server.js",
-    "dev": "concurrently --kill-others-on-fail \"npm run server\" \"npm run client\""
+    "dev": "concurrently --kill-others-on-fail \"npm run server\" \"npm run client\"",
+    "release": "standard-version",
+    "release:alpha": "standard-version --prerelease alpha",
+    "release:beta": "standard-version --prerelease beta",
+    "release:rc": "standard-version --prerelease rc",
+    "prepare": "husky"
   },
   "engines": {
     "node": "20.x"
@@ -32,8 +37,12 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
     "@types/obs-studio": "^2.17.2",
-    "concurrently": "^4.1.2"
+    "concurrently": "^4.1.2",
+    "husky": "^9.1.7",
+    "standard-version": "^9.5.0"
   },
   "type": "module"
 }
