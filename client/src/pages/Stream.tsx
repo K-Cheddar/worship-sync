@@ -28,12 +28,15 @@ const Stream = () => {
       prevBoxes={prevStreamInfo.slide?.boxes || []}
       displayType={streamInfo.displayType}
       participantOverlayInfo={streamInfo.participantOverlayInfo}
-      prevOverlayInfo={prevStreamInfo.participantOverlayInfo}
+      prevParticipantOverlayInfo={prevStreamInfo.participantOverlayInfo}
       stbOverlayInfo={streamInfo.stbOverlayInfo}
-      prevBibleDisplayInfo={prevStreamInfo.bibleDisplayInfo}
+      prevStbOverlayInfo={prevStreamInfo.stbOverlayInfo}
       bibleDisplayInfo={streamInfo.bibleDisplayInfo}
+      prevBibleDisplayInfo={prevStreamInfo.bibleDisplayInfo}
       qrCodeOverlayInfo={streamInfo.qrCodeOverlayInfo}
+      prevQrCodeOverlayInfo={prevStreamInfo.qrCodeOverlayInfo}
       imageOverlayInfo={streamInfo.imageOverlayInfo}
+      prevImageOverlayInfo={prevStreamInfo.imageOverlayInfo}
       shouldAnimate
       width={100}
       timerInfo={streamTimer}

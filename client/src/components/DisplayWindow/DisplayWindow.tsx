@@ -33,11 +33,14 @@ type DisplayWindowProps = {
   width: number;
   showBorder?: boolean;
   displayType?: DisplayType;
-  prevOverlayInfo?: OverlayInfo;
   participantOverlayInfo?: OverlayInfo;
+  prevParticipantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
+  prevStbOverlayInfo?: OverlayInfo;
   qrCodeOverlayInfo?: OverlayInfo;
+  prevQrCodeOverlayInfo?: OverlayInfo;
   imageOverlayInfo?: OverlayInfo;
+  prevImageOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
   prevBibleDisplayInfo?: BibleDisplayInfo;
   timerInfo?: TimerInfo;
@@ -59,9 +62,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       width,
       showBorder = false,
       displayType,
-      prevOverlayInfo,
       participantOverlayInfo,
+      prevParticipantOverlayInfo,
       stbOverlayInfo,
+      prevStbOverlayInfo,
       shouldAnimate = false,
       shouldPlayVideo = false,
       time,
@@ -69,7 +73,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       bibleDisplayInfo,
       prevBibleDisplayInfo,
       qrCodeOverlayInfo,
+      prevQrCodeOverlayInfo,
       imageOverlayInfo,
+      prevImageOverlayInfo,
       timerInfo,
       prevTimerInfo,
       selectBox,
@@ -198,6 +204,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               width={width}
               shouldAnimate={shouldAnimate}
               stbOverlayInfo={stbOverlayInfo}
+              prevStbOverlayInfo={prevStbOverlayInfo}
               ref={containerRef}
             />
 
@@ -205,6 +212,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               width={width}
               shouldAnimate={shouldAnimate}
               participantOverlayInfo={participantOverlayInfo}
+              prevParticipantOverlayInfo={prevParticipantOverlayInfo}
               ref={containerRef}
             />
 
@@ -212,6 +220,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               width={width}
               shouldAnimate={shouldAnimate}
               qrCodeOverlayInfo={qrCodeOverlayInfo}
+              prevQrCodeOverlayInfo={prevQrCodeOverlayInfo}
               ref={containerRef}
             />
 
@@ -219,6 +228,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               width={width}
               shouldAnimate={shouldAnimate}
               imageOverlayInfo={imageOverlayInfo}
+              prevImageOverlayInfo={prevImageOverlayInfo}
               ref={containerRef}
             />
           </>

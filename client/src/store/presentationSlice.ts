@@ -157,9 +157,18 @@ export const presentationSlice = createSlice({
       if (state.isStreamTransmitting) {
         // set previous info for cross animation
         state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
+        state.prevStreamInfo.imageOverlayInfo =
+          state.streamInfo.imageOverlayInfo;
+
         state.streamInfo.stbOverlayInfo = {
           ...action.payload,
           time: Date.now(),
+        };
+        state.streamInfo.imageOverlayInfo = {
+          name: "",
+          imageUrl: "",
+          time: Date.now(),
+          id: generateRandomId(),
         };
       }
     },
@@ -191,6 +200,12 @@ export const presentationSlice = createSlice({
             title: "",
             text: "",
             time: Date.now(),
+          };
+          state.streamInfo.imageOverlayInfo = {
+            name: "",
+            imageUrl: "",
+            time: Date.now(),
+            id: generateRandomId(),
           };
         }
       }
@@ -317,9 +332,16 @@ export const presentationSlice = createSlice({
     ) => {
       // set previous info for cross animation
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
+      state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
       state.streamInfo.stbOverlayInfo = {
         ...action.payload,
         time: action.payload.time,
+      };
+      state.streamInfo.imageOverlayInfo = {
+        name: "",
+        imageUrl: "",
+        time: Date.now(),
+        id: generateRandomId(),
       };
     },
     updateQrCodeOverlayInfoFromRemote: (
