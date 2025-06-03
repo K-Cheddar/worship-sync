@@ -1,6 +1,6 @@
 {
   "name": "worship-sync-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "scripts": {
     "start": "node server.js",
     "heroku-postbuild": "cd client && npm install && npm install --only=dev --no-shrinkwrap && npm run build",
