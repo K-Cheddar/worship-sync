@@ -781,7 +781,8 @@ const formatBibleVerses = ({
   isNew,
 }: formatBibleVersesType) => {
   let slides = item.slides || [];
-  let currentSlide: ItemSlide = slides[item.selectedSlide] || {};
+  const referenceIndex = item.selectedSlide > 0 ? item.selectedSlide : 1;
+  let currentSlide: ItemSlide = slides[referenceIndex] || {};
   // let allBoxes = slides.flatMap(x => x.boxes);
   // let overflowBoxes = allBoxes.filter(e => !e.excludeFromOverflow)
   let currentBoxes = [...currentSlide.boxes];

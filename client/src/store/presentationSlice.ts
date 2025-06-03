@@ -423,7 +423,6 @@ export const presentationSlice = createSlice({
           };
         }
         state.streamInfo.time = Date.now();
-        // state.prevStreamInfo.slide = null;
       }
     },
     updateBibleDisplayInfoFromRemote: (
@@ -721,11 +720,7 @@ export const presentationSlice = createSlice({
     },
     updateStreamFromRemote: (state, action: PayloadAction<Presentation>) => {
       // set previous info for cross animation
-      state.prevStreamInfo.slide = state.streamInfo.slide;
-      state.prevStreamInfo.name = state.streamInfo.name;
-      state.prevStreamInfo.type = state.streamInfo.type;
-      state.prevStreamInfo.time = state.streamInfo.time;
-      state.prevStreamInfo.timerId = state.streamInfo.timerId;
+      state.prevStreamInfo = { ...state.streamInfo };
 
       if (action.payload.type !== "bible") {
         state.streamInfo.slide = action.payload.slide;
