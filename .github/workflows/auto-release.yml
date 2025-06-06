@@ -7,16 +7,12 @@ on:
       - master
 
 jobs:
-  release:
-    name: Release
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -27,6 +23,36 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build project
+        run: npm run build
+
+      - name: Save Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: ./dist  # Adjust based on your build output
+
+  release:
+    needs: build
+    name: Release
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Retrieve Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: ./dist
+
       - name: Configure Git
         run: |
           git config --global user.name 'github-actions[bot]'
@@ -34,7 +60,7 @@ jobs:
 
       - name: Release
         run: |
-          if [ "${{ github.base_ref }}" = "master" ]; then
+          if [ "${{ github.ref }}" = "refs/heads/master" ]; then
             npm run release
           else
             npm run release:beta
@@ -45,3 +71,33 @@ jobs:
       - name: Push changes
         run: |
           git push --follow-tags origin HEAD:${{ github.base_ref }} 
+
+  deploy:
+    needs: release
+    name: Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Retrieve Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: ./dist
+
+      - name: Deploy to Heroku
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: |
+          git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/${{ secrets.HEROKU_APP_NAME }}.git
+          git push heroku HEAD:refs/heads/main --force
