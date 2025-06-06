@@ -9,12 +9,10 @@ const Credits = ({
   credits,
   isPreview = false,
   runObsTransition,
-  setCreditsTimeline,
 }: {
   credits: CreditsInfo[];
   isPreview?: boolean;
   runObsTransition?: () => void;
-  setCreditsTimeline?: (timeline: GSAPTimeline) => void;
 }) => {
   const containerRef = useRef<HTMLUListElement>(null);
   const endingRef = useRef<HTMLDivElement>(null);
@@ -32,26 +30,18 @@ const Credits = ({
 
   useGSAP(
     () => {
-      if (
-        !containerRef.current ||
-        isPreview ||
-        credits.length === 0 ||
-        !setCreditsTimeline
-      )
-        return;
+      if (!containerRef.current || isPreview || credits.length === 0) return;
 
-      setCreditsTimeline(
-        gsap
-          .timeline()
-          .set(containerRef.current, {
-            scrollTo: "#starting-credits",
-          })
-          .to(containerRef.current, {
-            scrollTo: "#ending-credits",
-            duration: credits.length * 3.5,
-            ease: "none",
-          })
-      );
+      gsap
+        .timeline()
+        .set(containerRef.current, {
+          scrollTo: "#starting-credits",
+        })
+        .to(containerRef.current, {
+          scrollTo: "#ending-credits",
+          duration: credits.length * 3.5,
+          ease: "none",
+        });
     },
     { scope: containerRef, dependencies: [isPreview, credits] }
   );
