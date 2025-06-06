@@ -20,17 +20,22 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install dependencies
+      - name: Install server dependencies
         run: npm ci
 
-      - name: Build project
-        run: npm run build
+      - name: Install client dependencies
+        run: cd client && npm ci
+
+      - name: Build client
+        run: cd client && npm run build
 
       - name: Save Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
-          path: ./dist  # Adjust based on your build output
+          path: |
+            ./dist
+            ./client/build
 
   release:
     needs: build
@@ -44,14 +49,11 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install dependencies
-        run: npm ci
-
       - name: Retrieve Build Artifacts
         uses: actions/download-artifact@v4
         with:
           name: build-artifacts
-          path: ./dist
+          path: .  # Ensures correct placement of retrieved files
 
       - name: Configure Git
         run: |
@@ -70,7 +72,7 @@ jobs:
 
       - name: Push changes
         run: |
-          git push --follow-tags origin HEAD:${{ github.base_ref }} 
+          git push --follow-tags origin HEAD:refs/heads/master
 
   deploy:
     needs: release
@@ -93,11 +95,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-artifacts
-          path: ./dist
+          path: .
 
       - name: Deploy to Heroku
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: |
           git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/${{ secrets.HEROKU_APP_NAME }}.git
+          git status --porcelain | grep . && git add . && git commit -m "Deploy to Heroku" || true
           git push heroku HEAD:refs/heads/main --force
