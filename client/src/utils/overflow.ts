@@ -623,25 +623,23 @@ export const formatSong = (_item: ItemState) => {
     return { ...ele, slideSpan };
   });
 
+  // Create a map to track how many times we've seen each section
+  const sectionOccurrences = new Map<string, number>();
+
   const updatedSlides = slides.map((slide, index) => {
     const formattedLyric = formattedLyrics.find((e) => e.name === slide.name);
     if (!formattedLyric || formattedLyric.slideSpan < 2) return slide;
 
-    // Find the start of the current consecutive section
-    let sectionStartIndex = index;
-    while (
-      sectionStartIndex > 0 &&
-      slides[sectionStartIndex - 1].name === slide.name
-    ) {
-      sectionStartIndex--;
-    }
+    // Get how many times we've seen this section
+    const occurrence = sectionOccurrences.get(slide.name) || 0;
+    sectionOccurrences.set(slide.name, occurrence + 1);
 
-    // Count occurrences only within the current consecutive section
-    const occurrenceIndex = index - sectionStartIndex;
+    // Calculate which letter to use based on the occurrence and slideSpan
+    const letterIndex = occurrence % Math.ceil(formattedLyric.slideSpan);
 
     return {
       ...slide,
-      name: `${slide.name}${getLetterFromIndex(occurrenceIndex, true)}`,
+      name: `${slide.name}${getLetterFromIndex(letterIndex, true)}`,
     };
   });
 
