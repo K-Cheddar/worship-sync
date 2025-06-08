@@ -293,9 +293,29 @@ const GlobalInfoProvider = ({ children }: any) => {
     const unsubscribe = onValue(activeInstancesRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        // Only count instances that are on the controller page
+        // Clean up stale instances (older than 1 hour)
+        const now = Date.now();
+        const staleInstances = Object.entries(data).filter(
+          ([_, instance]: [string, any]) => {
+            const lastActive = new Date(instance.lastActive).getTime();
+            return now - lastActive > 60 * 60 * 1000; // 1 hour
+          }
+        );
+
+        // Remove stale instances
+        staleInstances.forEach(([hostId]) => {
+          const staleRef = ref(
+            firebaseDb,
+            `users/${user}/v2/activeInstances/${hostId}`
+          );
+          set(staleRef, null);
+        });
+
+        // Only count instances that are on the controller page and not stale
         const count = Object.values(data).filter(
-          (instance: any) => instance.isOnController
+          (instance: any) =>
+            instance.isOnController &&
+            now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
         ).length;
         setActiveInstances(count);
       } else {
@@ -325,6 +345,9 @@ const GlobalInfoProvider = ({ children }: any) => {
     // Initial setup
     updateInstance();
 
+    // Set up periodic updates while the component is mounted
+    const updateInterval = setInterval(updateInstance, 30 * 60 * 1000); // Update every 30 minutes
+
     // Remove this instance when the user disconnects
     if (instanceRef.current) {
       onDisconnect(instanceRef.current).remove();
@@ -333,6 +356,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     // Cleanup function
     return () => {
       unsubscribe();
+      clearInterval(updateInterval);
       if (instanceRef.current) {
         set(instanceRef.current, null);
       }
