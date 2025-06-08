@@ -85,6 +85,7 @@ const SongSections = ({
               name: section || songOrder[0]?.name,
             });
             setSongOrder(updatedSongOrder);
+            setSelectedIndex(selectedIndex + 1);
           }}
           className="text-base mt-2 w-full justify-center h-7"
           disabled={!section}
