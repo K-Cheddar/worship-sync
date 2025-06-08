@@ -6,5 +6,6 @@
     "@semantic-release/changelog",
     "@semantic-release/git",
     "@semantic-release/github"
-  ]
+  ],
+  "npmPublish": false
 }
