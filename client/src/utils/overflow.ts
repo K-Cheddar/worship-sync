@@ -8,7 +8,7 @@ import {
   BibleFontMode,
 } from "../types";
 import { getLetterFromIndex } from "./generalUtils";
-import { createNewSlide } from "./slideCreation";
+import { createBox, createNewSlide } from "./slideCreation";
 import generateRandomId from "./generateRandomId";
 
 type getMaxLinesProps = {
@@ -57,13 +57,12 @@ export const getMaxLines = ({
     // Use `getBoundingClientRect()` for more precise height
     const singleLineHeight = measureSpan.getBoundingClientRect().height;
 
-    measureSpan.textContent =
-      "Sample Text\nWith Multiple Lines\nAnd Some Longer Words";
+    measureSpan.textContent = "Sample\nText\nWith\nMultiple\nLines";
     const multiLineHeight = measureSpan.getBoundingClientRect().height;
 
     document.body.removeChild(measureSpan);
 
-    const lineHeight = Math.max(singleLineHeight, multiLineHeight / 3);
+    const lineHeight = Math.max(singleLineHeight, multiLineHeight / 5);
     const maxLines = Math.floor(containerHeightPx / lineHeight);
 
     return {
@@ -124,7 +123,7 @@ export const getNumLines = ({
     const textHeight = measureSpan.getBoundingClientRect().height;
     document.body.removeChild(measureSpan);
 
-    const numLines = Math.round(textHeight / lineHeight);
+    const numLines = Math.ceil(textHeight / lineHeight);
 
     return Math.max(1, numLines);
   } catch (error) {
@@ -623,25 +622,23 @@ export const formatSong = (_item: ItemState) => {
     return { ...ele, slideSpan };
   });
 
+  // Create a map to track how many times we've seen each section
+  const sectionOccurrences = new Map<string, number>();
+
   const updatedSlides = slides.map((slide, index) => {
     const formattedLyric = formattedLyrics.find((e) => e.name === slide.name);
     if (!formattedLyric || formattedLyric.slideSpan < 2) return slide;
 
-    // Find the start of the current consecutive section
-    let sectionStartIndex = index;
-    while (
-      sectionStartIndex > 0 &&
-      slides[sectionStartIndex - 1].name === slide.name
-    ) {
-      sectionStartIndex--;
-    }
+    // Get how many times we've seen this section
+    const occurrence = sectionOccurrences.get(slide.name) || 0;
+    sectionOccurrences.set(slide.name, occurrence + 1);
 
-    // Count occurrences only within the current consecutive section
-    const occurrenceIndex = index - sectionStartIndex;
+    // Calculate which letter to use based on the occurrence and slideSpan
+    const letterIndex = occurrence % Math.ceil(formattedLyric.slideSpan);
 
     return {
       ...slide,
-      name: `${slide.name}${getLetterFromIndex(occurrenceIndex, true)}`,
+      name: `${slide.name}${getLetterFromIndex(letterIndex, true)}`,
     };
   });
 
@@ -681,22 +678,34 @@ export const formatBible = ({
     : [
         createNewSlide({
           type: "Title",
+          itemType: "bible",
           fontSize: 3.5,
           words: ["", item.name],
           background,
           brightness,
         }),
+
         createNewSlide({
+          itemType: "bible",
           type: "Verse",
           fontSize: 2.5,
           background,
           brightness,
+          boxes: [
+            createBox({}),
+            createBox({
+              height: 92,
+            }),
+            createBox({ height: 8 }),
+          ],
+          words: ["", "", ""],
         }),
       ];
   let boxes = slides[0]?.boxes || [];
   let newSlides = [
     createNewSlide({
       type: "Title",
+      itemType: "bible",
       fontSize: boxes[1]?.fontSize || 3.5,
       words: ["", boxes[1]?.words || " "],
       background: boxes[0]?.background || background,
@@ -792,6 +801,17 @@ const formatBibleVerses = ({
   });
   let formattedVerses = [];
   // let type = currentSlide.type;
+
+  console.log({
+    verses,
+    item,
+    mode,
+    book,
+    chapter,
+    version,
+    isNew,
+    currentBoxes,
+  });
 
   if (mode === "separate" && verses) {
     for (let i = 0; i < verses.length; ++i) {
@@ -945,16 +965,18 @@ const formatBibleVerses = ({
       const verse = verses[i];
       let words = verse.text?.split(" ") || [];
       let slide = "";
-      let currentFontSize = 2.5;
+      let currentFontSize = currentBoxes[1]?.fontSize || 2.5;
       let fitProcessing = true;
+      const versePrefix = "\u200B" + verse.name + ".\u200B ";
 
       while (fitProcessing) {
         let tempSlide = "";
         for (let j = 0; j < words.length; j++) {
           let update = tempSlide + words[j];
+          // Always include the verse prefix in the line calculation
           if (
             getNumLines({
-              text: update,
+              text: versePrefix + update,
               fontSize: currentFontSize,
               lineHeight,
               width: currentBoxes[1].width,
@@ -977,12 +999,6 @@ const formatBibleVerses = ({
         }
       }
 
-      // Update maxLines and lineHeight for the final slide
-      ({ maxLines, lineHeight } = getMaxLines({
-        fontSize: currentFontSize,
-        height: currentBoxes[1].height || 95,
-      }));
-
       formattedVerses.push(
         createNewSlide({
           itemType: "bible",
@@ -1000,7 +1016,7 @@ const formatBibleVerses = ({
               ],
           words: [
             "",
-            "\u200B" + verse.name + ".\u200B " + slide,
+            versePrefix + slide,
             getBibleName({ book, chapter, verse: verse.name, version }),
           ],
         })

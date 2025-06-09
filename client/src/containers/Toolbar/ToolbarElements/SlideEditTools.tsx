@@ -201,7 +201,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         <Input
           label="Font Size"
           type="number"
-          disabled={item.type === "bible" && item.bibleInfo?.fontMode === "fit"}
           value={fontSize}
           onChange={(val) => _updateFontSize(val as number)}
           className="w-8 2xl:w-10"
