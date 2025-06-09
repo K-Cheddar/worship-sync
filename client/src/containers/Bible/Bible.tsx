@@ -185,6 +185,22 @@ const Bible = () => {
   }, [chapter, chapters, dispatch]);
 
   useEffect(() => {
+    if (verses) {
+      if (!searchValues.endVerse) {
+        dispatch(setEndVerse(verses.length - 1));
+      }
+    }
+  }, [verses, dispatch, searchValues.endVerse]);
+
+  useEffect(() => {
+    if (verses) {
+      if (!searchValues.startVerse) {
+        dispatch(setStartVerse(0));
+      }
+    }
+  }, [verses, dispatch, searchValues.startVerse]);
+
+  useEffect(() => {
     if (books) {
       dispatch(setChapters(books[book]?.chapters || books[0]?.chapters || []));
     }

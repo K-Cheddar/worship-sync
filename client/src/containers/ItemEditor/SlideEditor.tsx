@@ -255,7 +255,7 @@ const SlideEditor = () => {
   const canDeleteBox = useCallback(
     (index: number) => {
       if (type === "bible") {
-        return index > 2;
+        return selectedSlide > 0 ? index > 2 : index > 1;
       }
 
       if (type === "song") {
@@ -268,7 +268,7 @@ const SlideEditor = () => {
 
       return false;
     },
-    [type]
+    [type, selectedSlide]
   );
 
   const isEmpty = _boxes.length === 0;

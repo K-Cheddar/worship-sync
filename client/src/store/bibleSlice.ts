@@ -86,6 +86,10 @@ export const bibleSlice = createSlice({
 
       if (type === "startVerse") {
         state.searchValues.endVerse = "";
+
+        if (action.payload.value > state.searchValues.endVerse) {
+          state.searchValues.endVerse = "";
+        }
       }
     },
   },

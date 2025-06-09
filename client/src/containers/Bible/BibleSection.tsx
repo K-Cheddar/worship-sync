@@ -59,7 +59,7 @@ const BibleSection = ({
     if (updatedFilteredList?.[0] && !isValueInList) {
       setValue(updatedFilteredList[0].index);
     }
-  }, [searchValue, initialList, setValue, type, value, min]);
+  }, [searchValue, initialList, setValue, type, value, min, label]);
 
   return (
     <div
