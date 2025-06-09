@@ -14,8 +14,12 @@ import textMidThird from "../../../assets/images/textbox_midThird.png";
 
 import { Box } from "../../../types";
 import { useDispatch, useSelector } from "../../../hooks";
-import { formatSong } from "../../../utils/overflow";
-import { updateArrangements, updateBoxes } from "../../../store/itemSlice";
+import { formatBible, formatSong } from "../../../utils/overflow";
+import {
+  updateArrangements,
+  updateBoxes,
+  updateSlides,
+} from "../../../store/itemSlice";
 import { useMemo, useState } from "react";
 import RadioButton from "../../../components/RadioButton/RadioButton";
 import PopOver from "../../../components/PopOver/PopOver";
@@ -65,9 +69,27 @@ const BoxEditor = () => {
           }
         : b
     );
-    if (type !== "song") {
+    if (type === "free" || type === "timer") {
       dispatch(updateBoxes({ boxes: newBoxes }));
       return;
+    }
+
+    const updatedItem = {
+      ...item,
+      slides: item.slides.map((slide, index) => {
+        if (index === selectedSlide) {
+          return { ...slide, boxes: newBoxes };
+        }
+        return slide;
+      }),
+    };
+
+    if (type === "bible") {
+      const _item = formatBible({
+        item: updatedItem,
+        mode: item.bibleInfo?.fontMode || "separate",
+      });
+      dispatch(updateSlides({ slides: _item.slides }));
     }
 
     if (type === "song") {

@@ -123,7 +123,7 @@ export const getNumLines = ({
     const textHeight = measureSpan.getBoundingClientRect().height;
     document.body.removeChild(measureSpan);
 
-    const numLines = Math.ceil(textHeight / lineHeight);
+    const numLines = Math.round(textHeight / lineHeight);
 
     return Math.max(1, numLines);
   } catch (error) {
@@ -802,17 +802,6 @@ const formatBibleVerses = ({
   let formattedVerses = [];
   // let type = currentSlide.type;
 
-  console.log({
-    verses,
-    item,
-    mode,
-    book,
-    chapter,
-    version,
-    isNew,
-    currentBoxes,
-  });
-
   if (mode === "separate" && verses) {
     for (let i = 0; i < verses.length; ++i) {
       const verse = verses[i];
@@ -968,6 +957,12 @@ const formatBibleVerses = ({
       let currentFontSize = currentBoxes[1]?.fontSize || 2.5;
       let fitProcessing = true;
       const versePrefix = "\u200B" + verse.name + ".\u200B ";
+
+      // Update maxLines and lineHeight before each verse
+      ({ maxLines, lineHeight } = getMaxLines({
+        fontSize: currentFontSize,
+        height: currentBoxes[1].height || 95,
+      }));
 
       while (fitProcessing) {
         let tempSlide = "";

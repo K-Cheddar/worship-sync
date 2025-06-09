@@ -33,7 +33,7 @@ import {
   updateSlides,
 } from "../../store/itemSlice";
 import { setName, updateBoxes } from "../../store/itemSlice";
-import { formatFree, formatSong } from "../../utils/overflow";
+import { formatBible, formatFree, formatSong } from "../../utils/overflow";
 import { Box } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
@@ -158,19 +158,32 @@ const SlideEditor = () => {
           }
         : b
     );
-    if (type === "bible" || type === "timer") {
+
+    if (type === "timer") {
       dispatch(updateBoxes({ boxes: newBoxes }));
+    }
+
+    const updatedItem = {
+      ...item,
+      slides: item.slides.map((slide, index) => {
+        if (index === selectedSlide) {
+          return { ...slide, boxes: newBoxes };
+        }
+        return slide;
+      }),
+    };
+
+    if (type === "bible") {
+      const _item = formatBible({
+        item: updatedItem,
+        mode: item.bibleInfo?.fontMode || "separate",
+      });
+      dispatch(updateSlides({ slides: _item.slides }));
     }
 
     if (type === "free") {
       const _item = formatFree({
-        ...item,
-        slides: item.slides.map((slide, index) => {
-          if (index === selectedSlide) {
-            return { ...slide, boxes: newBoxes };
-          }
-          return slide;
-        }),
+        ...updatedItem,
       });
       dispatch(updateSlides({ slides: _item.slides }));
     }

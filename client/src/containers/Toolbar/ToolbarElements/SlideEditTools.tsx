@@ -89,9 +89,16 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const _updateFontSize = (val: number) => {
     const _val = Math.round(Math.max(Math.min(val, 150), 1));
     setFontSize(_val);
-    const fSize = _val / 10;
-    const updatedItem = updateFontSize({ fontSize: fSize, item });
-    updateItem(updatedItem);
+
+    // Debounce updateFontSize
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = setTimeout(() => {
+      const fSize = _val / 10;
+      const updatedItem = updateFontSize({ fontSize: fSize, item });
+      updateItem(updatedItem);
+    }, 250);
   };
 
   const _updateBrightness = (val: number) => {
