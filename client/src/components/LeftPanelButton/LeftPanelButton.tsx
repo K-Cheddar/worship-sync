@@ -40,6 +40,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
   ) => {
     return (
       <li
+        id={id}
         ref={ref}
         style={style}
         className={cn(
