@@ -98,7 +98,8 @@ const ItemSlides = () => {
     (state: RootState) => state.undoable.present.preferences
   );
   const { isMobile } = useContext(ControllerInfoContext) || {};
-  const size = isMobile ? slidesPerRowMobile : slidesPerRow;
+  const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
+  const size = type === "timer" ? Math.min(_size, 2) : _size;
 
   const debounceTime = useRef(0);
 
