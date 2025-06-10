@@ -4,6 +4,11 @@ export default {
     "body-max-line-length": [2, "always", 100],
     "footer-max-line-length": [2, "always", 100],
     "header-max-length": [2, "always", 100],
+    "subject-case": [
+      0,
+      "never",
+      ["sentence-case", "start-case", "pascal-case", "upper-case"],
+    ],
     "subject-empty": [2, "never"],
     "subject-full-stop": [2, "never", "."],
     "type-case": [2, "always", "lower-case"],
