@@ -11,6 +11,9 @@ const Projector = () => {
   const projectorTimer = timers.find(
     (timer) => timer.id === projectorInfo.timerId
   );
+  const prevProjectorTimer = timers.find(
+    (timer) => timer.id === prevProjectorInfo.timerId
+  );
 
   useEffect(() => {
     const keepScreenOn = async () => {
@@ -29,6 +32,7 @@ const Projector = () => {
       displayInfo={projectorInfo}
       prevDisplayInfo={prevProjectorInfo}
       timerInfo={projectorTimer}
+      prevTimerInfo={prevProjectorTimer}
     />
   );
 };

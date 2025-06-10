@@ -17,6 +17,7 @@ type PresentationProps = {
   showBorder?: boolean;
   isMobile?: boolean;
   timerInfo?: TimerInfo;
+  prevTimerInfo?: TimerInfo;
   timers: TimerInfo[];
 };
 
@@ -30,6 +31,7 @@ const Presentation = ({
   showBorder = true,
   isMobile,
   timerInfo,
+  prevTimerInfo,
   timers,
 }: PresentationProps) => {
   return (
@@ -55,6 +57,7 @@ const Presentation = ({
           prevBibleDisplayInfo={prevInfo.bibleDisplayInfo}
           bibleDisplayInfo={info.bibleDisplayInfo}
           timerInfo={timerInfo}
+          prevTimerInfo={prevTimerInfo}
           time={info.time}
           prevTime={prevInfo.time}
           shouldAnimate

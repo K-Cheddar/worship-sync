@@ -9,6 +9,9 @@ const Monitor = () => {
 
   const timers = useSelector((state) => state.timers.timers);
   const monitorTimer = timers.find((timer) => timer.id === monitorInfo.timerId);
+  const prevMonitorTimer = timers.find(
+    (timer) => timer.id === prevMonitorInfo.timerId
+  );
 
   useEffect(() => {
     const keepScreenOn = async () => {
@@ -27,6 +30,7 @@ const Monitor = () => {
       displayInfo={monitorInfo}
       prevDisplayInfo={prevMonitorInfo}
       timerInfo={monitorTimer}
+      prevTimerInfo={prevMonitorTimer}
     />
   );
 };
