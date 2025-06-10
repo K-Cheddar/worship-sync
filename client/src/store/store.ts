@@ -271,6 +271,7 @@ listenerMiddleware.startListening({
       action.type !== "overlays/setHasPendingUpdate" &&
       action.type !== "overlays/updateInitialList" &&
       action.type !== "overlays/addToInitialList" &&
+      action.type !== "overlays/setOverlayId" &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
       action.type !== "RESET"

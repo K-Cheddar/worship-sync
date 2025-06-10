@@ -5,6 +5,7 @@ import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   addOverlay,
+  setOverlayId,
   updateInitialList,
   updateList,
   updateOverlay,
@@ -224,6 +225,7 @@ const Overlays = () => {
                 disabled={justAdded}
                 onClick={() => {
                   setJustAdded(true);
+                  const newId = generateRandomId();
                   dispatch(
                     addOverlay({
                       name: localName,
@@ -237,10 +239,11 @@ const Overlays = () => {
                       duration: localDuration,
                       type: localType,
                       imageUrl: localImageUrl,
-                      id: generateRandomId(),
+                      id: newId,
                     })
                   );
                   setTimeout(() => {
+                    dispatch(setOverlayId(newId));
                     setJustAdded(false);
                   }, 500);
                 }}
