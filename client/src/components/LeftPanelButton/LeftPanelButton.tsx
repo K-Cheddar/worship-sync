@@ -20,6 +20,7 @@ type LeftPanelButtonProps = {
   }[];
   image?: string;
   className?: string;
+  displayId?: string;
 };
 
 const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
@@ -34,13 +35,14 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
       style,
       image,
       className,
+      displayId,
       ...rest
     },
     ref
   ) => {
     return (
       <li
-        id={id}
+        id={displayId}
         ref={ref}
         style={style}
         className={cn(
