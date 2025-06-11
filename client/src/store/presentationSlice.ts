@@ -49,6 +49,7 @@ export const presentationSlice = createSlice({
   initialState,
   reducers: {
     updatePresentation: (state, action: PayloadAction<Presentation>) => {
+      console.log("updatePresentation", action.payload);
       if (state.isProjectorTransmitting) {
         // set previous info for cross animation
         state.prevProjectorInfo.slide = state.projectorInfo.slide;
@@ -260,7 +261,7 @@ export const presentationSlice = createSlice({
         time: action.payload.time,
       };
       // clear other overlays
-      if (action.payload.url || action.payload.description) {
+      if (action.payload.imageUrl) {
         state.prevStreamInfo.bibleDisplayInfo =
           state.streamInfo.bibleDisplayInfo;
         state.prevStreamInfo.participantOverlayInfo =
@@ -720,10 +721,50 @@ export const presentationSlice = createSlice({
     },
     updateStreamFromRemote: (state, action: PayloadAction<Presentation>) => {
       // set previous info for cross animation
+
       state.prevStreamInfo = { ...state.streamInfo };
 
       if (action.payload.type !== "bible") {
         state.streamInfo.slide = action.payload.slide;
+      }
+
+      if (action.payload.participantOverlayInfo) {
+        state.streamInfo.participantOverlayInfo =
+          action.payload.participantOverlayInfo;
+      } else {
+        state.streamInfo.participantOverlayInfo = {
+          name: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+      }
+      if (action.payload.stbOverlayInfo) {
+        state.streamInfo.stbOverlayInfo = action.payload.stbOverlayInfo;
+      } else {
+        state.streamInfo.stbOverlayInfo = {
+          heading: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+      }
+      if (action.payload.qrCodeOverlayInfo) {
+        state.streamInfo.qrCodeOverlayInfo = action.payload.qrCodeOverlayInfo;
+      } else {
+        state.streamInfo.qrCodeOverlayInfo = {
+          description: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+      }
+      if (action.payload.imageOverlayInfo) {
+        state.streamInfo.imageOverlayInfo = action.payload.imageOverlayInfo;
+      } else {
+        state.streamInfo.imageOverlayInfo = {
+          name: "",
+          imageUrl: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
       }
 
       state.streamInfo.name = action.payload.name;

@@ -57,6 +57,9 @@ export const overlaysSlice = createSlice({
       }
       state.hasPendingUpdate = true;
     },
+    setOverlayId: (state, action: PayloadAction<string>) => {
+      state.id = action.payload;
+    },
     updateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
       state.list = action.payload;
       state.hasPendingUpdate = true;
@@ -194,6 +197,7 @@ export const {
   setHasPendingUpdate,
   updateInitialList,
   addToInitialList,
+  setOverlayId,
 } = overlaysSlice.actions;
 
 export default overlaysSlice.reducer;

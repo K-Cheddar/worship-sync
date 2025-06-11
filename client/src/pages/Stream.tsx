@@ -9,6 +9,9 @@ const Stream = () => {
 
   const timers = useSelector((state) => state.timers.timers);
   const streamTimer = timers.find((timer) => timer.id === streamInfo.timerId);
+  const prevStreamTimer = timers.find(
+    (timer) => timer.id === prevStreamInfo.timerId
+  );
 
   useEffect(() => {
     const keepScreenOn = async () => {
@@ -40,6 +43,7 @@ const Stream = () => {
       shouldAnimate
       width={100}
       timerInfo={streamTimer}
+      prevTimerInfo={prevStreamTimer}
     />
   );
 };

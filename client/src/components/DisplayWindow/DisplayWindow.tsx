@@ -172,7 +172,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 shouldPlayVideo={shouldPlayVideo}
                 prevBox={boxes[index]}
                 time={time}
-                timerInfo={timerInfo}
+                timerInfo={prevTimerInfo}
                 isPrev
               />
             );
@@ -184,7 +184,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 box={box}
                 width={width}
                 time={time}
-                timerInfo={timerInfo}
+                timerInfo={prevTimerInfo}
                 isPrev
                 prevBox={boxes[index]}
               />

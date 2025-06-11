@@ -164,6 +164,7 @@ const ServiceItem = ({
       type={item.type}
       image={item.background}
       actions={actions}
+      displayId={`service-item-${item.listId}`}
       id={item.listId}
     />
   );

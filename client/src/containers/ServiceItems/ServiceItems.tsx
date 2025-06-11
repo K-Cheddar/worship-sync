@@ -11,6 +11,8 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import ServiceItem from "./ServiceItem";
+import { keepElementInView } from "../../utils/generalUtils";
+import { useEffect } from "react";
 
 const ServiceItems = () => {
   const dispatch = useDispatch();
@@ -21,6 +23,7 @@ const ServiceItems = () => {
     initialItems,
     selectedItemListId,
   } = useSelector((state) => state.undoable.present.itemList);
+  const { listId } = useSelector((state) => state.undoable.present.item);
   const { selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
@@ -54,6 +57,18 @@ const ServiceItems = () => {
     dispatch(updateItemList(updatedServiceItems));
   };
 
+  useEffect(() => {
+    const itemElement = document.getElementById(`service-item-${listId}`);
+    const parentElement = document.getElementById("service-items-list");
+
+    if (itemElement && parentElement) {
+      keepElementInView({
+        child: itemElement,
+        parent: parentElement,
+      });
+    }
+  }, [listId, serviceItems]);
+
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <h3 className="font-bold text-center p-1 text-base bg-gray-800">
@@ -68,7 +83,11 @@ const ServiceItems = () => {
       {isLoading ? (
         <div className="text-lg text-center mt-2">Loading items...</div>
       ) : (
-        <ul ref={setNodeRef} className={`service-items-list`}>
+        <ul
+          ref={setNodeRef}
+          className={`service-items-list`}
+          id="service-items-list"
+        >
           <SortableContext
             items={serviceItems.map((item) => item.listId)}
             strategy={verticalListSortingStrategy}
