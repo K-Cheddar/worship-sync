@@ -53,10 +53,11 @@ const parseData = async (textHtml: string, chapter: number, book: string) => {
   const addVerse = () => {
     // splitting by an invisible character, not a space
     const splitText = currentText.split(" ");
+    const filteredSplitText = splitText.filter((item) => item?.trim() !== "");
     verses.push({
       index: verses.length,
       name: (verses.length + 1).toString(), // verse number comes first
-      text: splitText[1]
+      text: filteredSplitText[1]
         .replace(/\[[^\]]{1,2}\]/g, "")
         .replaceAll(" ", " ")
         .replaceAll("’", "'")
