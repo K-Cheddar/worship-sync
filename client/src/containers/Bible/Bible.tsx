@@ -1,5 +1,6 @@
 import {
   CSSProperties,
+  useRef,
   useCallback,
   useContext,
   useEffect,
@@ -84,6 +85,16 @@ const Bible = () => {
 
   const [showVersesDisplaySection, setShowVersesDisplaySection] =
     useState(false);
+
+  const currentVerses = useRef<verseType[]>(verses);
+  const currentEndVerse = useRef<number>(endVerse);
+  const currentStartVerse = useRef<number>(startVerse);
+
+  useEffect(() => {
+    currentVerses.current = verses;
+    currentEndVerse.current = endVerse;
+    currentStartVerse.current = startVerse;
+  }, [verses, endVerse, startVerse]);
 
   const [versionSelectorHeight, setVersionSelectorHeight] = useState(0);
   const [justAdded, setJustAdded] = useState(false);
@@ -185,20 +196,20 @@ const Bible = () => {
   }, [chapter, chapters, dispatch]);
 
   useEffect(() => {
-    if (verses) {
+    if (chapters?.[chapter]) {
       if (!searchValues.endVerse) {
-        dispatch(setEndVerse(verses.length - 1));
+        dispatch(setEndVerse(chapters[chapter]?.verses?.length - 1 || 0));
       }
     }
-  }, [verses, dispatch, searchValues.endVerse]);
+  }, [chapter, chapters, dispatch, searchValues.endVerse]);
 
   useEffect(() => {
-    if (verses) {
+    if (chapters?.[chapter]) {
       if (!searchValues.startVerse) {
         dispatch(setStartVerse(0));
       }
     }
-  }, [verses, dispatch, searchValues.startVerse]);
+  }, [chapter, chapters, dispatch, searchValues.startVerse]);
 
   useEffect(() => {
     if (books) {
