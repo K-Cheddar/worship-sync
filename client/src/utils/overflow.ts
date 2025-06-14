@@ -927,7 +927,9 @@ const formatBibleVerses = ({
               (needsLetters
                 ? getLetterFromIndex(verseSplitCounts[verse.name], true)
                 : ""),
-            boxes: currentBoxes,
+            boxes: isNew
+              ? [currentBoxes[0], { ...currentBoxes[1] }]
+              : [currentBoxes[0], { ...currentBoxes[1] }, currentBoxes[2]],
             words: [
               "",
               currentPrefix + cleanText,
