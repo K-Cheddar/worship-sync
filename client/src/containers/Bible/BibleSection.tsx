@@ -63,7 +63,7 @@ const BibleSection = ({
 
   return (
     <div
-      className={`flex flex-col gap-2 ${
+      className={`flex flex-col gap-2 h-full ${
         type === "book" ? "lg:w-1/5 max-lg:w-[40%]" : "w-14"
       }`}
     >

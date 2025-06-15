@@ -23,6 +23,8 @@ export type MenuItemType = {
   text?: string;
   onClick?: React.MouseEventHandler;
   to?: string;
+  element?: React.ReactNode;
+  className?: string;
 };
 
 export type Box = {

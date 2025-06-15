@@ -12,8 +12,10 @@ type ControllerInfoContextType = {
   cloud: Cloudinary;
   updater: EventTarget;
   isMobile: boolean;
+  isPhone: boolean;
   dbProgress: number;
   setIsMobile: (val: boolean) => void;
+  setIsPhone: (val: boolean) => void;
   logout: () => Promise<void>;
   login: ({
     username,
@@ -46,6 +48,7 @@ const ControllerInfoProvider = ({ children }: any) => {
   );
   const [dbProgress, setDbProgress] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
+  const [isPhone, setIsPhone] = useState(false);
   const [isDbSetup, setIsDbSetup] = useState(false);
 
   const location = useLocation();
@@ -180,6 +183,8 @@ const ControllerInfoProvider = ({ children }: any) => {
         logout: _logout,
         isMobile,
         setIsMobile,
+        isPhone,
+        setIsPhone,
         dbProgress,
         login: _login,
       }}

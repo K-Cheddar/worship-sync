@@ -2,8 +2,15 @@ import Menu from "../../../components/Menu/Menu";
 import Button from "../../../components/Button/Button";
 import { ReactComponent as MenuSVG } from "../../../assets/icons/menu.svg";
 import { MenuItemType } from "../../../types";
+import { RedoButton, UndoButton } from "./Undo";
 
-const ToolbarMenu = () => {
+const ToolbarMenu = ({
+  isPhone,
+  isEditMode,
+}: {
+  isPhone?: boolean;
+  isEditMode?: boolean;
+}) => {
   const menuItems: MenuItemType[] = [
     {
       text: "Open Stage Monitor",
@@ -20,6 +27,18 @@ const ToolbarMenu = () => {
       text: "Home",
       to: "/",
     },
+    ...(isPhone && !isEditMode
+      ? [
+          {
+            element: <UndoButton color="black" />,
+            className: "flex justify-center",
+          },
+          {
+            element: <RedoButton color="black" />,
+            className: "flex justify-center",
+          },
+        ]
+      : []),
     // {
     //   text: isLoggedIn ? "Logout" : "Login",
     //   onClick: async () => {

@@ -113,7 +113,7 @@ const TransmitHandler = () => {
             onChange={handleSetTransmitting}
           />
         </div>
-        <div className="overflow-y-auto h-full">
+        <div className="transmit-handler-content">
           <Presentation
             timers={timers}
             name="Projector"

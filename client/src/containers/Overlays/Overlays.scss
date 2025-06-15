@@ -1,11 +1,23 @@
 .overlays-list { 
   scrollbar-width: var(--scrollbar-width);;
-  max-height: calc(100% - clamp(5rem, 6vw, 7rem));
+  // max-height: calc(100% - clamp(5rem, 6vw, 7rem));
 
   @media(max-width: 1023px) {
     @apply mt-4;
-    max-height: calc(100vh - var(--overlay-editor-height) - var(--toolbar-height) - 6rem);
+    max-height: calc(100vh - var(--overlay-editor-height) - var(--toolbar-height) - 6rem );
   }
 
   @apply flex flex-col gap-2 w-full overflow-y-auto overflow-x-hidden;
+}
+
+.overlays-list-container {
+  @apply flex gap-2 lg:h-full max-lg:flex-col-reverse pb-4;
+
+  max-height: calc(100% - var(--overlay-header-height));
+}
+
+.overlays-editing-section {
+  @apply flex flex-col gap-2 bg-gray-800 p-4 rounded-md items-center overflow-y-auto;
+
+  scrollbar-width: var(--scrollbar-width);
 }

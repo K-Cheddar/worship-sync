@@ -21,3 +21,9 @@
 
   max-height: calc(100% - var(--toolbar-height));
 }
+
+.toolbar-middle {
+  @apply w-full flex h-[3.75rem] min-h-fit flex-col overflow-x-auto;
+
+  scrollbar-width: var(--scrollbar-width);
+}

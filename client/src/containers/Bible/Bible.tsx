@@ -300,7 +300,7 @@ const Bible = () => {
 
   const versesDisplaySection = books && chapters && verses && (
     <div
-      className="flex-1 flex flex-col gap-2 items-center h-full mt-2"
+      className="flex-1 flex flex-col gap-2 items-center h-full mt-2 justify-between pb-4"
       data-has-title={!!createItemName}
     >
       {createItemName && (
@@ -394,7 +394,7 @@ const Bible = () => {
       {isMobile && showVersesDisplaySection && versesDisplaySection}
       {((isMobile && !showVersesDisplaySection) || !isMobile) &&
         !!books.length && (
-          <div className="flex h-full w-full gap-4 max-lg:justify-center">
+          <div className="bible-section-container">
             <BibleSection
               initialList={books as bookType[]}
               setValue={(val) => dispatch(setBook(val))}

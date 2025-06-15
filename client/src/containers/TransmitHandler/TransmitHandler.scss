@@ -16,3 +16,9 @@
     opacity: 1;
   }
 }
+
+.transmit-handler-content {
+  @apply overflow-y-auto h-full;
+
+  scrollbar-width: var(--scrollbar-width);
+}

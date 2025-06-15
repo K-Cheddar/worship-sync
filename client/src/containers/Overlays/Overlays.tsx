@@ -85,6 +85,7 @@ const Overlays = () => {
   const { isMobile } = useContext(ControllerInfoContext) || {};
 
   const [overlayEditorHeight, setOverlayEditorHeight] = useState(0);
+  const [overlayHeaderHeight, setOverlayHeaderHeight] = useState(0);
   const [showPreview, setShowPreview] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
   const [justUpdated, setJustUpdated] = useState(false);
@@ -151,6 +152,16 @@ const Overlays = () => {
     }
   }, []);
 
+  const overlayHeaderRef = useCallback((node: HTMLDivElement) => {
+    if (node) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        setOverlayHeaderHeight(entries[0].borderBoxSize[0].blockSize);
+      });
+
+      resizeObserver.observe(node);
+    }
+  }, []);
+
   useEffect(() => {
     const selectedOverlayId = list.find((overlay) => overlay.id === id)?.id;
     const overlayElement = document.getElementById(
@@ -158,13 +169,23 @@ const Overlays = () => {
     );
     const parentElement = document.getElementById("overlays-list");
 
-    if (selectedOverlayId && overlayElement && parentElement) {
-      keepElementInView({
-        child: overlayElement,
-        parent: parentElement,
-      });
+    const scrollToElement = () => {
+      if (selectedOverlayId && overlayElement && parentElement) {
+        keepElementInView({
+          child: overlayElement,
+          parent: parentElement,
+        });
+      }
+    };
+
+    if (isMobile) {
+      setTimeout(() => {
+        scrollToElement();
+      }, 100);
+    } else {
+      scrollToElement();
     }
-  }, [id, list]);
+  }, [id, list, isMobile]);
 
   useEffect(() => {
     return () => {
@@ -185,10 +206,16 @@ const Overlays = () => {
         style={
           {
             "--overlay-editor-height": `${overlayEditorHeight}px`,
+            "--overlay-header-height": `${overlayHeaderHeight}px`,
           } as CSSProperties
         }
       >
-        <h2 className="text-xl font-semibold text-center h-fit">Overlays</h2>
+        <h2
+          ref={overlayHeaderRef}
+          className="text-xl font-semibold text-center h-fit"
+        >
+          Overlays
+        </h2>
         {!isLoading && list.length === 0 && (
           <p className="text-sm px-2">
             This outline doesn't have any overlays yet. Click the button below
@@ -198,7 +225,7 @@ const Overlays = () => {
         {isLoading ? (
           <h3 className="text-lg text-center">Loading overlays...</h3>
         ) : (
-          <div className="flex gap-2 lg:h-full max-lg:flex-col-reverse">
+          <div className="overlays-list-container">
             <section className="flex-1 flex flex-col gap-2">
               <ul id="overlays-list" className="overlays-list" ref={setNodeRef}>
                 <SortableContext
@@ -322,7 +349,7 @@ const Overlays = () => {
                       />
                     </div>
                   )}
-                  <section className="flex flex-col gap-2 bg-gray-800 p-4 rounded-md min-w-1/2 items-center">
+                  <section className="overlays-editing-section">
                     {localType === "participant" && (
                       <>
                         <Input
