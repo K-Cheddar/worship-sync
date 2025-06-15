@@ -3,7 +3,7 @@
 
   height: calc(100% - var(--bible-version-selector-height) - clamp(3rem, 3.5vw, 4rem));
 
-  scrollbar-width: thin;
+  scrollbar-width: var(--scrollbar-width);;
 }
 
 .bible-verses-list {
@@ -17,7 +17,7 @@
     height: calc(100% - var(--bible-version-selector-height) - clamp(5rem, 6.5vw, 7rem));
   }
 
-  scrollbar-width: thin;
+  scrollbar-width: var(--scrollbar-width);;
 }
 
 .bible-section-input {

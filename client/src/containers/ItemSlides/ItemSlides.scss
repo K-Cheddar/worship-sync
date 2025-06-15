@@ -1,5 +1,5 @@
 .item-slides-container {
-  scrollbar-width: thin;
+  scrollbar-width: var(--scrollbar-width);;
 
   @apply max-h-full px-2 overflow-y-auto grid pb-2 focus-visible:outline-none;
 }

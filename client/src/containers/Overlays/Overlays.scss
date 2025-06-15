@@ -1,5 +1,5 @@
 .overlays-list { 
-  scrollbar-width: thin;
+  scrollbar-width: var(--scrollbar-width);;
   max-height: calc(100% - clamp(5rem, 6vw, 7rem));
 
   @media(max-width: 1023px) {

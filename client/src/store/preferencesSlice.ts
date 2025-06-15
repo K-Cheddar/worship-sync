@@ -2,6 +2,7 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import {
   BibleFontMode,
   PreferencesType,
+  ScrollbarWidth,
   Presentation,
   QuickLinkType,
 } from "../types";
@@ -42,6 +43,7 @@ type PreferencesState = {
   selectedQuickLink: QuickLinkType | null;
   tab: PreferencesTabType;
   bibleFontMode: BibleFontMode;
+  scrollbarWidth: ScrollbarWidth;
 };
 
 const initialState: PreferencesState = {
@@ -100,6 +102,7 @@ const initialState: PreferencesState = {
   selectedQuickLink: null,
   tab: "defaults",
   bibleFontMode: "separate",
+  scrollbarWidth: "thin",
 };
 
 export const preferencesSlice = createSlice({
@@ -360,6 +363,9 @@ export const preferencesSlice = createSlice({
     setBibleFontMode: (state, action: PayloadAction<BibleFontMode>) => {
       state.bibleFontMode = action.payload;
     },
+    setScrollbarWidth: (state, action: PayloadAction<ScrollbarWidth>) => {
+      state.scrollbarWidth = action.payload;
+    },
     setSelectedPreference: (
       state,
       action: PayloadAction<SelectedPreferenceType>
@@ -403,6 +409,7 @@ export const {
   setIsLoading,
   setSelectedPreference,
   setBibleFontMode,
+  setScrollbarWidth,
 } = preferencesSlice.actions;
 
 export default preferencesSlice.reducer;

@@ -13,7 +13,7 @@
 .services-list {
   @apply flex-1 overflow-y-auto max-h-64 overflow-x-hidden;
   
-  scrollbar-width: thin;
+  scrollbar-width: var(--scrollbar-width);;
 }
 
 .services-container {

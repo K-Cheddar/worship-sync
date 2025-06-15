@@ -287,6 +287,8 @@ export type PreferencesType = {
   defaultBibleFontMode: BibleFontMode;
 };
 
+export type ScrollbarWidth = "thin" | "auto" | "none";
+
 export type ItemList = {
   name: string;
   _id: string;

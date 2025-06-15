@@ -89,6 +89,10 @@ const Controller = () => {
     (state) => state.undoable.present.itemLists
   );
 
+  const { scrollbarWidth } = useSelector(
+    (state) => state.undoable.present.preferences
+  );
+
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
   const [toolbarHeight, setToolbarHeight] = useState(0);
@@ -269,6 +273,7 @@ const Controller = () => {
         style={
           {
             "--toolbar-height": `${toolbarHeight}px`,
+            "--scrollbar-width": scrollbarWidth,
           } as CSSProperties
         }
       >
