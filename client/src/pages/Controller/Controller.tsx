@@ -274,7 +274,7 @@ const Controller = () => {
       )}
       <div
         onClick={(e) => handleElementClick(e)}
-        className="bg-gray-700 w-screen h-screen flex flex-col text-white overflow-auto list-none"
+        className="bg-gray-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none"
         style={
           {
             "--toolbar-height": `${toolbarHeight}px`,

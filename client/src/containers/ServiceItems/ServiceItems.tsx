@@ -58,16 +58,21 @@ const ServiceItems = () => {
   };
 
   useEffect(() => {
-    const itemElement = document.getElementById(`service-item-${listId}`);
+    const itemElement = document.getElementById(
+      `service-item-${selectedItemListId}`
+    );
     const parentElement = document.getElementById("service-items-list");
 
-    if (itemElement && parentElement) {
-      keepElementInView({
-        child: itemElement,
-        parent: parentElement,
-      });
-    }
-  }, [listId, serviceItems]);
+    // Wait for item to be done animating
+    setTimeout(() => {
+      if (itemElement && parentElement) {
+        keepElementInView({
+          child: itemElement,
+          parent: parentElement,
+        });
+      }
+    }, 500);
+  }, [selectedItemListId]);
 
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
