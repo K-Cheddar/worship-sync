@@ -470,6 +470,7 @@ listenerMiddleware.startListening({
       action.type !== "preferences/setSelectedPreference" &&
       action.type !== "preferences/setSelectedQuickLink" &&
       action.type !== "preferences/setTab" &&
+      action.type !== "preferences/setScrollbarWidth" &&
       action.type !== "RESET"
     );
   },

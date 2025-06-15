@@ -211,7 +211,6 @@ export const keepElementInView = ({
   keepNextInView,
 }: keepElementInViewType) => {
   try {
-    child.focus();
     const parentRect = parent.getBoundingClientRect();
     const childRect = child.getBoundingClientRect();
     const scrollPadding = shouldScrollToCenter

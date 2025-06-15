@@ -23,6 +23,8 @@ export type MenuItemType = {
   text?: string;
   onClick?: React.MouseEventHandler;
   to?: string;
+  element?: React.ReactNode;
+  className?: string;
 };
 
 export type Box = {
@@ -286,6 +288,8 @@ export type PreferencesType = {
   defaultIsMediaExpanded: boolean;
   defaultBibleFontMode: BibleFontMode;
 };
+
+export type ScrollbarWidth = "thin" | "auto" | "none";
 
 export type ItemList = {
   name: string;

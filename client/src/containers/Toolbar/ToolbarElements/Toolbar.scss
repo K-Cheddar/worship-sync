@@ -13,11 +13,17 @@
 .services-list {
   @apply flex-1 overflow-y-auto max-h-64 overflow-x-hidden;
   
-  scrollbar-width: thin;
+  scrollbar-width: var(--scrollbar-width);;
 }
 
 .services-container {
   @apply flex gap-4 flex-1;
 
   max-height: calc(100% - var(--toolbar-height));
+}
+
+.toolbar-middle {
+  @apply w-full flex h-[3.75rem] min-h-fit flex-col overflow-x-auto;
+
+  scrollbar-width: var(--scrollbar-width);
 }

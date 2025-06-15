@@ -99,7 +99,7 @@ const ItemSlides = () => {
   );
   const { isMobile } = useContext(ControllerInfoContext) || {};
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
-  const size = type === "timer" ? Math.min(_size, 2) : _size;
+  const size = type === "timer" ? Math.min(_size, 3) : _size;
 
   const debounceTime = useRef(0);
 
@@ -350,8 +350,14 @@ const ItemSlides = () => {
           onClick={() => {
             if (isMobile) {
               dispatch(increaseSlidesMobile());
+              if (type === "timer") {
+                dispatch(setSlidesMobile(size + 1));
+              }
             } else {
               dispatch(increaseSlides());
+              if (type === "timer") {
+                dispatch(setSlides(size + 1));
+              }
             }
           }}
         />
@@ -361,8 +367,14 @@ const ItemSlides = () => {
           onClick={() => {
             if (isMobile) {
               dispatch(decreaseSlidesMobile());
+              if (type === "timer") {
+                dispatch(setSlidesMobile(size - 1));
+              }
             } else {
               dispatch(decreaseSlides());
+              if (type === "timer") {
+                dispatch(setSlides(size - 1));
+              }
             }
           }}
         />

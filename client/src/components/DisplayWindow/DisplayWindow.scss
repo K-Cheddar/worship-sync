@@ -10,7 +10,7 @@
 .display-editor {
   @apply h-full w-full bg-transparent absolute resize-none outline-none;
 
-    scrollbar-width: thin;
+    scrollbar-width: var(--scrollbar-width);
 }
 
 .overlay-participant-info-container {

@@ -3,7 +3,7 @@
 }
 
 .media-items {
-  scrollbar-width: thin;
+  scrollbar-width: var(--scrollbar-width);;
 
   @apply grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-2 z-10;
 }
