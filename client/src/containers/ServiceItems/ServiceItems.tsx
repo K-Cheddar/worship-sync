@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from "../../hooks";
 import { updateItemList } from "../../store/itemListSlice";
 import { useLocation } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
+import { useRef } from "react";
 
 import { useSensors } from "../../utils/dndUtils";
 
@@ -23,7 +24,8 @@ const ServiceItems = () => {
     initialItems,
     selectedItemListId,
   } = useSelector((state) => state.undoable.present.itemList);
-  const { listId } = useSelector((state) => state.undoable.present.item);
+  const prevItemsLengthRef = useRef(serviceItems.length);
+
   const { selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
@@ -63,16 +65,26 @@ const ServiceItems = () => {
     );
     const parentElement = document.getElementById("service-items-list");
 
-    // Wait for item to be done animating
-    setTimeout(() => {
+    const isNewItem = serviceItems.length > prevItemsLengthRef.current;
+    prevItemsLengthRef.current = serviceItems.length;
+
+    const scrollToItem = () => {
       if (itemElement && parentElement) {
         keepElementInView({
           child: itemElement,
           parent: parentElement,
         });
       }
-    }, 500);
-  }, [selectedItemListId]);
+    };
+
+    if (isNewItem) {
+      // Only delay if a new item was added
+      setTimeout(scrollToItem, 500);
+    } else {
+      // Scroll immediately for other cases
+      scrollToItem();
+    }
+  }, [selectedItemListId, serviceItems.length]);
 
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>

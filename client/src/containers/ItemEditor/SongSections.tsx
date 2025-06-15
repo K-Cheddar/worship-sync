@@ -7,6 +7,7 @@ import { DndContext, DragEndEvent, useDroppable } from "@dnd-kit/core";
 import { useSensors } from "../../utils/dndUtils";
 import { SortableContext } from "@dnd-kit/sortable";
 import SongSection from "./SongSection";
+import { keepElementInView } from "../../utils/generalUtils";
 
 type SongSectionsProps = {
   songOrder: SongOrder[];
@@ -47,6 +48,20 @@ const SongSections = ({
     updatedSongOrder.splice(newIndex, 0, element);
     setSongOrder(updatedSongOrder);
   };
+
+  useEffect(() => {
+    const itemElement = document.getElementById(
+      `song-section-${selectedIndex}`
+    );
+    const parentElement = document.getElementById("song-sections-list");
+
+    if (itemElement && parentElement) {
+      keepElementInView({
+        child: itemElement,
+        parent: parentElement,
+      });
+    }
+  }, [selectedIndex]);
 
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
