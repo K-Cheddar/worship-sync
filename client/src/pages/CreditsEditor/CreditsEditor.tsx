@@ -11,6 +11,7 @@ import { DBCredits } from "../../types";
 import {
   initiateCreditsList,
   initiateCreditsScene,
+  initiatePublishedCreditsList,
   initiateTransitionScene,
   setCreditsScene,
   setIsLoading,
@@ -90,36 +91,43 @@ const CreditsEditor = () => {
   }, [updater, dispatch]);
 
   useEffect(() => {
-    const getTransitionScene = async () => {
+    const getCreditsFromFirebase = async () => {
       if (!firebaseDb) return;
-      const updateRef = ref(
+      const transitionSceneRef = ref(
         firebaseDb,
         "users/" + user + "/v2/credits/transitionScene"
       );
-      onValue(updateRef, (snapshot) => {
+      onValue(transitionSceneRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
           dispatch(initiateTransitionScene(data));
         }
       });
-    };
 
-    const getCreditsScene = async () => {
-      if (!firebaseDb) return;
-      const updateRef = ref(
+      const creditsSceneRef = ref(
         firebaseDb,
         "users/" + user + "/v2/credits/creditsScene"
       );
-      onValue(updateRef, (snapshot) => {
+      onValue(creditsSceneRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
           dispatch(initiateCreditsScene(data));
         }
       });
+
+      const getPublishedRef = ref(
+        firebaseDb,
+        "users/" + user + "/v2/credits/publishedList"
+      );
+      onValue(getPublishedRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          dispatch(initiatePublishedCreditsList(data));
+        }
+      });
     };
 
-    getTransitionScene();
-    getCreditsScene();
+    getCreditsFromFirebase();
   }, [dispatch, firebaseDb, user]);
 
   const editorRef = useCallback(
@@ -348,7 +356,7 @@ const CreditsEditor = () => {
         </div>
       )}
 
-      <div className="flex gap-2 px-4 pb-4">
+      <div className="flex gap-2 px-4 pb-4 h-full">
         <CreditsEditorContainer
           className={isPreviewOpen ? "max-md:hidden" : ""}
         />

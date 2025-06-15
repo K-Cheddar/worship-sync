@@ -38,8 +38,19 @@ const CreditsEditor = ({ className }: { className?: string }) => {
   const sensors = useSensors();
 
   const hasUnpublishedChanges = () => {
-    const visibleList = list.filter((credit) => !credit.hidden);
-    const visiblePublishedList = publishedList;
+    const visibleList = list
+      .filter((credit) => !credit.hidden)
+      .map((credit) => ({
+        heading: credit.heading,
+        text: credit.text,
+      }));
+    const visiblePublishedList = publishedList
+      .filter((credit) => !credit.hidden)
+      .map((credit) => ({
+        heading: credit.heading,
+        text: credit.text,
+      }));
+    console.log(visiblePublishedList, visibleList);
     return JSON.stringify(visiblePublishedList) !== JSON.stringify(visibleList);
   };
 
