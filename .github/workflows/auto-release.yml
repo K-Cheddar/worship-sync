@@ -49,6 +49,5 @@ jobs:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: |
           git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/${{ secrets.HEROKU_APP_NAME }}.git
-          git fetch --unshallow || true
-          git status --porcelain | grep . && git add . && git commit -m "Deploy to Heroku" || true
+          git status --porcelain | grep . && git add . && git commit -m "chore(release): Deploy to Heroku" || true
           git push heroku HEAD:refs/heads/main --force
