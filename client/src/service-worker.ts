@@ -79,20 +79,20 @@ self.addEventListener("message", (event) => {
 });
 
 // Add event listener for the 'activate' event
-self.addEventListener("activate", (event) => {
-  // Take control of all clients as soon as it's activated
-  event.waitUntil(
-    Promise.all([
-      // Take control of all clients
-      self.clients.claim(),
-      // Force reload all clients to ensure they're using the latest version
-      self.clients.matchAll().then((clients) => {
-        clients.forEach((client) => {
-          client.postMessage({ type: "RELOAD" });
-        });
-      }),
-    ])
-  );
-});
+// self.addEventListener("activate", (event) => {
+//   // Take control of all clients as soon as it's activated
+//   event.waitUntil(
+//     Promise.all([
+//       // Take control of all clients
+//       self.clients.claim(),
+//       // Force reload all clients to ensure they're using the latest version
+//       self.clients.matchAll().then((clients) => {
+//         clients.forEach((client) => {
+//           client.postMessage({ type: "RELOAD" });
+//         });
+//       }),
+//     ])
+//   );
+// });
 
 // Any other custom service worker logic can go here.
