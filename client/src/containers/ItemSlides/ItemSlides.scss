@@ -6,6 +6,7 @@
 
 .item-slide {
   width: calc(25% - clamp(0.25rem, 0.5vw, 0.5rem));
+  border-width: var(--border-width);
 
-  @apply cursor-pointer border-4 max-lg:border-2 w-fit;
+  @apply cursor-pointer w-fit rounded-lg;
 }

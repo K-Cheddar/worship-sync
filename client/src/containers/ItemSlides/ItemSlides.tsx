@@ -48,27 +48,82 @@ import generateRandomId from "../../utils/generateRandomId";
 
 export const sizeMap: Map<
   number,
-  { width: number; cols: string; hSize: string; mobileWidth: number }
+  {
+    width: number;
+    cols: string;
+    hSize: string;
+    mobileWidth: number;
+    borderWidth: string;
+  }
 > = new Map([
-  [7, { width: 7, mobileWidth: 10, cols: "grid-cols-7", hSize: "text-xs" }],
-  [6, { width: 8.25, mobileWidth: 12, cols: "grid-cols-6", hSize: "text-xs" }],
-  [5, { width: 10, mobileWidth: 15, cols: "grid-cols-5", hSize: "text-xs" }],
+  [
+    7,
+    {
+      width: 7,
+      mobileWidth: 10,
+      cols: "grid-cols-7",
+      hSize: "text-xs",
+      borderWidth: "clamp(0.2rem, 0.2vw, 0.4rem)",
+    },
+  ],
+  [
+    6,
+    {
+      width: 8.25,
+      mobileWidth: 12,
+      cols: "grid-cols-6",
+      hSize: "text-xs",
+      borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+    },
+  ],
+  [
+    5,
+    {
+      width: 10,
+      mobileWidth: 14.5,
+      cols: "grid-cols-5",
+      hSize: "text-xs",
+      borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+    },
+  ],
   [
     4,
-    { width: 12.75, mobileWidth: 19.25, cols: "grid-cols-4", hSize: "text-sm" },
+    {
+      width: 12.75,
+      mobileWidth: 19,
+      cols: "grid-cols-4",
+      hSize: "text-sm",
+      borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+    },
   ],
   [
     3,
-    { width: 17, mobileWidth: 26.25, cols: "grid-cols-3", hSize: "text-base" },
+    {
+      width: 17,
+      mobileWidth: 25,
+      cols: "grid-cols-3",
+      hSize: "text-base",
+      borderWidth: "clamp(0.35rem, 0.35vw, 0.7rem)",
+    },
   ],
-  [2, { width: 26, mobileWidth: 40, cols: "grid-cols-2", hSize: "text-base" }],
+  [
+    2,
+    {
+      width: 26,
+      mobileWidth: 37.5,
+      cols: "grid-cols-2",
+      hSize: "text-base",
+      borderWidth: "clamp(0.45rem, 0.45vw, 0.9rem)",
+    },
+  ],
   [
     1,
     {
       width: 52.25,
-      mobileWidth: 81.5,
+      mobileWidth: 76,
       cols: "grid-cols-1",
       hSize: "text-base",
+      borderWidth: "clamp(0.5rem, 0.5vw, 1rem)",
     },
   ],
 ]);
@@ -84,6 +139,15 @@ const ItemSlides = () => {
     isLoading,
     _id,
   } = useSelector((state: RootState) => state.undoable.present.item);
+
+  const {
+    isMonitorTransmitting,
+    isProjectorTransmitting,
+    isStreamTransmitting,
+  } = useSelector((state) => state.presentation);
+
+  const isTransmitting =
+    isMonitorTransmitting || isProjectorTransmitting || isStreamTransmitting;
 
   const timers = useSelector((state: RootState) => state.timers.timers);
   const timerInfo = timers.find((timer) => timer.id === _id);
@@ -415,6 +479,7 @@ const ItemSlides = () => {
           >
             {debouncedSlides.map((slide, index) => (
               <ItemSlide
+                isTransmitting={isTransmitting}
                 timerInfo={timerInfo}
                 key={slide.id}
                 slide={slide}
