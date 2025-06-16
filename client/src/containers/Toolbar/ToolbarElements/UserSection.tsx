@@ -27,9 +27,7 @@ const UserSection = () => {
       <Icon
         svg={isDemo ? SyncDisabled : SyncCloud}
         size="md"
-        color={
-          isDemo ? "oklch(0.75 0.183 55.934)" : "oklch(0.723 0.219 149.579)"
-        }
+        color={isDemo ? "oklch(0.75 0.183 55.934)" : "#22d3ee"}
       />
       <span className="text-sm font-semibold ">{user}</span>
       {!isMobile && (
@@ -37,7 +35,7 @@ const UserSection = () => {
           <Icon
             svg={Circle}
             size="xs"
-            color="oklch(0.723 0.219 149.579)"
+            color="#22d3ee"
             className={isPulsing ? "animate-pulse" : ""}
           />
           <span className="text-sm">{activeInstances}</span>

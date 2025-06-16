@@ -18,9 +18,11 @@ type ItemSlideProps = {
   isMobile: boolean;
   timerInfo?: TimerInfo;
   draggedSection: string | null;
+  isTransmitting: boolean;
 };
 
 const ItemSlide = ({
+  isTransmitting,
   slide,
   index,
   selectSlide,
@@ -71,23 +73,28 @@ const ItemSlide = ({
     <li
       ref={setNodeRef}
       style={(() => {
+        const borderStyle = {
+          "--border-width": sizeMap.get(size)?.borderWidth,
+        } as React.CSSProperties;
         if (!isFree) {
-          return undefined;
+          return borderStyle;
         }
         if (isDragging) {
-          return style;
+          return { ...style, ...borderStyle };
         }
         if (isInDraggedSection) {
           return sectionStyle;
         }
-        return undefined;
+        return borderStyle;
       })()}
       {...(isFree && attributes)}
       {...(isFree && listeners)}
       key={slide.id}
       className={cn(
         "item-slide",
-        selectedSlide === index ? "border-cyan-500" : "border-transparent",
+        selectedSlide === index && !isTransmitting && "border-gray-300",
+        selectedSlide === index && isTransmitting && "border-green-500",
+        selectedSlide !== index && "border-transparent",
         isInDraggedSection && "z-10"
       )}
       onClick={() => selectSlide(index)}
