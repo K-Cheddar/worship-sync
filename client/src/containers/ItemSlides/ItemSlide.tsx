@@ -19,6 +19,8 @@ type ItemSlideProps = {
   timerInfo?: TimerInfo;
   draggedSection: string | null;
   isTransmitting: boolean;
+  isStreamFormat: boolean;
+  getBibleInfo: (index: number) => { title: string; text: string };
 };
 
 const ItemSlide = ({
@@ -32,6 +34,8 @@ const ItemSlide = ({
   isMobile,
   timerInfo,
   draggedSection,
+  isStreamFormat,
+  getBibleInfo,
 }: ItemSlideProps) => {
   const width =
     (isMobile ? sizeMap.get(size)?.mobileWidth : sizeMap.get(size)?.width) ||
@@ -129,10 +133,34 @@ const ItemSlide = ({
       </h4>
       <DisplayWindow
         showBorder
-        boxes={slide.boxes}
+        boxes={
+          isStreamFormat && (itemType === "free" || itemType === "bible")
+            ? []
+            : slide.boxes
+        }
         width={width}
-        displayType="slide"
+        displayType={isStreamFormat ? "stream" : "slide"}
         timerInfo={timerInfo}
+        bibleDisplayInfo={
+          itemType === "bible" ? getBibleInfo(index) : undefined
+        }
+        formattedTextDisplayInfo={
+          itemType === "free"
+            ? {
+                text: slide.boxes[1]?.words?.trim() || "",
+                backgroundColor:
+                  slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
+                textColor:
+                  slide.formattedTextDisplayInfo?.textColor || "#ffffff",
+                fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
+                paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
+                paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
+                isBold: slide.formattedTextDisplayInfo?.isBold || false,
+                isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
+                align: slide.formattedTextDisplayInfo?.align || "left",
+              }
+            : undefined
+        }
       />
     </li>
   );

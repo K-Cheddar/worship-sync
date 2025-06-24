@@ -37,6 +37,8 @@ export type Box = {
   label?: string;
   fontSize?: number;
   align?: "left" | "right" | "center";
+  isBold?: boolean;
+  isItalic?: boolean;
   brightness?: number;
   x?: number;
   y?: number;
@@ -76,6 +78,7 @@ export type ItemSlide = {
   id: string;
   boxes: Box[];
   overflow?: OverflowMode;
+  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
 };
 
 export type LinkType = "image" | "slide" | "overlay";
@@ -206,6 +209,20 @@ export type Presentation = {
   timerId?: string;
   qrCodeOverlayInfo?: OverlayInfo;
   imageOverlayInfo?: OverlayInfo;
+  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
+};
+
+export type FormattedTextDisplayInfo = {
+  backgroundColor?: string;
+  textColor?: string;
+  fontSize?: number;
+  time?: number;
+  text?: string;
+  paddingX?: number;
+  paddingY?: number;
+  align?: "left" | "right" | "center";
+  isBold?: boolean;
+  isItalic?: boolean;
 };
 
 export type BibleDisplayInfo = {

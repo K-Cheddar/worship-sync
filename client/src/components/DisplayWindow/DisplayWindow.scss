@@ -121,3 +121,19 @@
   max-width: 85%;
   bottom: 1.5%
 }
+
+.formatted-text-container,
+.prev-formatted-text-container {
+  @apply w-fit absolute flex flex-col mx-auto left-0 right-0;
+
+  max-width: 65%;
+  bottom: 10%;
+  background-color: var(--formatted-text-background-color);
+  color: var(--formatted-text-text-color);
+  font-size: var(--formatted-text-font-size);
+  padding: var(--formatted-text-padding);
+  border-radius: 2% / 8%;
+  font-weight: var(--formatted-text-font-weight);
+  font-style: var(--formatted-text-font-style);
+  text-align: var(--formatted-text-align);
+}

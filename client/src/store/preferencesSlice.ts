@@ -37,6 +37,7 @@ type PreferencesState = {
   formattedLyricsPerRow: number;
   mediaItemsPerRow: number;
   shouldShowItemEditor: boolean;
+  shouldShowStreamFormat: boolean;
   isMediaExpanded: boolean;
   quickLinks: QuickLinkType[];
   defaultQuickLinks: QuickLinkType[];
@@ -73,6 +74,7 @@ const initialState: PreferencesState = {
   mediaItemsPerRow: 4,
   shouldShowItemEditor: true,
   isMediaExpanded: false,
+  shouldShowStreamFormat: false,
   isLoading: true,
   selectedPreference: "",
   defaultQuickLinks: [
@@ -354,6 +356,9 @@ export const preferencesSlice = createSlice({
     setShouldShowItemEditor: (state, action: PayloadAction<boolean>) => {
       state.shouldShowItemEditor = action.payload;
     },
+    setShouldShowStreamFormat: (state, action: PayloadAction<boolean>) => {
+      state.shouldShowStreamFormat = action.payload;
+    },
     setIsMediaExpanded: (state, action: PayloadAction<boolean>) => {
       state.isMediaExpanded = action.payload;
     },
@@ -402,6 +407,7 @@ export const {
   decreaseFormattedLyrics,
   setFormattedLyrics,
   setShouldShowItemEditor,
+  setShouldShowStreamFormat,
   setIsMediaExpanded,
   increaseMediaItems,
   decreaseMediaItems,

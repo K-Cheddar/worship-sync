@@ -294,7 +294,7 @@ const Controller = () => {
             onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
           />
           <div
-            className={`flex flex-col border-r-2 border-gray-500 bg-gray-700 h-full lg:w-[15%] max-lg:fixed max-lg:left-0 transition-all ${
+            className={`flex flex-col border-r-2 border-gray-500 bg-gray-700 h-full lg:w-[15%] max-lg:fixed max-lg:left-0 max-lg:h-[calc(100vh-var(--toolbar-height))] transition-all ${
               isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
             }`}
             ref={leftPanelRef}

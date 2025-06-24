@@ -16,6 +16,7 @@ import {
   updateImageOverlayInfoFromRemote,
   updateStbOverlayInfoFromRemote,
   updateStreamFromRemote,
+  updateFormattedTextDisplayInfoFromRemote,
 } from "./presentationSlice";
 import { itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
@@ -38,6 +39,7 @@ import {
   DBItemLists,
   DBMedia,
   DBPreferences,
+  FormattedTextDisplayInfo,
   OverlayInfo,
   Presentation,
   TimerInfo,
@@ -96,6 +98,7 @@ const undoableReducers = undoable(
       preferencesSlice.actions.setIsLoading.toString(),
       preferencesSlice.actions.setSelectedPreference.toString(),
       preferencesSlice.actions.setShouldShowItemEditor.toString(),
+      preferencesSlice.actions.setShouldShowStreamFormat.toString(),
       preferencesSlice.actions.setIsMediaExpanded.toString(),
       preferencesSlice.actions.increaseSlides.toString(),
       preferencesSlice.actions.decreaseSlides.toString(),
@@ -466,6 +469,7 @@ listenerMiddleware.startListening({
       action.type !== "preferences/setMediaItems" &&
       action.type !== "preferences/setShouldShowItemEditor" &&
       action.type !== "preferences/setIsMediaExpanded" &&
+      action.type !== "preferences/setShouldShowStreamFormat" &&
       action.type !== "preferences/setIsLoading" &&
       action.type !== "preferences/setSelectedPreference" &&
       action.type !== "preferences/setSelectedQuickLink" &&
@@ -520,6 +524,7 @@ listenerMiddleware.startListening({
       action.type !== "presentation/updateBibleDisplayInfoFromRemote" &&
       action.type !== "presentation/updateQrCodeOverlayInfoFromRemote" &&
       action.type !== "presentation/updateImageOverlayInfoFromRemote" &&
+      action.type !== "presentation/updateFormattedTextDisplayInfoFromRemote" &&
       action.type !== "RESET"
     );
   },
@@ -546,6 +551,7 @@ listenerMiddleware.startListening({
       stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
       stream_qrCodeOverlayInfo: streamInfo.qrCodeOverlayInfo,
       stream_imageOverlayInfo: streamInfo.imageOverlayInfo,
+      stream_formattedTextDisplayInfo: streamInfo.formattedTextDisplayInfo,
     };
 
     localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
@@ -570,6 +576,10 @@ listenerMiddleware.startListening({
     localStorage.setItem(
       "stream_imageOverlayInfo",
       JSON.stringify(streamInfo.imageOverlayInfo)
+    );
+    localStorage.setItem(
+      "stream_formattedTextDisplayInfo",
+      JSON.stringify(streamInfo.formattedTextDisplayInfo)
     );
 
     set(
@@ -786,6 +796,34 @@ listenerMiddleware.startListening({
 
     listenerApi.dispatch(
       updateImageOverlayInfoFromRemote(action.payload as OverlayInfo)
+    );
+  },
+});
+
+// handle updating from remote formatted text display info
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    const state = (previousState as RootState).presentation;
+    const info = action.payload as FormattedTextDisplayInfo;
+    return (
+      action.type === "debouncedUpdateFormattedTextDisplayInfo" &&
+      !!(
+        (info.time &&
+          state.streamInfo.formattedTextDisplayInfo?.time &&
+          info.time > state.streamInfo.formattedTextDisplayInfo.time) ||
+        (info.time && !state.streamInfo.formattedTextDisplayInfo?.time)
+      )
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(
+      updateFormattedTextDisplayInfoFromRemote(
+        action.payload as FormattedTextDisplayInfo
+      )
     );
   },
 });

@@ -307,6 +307,7 @@ const BoxEditor = () => {
             min={0}
             max={100}
             inputWidth="w-16"
+            inputTextSize="text-xs"
             hideSpinButtons={false}
           />
           <Input
@@ -318,6 +319,7 @@ const BoxEditor = () => {
             min={0}
             max={100}
             inputWidth="w-16"
+            inputTextSize="text-xs"
             hideSpinButtons={false}
           />
           <Input
@@ -329,6 +331,7 @@ const BoxEditor = () => {
             min={0}
             max={100}
             inputWidth="w-16"
+            inputTextSize="text-xs"
             hideSpinButtons={false}
           />
           <Input
@@ -340,6 +343,7 @@ const BoxEditor = () => {
             min={0}
             max={100}
             inputWidth="w-16"
+            inputTextSize="text-xs"
             hideSpinButtons={false}
           />
         </>

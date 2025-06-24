@@ -40,6 +40,8 @@ const Stream = () => {
       prevQrCodeOverlayInfo={prevStreamInfo.qrCodeOverlayInfo}
       imageOverlayInfo={streamInfo.imageOverlayInfo}
       prevImageOverlayInfo={prevStreamInfo.imageOverlayInfo}
+      formattedTextDisplayInfo={streamInfo.formattedTextDisplayInfo}
+      prevFormattedTextDisplayInfo={prevStreamInfo.formattedTextDisplayInfo}
       shouldAnimate
       width={100}
       timerInfo={streamTimer}
