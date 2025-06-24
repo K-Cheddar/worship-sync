@@ -3,6 +3,7 @@ import {
   BibleDisplayInfo,
   Box,
   DisplayType,
+  FormattedTextDisplayInfo,
   OverlayInfo,
   TimerInfo,
 } from "../../types";
@@ -15,6 +16,7 @@ import DisplayQrCodeOverlay from "./DisplayQrCodeOverlay";
 import DisplayEditor from "./DisplayEditor";
 import DisplayStreamText from "./DisplayStreamText";
 import DisplayImageOverlay from "./DisplayImageOverlay";
+import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
 
 type DisplayWindowProps = {
   prevBoxes?: Box[];
@@ -43,6 +45,8 @@ type DisplayWindowProps = {
   prevImageOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
   prevBibleDisplayInfo?: BibleDisplayInfo;
+  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
+  prevFormattedTextDisplayInfo?: FormattedTextDisplayInfo;
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
   shouldAnimate?: boolean;
@@ -80,6 +84,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       prevTimerInfo,
       selectBox,
       selectedBox,
+      formattedTextDisplayInfo,
+      prevFormattedTextDisplayInfo,
     }: DisplayWindowProps,
     ref
   ) => {
@@ -96,6 +102,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isStream = displayType === "stream";
     const isEditor = displayType === "editor";
     const isDisplay = !isStream && !isEditor;
+
+    if (isStream) {
+      console.log("formattedTextDisplayInfo", formattedTextDisplayInfo);
+      console.log("boxes", boxes);
+    }
 
     return (
       <div
@@ -232,6 +243,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               imageOverlayInfo={imageOverlayInfo}
               prevImageOverlayInfo={prevImageOverlayInfo}
               ref={containerRef}
+            />
+
+            <DisplayStreamFormattedText
+              width={width}
+              shouldAnimate={shouldAnimate}
+              formattedTextDisplayInfo={formattedTextDisplayInfo}
+              prevFormattedTextDisplayInfo={prevFormattedTextDisplayInfo}
             />
           </>
         )}

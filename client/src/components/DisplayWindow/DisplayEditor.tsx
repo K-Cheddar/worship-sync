@@ -199,6 +199,8 @@ const DisplayEditor = ({
     lineHeight: 1.25,
     fontSize: `${fontSizeValue}vw`,
     color: box.fontColor,
+    fontWeight: box.isBold ? "bold" : "normal",
+    fontStyle: box.isItalic ? "italic" : "normal",
   };
   return (
     <Rnd

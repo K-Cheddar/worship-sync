@@ -1,4 +1,9 @@
-import { BibleFontMode, ItemSlide, ItemState } from "../types";
+import {
+  BibleFontMode,
+  FormattedTextDisplayInfo,
+  ItemSlide,
+  ItemState,
+} from "../types";
 import { formatBible, formatFree, formatSong } from "./overflow";
 
 type UpdateSlideBgPropertyType = {
@@ -237,4 +242,25 @@ export const updateBibleFontMode = ({
     mode: fontMode,
   });
   return updatedItem;
+};
+
+type UpdateFormattedTextDisplayInfoType = {
+  formattedTextDisplayInfo: FormattedTextDisplayInfo;
+  item: ItemState;
+  shouldApplyToAll: boolean;
+};
+
+export const updateFormattedTextDisplayInfo = ({
+  formattedTextDisplayInfo,
+  item,
+  shouldApplyToAll,
+}: UpdateFormattedTextDisplayInfoType): ItemState => {
+  const { slides, selectedSlide } = item;
+
+  let updatedSlides = slides.map((slide, slideIndex) => {
+    if (slideIndex !== selectedSlide && !shouldApplyToAll) return slide;
+    return { ...slide, formattedTextDisplayInfo: formattedTextDisplayInfo };
+  });
+
+  return { ...item, slides: [...updatedSlides] };
 };

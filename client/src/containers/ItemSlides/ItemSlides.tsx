@@ -22,6 +22,7 @@ import { useSelector } from "../../hooks";
 import { useDispatch } from "../../hooks";
 import {
   updateBibleDisplayInfo,
+  updateFormattedTextDisplayInfo,
   updatePresentation,
 } from "../../store/presentationSlice";
 import { createNewSlide } from "../../utils/slideCreation";
@@ -158,9 +159,8 @@ const ItemSlides = () => {
     const _slides = arrangement?.slides || __slides || [];
     return isLoading ? [] : _slides;
   }, [isLoading, __slides, arrangement?.slides]);
-  const { slidesPerRow, slidesPerRowMobile } = useSelector(
-    (state: RootState) => state.undoable.present.preferences
-  );
+  const { slidesPerRow, slidesPerRowMobile, shouldShowStreamFormat } =
+    useSelector((state: RootState) => state.undoable.present.preferences);
   const { isMobile } = useContext(ControllerInfoContext) || {};
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
   const size = type === "timer" ? Math.min(_size, 3) : _size;
@@ -228,14 +228,19 @@ const ItemSlides = () => {
     }
   }, [selectedSlide, isMobile]);
 
+  const getBibleInfo = (index: number) => {
+    const slide = slides[index];
+    const title =
+      index > 0 ? slide.boxes[2]?.words || "" : slide.boxes[1]?.words || "";
+    const text = index > 0 ? slide.boxes[1]?.words || "" : "";
+    return { title, text };
+  };
+
   const selectSlide = (index: number) => {
     dispatch(setSelectedSlide(index));
+    const slide = slides[index];
     if (type === "bible") {
-      const title =
-        index > 0
-          ? slides[index].boxes[2]?.words || ""
-          : slides[index].boxes[1]?.words || "";
-      const text = index > 0 ? slides[index].boxes[1]?.words || "" : "";
+      const { title, text } = getBibleInfo(index);
       dispatch(
         updateBibleDisplayInfo({
           title,
@@ -245,6 +250,30 @@ const ItemSlides = () => {
     } else {
       dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
     }
+
+    if (type === "free") {
+      dispatch(
+        updateFormattedTextDisplayInfo({
+          text: slide.boxes[1]?.words || "",
+          backgroundColor:
+            slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
+          textColor: slide.formattedTextDisplayInfo?.textColor || "#ffffff",
+          fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
+          paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
+          paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
+          isBold: slide.formattedTextDisplayInfo?.isBold || false,
+          isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
+          align: slide.formattedTextDisplayInfo?.align || "left",
+        })
+      );
+    } else {
+      dispatch(
+        updateFormattedTextDisplayInfo({
+          text: "",
+        })
+      );
+    }
+
     dispatch(
       updatePresentation({
         slide: slides[index],
@@ -490,6 +519,8 @@ const ItemSlides = () => {
                 itemType={type}
                 isMobile={isMobile || false}
                 draggedSection={draggedSection}
+                isStreamFormat={shouldShowStreamFormat}
+                getBibleInfo={getBibleInfo}
               />
             ))}
           </SortableContext>

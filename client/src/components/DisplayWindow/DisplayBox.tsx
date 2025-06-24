@@ -135,6 +135,8 @@ const DisplayBox = ({
     WebkitTextStroke: `${fOS}vw #000`,
     textAlign: box.align || "center",
     lineHeight: 1.25,
+    fontWeight: box.isBold ? "bold" : "normal",
+    fontStyle: box.isItalic ? "italic" : "normal",
   };
 
   const renderContent = () => {

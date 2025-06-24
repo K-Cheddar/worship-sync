@@ -1,5 +1,22 @@
-import { Box, SlideType, OverflowMode } from "../types";
+import {
+  Box,
+  SlideType,
+  OverflowMode,
+  FormattedTextDisplayInfo,
+} from "../types";
 import generateRandomId from "./generateRandomId";
+
+export const defaultFormattedTextDisplayInfo: FormattedTextDisplayInfo = {
+  backgroundColor: "#eb8934",
+  textColor: "#ffffff",
+  fontSize: 1.5,
+  paddingX: 2,
+  paddingY: 1,
+  align: "left",
+  isBold: false,
+  isItalic: false,
+  text: "",
+};
 
 type CreateBoxType = {
   words?: string;
@@ -21,6 +38,8 @@ type CreateBoxType = {
   topMargin?: number;
   sideMargin?: number;
   slideIndex?: number;
+  isBold?: boolean;
+  isItalic?: boolean;
 };
 
 export const createBox = ({
@@ -43,6 +62,8 @@ export const createBox = ({
   brightness,
   label,
   slideIndex,
+  isBold,
+  isItalic,
 }: CreateBoxType): Box => {
   return {
     brightness: brightness ?? 100,
@@ -64,6 +85,8 @@ export const createBox = ({
     align: align ?? "center",
     slideIndex: slideIndex ?? 0,
     label: label ?? "",
+    isBold: isBold ?? false,
+    isItalic: isItalic ?? false,
   };
 };
 
@@ -81,6 +104,9 @@ type CreateNewSlideType = {
   textFontSize?: number;
   fontColor?: string;
   overflow?: OverflowMode;
+  isBold?: boolean;
+  isItalic?: boolean;
+  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
 };
 
 export const createNewSlide = ({
@@ -97,6 +123,9 @@ export const createNewSlide = ({
   textFontSize,
   fontColor,
   overflow,
+  isBold,
+  isItalic,
+  formattedTextDisplayInfo,
 }: CreateNewSlideType) => {
   const defaultBox = createBox({});
 
@@ -143,6 +172,8 @@ export const createNewSlide = ({
         topMargin: 1,
         sideMargin: 2,
         excludeFromOverflow: true,
+        isBold: isBold ?? false,
+        isItalic: isItalic ?? false,
       })
     );
   } else if (newBoxes.length) {
@@ -162,6 +193,8 @@ export const createNewSlide = ({
         sideMargin: 2.5,
         excludeFromOverflow: true,
         words: words ? words[0] : " ",
+        isBold: isBold ?? false,
+        isItalic: isItalic ?? false,
       })
     );
     boxes.push(
@@ -204,6 +237,12 @@ export const createNewSlide = ({
     boxes: JSON.parse(JSON.stringify(boxes)),
     id: generateRandomId(),
     ...(overflow && { overflow }),
+    ...(formattedTextDisplayInfo && {
+      formattedTextDisplayInfo: {
+        ...defaultFormattedTextDisplayInfo,
+        ...formattedTextDisplayInfo,
+      },
+    }),
   };
 
   if (typeof slideIndex === "number" && slideIndex >= 0)

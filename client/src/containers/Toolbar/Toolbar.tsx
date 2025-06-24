@@ -8,15 +8,17 @@ import SlideEditTools from "./ToolbarElements/SlideEditTools";
 import Undo from "./ToolbarElements/Undo";
 import UserSection from "./ToolbarElements/UserSection";
 import QuickLinkSelection from "./ToolbarElements/QuickLinkSelection";
-import { useSelector } from "../../hooks";
+import { useDispatch, useSelector } from "../../hooks";
 import { forwardRef, useContext, useEffect, useMemo, useState } from "react";
 import Button from "../../components/Button/Button";
 import TimerControls from "../../components/TimerControls/TimerControls";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import cn from "classnames";
 import "./ToolbarElements/Toolbar.scss";
+import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
+import { setShouldShowStreamFormat } from "../../store/preferencesSlice";
 
-type sections = "settings" | "slide-tools" | "timer-manager";
+type sections = "settings" | "slide-tools" | "timer-manager" | "stream-format";
 
 const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
   ({ className }, ref) => {
@@ -26,7 +28,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
     );
     const [section, setSection] = useState<sections>("settings");
     const { isMobile, isPhone } = useContext(ControllerInfoContext) || {};
-
+    const dispatch = useDispatch();
     const onItemPage = useMemo(
       () => location.pathname.includes("controller/item"),
       [location.pathname]
@@ -41,6 +43,14 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
         setSection("settings");
       }
     }, [onItemPage, type]);
+
+    useEffect(() => {
+      if (section === "stream-format") {
+        dispatch(setShouldShowStreamFormat(true));
+      } else {
+        dispatch(setShouldShowStreamFormat(false));
+      }
+    }, [section, dispatch]);
 
     return (
       <div ref={ref} className={className}>
@@ -72,6 +82,19 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
               )}
             >
               Slide Tools
+            </Button>
+            <Button
+              variant="none"
+              disabled={!onItemPage}
+              svg={EditSquareSVG}
+              onClick={() => setSection("stream-format")}
+              className={cn(
+                "text-xs rounded-none",
+                section === "stream-format" && "bg-gray-800",
+                !onItemPage && "hidden"
+              )}
+            >
+              Stream Format
             </Button>
             <Button
               variant="none"
@@ -107,6 +130,9 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
             <QuickLinkSelection isMobile={isMobile} />
             <SlideEditTools
               className={cn(section !== "slide-tools" && "hidden")}
+            />
+            <FormattedTextEditor
+              className={cn(section !== "stream-format" && "hidden")}
             />
             <TimerControls
               className={cn(

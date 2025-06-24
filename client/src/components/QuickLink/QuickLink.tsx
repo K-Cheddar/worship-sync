@@ -93,6 +93,7 @@ const QuickLink = ({
             imageOverlayInfo={presentationInfo.imageOverlayInfo}
             prevBibleDisplayInfo={presentationInfo.bibleDisplayInfo}
             bibleDisplayInfo={presentationInfo.bibleDisplayInfo}
+            formattedTextDisplayInfo={presentationInfo.formattedTextDisplayInfo}
             timerInfo={timerInfo}
           />
         )}
