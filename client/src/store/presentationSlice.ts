@@ -590,6 +590,8 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.qrCodeOverlayInfo =
         state.streamInfo.qrCodeOverlayInfo;
       state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
+      state.prevStreamInfo.formattedTextDisplayInfo =
+        state.streamInfo.formattedTextDisplayInfo;
 
       state.streamInfo = {
         ...initialState.streamInfo,
@@ -615,6 +617,10 @@ export const presentationSlice = createSlice({
           imageUrl: "",
           time: Date.now(),
           id: generateRandomId(),
+        },
+        formattedTextDisplayInfo: {
+          text: "",
+          time: Date.now(),
         },
       };
     },
@@ -644,6 +650,8 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.qrCodeOverlayInfo =
         state.streamInfo.qrCodeOverlayInfo;
       state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
+      state.prevStreamInfo.formattedTextDisplayInfo =
+        state.streamInfo.formattedTextDisplayInfo;
 
       state.projectorInfo = {
         ...initialState.projectorInfo,
@@ -677,6 +685,10 @@ export const presentationSlice = createSlice({
           imageUrl: "",
           time: Date.now(),
           id: generateRandomId(),
+        },
+        formattedTextDisplayInfo: {
+          text: "",
+          time: Date.now(),
         },
       };
     },

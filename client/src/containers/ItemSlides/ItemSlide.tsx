@@ -135,7 +135,11 @@ const ItemSlide = ({
       </h4>
       <DisplayWindow
         showBorder
-        boxes={isStreamFormat ? [] : slide.boxes}
+        boxes={
+          isStreamFormat && (itemType === "free" || itemType === "bible")
+            ? []
+            : slide.boxes
+        }
         width={width}
         displayType={isStreamFormat ? "stream" : "slide"}
         timerInfo={timerInfo}
@@ -145,7 +149,7 @@ const ItemSlide = ({
         formattedTextDisplayInfo={
           itemType === "free"
             ? {
-                text: slide.boxes[1]?.words || "",
+                text: slide.boxes[1]?.words?.trim() || "",
                 backgroundColor:
                   slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
                 textColor:

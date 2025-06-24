@@ -12,6 +12,8 @@ import { ReactComponent as AlignLeftSVG } from "../../../assets/icons/align-left
 import { ReactComponent as AlignCenterSVG } from "../../../assets/icons/align-center.svg";
 import { ReactComponent as AlignRightSVG } from "../../../assets/icons/align-right.svg";
 import { ReactComponent as TextFieldSVG } from "../../../assets/icons/text-field.svg";
+import { ReactComponent as BoldSVG } from "../../../assets/icons/format-bold.svg";
+import { ReactComponent as ItalicSVG } from "../../../assets/icons/format-italic.svg";
 import PopOver from "../../../components/PopOver/PopOver";
 import { updateFormattedTextDisplayInfo } from "../../../utils/formatter";
 import { HexColorInput, HexColorPicker } from "react-colorful";
@@ -31,7 +33,7 @@ type fieldType =
 const FormattedTextEditor = ({ className }: { className?: string }) => {
   const item = useSelector((state) => state.undoable.present.item);
 
-  const { slides, selectedSlide } = item;
+  const { slides, selectedSlide, type } = item;
 
   const formattedTextDisplayInfo = useMemo(() => {
     return slides[selectedSlide]?.formattedTextDisplayInfo;
@@ -54,7 +56,10 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
 
   const [shouldApplyToAll, setShouldApplyToAll] = useState(true);
 
-  const runUpdate = (field: fieldType, updatedValue: string | number) => {
+  const runUpdate = (
+    field: fieldType,
+    updatedValue: string | number | boolean
+  ) => {
     const updatedItem = updateFormattedTextDisplayInfo({
       formattedTextDisplayInfo: {
         ...formattedTextDisplayInfo,
@@ -68,7 +73,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
   };
 
   const handleChange = (field: fieldType, value: string) => {
-    let updatedValue: string | number = value;
+    let updatedValue: string | number | boolean = value;
     let numValue = parseFloat(value);
 
     if (field === "paddingX" || field === "paddingY") {
@@ -81,6 +86,9 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
       let numValue = parseFloat(value);
       numValue = Math.round(Math.max(Math.min(numValue, 150), 1));
       updatedValue = numValue / 10;
+    }
+    if (field === "isBold" || field === "isItalic") {
+      updatedValue = value === "true" ? true : false;
     }
 
     if (field === "textColor" || field === "backgroundColor") {
@@ -111,6 +119,13 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
     }
   };
 
+  if (type !== "free")
+    return (
+      <section className="flex flex-wrap gap-2 lg:pr-2 max-lg:pb-4 invisible">
+        <Button svg={TextFieldSVG} iconSize="lg" />
+      </section>
+    );
+
   return (
     <section
       className={cn(
@@ -118,7 +133,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
         className
       )}
     >
-      <Icon svg={TextFieldSVG} className="border-b border-black" />
+      <Icon svg={TextFieldSVG} size="lg" className="border-b border-black" />
       <Button
         svg={MinusSVG}
         variant="tertiary"
@@ -141,6 +156,23 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
         variant="tertiary"
         onClick={() =>
           handleChange("fontSize", (formattedTextState.fontSize + 1).toString())
+        }
+      />
+      <Button
+        variant={formattedTextState.isBold ? "secondary" : "tertiary"}
+        svg={BoldSVG}
+        onClick={() =>
+          handleChange("isBold", formattedTextState.isBold ? "false" : "true")
+        }
+      />
+      <Button
+        variant={formattedTextState.isItalic ? "secondary" : "tertiary"}
+        svg={ItalicSVG}
+        onClick={() =>
+          handleChange(
+            "isItalic",
+            formattedTextState.isItalic ? "false" : "true"
+          )
         }
       />
       <Button
@@ -207,24 +239,26 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
       <Input
         type="number"
         value={formattedTextState.paddingX}
+        inputTextSize="text-xs"
         onChange={(value) => handleChange("paddingX", value.toString())}
-        label="X"
-        labelClassName="lg:mr-2 max-lg:mb-2"
+        label="Padding X"
+        labelClassName="lg:mr-2 max-lg:mb-2 text-xs"
         min={0}
         max={100}
-        step={0.25}
+        step={0.5}
         inputWidth="w-16"
         hideSpinButtons={false}
       />
       <Input
         type="number"
         value={formattedTextState.paddingY}
+        inputTextSize="text-xs"
         onChange={(value) => handleChange("paddingY", value.toString())}
-        label="Y"
-        labelClassName="lg:mr-2 max-lg:mb-2"
+        label="PaddingY"
+        labelClassName="lg:mr-2 max-lg:mb-2 text-xs"
         min={0}
         max={100}
-        step={0.25}
+        step={0.5}
         inputWidth="w-16"
         hideSpinButtons={false}
       />

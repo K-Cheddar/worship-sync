@@ -426,6 +426,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onChange={(val) => _updateKeepAspectRatio(val)}
         />
       )}
+      <Button svg={TextFieldSVG} iconSize="lg" className="invisible" />
     </>
   );
 

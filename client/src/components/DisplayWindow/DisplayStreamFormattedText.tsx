@@ -1,4 +1,4 @@
-import { CSSProperties, forwardRef, MutableRefObject, useRef } from "react";
+import { CSSProperties, useRef } from "react";
 import { FormattedTextDisplayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -10,136 +10,119 @@ type DisplayStreamFormattedTextProps = {
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
   prevFormattedTextDisplayInfo?: FormattedTextDisplayInfo;
   shouldAnimate?: boolean;
+  isPrev?: boolean;
 };
 
-const DisplayStreamFormattedText = forwardRef<
-  HTMLDivElement,
-  DisplayStreamFormattedTextProps
->(
-  (
+const generateFormattedTextStyles = (
+  width: number,
+  displayInfo?: FormattedTextDisplayInfo
+): CSSProperties =>
+  ({
+    "--formatted-text-background-color":
+      displayInfo?.backgroundColor || "#eb8934",
+    "--formatted-text-text-color": displayInfo?.textColor || "#ffffff",
+    "--formatted-text-font-size": `${
+      (displayInfo?.fontSize || 1.5) * (width / 100)
+    }vw`,
+    "--formatted-text-padding": displayInfo?.text
+      ? `${displayInfo?.paddingY}% ${displayInfo?.paddingX}%`
+      : "0",
+    "--formatted-text-align": displayInfo?.align || "center",
+    "--formatted-text-font-weight": displayInfo?.isBold ? "bold" : "normal",
+    "--formatted-text-font-style": displayInfo?.isItalic ? "italic" : "normal",
+  } as CSSProperties);
+
+const DisplayStreamFormattedText = ({
+  width,
+  shouldAnimate = false,
+  formattedTextDisplayInfo,
+  prevFormattedTextDisplayInfo,
+  isPrev = false,
+}: DisplayStreamFormattedTextProps) => {
+  const formattedTextRef = useRef<HTMLDivElement | null>(null);
+  const prevFormattedTextRef = useRef<HTMLDivElement | null>(null);
+  const formattedTextTimeline = useRef<GSAPTimeline | null>();
+  const prevFormattedTextTimeline = useRef<GSAPTimeline | null>();
+
+  useGSAP(
+    () => {
+      if (!formattedTextRef.current || !shouldAnimate) return;
+
+      formattedTextTimeline.current?.clear();
+
+      if (formattedTextDisplayInfo?.text?.trim()) {
+        formattedTextTimeline.current = gsap.timeline().fromTo(
+          formattedTextRef.current,
+          {
+            opacity: 0,
+          },
+          { opacity: 1, duration: 0.35, ease: "power1.inOut" }
+        );
+      }
+    },
     {
-      width,
-      shouldAnimate = false,
-      formattedTextDisplayInfo,
-      prevFormattedTextDisplayInfo,
-    }: DisplayStreamFormattedTextProps,
-    containerRef
-  ) => {
-    const formattedTextRef = useRef<HTMLDivElement | null>(null);
-    const prevFormattedTextRef = useRef<HTMLDivElement | null>(null);
-    const formattedTextTimeline = useRef<GSAPTimeline | null>();
-    const prevFormattedTextTimeline = useRef<GSAPTimeline | null>();
+      scope: formattedTextRef,
+      dependencies: [formattedTextDisplayInfo, isPrev],
+    }
+  );
 
-    useGSAP(
-      () => {
-        if (
-          !formattedTextRef.current ||
-          !(containerRef as MutableRefObject<HTMLDivElement>)?.current ||
-          !shouldAnimate
-        )
-          return;
+  useGSAP(
+    () => {
+      if (!prevFormattedTextRef.current || !shouldAnimate) return;
 
-        formattedTextTimeline.current?.clear();
+      prevFormattedTextTimeline.current?.clear();
 
-        if (formattedTextDisplayInfo?.text?.trim()) {
-          formattedTextTimeline.current = gsap.timeline().fromTo(
-            formattedTextRef.current,
-            {
-              opacity: 0,
-              yPercent: 0,
-            },
-            { opacity: 1, duration: 0.35, ease: "power1.inOut" }
-          );
-        }
-      },
-      { scope: formattedTextRef, dependencies: [formattedTextDisplayInfo] }
-    );
-
-    useGSAP(
-      () => {
-        if (!prevFormattedTextRef.current || !shouldAnimate) return;
-
-        prevFormattedTextTimeline.current?.clear();
-
-        if (prevFormattedTextDisplayInfo?.text?.trim()) {
-          prevFormattedTextTimeline.current = gsap.timeline().fromTo(
-            prevFormattedTextRef.current,
-            {
-              opacity: 1,
-              yPercent: 0,
-            },
-            { opacity: 0, duration: 0.35, ease: "power1.inOut" }
-          );
-        }
-      },
-      {
-        scope: prevFormattedTextRef,
-        dependencies: [prevFormattedTextDisplayInfo],
+      if (prevFormattedTextDisplayInfo?.text?.trim()) {
+        prevFormattedTextTimeline.current = gsap.timeline().fromTo(
+          prevFormattedTextRef.current,
+          {
+            opacity: 1,
+          },
+          { opacity: 0, duration: 0.35, ease: "power1.inOut" }
+        );
       }
-    );
+    },
+    {
+      scope: prevFormattedTextRef,
+      dependencies: [prevFormattedTextDisplayInfo],
+    }
+  );
 
-    const renderContent = (text: string) => {
-      if (text.includes("\u200B")) {
-        return <VerseDisplay words={text} className="text-yellow-400" />;
-      }
+  const renderContent = (text: string) => {
+    if (text.includes("\u200B")) {
+      return <VerseDisplay words={text} className="text-yellow-400" />;
+    }
 
-      return text;
-    };
+    return text;
+  };
 
-    return (
-      <>
-        <div
-          ref={formattedTextRef}
-          className="formatted-text-container"
-          style={
-            {
-              "--formatted-text-background-color":
-                formattedTextDisplayInfo?.backgroundColor || "#eb8934",
-              "--formatted-text-text-color":
-                formattedTextDisplayInfo?.textColor || "#ffffff",
-              "--formatted-text-font-size": `${
-                (formattedTextDisplayInfo?.fontSize || 1.5) * (width / 100)
-              }vw`,
-              "--formatted-text-padding": formattedTextDisplayInfo?.text
-                ? `${formattedTextDisplayInfo?.paddingY}% ${formattedTextDisplayInfo?.paddingX}%`
-                : "0",
-            } as CSSProperties
-          }
-        >
-          {formattedTextDisplayInfo?.text && (
-            <p className="formatted-text-text">
-              {renderContent(formattedTextDisplayInfo.text)}
-            </p>
-          )}
-        </div>
+  return (
+    <>
+      <div
+        ref={formattedTextRef}
+        className="formatted-text-container"
+        style={generateFormattedTextStyles(width, formattedTextDisplayInfo)}
+      >
+        {formattedTextDisplayInfo?.text && (
+          <p className="formatted-text-text">
+            {renderContent(formattedTextDisplayInfo.text)}
+          </p>
+        )}
+      </div>
 
-        <div
-          ref={prevFormattedTextRef}
-          className="prev-formatted-text-container"
-          style={
-            {
-              "--formatted-text-background-color":
-                prevFormattedTextDisplayInfo?.backgroundColor || "#eb8934",
-              "--formatted-text-text-color":
-                prevFormattedTextDisplayInfo?.textColor || "#ffffff",
-              "--formatted-text-font-size": `${
-                (prevFormattedTextDisplayInfo?.fontSize || 1.5) * (width / 100)
-              }vw`,
-              "--formatted-text-padding": prevFormattedTextDisplayInfo?.text
-                ? `${prevFormattedTextDisplayInfo?.paddingY}% ${prevFormattedTextDisplayInfo?.paddingX}%`
-                : "0",
-            } as CSSProperties
-          }
-        >
-          {prevFormattedTextDisplayInfo?.text && (
-            <p className="prev-formatted-text-text">
-              {renderContent(prevFormattedTextDisplayInfo.text)}
-            </p>
-          )}
-        </div>
-      </>
-    );
-  }
-);
+      <div
+        ref={prevFormattedTextRef}
+        className="prev-formatted-text-container"
+        style={generateFormattedTextStyles(width, prevFormattedTextDisplayInfo)}
+      >
+        {prevFormattedTextDisplayInfo?.text && (
+          <p className="prev-formatted-text-text">
+            {renderContent(prevFormattedTextDisplayInfo.text)}
+          </p>
+        )}
+      </div>
+    </>
+  );
+};
 
 export default DisplayStreamFormattedText;

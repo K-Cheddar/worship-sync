@@ -103,11 +103,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isEditor = displayType === "editor";
     const isDisplay = !isStream && !isEditor;
 
-    if (isStream) {
-      console.log("formattedTextDisplayInfo", formattedTextDisplayInfo);
-      console.log("boxes", boxes);
-    }
-
     return (
       <div
         className={`display-window ${
