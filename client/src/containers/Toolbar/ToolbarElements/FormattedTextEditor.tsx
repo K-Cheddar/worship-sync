@@ -16,7 +16,11 @@ import { ReactComponent as BoldSVG } from "../../../assets/icons/format-bold.svg
 import { ReactComponent as ItalicSVG } from "../../../assets/icons/format-italic.svg";
 import PopOver from "../../../components/PopOver/PopOver";
 import { updateFormattedTextDisplayInfo } from "../../../utils/formatter";
-import { HexColorInput, HexColorPicker } from "react-colorful";
+import {
+  HexColorInput,
+  HexColorPicker,
+  HexAlphaColorPicker,
+} from "react-colorful";
 import cn from "classnames";
 import Icon from "../../../components/Icon/Icon";
 
@@ -129,7 +133,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
   return (
     <section
       className={cn(
-        "flex flex-wrap gap-2 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4 justify-center items-center",
+        "flex flex-wrap gap-1 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4 justify-center items-center",
         className
       )}
     >
@@ -158,6 +162,27 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           handleChange("fontSize", (formattedTextState.fontSize + 1).toString())
         }
       />
+      <PopOver
+        TriggeringButton={
+          <Button
+            variant="tertiary"
+            className="border-b-2"
+            svg={ColorSVG}
+            style={{ borderColor: formattedTextState.textColor }}
+          />
+        }
+      >
+        <HexColorPicker
+          color={formattedTextState.textColor}
+          onChange={(val) => handleChange("textColor", val)}
+        />
+        <HexColorInput
+          color={formattedTextState.textColor}
+          prefixed
+          onChange={(val) => handleChange("textColor", val)}
+          className="text-black w-full mt-2"
+        />
+      </PopOver>
       <Button
         variant={formattedTextState.isBold ? "secondary" : "tertiary"}
         svg={BoldSVG}
@@ -204,7 +229,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           />
         }
       >
-        <HexColorPicker
+        <HexAlphaColorPicker
           color={formattedTextState.backgroundColor}
           onChange={(val) => handleChange("backgroundColor", val)}
         />
@@ -215,27 +240,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           className="text-black w-full mt-2"
         />
       </PopOver>
-      <PopOver
-        TriggeringButton={
-          <Button
-            variant="tertiary"
-            className="border-b-2"
-            svg={ColorSVG}
-            style={{ borderColor: formattedTextState.textColor }}
-          />
-        }
-      >
-        <HexColorPicker
-          color={formattedTextState.textColor}
-          onChange={(val) => handleChange("textColor", val)}
-        />
-        <HexColorInput
-          color={formattedTextState.textColor}
-          prefixed
-          onChange={(val) => handleChange("textColor", val)}
-          className="text-black w-full mt-2"
-        />
-      </PopOver>
+
       <Input
         type="number"
         value={formattedTextState.paddingX}
