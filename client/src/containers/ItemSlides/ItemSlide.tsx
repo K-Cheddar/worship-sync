@@ -73,8 +73,6 @@ const ItemSlide = ({
         }
       : undefined;
 
-  console.log(slide.formattedTextDisplayInfo);
-
   return (
     <li
       ref={setNodeRef}

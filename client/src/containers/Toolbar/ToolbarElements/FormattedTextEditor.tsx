@@ -133,7 +133,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
         className
       )}
     >
-      <Icon svg={TextFieldSVG} size="lg" className="border-b border-black" />
+      <Icon svg={TextFieldSVG} className="border-b border-black" />
       <Button
         svg={MinusSVG}
         variant="tertiary"
@@ -275,6 +275,8 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
         value={shouldApplyToAll}
         onChange={() => setShouldApplyToAll(true)}
       />
+      {/* Keep the height the same as other sections */}
+      <Button svg={TextFieldSVG} iconSize="lg" className="invisible" />
     </section>
   );
 };

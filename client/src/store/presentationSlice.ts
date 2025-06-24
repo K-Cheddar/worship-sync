@@ -474,8 +474,6 @@ export const presentationSlice = createSlice({
       action: PayloadAction<FormattedTextDisplayInfo>
     ) => {
       if (state.isStreamTransmitting) {
-        console.log("action.payload", action.payload);
-
         // set previous info for cross animation
         state.prevStreamInfo.formattedTextDisplayInfo =
           state.streamInfo.formattedTextDisplayInfo;
