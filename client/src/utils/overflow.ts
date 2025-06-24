@@ -184,7 +184,7 @@ export const formatSection = ({
   let currentBoxes = [];
   let boxes: Box[] = [];
   let box: Box = { width: 100, height: 100 };
-  //lineContainer = {}
+
   let maxLines = 0,
     lineHeight = 0,
     lineCounter = 0,
@@ -208,8 +208,9 @@ export const formatSection = ({
       }));
 
       while (i + counter < lines.length && lineCounter < maxLines) {
-        boxWords += lines[i + counter];
-        if (i + counter < lines.length - 1) boxWords += "\n";
+        let testWords = boxWords + lines[i + counter];
+
+        if (i + counter < lines.length - 1) testWords += "\n";
 
         let lineCount = getNumLines({
           text: lines[i + counter],
@@ -217,7 +218,15 @@ export const formatSection = ({
           lineHeight,
           width: currentBoxes[1].width,
         });
-        if (lineCount === 0) lineCount = 1;
+
+        // If the text can't fit and we're not on the first round of the loop
+        // break the loop. Existing text will be added and the next round will grab
+        // The rest of the text
+        if (lineCounter + lineCount > maxLines && counter > 0) {
+          break;
+        }
+
+        boxWords = testWords;
         lineCounter += lineCount;
         counter++;
       }
@@ -226,6 +235,7 @@ export const formatSection = ({
       box.words = boxWords;
       boxes.push(box);
     }
+
     boxes[0].words = " ";
     boxes[1].excludeFromOverflow = false;
     boxes[1].brightness = 100; // todo fix brightness on added slides without this line
@@ -538,8 +548,10 @@ export const formatFree = (item: ItemState) => {
 
 export const formatLyrics = (item: ItemState) => {
   const selectedArrangement = item.selectedArrangement || 0;
+  const selectedSlide = item.selectedSlide || 1;
   const arrangements = item.arrangements || [];
   let slides = arrangements[selectedArrangement].slides || [];
+  const slide = slides[selectedSlide];
 
   const boxes = slides[0].boxes;
   const lastSlide = slides.length - 1;
@@ -556,9 +568,9 @@ export const formatLyrics = (item: ItemState) => {
   ];
   const songOrder = arrangements[selectedArrangement].songOrder;
   const formattedLyrics = arrangements[selectedArrangement].formattedLyrics;
-  const fontSize: number = slides[1] ? slides[1].boxes[1].fontSize || 2.5 : 2.5;
-  const fontColor: string = slides[1]
-    ? slides[1].boxes[1].fontColor || "rgb(255, 255, 255)"
+  const fontSize: number = slide ? slide.boxes[1].fontSize || 2.5 : 2.5;
+  const fontColor: string = slide
+    ? slide.boxes[1].fontColor || "rgb(255, 255, 255)"
     : "rgb(255, 255, 255)";
 
   for (let i = 0; i < songOrder.length; ++i) {

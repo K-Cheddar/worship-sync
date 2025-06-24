@@ -49,7 +49,6 @@ export const presentationSlice = createSlice({
   initialState,
   reducers: {
     updatePresentation: (state, action: PayloadAction<Presentation>) => {
-      console.log("updatePresentation", action.payload);
       if (state.isProjectorTransmitting) {
         // set previous info for cross animation
         state.prevProjectorInfo.slide = state.projectorInfo.slide;

@@ -50,7 +50,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         heading: credit.heading,
         text: credit.text,
       }));
-    console.log(visiblePublishedList, visibleList);
     return JSON.stringify(visiblePublishedList) !== JSON.stringify(visibleList);
   };
 
