@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/K-Cheddar/worship-sync/compare/v1.3.0...v1.3.1) (2025-06-27)
+
+
+### Bug Fixes
+
+* improve overflow ([ec0db4a](https://github.com/K-Cheddar/worship-sync/commit/ec0db4a2848900347b02e2a6919cdbd22dbadd84))
+
 # [1.3.0](https://github.com/K-Cheddar/worship-sync/compare/v1.2.2...v1.3.0) (2025-06-24)
 
 
