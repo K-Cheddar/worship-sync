@@ -119,7 +119,9 @@ const SlideEditor = () => {
       if (textBoxElement && typeof position === "number") {
         textBoxElement.selectionEnd = position;
         textBoxElement.selectionStart = position;
-        textBoxElement.scrollTop = 0;
+        requestAnimationFrame(() => {
+          textBoxElement.scrollTop = 0;
+        });
       }
     });
   }, [cursorPositions]);
@@ -210,9 +212,24 @@ const SlideEditor = () => {
         let newWords = "";
 
         for (let i = start; i <= end; ++i) {
-          if (i === selectedSlide) newWords += value;
-          else newWords += slides[i].boxes[index].words;
+          if (i === selectedSlide) {
+            // Check if the current slide already ends with a newline
+            const alreadyHasNewline = value.endsWith("\n");
+
+            // Only add newline if:
+            // 1. It's not the last slide in the range
+            // 2. The slide doesn't already end with a newline
+            // 3. The slide has some content (not empty)
+            const shouldAddNewline =
+              i < end && !alreadyHasNewline && value.trim().length > 0;
+
+            newWords += shouldAddNewline ? value + "\n" : value;
+            // newWords += value;
+          } else {
+            newWords += slides[i].boxes[index].words;
+          }
         }
+
         if (newWords !== "") {
           const updatedArrangements = item.arrangements.map(
             (arrangement, index) => {

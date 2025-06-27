@@ -246,7 +246,7 @@ export const formatSection = ({
         // If the text can't fit and we're not on the first round of the loop
         // break the loop. Existing text will be added and the next round will grab
         // The rest of the text
-        if (lineCounter + lineCount > maxLines && counter > 0) {
+        if (lineCount + lineCounter > maxLines && counter > 0) {
           break;
         }
 
@@ -283,151 +283,6 @@ export const formatSection = ({
   return formattedText;
 };
 
-export const formatSectionByWords = ({
-  text,
-  type,
-  name,
-  slides,
-  newSlides,
-  lastBoxes,
-  fontSize,
-  fontColor,
-  isBold,
-  isItalic,
-  formattedTextDisplayInfo,
-}: FormatSectionType): ItemSlide[] => {
-  // Handle empty text case
-  if (!text || text.trim() === "") {
-    return [
-      createNewSlide({
-        type: type as SlideType,
-        name: name,
-        boxes: lastBoxes.map((box) => ({
-          ...box,
-          words: box === lastBoxes[0] ? " " : " ",
-        })),
-        fontSize: fontSize,
-        fontColor: fontColor,
-        slideIndex: 0,
-        isBold,
-        isItalic,
-        formattedTextDisplayInfo,
-      }),
-    ];
-  }
-
-  let words = text.split(" ");
-  let formattedText = [];
-  let currentBoxes = [];
-  let boxes: Box[] = [];
-  let box: Box = { width: 100, height: 100 };
-  let maxLines = 0,
-    lineHeight = 0,
-    lineCounter = 0,
-    counter = 0;
-  let boxWords = "";
-
-  for (let i = 0; i < words.length; ++i) {
-    counter = 0;
-    lineCounter = 0;
-    boxWords = "";
-    boxes = [];
-
-    if (slides[newSlides.length + formattedText.length])
-      currentBoxes = slides[newSlides.length + formattedText.length].boxes;
-    else currentBoxes = lastBoxes;
-
-    for (let j = 0; j < currentBoxes.length; ++j) {
-      ({ maxLines, lineHeight } = getMaxLines({
-        fontSize,
-        height: currentBoxes[1].height,
-        isBold: currentBoxes[1].isBold,
-        isItalic: currentBoxes[1].isItalic,
-      }));
-
-      // Handle case where we're at the last word
-      if (i === words.length - 1) {
-        boxWords = words[i];
-        break;
-      }
-
-      while (i + counter < words.length && lineCounter < maxLines) {
-        let testWords = boxWords + (boxWords ? " " : "") + words[i + counter];
-        let lineCount = getNumLines({
-          text: testWords,
-          fontSize,
-          lineHeight,
-          width: currentBoxes[1].width,
-          isBold: currentBoxes[1].isBold,
-          isItalic: currentBoxes[1].isItalic,
-        });
-
-        // If even a single word doesn't fit, force it to fit
-        if (counter === 0 && lineCount > maxLines) {
-          boxWords = words[i];
-          lineCounter = lineCount;
-          counter = 1;
-          break;
-        }
-
-        if (lineCount <= maxLines) {
-          boxWords = testWords;
-          lineCounter = lineCount;
-          counter++;
-        } else {
-          break;
-        }
-      }
-
-      box = Object.assign({}, currentBoxes[j]);
-      if (boxWords === "") boxWords = " ";
-      box.words = boxWords;
-      boxes.push(box);
-    }
-
-    boxes[0].words = " ";
-    boxes[1].excludeFromOverflow = false;
-    boxes[1].brightness = 100;
-
-    i += counter - 1;
-    formattedText.push(
-      createNewSlide({
-        type: type as SlideType,
-        name: name,
-        boxes: boxes,
-        fontSize: fontSize,
-        fontColor: fontColor,
-        slideIndex: formattedText.length,
-        isBold,
-        isItalic,
-        formattedTextDisplayInfo,
-      })
-    );
-  }
-
-  // If no slides were created (e.g., empty text), create a default slide
-  if (formattedText.length === 0) {
-    formattedText.push(
-      createNewSlide({
-        type: type as SlideType,
-        name: name,
-        boxes: lastBoxes.map((box) => ({
-          ...box,
-          words: box === lastBoxes[0] ? " " : " ",
-        })),
-        fontSize: fontSize,
-        fontColor: fontColor,
-        slideIndex: 0,
-        isBold,
-        isItalic,
-        formattedTextDisplayInfo,
-      })
-    );
-  }
-
-  return formattedText;
-};
-
 export const formatFree = (item: ItemState) => {
   const { selectedSlide, selectedBox } = item;
   let slides = item.slides;
@@ -453,7 +308,23 @@ export const formatFree = (item: ItemState) => {
 
   // Get words from selected box of all slides of section
   const sectionWords = currentSectionSlides
-    .map((slide) => slide.boxes[selectedBox]?.words)
+    .map((slide, index) => {
+      const words = slide.boxes[selectedBox]?.words || "";
+
+      // Check if the current slide already ends with a newline
+      const alreadyHasNewline = words.endsWith("\n");
+
+      // Only add newline if:
+      // 1. It's not the last slide
+      // 2. The slide doesn't already end with a newline
+      // 3. The slide has some content (not empty)
+      const shouldAddNewline =
+        index < currentSectionSlides.length - 1 &&
+        !alreadyHasNewline &&
+        words.trim().length > 0;
+
+      return shouldAddNewline ? words + "\n" : words;
+    })
     .join("");
 
   // Get the background from the last slide in the section
