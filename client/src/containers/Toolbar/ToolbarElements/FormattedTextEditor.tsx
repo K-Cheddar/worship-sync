@@ -5,6 +5,7 @@ import { updateSlides } from "../../../store/itemSlice";
 import { useMemo, useRef, useState } from "react";
 import RadioButton from "../../../components/RadioButton/RadioButton";
 import { ReactComponent as ColorSVG } from "../../../assets/icons/text-color.svg";
+import { ReactComponent as ExpandSVG } from "../../../assets/icons/expand.svg";
 import { ReactComponent as BGOne } from "../../../assets/icons/background-one.svg";
 import { ReactComponent as AddSVG } from "../../../assets/icons/add.svg";
 import { ReactComponent as MinusSVG } from "../../../assets/icons/remove.svg";
@@ -130,158 +131,181 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
       </section>
     );
 
+  const controls = (
+    <>
+      <section className="flex gap-1 items-center">
+        <Icon svg={TextFieldSVG} className="border-b border-black" />
+        <Button
+          svg={MinusSVG}
+          variant="tertiary"
+          onClick={() =>
+            handleChange(
+              "fontSize",
+              (formattedTextState.fontSize - 1).toString()
+            )
+          }
+        />
+        <Input
+          label="Font Size"
+          type="number"
+          value={formattedTextState.fontSize}
+          onChange={(val) => handleChange("fontSize", val.toString())}
+          className="w-8 2xl:w-10"
+          inputTextSize="text-xs"
+          hideLabel
+          data-ignore-undo="true"
+        />
+        <Button
+          svg={AddSVG}
+          variant="tertiary"
+          onClick={() =>
+            handleChange(
+              "fontSize",
+              (formattedTextState.fontSize + 1).toString()
+            )
+          }
+        />
+        <PopOver
+          TriggeringButton={
+            <Button
+              variant="tertiary"
+              className="border-b-2"
+              svg={ColorSVG}
+              style={{ borderColor: formattedTextState.textColor }}
+            />
+          }
+        >
+          <HexColorPicker
+            color={formattedTextState.textColor}
+            onChange={(val) => handleChange("textColor", val)}
+          />
+          <HexColorInput
+            color={formattedTextState.textColor}
+            prefixed
+            onChange={(val) => handleChange("textColor", val)}
+            className="text-black w-full mt-2"
+          />
+        </PopOver>
+        <Button
+          variant={formattedTextState.isBold ? "secondary" : "tertiary"}
+          svg={BoldSVG}
+          onClick={() =>
+            handleChange("isBold", formattedTextState.isBold ? "false" : "true")
+          }
+        />
+        <Button
+          variant={formattedTextState.isItalic ? "secondary" : "tertiary"}
+          svg={ItalicSVG}
+          onClick={() =>
+            handleChange(
+              "isItalic",
+              formattedTextState.isItalic ? "false" : "true"
+            )
+          }
+        />
+        <Button
+          variant={
+            formattedTextState.align === "left" ? "secondary" : "tertiary"
+          }
+          svg={AlignLeftSVG}
+          onClick={() => handleChange("align", "left")}
+        />
+        <Button
+          variant={
+            formattedTextState.align === "center" ? "secondary" : "tertiary"
+          }
+          svg={AlignCenterSVG}
+          onClick={() => handleChange("align", "center")}
+        />
+        <Button
+          variant={
+            formattedTextState.align === "right" ? "secondary" : "tertiary"
+          }
+          svg={AlignRightSVG}
+          onClick={() => handleChange("align", "right")}
+        />
+      </section>
+      <section className="flex gap-2 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4">
+        <PopOver
+          TriggeringButton={
+            <Button
+              variant="tertiary"
+              className="border-b-2"
+              svg={BGOne}
+              style={{ borderColor: formattedTextState.backgroundColor }}
+            />
+          }
+        >
+          <HexAlphaColorPicker
+            color={formattedTextState.backgroundColor}
+            onChange={(val) => handleChange("backgroundColor", val)}
+          />
+          <HexColorInput
+            color={formattedTextState.backgroundColor}
+            prefixed
+            onChange={(val) => handleChange("backgroundColor", val)}
+            className="text-black w-full mt-2"
+          />
+        </PopOver>
+        <Input
+          type="number"
+          value={formattedTextState.paddingX}
+          inputTextSize="text-xs"
+          onChange={(value) => handleChange("paddingX", value.toString())}
+          label="Padding X"
+          labelClassName="mr-2 text-xs"
+          min={0}
+          max={100}
+          step={0.5}
+          inputWidth="w-12"
+          hideSpinButtons={false}
+        />
+        <Input
+          type="number"
+          value={formattedTextState.paddingY}
+          inputTextSize="text-xs"
+          onChange={(value) => handleChange("paddingY", value.toString())}
+          label="Padding Y"
+          labelClassName="mr-2 text-xs"
+          min={0}
+          max={100}
+          step={0.5}
+          inputWidth="w-12"
+          hideSpinButtons={false}
+        />
+      </section>
+
+      <section className="flex gap-1 items-center">
+        <RadioButton
+          className="text-xs w-fit"
+          label="Apply to selected"
+          value={!shouldApplyToAll}
+          onChange={() => setShouldApplyToAll(false)}
+        />
+        <RadioButton
+          label="Apply to all"
+          className="text-xs w-fit"
+          value={shouldApplyToAll}
+          onChange={() => setShouldApplyToAll(true)}
+        />
+        {/* Keep the height the same as other sections */}
+        <Button svg={TextFieldSVG} iconSize="lg" className="invisible" />
+      </section>
+    </>
+  );
+
   return (
-    <section
-      className={cn(
-        "flex flex-wrap gap-1 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4 justify-center items-center",
-        className
-      )}
-    >
-      <Icon svg={TextFieldSVG} className="border-b border-black" />
-      <Button
-        svg={MinusSVG}
-        variant="tertiary"
-        onClick={() =>
-          handleChange("fontSize", (formattedTextState.fontSize - 1).toString())
-        }
-      />
-      <Input
-        label="Font Size"
-        type="number"
-        value={formattedTextState.fontSize}
-        onChange={(val) => handleChange("fontSize", val.toString())}
-        className="w-8 2xl:w-10"
-        inputTextSize="text-xs"
-        hideLabel
-        data-ignore-undo="true"
-      />
-      <Button
-        svg={AddSVG}
-        variant="tertiary"
-        onClick={() =>
-          handleChange("fontSize", (formattedTextState.fontSize + 1).toString())
-        }
-      />
+    <section className={cn("flex gap-1 items-center", className)}>
+      <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>
       <PopOver
         TriggeringButton={
-          <Button
-            variant="tertiary"
-            className="border-b-2"
-            svg={ColorSVG}
-            style={{ borderColor: formattedTextState.textColor }}
-          />
+          <Button className="lg:hidden" variant="tertiary" svg={ExpandSVG}>
+            Tools
+          </Button>
         }
       >
-        <HexColorPicker
-          color={formattedTextState.textColor}
-          onChange={(val) => handleChange("textColor", val)}
-        />
-        <HexColorInput
-          color={formattedTextState.textColor}
-          prefixed
-          onChange={(val) => handleChange("textColor", val)}
-          className="text-black w-full mt-2"
-        />
+        <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
       </PopOver>
-      <Button
-        variant={formattedTextState.isBold ? "secondary" : "tertiary"}
-        svg={BoldSVG}
-        onClick={() =>
-          handleChange("isBold", formattedTextState.isBold ? "false" : "true")
-        }
-      />
-      <Button
-        variant={formattedTextState.isItalic ? "secondary" : "tertiary"}
-        svg={ItalicSVG}
-        onClick={() =>
-          handleChange(
-            "isItalic",
-            formattedTextState.isItalic ? "false" : "true"
-          )
-        }
-      />
-      <Button
-        variant={formattedTextState.align === "left" ? "secondary" : "tertiary"}
-        svg={AlignLeftSVG}
-        onClick={() => handleChange("align", "left")}
-      />
-      <Button
-        variant={
-          formattedTextState.align === "center" ? "secondary" : "tertiary"
-        }
-        svg={AlignCenterSVG}
-        onClick={() => handleChange("align", "center")}
-      />
-      <Button
-        variant={
-          formattedTextState.align === "right" ? "secondary" : "tertiary"
-        }
-        svg={AlignRightSVG}
-        onClick={() => handleChange("align", "right")}
-      />
-      <PopOver
-        TriggeringButton={
-          <Button
-            variant="tertiary"
-            className="border-b-2"
-            svg={BGOne}
-            style={{ borderColor: formattedTextState.backgroundColor }}
-          />
-        }
-      >
-        <HexAlphaColorPicker
-          color={formattedTextState.backgroundColor}
-          onChange={(val) => handleChange("backgroundColor", val)}
-        />
-        <HexColorInput
-          color={formattedTextState.backgroundColor}
-          prefixed
-          onChange={(val) => handleChange("backgroundColor", val)}
-          className="text-black w-full mt-2"
-        />
-      </PopOver>
-
-      <Input
-        type="number"
-        value={formattedTextState.paddingX}
-        inputTextSize="text-xs"
-        onChange={(value) => handleChange("paddingX", value.toString())}
-        label="Padding X"
-        labelClassName="lg:mr-2 max-lg:mb-2 text-xs"
-        min={0}
-        max={100}
-        step={0.5}
-        inputWidth="w-16"
-        hideSpinButtons={false}
-      />
-      <Input
-        type="number"
-        value={formattedTextState.paddingY}
-        inputTextSize="text-xs"
-        onChange={(value) => handleChange("paddingY", value.toString())}
-        label="PaddingY"
-        labelClassName="lg:mr-2 max-lg:mb-2 text-xs"
-        min={0}
-        max={100}
-        step={0.5}
-        inputWidth="w-16"
-        hideSpinButtons={false}
-      />
-
-      <RadioButton
-        className="text-xs w-fit"
-        label="Apply to selected"
-        value={!shouldApplyToAll}
-        onChange={() => setShouldApplyToAll(false)}
-      />
-      <RadioButton
-        label="Apply to all"
-        className="text-xs w-fit"
-        value={shouldApplyToAll}
-        onChange={() => setShouldApplyToAll(true)}
-      />
-      {/* Keep the height the same as other sections */}
-      <Button svg={TextFieldSVG} iconSize="lg" className="invisible" />
     </section>
   );
 };
