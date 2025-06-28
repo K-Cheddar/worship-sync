@@ -1,3 +1,10 @@
+## [1.3.2](https://github.com/K-Cheddar/worship-sync/compare/v1.3.1...v1.3.2) (2025-06-28)
+
+
+### Bug Fixes
+
+* Stabilized bible slides ([a2ad8b7](https://github.com/K-Cheddar/worship-sync/commit/a2ad8b7d8eda71cba2f6895cf3fb90fec4897bd5))
+
 ## [1.3.1](https://github.com/K-Cheddar/worship-sync/compare/v1.3.0...v1.3.1) (2025-06-27)
 
 
