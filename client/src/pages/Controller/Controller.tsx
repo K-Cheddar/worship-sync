@@ -219,7 +219,7 @@ const Controller = () => {
       if (node) {
         const resizeObserver = new ResizeObserver((entries) => {
           const width = entries[0].borderBoxSize[0].inlineSize;
-          if (width < 768) {
+          if (width < 576) {
             setIsPhone?.(true);
           } else {
             setIsPhone?.(false);
