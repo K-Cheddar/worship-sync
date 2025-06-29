@@ -17,10 +17,7 @@ import { useEffect, useState, useCallback, useRef, useContext } from "react";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useLocation } from "react-router-dom";
 import {
-  updateFontSize,
-  updateBrightness,
-  updateKeepAspectRatio,
-  updateFontColor,
+  updateBoxProperties,
   updateItemTimerColor,
   updateBibleFontMode,
 } from "../../../utils/formatter";
@@ -102,7 +99,11 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     }
     timeoutRef.current = setTimeout(() => {
       const fSize = _val / 10;
-      const updatedItem = updateFontSize({ fontSize: fSize, item });
+      const updatedItem = updateBoxProperties({
+        updatedProperties: { fontSize: fSize },
+        item,
+        shouldFormatItem: true,
+      });
       updateItem(updatedItem);
     }, 250);
   };
@@ -110,15 +111,21 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const _updateBrightness = (val: number) => {
     const _val = Math.max(Math.min(val, 100), 10);
     setBrightness(_val);
-    const updatedItem = updateBrightness({ brightness: _val, item });
+    const updatedItem = updateBoxProperties({
+      updatedProperties: { brightness: _val },
+      item,
+      shouldUpdateBgOnly: true,
+      shouldApplyToAll: true,
+    });
     updateItem(updatedItem);
   };
 
   const _updateKeepAspectRatio = (val: boolean) => {
     setShouldKeepAspectRatio(val);
-    const updatedItem = updateKeepAspectRatio({
-      shouldKeepAspectRatio: val,
+    const updatedItem = updateBoxProperties({
+      updatedProperties: { shouldKeepAspectRatio: val },
       item,
+      shouldUpdateBgOnly: true,
     });
     updateItem(updatedItem);
   };
@@ -137,7 +144,11 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     timeoutRef.current = setTimeout(() => {
       setFontColor(val);
 
-      const updatedItem = updateFontColor({ fontColor: val, item });
+      const updatedItem = updateBoxProperties({
+        updatedProperties: { fontColor: val },
+        item,
+        shouldApplyToAll: true,
+      });
       updateItem(updatedItem);
     }, 250);
   };
@@ -164,58 +175,34 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const _updateIsBold = () => {
     setIsBold(!isBold);
-    const updatedSlides = slides.map((s, index) => {
-      if (index === selectedSlide) {
-        return {
-          ...s,
-          boxes: s.boxes.map((box, boxIndex) => {
-            if (boxIndex === selectedBox) {
-              return { ...box, isBold: !isBold };
-            }
-            return box;
-          }),
-        };
-      }
-      return s;
+    const updatedItem = updateBoxProperties({
+      updatedProperties: { isBold: !isBold },
+      item,
+      shouldFormatItem: true,
+      shouldApplyToAll: true,
     });
-    const updatedItem = { ...item, slides: updatedSlides };
     updateItem(updatedItem);
   };
 
   const _updateIsItalic = () => {
     setIsItalic(!isItalic);
-    const updatedSlides = slides.map((s, index) => {
-      if (index === selectedSlide) {
-        return {
-          ...s,
-          boxes: s.boxes.map((box, boxIndex) =>
-            boxIndex === selectedBox ? { ...box, isItalic: !isItalic } : box
-          ),
-        };
-      }
-      return s;
+    const updatedItem = updateBoxProperties({
+      updatedProperties: { isItalic: !isItalic },
+      item,
+      shouldFormatItem: true,
+      shouldApplyToAll: true,
     });
-    const updatedItem = { ...item, slides: updatedSlides };
     updateItem(updatedItem);
   };
 
   const _updateAlignment = (align: "left" | "center" | "right") => {
     setAlignment(align);
-    const updatedSlides = slides.map((s, index) => {
-      if (index === selectedSlide) {
-        return {
-          ...s,
-          boxes: s.boxes.map((box, boxIndex) => {
-            if (boxIndex === selectedBox) {
-              return { ...box, align };
-            }
-            return box;
-          }),
-        };
-      }
-      return s;
+    const updatedItem = updateBoxProperties({
+      updatedProperties: { align },
+      item,
+      shouldApplyToAll: true,
+      shouldFormatItem: true,
     });
-    const updatedItem = { ...item, slides: updatedSlides };
     updateItem(updatedItem);
   };
 
@@ -418,7 +405,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
-      <BoxEditor />
+      <BoxEditor updateItem={updateItem} />
       {canChangeAspectRatio && (
         <Toggle
           label="Keep Aspect Ratio"

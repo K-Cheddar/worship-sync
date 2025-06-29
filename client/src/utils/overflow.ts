@@ -175,13 +175,9 @@ type FormatSectionType = {
   name: string;
   slides: ItemSlide[];
   newSlides: ItemSlide[];
-  lastBoxes: Box[];
   fontSize: number;
-  fontColor?: string;
-  background?: string;
-  isBold?: boolean;
-  isItalic?: boolean;
-  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
+  selectedBox: number;
+  selectedSlide: ItemSlide;
 };
 
 export const formatSection = ({
@@ -190,18 +186,13 @@ export const formatSection = ({
   name,
   slides,
   newSlides,
-  lastBoxes,
   fontSize,
-  fontColor,
-  background,
-  isBold,
-  isItalic,
-  formattedTextDisplayInfo,
+  selectedBox,
+  selectedSlide,
 }: FormatSectionType): ItemSlide[] => {
   let lines = text.split("\n");
   let formattedSlides = [];
   let currentBoxes = [];
-  let box: Box = { width: 100, height: 100 };
 
   let maxLines = 0,
     lineHeight = 0,
@@ -217,7 +208,7 @@ export const formatSection = ({
     slidePosition = newSlides.length + formattedSlides.length;
 
     if (slides[slidePosition]) currentBoxes = slides[slidePosition].boxes;
-    else currentBoxes = lastBoxes;
+    else currentBoxes = slides[slides.length - 1].boxes || [];
 
     const currentBox = currentBoxes[1];
 
@@ -256,7 +247,7 @@ export const formatSection = ({
       counter++;
     }
 
-    box = Object.assign({}, currentBox);
+    const box = Object.assign({}, currentBox);
     if (boxWords === "") boxWords = " ";
     box.words = boxWords;
 
@@ -265,14 +256,20 @@ export const formatSection = ({
       createNewSlide({
         type,
         name,
-        boxes: [currentBoxes[0], box, ...currentBoxes.slice(2)],
+        boxes: currentBoxes.map((_box, index) => {
+          if (index === selectedBox) {
+            return box;
+          } else {
+            return _box;
+          }
+        }),
         fontSize,
-        fontColor,
+        fontColor: selectedSlide.boxes[selectedBox].fontColor,
         slideIndex: formattedSlides.length,
-        background: background || undefined,
-        isBold,
-        isItalic,
-        formattedTextDisplayInfo,
+        background: selectedSlide.boxes[0].background || undefined,
+        isBold: selectedSlide.boxes[selectedBox].isBold,
+        isItalic: selectedSlide.boxes[selectedBox].isItalic,
+        formattedTextDisplayInfo: selectedSlide.formattedTextDisplayInfo,
       })
     );
   }
@@ -365,15 +362,11 @@ export const formatFree = (item: ItemState) => {
         text: sectionWords,
         type: slide.type,
         name: slide.name,
-        slides,
+        slides: currentSectionSlides,
         newSlides,
-        lastBoxes: slide.boxes,
         fontSize: minFontSize,
-        fontColor,
-        background,
-        isBold,
-        isItalic,
-        formattedTextDisplayInfo,
+        selectedSlide: slide,
+        selectedBox,
       });
     } else {
       // Create a single slide with the adjusted font size
@@ -408,15 +401,11 @@ export const formatFree = (item: ItemState) => {
       text: sectionWords,
       type: slide.type,
       name: slide.name,
-      slides,
+      slides: currentSectionSlides,
       newSlides,
-      lastBoxes: slide.boxes,
       fontSize,
-      fontColor,
-      background,
-      isBold,
-      isItalic,
-      formattedTextDisplayInfo,
+      selectedSlide: slide,
+      selectedBox,
     });
   }
 
@@ -473,114 +462,6 @@ export const formatFree = (item: ItemState) => {
   };
 };
 
-type FormatSongSectionType = {
-  text: string;
-  type: SlideType;
-  name: string;
-  slides: ItemSlide[];
-  newSlides: ItemSlide[];
-  fontSize: number;
-  fontColor?: string;
-  background?: string;
-  isBold?: boolean;
-  isItalic?: boolean;
-  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
-};
-
-export const formatSongSection = ({
-  text,
-  type,
-  name,
-  slides,
-  newSlides,
-  fontSize,
-  fontColor,
-  background,
-  isBold,
-  isItalic,
-  formattedTextDisplayInfo,
-}: FormatSongSectionType): ItemSlide[] => {
-  let lines = text.split("\n");
-  let formattedSlides = [];
-  let currentBoxes = [];
-  let box: Box = { width: 100, height: 100 };
-
-  let maxLines = 0,
-    lineHeight = 0,
-    lineCounter = 0,
-    counter = 0;
-  let boxWords = "";
-  let slidePosition = 0;
-
-  for (let i = 0; i < lines.length; ++i) {
-    counter = 0;
-    lineCounter = 0;
-    boxWords = "";
-    slidePosition = newSlides.length + formattedSlides.length;
-
-    if (slides[slidePosition]) currentBoxes = slides[slidePosition].boxes;
-    else currentBoxes = slides[slides.length - 1].boxes || [];
-
-    const currentBox = currentBoxes[1];
-
-    // Process text overflow for all boxes
-    ({ maxLines, lineHeight } = getMaxLines({
-      fontSize,
-      height: currentBox.height,
-      isBold: currentBox.isBold,
-      isItalic: currentBox.isItalic,
-      topMargin: currentBox.topMargin,
-    }));
-
-    while (i + counter < lines.length && lineCounter < maxLines) {
-      let testWords = boxWords + lines[i + counter];
-
-      if (i + counter < lines.length - 1) testWords += "\n";
-
-      let lineCount = getNumLines({
-        text: lines[i + counter],
-        fontSize,
-        lineHeight,
-        width: currentBox.width,
-        isBold: currentBox.isBold,
-        isItalic: currentBox.isItalic,
-      });
-
-      // If the text can't fit and we're not on the first round of the loop
-      // break the loop. Existing text will be added and the next round will grab
-      // The rest of the text
-      if (lineCount + lineCounter > maxLines && counter > 0) {
-        break;
-      }
-
-      boxWords = testWords;
-      lineCounter += lineCount;
-      counter++;
-    }
-
-    box = Object.assign({}, currentBox);
-    if (boxWords === "") boxWords = " ";
-    box.words = boxWords;
-
-    i += counter - 1;
-    formattedSlides.push(
-      createNewSlide({
-        type,
-        name,
-        boxes: [currentBoxes[0], box, ...currentBoxes.slice(2)],
-        fontSize,
-        fontColor,
-        slideIndex: formattedSlides.length,
-        background: background || undefined,
-        isBold,
-        isItalic,
-        formattedTextDisplayInfo,
-      })
-    );
-  }
-  return formattedSlides;
-};
-
 export const formatLyrics = (item: ItemState) => {
   const selectedArrangement = item.selectedArrangement || 0;
   const selectedSlide = item.selectedSlide || 1;
@@ -605,14 +486,6 @@ export const formatLyrics = (item: ItemState) => {
   const songOrder = arrangements[selectedArrangement].songOrder;
   const formattedLyrics = arrangements[selectedArrangement].formattedLyrics;
   const fontSize: number = slide ? slide.boxes[1].fontSize || 2.5 : 2.5;
-  const fontColor: string = slide
-    ? slide.boxes[1].fontColor || "rgb(255, 255, 255)"
-    : "rgb(255, 255, 255)";
-
-  const isBold = slide.boxes[1].isBold || false;
-  const isItalic = slide.boxes[1].isItalic || false;
-
-  const formattedTextDisplayInfo = slide.formattedTextDisplayInfo;
 
   for (let i = 0; i < songOrder.length; ++i) {
     let lyrics =
@@ -622,17 +495,15 @@ export const formatLyrics = (item: ItemState) => {
     );
 
     newSlides.push(
-      ...formatSongSection({
+      ...formatSection({
         text: lyrics,
         type: songOrder[i].name.split(" ")[0] as SlideType,
         name: songOrder[i].name,
         slides: sectionSlides,
         newSlides,
         fontSize,
-        fontColor,
-        isBold,
-        isItalic,
-        formattedTextDisplayInfo,
+        selectedSlide: slide,
+        selectedBox: 1,
       })
     );
   }
