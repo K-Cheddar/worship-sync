@@ -5,7 +5,13 @@ import { ActionCreators } from "redux-undo";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useEffect } from "react";
 
-export const UndoButton = ({ color }: { color?: string }) => {
+export const UndoButton = ({
+  color,
+  className,
+}: {
+  color?: string;
+  className?: string;
+}) => {
   const dispatch = useDispatch();
   const { past } = useSelector((state) => state.undoable);
   return (
@@ -15,11 +21,18 @@ export const UndoButton = ({ color }: { color?: string }) => {
       disabled={!past.length}
       variant="tertiary"
       onClick={() => dispatch(ActionCreators.undo())}
+      className={className}
     />
   );
 };
 
-export const RedoButton = ({ color }: { color?: string }) => {
+export const RedoButton = ({
+  color,
+  className,
+}: {
+  color?: string;
+  className?: string;
+}) => {
   const dispatch = useDispatch();
   const { future } = useSelector((state) => state.undoable);
   return (
@@ -29,6 +42,7 @@ export const RedoButton = ({ color }: { color?: string }) => {
       disabled={!future.length}
       variant="tertiary"
       onClick={() => dispatch(ActionCreators.redo())}
+      className={className}
     />
   );
 };
