@@ -101,12 +101,24 @@ const BoxEditor = () => {
             return {
               ...arrangement,
               slides: slides.map((slide, i) => {
+                // Last slide should not be editable
+                if (i === slides.length - 1) {
+                  return slide;
+                }
                 if (i === selectedSlide) {
                   return {
                     ...slide,
                     boxes: newBoxes,
                   };
-                } else if (_shouldApplyToAll) {
+                }
+
+                // If the first slide isn't selected, don't apply changes
+                if (i === 0) {
+                  return slide;
+                }
+
+                // Apply box sizing changes to all other slides
+                if (_shouldApplyToAll) {
                   return {
                     ...slide,
                     boxes: slide.boxes.map((b, i) =>
@@ -121,9 +133,9 @@ const BoxEditor = () => {
                         : b
                     ),
                   };
-                } else {
-                  return slide;
                 }
+
+                return slide;
               }),
             };
           } else {

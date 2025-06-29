@@ -191,7 +191,6 @@ export const createNewSlide = ({
         transparent: true,
         topMargin: 1,
         sideMargin: 2.5,
-        excludeFromOverflow: true,
         words: words ? words[0] : " ",
         isBold: isBold ?? false,
         isItalic: isItalic ?? false,
@@ -207,7 +206,6 @@ export const createNewSlide = ({
         transparent: true,
         topMargin: 1,
         sideMargin: 2.5,
-        excludeFromOverflow: true,
         words: words ? words[1] : " ",
       })
     );
@@ -215,7 +213,6 @@ export const createNewSlide = ({
     boxes.push(
       createBox({
         ...box,
-        excludeFromOverflow: true,
       })
     );
     boxes.push(

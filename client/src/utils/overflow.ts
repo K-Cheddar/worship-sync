@@ -198,7 +198,6 @@ export const formatSection = ({
   isItalic,
   formattedTextDisplayInfo,
 }: FormatSectionType): ItemSlide[] => {
-  console.log({ slides, newSlides, lastBoxes, text });
   let lines = text.split("\n");
   let formattedSlides = [];
   let currentBoxes = [];
@@ -474,6 +473,114 @@ export const formatFree = (item: ItemState) => {
   };
 };
 
+type FormatSongSectionType = {
+  text: string;
+  type: SlideType;
+  name: string;
+  slides: ItemSlide[];
+  newSlides: ItemSlide[];
+  fontSize: number;
+  fontColor?: string;
+  background?: string;
+  isBold?: boolean;
+  isItalic?: boolean;
+  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
+};
+
+export const formatSongSection = ({
+  text,
+  type,
+  name,
+  slides,
+  newSlides,
+  fontSize,
+  fontColor,
+  background,
+  isBold,
+  isItalic,
+  formattedTextDisplayInfo,
+}: FormatSongSectionType): ItemSlide[] => {
+  let lines = text.split("\n");
+  let formattedSlides = [];
+  let currentBoxes = [];
+  let box: Box = { width: 100, height: 100 };
+
+  let maxLines = 0,
+    lineHeight = 0,
+    lineCounter = 0,
+    counter = 0;
+  let boxWords = "";
+  let slidePosition = 0;
+
+  for (let i = 0; i < lines.length; ++i) {
+    counter = 0;
+    lineCounter = 0;
+    boxWords = "";
+    slidePosition = newSlides.length + formattedSlides.length;
+
+    if (slides[slidePosition]) currentBoxes = slides[slidePosition].boxes;
+    else currentBoxes = slides[slides.length - 1].boxes || [];
+
+    const currentBox = currentBoxes[1];
+
+    // Process text overflow for all boxes
+    ({ maxLines, lineHeight } = getMaxLines({
+      fontSize,
+      height: currentBox.height,
+      isBold: currentBox.isBold,
+      isItalic: currentBox.isItalic,
+      topMargin: currentBox.topMargin,
+    }));
+
+    while (i + counter < lines.length && lineCounter < maxLines) {
+      let testWords = boxWords + lines[i + counter];
+
+      if (i + counter < lines.length - 1) testWords += "\n";
+
+      let lineCount = getNumLines({
+        text: lines[i + counter],
+        fontSize,
+        lineHeight,
+        width: currentBox.width,
+        isBold: currentBox.isBold,
+        isItalic: currentBox.isItalic,
+      });
+
+      // If the text can't fit and we're not on the first round of the loop
+      // break the loop. Existing text will be added and the next round will grab
+      // The rest of the text
+      if (lineCount + lineCounter > maxLines && counter > 0) {
+        break;
+      }
+
+      boxWords = testWords;
+      lineCounter += lineCount;
+      counter++;
+    }
+
+    box = Object.assign({}, currentBox);
+    if (boxWords === "") boxWords = " ";
+    box.words = boxWords;
+
+    i += counter - 1;
+    formattedSlides.push(
+      createNewSlide({
+        type,
+        name,
+        boxes: [currentBoxes[0], box, ...currentBoxes.slice(2)],
+        fontSize,
+        fontColor,
+        slideIndex: formattedSlides.length,
+        background: background || undefined,
+        isBold,
+        isItalic,
+        formattedTextDisplayInfo,
+      })
+    );
+  }
+  return formattedSlides;
+};
+
 export const formatLyrics = (item: ItemState) => {
   const selectedArrangement = item.selectedArrangement || 0;
   const selectedSlide = item.selectedSlide || 1;
@@ -510,15 +617,17 @@ export const formatLyrics = (item: ItemState) => {
   for (let i = 0; i < songOrder.length; ++i) {
     let lyrics =
       formattedLyrics.find((e) => e.name === songOrder[i].name)?.words || "";
+    const sectionSlides = slides.filter((slide) =>
+      slide.name.startsWith(songOrder[i].name)
+    );
 
     newSlides.push(
-      ...formatSection({
+      ...formatSongSection({
         text: lyrics,
         type: songOrder[i].name.split(" ")[0] as SlideType,
         name: songOrder[i].name,
-        slides,
+        slides: sectionSlides,
         newSlides,
-        lastBoxes,
         fontSize,
         fontColor,
         isBold,
@@ -745,8 +854,7 @@ const formatBibleVerses = ({
   const referenceIndex = item.selectedSlide > 0 ? item.selectedSlide : 1;
   let currentSlide: ItemSlide = slides[referenceIndex] || {};
   const titleSlideText = slides[0]?.boxes[1]?.words?.trim() || "";
-  // let allBoxes = slides.flatMap(x => x.boxes);
-  // let overflowBoxes = allBoxes.filter(e => !e.excludeFromOverflow)
+
   let currentBoxes = [...currentSlide.boxes];
   let { maxLines, lineHeight } = getMaxLines({
     fontSize: currentBoxes[1].fontSize || 1,

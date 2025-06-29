@@ -191,11 +191,14 @@ const SlideEditor = () => {
     }
 
     if (type === "song") {
+      // Last slide should not be editable
       if (
-        box.excludeFromOverflow ||
-        selectedSlide === 0 ||
-        selectedSlide === arrangements[selectedArrangement]?.slides?.length - 1
+        selectedSlide ===
+        arrangements[selectedArrangement]?.slides?.length - 1
       ) {
+        return;
+      }
+      if (box.excludeFromOverflow || selectedSlide === 0) {
         dispatch(updateBoxes({ boxes: newBoxes }));
       } else {
         const formattedLyrics =
@@ -436,6 +439,11 @@ const SlideEditor = () => {
                           boxes: boxes.filter((b, i) => i !== index),
                         })
                       );
+                      if (boxes[index - 1]) {
+                        dispatch(setSelectedBox(index - 1));
+                      } else {
+                        dispatch(setSelectedBox(boxes.length - 1));
+                      }
                     }}
                   />
                 )}
@@ -445,20 +453,22 @@ const SlideEditor = () => {
           <Button
             className="text-xs w-full justify-center"
             svg={AddSVG}
-            onClick={() =>
+            onClick={() => {
               dispatch(
                 updateBoxes({
                   boxes: [
                     ...boxes,
                     createBox({
-                      width: 25,
-                      height: 25,
-                      excludeFromOverflow: true,
+                      width: 75,
+                      height: 75,
+                      x: 12.5,
+                      y: 12.5,
                     }),
                   ],
                 })
-              )
-            }
+              );
+              dispatch(setSelectedBox(boxes.length));
+            }}
           >
             Add Box
           </Button>
