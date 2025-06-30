@@ -230,10 +230,14 @@ const ItemSlides = () => {
 
   const getBibleInfo = (index: number) => {
     const slide = slides[index];
+
     if (!slide) return { title: "", text: "" };
-    const title =
-      index > 0 ? slide.boxes[2]?.words || "" : slide.boxes[1]?.words || "";
-    const text = index > 0 ? slide.boxes[1]?.words || "" : "";
+
+    const titleSlideText = slides[0].boxes[1]?.words?.trim();
+    const slideText = slide.boxes[1]?.words?.trim();
+
+    const title = (slideText ? titleSlideText : "") || "";
+    const text = index > 0 ? slideText || "" : "";
     return { title, text };
   };
 

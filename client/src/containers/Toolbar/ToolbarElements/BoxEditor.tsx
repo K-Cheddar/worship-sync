@@ -12,22 +12,20 @@ import textLowerThird from "../../../assets/images/textbox_lowerThird.png";
 import textUpperThird from "../../../assets/images/textbox_upperThird.png";
 import textMidThird from "../../../assets/images/textbox_midThird.png";
 
-import { Box } from "../../../types";
-import { useDispatch, useSelector } from "../../../hooks";
-import { formatBible, formatSong } from "../../../utils/overflow";
-import {
-  updateArrangements,
-  updateBoxes,
-  updateSlides,
-} from "../../../store/itemSlice";
-import { useMemo, useState } from "react";
+import { ItemState } from "../../../types";
+import { useSelector } from "../../../hooks";
+import { useEffect, useMemo, useState } from "react";
 import RadioButton from "../../../components/RadioButton/RadioButton";
 import PopOver from "../../../components/PopOver/PopOver";
+import { updateBoxProperties } from "../../../utils/formatter";
 
-const BoxEditor = () => {
+const BoxEditor = ({
+  updateItem,
+}: {
+  updateItem: (item: ItemState) => void;
+}) => {
   const item = useSelector((state) => state.undoable.present.item);
-  const { type, selectedArrangement, selectedSlide, selectedBox, slides } =
-    item;
+  const { selectedSlide, selectedBox, slides } = item;
 
   const boxes = useMemo(() => {
     return slides[selectedSlide].boxes;
@@ -37,109 +35,32 @@ const BoxEditor = () => {
     return boxes[selectedBox] || {};
   }, [boxes, selectedBox]);
 
-  const dispatch = useDispatch();
+  const [shouldApplyToAll, setShouldApplyToAll] = useState(
+    item.type === "free" ? false : true
+  );
 
-  const [shouldApplyToAll, setShouldApplyToAll] = useState(true);
+  useEffect(() => {
+    setShouldApplyToAll(item.type === "free" ? false : true);
+  }, [item.type]);
 
   const updateBoxSize = ({
     width,
     height,
     x,
     y,
-    _shouldApplyAll,
   }: {
     width: number;
     height: number;
     x: number;
     y: number;
-    _shouldApplyAll?: boolean;
   }) => {
-    const box: Box = { ...boxes[selectedBox], width, height, x, y };
-
-    const _shouldApplyToAll = _shouldApplyAll ?? shouldApplyToAll;
-
-    const newBoxes = boxes.map((b, i) =>
-      i === selectedBox
-        ? {
-            ...b,
-            x: box.x,
-            y: box.y,
-            width: box.width,
-            height: box.height,
-          }
-        : b
-    );
-    if (type === "free" || type === "timer") {
-      dispatch(updateBoxes({ boxes: newBoxes }));
-      return;
-    }
-
-    const updatedItem = {
-      ...item,
-      slides: item.slides.map((slide, index) => {
-        if (index === selectedSlide) {
-          return { ...slide, boxes: newBoxes };
-        }
-        return slide;
-      }),
-    };
-
-    if (type === "bible") {
-      const _item = formatBible({
-        item: updatedItem,
-        mode: item.bibleInfo?.fontMode || "separate",
-      });
-      dispatch(updateSlides({ slides: _item.slides }));
-    }
-
-    if (type === "song") {
-      const slides = item.arrangements[item.selectedArrangement].slides;
-
-      const updatedArrangements = item.arrangements.map(
-        (arrangement, index) => {
-          if (index === item.selectedArrangement) {
-            return {
-              ...arrangement,
-              slides: slides.map((slide, i) => {
-                if (i === selectedSlide) {
-                  return {
-                    ...slide,
-                    boxes: newBoxes,
-                  };
-                } else if (_shouldApplyToAll) {
-                  return {
-                    ...slide,
-                    boxes: slide.boxes.map((b, i) =>
-                      i === selectedBox
-                        ? {
-                            ...b,
-                            x: box.x,
-                            y: box.y,
-                            width: box.width,
-                            height: box.height,
-                          }
-                        : b
-                    ),
-                  };
-                } else {
-                  return slide;
-                }
-              }),
-            };
-          } else {
-            return arrangement;
-          }
-        }
-      );
-
-      const _item = formatSong({
-        ...item,
-        arrangements: updatedArrangements,
-        selectedArrangement,
-      });
-
-      dispatch(updateArrangements({ arrangements: _item.arrangements }));
-    }
+    const updatedItem = updateBoxProperties({
+      updatedProperties: { width, height, x, y },
+      item,
+      shouldFormatItem: true,
+      shouldApplyToAll: shouldApplyToAll,
+    });
+    updateItem(updatedItem);
   };
 
   const handleInputChange = (
@@ -168,6 +89,58 @@ const BoxEditor = () => {
         TriggeringButton={<Button svg={BoxEditSVG} variant="tertiary" />}
       >
         <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap gap-2 border-b-2 border-gray-200 pb-2">
+            <Input
+              type="number"
+              value={currentBox.x || 0}
+              onChange={(value) => handleInputChange("x", value.toString())}
+              label="X"
+              labelClassName="lg:mr-2 max-lg:mb-2"
+              min={0}
+              max={100}
+              inputWidth="w-16"
+              inputTextSize="text-xs"
+              hideSpinButtons={false}
+            />
+            <Input
+              type="number"
+              value={currentBox.y || 0}
+              onChange={(value) => handleInputChange("y", value.toString())}
+              label="Y"
+              labelClassName="lg:mr-2 max-lg:mb-2"
+              min={0}
+              max={100}
+              inputWidth="w-16"
+              inputTextSize="text-xs"
+              hideSpinButtons={false}
+            />
+            <Input
+              type="number"
+              value={currentBox.width}
+              onChange={(value) => handleInputChange("width", value.toString())}
+              label="Width"
+              labelClassName="lg:mr-2 max-lg:mb-2"
+              min={0}
+              max={100}
+              inputWidth="w-16"
+              inputTextSize="text-xs"
+              hideSpinButtons={false}
+            />
+            <Input
+              type="number"
+              value={currentBox.height}
+              onChange={(value) =>
+                handleInputChange("height", value.toString())
+              }
+              label="Height"
+              labelClassName="lg:mr-2 max-lg:mb-2"
+              min={0}
+              max={100}
+              inputWidth="w-16"
+              inputTextSize="text-xs"
+              hideSpinButtons={false}
+            />
+          </div>
           <div className="flex flex-wrap gap-2">
             <Button
               image={textFull}
@@ -296,58 +269,6 @@ const BoxEditor = () => {
           </div>
         </div>
       </PopOver>
-      {!currentBox.isLocked && (
-        <>
-          <Input
-            type="number"
-            value={currentBox.x || 0}
-            onChange={(value) => handleInputChange("x", value.toString())}
-            label="X"
-            labelClassName="lg:mr-2 max-lg:mb-2"
-            min={0}
-            max={100}
-            inputWidth="w-16"
-            inputTextSize="text-xs"
-            hideSpinButtons={false}
-          />
-          <Input
-            type="number"
-            value={currentBox.y || 0}
-            onChange={(value) => handleInputChange("y", value.toString())}
-            label="Y"
-            labelClassName="lg:mr-2 max-lg:mb-2"
-            min={0}
-            max={100}
-            inputWidth="w-16"
-            inputTextSize="text-xs"
-            hideSpinButtons={false}
-          />
-          <Input
-            type="number"
-            value={currentBox.width}
-            onChange={(value) => handleInputChange("width", value.toString())}
-            label="Width"
-            labelClassName="lg:mr-2 max-lg:mb-2"
-            min={0}
-            max={100}
-            inputWidth="w-16"
-            inputTextSize="text-xs"
-            hideSpinButtons={false}
-          />
-          <Input
-            type="number"
-            value={currentBox.height}
-            onChange={(value) => handleInputChange("height", value.toString())}
-            label="Height"
-            labelClassName="lg:mr-2 max-lg:mb-2"
-            min={0}
-            max={100}
-            inputWidth="w-16"
-            inputTextSize="text-xs"
-            hideSpinButtons={false}
-          />
-        </>
-      )}
     </section>
   );
 };

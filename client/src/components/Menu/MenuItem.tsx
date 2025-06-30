@@ -9,14 +9,20 @@ export interface MenuItemProps
   children: ReactNode;
 }
 
-const MenuItem = ({ children, onClick, to, className }: MenuItemProps) => {
-  const innerClasses = "px-3 py-2 h-full w-full block text-left";
+const MenuItem = ({
+  children,
+  onClick,
+  to,
+  className,
+  padding = "px-3 py-2",
+}: MenuItemProps) => {
+  const innerClasses = `${padding} h-full w-full block text-left`;
   const isLinkOrButton = to || onClick;
   return (
     <li
       className={cn(
         "bg-gray-200 font-semibold hover:bg-gray-300 active:bg-gray-400 cursor-pointer w-full text-sm text-black",
-        !isLinkOrButton && "px-3 py-2",
+        !isLinkOrButton && padding,
         className
       )}
     >

@@ -255,8 +255,13 @@ const Bible = () => {
   };
 
   const sendVerse = (verse: verseType) => {
+    const bookName = books[book]?.name || "";
+    const chapterName = chapters[chapter]?.name || "";
+    const sendItemName = `${bookName} ${chapterName}:${
+      verse.name
+    } ${version.toUpperCase()}`;
     const _item = createItemFromProps({
-      name: createItemName || bibleItemName,
+      name: sendItemName,
       type: "bible",
     });
     const item = formatBible({
@@ -267,6 +272,8 @@ const Bible = () => {
       chapter: chapters[chapter].name,
       version,
       verses: [verse],
+      background: defaultBibleBackground,
+      brightness: defaultBibleBackgroundBrightness,
     });
 
     const slides = item.slides || [];

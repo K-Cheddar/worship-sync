@@ -175,13 +175,9 @@ type FormatSectionType = {
   name: string;
   slides: ItemSlide[];
   newSlides: ItemSlide[];
-  lastBoxes: Box[];
   fontSize: number;
-  fontColor?: string;
-  background?: string;
-  isBold?: boolean;
-  isItalic?: boolean;
-  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
+  selectedBox: number;
+  selectedSlide: ItemSlide;
 };
 
 export const formatSection = ({
@@ -190,97 +186,94 @@ export const formatSection = ({
   name,
   slides,
   newSlides,
-  lastBoxes,
   fontSize,
-  fontColor,
-  background,
-  isBold,
-  isItalic,
-  formattedTextDisplayInfo,
+  selectedBox,
+  selectedSlide,
 }: FormatSectionType): ItemSlide[] => {
   let lines = text.split("\n");
-  let formattedText = [];
+  let formattedSlides = [];
   let currentBoxes = [];
-  let boxes: Box[] = [];
-  let box: Box = { width: 100, height: 100 };
 
   let maxLines = 0,
     lineHeight = 0,
     lineCounter = 0,
     counter = 0;
   let boxWords = "";
+  let slidePosition = 0;
 
   for (let i = 0; i < lines.length; ++i) {
     counter = 0;
     lineCounter = 0;
     boxWords = "";
-    boxes = [];
+    slidePosition = newSlides.length + formattedSlides.length;
 
-    if (slides[newSlides.length + formattedText.length])
-      currentBoxes = slides[newSlides.length + formattedText.length].boxes;
-    else currentBoxes = lastBoxes;
+    if (slides[slidePosition]) currentBoxes = slides[slidePosition].boxes;
+    else currentBoxes = slides[slides.length - 1].boxes || [];
 
-    for (let j = 0; j < currentBoxes.length; ++j) {
-      ({ maxLines, lineHeight } = getMaxLines({
+    const currentBox = currentBoxes[1];
+
+    // Process text overflow for all boxes
+    ({ maxLines, lineHeight } = getMaxLines({
+      fontSize,
+      height: currentBox.height,
+      isBold: currentBox.isBold,
+      isItalic: currentBox.isItalic,
+      topMargin: currentBox.topMargin,
+    }));
+
+    while (i + counter < lines.length && lineCounter < maxLines) {
+      let testWords = boxWords + lines[i + counter];
+
+      if (i + counter < lines.length - 1) testWords += "\n";
+
+      let lineCount = getNumLines({
+        text: lines[i + counter],
         fontSize,
-        height: currentBoxes[1].height,
-        isBold: currentBoxes[1].isBold,
-        isItalic: currentBoxes[1].isItalic,
-        topMargin: currentBoxes[1].topMargin,
-      }));
+        lineHeight,
+        width: currentBox.width,
+        isBold: currentBox.isBold,
+        isItalic: currentBox.isItalic,
+      });
 
-      while (i + counter < lines.length && lineCounter < maxLines) {
-        let testWords = boxWords + lines[i + counter];
-
-        if (i + counter < lines.length - 1) testWords += "\n";
-
-        let lineCount = getNumLines({
-          text: lines[i + counter],
-          fontSize,
-          lineHeight,
-          width: currentBoxes[1].width,
-          isBold: currentBoxes[1].isBold,
-          isItalic: currentBoxes[1].isItalic,
-        });
-
-        // If the text can't fit and we're not on the first round of the loop
-        // break the loop. Existing text will be added and the next round will grab
-        // The rest of the text
-        if (lineCount + lineCounter > maxLines && counter > 0) {
-          break;
-        }
-
-        boxWords = testWords;
-        lineCounter += lineCount;
-        counter++;
+      // If the text can't fit and we're not on the first round of the loop
+      // break the loop. Existing text will be added and the next round will grab
+      // The rest of the text
+      if (lineCount + lineCounter > maxLines && counter > 0) {
+        break;
       }
-      box = Object.assign({}, currentBoxes[j]);
-      if (boxWords === "") boxWords = " ";
-      box.words = boxWords;
-      boxes.push(box);
+
+      boxWords = testWords;
+      lineCounter += lineCount;
+      counter++;
     }
 
-    boxes[0].words = " ";
-    boxes[1].excludeFromOverflow = false;
-    boxes[1].brightness = 100; // todo fix brightness on added slides without this line
+    const box = Object.assign({}, currentBox);
+    if (boxWords === "") boxWords = " ";
+    box.words = boxWords;
 
     i += counter - 1;
-    formattedText.push(
+    formattedSlides.push(
       createNewSlide({
         type,
         name,
-        boxes,
+        boxes: currentBoxes.map((_box, index) => {
+          if (index === selectedBox) {
+            return box;
+          } else {
+            return _box;
+          }
+        }),
         fontSize,
-        fontColor,
-        slideIndex: formattedText.length,
-        background: background || undefined,
-        isBold,
-        isItalic,
-        formattedTextDisplayInfo,
+        fontColor: selectedSlide.boxes[selectedBox].fontColor,
+        slideIndex: formattedSlides.length,
+        background: selectedSlide.boxes[0].background || undefined,
+        isBold: selectedSlide.boxes[selectedBox].isBold,
+        isItalic: selectedSlide.boxes[selectedBox].isItalic,
+        formattedTextDisplayInfo: selectedSlide.formattedTextDisplayInfo,
       })
     );
   }
-  return formattedText;
+  return formattedSlides;
 };
 
 export const formatFree = (item: ItemState) => {
@@ -369,15 +362,11 @@ export const formatFree = (item: ItemState) => {
         text: sectionWords,
         type: slide.type,
         name: slide.name,
-        slides,
+        slides: currentSectionSlides,
         newSlides,
-        lastBoxes: slide.boxes,
         fontSize: minFontSize,
-        fontColor,
-        background,
-        isBold,
-        isItalic,
-        formattedTextDisplayInfo,
+        selectedSlide: slide,
+        selectedBox,
       });
     } else {
       // Create a single slide with the adjusted font size
@@ -412,15 +401,11 @@ export const formatFree = (item: ItemState) => {
       text: sectionWords,
       type: slide.type,
       name: slide.name,
-      slides,
+      slides: currentSectionSlides,
       newSlides,
-      lastBoxes: slide.boxes,
       fontSize,
-      fontColor,
-      background,
-      isBold,
-      isItalic,
-      formattedTextDisplayInfo,
+      selectedSlide: slide,
+      selectedBox,
     });
   }
 
@@ -470,6 +455,7 @@ export const formatFree = (item: ItemState) => {
 
   // Replace all slides of section with updated slides
   updatedSlides.splice(firstSlideLocation, 0, ...formattedSlides);
+
   return {
     ...item,
     slides: updatedSlides,
@@ -486,6 +472,7 @@ export const formatLyrics = (item: ItemState) => {
   const boxes = slides[0].boxes;
   const lastSlide = slides.length - 1;
   const lastBoxes = slides[lastSlide].boxes;
+
   const newSlides = [
     createNewSlide({
       type: "Title",
@@ -499,32 +486,24 @@ export const formatLyrics = (item: ItemState) => {
   const songOrder = arrangements[selectedArrangement].songOrder;
   const formattedLyrics = arrangements[selectedArrangement].formattedLyrics;
   const fontSize: number = slide ? slide.boxes[1].fontSize || 2.5 : 2.5;
-  const fontColor: string = slide
-    ? slide.boxes[1].fontColor || "rgb(255, 255, 255)"
-    : "rgb(255, 255, 255)";
-
-  const isBold = slide.boxes[1].isBold || false;
-  const isItalic = slide.boxes[1].isItalic || false;
-
-  const formattedTextDisplayInfo = slide.formattedTextDisplayInfo;
 
   for (let i = 0; i < songOrder.length; ++i) {
     let lyrics =
       formattedLyrics.find((e) => e.name === songOrder[i].name)?.words || "";
+    const sectionSlides = slides.filter((slide) =>
+      slide.name.startsWith(songOrder[i].name)
+    );
 
     newSlides.push(
       ...formatSection({
         text: lyrics,
         type: songOrder[i].name.split(" ")[0] as SlideType,
         name: songOrder[i].name,
-        slides,
+        slides: sectionSlides,
         newSlides,
-        lastBoxes,
         fontSize,
-        fontColor,
-        isBold,
-        isItalic,
-        formattedTextDisplayInfo,
+        selectedSlide: slide,
+        selectedBox: 1,
       })
     );
   }
@@ -652,6 +631,7 @@ export const formatBible = ({
         }),
       ];
   let boxes = slides[0]?.boxes || [];
+
   let newSlides = [
     createNewSlide({
       type: "Title",
@@ -744,8 +724,8 @@ const formatBibleVerses = ({
   let slides = item.slides || [];
   const referenceIndex = item.selectedSlide > 0 ? item.selectedSlide : 1;
   let currentSlide: ItemSlide = slides[referenceIndex] || {};
-  // let allBoxes = slides.flatMap(x => x.boxes);
-  // let overflowBoxes = allBoxes.filter(e => !e.excludeFromOverflow)
+  const titleSlideText = slides[0]?.boxes[1]?.words?.trim() || "";
+
   let currentBoxes = [...currentSlide.boxes];
   let { maxLines, lineHeight } = getMaxLines({
     fontSize: currentBoxes[1].fontSize || 1,
@@ -843,16 +823,17 @@ const formatBibleVerses = ({
                 words: [
                   "",
                   currentPrefix + cleanText,
-                  getBibleName({
-                    book,
-                    chapter,
-                    verse:
-                      verse.name +
-                      (needsLetters
-                        ? getLetterFromIndex(verseSplitCounts[verse.name])
-                        : ""),
-                    version,
-                  }),
+                  titleSlideText ||
+                    getBibleName({
+                      book,
+                      chapter,
+                      verse:
+                        verse.name +
+                        (needsLetters
+                          ? getLetterFromIndex(verseSplitCounts[verse.name])
+                          : ""),
+                      version,
+                    }),
                 ],
               })
             );
@@ -893,16 +874,17 @@ const formatBibleVerses = ({
             words: [
               "",
               currentPrefix + cleanText,
-              getBibleName({
-                book,
-                chapter,
-                verse:
-                  verse.name +
-                  (needsLetters
-                    ? getLetterFromIndex(verseSplitCounts[verse.name])
-                    : ""),
-                version,
-              }),
+              titleSlideText ||
+                getBibleName({
+                  book,
+                  chapter,
+                  verse:
+                    verse.name +
+                    (needsLetters
+                      ? getLetterFromIndex(verseSplitCounts[verse.name])
+                      : ""),
+                  version,
+                }),
             ],
           })
         );
@@ -980,7 +962,8 @@ const formatBibleVerses = ({
           words: [
             "",
             versePrefix + slide,
-            getBibleName({ book, chapter, verse: verse.name, version }),
+            titleSlideText ||
+              getBibleName({ book, chapter, verse: verse.name, version }),
           ],
         })
       );
@@ -1124,12 +1107,13 @@ const formatBibleVerses = ({
               words: [
                 "",
                 currentSlide,
-                getBibleName({
-                  book,
-                  chapter,
-                  verse: formatVerseRange(currentVerses),
-                  version,
-                }),
+                titleSlideText ||
+                  getBibleName({
+                    book,
+                    chapter,
+                    verse: formatVerseRange(currentVerses),
+                    version,
+                  }),
               ],
             })
           );
@@ -1207,14 +1191,15 @@ const formatBibleVerses = ({
                     words: [
                       "",
                       versePrefix + cleanText,
-                      getBibleName({
-                        book,
-                        chapter,
-                        verse:
-                          verse.name +
-                          getLetterFromIndex(verseSplitCounts[verse.name]),
-                        version,
-                      }),
+                      titleSlideText ||
+                        getBibleName({
+                          book,
+                          chapter,
+                          verse:
+                            verse.name +
+                            getLetterFromIndex(verseSplitCounts[verse.name]),
+                          version,
+                        }),
                     ],
                   })
                 );
@@ -1269,14 +1254,15 @@ const formatBibleVerses = ({
                 words: [
                   "",
                   versePrefix + cleanText,
-                  getBibleName({
-                    book,
-                    chapter,
-                    verse:
-                      verse.name +
-                      getLetterFromIndex(verseSplitCounts[verse.name]),
-                    version,
-                  }),
+                  titleSlideText ||
+                    getBibleName({
+                      book,
+                      chapter,
+                      verse:
+                        verse.name +
+                        getLetterFromIndex(verseSplitCounts[verse.name]),
+                      version,
+                    }),
                 ],
               })
             );
@@ -1297,7 +1283,9 @@ const formatBibleVerses = ({
         createNewSlide({
           itemType: "bible",
           type: "Verse",
-          name: "Verses " + formatVerseRange(currentVerses),
+          name:
+            (currentVerses.length > 1 ? "Verses " : "Verse ") +
+            formatVerseRange(currentVerses),
           boxes: isNew
             ? [
                 currentBoxes[0],
@@ -1311,12 +1299,13 @@ const formatBibleVerses = ({
           words: [
             "",
             currentSlide,
-            getBibleName({
-              book,
-              chapter,
-              verse: formatVerseRange(currentVerses),
-              version,
-            }),
+            titleSlideText ||
+              getBibleName({
+                book,
+                chapter,
+                verse: formatVerseRange(currentVerses),
+                version,
+              }),
           ],
         })
       );

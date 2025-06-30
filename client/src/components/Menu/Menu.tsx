@@ -73,20 +73,13 @@ const Menu = ({ menuItems, TriggeringButton, ...rest }: MenuProps) => {
             {...getFloatingProps()}
             {...rest}
           >
-            {menuItemsWIds.map(
-              ({ onClick, text, to, id, element, className }) => {
-                return (
-                  <MenuItem
-                    key={id}
-                    onClick={onClick}
-                    to={to}
-                    className={className}
-                  >
-                    {element || text}
-                  </MenuItem>
-                );
-              }
-            )}
+            {menuItemsWIds.map(({ text, id, element, ...rest }) => {
+              return (
+                <MenuItem key={id} {...rest}>
+                  {element || text}
+                </MenuItem>
+              );
+            })}
           </ul>
         </FloatingFocusManager>
       )}

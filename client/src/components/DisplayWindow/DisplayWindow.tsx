@@ -55,6 +55,7 @@ type DisplayWindowProps = {
   prevTime?: number;
   selectBox?: (index: number) => void;
   selectedBox?: number;
+  isBoxLocked?: boolean[];
 };
 
 const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
@@ -86,6 +87,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       selectedBox,
       formattedTextDisplayInfo,
       prevFormattedTextDisplayInfo,
+      isBoxLocked,
     }: DisplayWindowProps,
     ref
   ) => {
@@ -129,6 +131,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 index={index}
                 selectBox={selectBox}
                 isSelected={selectedBox === index}
+                isBoxLocked={isBoxLocked?.[index] ?? true}
               />
             );
           if (isStream)

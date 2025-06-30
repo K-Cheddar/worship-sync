@@ -25,12 +25,12 @@ export type MenuItemType = {
   to?: string;
   element?: React.ReactNode;
   className?: string;
+  padding?: string;
 };
 
 export type Box = {
   words?: string;
   id?: string;
-  isLocked?: boolean;
   background?: string;
   width: number;
   height: number;

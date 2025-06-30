@@ -30,12 +30,16 @@ const ToolbarMenu = ({
     ...(isPhone && !isEditMode
       ? [
           {
-            element: <UndoButton color="black" />,
-            className: "flex justify-center",
+            element: (
+              <UndoButton color="black" className="w-full justify-center" />
+            ),
+            padding: "p-0",
           },
           {
-            element: <RedoButton color="black" />,
-            className: "flex justify-center",
+            element: (
+              <RedoButton color="black" className="w-full justify-center" />
+            ),
+            padding: "p-0",
           },
         ]
       : []),
