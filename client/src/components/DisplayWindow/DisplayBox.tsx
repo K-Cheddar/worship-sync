@@ -159,7 +159,7 @@ const DisplayBox = ({
       style={{
         width: boxWidth,
         height: boxHeight,
-        pointerEvents: box.isLocked ? "none" : "all",
+        pointerEvents: "none",
         fontSize: `${fontSizeValue}vw`,
         marginTop,
         marginBottom,

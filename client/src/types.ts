@@ -31,7 +31,6 @@ export type MenuItemType = {
 export type Box = {
   words?: string;
   id?: string;
-  isLocked?: boolean;
   background?: string;
   width: number;
   height: number;

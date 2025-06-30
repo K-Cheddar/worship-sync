@@ -36,11 +36,11 @@ const BoxEditor = ({
   }, [boxes, selectedBox]);
 
   const [shouldApplyToAll, setShouldApplyToAll] = useState(
-    item.type === "song" ? true : false
+    item.type === "free" ? false : true
   );
 
   useEffect(() => {
-    setShouldApplyToAll(item.type === "song" ? true : false);
+    setShouldApplyToAll(item.type === "free" ? false : true);
   }, [item.type]);
 
   const updateBoxSize = ({

@@ -21,7 +21,6 @@ export const defaultFormattedTextDisplayInfo: FormattedTextDisplayInfo = {
 type CreateBoxType = {
   words?: string;
   id?: string;
-  isLocked?: boolean;
   background?: string;
   width?: number;
   height?: number;
@@ -57,7 +56,6 @@ export const createBox = ({
   excludeFromOverflow,
   align,
   shouldKeepAspectRatio,
-  isLocked,
   background,
   brightness,
   label,
@@ -75,7 +73,6 @@ export const createBox = ({
     y: y ?? 0,
     fontSize: fontSize ?? 2.5,
     id: generateRandomId(),
-    isLocked: isLocked ?? true,
     background: background ?? "",
     fontColor: fontColor ?? "rgba(255, 255, 255, 1)",
     shouldKeepAspectRatio: shouldKeepAspectRatio ?? false,
@@ -154,7 +151,6 @@ export const createNewSlide = ({
         height: 92,
         y: 8,
         width: 100,
-        isLocked: true,
         topMargin: 3,
         sideMargin: 4,
       });
@@ -167,7 +163,6 @@ export const createNewSlide = ({
         height: 20,
         width: 100,
         words: words[2],
-        isLocked: true,
         align: "left",
         topMargin: 1,
         sideMargin: 2,
@@ -220,7 +215,6 @@ export const createNewSlide = ({
         ...box,
         background: "",
         transparent: true,
-        isLocked: true,
         topMargin: 3,
         sideMargin: 4,
         words: words[1] || " ",
