@@ -1,12 +1,10 @@
 import {
   Arrangment,
-  Box,
   ItemSlide,
   ItemState,
   SlideType,
   verseType,
   BibleFontMode,
-  FormattedTextDisplayInfo,
 } from "../types";
 import { getLetterFromIndex } from "./generalUtils";
 import { createBox, createNewSlide } from "./slideCreation";

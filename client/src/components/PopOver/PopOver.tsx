@@ -51,7 +51,7 @@ const PopOver = ({ children, TriggeringButton }: PopOverProps) => {
       {isOpen && (
         <FloatingFocusManager context={context} modal>
           <div
-            className="bg-gray-700 relative rounded-lg shadow-2xl z-30 border-2 border-gray-600"
+            className="bg-gray-700 relative rounded-lg shadow-2xl z-30 border-2 border-gray-600 max-w-[85vw] overflow-x-hidden"
             style={floatingStyles}
             ref={refs.setFloating}
             {...getFloatingProps()}
