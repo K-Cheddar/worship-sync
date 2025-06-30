@@ -1,3 +1,20 @@
+# [1.4.0](https://github.com/K-Cheddar/worship-sync/compare/v1.3.2...v1.4.0) (2025-06-30)
+
+
+### Bug Fixes
+
+* Improve box lock functionality ([d5b719d](https://github.com/K-Cheddar/worship-sync/commit/d5b719df672aab401cab1a058d79a092a509589e))
+* Improve consistency of box editing among item types ([cb16751](https://github.com/K-Cheddar/worship-sync/commit/cb16751a8fd1932e9749390b353f2fb512ee4c52))
+* Improve slide edit tool responsiveness ([0f98c75](https://github.com/K-Cheddar/worship-sync/commit/0f98c757bfcad7d5105f548d8f16bd6f4fa1b277))
+* Improve text box handling ([ebe56f1](https://github.com/K-Cheddar/worship-sync/commit/ebe56f17040139fc2abbedc3282106f084900d68))
+* Sending bible verses directly now has correct background ([d3978d2](https://github.com/K-Cheddar/worship-sync/commit/d3978d2e1112e4772b46d9c153f491d8f7e255a8))
+* undo/redo buttons in menu fill width ([80bf3e2](https://github.com/K-Cheddar/worship-sync/commit/80bf3e2dda701f9eb549514240f6bc7ebf71ed6d))
+
+
+### Features
+
+* Bible slides now show the full passage range ([c738fe7](https://github.com/K-Cheddar/worship-sync/commit/c738fe7b2eb9a209a7fae1886877f590946d9e0d))
+
 ## [1.3.2](https://github.com/K-Cheddar/worship-sync/compare/v1.3.1...v1.3.2) (2025-06-28)
 
 
