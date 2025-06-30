@@ -228,7 +228,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const controls = (
     <>
-      <div className="flex gap-1 items-center">
+      <div className="flex gap-1 items-center flex-wrap justify-center">
         <Icon svg={TextFieldSVG} className="border-b border-black" />
         <Button
           svg={MinusSVG}
@@ -281,21 +281,23 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateIsItalic()}
         />
 
-        <Button
-          variant={alignment === "left" ? "secondary" : "tertiary"}
-          svg={AlignLeftSVG}
-          onClick={() => _updateAlignment("left")}
-        />
-        <Button
-          variant={alignment === "center" ? "secondary" : "tertiary"}
-          svg={AlignCenterSVG}
-          onClick={() => _updateAlignment("center")}
-        />
-        <Button
-          variant={alignment === "right" ? "secondary" : "tertiary"}
-          svg={AlignRightSVG}
-          onClick={() => _updateAlignment("right")}
-        />
+        <div className="flex gap-1 items-center">
+          <Button
+            variant={alignment === "left" ? "secondary" : "tertiary"}
+            svg={AlignLeftSVG}
+            onClick={() => _updateAlignment("left")}
+          />
+          <Button
+            variant={alignment === "center" ? "secondary" : "tertiary"}
+            svg={AlignCenterSVG}
+            onClick={() => _updateAlignment("center")}
+          />
+          <Button
+            variant={alignment === "right" ? "secondary" : "tertiary"}
+            svg={AlignRightSVG}
+            onClick={() => _updateAlignment("right")}
+          />
+        </div>
       </div>
 
       <div className="flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4">
