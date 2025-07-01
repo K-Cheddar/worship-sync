@@ -5,9 +5,11 @@ import { ReactComponent as TimerSVG } from "../../assets/icons/timer.svg";
 import Menu from "./ToolbarElements/Menu";
 import Outlines from "./ToolbarElements/Outlines";
 import SlideEditTools from "./ToolbarElements/SlideEditTools";
+import ItemEditTools from "./ToolbarElements/ItemEditTools";
 import Undo from "./ToolbarElements/Undo";
 import UserSection from "./ToolbarElements/UserSection";
 import QuickLinkSelection from "./ToolbarElements/QuickLinkSelection";
+import ToolbarButton from "./ToolbarElements/ToolbarButton";
 import { useDispatch, useSelector } from "../../hooks";
 import { forwardRef, useContext, useEffect, useMemo, useState } from "react";
 import Button from "../../components/Button/Button";
@@ -18,7 +20,12 @@ import "./ToolbarElements/Toolbar.scss";
 import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
 import { setShouldShowStreamFormat } from "../../store/preferencesSlice";
 
-type sections = "settings" | "slide-tools" | "timer-manager" | "stream-format";
+type sections =
+  | "settings"
+  | "slide-tools"
+  | "timer-manager"
+  | "stream-format"
+  | "item-tools";
 
 const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
   ({ className }, ref) => {
@@ -60,55 +67,49 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
         </div>
         <div className="toolbar-middle">
           <div className="flex gap-1">
-            <Button
-              variant="none"
+            <ToolbarButton
               svg={SettingsSVG}
               onClick={() => setSection("settings")}
-              className={`text-xs rounded-none ${
-                section === "settings" && "bg-gray-800"
-              }`}
+              isActive={section === "settings"}
             >
               Settings
-            </Button>
-            <Button
-              variant="none"
-              disabled={!onItemPage}
+            </ToolbarButton>
+            <ToolbarButton
               svg={EditSquareSVG}
               onClick={() => setSection("slide-tools")}
-              className={cn(
-                "text-xs rounded-none",
-                section === "slide-tools" && "bg-gray-800",
-                !onItemPage && "hidden"
-              )}
+              disabled={!onItemPage}
+              hidden={!onItemPage}
+              isActive={section === "slide-tools"}
             >
               Slide Tools
-            </Button>
-            <Button
-              variant="none"
-              disabled={!onItemPage}
+            </ToolbarButton>
+            <ToolbarButton
               svg={EditSquareSVG}
               onClick={() => setSection("stream-format")}
-              className={cn(
-                "text-xs rounded-none",
-                section === "stream-format" && "bg-gray-800",
-                !onItemPage && "hidden"
-              )}
+              disabled={!onItemPage}
+              hidden={!onItemPage}
+              isActive={section === "stream-format"}
             >
               Stream Format
-            </Button>
-            <Button
-              variant="none"
+            </ToolbarButton>
+            <ToolbarButton
               svg={TimerSVG}
-              disabled={!onItemPage || type !== "timer"}
               onClick={() => setSection("timer-manager")}
-              className={cn(
-                "text-xs rounded-none",
-                section === "timer-manager" && "bg-gray-800",
-                !onItemPage && "hidden"
-              )}
+              disabled={!onItemPage || type !== "timer"}
+              hidden={!onItemPage}
+              isActive={section === "timer-manager"}
             >
               Timer Manager
-            </Button>
+            </ToolbarButton>
+            <ToolbarButton
+              svg={EditSquareSVG}
+              onClick={() => setSection("item-tools")}
+              disabled={!onItemPage}
+              hidden={!onItemPage}
+              isActive={section === "item-tools"}
+            >
+              Item Tools
+            </ToolbarButton>
           </div>
           <hr className="border-gray-500 w-full border-t-2 sticky left-0" />
           <div
@@ -138,6 +139,9 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
               className={cn(
                 (section !== "timer-manager" || type !== "timer") && "hidden"
               )}
+            />
+            <ItemEditTools
+              className={cn(section !== "item-tools" && "hidden")}
             />
           </div>
         </div>

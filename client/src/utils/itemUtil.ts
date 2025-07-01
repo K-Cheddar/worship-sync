@@ -4,7 +4,6 @@ import {
   FormattedLyrics,
   SongOrder,
   ItemState,
-  OptionalItemState,
   Media,
   ServiceItem,
   DBItem,
@@ -122,6 +121,11 @@ export const createNewSong = async ({
     slides: [],
     shouldSkipTitle: false,
     arrangements,
+    shouldSendTo: {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
   };
 
   const item = formatSong(newItem);
@@ -141,10 +145,10 @@ export const createItemFromProps = ({
   selectedSlide,
   selectedBox,
   slides,
-}: OptionalItemState): ItemState => {
+}: Partial<ItemState>): ItemState => {
   const item: ItemState = {
-    name,
-    type,
+    name: name || "",
+    type: type || "song",
     _id: _id || generateRandomId(),
     selectedArrangement: selectedArrangement || 0,
     shouldSkipTitle,
@@ -152,6 +156,11 @@ export const createItemFromProps = ({
     selectedSlide: selectedSlide || 0,
     selectedBox: selectedBox || 1,
     slides: slides || [],
+    shouldSendTo: {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
   };
 
   return item;
@@ -194,6 +203,11 @@ export const createNewBible = async ({
     selectedSlide: 1,
     selectedBox: 1,
     slides: [],
+    shouldSendTo: {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
   };
 
   const item = formatBible({
@@ -324,6 +338,11 @@ export const createNewFreeForm = async ({
       }),
     ],
     arrangements: [],
+    shouldSendTo: {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
   };
 
   const formattedItem = formatFree(newItem);
@@ -394,6 +413,11 @@ export const createNewTimer = async ({
       startedAt: undefined,
       endTime,
       showMinutesOnly: false,
+    },
+    shouldSendTo: {
+      projector: true,
+      monitor: true,
+      stream: true,
     },
   };
 
