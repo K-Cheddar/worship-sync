@@ -126,8 +126,13 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
 
   if (type !== "free")
     return (
-      <section className="flex flex-wrap gap-2 lg:pr-2 max-lg:pb-4 invisible">
-        <Button svg={TextFieldSVG} iconSize="lg" />
+      <section className="flex flex-wrap max-lg:pb-4 invisible">
+        <Button
+          svg={TextFieldSVG}
+          iconSize="lg"
+          padding="py-1 px-0"
+          className="w-0"
+        />
       </section>
     );
 

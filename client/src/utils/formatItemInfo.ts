@@ -16,6 +16,11 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
     selectedSlide: 0,
     bibleInfo: item.bibleInfo,
     timerInfo: item.timerInfo,
+    shouldSendTo: item.shouldSendTo || {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
   };
 
   let updatedArrangements;
@@ -99,5 +104,6 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
   if (item.type === "song") {
     return formatSong(_item);
   }
+
   return _item;
 };

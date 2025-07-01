@@ -141,7 +141,7 @@ listenerMiddleware.startListening({
       state = listenerApi.getOriginalState() as RootState;
     } else {
       listenerApi.cancelActiveListeners();
-      await listenerApi.delay(3500);
+      await listenerApi.delay(2500);
     }
 
     listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
@@ -160,6 +160,7 @@ listenerMiddleware.startListening({
       selectedArrangement: item.selectedArrangement,
       bibleInfo: item.bibleInfo,
       timerInfo: item.timerInfo,
+      shouldSendTo: item.shouldSendTo,
     };
     db.put(db_item);
   },

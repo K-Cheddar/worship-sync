@@ -93,17 +93,8 @@ export type QuickLinkType = {
   canDelete: boolean;
 };
 
-export type DBItem = {
-  _id: string;
-  name: string;
-  selectedArrangement: number;
-  skipTitle?: boolean;
-  background?: string;
-  type: ItemType;
-  slides: ItemSlide[];
-  bibleInfo?: BibleInfo;
-  timerInfo?: TimerInfo;
-  arrangements: Arrangment[];
+export type DBItem = ItemProperties & {
+  _rev?: string;
 };
 
 export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";
@@ -126,6 +117,26 @@ export type TimerInfo = {
   showMinutesOnly?: boolean;
 };
 
+export type ShouldSendTo = {
+  projector: boolean;
+  monitor: boolean;
+  stream: boolean;
+};
+
+export type ItemProperties = {
+  name: string;
+  type: ItemType;
+  _id: string;
+  shouldSkipTitle?: boolean;
+  selectedArrangement: number;
+  background?: string;
+  arrangements: Arrangment[];
+  slides: ItemSlide[];
+  bibleInfo?: BibleInfo;
+  timerInfo?: TimerInfo;
+  shouldSendTo: ShouldSendTo;
+};
+
 export type BibleFontMode = "fit" | "separate" | "multiple";
 
 export type BibleInfo = {
@@ -136,44 +147,13 @@ export type BibleInfo = {
   fontMode: BibleFontMode;
 };
 
-export type ItemState = {
-  name: string;
-  type: ItemType;
-  _id: string;
+export type ItemState = ItemProperties & {
   listId?: string;
-  selectedArrangement: number;
-  shouldSkipTitle?: boolean;
-  _rev?: string;
-  background?: string;
-  arrangements: Arrangment[];
   selectedSlide: number;
   selectedBox: number;
-  slides: ItemSlide[];
   isEditMode?: boolean;
-  bibleInfo?: BibleInfo;
   isLoading?: boolean;
   hasPendingUpdate?: boolean;
-  timerInfo?: TimerInfo;
-};
-
-export type OptionalItemState = {
-  name: string;
-  type: ItemType;
-  _id?: string;
-  listId?: string;
-  selectedArrangement?: number;
-  shouldSkipTitle?: boolean;
-  arrangements?: Arrangment[];
-  selectedSlide?: number;
-  selectedBox?: number;
-  slides?: ItemSlide[];
-  isEditMode?: boolean;
-  bibleInfo?: {
-    book: string;
-    chapter: string;
-    verse: string;
-    version: string;
-  };
 };
 
 export type Arrangment = {

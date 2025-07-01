@@ -23,7 +23,9 @@ import { useDispatch } from "../../hooks";
 import {
   updateBibleDisplayInfo,
   updateFormattedTextDisplayInfo,
-  updatePresentation,
+  updateMonitor,
+  updateProjector,
+  updateStream,
 } from "../../store/presentationSlice";
 import { createNewSlide } from "../../utils/slideCreation";
 import { addSlide as addSlideAction } from "../../store/itemSlice";
@@ -139,6 +141,7 @@ const ItemSlides = () => {
     slides: __slides,
     isLoading,
     _id,
+    shouldSendTo,
   } = useSelector((state: RootState) => state.undoable.present.item);
 
   const {
@@ -244,49 +247,74 @@ const ItemSlides = () => {
   const selectSlide = (index: number) => {
     dispatch(setSelectedSlide(index));
     const slide = slides[index];
-    if (type === "bible") {
-      const { title, text } = getBibleInfo(index);
+
+    if (shouldSendTo.stream) {
+      if (type === "bible") {
+        const { title, text } = getBibleInfo(index);
+        dispatch(
+          updateBibleDisplayInfo({
+            title,
+            text,
+          })
+        );
+      } else {
+        dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
+      }
+
+      if (type === "free") {
+        dispatch(
+          updateFormattedTextDisplayInfo({
+            text: slide.boxes[1]?.words || "",
+            backgroundColor:
+              slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
+            textColor: slide.formattedTextDisplayInfo?.textColor || "#ffffff",
+            fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
+            paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
+            paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
+            isBold: slide.formattedTextDisplayInfo?.isBold || false,
+            isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
+            align: slide.formattedTextDisplayInfo?.align || "left",
+          })
+        );
+      } else {
+        dispatch(
+          updateFormattedTextDisplayInfo({
+            text: "",
+          })
+        );
+      }
+
       dispatch(
-        updateBibleDisplayInfo({
-          title,
-          text,
+        updateStream({
+          slide,
+          type,
+          name,
+          timerId: timerInfo?.id,
         })
       );
-    } else {
-      dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
     }
 
-    if (type === "free") {
+    if (shouldSendTo.projector) {
       dispatch(
-        updateFormattedTextDisplayInfo({
-          text: slide.boxes[1]?.words || "",
-          backgroundColor:
-            slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
-          textColor: slide.formattedTextDisplayInfo?.textColor || "#ffffff",
-          fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
-          paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
-          paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
-          isBold: slide.formattedTextDisplayInfo?.isBold || false,
-          isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
-          align: slide.formattedTextDisplayInfo?.align || "left",
-        })
-      );
-    } else {
-      dispatch(
-        updateFormattedTextDisplayInfo({
-          text: "",
+        updateProjector({
+          slide,
+          type,
+          name,
+          timerId: timerInfo?.id,
         })
       );
     }
 
-    dispatch(
-      updatePresentation({
-        slide: slides[index],
-        type,
-        name,
-        timerId: timerInfo?.id,
-      })
-    );
+    if (shouldSendTo.monitor) {
+      dispatch(
+        updateMonitor({
+          slide,
+          type,
+          name,
+          timerId: timerInfo?.id,
+        })
+      );
+    }
   };
 
   const addSlide = () => {
