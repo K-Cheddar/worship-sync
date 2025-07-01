@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/K-Cheddar/worship-sync/compare/v1.4.0...v1.5.0) (2025-07-01)
+
+
+### Features
+
+* Items can now toggle which screens they send to ([13163d0](https://github.com/K-Cheddar/worship-sync/commit/13163d0026feef5e17366aee12128d465a819c08))
+
 # [1.4.0](https://github.com/K-Cheddar/worship-sync/compare/v1.3.2...v1.4.0) (2025-06-30)
 
 
