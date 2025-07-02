@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/K-Cheddar/worship-sync/compare/v1.5.0...v1.6.0) (2025-07-02)
+
+
+### Features
+
+* Added version checking and changelog ([5e3c823](https://github.com/K-Cheddar/worship-sync/commit/5e3c823abaaef441e57988ac1155d0da928ba274))
+
 # [1.5.0](https://github.com/K-Cheddar/worship-sync/compare/v1.4.0...v1.5.0) (2025-07-01)
 
 
