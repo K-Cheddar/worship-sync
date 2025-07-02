@@ -329,6 +329,23 @@ app.get("/getMembers", async (req, res) => {
   res.send(members);
 });
 
+app.get("/api/version", (req, res) => {
+  const packageJson = require("./package.json");
+  res.json({ version: packageJson.version });
+});
+
+app.get("/api/changelog", async (req, res) => {
+  try {
+    const changelogPath = path.join(dirname, "CHANGELOG.md");
+    const changelogContent = await fs.readFile(changelogPath, "utf8");
+    res.setHeader("Content-Type", "text/plain");
+    res.send(changelogContent);
+  } catch (error) {
+    console.error("Error reading changelog:", error);
+    res.status(500).json({ error: "Failed to load changelog" });
+  }
+});
+
 // Serve any static files
 app.use(express.static(path.join(dirname, "/client/build")));
 // Handle React routing, return all requests to React app

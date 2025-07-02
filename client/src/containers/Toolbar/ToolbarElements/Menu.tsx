@@ -3,6 +3,8 @@ import Button from "../../../components/Button/Button";
 import { ReactComponent as MenuSVG } from "../../../assets/icons/menu.svg";
 import { MenuItemType } from "../../../types";
 import { RedoButton, UndoButton } from "./Undo";
+import ChangelogModal from "../../../components/ChangelogModal/ChangelogModal";
+import { useState } from "react";
 
 const ToolbarMenu = ({
   isPhone,
@@ -11,6 +13,8 @@ const ToolbarMenu = ({
   isPhone?: boolean;
   isEditMode?: boolean;
 }) => {
+  const [isChangelogOpen, setIsChangelogOpen] = useState(false);
+
   const menuItems: MenuItemType[] = [
     {
       text: "Open Stage Monitor",
@@ -26,6 +30,10 @@ const ToolbarMenu = ({
     {
       text: "Home",
       to: "/",
+    },
+    {
+      text: "Changelog",
+      onClick: () => setIsChangelogOpen(true),
     },
     ...(isPhone && !isEditMode
       ? [
@@ -56,10 +64,16 @@ const ToolbarMenu = ({
   ];
 
   return (
-    <Menu
-      menuItems={menuItems}
-      TriggeringButton={<Button variant="tertiary" svg={MenuSVG} />}
-    />
+    <>
+      <Menu
+        menuItems={menuItems}
+        TriggeringButton={<Button variant="tertiary" svg={MenuSVG} />}
+      />
+      <ChangelogModal
+        isOpen={isChangelogOpen}
+        onClose={() => setIsChangelogOpen(false)}
+      />
+    </>
   );
 };
 

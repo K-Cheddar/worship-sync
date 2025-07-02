@@ -17,6 +17,7 @@ import Credits from "./pages/Credits";
 import ProjectorFull from "./pages/ProjectorFull";
 import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
 import TimerManager from "./components/TimerManager/TimerManager";
+import VersionCheck from "./components/VersionCheck";
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
@@ -27,6 +28,7 @@ const App: React.FC = () => {
       <Router>
         <GlobalInfoProvider>
           <TimerManager />
+          <VersionCheck />
           <Routes>
             <Route element={<ControllerContextWrapper />}>
               <Route path="/" element={<Home />} />
