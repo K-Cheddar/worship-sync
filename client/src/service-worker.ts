@@ -70,29 +70,139 @@ registerRoute(
   })
 );
 
+// Version checking functionality
+let currentVersion: string | null = null;
+let checkInterval: ReturnType<typeof setInterval> | null = null;
+
+// Function to check if a version is newer
+function isNewerVersion(newVersion: string, currentVersion: string): boolean {
+  const v1Parts = newVersion.split(".").map(Number);
+  const v2Parts = currentVersion.split(".").map(Number);
+
+  for (let i = 0; i < Math.max(v1Parts.length, v2Parts.length); i++) {
+    const v1Part = v1Parts[i] || 0;
+    const v2Part = v2Parts[i] || 0;
+
+    if (v1Part > v2Part) {
+      return true;
+    }
+    if (v1Part < v2Part) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+// Function to check for version updates
+async function checkForUpdates() {
+  try {
+    // Get the base URL from the service worker's location
+    const baseUrl = self.location.origin;
+    const apiPath = baseUrl.includes("localhost")
+      ? "http://localhost:5000"
+      : baseUrl;
+
+    const response = await fetch(`${apiPath}/api/version`, {
+      cache: "no-cache", // Always fetch fresh version
+    });
+
+    if (response.ok) {
+      const { version } = await response.json();
+
+      // Get current version from clients (which have access to localStorage)
+      const clients = await self.clients.matchAll();
+
+      // Try to get the current version from any available client
+      for (const client of clients) {
+        try {
+          // Request current version from client
+          client.postMessage({ type: "GET_CURRENT_VERSION" });
+          // Note: We'll handle the response in the message event listener
+        } catch (error) {
+          console.error("Error requesting current version from client:", error);
+        }
+      }
+
+      // If we have a current version and the new version is newer, notify clients
+      if (currentVersion && isNewerVersion(version, currentVersion)) {
+        console.log(`New version detected: ${currentVersion} → ${version}`);
+
+        // New version detected, notify all clients
+        clients.forEach((client) => {
+          client.postMessage({
+            type: "VERSION_UPDATE",
+            version: version,
+            currentVersion: currentVersion,
+          });
+        });
+      }
+
+      // Update the stored version
+      currentVersion = version;
+
+      // Notify clients to update their stored version
+      clients.forEach((client) => {
+        client.postMessage({
+          type: "SET_VERSION",
+          version: version,
+        });
+      });
+    }
+  } catch (error) {
+    console.error("Error checking for updates:", error);
+  }
+}
+
+// Start version checking when service worker installs
+self.addEventListener("install", (event) => {
+  console.log("Service Worker installing...");
+  // Start checking for updates once a day
+  checkInterval = setInterval(checkForUpdates, 24 * 60 * 60 * 1000);
+
+  // Check immediately on install
+  event.waitUntil(checkForUpdates());
+});
+
+// Handle service worker activation
+self.addEventListener("activate", (event) => {
+  console.log("Service Worker activating...");
+  event.waitUntil(
+    Promise.all([
+      // Take control of all clients
+      self.clients.claim(),
+      // Start version checking
+      checkForUpdates(),
+    ])
+  );
+});
+
 // This allows the web app to trigger skipWaiting via
 // registration.waiting.postMessage({type: 'SKIP_WAITING'})
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") {
     self.skipWaiting();
   }
+
+  // Handle version check requests from clients
+  if (event.data && event.data.type === "CHECK_VERSION") {
+    event.waitUntil(checkForUpdates());
+  }
+
+  // Handle current version response from clients
+  if (event.data && event.data.type === "CURRENT_VERSION_RESPONSE") {
+    // Update the service worker's current version with the stored version
+    if (event.data.version) {
+      currentVersion = event.data.version;
+    }
+  }
 });
 
-// Add event listener for the 'activate' event
-// self.addEventListener("activate", (event) => {
-//   // Take control of all clients as soon as it's activated
-//   event.waitUntil(
-//     Promise.all([
-//       // Take control of all clients
-//       self.clients.claim(),
-//       // Force reload all clients to ensure they're using the latest version
-//       self.clients.matchAll().then((clients) => {
-//         clients.forEach((client) => {
-//           client.postMessage({ type: "RELOAD" });
-//         });
-//       }),
-//     ])
-//   );
-// });
+// Clean up interval when service worker is terminated
+self.addEventListener("beforeunload", () => {
+  if (checkInterval) {
+    clearInterval(checkInterval);
+  }
+});
 
 // Any other custom service worker logic can go here.
