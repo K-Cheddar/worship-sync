@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { getChangelogForVersion } from "../utils/versionUtils";
+import {
+  cacheChangelog,
+  getCachedChangelog,
+  getChangelogForVersion,
+  getCurrentVersionFromStorage,
+  isNewerVersion,
+  isValidMessageSource,
+  isVersionUpdateDismissed,
+  markVersionUpdateDismissed,
+  setCurrentVersionInStorage,
+} from "../utils/versionUtils";
 import Button from "./Button/Button";
 import Modal from "./Modal/Modal";
 import MarkdownRenderer from "./MarkdownRenderer/MarkdownRenderer";
@@ -10,11 +20,6 @@ interface VersionUpdate {
   currentVersion: string;
   timestamp: number;
 }
-
-// localStorage keys
-const VERSION_STORAGE_KEY = "worshipSync_currentVersion";
-const VERSION_UPDATE_DISMISSED_KEY = "worshipSync_versionUpdateDismissed";
-const CHANGELOG_CACHE_KEY = "worshipSync_changelogCache";
 
 const VersionCheck: React.FC = () => {
   const [showUpdate, setShowUpdate] = useState(false);
@@ -39,153 +44,86 @@ const VersionCheck: React.FC = () => {
     );
   }, [location.pathname]);
 
-  // Get current version from localStorage
-  const getCurrentVersionFromStorage = useCallback((): string | null => {
+  // Fetch changelog for the new version (with caching)
+  const fetchChangelog = useCallback(async (version: string) => {
+    setIsLoadingChangelog(true);
     try {
-      return localStorage.getItem(VERSION_STORAGE_KEY);
+      // Get current version for changelog range
+      const currentVersion = getCurrentVersionFromStorage();
+
+      // Check cache first (use both versions for cache key)
+      const cacheKey = currentVersion
+        ? `${currentVersion}-${version}`
+        : version;
+      const cachedChangelog = getCachedChangelog(cacheKey);
+      if (cachedChangelog) {
+        setChangelog(cachedChangelog);
+        setIsLoadingChangelog(false);
+        return;
+      }
+
+      // Fetch from server if not cached
+      const changelogContent = await getChangelogForVersion(
+        version,
+        currentVersion || undefined
+      );
+      setChangelog(changelogContent);
+
+      // Cache the result
+      if (changelogContent) {
+        cacheChangelog(cacheKey, changelogContent);
+      }
     } catch (error) {
-      console.error("Error reading version from localStorage:", error);
-      return null;
+      console.error("Error fetching changelog:", error);
+      setChangelog(null);
+    } finally {
+      setIsLoadingChangelog(false);
     }
   }, []);
 
-  // Set current version in localStorage
-  const setCurrentVersionInStorage = useCallback((version: string): void => {
+  // Fallback function to check version directly (when service worker is not available)
+  const checkVersionDirectly = useCallback(async () => {
     try {
-      localStorage.setItem(VERSION_STORAGE_KEY, version);
-    } catch (error) {
-      console.error("Error writing version to localStorage:", error);
-    }
-  }, []);
+      const baseUrl = window.location.origin;
+      const apiPath = baseUrl.includes("localhost")
+        ? "http://localhost:5000"
+        : baseUrl;
 
-  // Check if version update was recently dismissed
-  const isVersionUpdateDismissed = useCallback(
-    (newVersion: string): boolean => {
-      try {
-        const dismissed = localStorage.getItem(VERSION_UPDATE_DISMISSED_KEY);
-        if (dismissed) {
-          const { version, timestamp } = JSON.parse(dismissed);
-          // Check if it's the same version and dismissed within the last 6 hours
-          if (
-            version === newVersion &&
-            Date.now() - timestamp < 6 * 60 * 60 * 1000
-          ) {
-            return true;
+      const response = await fetch(`${apiPath}/api/version`, {
+        cache: "no-cache",
+      });
+
+      if (response.ok) {
+        const { version } = await response.json();
+        const currentVersion = getCurrentVersionFromStorage();
+
+        if (currentVersion && isNewerVersion(version, currentVersion)) {
+          const update: VersionUpdate = {
+            newVersion: version,
+            currentVersion: currentVersion,
+            timestamp: Date.now(),
+          };
+          setVersionUpdate(update);
+
+          if (isControllerRoute()) {
+            if (!isVersionUpdateDismissed(version)) {
+              setShowUpdate(true);
+              fetchChangelog(version);
+            }
+          } else {
+            setIsUpdating(true);
+            // Update the stored version since the user is effectively updating via auto-refresh
+            setCurrentVersionInStorage(version);
+            autoRefreshTimeoutRef.current = setTimeout(() => {
+              window.location.reload();
+            }, 1000);
           }
         }
-        return false;
-      } catch (error) {
-        console.error("Error checking dismissed version:", error);
-        return false;
       }
-    },
-    []
-  );
-
-  // Mark version update as dismissed
-  const markVersionUpdateDismissed = useCallback((version: string): void => {
-    try {
-      localStorage.setItem(
-        VERSION_UPDATE_DISMISSED_KEY,
-        JSON.stringify({
-          version,
-          timestamp: Date.now(),
-        })
-      );
     } catch (error) {
-      console.error("Error marking version as dismissed:", error);
+      console.error("VersionCheck: Error in direct version check:", error);
     }
-  }, []);
-
-  // Get cached changelog for a version
-  const getCachedChangelog = useCallback((version: string): string | null => {
-    try {
-      const cached = localStorage.getItem(CHANGELOG_CACHE_KEY);
-      if (cached) {
-        const {
-          version: cachedVersion,
-          changelog: cachedChangelog,
-          timestamp,
-        } = JSON.parse(cached);
-        // Cache is valid for 24 hours
-        if (
-          cachedVersion === version &&
-          Date.now() - timestamp < 24 * 60 * 60 * 1000
-        ) {
-          return cachedChangelog;
-        }
-      }
-      return null;
-    } catch (error) {
-      console.error("Error reading cached changelog:", error);
-      return null;
-    }
-  }, []);
-
-  // Cache changelog for a version
-  const cacheChangelog = useCallback(
-    (version: string, changelog: string): void => {
-      try {
-        localStorage.setItem(
-          CHANGELOG_CACHE_KEY,
-          JSON.stringify({
-            version,
-            changelog,
-            timestamp: Date.now(),
-          })
-        );
-      } catch (error) {
-        console.error("Error caching changelog:", error);
-      }
-    },
-    []
-  );
-
-  // Fetch changelog for the new version (with caching)
-  const fetchChangelog = useCallback(
-    async (version: string) => {
-      setIsLoadingChangelog(true);
-      try {
-        // Check cache first
-        const cachedChangelog = getCachedChangelog(version);
-        if (cachedChangelog) {
-          setChangelog(cachedChangelog);
-          setIsLoadingChangelog(false);
-          return;
-        }
-
-        // Fetch from server if not cached
-        const changelogContent = await getChangelogForVersion(version);
-        setChangelog(changelogContent);
-
-        // Cache the result
-        if (changelogContent) {
-          cacheChangelog(version, changelogContent);
-        }
-      } catch (error) {
-        console.error("Error fetching changelog:", error);
-        setChangelog(null);
-      } finally {
-        setIsLoadingChangelog(false);
-      }
-    },
-    [getCachedChangelog, cacheChangelog]
-  );
-
-  // Validate message origin to prevent cross-tab or rogue service worker noise
-  const isValidMessageSource = useCallback((event: MessageEvent): boolean => {
-    // Check if message is from our service worker
-    if (event.source && event.source !== navigator.serviceWorker.controller) {
-      return false;
-    }
-
-    // Check if origin matches (for additional security)
-    if (event.origin && event.origin !== window.location.origin) {
-      return false;
-    }
-
-    return true;
-  }, []);
+  }, [fetchChangelog, isControllerRoute]);
 
   useEffect(() => {
     // Combined message listener for all service worker messages
@@ -216,15 +154,12 @@ const VersionCheck: React.FC = () => {
         } else {
           // Auto-refresh for non-controller routes
           setIsUpdating(true);
+          // Update the stored version since the user is effectively updating via auto-refresh
+          setCurrentVersionInStorage(event.data.version);
           autoRefreshTimeoutRef.current = setTimeout(() => {
             window.location.reload();
           }, 1000);
         }
-      }
-
-      // Handle SET_VERSION messages from service worker
-      if (event.data && event.data.type === "SET_VERSION") {
-        setCurrentVersionInStorage(event.data.version);
       }
 
       // Handle GET_CURRENT_VERSION requests from service worker
@@ -245,6 +180,25 @@ const VersionCheck: React.FC = () => {
       handleServiceWorkerMessage
     );
 
+    // Wait for service worker to be ready before triggering version check
+    navigator.serviceWorker.ready
+      .then((registration) => {
+        // Trigger an initial version check when service worker is ready
+        if (navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: "CHECK_VERSION",
+          });
+        } else {
+          // Fallback: try to check version directly if service worker is not available
+          checkVersionDirectly();
+        }
+      })
+      .catch((error) => {
+        console.error("VersionCheck: Error waiting for service worker:", error);
+        // Fallback: try to check version directly if service worker fails
+        checkVersionDirectly();
+      });
+
     // Cleanup function to clear timeouts and remove event listeners
     return () => {
       // Clear any pending timeouts
@@ -258,14 +212,7 @@ const VersionCheck: React.FC = () => {
         handleServiceWorkerMessage
       );
     };
-  }, [
-    isControllerRoute,
-    fetchChangelog,
-    isVersionUpdateDismissed,
-    setCurrentVersionInStorage,
-    getCurrentVersionFromStorage,
-    isValidMessageSource,
-  ]);
+  }, [isControllerRoute, fetchChangelog, checkVersionDirectly]);
 
   const handleUpdate = () => {
     setIsUpdating(true);
@@ -301,11 +248,10 @@ const VersionCheck: React.FC = () => {
       markVersionUpdateDismissed(versionUpdate.newVersion);
     }
     setVersionUpdate(null);
-    // No setTimeout needed - the service worker will check again and localStorage will control visibility
   };
 
   // Only render modal if we're in a controller route and should show update
-  if (!isControllerRoute() || !showUpdate || !versionUpdate) {
+  if (!isControllerRoute()) {
     return null;
   }
 

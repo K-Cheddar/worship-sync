@@ -1,13 +1,3 @@
-// const express = require('express');
-// const path = require('path');
-// const app = express();
-// const cors = require('cors');
-// const port = process.env.PORT || 5000;
-// const request = require('request');
-// const cheerio = require('cheerio');
-// const qs = require('querystring');
-// const h2p = require('html2plaintext');
-
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -17,6 +7,7 @@ import axios from "axios";
 import qs from "qs";
 import * as XLSX from "xlsx";
 import dotenv from "dotenv";
+import packageJson from "./package.json" assert { type: "json" };
 
 dotenv.config();
 // Validate required environment variables
@@ -40,9 +31,6 @@ const clientId = process.env.AZURE_CLIENT_ID;
 const clientSecret = process.env.AZURE_CLIENT_SECRET;
 
 const port = process.env.PORT || 5000;
-// import request from "request";
-// import qs from "querystring";
-// import h2p from "html2plaintext";
 
 app.listen(port, () => console.log(`Listening on port ${port}`));
 
@@ -330,7 +318,6 @@ app.get("/getMembers", async (req, res) => {
 });
 
 app.get("/api/version", (req, res) => {
-  const packageJson = require("./package.json");
   res.json({ version: packageJson.version });
 });
 

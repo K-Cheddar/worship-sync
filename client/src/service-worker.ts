@@ -102,7 +102,6 @@ async function checkForUpdates() {
     const apiPath = baseUrl.includes("localhost")
       ? "http://localhost:5000"
       : baseUrl;
-
     const response = await fetch(`${apiPath}/api/version`, {
       cache: "no-cache", // Always fetch fresh version
     });
@@ -136,18 +135,22 @@ async function checkForUpdates() {
             currentVersion: currentVersion,
           });
         });
+      } else if (!currentVersion) {
+        // If we don't have a current version, this might be the first check
+        // Set the current version but don't notify clients to update their stored version
+        currentVersion = version;
+        console.log("Service Worker: Setting initial version:", version);
+      } else {
+        console.log("Service Worker: No new version detected");
       }
 
-      // Update the stored version
-      currentVersion = version;
-
-      // Notify clients to update their stored version
-      clients.forEach((client) => {
-        client.postMessage({
-          type: "SET_VERSION",
-          version: version,
-        });
-      });
+      // Don't update the stored version automatically - only when user actually updates
+      // The stored version should remain the same until the user updates
+    } else {
+      console.error(
+        "Service Worker: Failed to fetch version, status:",
+        response.status
+      );
     }
   } catch (error) {
     console.error("Error checking for updates:", error);
@@ -156,7 +159,6 @@ async function checkForUpdates() {
 
 // Start version checking when service worker installs
 self.addEventListener("install", (event) => {
-  console.log("Service Worker installing...");
   // Start checking for updates once a day
   checkInterval = setInterval(checkForUpdates, 24 * 60 * 60 * 1000);
 
@@ -166,7 +168,6 @@ self.addEventListener("install", (event) => {
 
 // Handle service worker activation
 self.addEventListener("activate", (event) => {
-  console.log("Service Worker activating...");
   event.waitUntil(
     Promise.all([
       // Take control of all clients
