@@ -126,6 +126,12 @@ const VersionCheck: React.FC = () => {
   }, [fetchChangelog, isControllerRoute]);
 
   useEffect(() => {
+    // Check if service worker is supported
+    if (!("serviceWorker" in navigator)) {
+      checkVersionDirectly();
+      return;
+    }
+
     // Combined message listener for all service worker messages
     const handleServiceWorkerMessage = (event: MessageEvent) => {
       // Validate message source
@@ -207,10 +213,13 @@ const VersionCheck: React.FC = () => {
         autoRefreshTimeoutRef.current = null;
       }
 
-      navigator.serviceWorker.removeEventListener(
-        "message",
-        handleServiceWorkerMessage
-      );
+      // Only remove event listener if service worker is supported
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.removeEventListener(
+          "message",
+          handleServiceWorkerMessage
+        );
+      }
     };
   }, [isControllerRoute, fetchChangelog, checkVersionDirectly]);
 
