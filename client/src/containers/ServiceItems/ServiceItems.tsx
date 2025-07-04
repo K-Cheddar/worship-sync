@@ -113,6 +113,10 @@ const ServiceItems = () => {
               return (
                 <ServiceItem
                   isActive={activeTimers.some((timer) => timer.id === item._id)}
+                  timerValue={
+                    activeTimers.find((timer) => timer.id === item._id)
+                      ?.remainingTime
+                  }
                   key={item.listId}
                   item={item}
                   selectedItemListId={selectedItemListId}

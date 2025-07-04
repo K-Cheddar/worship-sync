@@ -491,7 +491,7 @@ const SlideEditor = () => {
             onChange={(onChangeInfo) => {
               onChange(onChangeInfo);
             }}
-            width={isMobile ? 84 : 42}
+            width={isMobile ? 80 : 42}
             displayType="editor"
             selectedBox={selectedBox}
             isBoxLocked={isBoxLocked}

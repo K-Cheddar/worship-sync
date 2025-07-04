@@ -151,7 +151,9 @@ const ItemSlides = () => {
   } = useSelector((state) => state.presentation);
 
   const isTransmitting =
-    isMonitorTransmitting || isProjectorTransmitting || isStreamTransmitting;
+    (shouldSendTo.monitor && isMonitorTransmitting) ||
+    (shouldSendTo.projector && isProjectorTransmitting) ||
+    (shouldSendTo.stream && isStreamTransmitting);
 
   const timers = useSelector((state: RootState) => state.timers.timers);
   const timerInfo = timers.find((timer) => timer.id === _id);
