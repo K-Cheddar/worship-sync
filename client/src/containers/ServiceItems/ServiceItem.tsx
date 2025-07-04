@@ -18,6 +18,7 @@ import cn from "classnames";
 
 type ServiceItemsProps = {
   isActive: boolean;
+  timerValue?: number;
   selectedItemListId: string | undefined;
   location: Location;
   item: ServiceItemType;
@@ -26,6 +27,7 @@ type ServiceItemsProps = {
 
 const ServiceItem = ({
   isActive,
+  timerValue,
   item,
   selectedItemListId,
   location,
@@ -154,8 +156,7 @@ const ServiceItem = ({
       title={item.name}
       className={cn(
         "border-b-2 border-r-4 overflow-hidden",
-        isSelected ? "border-l-cyan-500" : "border-transparent",
-        isActive ? "border-r-cyan-500" : "border-r-transparent"
+        isSelected ? "border-l-cyan-500" : "border-transparent"
       )}
       isSelected={isSelected && location.pathname.includes("item")}
       to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(
@@ -163,9 +164,11 @@ const ServiceItem = ({
       )}`}
       type={item.type}
       image={item.background}
+      timerValue={timerValue}
       actions={actions}
       displayId={`service-item-${item.listId}`}
       id={item.listId}
+      isActive={isActive}
     />
   );
 };
