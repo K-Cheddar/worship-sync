@@ -1,4 +1,4 @@
-import { Box } from "../../types";
+import { Box, TimerInfo } from "../../types";
 import { ReactComponent as ArrowDownSVG } from "../../assets/icons/arrow-down-double.svg";
 import { ReactComponent as ArrowUpSVG } from "../../assets/icons/arrow-up-double.svg";
 
@@ -7,6 +7,8 @@ import { Position, ResizableDelta, Rnd } from "react-rnd";
 import cn from "classnames";
 import { ResizeDirection } from "re-resizable";
 import Button from "../Button/Button";
+import TimerDisplay from "./TimerDisplay";
+import VerseDisplay from "./VerseDisplay";
 
 type DraggableData = {
   node: HTMLElement;
@@ -27,6 +29,7 @@ type DisplayEditorProps = {
   selectBox?: Function;
   isSelected?: boolean;
   isBoxLocked?: boolean;
+  timerInfo?: TimerInfo;
 };
 
 const DisplayEditor = ({
@@ -38,6 +41,7 @@ const DisplayEditor = ({
   index,
   isSelected,
   isBoxLocked,
+  timerInfo,
 }: DisplayEditorProps) => {
   const [boxWidth, setBoxWidth] = useState(`${box.width}%`);
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
@@ -46,7 +50,7 @@ const DisplayEditor = ({
   let textAreaFocusTimeout: NodeJS.Timeout | null = null;
 
   const [isOverflowing, setIsOverflowing] = useState(() => {
-    const textArea = document.getElementById(`display-editor-${index}`);
+    const textArea = document.getElementById(`display-box-text-${index}`);
     return textArea ? textArea.scrollHeight > textArea.clientHeight : false;
   });
 
@@ -62,7 +66,7 @@ const DisplayEditor = ({
     return Math.round((height * (box.y || 0)) / 100);
   });
 
-  const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const textAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (textAreaRef.current) {
@@ -180,6 +184,26 @@ const DisplayEditor = ({
 
   const bFontSize = box.fontSize;
   const words = box.words || "";
+
+  // Update content when words prop changes
+  useEffect(() => {
+    if (textAreaRef.current && textAreaRef.current.innerText !== words) {
+      textAreaRef.current.innerText = words;
+    }
+  }, [words]);
+
+  const renderContent = () => {
+    if (words.includes("{{timer}}")) {
+      return <TimerDisplay timerInfo={timerInfo} words={words} />;
+    }
+
+    if (words.includes("\u200B")) {
+      return <VerseDisplay words={words} />;
+    }
+
+    return words;
+  };
+
   const fontSizeValue = bFontSize ? bFontSize / fontAdjustment : 1;
   const tSS = fontSizeValue / (width > 20 ? 32 : 10); // text shadow size
   const fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size
@@ -252,14 +276,15 @@ const DisplayEditor = ({
       )}
       {typeof onChange === "function" && index !== 0 && (
         <>
-          <textarea
+          <div
             className={cn(
               "display-editor",
               showOverflow ? "overflow-y-visible" : "overflow-y-clip"
             )}
             id={`display-box-text-${index}`}
             ref={textAreaRef}
-            value={words}
+            contentEditable={true}
+            suppressContentEditableWarning={true}
             style={{
               marginTop,
               marginBottom,
@@ -280,16 +305,143 @@ const DisplayEditor = ({
                 setIsTextAreaFocused(false);
               }, 500);
             }}
-            onChange={(e) => {
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                document.execCommand("insertLineBreak", false);
+              }
+              // Prevent tab from moving focus out of the editor
+              if (e.key === "Tab") {
+                e.preventDefault();
+                document.execCommand("insertText", false, "\t");
+              }
+              // Handle backspace and delete to work properly with line breaks
+              if (e.key === "Backspace" || e.key === "Delete") {
+                const selection = window.getSelection();
+                if (selection && selection.rangeCount > 0) {
+                  const range = selection.getRangeAt(0);
+                  const target = e.target as HTMLDivElement;
+
+                  // Check if we're at a line break
+                  if (e.key === "Backspace") {
+                    // For backspace, check if we're at the start of a line
+                    if (
+                      range.startOffset === 0 &&
+                      range.startContainer !== target
+                    ) {
+                      e.preventDefault();
+                      // Move cursor to end of previous line and delete
+                      const walker = document.createTreeWalker(
+                        target,
+                        NodeFilter.SHOW_TEXT,
+                        null
+                      );
+
+                      let prevTextNode: Text | null = null;
+                      let currentTextNode: Text | null = null;
+
+                      while ((currentTextNode = walker.nextNode() as Text)) {
+                        if (currentTextNode === range.startContainer) {
+                          break;
+                        }
+                        prevTextNode = currentTextNode;
+                      }
+
+                      if (prevTextNode) {
+                        const newRange = document.createRange();
+                        newRange.setStart(prevTextNode, prevTextNode.length);
+                        newRange.setEnd(prevTextNode, prevTextNode.length);
+                        selection.removeAllRanges();
+                        selection.addRange(newRange);
+                        // Delete the line break by replacing with empty string
+                        document.execCommand("insertText", false, "");
+                      }
+                    }
+                  } else if (e.key === "Delete") {
+                    // For delete, check if we're at the end of a line
+                    const textNode = range.startContainer as Text;
+                    if (textNode && range.startOffset === textNode.length) {
+                      e.preventDefault();
+                      // Find next text node and move content
+                      const walker = document.createTreeWalker(
+                        target,
+                        NodeFilter.SHOW_TEXT,
+                        null
+                      );
+
+                      let foundCurrent = false;
+                      let nextTextNode: Text | null = null;
+
+                      while ((nextTextNode = walker.nextNode() as Text)) {
+                        if (foundCurrent) {
+                          break;
+                        }
+                        if (nextTextNode === textNode) {
+                          foundCurrent = true;
+                        }
+                      }
+
+                      if (nextTextNode) {
+                        // Merge the content
+                        const newText =
+                          (textNode.textContent || "") +
+                          (nextTextNode.textContent || "");
+                        textNode.textContent = newText;
+                        nextTextNode.remove();
+
+                        // Set cursor position
+                        const newRange = document.createRange();
+                        newRange.setStart(textNode, textNode.length);
+                        newRange.collapse(true);
+                        selection.removeAllRanges();
+                        selection.addRange(newRange);
+                      }
+                    }
+                  }
+                }
+              }
+            }}
+            onPaste={(e) => {
               e.preventDefault();
+              const text = e.clipboardData.getData("text/plain");
+              document.execCommand("insertText", false, text);
+            }}
+            onInput={(e) => {
+              e.preventDefault();
+              const target = e.target as HTMLDivElement;
+              const selection = window.getSelection();
+
+              // Calculate cursor position across all text nodes
+              let cursorPosition = 0;
+              if (selection && selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                const walker = document.createTreeWalker(
+                  target,
+                  NodeFilter.SHOW_TEXT,
+                  null
+                );
+
+                let node;
+                while ((node = walker.nextNode())) {
+                  const textNode = node as Text;
+                  if (textNode === range.startContainer) {
+                    cursorPosition += range.startOffset;
+                    break;
+                  }
+                  cursorPosition += textNode.textContent?.length || 0;
+                }
+              }
+
               onChange({
                 index,
-                value: e.target.value,
+                value: target.innerText || "",
                 box,
-                cursorPosition: e.target.selectionStart,
+                cursorPosition,
               });
             }}
-          />
+          >
+            {renderContent()}
+          </div>
           {isOverflowing && isTextAreaFocused && (
             <Button
               variant="tertiary"

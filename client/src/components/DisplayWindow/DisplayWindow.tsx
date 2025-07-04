@@ -132,6 +132,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 selectBox={selectBox}
                 isSelected={selectedBox === index}
                 isBoxLocked={isBoxLocked?.[index] ?? true}
+                timerInfo={timerInfo}
               />
             );
           if (isStream)

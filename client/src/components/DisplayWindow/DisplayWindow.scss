@@ -8,7 +8,7 @@
 }
 
 .display-editor {
-  @apply h-full w-full bg-transparent absolute resize-none outline-none;
+  @apply h-full w-full bg-transparent absolute resize-none outline-none whitespace-pre-line;
 
     scrollbar-width: none;
 }

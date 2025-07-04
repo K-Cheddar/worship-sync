@@ -55,7 +55,12 @@ const SlideEditor = () => {
     selectedBox,
     slides,
     isLoading,
+    timerInfo,
   } = item;
+
+  const timer = useSelector((state: RootState) =>
+    state.timers.timers.find((t) => t.id === timerInfo?.id)
+  );
 
   const { shouldShowItemEditor } = useSelector(
     (state: RootState) => state.undoable.present.preferences
@@ -126,10 +131,42 @@ const SlideEditor = () => {
     Object.entries(cursorPositions).forEach(([index, position]) => {
       const textBoxElement = document.getElementById(
         `display-box-text-${index}`
-      ) as HTMLTextAreaElement;
+      ) as HTMLDivElement;
       if (textBoxElement && typeof position === "number") {
-        textBoxElement.selectionEnd = position;
-        textBoxElement.selectionStart = position;
+        const selection = window.getSelection();
+        const range = document.createRange();
+
+        // Find the text node and set cursor position
+        const walker = document.createTreeWalker(
+          textBoxElement,
+          NodeFilter.SHOW_TEXT,
+          null
+        );
+
+        let currentLength = 0;
+        let targetNode: Text | null = null;
+        let targetOffset = 0;
+
+        let node;
+        while ((node = walker.nextNode())) {
+          const textNode = node as Text;
+          const nodeLength = textNode.textContent?.length || 0;
+
+          if (currentLength + nodeLength >= position) {
+            targetNode = textNode;
+            targetOffset = position - currentLength;
+            break;
+          }
+          currentLength += nodeLength;
+        }
+
+        if (targetNode && selection) {
+          range.setStart(targetNode, targetOffset);
+          range.setEnd(targetNode, targetOffset);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+
         requestAnimationFrame(() => {
           textBoxElement.scrollTop = 0;
         });
@@ -491,10 +528,11 @@ const SlideEditor = () => {
             onChange={(onChangeInfo) => {
               onChange(onChangeInfo);
             }}
-            width={isMobile ? 84 : 42}
+            width={isMobile ? 80 : 42}
             displayType="editor"
             selectedBox={selectedBox}
             isBoxLocked={isBoxLocked}
+            timerInfo={timer}
           />
         ) : (
           <p
