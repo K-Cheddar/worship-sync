@@ -1,3 +1,10 @@
+## [1.7.2](https://github.com/K-Cheddar/worship-sync/compare/v1.7.1...v1.7.2) (2025-07-04)
+
+
+### Bug Fixes
+
+* app stability improvement ([f6ffb8c](https://github.com/K-Cheddar/worship-sync/commit/f6ffb8c3cd9a959adbc8650056f457473a64f437))
+
 ## [1.7.1](https://github.com/K-Cheddar/worship-sync/compare/v1.7.0...v1.7.1) (2025-07-04)
 
 
