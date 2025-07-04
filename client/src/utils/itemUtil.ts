@@ -415,9 +415,9 @@ export const createNewTimer = async ({
       showMinutesOnly: false,
     },
     shouldSendTo: {
-      projector: true,
+      projector: false,
       monitor: true,
-      stream: true,
+      stream: false,
     },
   };
 
