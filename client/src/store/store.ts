@@ -384,7 +384,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     // update db with lists
-    const { list, publishedList, transitionScene, creditsScene } =
+    const { list, publishedList, transitionScene, creditsScene, scheduleName } =
       state.undoable.present.credits;
 
     if (
@@ -413,6 +413,13 @@ listenerMiddleware.startListening({
           "users/" + globalFireDbInfo.user + "/v2/credits/creditsScene"
         ),
         creditsScene
+      );
+      set(
+        ref(
+          globalFireDbInfo.db,
+          "users/" + globalFireDbInfo.user + "/v2/credits/scheduleName"
+        ),
+        scheduleName
       );
     }
 
