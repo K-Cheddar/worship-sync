@@ -230,6 +230,7 @@ type CreditsState = {
   isLoading: boolean;
   transitionScene: string;
   creditsScene: string;
+  scheduleName: string;
   selectedCreditId: string;
 };
 
@@ -240,6 +241,7 @@ const initialState: CreditsState = {
   isLoading: true,
   transitionScene: "",
   creditsScene: "",
+  scheduleName: "",
   selectedCreditId: "",
 };
 
@@ -353,6 +355,9 @@ export const creditsSlice = createSlice({
     setIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
     },
+    setScheduleName: (state, action: PayloadAction<string>) => {
+      state.scheduleName = action.payload;
+    },
   },
 });
 
@@ -373,6 +378,7 @@ export const {
   updatePublishedCreditsListFromRemote,
   updateInitialList,
   setIsLoading,
+  setScheduleName,
 } = creditsSlice.actions;
 
 export default creditsSlice.reducer;

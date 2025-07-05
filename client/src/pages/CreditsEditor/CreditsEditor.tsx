@@ -15,6 +15,7 @@ import {
   initiateTransitionScene,
   setCreditsScene,
   setIsLoading,
+  setScheduleName,
   setTransitionScene,
   updateCreditsListFromRemote,
   updateList,
@@ -33,7 +34,7 @@ import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
 import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
 
 const CreditsEditor = () => {
-  const { list, transitionScene, creditsScene } = useSelector(
+  const { list, transitionScene, creditsScene, scheduleName } = useSelector(
     (state) => state.undoable.present.credits
   );
   const { list: overlays } = useSelector(
@@ -112,6 +113,17 @@ const CreditsEditor = () => {
         const data = snapshot.val();
         if (data) {
           dispatch(initiateCreditsScene(data));
+        }
+      });
+
+      const scheduleNameRef = ref(
+        firebaseDb,
+        "users/" + user + "/v2/credits/scheduleName"
+      );
+      onValue(scheduleNameRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          dispatch(setScheduleName(data));
         }
       });
 
@@ -199,7 +211,7 @@ const CreditsEditor = () => {
       };
 
       const schedule = await getScheduleFromExcel(
-        "2nd Quarter 2025 - Schedule.xlsx",
+        `${scheduleName}.xlsx`,
         "/Media Team Positions.xlsx"
       );
 
@@ -251,7 +263,7 @@ const CreditsEditor = () => {
     } finally {
       setIsGenerating(false);
     }
-  }, [overlays, list, dispatch]);
+  }, [overlays, list, dispatch, scheduleName]);
 
   const controls = (
     <>
@@ -268,6 +280,13 @@ const CreditsEditor = () => {
         value={creditsScene}
         data-ignore-undo="true"
         onChange={(val) => dispatch(setCreditsScene(val as string))}
+      />
+      <Input
+        label="Schedule Name"
+        className="credits-transition-input"
+        value={scheduleName}
+        data-ignore-undo="true"
+        onChange={(val) => dispatch(setScheduleName(val as string))}
       />
       <Button
         className="text-sm"
@@ -303,12 +322,12 @@ const CreditsEditor = () => {
           <div className="border-l-2 border-gray-400 pl-4">
             <Undo />
           </div>
-          <div className="max-md:hidden flex gap-8 items-center border-l-2 border-gray-400 pl-4">
+          <div className="max-lg:hidden flex gap-8 items-center border-l-2 border-gray-400 pl-4">
             {controls}
           </div>
           <PopOver
             TriggeringButton={
-              <Button className="md:hidden" variant="tertiary" svg={ExpandSVG}>
+              <Button className="lg:hidden" variant="tertiary" svg={ExpandSVG}>
                 Tools
               </Button>
             }
