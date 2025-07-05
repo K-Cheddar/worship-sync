@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/K-Cheddar/worship-sync/compare/v1.7.2...v1.8.0) (2025-07-05)
+
+
+### Features
+
+* Add ability to change the schedule name for credits ([ba569c1](https://github.com/K-Cheddar/worship-sync/commit/ba569c1e326c434aee7ea6fbae461a5f4ff9f4ae))
+
 ## [1.7.2](https://github.com/K-Cheddar/worship-sync/compare/v1.7.1...v1.7.2) (2025-07-04)
 
 
