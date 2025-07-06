@@ -41,8 +41,6 @@ export const updateBoxProperties = ({
 
   slides = slides.map((slide, slideIndex) => {
     if (item.type === "song") {
-      // Last slide should not be editable
-      if (slideIndex === slides.length - 1) return slide;
       // If the first slide isn't selected, don't apply changes
       if (slideIndex === 0 && selectedSlide !== 0) return slide;
     }

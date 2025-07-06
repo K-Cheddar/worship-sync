@@ -257,7 +257,7 @@ const DisplayEditor = ({
               "display-editor",
               showOverflow ? "overflow-y-visible" : "overflow-y-clip"
             )}
-            id={`display-box-text-${index}`}
+            id={`display-editor-box-${index}`}
             ref={textAreaRef}
             value={words}
             style={{
