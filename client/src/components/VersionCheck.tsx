@@ -53,12 +53,23 @@ const VersionCheck: React.FC = () => {
 
   const handleUpdate = useCallback(() => {
     setIsUpdating(true);
-    // Reload after a short delay
-    setTimeout(() => {
-      // Force a hard reload to bypass cache
-      window.location.href =
-        window.location.pathname + "?cacheBust=" + Date.now();
-    }, 1000);
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        registrations.forEach((registration) => {
+          registration.unregister();
+        });
+        // Wait a bit for unregister, then reload
+        setTimeout(() => {
+          window.location.href =
+            window.location.pathname + "?cacheBust=" + Date.now();
+        }, 1000);
+      });
+    } else {
+      setTimeout(() => {
+        window.location.href =
+          window.location.pathname + "?cacheBust=" + Date.now();
+      }, 1000);
+    }
   }, [setIsUpdating]);
 
   // Fetch changelog for the new version (with caching)
