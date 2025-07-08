@@ -389,3 +389,11 @@ export type allDocsType = {
       | DBMedia;
   }[];
 };
+
+export type Instance = {
+  database: string;
+  hostId: string;
+  isOnController: boolean;
+  lastActive: string;
+  user: string;
+};

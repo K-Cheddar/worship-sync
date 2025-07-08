@@ -1,3 +1,5 @@
+import versionInfo from "../version.json";
+
 // localStorage keys
 export const VERSION_STORAGE_KEY = "worshipSync_currentVersion";
 export const VERSION_UPDATE_DISMISSED_KEY =
@@ -118,25 +120,6 @@ export const markVersionUpdateDismissed = (version: string): void => {
   }
 };
 
-// Get current version from localStorage
-export const getCurrentVersionFromStorage = (): string | null => {
-  try {
-    return localStorage.getItem(VERSION_STORAGE_KEY);
-  } catch (error) {
-    console.error("Error reading version from localStorage:", error);
-    return null;
-  }
-};
-
-// Set current version in localStorage
-export const setCurrentVersionInStorage = (version: string): void => {
-  try {
-    localStorage.setItem(VERSION_STORAGE_KEY, version);
-  } catch (error) {
-    console.error("Error writing version to localStorage:", error);
-  }
-};
-
 // Check if version update was recently dismissed
 export const isVersionUpdateDismissed = (newVersion: string): boolean => {
   try {
@@ -199,17 +182,4 @@ export const cacheChangelog = (version: string, changelog: string): void => {
   }
 };
 
-// Validate message origin to prevent cross-tab or rogue service worker noise
-export const isValidMessageSource = (event: MessageEvent): boolean => {
-  // Check if message is from our service worker
-  if (event.source && event.source !== navigator.serviceWorker.controller) {
-    return false;
-  }
-
-  // Check if origin matches (for additional security)
-  if (event.origin && event.origin !== window.location.origin) {
-    return false;
-  }
-
-  return true;
-};
+export const getBuildTimeVersion = () => versionInfo.version || "1.0.0";

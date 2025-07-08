@@ -1,40 +1,47 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useContext, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import {
   cacheChangelog,
   getCachedChangelog,
   getChangelogForVersion,
-  getCurrentVersionFromStorage,
   isNewerVersion,
-  isValidMessageSource,
   isVersionUpdateDismissed,
   markVersionUpdateDismissed,
-  setCurrentVersionInStorage,
+  getBuildTimeVersion,
 } from "../utils/versionUtils";
+import { useVersionContext } from "../context/versionContext";
+import { GlobalInfoContext } from "../context/globalInfo";
 import Button from "./Button/Button";
 import Modal from "./Modal/Modal";
 import MarkdownRenderer from "./MarkdownRenderer/MarkdownRenderer";
 
-interface VersionUpdate {
-  newVersion: string;
-  currentVersion: string;
-  timestamp: number;
-}
-
 const VersionCheck: React.FC = () => {
-  const [showUpdate, setShowUpdate] = useState(false);
-  const [versionUpdate, setVersionUpdate] = useState<VersionUpdate | null>(
-    null
-  );
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [changelog, setChangelog] = useState<string | null>(null);
-  const [isLoadingChangelog, setIsLoadingChangelog] = useState(false);
+  const {
+    versionUpdate,
+    setVersionUpdate,
+    showUpdateModal,
+    setShowUpdateModal,
+    isUpdating,
+    setIsUpdating,
+    changelog,
+    setChangelog,
+    isLoadingChangelog,
+    setIsLoadingChangelog,
+  } = useVersionContext();
+
   const location = useLocation();
+  const { hostId, activeInstances } = useContext(GlobalInfoContext) || {};
 
   // Store timeout IDs to clear on unmount
-  const autoRefreshTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const versionCheckTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Check if user is within ControllerContextWrapper routes
+  const isUserActive = useMemo(() => {
+    if (!hostId || !activeInstances) return false;
+    return activeInstances.some((instance) => instance.hostId === hostId);
+  }, [hostId, activeInstances]);
+
+  const wasActiveRef = useRef<boolean>(false);
+
   const isControllerRoute = useCallback(() => {
     const controllerRoutes = ["/", "/controller", "/login", "/credits-editor"];
     return controllerRoutes.some(
@@ -44,45 +51,58 @@ const VersionCheck: React.FC = () => {
     );
   }, [location.pathname]);
 
+  const handleUpdate = useCallback(() => {
+    setIsUpdating(true);
+    // Reload after a short delay
+    setTimeout(() => {
+      // Force a hard reload to bypass cache
+      window.location.href =
+        window.location.pathname + "?cacheBust=" + Date.now();
+    }, 1000);
+  }, [setIsUpdating]);
+
   // Fetch changelog for the new version (with caching)
-  const fetchChangelog = useCallback(async (version: string) => {
-    setIsLoadingChangelog(true);
-    try {
-      // Get current version for changelog range
-      const currentVersion = getCurrentVersionFromStorage();
+  const fetchChangelog = useCallback(
+    async (version: string) => {
+      setIsLoadingChangelog(true);
+      try {
+        // Get current version for changelog range
+        const currentVersion = getBuildTimeVersion();
 
-      // Check cache first (use both versions for cache key)
-      const cacheKey = currentVersion
-        ? `${currentVersion}-${version}`
-        : version;
-      const cachedChangelog = getCachedChangelog(cacheKey);
-      if (cachedChangelog) {
-        setChangelog(cachedChangelog);
+        // Check cache first (use both versions for cache key)
+        const cacheKey = currentVersion
+          ? `${currentVersion}-${version}`
+          : version;
+        const cachedChangelog = getCachedChangelog(cacheKey);
+        if (cachedChangelog) {
+          setChangelog(cachedChangelog);
+          setIsLoadingChangelog(false);
+          return;
+        }
+
+        // Fetch from server if not cached
+        const changelogContent = await getChangelogForVersion(
+          version,
+          currentVersion || undefined
+        );
+        setChangelog(changelogContent);
+
+        // Cache the result
+        if (changelogContent) {
+          cacheChangelog(cacheKey, changelogContent);
+        }
+      } catch (error) {
+        console.error("Error fetching changelog:", error);
+        setChangelog(null);
+      } finally {
         setIsLoadingChangelog(false);
-        return;
       }
+    },
+    [setChangelog, setIsLoadingChangelog]
+  );
 
-      // Fetch from server if not cached
-      const changelogContent = await getChangelogForVersion(
-        version,
-        currentVersion || undefined
-      );
-      setChangelog(changelogContent);
-
-      // Cache the result
-      if (changelogContent) {
-        cacheChangelog(cacheKey, changelogContent);
-      }
-    } catch (error) {
-      console.error("Error fetching changelog:", error);
-      setChangelog(null);
-    } finally {
-      setIsLoadingChangelog(false);
-    }
-  }, []);
-
-  // Fallback function to check version directly (when service worker is not available)
-  const checkVersionDirectly = useCallback(async () => {
+  // Check version directly from the server
+  const checkVersion = useCallback(async () => {
     try {
       const baseUrl = window.location.origin;
       const apiPath = baseUrl.includes("localhost")
@@ -95,10 +115,10 @@ const VersionCheck: React.FC = () => {
 
       if (response.ok) {
         const { version } = await response.json();
-        const currentVersion = getCurrentVersionFromStorage();
+        const currentVersion = getBuildTimeVersion();
 
         if (currentVersion && isNewerVersion(version, currentVersion)) {
-          const update: VersionUpdate = {
+          const update = {
             newVersion: version,
             currentVersion: currentVersion,
             timestamp: Date.now(),
@@ -107,140 +127,61 @@ const VersionCheck: React.FC = () => {
 
           if (isControllerRoute()) {
             if (!isVersionUpdateDismissed(version)) {
-              setShowUpdate(true);
+              setShowUpdateModal(true);
               fetchChangelog(version);
             }
           } else {
-            setIsUpdating(true);
-            // Update the stored version since the user is effectively updating via auto-refresh
-            setCurrentVersionInStorage(version);
-            autoRefreshTimeoutRef.current = setTimeout(() => {
-              window.location.reload();
-            }, 1000);
+            handleUpdate();
           }
         }
       }
     } catch (error) {
-      console.error("VersionCheck: Error in direct version check:", error);
+      console.error("VersionCheck: Error checking version:", error);
     }
-  }, [fetchChangelog, isControllerRoute]);
+  }, [
+    fetchChangelog,
+    isControllerRoute,
+    setVersionUpdate,
+    setShowUpdateModal,
+    handleUpdate,
+  ]);
 
+  // Set up periodic version checking
   useEffect(() => {
-    // Check if service worker is supported
-    if (!("serviceWorker" in navigator)) {
-      checkVersionDirectly();
-      return;
-    }
+    // Initial version check
+    checkVersion();
 
-    // Combined message listener for all service worker messages
-    const handleServiceWorkerMessage = (event: MessageEvent) => {
-      // Validate message source
-      if (!isValidMessageSource(event)) {
-        console.warn("Ignoring message from unexpected source:", event.origin);
-        return;
-      }
-
-      // Handle VERSION_UPDATE messages
-      if (event.data && event.data.type === "VERSION_UPDATE") {
-        const update: VersionUpdate = {
-          newVersion: event.data.version,
-          currentVersion: event.data.currentVersion,
-          timestamp: Date.now(),
-        };
-        setVersionUpdate(update);
-
-        // If user is in controller route, show modal; otherwise auto-refresh
-        if (isControllerRoute()) {
-          // Check if this version update was recently dismissed
-          if (!isVersionUpdateDismissed(event.data.version)) {
-            setShowUpdate(true);
-            // Fetch changelog for the new version
-            fetchChangelog(event.data.version);
-          }
-        } else {
-          // Auto-refresh for non-controller routes
-          setIsUpdating(true);
-          // Update the stored version since the user is effectively updating via auto-refresh
-          setCurrentVersionInStorage(event.data.version);
-          autoRefreshTimeoutRef.current = setTimeout(() => {
-            window.location.reload();
-          }, 1000);
-        }
-      }
-
-      // Handle GET_CURRENT_VERSION requests from service worker
-      if (event.data && event.data.type === "GET_CURRENT_VERSION") {
-        const currentVersion = getCurrentVersionFromStorage();
-        // Send the current version back to the service worker
-        if (navigator.serviceWorker.controller) {
-          navigator.serviceWorker.controller.postMessage({
-            type: "CURRENT_VERSION_RESPONSE",
-            version: currentVersion,
-          });
-        }
-      }
+    const startPeriodicCheck = () => {
+      versionCheckTimeoutRef.current = setTimeout(() => {
+        checkVersion();
+        startPeriodicCheck(); // Schedule next check
+      }, 6 * 60 * 60 * 1000); // 6 hours
     };
 
-    navigator.serviceWorker.addEventListener(
-      "message",
-      handleServiceWorkerMessage
-    );
+    startPeriodicCheck();
 
-    // Wait for service worker to be ready before triggering version check
-    navigator.serviceWorker.ready
-      .then((registration) => {
-        // Trigger an initial version check when service worker is ready
-        if (navigator.serviceWorker.controller) {
-          navigator.serviceWorker.controller.postMessage({
-            type: "CHECK_VERSION",
-          });
-        } else {
-          // Fallback: try to check version directly if service worker is not available
-          checkVersionDirectly();
-        }
-      })
-      .catch((error) => {
-        console.error("VersionCheck: Error waiting for service worker:", error);
-        // Fallback: try to check version directly if service worker fails
-        checkVersionDirectly();
-      });
-
-    // Cleanup function to clear timeouts and remove event listeners
+    // Cleanup function to clear timeouts
     return () => {
-      // Clear any pending timeouts
-      if (autoRefreshTimeoutRef.current) {
-        clearTimeout(autoRefreshTimeoutRef.current);
-        autoRefreshTimeoutRef.current = null;
-      }
-
-      // Only remove event listener if service worker is supported
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.removeEventListener(
-          "message",
-          handleServiceWorkerMessage
-        );
+      if (versionCheckTimeoutRef.current) {
+        clearTimeout(versionCheckTimeoutRef.current);
+        versionCheckTimeoutRef.current = null;
       }
     };
-  }, [isControllerRoute, fetchChangelog, checkVersionDirectly]);
+  }, [checkVersion]);
 
-  const handleUpdate = () => {
-    setIsUpdating(true);
-    // Update the stored version
-    if (versionUpdate) {
-      setCurrentVersionInStorage(versionUpdate.newVersion);
+  // Monitor active instances to detect when user becomes active
+  useEffect(() => {
+    // If user was not active before but is now active, trigger version check
+    if (!wasActiveRef.current && isUserActive) {
+      checkVersion();
     }
-    // Trigger service worker to skip waiting and reload
-    if ("serviceWorker" in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({ type: "SKIP_WAITING" });
-    }
-    // Fallback: reload after a short delay
-    autoRefreshTimeoutRef.current = setTimeout(() => {
-      window.location.reload();
-    }, 1000);
-  };
+
+    // Update the was active state
+    wasActiveRef.current = isUserActive;
+  }, [isUserActive, checkVersion]);
 
   const handleDismiss = () => {
-    setShowUpdate(false);
+    setShowUpdateModal(false);
     setChangelog(null);
     // Mark this version as dismissed
     if (versionUpdate) {
@@ -250,7 +191,7 @@ const VersionCheck: React.FC = () => {
   };
 
   const handleRemindLater = () => {
-    setShowUpdate(false);
+    setShowUpdateModal(false);
     setChangelog(null);
     // Mark this version as dismissed (will show again after 6 hours)
     if (versionUpdate) {
@@ -266,7 +207,7 @@ const VersionCheck: React.FC = () => {
 
   return (
     <Modal
-      isOpen={showUpdate && !!versionUpdate}
+      isOpen={showUpdateModal}
       onClose={handleDismiss}
       title="Update Available"
       size="md"
@@ -277,7 +218,7 @@ const VersionCheck: React.FC = () => {
           A new version ({versionUpdate?.newVersion}) is available!
         </p>
         <p className="text-gray-400 text-sm mb-4">
-          Current version: {versionUpdate?.currentVersion}
+          Current version: {getBuildTimeVersion()}
         </p>
 
         <div className="border-t border-gray-600 pt-4">

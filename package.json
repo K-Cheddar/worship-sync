@@ -9,7 +9,7 @@
     "server": "npx nodemon server.js",
     "dev": "concurrently --kill-others-on-fail \"npm run server\" \"npm run client\"",
     "prepare": "husky",
-    "release": "semantic-release"
+    "release": "semantic-release && node scripts/updateClientVersion.js"
   },
   "engines": {
     "node": "20.x"
