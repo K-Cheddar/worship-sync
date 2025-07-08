@@ -24,32 +24,54 @@ try {
     fs.mkdirSync(clientSrcPath, { recursive: true });
   }
 
-  // Create the version.json file in the client src directory
+  // Path to version.json in client src directory
   const versionOutputPath = path.join(__dirname, "../client/src/version.json");
   const versionData = { version: rootPackage.version };
 
-  fs.writeFileSync(versionOutputPath, JSON.stringify(versionData, null, 2));
+  // Check if version.json exists and if the version matches
+  let shouldUpdate = true;
+  if (fs.existsSync(versionOutputPath)) {
+    try {
+      const currentVersionData = JSON.parse(
+        fs.readFileSync(versionOutputPath, "utf8")
+      );
+      if (currentVersionData.version === rootPackage.version) {
+        shouldUpdate = false;
+        console.log(
+          `ℹ️  client/src/version.json is already up to date (version: ${rootPackage.version})`
+        );
+      }
+    } catch (readErr) {
+      // If reading/parsing fails, proceed to update
+      shouldUpdate = true;
+    }
+  }
 
-  console.log(
-    `✅ Updated client version.json with version: ${rootPackage.version}`
-  );
-
-  // Commit the changes to version.json
-  try {
-    execSync("git add client/src/version.json", { stdio: "inherit" });
-    execSync(
-      `git commit -m "chore: update client version.json to ${rootPackage.version}"`,
-      { stdio: "inherit" }
-    );
-    console.log("✅ Committed version.json changes to git");
-  } catch (gitError) {
-    console.warn(
-      "⚠️  Warning: Could not commit version.json changes:",
-      gitError.message
-    );
+  if (shouldUpdate) {
+    fs.writeFileSync(versionOutputPath, JSON.stringify(versionData, null, 2));
     console.log(
-      "   The file was updated but not committed. You may need to commit manually."
+      `✅ Updated client version.json with version: ${rootPackage.version}`
     );
+
+    // Commit the changes to version.json
+    try {
+      execSync("git add client/src/version.json", { stdio: "inherit" });
+      execSync(
+        `git commit -m "chore: update client version.json to ${rootPackage.version}"`,
+        { stdio: "inherit" }
+      );
+      console.log("✅ Committed version.json changes to git");
+      execSync("git push", { stdio: "inherit" });
+      console.log("✅ Pushed version.json changes to remote");
+    } catch (gitError) {
+      console.warn(
+        "⚠️  Warning: Could not commit version.json changes:",
+        gitError.message
+      );
+      console.log(
+        "   The file was updated but not committed. You may need to commit manually."
+      );
+    }
   }
 } catch (error) {
   console.error("❌ Error updating client version:", error);

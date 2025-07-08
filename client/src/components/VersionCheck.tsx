@@ -127,7 +127,6 @@ const VersionCheck: React.FC = () => {
 
           if (isControllerRoute()) {
             if (!isVersionUpdateDismissed(version)) {
-              setShowUpdateModal(true);
               fetchChangelog(version);
             }
           } else {
@@ -138,13 +137,7 @@ const VersionCheck: React.FC = () => {
     } catch (error) {
       console.error("VersionCheck: Error checking version:", error);
     }
-  }, [
-    fetchChangelog,
-    isControllerRoute,
-    setVersionUpdate,
-    setShowUpdateModal,
-    handleUpdate,
-  ]);
+  }, [fetchChangelog, isControllerRoute, setVersionUpdate, handleUpdate]);
 
   // Set up periodic version checking
   useEffect(() => {
