@@ -1,3 +1,12 @@
+## [1.8.1](https://github.com/K-Cheddar/worship-sync/compare/v1.8.0...v1.8.1) (2025-07-08)
+
+
+### Bug Fixes
+
+* added delete confirmation for outlines ([34179d9](https://github.com/K-Cheddar/worship-sync/commit/34179d9e20a1a3e1bf66cae50c04e369f4f7bd39))
+* Improve overflow calculations ([c2d386a](https://github.com/K-Cheddar/worship-sync/commit/c2d386adc93ae8a2bcf22a34ac9e52c33c0d872a))
+* improve update functionality ([ffaf850](https://github.com/K-Cheddar/worship-sync/commit/ffaf850ac3cead9b13fe5f7d1378493d101cec32))
+
 # [1.8.0](https://github.com/K-Cheddar/worship-sync/compare/v1.7.2...v1.8.0) (2025-07-05)
 
 
