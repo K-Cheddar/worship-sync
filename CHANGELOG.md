@@ -1,3 +1,10 @@
+## [1.8.3](https://github.com/K-Cheddar/worship-sync/compare/v1.8.2...v1.8.3) (2025-07-08)
+
+
+### Bug Fixes
+
+* Improve update mechanism ([4adae7a](https://github.com/K-Cheddar/worship-sync/commit/4adae7a1d0a5fabfe6836fcdd9c8bd6017188ba7))
+
 ## [1.8.2](https://github.com/K-Cheddar/worship-sync/compare/v1.8.1...v1.8.2) (2025-07-08)
 
 
