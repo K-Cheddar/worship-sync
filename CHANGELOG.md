@@ -1,3 +1,46 @@
+# [1.8.0](https://github.com/K-Cheddar/worship-sync/compare/v1.7.2...v1.8.0) (2025-07-05)
+
+
+### Features
+
+* Add ability to change the schedule name for credits ([ba569c1](https://github.com/K-Cheddar/worship-sync/commit/ba569c1e326c434aee7ea6fbae461a5f4ff9f4ae))
+
+## [1.7.2](https://github.com/K-Cheddar/worship-sync/compare/v1.7.1...v1.7.2) (2025-07-04)
+
+
+### Bug Fixes
+
+* app stability improvement ([f6ffb8c](https://github.com/K-Cheddar/worship-sync/commit/f6ffb8c3cd9a959adbc8650056f457473a64f437))
+
+## [1.7.1](https://github.com/K-Cheddar/worship-sync/compare/v1.7.0...v1.7.1) (2025-07-04)
+
+
+### Bug Fixes
+
+* update version checking ([f74eee2](https://github.com/K-Cheddar/worship-sync/commit/f74eee265b8cfe3a34a032a0db7e30822f3e9968))
+
+# [1.7.0](https://github.com/K-Cheddar/worship-sync/compare/v1.6.0...v1.7.0) (2025-07-04)
+
+
+### Bug Fixes
+
+* Corrected slide editor width on mobile ([cb2e618](https://github.com/K-Cheddar/worship-sync/commit/cb2e618bb64234f163c2757b22da5e222276be9b))
+* Outline on slides is now green if clicking it will send ([a23ca61](https://github.com/K-Cheddar/worship-sync/commit/a23ca612671ba2f8c33e9f3deea433ebcd0b6c80))
+
+
+### Features
+
+* Improved image/title visibility in outline ([f36f721](https://github.com/K-Cheddar/worship-sync/commit/f36f721c9998a5c5cd87003b735b1400d9663925))
+* **Timers:** New timers default to only send to monitor ([30b8ade](https://github.com/K-Cheddar/worship-sync/commit/30b8ade526be6e80eef69036c4ce5ddf7e708cf4))
+* **Timers:** Show countdown in outline ([3d5a9d8](https://github.com/K-Cheddar/worship-sync/commit/3d5a9d8d42b3bad3c1f0480fd4c05c6f7d5f0658))
+
+# [1.6.0](https://github.com/K-Cheddar/worship-sync/compare/v1.5.0...v1.6.0) (2025-07-02)
+
+
+### Features
+
+* Added version checking and changelog ([5e3c823](https://github.com/K-Cheddar/worship-sync/commit/5e3c823abaaef441e57988ac1155d0da928ba274))
+
 # [1.5.0](https://github.com/K-Cheddar/worship-sync/compare/v1.4.0...v1.5.0) (2025-07-01)
 
 
