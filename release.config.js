@@ -8,12 +8,21 @@ export default {
       "@semantic-release/npm",
       {
         npmPublish: false,
+        pkgRoot: ".",
       },
     ],
     [
+      "@semantic-release/npm",
+      {
+        npmPublish: false,
+        pkgRoot: "client",
+      },
+    ],
+
+    [
       "@semantic-release/git",
       {
-        assets: ["package.json", "CHANGELOG.md"],
+        assets: ["package.json", "client/package.json", "CHANGELOG.md"],
         message: "chore(release): ${nextRelease.version} [skip ci]",
       },
     ],

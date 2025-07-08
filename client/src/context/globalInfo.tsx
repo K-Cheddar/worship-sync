@@ -18,7 +18,7 @@ import {
   onDisconnect,
 } from "firebase/database";
 import PouchDB from "pouchdb";
-import { DBLogin, TimerInfo } from "../types";
+import { DBLogin, Instance, TimerInfo } from "../types";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import generateRandomId from "../utils/generateRandomId";
@@ -48,7 +48,7 @@ type GlobalInfoContextType = {
   setLoginState: (val: LoginStateType) => void;
   firebaseDb: Database | undefined;
   hostId: string;
-  activeInstances: number;
+  activeInstances: Instance[];
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
@@ -88,7 +88,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     globalHostId = id;
     return id;
   });
-  const [activeInstances, setActiveInstances] = useState(0);
+  const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const location = useLocation();
   const isOnController = useMemo(() => {
@@ -316,16 +316,14 @@ const GlobalInfoProvider = ({ children }: any) => {
           );
           set(staleRef, null);
         });
-
-        // Only count instances that are on the controller page and not stale
-        const count = Object.values(data).filter(
-          (instance: any) =>
+        const _activeInstances = Object.values(data).filter(
+          (instance: any): instance is Instance =>
             instance.isOnController &&
             now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
-        ).length;
-        setActiveInstances(count);
+        );
+        setActiveInstances(_activeInstances);
       } else {
-        setActiveInstances(0);
+        setActiveInstances([]);
       }
     });
 

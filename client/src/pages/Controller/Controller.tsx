@@ -287,7 +287,11 @@ const Controller = () => {
           ref={toolbarRef}
           className="flex border-b-2 border-gray-500 text-sm min-h-fit"
         />
-        <div className="controller-main" ref={controllerRef}>
+        <div
+          id="controller-main"
+          className="controller-main"
+          ref={controllerRef}
+        >
           <LyricsEditor />
           <Button
             className="lg:hidden mr-2 h-1/4 z-10"

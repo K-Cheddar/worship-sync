@@ -125,7 +125,7 @@ const SlideEditor = () => {
   useEffect(() => {
     Object.entries(cursorPositions).forEach(([index, position]) => {
       const textBoxElement = document.getElementById(
-        `display-box-text-${index}`
+        `display-editor-box-${index}`
       ) as HTMLTextAreaElement;
       if (textBoxElement && typeof position === "number") {
         textBoxElement.selectionEnd = position;
