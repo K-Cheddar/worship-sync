@@ -5,6 +5,7 @@ import { ReactComponent as CheckSVG } from "../../../assets/icons/check.svg";
 import { ReactComponent as CopySVG } from "../../../assets/icons/copy.svg";
 import { ItemList } from "../../../types";
 import Input from "../../../components/Input/Input";
+import DeleteModal from "../../../components/Modal/DeleteModal";
 import { useState } from "react";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
@@ -28,6 +29,7 @@ const Service = ({
 }: ServiceProps) => {
   const [name, setName] = useState<string>(list.name);
   const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
   const nameClasses =
     "text-base flex-1 mr-2 pl-2 max-w-64 max-lg:max-w-48 truncate";
 
@@ -43,61 +45,75 @@ const Service = ({
   };
 
   return (
-    <li
-      className={`p-1.5 hover:bg-gray-800 rounded-md flex gap-1 items-center ${
-        isSelected ? "bg-gray-900" : ""
-      }`}
-      {...attributes}
-      {...listeners}
-      style={style}
-      ref={setNodeRef}
-    >
-      {!isEditing && (
-        <Button
-          variant="tertiary"
-          onClick={() => selectList(list._id)}
-          className={nameClasses}
-        >
-          {list.name}
-        </Button>
-      )}
-      {isEditing && (
-        <Input
-          className={nameClasses}
-          label="Edit List Name"
-          data-ignore-undo="true"
-          hideLabel
-          value={name}
-          onChange={(val) => setName(val as string)}
-        />
-      )}
-      <Button
-        svg={isEditing ? CheckSVG : EditSVG}
-        variant="tertiary"
-        onClick={() => {
-          if (isEditing) {
-            setIsEditing(false);
-            updateList({ ...list, name });
-          } else {
-            setIsEditing(true);
-          }
+    <>
+      <DeleteModal
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        onConfirm={() => {
+          deleteList && deleteList(list._id);
+          setShowDeleteModal(false);
         }}
+        itemName={list.name}
+        title="Delete Outline"
+        message="Are you sure you want to delete the outline"
+        warningMessage="This action is permanent and cannot be undone."
       />
-      {copyList && (
+      <li
+        className={`p-1.5 hover:bg-gray-800 rounded-md flex gap-1 items-center ${
+          isSelected ? "bg-gray-900" : ""
+        }`}
+        {...attributes}
+        {...listeners}
+        style={style}
+        ref={setNodeRef}
+      >
+        {!isEditing && (
+          <Button
+            variant="tertiary"
+            onClick={() => selectList(list._id)}
+            className={nameClasses}
+          >
+            {list.name}
+          </Button>
+        )}
+        {isEditing && (
+          <Input
+            className={nameClasses}
+            label="Edit List Name"
+            data-ignore-undo="true"
+            hideLabel
+            value={name}
+            onChange={(val) => setName(val as string)}
+          />
+        )}
         <Button
-          svg={CopySVG}
+          svg={isEditing ? CheckSVG : EditSVG}
           variant="tertiary"
-          onClick={() => copyList(list)}
+          onClick={() => {
+            if (isEditing) {
+              setIsEditing(false);
+              updateList({ ...list, name });
+            } else {
+              setIsEditing(true);
+            }
+          }}
         />
-      )}
-      <Button
-        variant="tertiary"
-        color={deleteList ? "red" : "gray"}
-        disabled={!deleteList}
-        svg={DeleteSVG}
-        onClick={() => deleteList && deleteList(list._id)}
-      />
-    </li>
+        {copyList && (
+          <Button
+            svg={CopySVG}
+            variant="tertiary"
+            onClick={() => copyList(list)}
+          />
+        )}
+        <Button
+          variant="tertiary"
+          color={deleteList ? "red" : "gray"}
+          disabled={!deleteList}
+          svg={DeleteSVG}
+          onClick={() => setShowDeleteModal(true)}
+        />
+      </li>
+    </>
   );
 };
 

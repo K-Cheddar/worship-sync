@@ -6,6 +6,7 @@ import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 
 import Button from "../Button/Button";
 import Input from "../Input/Input";
+import DeleteModal from "../Modal/DeleteModal";
 import "./FilteredItems.scss";
 import {
   addItemToItemList,
@@ -236,34 +237,12 @@ const FilteredItems = ({
 
   return (
     <div className="px-2 py-4 h-full flex flex-col items-center">
-      {itemToBeDeleted && (
-        <div className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center z-10">
-          <div className="bg-gray-700 rounded px-8 py-4">
-            <p className="text-xl">
-              Are you sure you want to delete{" "}
-              <span className="font-semibold">{itemToBeDeleted.name}</span>?
-            </p>
-            <p className="text-lg text-amber-400">
-              This action is permanent and will clear your undo history.
-            </p>
-            <div className="flex gap-6 w-full mt-4">
-              <Button
-                className="flex-1 justify-center"
-                onClick={() => setItemToBeDeleted(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                className="flex-1 justify-center"
-                variant="cta"
-                onClick={() => deleteItem(itemToBeDeleted)}
-              >
-                Delete Forever
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DeleteModal
+        isOpen={!!itemToBeDeleted}
+        onClose={() => setItemToBeDeleted(null)}
+        onConfirm={() => itemToBeDeleted && deleteItem(itemToBeDeleted)}
+        itemName={itemToBeDeleted?.name}
+      />
       <h2 className="text-2xl text-center mb-2 max-2xl:w-full 2xl:w-2/3">
         {heading}
       </h2>

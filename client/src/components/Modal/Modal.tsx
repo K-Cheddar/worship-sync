@@ -1,7 +1,9 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import Button from "../Button/Button";
 import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import "./Modal.scss";
+import cn from "classnames";
 
 interface ModalProps {
   isOpen: boolean;
@@ -10,6 +12,7 @@ interface ModalProps {
   children: React.ReactNode;
   size?: "sm" | "md" | "lg" | "xl";
   showCloseButton?: boolean;
+  contentPadding?: string;
 }
 
 const sizeClasses = {
@@ -26,6 +29,7 @@ const Modal = ({
   children,
   size = "md",
   showCloseButton = true,
+  contentPadding = "p-4",
 }: ModalProps) => {
   const modalRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
@@ -69,7 +73,19 @@ const Modal = ({
     }
   }, [isOpen]);
 
-  return (
+  // Find the controller element to use as portal target
+  const getControllerElement = () => {
+    // Look for the controller main element by ID
+    const controllerMain = document.getElementById("controller-main");
+    if (controllerMain) {
+      return controllerMain;
+    }
+
+    // Fallback to body if controller is not found
+    return document.body;
+  };
+
+  const modalContent = (
     <div
       className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${
         isOpen ? "block" : "hidden"
@@ -108,10 +124,13 @@ const Modal = ({
           </div>
         )}
 
-        <div className="modal-content">{children}</div>
+        <div className={cn("modal-content", contentPadding)}>{children}</div>
       </div>
     </div>
   );
+
+  // Use portal to render modal into controller element
+  return createPortal(modalContent, getControllerElement());
 };
 
 export default Modal;
