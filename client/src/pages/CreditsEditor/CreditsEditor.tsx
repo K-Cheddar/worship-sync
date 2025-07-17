@@ -210,8 +210,17 @@ const CreditsEditor = () => {
           )?.name || "",
       };
 
+      // Dynamically determine the fallback schedule name as '3rd Quarter 2025 - Schedule' (or similar)
+      const now = new Date();
+      const year = now.getFullYear();
+      const quarter = Math.floor(now.getMonth() / 3) + 1;
+      const quarterNames = ["1st", "2nd", "3rd", "4th"];
+      const fallbackScheduleName = `${
+        quarterNames[quarter - 1]
+      } Quarter ${year} - Schedule`;
+
       const schedule = await getScheduleFromExcel(
-        `${scheduleName}.xlsx`,
+        `${scheduleName || fallbackScheduleName}.xlsx`,
         "/Media Team Positions.xlsx"
       );
 
