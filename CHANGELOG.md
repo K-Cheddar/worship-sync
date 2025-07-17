@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/K-Cheddar/worship-sync/compare/v1.8.3...v1.9.0) (2025-07-17)
+
+
+### Features
+
+* **Credits:** Generate from next available schedule instead of only Saturdays ([907f78d](https://github.com/K-Cheddar/worship-sync/commit/907f78d475470a77ac9f61ea488af98549c88c81))
+
 ## [1.8.3](https://github.com/K-Cheddar/worship-sync/compare/v1.8.2...v1.8.3) (2025-07-08)
 
 
