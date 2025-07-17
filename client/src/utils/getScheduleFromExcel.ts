@@ -17,7 +17,7 @@ const getScheduleFromExcel = async (
   const data = await response.json();
   const members = await membersResponse.json();
 
-  const schedule = getNextSaturdaySchedule(data);
+  const schedule = getClosestUpcomingSchedule(data);
   const transformedSchedule = await transformSchedule(schedule, members);
 
   return transformedSchedule;
@@ -25,32 +25,58 @@ const getScheduleFromExcel = async (
 
 export default getScheduleFromExcel;
 
-const getNextSaturdaySchedule = (data: any) => {
-  // Get current date
+const getClosestUpcomingSchedule = (data: any) => {
+  // Get current date (set time to 0:00 for comparison)
   const today = new Date();
-
-  // Find next Saturday
-  const nextSaturday = new Date(today);
-  const daysUntilSaturday = (6 - today.getDay() + 7) % 7;
-  nextSaturday.setDate(today.getDate() + daysUntilSaturday);
-
-  // Format date as MM/DD/YY
-  const formattedDate = `${
-    nextSaturday.getMonth() + 1
-  }/${nextSaturday.getDate()}/${nextSaturday
-    .getFullYear()
-    .toString()
-    .slice(-2)}`;
-
-  // Find the row with the matching date
-  const scheduleRow = data.find((row: any) => row[0] === formattedDate);
-
-  if (!scheduleRow) {
-    return null;
-  }
+  today.setHours(0, 0, 0, 0);
 
   // Get the headers (first row)
   const headers = data[0];
+
+  // Find the first row with a date >= today
+  let closestRow: any = null;
+  let closestDate: Date | null = null;
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const dateStr = row[0];
+    // Skip if dateStr is not a valid date in MM/DD/YY or MM/DD/YYYY format
+    if (typeof dateStr !== "string") continue;
+    const dateParts = dateStr.split("/");
+    if (dateParts.length !== 3) continue;
+    const [month, day, year] = dateParts;
+    if (
+      isNaN(Number(month)) ||
+      isNaN(Number(day)) ||
+      isNaN(Number(year)) ||
+      Number(month) < 1 ||
+      Number(month) > 12 ||
+      Number(day) < 1 ||
+      Number(day) > 31 ||
+      (year.length !== 2 && year.length !== 4)
+    ) {
+      continue;
+    }
+    // Parse date in MM/DD/YY or MM/DD/YYYY format
+    const fullYear = year.length === 2 ? parseInt(year) + 2000 : parseInt(year);
+    const rowDate = new Date(fullYear, parseInt(month) - 1, parseInt(day));
+    rowDate.setHours(0, 0, 0, 0);
+    if (rowDate >= today) {
+      if (!closestDate || rowDate < closestDate) {
+        closestDate = rowDate;
+        closestRow = row;
+      }
+    }
+  }
+
+  if (!closestRow || !closestDate) {
+    return null;
+  }
+
+  // Format date as MM/DD/YY
+  const formattedDate = `${
+    closestDate.getMonth() + 1
+  }/${closestDate.getDate()}/${closestDate.getFullYear().toString().slice(-2)}`;
 
   // Create schedule object
   const schedule = {
@@ -61,8 +87,8 @@ const getNextSaturdaySchedule = (data: any) => {
   // Map positions to people
   for (let i = 1; i < headers.length; i++) {
     const header = headers[i];
-    if (header && scheduleRow[i]) {
-      schedule.positions[header] = scheduleRow[i] as string;
+    if (header && closestRow[i]) {
+      schedule.positions[header] = closestRow[i] as string;
     }
   }
 
