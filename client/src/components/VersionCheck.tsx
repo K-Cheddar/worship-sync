@@ -60,14 +60,16 @@ const VersionCheck: React.FC = () => {
         });
         // Wait a bit for unregister, then reload
         setTimeout(() => {
-          window.location.href =
-            window.location.pathname + "?cacheBust=" + Date.now();
+          window.location.replace(
+            window.location.href.split("?")[0] + "?cacheBust=" + Date.now()
+          );
         }, 1000);
       });
     } else {
       setTimeout(() => {
-        window.location.href =
-          window.location.pathname + "?cacheBust=" + Date.now();
+        window.location.replace(
+          window.location.href.split("?")[0] + "?cacheBust=" + Date.now()
+        );
       }, 1000);
     }
   }, [setIsUpdating]);
