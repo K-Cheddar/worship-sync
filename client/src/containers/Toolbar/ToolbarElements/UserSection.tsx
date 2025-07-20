@@ -78,7 +78,7 @@ const UserSection = () => {
           }
         }}
         position="fixed"
-        className="lg:top-2 max-lg:bottom-2 right-2 flex flex-row-reverse items-center"
+        className="lg:top-2 max-lg:bottom-2 lg:right-2 max-lg:left-2 flex flex-row-reverse items-center"
         childrenClassName="px-4 py-2 flex gap-2 items-center"
         closeButtonClassName=""
       >
