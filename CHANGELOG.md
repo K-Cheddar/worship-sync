@@ -1,3 +1,10 @@
+## [1.9.1](https://github.com/K-Cheddar/worship-sync/compare/v1.9.0...v1.9.1) (2025-07-20)
+
+
+### Bug Fixes
+
+* Correct reload for version updates ([8429c23](https://github.com/K-Cheddar/worship-sync/commit/8429c2346d634ed058a69341285700b50fe15c85))
+
 # [1.9.0](https://github.com/K-Cheddar/worship-sync/compare/v1.8.3...v1.9.0) (2025-07-17)
 
 
