@@ -1,3 +1,11 @@
+## [1.9.2](https://github.com/K-Cheddar/worship-sync/compare/v1.9.1...v1.9.2) (2025-07-25)
+
+
+### Bug Fixes
+
+* **Bible:** Add to outline button now always visible on mobile ([39b3826](https://github.com/K-Cheddar/worship-sync/commit/39b38268aef469dfe909a9a49b9690ede0b5bbfb))
+* **Toolbar:** Improve button visibility ([0278425](https://github.com/K-Cheddar/worship-sync/commit/027842526cfe53f00e8577ecb5639740071cee01))
+
 ## [1.9.1](https://github.com/K-Cheddar/worship-sync/compare/v1.9.0...v1.9.1) (2025-07-20)
 
 
