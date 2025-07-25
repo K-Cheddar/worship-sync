@@ -48,6 +48,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { sortNamesInList } from "../../utils/sort";
 import {
   deleteUnusedBibleItems,
+  // formatAllDocs,
   // formatAllItems,
   // formatAllSongs,
   updateAllDocs,

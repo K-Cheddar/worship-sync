@@ -121,7 +121,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
             <Outlines className={cn(section !== "settings" && "hidden")} />
             <Button
               className={cn(section !== "settings" && "hidden")}
-              variant="none"
+              variant="tertiary"
               svg={SettingsSVG}
             >
               <Link className="h-full w-full" to="/controller/preferences">
