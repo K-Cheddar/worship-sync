@@ -125,7 +125,7 @@ const Services = ({ className }: { className: string }) => {
             <Button
               svg={ListSVG}
               iconSize="lg"
-              variant="tertiary"
+              variant="primary"
               className="max-lg:max-w-40 lg:max-w-64"
               truncate
             >

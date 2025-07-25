@@ -101,7 +101,7 @@ export const updateAllDocs = async (dispatch: Function) => {
   }
 };
 
-export const formatAllItems = async (
+export const formatAllDocs = async (
   db: PouchDB.Database,
   cloud: Cloudinary
 ) => {
@@ -181,5 +181,29 @@ export const formatAllSongs = async (
     }
   } catch (error) {
     console.error("Failed to format all songs", error);
+  }
+};
+
+export const formatAllItems = async (
+  db: PouchDB.Database,
+  cloud: Cloudinary
+) => {
+  if (!db) return;
+  try {
+    const allItems: DBAllItems | undefined = await db.get("allItems");
+    const formattedItems = allItems?.items.map((item) => {
+      const updatedBackground =
+        item.background?.includes("http") || !item.background
+          ? item.background
+          : `https://res.cloudinary.com/portable-media/image/upload/v1/${item.background}`;
+      return {
+        ...item,
+        background: updatedBackground,
+      };
+    });
+    await db.put({ ...allItems, items: formattedItems });
+    console.log("formattedItems", formattedItems);
+  } catch (error) {
+    console.error("Failed to format all items", error);
   }
 };
