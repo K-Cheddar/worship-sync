@@ -33,3 +33,9 @@
 
   max-height: calc(100% - var(--bible-version-selector-height));
 }
+
+.bible-verses-display-section {
+  @apply flex-1 flex flex-col gap-2 items-center mt-2 pb-4;
+
+  height: calc(100% - var(--bible-version-selector-height));
+}

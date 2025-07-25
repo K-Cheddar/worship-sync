@@ -307,7 +307,7 @@ const Bible = () => {
 
   const versesDisplaySection = books && chapters && verses && (
     <div
-      className="flex-1 flex flex-col gap-2 items-center h-full mt-2 justify-between pb-4"
+      className="bible-verses-display-section"
       data-has-title={!!createItemName}
     >
       {createItemName && (
@@ -334,7 +334,7 @@ const Bible = () => {
       <Button
         variant="cta"
         padding="px-4 py-1"
-        className="ml-auto"
+        className="ml-auto mt-auto mb-2"
         onClick={submitVerses}
         disabled={(bibleType === "external" && !hasExternalVerses) || justAdded}
         color={justAdded ? "#67e8f9" : undefined}
