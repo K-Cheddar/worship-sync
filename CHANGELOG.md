@@ -1,3 +1,10 @@
+## [1.9.4](https://github.com/K-Cheddar/worship-sync/compare/v1.9.3...v1.9.4) (2025-07-26)
+
+
+### Bug Fixes
+
+* **Credits:** Use time when generating credits from schedule ([327c43c](https://github.com/K-Cheddar/worship-sync/commit/327c43cb98d5cf2e41b85118b02772fb3aa9c5a8))
+
 ## [1.9.3](https://github.com/K-Cheddar/worship-sync/compare/v1.9.2...v1.9.3) (2025-07-26)
 
 
