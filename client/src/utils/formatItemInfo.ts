@@ -48,6 +48,7 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
               return {
                 ...box,
                 id: generateRandomId(),
+                excludeFromOverflow: index === 0 ? true : false, // TODO - check if there is a better way to do this
                 background: index === 1 ? "" : boxBackground,
                 brightness: index !== 0 ? 100 : box.brightness,
                 width: box.width || 100,

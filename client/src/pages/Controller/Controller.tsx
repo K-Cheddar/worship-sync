@@ -48,9 +48,9 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { sortNamesInList } from "../../utils/sort";
 import {
   deleteUnusedBibleItems,
+  // formatAllSongs,
   // formatAllDocs,
   // formatAllItems,
-  // formatAllSongs,
   updateAllDocs,
 } from "../../utils/dbUtils";
 import Timers from "../../containers/Timers/Timers";
@@ -134,7 +134,7 @@ const Controller = () => {
   // Leaving this in case we need to reformat all songs in the db
   // useEffect(() => {
   //   if (!db || !cloud) return;
-  //   formatAllItems(db, cloud);
+  //   formatAllSongs(db, cloud);
   // }, [db, cloud]);
 
   useEffect(() => {
