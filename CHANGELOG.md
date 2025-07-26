@@ -1,3 +1,10 @@
+## [1.9.3](https://github.com/K-Cheddar/worship-sync/compare/v1.9.2...v1.9.3) (2025-07-26)
+
+
+### Bug Fixes
+
+* **Schedule:** Get next schedule after current day ([19b477f](https://github.com/K-Cheddar/worship-sync/commit/19b477f92280b18a378221cc03ccf589aef2e396))
+
 ## [1.9.2](https://github.com/K-Cheddar/worship-sync/compare/v1.9.1...v1.9.2) (2025-07-25)
 
 
