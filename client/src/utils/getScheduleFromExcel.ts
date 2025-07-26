@@ -39,6 +39,8 @@ const getClosestUpcomingSchedule = (data: any) => {
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     const dateStr = row[0];
+    const timeStr = row[13]; // 14th column (0-indexed)
+
     // Skip if dateStr is not a valid date in MM/DD/YY or MM/DD/YYYY format
     if (typeof dateStr !== "string") continue;
     const dateParts = dateStr.split("/");
@@ -56,10 +58,69 @@ const getClosestUpcomingSchedule = (data: any) => {
     ) {
       continue;
     }
+
     // Parse date in MM/DD/YY or MM/DD/YYYY format
     const fullYear = year.length === 2 ? parseInt(year) + 2000 : parseInt(year);
     const rowDate = new Date(fullYear, parseInt(month) - 1, parseInt(day));
-    rowDate.setHours(0, 0, 0, 0);
+
+    // Parse time if available (column 13) - format: "10:00:00 AM"
+    if (timeStr && typeof timeStr === "string") {
+      // Handle format like "10:00:00 AM" or "2:30:45 PM"
+      const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$/i);
+      if (timeMatch) {
+        let hours = parseInt(timeMatch[1]);
+        const minutes = parseInt(timeMatch[2]);
+        const seconds = parseInt(timeMatch[3]);
+        const period = timeMatch[4].toUpperCase();
+
+        // Convert 12-hour format to 24-hour format
+        if (period === "PM" && hours !== 12) {
+          hours += 12;
+        } else if (period === "AM" && hours === 12) {
+          hours = 0;
+        }
+
+        if (
+          !isNaN(hours) &&
+          !isNaN(minutes) &&
+          !isNaN(seconds) &&
+          hours >= 0 &&
+          hours <= 23 &&
+          minutes >= 0 &&
+          minutes <= 59 &&
+          seconds >= 0 &&
+          seconds <= 59
+        ) {
+          rowDate.setHours(hours, minutes, seconds, 0);
+        } else {
+          rowDate.setHours(0, 0, 0, 0);
+        }
+      } else {
+        // Fallback to simple HH:MM format if AM/PM format doesn't match
+        const timeParts = timeStr.split(":");
+        if (timeParts.length >= 2) {
+          const hours = parseInt(timeParts[0]);
+          const minutes = parseInt(timeParts[1]);
+          if (
+            !isNaN(hours) &&
+            !isNaN(minutes) &&
+            hours >= 0 &&
+            hours <= 23 &&
+            minutes >= 0 &&
+            minutes <= 59
+          ) {
+            rowDate.setHours(hours, minutes, 0, 0);
+          } else {
+            rowDate.setHours(0, 0, 0, 0);
+          }
+        } else {
+          rowDate.setHours(0, 0, 0, 0);
+        }
+      }
+    } else {
+      rowDate.setHours(0, 0, 0, 0);
+    }
+
     if (rowDate >= today) {
       if (!closestDate || rowDate < closestDate) {
         closestDate = rowDate;
