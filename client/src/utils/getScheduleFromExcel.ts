@@ -26,9 +26,8 @@ const getScheduleFromExcel = async (
 export default getScheduleFromExcel;
 
 const getClosestUpcomingSchedule = (data: any) => {
-  // Get current date (set time to 0:00 for comparison)
+  // Get current date
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
 
   // Get the headers (first row)
   const headers = data[0];
