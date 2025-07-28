@@ -23,7 +23,7 @@
 }
 
 .toolbar-middle {
-  @apply w-full flex h-[3.75rem] min-h-fit flex-col overflow-x-auto;
+  @apply flex-1 flex min-h-fit flex-col min-w-0;
 
   scrollbar-width: var(--scrollbar-width);
 }
