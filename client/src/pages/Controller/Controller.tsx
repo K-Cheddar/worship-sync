@@ -60,6 +60,7 @@ import {
   initiateQuickLinks,
   setIsLoading,
 } from "../../store/preferencesSlice";
+import { setIsEditMode } from "../../store/itemSlice";
 
 // Here for future to implement resizable
 
@@ -108,10 +109,16 @@ const Controller = () => {
   const { user } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
-    if (location.pathname === "/controller") {
+    if (
+      location.pathname === "/controller" ||
+      location.pathname === "/controller/"
+    ) {
       setIsLeftPanelOpen(true);
     }
-  }, [location.pathname]);
+    if (!location.pathname.includes("/controller/item")) {
+      dispatch(setIsEditMode(false));
+    }
+  }, [location.pathname, dispatch]);
 
   useEffect(() => {
     // delete unused bible items

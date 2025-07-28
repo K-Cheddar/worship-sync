@@ -72,8 +72,8 @@ export const itemSlice = createSlice({
         stream: true,
       };
     },
-    toggleEditMode: (state) => {
-      state.isEditMode = !state.isEditMode;
+    setIsEditMode: (state, action: PayloadAction<boolean>) => {
+      state.isEditMode = action.payload;
     },
     _setName: (state, action: PayloadAction<string>) => {
       state.name = action.payload;
@@ -375,7 +375,7 @@ export const updateBibleInfo = createAsyncThunk(
 export const {
   setSelectedSlide,
   _setSelectedArrangement,
-  toggleEditMode,
+  setIsEditMode,
   _setName,
   _updateArrangements,
   setActiveItem,
