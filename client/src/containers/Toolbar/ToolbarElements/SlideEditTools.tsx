@@ -37,6 +37,7 @@ import RadioButton from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
 import { formatFree } from "../../../utils/overflow";
 import { GlobalInfoContext } from "../../../context/globalInfo";
+import { ControllerInfoContext } from "../../../context/controllerInfo";
 
 const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
@@ -53,6 +54,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const [isItalic, setIsItalic] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout>();
   const { hostId } = useContext(GlobalInfoContext) || {};
+  const { isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const item = useSelector((state) => state.undoable.present.item);
   const { slides, selectedSlide, selectedBox, timerInfo, type } = item;
@@ -103,6 +105,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         updatedProperties: { fontSize: fSize },
         item,
         shouldFormatItem: true,
+        isMobile,
       });
       updateItem(updatedItem);
     }, 250);
@@ -116,6 +119,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       item,
       shouldUpdateBgOnly: true,
       shouldApplyToAll: true,
+      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -126,6 +130,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       updatedProperties: { shouldKeepAspectRatio: val },
       item,
       shouldUpdateBgOnly: true,
+      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -148,6 +153,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         updatedProperties: { fontColor: val },
         item,
         shouldApplyToAll: true,
+        isMobile,
       });
       updateItem(updatedItem);
     }, 250);
@@ -180,6 +186,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       item,
       shouldFormatItem: true,
       shouldApplyToAll: true,
+      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -191,6 +198,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       item,
       shouldFormatItem: true,
       shouldApplyToAll: true,
+      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -202,6 +210,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       item,
       shouldApplyToAll: true,
       shouldFormatItem: true,
+      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -216,7 +225,11 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   }, []);
 
   const _updateBibleFontMode = (mode: BibleFontMode) => {
-    const updatedItem = updateBibleFontMode({ fontMode: mode, item });
+    const updatedItem = updateBibleFontMode({
+      fontMode: mode,
+      item,
+      isMobile,
+    });
     updateItem(updatedItem);
   };
 
@@ -329,12 +342,15 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               label="Fit"
               value={slide.overflow === "fit"}
               onChange={() => {
-                const updatedItem = formatFree({
-                  ...item,
-                  slides: slides.map((s, index) =>
-                    index === selectedSlide ? { ...s, overflow: "fit" } : s
-                  ),
-                });
+                const updatedItem = formatFree(
+                  {
+                    ...item,
+                    slides: slides.map((s, index) =>
+                      index === selectedSlide ? { ...s, overflow: "fit" } : s
+                    ),
+                  },
+                  isMobile || false
+                );
                 updateItem(updatedItem);
               }}
             />
@@ -343,12 +359,17 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               label="Separate"
               value={slide.overflow === "separate"}
               onChange={() => {
-                const updatedItem = formatFree({
-                  ...item,
-                  slides: slides.map((s, index) =>
-                    index === selectedSlide ? { ...s, overflow: "separate" } : s
-                  ),
-                });
+                const updatedItem = formatFree(
+                  {
+                    ...item,
+                    slides: slides.map((s, index) =>
+                      index === selectedSlide
+                        ? { ...s, overflow: "separate" }
+                        : s
+                    ),
+                  },
+                  isMobile || false
+                );
                 updateItem(updatedItem);
               }}
             />
@@ -407,7 +428,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
-      <BoxEditor updateItem={updateItem} />
+      <BoxEditor updateItem={updateItem} isMobile={isMobile} />
       {canChangeAspectRatio && (
         <Toggle
           label="Keep Aspect Ratio"

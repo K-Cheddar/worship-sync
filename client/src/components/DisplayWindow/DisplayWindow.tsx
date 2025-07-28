@@ -95,7 +95,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const containerRef = ref || fallbackRef;
 
     const aspectRatio = 16 / 9;
-    const fontAdjustment = width === 42 ? 1 : 42.35 / width; // Display editor is 42vw but sometimes the display gets clipped on other windows
+    const fontAdjustment = 43 / width; // Display editor is 42vw but sometimes the display gets clipped on other windows
 
     const showBackground =
       displayType === "projector" ||

@@ -106,6 +106,7 @@ const LyricBoxes = ({
             className="h-[30vh]"
             data-ignore-undo="true"
             value={words}
+            autoResize={isMobile}
             onChange={(val) => {
               const copiedFormattedLyrics = [...formattedLyrics];
               const lyric = { ...copiedFormattedLyrics[index] };

@@ -29,7 +29,7 @@ import { useDispatch, useSelector } from "../../hooks";
 import {
   setSelectedBox,
   setSelectedSlide,
-  toggleEditMode,
+  setIsEditMode,
   updateArrangements,
   updateSlides,
 } from "../../store/itemSlice";
@@ -78,7 +78,7 @@ const SlideEditor = () => {
 
   const slideInfoRef = useRef(null);
 
-  const { db, isMobile } = useContext(ControllerInfoContext) || {};
+  const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const [editorHeight, setEditorHeight] = useState(
     isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
@@ -190,14 +190,18 @@ const SlideEditor = () => {
       const _item = formatBible({
         item: updatedItem,
         mode: item.bibleInfo?.fontMode || "separate",
+        isMobile,
       });
       dispatch(updateSlides({ slides: _item.slides }));
     }
 
     if (type === "free") {
-      const _item = formatFree({
-        ...updatedItem,
-      });
+      const _item = formatFree(
+        {
+          ...updatedItem,
+        },
+        isMobile
+      );
       dispatch(updateSlides({ slides: _item.slides }));
     }
 
@@ -277,11 +281,14 @@ const SlideEditor = () => {
             }
           );
 
-          const _item = formatSong({
-            ...item,
-            arrangements: updatedArrangements,
-            selectedArrangement,
-          });
+          const _item = formatSong(
+            {
+              ...item,
+              arrangements: updatedArrangements,
+              selectedArrangement,
+            },
+            isMobile
+          );
 
           dispatch(updateArrangements({ arrangements: _item.arrangements }));
         }
@@ -364,7 +371,7 @@ const SlideEditor = () => {
           <Button
             className="text-sm"
             disabled={isLoading}
-            onClick={() => dispatch(toggleEditMode())}
+            onClick={() => dispatch(setIsEditMode(true))}
             svg={EditTextSVG}
           >
             {isMobile ? "" : "Edit Lyrics"}
