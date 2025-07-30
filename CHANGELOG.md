@@ -1,3 +1,12 @@
+## [1.9.5](https://github.com/K-Cheddar/worship-sync/compare/v1.9.4...v1.9.5) (2025-07-30)
+
+
+### Bug Fixes
+
+* Hide lyrics editor when navigating away ([e736985](https://github.com/K-Cheddar/worship-sync/commit/e736985ac39cdacf9adfe45921f1a75e641165bc))
+* Improved UI responsiveness and readability ([03e77e4](https://github.com/K-Cheddar/worship-sync/commit/03e77e4dfa5c3180cd17553e506a543e32a4b08f))
+* **Overflow:** Improve overflow on mobile ([d5b10a2](https://github.com/K-Cheddar/worship-sync/commit/d5b10a2eb62ff8d79d94e343c61f5bb903deb73b))
+
 ## [1.9.4](https://github.com/K-Cheddar/worship-sync/compare/v1.9.3...v1.9.4) (2025-07-26)
 
 
