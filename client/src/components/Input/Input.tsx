@@ -1,8 +1,7 @@
-import { FunctionComponent, HTMLProps, SVGProps } from "react";
+import { FunctionComponent, HTMLProps, SVGProps, useId } from "react";
 import cn from "classnames";
 import "./Input.scss";
 import Button from "../Button/Button";
-import generateRandomId from "../../utils/generateRandomId";
 
 type InputProps = HTMLProps<HTMLInputElement> & {
   className?: string;
@@ -44,7 +43,9 @@ const Input = ({
   inputWidth = "w-full",
   ...rest
 }: InputProps) => {
-  const inputId = id || generateRandomId();
+  const generatedId = useId();
+  const inputId = id || generatedId;
+
   return (
     <div
       className={cn(

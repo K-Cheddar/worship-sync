@@ -27,19 +27,21 @@ export default getScheduleFromExcel;
 
 const getClosestUpcomingSchedule = (data: any) => {
   // Get current date
-  const today = new Date();
+  const now = new Date();
 
   // Get the headers (first row)
   const headers = data[0];
 
-  // Find the first row with a date >= today
+  // Find the first row with a date >= now
   let closestRow: any = null;
   let closestDate: Date | null = null;
 
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     const dateStr = row[0];
-    const timeStr = row[13]; // 14th column (0-indexed)
+    const timeStr = row[12];
+    // const durationStr = row[13]; // TODO Factor in duration
+    // const durationInMinutes = durationStr ? parseInt(durationStr) : 0;
 
     // Skip if dateStr is not a valid date in MM/DD/YY or MM/DD/YYYY format
     if (typeof dateStr !== "string") continue;
@@ -59,11 +61,10 @@ const getClosestUpcomingSchedule = (data: any) => {
       continue;
     }
 
-    // Parse date in MM/DD/YY or MM/DD/YYYY format
     const fullYear = year.length === 2 ? parseInt(year) + 2000 : parseInt(year);
     const rowDate = new Date(fullYear, parseInt(month) - 1, parseInt(day));
 
-    // Parse time if available (column 13) - format: "10:00:00 AM"
+    // Parse time if available format: "10:00:00 AM"
     if (timeStr && typeof timeStr === "string") {
       // Handle format like "10:00:00 AM" or "2:30:45 PM"
       const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$/i);
@@ -121,7 +122,7 @@ const getClosestUpcomingSchedule = (data: any) => {
       rowDate.setHours(0, 0, 0, 0);
     }
 
-    if (rowDate >= today) {
+    if (rowDate >= now) {
       if (!closestDate || rowDate < closestDate) {
         closestDate = rowDate;
         closestRow = row;

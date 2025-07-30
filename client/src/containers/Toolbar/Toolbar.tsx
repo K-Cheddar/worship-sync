@@ -61,12 +61,12 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
 
     return (
       <div ref={ref} className={className}>
-        <div className="px-2 py-1 flex gap-1 flex-1 border-r-2 border-gray-500 items-center">
+        <div className="px-2 py-1 flex gap-1 border-r-2 border-gray-500 items-center">
           <Menu isPhone={isPhone} isEditMode={isEditMode} />
           {!isEditMode && !isPhone && <Undo />}
         </div>
-        <div className="toolbar-middle">
-          <div className="flex gap-1">
+        <div className={cn("toolbar-middle", isEditMode && "invisible")}>
+          <div className="flex gap-1 overflow-x-auto w-full">
             <ToolbarButton
               svg={SettingsSVG}
               onClick={() => setSection("settings")}
@@ -114,7 +114,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
           <hr className="border-gray-500 w-full border-t-2 sticky left-0" />
           <div
             className={cn(
-              "px-2 py-1 flex gap-1 items-center flex-1",
+              "px-2 py-1 flex gap-1 items-center flex-1 overflow-x-auto w-full",
               isEditMode && "hidden"
             )}
           >
@@ -145,7 +145,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
             />
           </div>
         </div>
-        <div className="px-2 py-1 flex gap-1 items-center flex-1 border-l-2 border-gray-500">
+        <div className="px-2 py-1 flex gap-1 items-center border-l-2 border-gray-500">
           <UserSection />
         </div>
       </div>

@@ -3,7 +3,11 @@ import { SongOrder, ItemState, DBItem } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatSong } from "./overflow";
 
-export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
+export const formatItemInfo = (
+  item: DBItem,
+  cloud: Cloudinary,
+  isMobile: boolean
+) => {
   const _item: ItemState = {
     name: item.name,
     type: item.type,
@@ -103,7 +107,7 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
   _item.arrangements = updatedArrangements || [];
   _item.slides = slides || [];
   if (item.type === "song") {
-    return formatSong(_item);
+    return formatSong(_item, isMobile);
   }
 
   return _item;

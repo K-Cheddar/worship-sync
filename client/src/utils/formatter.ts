@@ -24,6 +24,7 @@ type UpdateBoxPropertiesType = {
   shouldApplyToAll?: boolean;
   shouldFormatItem?: boolean;
   shouldUpdateBgOnly?: boolean;
+  isMobile: boolean;
 };
 export const updateBoxProperties = ({
   updatedProperties,
@@ -31,6 +32,7 @@ export const updateBoxProperties = ({
   shouldApplyToAll = false,
   shouldFormatItem = false,
   shouldUpdateBgOnly = false,
+  isMobile,
 }: UpdateBoxPropertiesType): ItemState => {
   let { selectedSlide, selectedBox } = item;
   let _item = { ...item };
@@ -65,12 +67,16 @@ export const updateBoxProperties = ({
     _item = formatBible({
       item: _item,
       mode: item.bibleInfo?.fontMode || "separate",
+      isMobile,
     });
 
   if (item.type === "free" && shouldFormatItem) {
-    _item = formatFree({
-      ..._item,
-    });
+    _item = formatFree(
+      {
+        ..._item,
+      },
+      isMobile
+    );
   }
 
   if (item.type === "song") {
@@ -82,7 +88,7 @@ export const updateBoxProperties = ({
       }),
     };
     if (shouldFormatItem) {
-      _item = formatSong(_item);
+      _item = formatSong(_item, isMobile);
     }
   }
 
@@ -112,15 +118,18 @@ export const updateItemTimerColor = ({
 type UpdateBibleFontModeType = {
   fontMode: BibleFontMode;
   item: ItemState;
+  isMobile: boolean;
 };
 
 export const updateBibleFontMode = ({
   fontMode,
   item,
+  isMobile,
 }: UpdateBibleFontModeType): ItemState => {
   const updatedItem = formatBible({
     item,
     mode: fontMode,
+    isMobile,
   });
   return updatedItem;
 };

@@ -2,12 +2,10 @@ import { useSelector, useDispatch } from "../../hooks";
 import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
 import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
-import { ReactComponent as ClosePaneltSVG } from "../../assets/icons/left-panel-close.svg";
-import { ReactComponent as OpenPanelSVG } from "../../assets/icons/left-panel-open.svg";
 
 import Button from "../../components/Button/Button";
 import { useContext, useEffect, useMemo, useState } from "react";
-import { toggleEditMode, updateArrangements } from "../../store/itemSlice";
+import { setIsEditMode, updateArrangements } from "../../store/itemSlice";
 
 import {
   increaseFormattedLyrics,
@@ -27,6 +25,7 @@ import { formatSong } from "../../utils/overflow";
 import { createSections as createSectionsUtil } from "../../utils/itemUtil";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { RootState } from "../../store/store";
+import { ButtonGroup, ButtonGroupItem } from "../../components/Button";
 
 const LyricsEditor = () => {
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -50,7 +49,7 @@ const LyricsEditor = () => {
     [localArrangements, localSelectedArrangement]
   );
 
-  const { isMobile } = useContext(ControllerInfoContext) || {};
+  const { isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const [showLeftSection, setShowLeftSection] = useState(!isMobile);
 
@@ -146,11 +145,11 @@ const LyricsEditor = () => {
 
   const onClose = () => {
     setLocalArrangements(arrangements);
-    dispatch(toggleEditMode());
+    dispatch(setIsEditMode(false));
   };
 
   const save = () => {
-    dispatch(toggleEditMode());
+    dispatch(setIsEditMode(false));
     const _arrangements = [...localArrangements];
 
     _arrangements[localSelectedArrangement] = {
@@ -158,11 +157,14 @@ const LyricsEditor = () => {
       formattedLyrics: [...localFormattedLyrics],
     };
 
-    const _item = formatSong({
-      ...item,
-      arrangements: _arrangements,
-      selectedArrangement: localSelectedArrangement,
-    });
+    const _item = formatSong(
+      {
+        ...item,
+        arrangements: _arrangements,
+        selectedArrangement: localSelectedArrangement,
+      },
+      isMobile
+    );
 
     dispatch(
       updateArrangements({
@@ -187,7 +189,7 @@ const LyricsEditor = () => {
 
   return (
     <div className="lyrics-editor">
-      <div className="flex bg-gray-900 px-2 h-8">
+      <div className="flex bg-gray-900 px-2 h-fit items-center">
         <Button
           variant="tertiary"
           className="max-lg:hidden"
@@ -200,15 +202,24 @@ const LyricsEditor = () => {
           svg={ZoomInSVG}
           onClick={() => dispatch(decreaseFormattedLyrics())}
         />
-        <Button
-          className="mx-auto text-sm"
-          svg={showLeftSection ? ClosePaneltSVG : OpenPanelSVG}
-          onClick={() => setShowLeftSection(!showLeftSection)}
-        >
-          {showLeftSection ? "Hide" : "Show"} Arrangments / New Lyrics
-        </Button>
+        <p className="mx-auto font-semibold text-lg">{item.name}</p>
         <Button variant="tertiary" svg={CloseSVG} onClick={() => onClose()} />
       </div>
+      <ButtonGroup className="lg:hidden my-2 mx-4">
+        <ButtonGroupItem
+          isActive={showLeftSection}
+          onClick={() => setShowLeftSection(true)}
+        >
+          Show Arrangements
+        </ButtonGroupItem>
+        <ButtonGroupItem
+          isActive={!showLeftSection}
+          onClick={() => setShowLeftSection(false)}
+        >
+          Show Song Order
+        </ButtonGroupItem>
+      </ButtonGroup>
+
       <div className="lyrics-editor-middle">
         {showLeftSection && (
           <div className="pl-4 pt-4 w-44 flex flex-col">

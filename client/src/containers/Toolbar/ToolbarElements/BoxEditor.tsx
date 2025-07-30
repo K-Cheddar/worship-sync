@@ -21,8 +21,10 @@ import { updateBoxProperties } from "../../../utils/formatter";
 
 const BoxEditor = ({
   updateItem,
+  isMobile,
 }: {
   updateItem: (item: ItemState) => void;
+  isMobile: boolean;
 }) => {
   const item = useSelector((state) => state.undoable.present.item);
   const { selectedSlide, selectedBox, slides } = item;
@@ -59,6 +61,7 @@ const BoxEditor = ({
       item,
       shouldFormatItem: true,
       shouldApplyToAll: shouldApplyToAll,
+      isMobile,
     });
     updateItem(updatedItem);
   };

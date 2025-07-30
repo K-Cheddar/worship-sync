@@ -95,7 +95,7 @@ const CreateItem = () => {
   const [justAdded, setJustAdded] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
 
-  const { db } = useContext(ControllerInfoContext) || {};
+  const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const naviagte = useNavigate();
   const dispatch = useDispatch();
@@ -144,6 +144,7 @@ const CreateItem = () => {
         db,
         background: defaultSongBackground,
         brightness: defaultSongBackgroundBrightness,
+        isMobile,
       });
 
       dispatchNewItem(newItem);
@@ -157,6 +158,7 @@ const CreateItem = () => {
         background: defaultFreeFormBackground,
         brightness: defaultFreeFormBackgroundBrightness,
         text,
+        isMobile,
       });
 
       dispatchNewItem(newItem);

@@ -11,7 +11,7 @@ import Select from "../../components/Select/Select";
 import "./Bible.scss";
 import BibleSection from "./BibleSection";
 import { bibleType, bookType, chapterType, verseType } from "../../types";
-import Button from "../../components/Button/Button";
+import { Button, ButtonGroup, ButtonGroupItem } from "../../components/Button";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   setBook,
@@ -103,7 +103,11 @@ const Bible = () => {
 
   const createItemName = decodeURI(searchParams.get("name") || "");
 
-  const { db, bibleDb, isMobile } = useContext(ControllerInfoContext) || {};
+  const {
+    db,
+    bibleDb,
+    isMobile = false,
+  } = useContext(ControllerInfoContext) || {};
 
   const bibleItemName = useMemo(() => {
     const bookName = books[book]?.name || "";
@@ -235,6 +239,7 @@ const Bible = () => {
       list,
       background: defaultBibleBackground,
       brightness: defaultBibleBackgroundBrightness,
+      isMobile,
     });
 
     const itemForList = {
@@ -274,6 +279,7 @@ const Bible = () => {
       verses: [verse],
       background: defaultBibleBackground,
       brightness: defaultBibleBackgroundBrightness,
+      isMobile,
     });
 
     const slides = item.slides || [];
@@ -375,22 +381,20 @@ const Bible = () => {
             ? "Got chapter from Bible Gateway!"
             : "Get chapter from Bible Gateway"}
         </Button>
-        <div className="flex w-full lg:hidden border border-gray-400 my-4 rounded-l-md rounded-r-md">
-          <Button
+        <ButtonGroup className="w-full lg:hidden my-4">
+          <ButtonGroupItem
             onClick={() => setShowVersesDisplaySection(false)}
-            className="justify-center rounded-r-none flex-1"
-            variant={!showVersesDisplaySection ? "secondary" : "tertiary"}
+            isActive={!showVersesDisplaySection}
           >
             Verse Selector
-          </Button>
-          <Button
+          </ButtonGroupItem>
+          <ButtonGroupItem
             onClick={() => setShowVersesDisplaySection(true)}
-            className="justify-center rounded-l-none flex-1"
-            variant={showVersesDisplaySection ? "secondary" : "tertiary"}
+            isActive={showVersesDisplaySection}
           >
             Selected Verses
-          </Button>
-        </div>
+          </ButtonGroupItem>
+        </ButtonGroup>
       </div>
       {!books.length && (
         <div className="text-2xl w-full text-center semi-bold mt-10">
