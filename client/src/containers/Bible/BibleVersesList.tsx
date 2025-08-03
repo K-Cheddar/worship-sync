@@ -14,8 +14,9 @@ type BibleVersesListProps = {
   verses: verseType[];
   startVerse: number;
   endVerse: number;
-  sendVerse: (verse: verseType) => void;
+  sendVerse: (verse: verseType) => Promise<void>;
   canTransmit: boolean;
+  isSendLoading: boolean;
 };
 
 const BibleVersesList = ({
@@ -27,6 +28,7 @@ const BibleVersesList = ({
   endVerse,
   canTransmit,
   sendVerse,
+  isSendLoading,
 }: BibleVersesListProps) => {
   const [selectedVerse, setSelectedVerse] = useState<number>(-1);
 
@@ -49,31 +51,31 @@ const BibleVersesList = ({
     }
   }, [selectedVerse, startVerse]);
 
-  const advanceVerse = () => {
+  const advanceVerse = async () => {
     const nextVerseIndex = Math.min(selectedVerse + 1, endVerse);
     if (nextVerseIndex === selectedVerse) return;
     setSelectedVerse(nextVerseIndex);
     const nextVerse = verses[nextVerseIndex + startVerse];
     if (nextVerse) {
-      sendVerse(nextVerse);
+      await sendVerse(nextVerse);
     }
   };
 
-  const previousVerse = () => {
+  const previousVerse = async () => {
     const prevVerseIndex = Math.max(selectedVerse - 1, 0);
     if (prevVerseIndex === selectedVerse) return;
     setSelectedVerse(prevVerseIndex);
     const prevVerse = verses[prevVerseIndex + startVerse];
     if (prevVerse) {
-      sendVerse(prevVerse);
+      await sendVerse(prevVerse);
     }
   };
   return (
     <ul
       id="bible-verses-list"
       className={`bible-verses-list ${isLoading ? "opacity-60" : ""}`}
-      onKeyDown={(e) =>
-        handleKeyDownTraverse({
+      onKeyDown={async (e) =>
+        await handleKeyDownTraverse({
           event: e,
           advance: advanceVerse,
           previous: previousVerse,
@@ -112,11 +114,12 @@ const BibleVersesList = ({
                 variant="tertiary"
                 className="text-sm"
                 svg={SendSVG}
-                onClick={() => {
+                onClick={async () => {
                   setSelectedVerse(index);
-                  sendVerse(verse);
+                  await sendVerse(verse);
                 }}
-                disabled={!canTransmit}
+                disabled={!canTransmit || isSendLoading}
+                isLoading={isSendLoading}
               >
                 Send
               </Button>

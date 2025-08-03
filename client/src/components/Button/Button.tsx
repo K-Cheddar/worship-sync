@@ -76,7 +76,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <button
         className={cn(
-          `font-semibold rounded-md flex items-center max-w-full disabled:opacity-65 disabled:pointer-events-none ${gap}`,
+          `font-semibold rounded-md flex items-center max-w-full disabled:opacity-65 disabled:pointer-events-none relative ${gap}`,
           _padding,
           !isSelected && variant,
           wrap
@@ -94,7 +94,11 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         {svg && iconPosition === "right" && iconWProps}
         {image && <img src={image} alt={image} />}
         {isLoading && (
-          <Spinner className="absolute" width="24px" borderWidth="3px" />
+          <Spinner
+            className="absolute top-0 bottom-0 left-0 right-0 m-auto"
+            width="24px"
+            borderWidth="3px"
+          />
         )}
       </button>
     );

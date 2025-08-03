@@ -166,6 +166,7 @@ const Bible = () => {
   }, [bibleDb, version]);
 
   const getVersesFromGateway = async () => {
+    let versesToReturn: verseType[] | null = null;
     setIsLoadingChapter(true);
     try {
       setIsLoading(true);
@@ -181,12 +182,14 @@ const Bible = () => {
         dispatch(setVerses(data.verses));
         setJustGotChapter(true);
         setShowVersesDisplaySection(true);
+        versesToReturn = data.verses;
       }
     } catch (error) {
       setIsLoading(false);
       console.error(error);
     }
     setIsLoadingChapter(false);
+    return versesToReturn;
   };
 
   useEffect(() => {
@@ -226,15 +229,27 @@ const Bible = () => {
   });
 
   const submitVerses = async () => {
+    let versesToUse = verses.filter(
+      ({ index }) => index >= startVerse && index <= endVerse
+    );
+
+    // If bible type is internal and we don't have external verses, fetch from Bible Gateway
+    if (bibleType === "internal" && !hasExternalVerses && !justGotChapter) {
+      const gatewayVerses = await getVersesFromGateway();
+      if (gatewayVerses) {
+        versesToUse = gatewayVerses.filter(
+          ({ index }) => index >= startVerse && index <= endVerse
+        );
+      }
+    }
+
     const item = await createNewBible({
       fontMode: defaultBibleFontMode,
       name: createItemName || bibleItemName,
       book: books[book].name,
       chapter: chapters[chapter].name,
       version,
-      verses: verses.filter(
-        ({ index }) => index >= startVerse && index <= endVerse
-      ),
+      verses: versesToUse,
       db,
       list,
       background: defaultBibleBackground,
@@ -259,11 +274,26 @@ const Bible = () => {
     setTimeout(() => setJustAdded(false), 2000);
   };
 
-  const sendVerse = (verse: verseType) => {
+  const sendVerse = async (verse: verseType) => {
+    let verseToUse = verse;
+
+    // If bible type is internal and we don't have external verses, fetch from Bible Gateway
+    if (bibleType === "internal" && !hasExternalVerses && !justGotChapter) {
+      const gatewayVerses = await getVersesFromGateway();
+      if (gatewayVerses) {
+        const externalVerse = gatewayVerses.find(
+          (v) => v.index === verse.index
+        );
+        if (externalVerse) {
+          verseToUse = externalVerse;
+        }
+      }
+    }
+
     const bookName = books[book]?.name || "";
     const chapterName = chapters[chapter]?.name || "";
     const sendItemName = `${bookName} ${chapterName}:${
-      verse.name
+      verseToUse.name
     } ${version.toUpperCase()}`;
     const _item = createItemFromProps({
       name: sendItemName,
@@ -276,7 +306,7 @@ const Bible = () => {
       book: books[book].name,
       chapter: chapters[chapter].name,
       version,
-      verses: [verse],
+      verses: [verseToUse],
       background: defaultBibleBackground,
       brightness: defaultBibleBackgroundBrightness,
       isMobile,
@@ -336,13 +366,27 @@ const Bible = () => {
           isProjectorTransmitting ||
           isStreamTransmitting
         }
+        isSendLoading={isLoadingChapter}
       />
       <Button
         variant="cta"
         padding="px-4 py-1"
         className="ml-auto mt-auto mb-2"
         onClick={submitVerses}
-        disabled={(bibleType === "external" && !hasExternalVerses) || justAdded}
+        isLoading={
+          bibleType === "internal" &&
+          !hasExternalVerses &&
+          !justGotChapter &&
+          isLoadingChapter
+        }
+        disabled={
+          (bibleType === "external" && !hasExternalVerses) ||
+          justAdded ||
+          (bibleType === "internal" &&
+            !hasExternalVerses &&
+            !justGotChapter &&
+            isLoadingChapter)
+        }
         color={justAdded ? "#67e8f9" : undefined}
         svg={justAdded ? CheckSVG : AddSVG}
       >
@@ -369,18 +413,20 @@ const Bible = () => {
           hideLabel
           options={versionOptions}
         />
-        <Button
-          className="lg:h-fit max-lg:flex-1 max-lg:justify-center"
-          onClick={getVersesFromGateway}
-          isLoading={isLoadingChapter}
-          disabled={isLoadingChapter || justGotChapter}
-          color={justGotChapter ? "#84cc16" : "#22d3ee"}
-          svg={justGotChapter ? CheckSVG : DownloadSVG}
-        >
-          {justGotChapter
-            ? "Got chapter from Bible Gateway!"
-            : "Get chapter from Bible Gateway"}
-        </Button>
+        {bibleType === "external" && (
+          <Button
+            className="lg:h-fit max-lg:flex-1 max-lg:justify-center"
+            onClick={getVersesFromGateway}
+            isLoading={isLoadingChapter}
+            disabled={isLoadingChapter || justGotChapter}
+            color={justGotChapter ? "#84cc16" : "#22d3ee"}
+            svg={justGotChapter ? CheckSVG : DownloadSVG}
+          >
+            {justGotChapter
+              ? "Got chapter from Bible Gateway!"
+              : "Get chapter from Bible Gateway"}
+          </Button>
+        )}
         <ButtonGroup className="w-full lg:hidden my-4">
           <ButtonGroupItem
             onClick={() => setShowVersesDisplaySection(false)}
