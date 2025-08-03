@@ -1,7 +1,7 @@
 @tailwind components;
 
 .button-group {
-  @apply inline-flex gap-0 border border-gray-400 rounded-md;
+  @apply gap-0 border border-gray-400 rounded-md;
 
   .button-group-item {
     @apply justify-center flex-1;
