@@ -39,14 +39,15 @@ export const getMaxLines = ({
     const fontSizeVw = `${adjustedFontSize}vw`;
     const windowWidth = window.innerWidth;
     const verticalMargin = _topMargin ? (_topMargin * 2) / 100 : 0.06;
-    const containerHeight = windowWidth * 0.23625;
-    const marginCalc = windowWidth * 0.42 * verticalMargin;
-    const containerHeightPx = containerHeight * (height / 100) - marginCalc;
+    const containerHeight = isMobile
+      ? windowWidth * 0.45
+      : windowWidth * 0.23625;
+    const containerWidth = isMobile ? windowWidth * 0.8 : windowWidth * 0.42;
 
     const editorOuterContainer = document.getElementById(`display-editor`);
 
     const editorOuterContainerWidth =
-      editorOuterContainer?.getBoundingClientRect().width || windowWidth * 0.42;
+      editorOuterContainer?.getBoundingClientRect().width || containerWidth;
 
     const editorOuterContainerHeight =
       editorOuterContainer?.getBoundingClientRect().height || containerHeight;
@@ -86,28 +87,7 @@ export const getMaxLines = ({
     document.body.removeChild(measureSpan);
 
     const lineHeight = Math.max(singleLineHeight, multiLineHeight / 5);
-    const maxLines = Math.floor(
-      (calculatedHeight || containerHeightPx) / lineHeight
-    );
-
-    console.log("maxLines", {
-      maxLines,
-      lineHeight,
-      singleLineHeight,
-      multiLineHeight,
-      editorHeight,
-      editorOuterContainerHeight,
-      editorOuterContainerWidth,
-      editorOuterContainer,
-      calculatedHeight,
-      containerHeightPx,
-      fontSize,
-      adjustedFontSize,
-      height,
-      verticalMargin,
-      marginCalc,
-      containerHeight,
-    });
+    const maxLines = Math.floor(calculatedHeight / lineHeight);
 
     return {
       maxLines: Math.max(1, maxLines),
@@ -150,14 +130,11 @@ export const getNumLines = ({
     const fontSizeVw = `${adjustedFontSize}vw`;
     const windowWidth = window.innerWidth;
     const sideMargin = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.92;
-    const containerWidth = Math.floor(
-      (((width || 95) * sideMargin) / 100) * windowWidth * 0.42
-    );
-
+    const containerWidth = isMobile ? windowWidth * 0.8 : windowWidth * 0.42;
     const editorOuterContainer = document.getElementById(`display-editor`);
 
     const editorOuterContainerWidth =
-      editorOuterContainer?.getBoundingClientRect().width || windowWidth * 0.42;
+      editorOuterContainer?.getBoundingClientRect().width || containerWidth;
 
     const editorWidth = editorOuterContainerWidth * (width / 100);
     const calculatedWidth = editorWidth * sideMargin;
@@ -169,7 +146,7 @@ export const getNumLines = ({
       font-family: Verdana;
       overflow-wrap: break-word;
       white-space: pre-wrap;
-      width: ${calculatedWidth || containerWidth}px;
+      width: ${calculatedWidth}px;
       position: fixed;
       line-height: ${lineHeight}px;
       font-weight: ${isBold ? "bold" : "normal"};
