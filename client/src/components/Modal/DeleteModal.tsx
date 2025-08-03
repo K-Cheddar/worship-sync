@@ -12,6 +12,7 @@ interface DeleteModalProps {
   warningMessage?: string;
   confirmText?: string;
   cancelText?: string;
+  imageUrl?: string;
 }
 
 const DeleteModal: React.FC<DeleteModalProps> = ({
@@ -24,6 +25,7 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
   warningMessage = "This action is permanent and will clear your undo history.",
   confirmText = "Delete Forever",
   cancelText = "Cancel",
+  imageUrl,
 }) => {
   return (
     <Modal
@@ -34,12 +36,20 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
       showCloseButton={false}
       contentPadding="p-4"
     >
-      <p className="text-xl mb-4">
+      {imageUrl && (
+        <div className="flex justify-center mb-4">
+          <div className="w-32 h-20 border-2 border-gray-600 rounded overflow-hidden">
+            <img
+              src={imageUrl}
+              alt={itemName || "Media preview"}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        </div>
+      )}
+      <p className="text-xl mb-4 break-words">
         {message}{" "}
-        {itemName && (
-          <span className="font-semibold inline-block">"{itemName}"</span>
-        )}
-        ?
+        {itemName && <span className="font-semibold">"{itemName}"</span>}?
       </p>
       <p className="text-lg text-amber-400 mb-6">{warningMessage}</p>
       <div className="flex gap-6 w-full">

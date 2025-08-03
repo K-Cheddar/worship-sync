@@ -1,6 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
+import DeleteModal from "../../components/Modal/DeleteModal";
 import { ReactComponent as BgAll } from "../../assets/icons/background-all.svg";
 import { ReactComponent as BGOne } from "../../assets/icons/background-one.svg";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
@@ -82,6 +83,13 @@ const Media = () => {
   }>(emptyMedia);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [mediaToDelete, setMediaToDelete] = useState<{
+    id: string;
+    name: string;
+    background: string;
+    thumbnail: string;
+  } | null>(null);
 
   // Filter media items based on search term
   const filteredList = list.filter((item) =>
@@ -159,16 +167,27 @@ const Media = () => {
     }
   };
 
-  const deleteBackground = async () => {
-    if (!db || !cloud) return;
+  const showDeleteConfirmation = () => {
+    if (!selectedMedia.id) return;
+
+    const mediaItem = list.find((item) => item.id === selectedMedia.id);
+    if (!mediaItem) return;
+
+    setMediaToDelete({
+      id: selectedMedia.id,
+      name: mediaItem.name || "this media",
+      background: mediaItem.background,
+      thumbnail: mediaItem.thumbnail,
+    });
+    setShowDeleteModal(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!db || !cloud || !mediaToDelete) return;
 
     try {
-      // Find the media item to get its background URL
-      const mediaItem = list.find((item) => item.id === selectedMedia.id);
-      if (!mediaItem) return;
-
       // Extract public_id from the background URL
-      const publicId = extractPublicId(mediaItem.background);
+      const publicId = extractPublicId(mediaToDelete.background);
 
       if (publicId) {
         // Delete from Cloudinary
@@ -181,16 +200,24 @@ const Media = () => {
       }
 
       // Remove from local list
-      const updatedList = list.filter((item) => item.id !== selectedMedia.id);
+      const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
       dispatch(updateMediaList(updatedList));
       setSelectedMedia(emptyMedia);
     } catch (error) {
       console.error("Error deleting background:", error);
       // Still remove from local list even if Cloudinary deletion fails
-      const updatedList = list.filter((item) => item.id !== selectedMedia.id);
+      const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
       dispatch(updateMediaList(updatedList));
       setSelectedMedia(emptyMedia);
+    } finally {
+      setShowDeleteModal(false);
+      setMediaToDelete(null);
     }
+  };
+
+  const handleCancelDelete = () => {
+    setShowDeleteModal(false);
+    setMediaToDelete(null);
   };
 
   const addNewBackground = ({
@@ -390,7 +417,7 @@ const Media = () => {
           variant="tertiary"
           disabled={selectedMedia.id === ""}
           svg={DeleteSVG}
-          onClick={() => deleteBackground()}
+          onClick={() => showDeleteConfirmation()}
         />
       </div>
       {!isMediaLoading && isMediaExpanded && (
@@ -500,6 +527,15 @@ const Media = () => {
           </p>
         </div>
       )}
+
+      <DeleteModal
+        isOpen={showDeleteModal}
+        onClose={handleCancelDelete}
+        onConfirm={handleConfirmDelete}
+        itemName={mediaToDelete?.name}
+        title="Delete Media"
+        imageUrl={mediaToDelete?.thumbnail}
+      />
     </>
   );
 };
