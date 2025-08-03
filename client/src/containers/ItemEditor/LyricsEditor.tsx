@@ -54,6 +54,12 @@ const LyricsEditor = () => {
   const [showLeftSection, setShowLeftSection] = useState(!isMobile);
 
   useEffect(() => {
+    if (item.type !== "song") {
+      dispatch(setIsEditMode(false));
+    }
+  }, [item.type, dispatch]);
+
+  useEffect(() => {
     setShowLeftSection(!isMobile);
   }, [isMobile]);
 
