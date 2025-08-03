@@ -26,7 +26,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
   const { list, publishedList, initialList, isLoading, selectedCreditId } =
     useSelector((state: RootState) => state.undoable.present.credits);
   const dispatch = useDispatch();
-  // const { isMobile } = useContext(ControllerInfoContext) || {};
 
   const [justAdded, setJustAdded] = useState(false);
   const [justPublished, setJustPublished] = useState(false);

@@ -27,6 +27,10 @@ import CloudinaryUploadWidget, {
 } from "./CloudinaryUploadWidget";
 import generateRandomId from "../../utils/generateRandomId";
 import {
+  deleteFromCloudinary,
+  extractPublicId,
+} from "../../utils/cloudinaryUtils";
+import {
   decreaseMediaItems,
   increaseMediaItems,
   setDefaultPreferences,
@@ -156,10 +160,37 @@ const Media = () => {
   };
 
   const deleteBackground = async () => {
-    if (!db) return;
-    const updatedList = list.filter((item) => item.id !== selectedMedia.id);
-    dispatch(updateMediaList(updatedList));
-    setSelectedMedia(emptyMedia);
+    if (!db || !cloud) return;
+
+    try {
+      // Find the media item to get its background URL
+      const mediaItem = list.find((item) => item.id === selectedMedia.id);
+      if (!mediaItem) return;
+
+      // Extract public_id from the background URL
+      const publicId = extractPublicId(mediaItem.background);
+
+      if (publicId) {
+        // Delete from Cloudinary
+        const cloudinarySuccess = await deleteFromCloudinary(cloud, publicId);
+        if (!cloudinarySuccess) {
+          console.warn(
+            "Failed to delete from Cloudinary, but continuing with local deletion"
+          );
+        }
+      }
+
+      // Remove from local list
+      const updatedList = list.filter((item) => item.id !== selectedMedia.id);
+      dispatch(updateMediaList(updatedList));
+      setSelectedMedia(emptyMedia);
+    } catch (error) {
+      console.error("Error deleting background:", error);
+      // Still remove from local list even if Cloudinary deletion fails
+      const updatedList = list.filter((item) => item.id !== selectedMedia.id);
+      dispatch(updateMediaList(updatedList));
+      setSelectedMedia(emptyMedia);
+    }
   };
 
   const addNewBackground = ({
@@ -181,8 +212,6 @@ const Media = () => {
     ];
     dispatch(updateMediaList(updatedList));
   };
-
-  console.log("list", list);
 
   return (
     <>
@@ -406,18 +435,16 @@ const Media = () => {
           {filteredList.map(({ id, thumbnail, background, type, name }) => {
             const isSelected = id === selectedMedia.id;
             return (
-              <li
-                className={`self-center border-2 flex flex-col items-center justify-center aspect-video cursor-pointer ${
-                  isSelected
-                    ? "border-cyan-400"
-                    : "border-gray-500 hover:border-gray-300"
-                }`}
-                key={id}
-              >
+              <li key={id}>
                 <Button
                   variant="none"
                   padding="p-0"
-                  className="w-full h-full justify-center"
+                  className={cn(
+                    "w-full h-full justify-center flex flex-col items-center border-2",
+                    isSelected
+                      ? "border-cyan-400"
+                      : "border-gray-500 hover:border-gray-300"
+                  )}
                   onClick={() => {
                     if (type === "video") {
                       // add mp4 extension to the url
@@ -436,20 +463,31 @@ const Media = () => {
                     }
                   }}
                 >
-                  <img
-                    className="max-w-full max-h-full"
-                    alt={id}
-                    src={thumbnail}
-                    loading="lazy"
-                  />
-                </Button>
-                {isMediaExpanded && name && (
-                  <div className="w-full px-1 py-1 text-center">
-                    <p className="text-xs text-gray-300 truncate" title={name}>
-                      {name.split("/").slice(1).join("/")}
-                    </p>
+                  <div
+                    className={cn(
+                      "aspect-video flex items-center justify-center w-full flex-1 overflow-hidden",
+                      isMediaExpanded && "border-b border-gray-500"
+                    )}
+                  >
+                    <img
+                      className="max-w-full max-h-full"
+                      alt={id}
+                      src={thumbnail}
+                      loading="lazy"
+                    />
                   </div>
-                )}
+
+                  {isMediaExpanded && name && (
+                    <div className="w-full px-1 py-1 text-center">
+                      <p
+                        className="text-xs text-gray-300 truncate"
+                        title={name}
+                      >
+                        {name.split("/").slice(1).join("/")}
+                      </p>
+                    </div>
+                  )}
+                </Button>
               </li>
             );
           })}

@@ -8,6 +8,7 @@ import qs from "qs";
 import * as XLSX from "xlsx";
 import dotenv from "dotenv";
 import packageJson from "./package.json" assert { type: "json" };
+import { v2 as cloudinary } from "cloudinary";
 
 dotenv.config();
 // Validate required environment variables
@@ -31,6 +32,13 @@ const clientId = process.env.AZURE_CLIENT_ID;
 const clientSecret = process.env.AZURE_CLIENT_SECRET;
 
 const port = process.env.PORT || 5000;
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: "portable-media",
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 app.listen(port, () => console.log(`Listening on port ${port}`));
 
@@ -330,6 +338,29 @@ app.get("/api/changelog", async (req, res) => {
   } catch (error) {
     console.error("Error reading changelog:", error);
     res.status(500).json({ error: "Failed to load changelog" });
+  }
+});
+
+app.delete("/api/cloudinary/delete", async (req, res) => {
+  try {
+    const { publicId } = req.body;
+
+    if (!publicId) {
+      return res.status(400).json({ error: "publicId is required" });
+    }
+
+    const result = await cloudinary.uploader.destroy(publicId);
+
+    if (result.result === "ok") {
+      res.json({ success: true, message: "Image deleted successfully" });
+    } else {
+      res.status(500).json({ error: "Failed to delete image", result });
+    }
+  } catch (error) {
+    console.error("Error deleting from Cloudinary:", error);
+    res
+      .status(500)
+      .json({ error: "Failed to delete image", details: error.message });
   }
 });
 
