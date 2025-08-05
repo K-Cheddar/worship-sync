@@ -4,6 +4,7 @@ import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
 import { useLocation } from "react-router-dom";
+import axios from "axios";
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
@@ -65,10 +66,10 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     const setupDb = async () => {
-      let remoteURL =
-        process.env.REACT_APP_DATABASE_STRING + "portable-media-" + database;
-      const remoteDb = new PouchDB(remoteURL);
-      const localDb = new PouchDB("portable-media");
+      const dbName = `worship-sync-${database}`;
+      const localDb = new PouchDB(dbName);
+      const remoteUrl = `${process.env.REACT_APP_API_BASE_PATH}db/${dbName}`;
+      const remoteDb = new PouchDB(remoteUrl);
 
       remoteDb.replicate
         .to(localDb, { retry: true })
@@ -117,10 +118,10 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     const setupBibleDb = async () => {
-      let remoteURL =
-        process.env.REACT_APP_DATABASE_STRING + "worship-sync-bibles";
-      const remoteDb = new PouchDB(remoteURL);
-      const localDb = new PouchDB("worship-sync-bibles");
+      const dbName = "worship-sync-bibles";
+      const localDb = new PouchDB(dbName);
+      const remoteUrl = `${process.env.REACT_APP_API_BASE_PATH}db/${dbName}`;
+      const remoteDb = new PouchDB(remoteUrl);
 
       remoteDb.replicate
         .to(localDb, { retry: true })
