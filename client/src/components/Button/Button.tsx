@@ -29,6 +29,7 @@ export type ButtonProps = Omit<React.HTMLProps<HTMLButtonElement>, "wrap"> & {
   iconSize?: "xs" | "sm" | "md" | "lg" | "xl" | number;
   type?: "button" | "submit" | "reset" | undefined;
   isLoading?: boolean;
+  position?: "relative" | "absolute";
 };
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
@@ -49,6 +50,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       type = "button",
       isLoading = false,
       image,
+      position = "relative",
       ...rest
     },
     ref
@@ -76,13 +78,14 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <button
         className={cn(
-          `font-semibold rounded-md flex items-center max-w-full disabled:opacity-65 disabled:pointer-events-none relative ${gap}`,
+          `font-semibold rounded-md flex items-center max-w-full disabled:opacity-65 disabled:pointer-events-none ${gap}`,
           _padding,
           !isSelected && variant,
           wrap
             ? "whitespace-normal text-left button-wrap"
             : "whitespace-nowrap",
           truncate && "truncate",
+          position,
           className
         )}
         type={type}

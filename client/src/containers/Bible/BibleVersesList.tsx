@@ -9,26 +9,20 @@ import {
 
 type BibleVersesListProps = {
   isLoading: boolean;
-  bibleType: "internal" | "external";
-  hasExternalVerses: boolean;
   verses: verseType[];
   startVerse: number;
   endVerse: number;
-  sendVerse: (verse: verseType) => Promise<void>;
+  sendVerse: (verse: verseType) => void;
   canTransmit: boolean;
-  isSendLoading: boolean;
 };
 
 const BibleVersesList = ({
   isLoading,
-  bibleType,
-  hasExternalVerses,
   verses,
   startVerse,
   endVerse,
   canTransmit,
   sendVerse,
-  isSendLoading,
 }: BibleVersesListProps) => {
   const [selectedVerse, setSelectedVerse] = useState<number>(-1);
 
@@ -51,82 +45,83 @@ const BibleVersesList = ({
     }
   }, [selectedVerse, startVerse]);
 
-  const advanceVerse = async () => {
+  const advanceVerse = () => {
     const nextVerseIndex = Math.min(selectedVerse + 1, endVerse);
     if (nextVerseIndex === selectedVerse) return;
     setSelectedVerse(nextVerseIndex);
     const nextVerse = verses[nextVerseIndex + startVerse];
     if (nextVerse) {
-      await sendVerse(nextVerse);
+      sendVerse(nextVerse);
     }
   };
 
-  const previousVerse = async () => {
+  const previousVerse = () => {
     const prevVerseIndex = Math.max(selectedVerse - 1, 0);
     if (prevVerseIndex === selectedVerse) return;
     setSelectedVerse(prevVerseIndex);
     const prevVerse = verses[prevVerseIndex + startVerse];
     if (prevVerse) {
-      await sendVerse(prevVerse);
+      sendVerse(prevVerse);
     }
   };
   return (
-    <ul
-      id="bible-verses-list"
-      className={`bible-verses-list ${isLoading ? "opacity-60" : ""}`}
-      onKeyDown={async (e) =>
-        await handleKeyDownTraverse({
-          event: e,
-          advance: advanceVerse,
-          previous: previousVerse,
-        })
-      }
-    >
-      {bibleType === "external" && !hasExternalVerses && (
-        <section className="flex flex-col gap-2 items-center">
-          <h3 className="text-2xl font-semibold">External Version Selected</h3>
-          <p className="text-base">
-            {isLoading
-              ? "Loading verses..."
-              : "Please click the button above to get this chapter from Bible Gateway."}
-          </p>
-        </section>
+    <>
+      {isLoading && (
+        <p className="text-xl font-semibold absolute top-0 left-0 w-full h-full flex items-center justify-center z-10">
+          Loading verses...
+        </p>
       )}
-      {verses
-        .filter(({ index }) => index >= startVerse && index <= endVerse)
-        .map((verse, index) => {
-          const bg = index % 2 === 0 ? "bg-gray-600" : "bg-gray-800";
-          return verse.text?.trim() ? (
-            <li
-              key={verse.index}
-              id={`bible-verse-${verse.index}`}
-              className={`${bg} flex gap-2 p-1 border ${
-                selectedVerse === index
-                  ? "border-cyan-400"
-                  : "border-transparent"
-              }`}
-            >
-              <span className="text-lg text-yellow-300">{verse.name}</span>
-              <span className="text-sm mr-auto">{verse.text}</span>
-              <Button
-                color={canTransmit ? "#22c55e" : "gray"}
-                padding="px-1 h-full"
-                variant="tertiary"
-                className="text-sm"
-                svg={SendSVG}
-                onClick={async () => {
-                  setSelectedVerse(index);
-                  await sendVerse(verse);
-                }}
-                disabled={!canTransmit || isSendLoading}
-                isLoading={isSendLoading}
+      {(verses.length === 0 || verses.every((verse) => !verse.text)) && (
+        <p className="text-lg font-semibold absolute top-0 left-0 w-full h-full flex items-center justify-center z-10">
+          No verses found
+        </p>
+      )}
+      <ul
+        id="bible-verses-list"
+        className={`bible-verses-list ${isLoading ? "opacity-30" : ""}`}
+        onKeyDown={(e) =>
+          handleKeyDownTraverse({
+            event: e,
+            advance: advanceVerse,
+            previous: previousVerse,
+          })
+        }
+      >
+        {verses
+          .filter(({ index }) => index >= startVerse && index <= endVerse)
+          .map((verse, index) => {
+            const bg = index % 2 === 0 ? "bg-gray-600" : "bg-gray-800";
+            return verse.text?.trim() ? (
+              <li
+                key={verse.index}
+                id={`bible-verse-${verse.index}`}
+                className={`${bg} flex gap-2 p-1 border ${
+                  selectedVerse === index
+                    ? "border-cyan-400"
+                    : "border-transparent"
+                }`}
               >
-                Send
-              </Button>
-            </li>
-          ) : null;
-        })}
-    </ul>
+                <span className="text-lg text-yellow-300">{verse.name}</span>
+                <span className="text-sm mr-auto">{verse.text}</span>
+                <Button
+                  color={canTransmit ? "#22c55e" : "gray"}
+                  padding="px-1 h-full"
+                  variant="tertiary"
+                  className="text-sm"
+                  svg={SendSVG}
+                  onClick={() => {
+                    setSelectedVerse(index);
+                    sendVerse(verse);
+                  }}
+                  disabled={!canTransmit}
+                >
+                  Send
+                </Button>
+              </li>
+            ) : null;
+          })}
+      </ul>
+    </>
   );
 };
 

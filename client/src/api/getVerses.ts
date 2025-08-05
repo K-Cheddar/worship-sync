@@ -19,6 +19,7 @@ export const getVerses = async ({ book, chapter, version }: getVersesType) => {
         ""
       )
     );
+
     const text = await response.text();
     data = await parseData(text, _chapter, book);
   } catch (error) {

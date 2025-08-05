@@ -1,0 +1,16 @@
+export const bibleVersions = [
+  { value: "asv", label: "American Standard Version" },
+  { value: "esv", label: "English Standard Version" },
+  { value: "kjv", label: "King James Version" },
+  { value: "niv", label: "New International Version" },
+  { value: "nkjv", label: "New King James Version" },
+  { value: "nlt", label: "New Living Translation" },
+  { value: "amp", label: "Amplified Bible" },
+  { value: "ceb", label: "Common English Bible" },
+  { value: "cev", label: "Contemporary English Version" },
+  { value: "csb", label: "Christian Study Bible" },
+  { value: "erv", label: "Easy to Read Version" },
+  { value: "gw", label: "God's Word" },
+  { value: "nasb", label: "New American Standard Bible" },
+  { value: "ncv", label: "New Century Version" },
+].sort((a, b) => a.label.localeCompare(b.label));
