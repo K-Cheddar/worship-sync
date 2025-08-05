@@ -17,7 +17,7 @@ const getScheduleFromExcel = async (
   const data = await response.json();
   const members = await membersResponse.json();
 
-  const schedule = getNextSaturdaySchedule(data);
+  const schedule = getClosestUpcomingSchedule(data);
   const transformedSchedule = await transformSchedule(schedule, members);
 
   return transformedSchedule;
@@ -25,32 +25,119 @@ const getScheduleFromExcel = async (
 
 export default getScheduleFromExcel;
 
-const getNextSaturdaySchedule = (data: any) => {
+const getClosestUpcomingSchedule = (data: any) => {
   // Get current date
-  const today = new Date();
-
-  // Find next Saturday
-  const nextSaturday = new Date(today);
-  const daysUntilSaturday = (6 - today.getDay() + 7) % 7;
-  nextSaturday.setDate(today.getDate() + daysUntilSaturday);
-
-  // Format date as MM/DD/YY
-  const formattedDate = `${
-    nextSaturday.getMonth() + 1
-  }/${nextSaturday.getDate()}/${nextSaturday
-    .getFullYear()
-    .toString()
-    .slice(-2)}`;
-
-  // Find the row with the matching date
-  const scheduleRow = data.find((row: any) => row[0] === formattedDate);
-
-  if (!scheduleRow) {
-    return null;
-  }
+  const now = new Date();
 
   // Get the headers (first row)
   const headers = data[0];
+
+  // Find the first row with a date >= now
+  let closestRow: any = null;
+  let closestDate: Date | null = null;
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const dateStr = row[0];
+    const timeStr = row[12];
+    // const durationStr = row[13]; // TODO Factor in duration
+    // const durationInMinutes = durationStr ? parseInt(durationStr) : 0;
+
+    // Skip if dateStr is not a valid date in MM/DD/YY or MM/DD/YYYY format
+    if (typeof dateStr !== "string") continue;
+    const dateParts = dateStr.split("/");
+    if (dateParts.length !== 3) continue;
+    const [month, day, year] = dateParts;
+    if (
+      isNaN(Number(month)) ||
+      isNaN(Number(day)) ||
+      isNaN(Number(year)) ||
+      Number(month) < 1 ||
+      Number(month) > 12 ||
+      Number(day) < 1 ||
+      Number(day) > 31 ||
+      (year.length !== 2 && year.length !== 4)
+    ) {
+      continue;
+    }
+
+    const fullYear = year.length === 2 ? parseInt(year) + 2000 : parseInt(year);
+    const rowDate = new Date(fullYear, parseInt(month) - 1, parseInt(day));
+
+    // Parse time if available format: "10:00:00 AM"
+    if (timeStr && typeof timeStr === "string") {
+      // Handle format like "10:00:00 AM" or "2:30:45 PM"
+      const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$/i);
+      if (timeMatch) {
+        let hours = parseInt(timeMatch[1]);
+        const minutes = parseInt(timeMatch[2]);
+        const seconds = parseInt(timeMatch[3]);
+        const period = timeMatch[4].toUpperCase();
+
+        // Convert 12-hour format to 24-hour format
+        if (period === "PM" && hours !== 12) {
+          hours += 12;
+        } else if (period === "AM" && hours === 12) {
+          hours = 0;
+        }
+
+        if (
+          !isNaN(hours) &&
+          !isNaN(minutes) &&
+          !isNaN(seconds) &&
+          hours >= 0 &&
+          hours <= 23 &&
+          minutes >= 0 &&
+          minutes <= 59 &&
+          seconds >= 0 &&
+          seconds <= 59
+        ) {
+          rowDate.setHours(hours, minutes, seconds, 0);
+        } else {
+          rowDate.setHours(0, 0, 0, 0);
+        }
+      } else {
+        // Fallback to simple HH:MM format if AM/PM format doesn't match
+        const timeParts = timeStr.split(":");
+        if (timeParts.length >= 2) {
+          const hours = parseInt(timeParts[0]);
+          const minutes = parseInt(timeParts[1]);
+          if (
+            !isNaN(hours) &&
+            !isNaN(minutes) &&
+            hours >= 0 &&
+            hours <= 23 &&
+            minutes >= 0 &&
+            minutes <= 59
+          ) {
+            rowDate.setHours(hours, minutes, 0, 0);
+          } else {
+            rowDate.setHours(0, 0, 0, 0);
+          }
+        } else {
+          rowDate.setHours(0, 0, 0, 0);
+        }
+      }
+    } else {
+      rowDate.setHours(0, 0, 0, 0);
+    }
+
+    if (rowDate >= now) {
+      if (!closestDate || rowDate < closestDate) {
+        closestDate = rowDate;
+        closestRow = row;
+      }
+    }
+  }
+
+  if (!closestRow || !closestDate) {
+    return null;
+  }
+
+  // Format date as MM/DD/YY
+  const formattedDate = `${
+    closestDate.getMonth() + 1
+  }/${closestDate.getDate()}/${closestDate.getFullYear().toString().slice(-2)}`;
 
   // Create schedule object
   const schedule = {
@@ -61,8 +148,8 @@ const getNextSaturdaySchedule = (data: any) => {
   // Map positions to people
   for (let i = 1; i < headers.length; i++) {
     const header = headers[i];
-    if (header && scheduleRow[i]) {
-      schedule.positions[header] = scheduleRow[i] as string;
+    if (header && closestRow[i]) {
+      schedule.positions[header] = closestRow[i] as string;
     }
   }
 

@@ -3,38 +3,38 @@
 }
 
 .media-items {
-  scrollbar-width: thin;
+  scrollbar-width: var(--scrollbar-width);;
 
   @apply grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-2 z-10;
 }
 
 @keyframes border-glow {
   0% {
-    border-color: rgba(22, 163, 74, 0); /* Fully Transparent */
+    border-color: rgba(255, 165, 0, 0); /* Fully Transparent */
   }
   10% {
-    border-color: rgba(22, 163, 74, 0.2); /* Slightly Visible */
+    border-color: rgba(255, 165, 0, 0.2); /* Slightly Visible */
   }
   25% {
-    border-color: rgba(22, 163, 74, 0.5); /* More Intense */
+    border-color: rgba(255, 165, 0, 0.5); /* More Intense */
   }
   40% {
-    border-color: rgba(22, 163, 74, 0.8); /* Almost Full */
+    border-color: rgba(255, 165, 0, 0.8); /* Almost Full */
   }
   50% {
-    border-color: rgba(22, 163, 74, 1); /* Bright Green */
+    border-color: rgba(255, 165, 0, 1); /* Bright Orange */
   }
   60% {
-    border-color: rgba(22, 163, 74, 0.8); /* Start Fading */
+    border-color: rgba(255, 165, 0, 0.8); /* Start Fading */
   }
   75% {
-    border-color: rgba(22, 163, 74, 0.5); /* More Transparent */
+    border-color: rgba(255, 165, 0, 0.5); /* More Transparent */
   }
   90% {
-    border-color: rgba(22, 163, 74, 0.2); /* Barely Visible */
+    border-color: rgba(255, 165, 0, 0.2); /* Barely Visible */
   }
   100% {
-    border-color: rgba(22, 163, 74, 0); /* Fully Transparent */
+    border-color: rgba(255, 165, 0, 0); /* Fully Transparent */
   }
 }
 

@@ -29,6 +29,7 @@ export type ButtonProps = Omit<React.HTMLProps<HTMLButtonElement>, "wrap"> & {
   iconSize?: "xs" | "sm" | "md" | "lg" | "xl" | number;
   type?: "button" | "submit" | "reset" | undefined;
   isLoading?: boolean;
+  position?: "relative" | "absolute";
 };
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
@@ -49,6 +50,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       type = "button",
       isLoading = false,
       image,
+      position = "relative",
       ...rest
     },
     ref
@@ -83,6 +85,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
             ? "whitespace-normal text-left button-wrap"
             : "whitespace-nowrap",
           truncate && "truncate",
+          position,
           className
         )}
         type={type}
@@ -94,7 +97,11 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         {svg && iconPosition === "right" && iconWProps}
         {image && <img src={image} alt={image} />}
         {isLoading && (
-          <Spinner className="absolute" width="24px" borderWidth="3px" />
+          <Spinner
+            className="absolute top-0 bottom-0 left-0 right-0 m-auto"
+            width="24px"
+            borderWidth="3px"
+          />
         )}
       </button>
     );

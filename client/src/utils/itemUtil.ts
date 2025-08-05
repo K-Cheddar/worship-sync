@@ -4,7 +4,6 @@ import {
   FormattedLyrics,
   SongOrder,
   ItemState,
-  OptionalItemState,
   Media,
   ServiceItem,
   DBItem,
@@ -73,6 +72,7 @@ type CreateNewSongType = {
   db: PouchDB.Database | undefined;
   background: string;
   brightness: number;
+  isMobile: boolean;
 };
 
 export const createNewSong = async ({
@@ -83,6 +83,7 @@ export const createNewSong = async ({
   db,
   background,
   brightness,
+  isMobile,
 }: CreateNewSongType): Promise<ItemState> => {
   const arrangements: Arrangment[] = [
     {
@@ -122,9 +123,14 @@ export const createNewSong = async ({
     slides: [],
     shouldSkipTitle: false,
     arrangements,
+    shouldSendTo: {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
   };
 
-  const item = formatSong(newItem);
+  const item = formatSong(newItem, isMobile);
 
   const _item = await createNewItemInDb({ item, db });
 
@@ -141,10 +147,10 @@ export const createItemFromProps = ({
   selectedSlide,
   selectedBox,
   slides,
-}: OptionalItemState): ItemState => {
+}: Partial<ItemState>): ItemState => {
   const item: ItemState = {
-    name,
-    type,
+    name: name || "",
+    type: type || "song",
     _id: _id || generateRandomId(),
     selectedArrangement: selectedArrangement || 0,
     shouldSkipTitle,
@@ -152,6 +158,11 @@ export const createItemFromProps = ({
     selectedSlide: selectedSlide || 0,
     selectedBox: selectedBox || 1,
     slides: slides || [],
+    shouldSendTo: {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
   };
 
   return item;
@@ -168,6 +179,7 @@ type CreateNewBibleType = {
   background: string;
   brightness: number;
   fontMode: BibleFontMode;
+  isMobile: boolean;
 };
 
 export const createNewBible = async ({
@@ -181,6 +193,7 @@ export const createNewBible = async ({
   background,
   brightness,
   fontMode,
+  isMobile,
 }: CreateNewBibleType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
 
@@ -194,6 +207,11 @@ export const createNewBible = async ({
     selectedSlide: 1,
     selectedBox: 1,
     slides: [],
+    shouldSendTo: {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
   };
 
   const item = formatBible({
@@ -206,6 +224,7 @@ export const createNewBible = async ({
     background,
     brightness,
     isNew: true,
+    isMobile,
   });
 
   const _item = await createNewItemInDb({ item, db });
@@ -294,6 +313,7 @@ type CreateNewFreeFormType = {
   db: PouchDB.Database | undefined;
   background: string;
   brightness: number;
+  isMobile: boolean;
 };
 
 export const createNewFreeForm = async ({
@@ -303,6 +323,7 @@ export const createNewFreeForm = async ({
   db,
   background,
   brightness,
+  isMobile,
 }: CreateNewFreeFormType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
   const newItem: ItemState = {
@@ -324,9 +345,14 @@ export const createNewFreeForm = async ({
       }),
     ],
     arrangements: [],
+    shouldSendTo: {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
   };
 
-  const formattedItem = formatFree(newItem);
+  const formattedItem = formatFree(newItem, isMobile);
 
   const item = await createNewItemInDb({ item: formattedItem, db });
 
@@ -394,6 +420,11 @@ export const createNewTimer = async ({
       startedAt: undefined,
       endTime,
       showMinutesOnly: false,
+    },
+    shouldSendTo: {
+      projector: false,
+      monitor: true,
+      stream: false,
     },
   };
 

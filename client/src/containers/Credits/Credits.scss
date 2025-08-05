@@ -5,7 +5,7 @@
   max-height: (calc(100vh - clamp(12rem, 14vw, 16rem)));
 
   @media(max-width: 767px) {
-    max-height: calc(100vh - 12rem);
+    max-height: calc(100dvh - 13rem);
   }
 }
 
@@ -19,7 +19,7 @@
   max-height: (calc(100vh - clamp(5rem, 7vw, 7.5rem)));
 
   @media(max-width: 767px) {
-    max-height: calc(100vh - 6.5rem);
+    max-height: calc(100dvh - 6.5rem);
   }
 }
 

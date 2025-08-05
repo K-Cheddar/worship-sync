@@ -1,0 +1,5 @@
+.modal-content {
+  @apply overflow-y-auto max-h-[calc(90vh-120px)];
+
+  scrollbar-width: var(--scrollbar-width);
+}

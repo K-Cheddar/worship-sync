@@ -17,6 +17,7 @@ import {
   setDefaultFormattedLyricsPerRow,
   setDefaultMediaItemsPerRow,
   setDefaultPreferences,
+  setScrollbarWidth,
 } from "../../store/preferencesSlice";
 import cn from "classnames";
 import Icon from "../../components/Icon/Icon";
@@ -46,6 +47,7 @@ const Preferences = () => {
       defaultBibleFontMode,
     },
     selectedPreference,
+    scrollbarWidth,
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
   const backgroundPreferences = [
@@ -288,7 +290,9 @@ const Preferences = () => {
         {itemPreferences.map(({ label, value, property, options }) => (
           <li
             key={label}
-            className={cn("grid grid-cols-2 gap-2 items-center p-2")}
+            className={cn(
+              "grid grid-cols-2 gap-2 items-center p-2 justify-center"
+            )}
           >
             <p className="font-semibold text-right">{label}:</p>
             <section className="flex gap-2 items-center px-2">
@@ -306,6 +310,32 @@ const Preferences = () => {
             </section>
           </li>
         ))}
+      </ul>
+      <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
+        Scrollbar Width
+      </h2>
+      <ul className="flex gap-6 items-center justify-center">
+        <li>
+          <RadioButton
+            label="Thin"
+            value={scrollbarWidth === "thin"}
+            onChange={() => dispatch(setScrollbarWidth("thin"))}
+          />
+        </li>
+        <li>
+          <RadioButton
+            label="Auto"
+            value={scrollbarWidth === "auto"}
+            onChange={() => dispatch(setScrollbarWidth("auto"))}
+          />
+        </li>
+        <li>
+          <RadioButton
+            label="None"
+            value={scrollbarWidth === "none"}
+            onChange={() => dispatch(setScrollbarWidth("none"))}
+          />
+        </li>
       </ul>
     </>
   );

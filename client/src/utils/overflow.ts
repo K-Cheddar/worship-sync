@@ -1,6 +1,5 @@
 import {
   Arrangment,
-  Box,
   ItemSlide,
   ItemState,
   SlideType,
@@ -8,13 +7,16 @@ import {
   BibleFontMode,
 } from "../types";
 import { getLetterFromIndex } from "./generalUtils";
-import { createNewSlide } from "./slideCreation";
+import { createBox, createNewSlide } from "./slideCreation";
 import generateRandomId from "./generateRandomId";
 
 type getMaxLinesProps = {
   fontSize: number;
   height: number;
   topMargin?: number;
+  isBold?: boolean;
+  isItalic?: boolean;
+  isMobile?: boolean;
 };
 
 type MaxLinesResult = {
@@ -26,14 +28,34 @@ export const getMaxLines = ({
   fontSize,
   height,
   topMargin: _topMargin,
+  isBold,
+  isItalic,
+  isMobile,
 }: getMaxLinesProps): MaxLinesResult => {
   try {
-    const fontSizeVw = `${fontSize}vw`;
+    const adjustedFontSize = isMobile
+      ? fontSize / (42 / 80)
+      : fontSize / (42 / 42);
+    const fontSizeVw = `${adjustedFontSize}vw`;
     const windowWidth = window.innerWidth;
     const verticalMargin = _topMargin ? (_topMargin * 2) / 100 : 0.06;
-    const containerHeight = windowWidth * 0.23625;
-    const marginCalc = windowWidth * 0.42 * verticalMargin;
-    const containerHeightPx = containerHeight * (height / 100) - marginCalc;
+    const containerHeight = isMobile
+      ? windowWidth * 0.45
+      : windowWidth * 0.23625;
+    const containerWidth = isMobile ? windowWidth * 0.8 : windowWidth * 0.42;
+
+    const editorOuterContainer = document.getElementById(`display-editor`);
+
+    const editorOuterContainerWidth =
+      editorOuterContainer?.getBoundingClientRect().width || containerWidth;
+
+    const editorOuterContainerHeight =
+      editorOuterContainer?.getBoundingClientRect().height || containerHeight;
+
+    const editorHeight = editorOuterContainerHeight * (height / 100);
+    // Vertical margin percentage is calculated based on the width on a container in css
+    const calculatedHeight =
+      editorHeight - verticalMargin * editorOuterContainerWidth;
 
     // Create a hidden span once for measuring
     const measureSpan = document.createElement("span");
@@ -42,6 +64,8 @@ export const getMaxLines = ({
       font-family: Verdana;
       overflow-wrap: break-word;
       position: fixed;
+      font-weight: ${isBold ? "bold" : "normal"};
+      font-style: ${isItalic ? "italic" : "normal"};
       line-height: 1.25;
       visibility: hidden;
       padding: 0;
@@ -57,14 +81,13 @@ export const getMaxLines = ({
     // Use `getBoundingClientRect()` for more precise height
     const singleLineHeight = measureSpan.getBoundingClientRect().height;
 
-    measureSpan.textContent =
-      "Sample Text\nWith Multiple Lines\nAnd Some Longer Words";
+    measureSpan.textContent = "Sample\nText\nWith\nMultiple\nLines";
     const multiLineHeight = measureSpan.getBoundingClientRect().height;
 
     document.body.removeChild(measureSpan);
 
-    const lineHeight = Math.max(singleLineHeight, multiLineHeight / 3);
-    const maxLines = Math.floor(containerHeightPx / lineHeight);
+    const lineHeight = Math.max(singleLineHeight, multiLineHeight / 5);
+    const maxLines = Math.floor(calculatedHeight / lineHeight);
 
     return {
       maxLines: Math.max(1, maxLines),
@@ -85,6 +108,9 @@ type getNumLinesProps = {
   lineHeight: number;
   width: number;
   sideMargin?: number;
+  isBold?: boolean;
+  isItalic?: boolean;
+  isMobile?: boolean;
 };
 
 export const getNumLines = ({
@@ -93,14 +119,25 @@ export const getNumLines = ({
   lineHeight,
   width,
   sideMargin: _sideMargin,
+  isBold,
+  isItalic,
+  isMobile,
 }: getNumLinesProps): number => {
   try {
-    const fontSizeVw = `${fontSize}vw`;
+    const adjustedFontSize = isMobile
+      ? fontSize / (42 / 80)
+      : fontSize / (42 / 42);
+    const fontSizeVw = `${adjustedFontSize}vw`;
     const windowWidth = window.innerWidth;
     const sideMargin = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.92;
-    const containerWidth = Math.floor(
-      (((width || 95) * sideMargin) / 100) * windowWidth * 0.42
-    );
+    const containerWidth = isMobile ? windowWidth * 0.8 : windowWidth * 0.42;
+    const editorOuterContainer = document.getElementById(`display-editor`);
+
+    const editorOuterContainerWidth =
+      editorOuterContainer?.getBoundingClientRect().width || containerWidth;
+
+    const editorWidth = editorOuterContainerWidth * (width / 100);
+    const calculatedWidth = editorWidth * sideMargin;
 
     // Reusable span for measurement
     const measureSpan = document.createElement("span");
@@ -109,9 +146,11 @@ export const getNumLines = ({
       font-family: Verdana;
       overflow-wrap: break-word;
       white-space: pre-wrap;
-      width: ${containerWidth}px;
+      width: ${calculatedWidth}px;
       position: fixed;
       line-height: ${lineHeight}px;
+      font-weight: ${isBold ? "bold" : "normal"};
+      font-style: ${isItalic ? "italic" : "normal"};
       visibility: hidden;
       padding: 0;
       margin: 0;
@@ -124,7 +163,7 @@ export const getNumLines = ({
     const textHeight = measureSpan.getBoundingClientRect().height;
     document.body.removeChild(measureSpan);
 
-    const numLines = Math.round(textHeight / lineHeight);
+    const numLines = Math.ceil(textHeight / lineHeight);
 
     return Math.max(1, numLines);
   } catch (error) {
@@ -163,10 +202,10 @@ type FormatSectionType = {
   name: string;
   slides: ItemSlide[];
   newSlides: ItemSlide[];
-  lastBoxes: Box[];
   fontSize: number;
-  fontColor?: string;
-  background?: string;
+  selectedBox: number;
+  selectedSlide: ItemSlide;
+  isMobile?: boolean;
 };
 
 export const formatSection = ({
@@ -175,208 +214,102 @@ export const formatSection = ({
   name,
   slides,
   newSlides,
-  lastBoxes,
   fontSize,
-  fontColor,
-  background,
+  selectedBox,
+  selectedSlide,
+  isMobile,
 }: FormatSectionType): ItemSlide[] => {
   let lines = text.split("\n");
-  let formattedText = [];
+  let formattedSlides = [];
   let currentBoxes = [];
-  let boxes: Box[] = [];
-  let box: Box = { width: 100, height: 100 };
-  //lineContainer = {}
+
   let maxLines = 0,
     lineHeight = 0,
     lineCounter = 0,
     counter = 0;
   let boxWords = "";
+  let slidePosition = 0;
 
   for (let i = 0; i < lines.length; ++i) {
     counter = 0;
     lineCounter = 0;
     boxWords = "";
-    boxes = [];
+    slidePosition = newSlides.length + formattedSlides.length;
 
-    if (slides[newSlides.length + formattedText.length])
-      currentBoxes = slides[newSlides.length + formattedText.length].boxes;
-    else currentBoxes = lastBoxes;
+    if (slides[slidePosition]) currentBoxes = slides[slidePosition].boxes;
+    else currentBoxes = slides[slides.length - 1].boxes || [];
 
-    for (let j = 0; j < currentBoxes.length; ++j) {
-      ({ maxLines, lineHeight } = getMaxLines({
+    const currentBox = currentBoxes[1];
+
+    // Process text overflow for all boxes
+    ({ maxLines, lineHeight } = getMaxLines({
+      fontSize,
+      height: currentBox.height,
+      isBold: currentBox.isBold,
+      isItalic: currentBox.isItalic,
+      topMargin: currentBox.topMargin,
+      isMobile,
+    }));
+
+    while (i + counter < lines.length && lineCounter < maxLines) {
+      let testWords = boxWords + lines[i + counter];
+
+      if (i + counter < lines.length - 1) testWords += "\n";
+
+      let lineCount = getNumLines({
+        text: lines[i + counter],
         fontSize,
-        height: currentBoxes[1].height,
-      }));
+        lineHeight,
+        width: currentBox.width,
+        isBold: currentBox.isBold,
+        isItalic: currentBox.isItalic,
+        sideMargin: currentBox.sideMargin,
+        isMobile,
+      });
 
-      while (i + counter < lines.length && lineCounter < maxLines) {
-        boxWords += lines[i + counter];
-        if (i + counter < lines.length - 1) boxWords += "\n";
-
-        let lineCount = getNumLines({
-          text: lines[i + counter],
-          fontSize,
-          lineHeight,
-          width: currentBoxes[1].width,
-        });
-        if (lineCount === 0) lineCount = 1;
-        lineCounter += lineCount;
-        counter++;
-      }
-      box = Object.assign({}, currentBoxes[j]);
-      if (boxWords === "") boxWords = " ";
-      box.words = boxWords;
-      boxes.push(box);
-    }
-    boxes[0].words = " ";
-    boxes[1].excludeFromOverflow = false;
-    boxes[1].brightness = 100; // todo fix brightness on added slides without this line
-
-    i += counter - 1;
-    formattedText.push(
-      createNewSlide({
-        type,
-        name,
-        boxes,
-        fontSize,
-        fontColor,
-        slideIndex: formattedText.length,
-        background: background || undefined,
-      })
-    );
-  }
-  return formattedText;
-};
-
-export const formatSectionByWords = ({
-  text,
-  type,
-  name,
-  slides,
-  newSlides,
-  lastBoxes,
-  fontSize,
-  fontColor,
-}: FormatSectionType): ItemSlide[] => {
-  // Handle empty text case
-  if (!text || text.trim() === "") {
-    return [
-      createNewSlide({
-        type: type as SlideType,
-        name: name,
-        boxes: lastBoxes.map((box) => ({
-          ...box,
-          words: box === lastBoxes[0] ? " " : " ",
-        })),
-        fontSize: fontSize,
-        fontColor: fontColor,
-        slideIndex: 0,
-      }),
-    ];
-  }
-
-  let words = text.split(" ");
-  let formattedText = [];
-  let currentBoxes = [];
-  let boxes: Box[] = [];
-  let box: Box = { width: 100, height: 100 };
-  let maxLines = 0,
-    lineHeight = 0,
-    lineCounter = 0,
-    counter = 0;
-  let boxWords = "";
-
-  for (let i = 0; i < words.length; ++i) {
-    counter = 0;
-    lineCounter = 0;
-    boxWords = "";
-    boxes = [];
-
-    if (slides[newSlides.length + formattedText.length])
-      currentBoxes = slides[newSlides.length + formattedText.length].boxes;
-    else currentBoxes = lastBoxes;
-
-    for (let j = 0; j < currentBoxes.length; ++j) {
-      ({ maxLines, lineHeight } = getMaxLines({
-        fontSize,
-        height: currentBoxes[1].height,
-      }));
-
-      // Handle case where we're at the last word
-      if (i === words.length - 1) {
-        boxWords = words[i];
+      // If the text can't fit and we're not on the first round of the loop
+      // break the loop. Existing text will be added and the next round will grab
+      // The rest of the text
+      if (lineCount + lineCounter > maxLines && counter > 0) {
         break;
       }
 
-      while (i + counter < words.length && lineCounter < maxLines) {
-        let testWords = boxWords + (boxWords ? " " : "") + words[i + counter];
-        let lineCount = getNumLines({
-          text: testWords,
-          fontSize,
-          lineHeight,
-          width: currentBoxes[1].width,
-        });
-
-        // If even a single word doesn't fit, force it to fit
-        if (counter === 0 && lineCount > maxLines) {
-          boxWords = words[i];
-          lineCounter = lineCount;
-          counter = 1;
-          break;
-        }
-
-        if (lineCount <= maxLines) {
-          boxWords = testWords;
-          lineCounter = lineCount;
-          counter++;
-        } else {
-          break;
-        }
-      }
-
-      box = Object.assign({}, currentBoxes[j]);
-      if (boxWords === "") boxWords = " ";
-      box.words = boxWords;
-      boxes.push(box);
+      boxWords = testWords;
+      lineCounter += lineCount;
+      counter++;
     }
 
-    boxes[0].words = " ";
-    boxes[1].excludeFromOverflow = false;
-    boxes[1].brightness = 100;
+    const box = Object.assign({}, currentBox);
+    if (boxWords === "") boxWords = " ";
+    box.words = boxWords;
 
     i += counter - 1;
-    formattedText.push(
+    formattedSlides.push(
       createNewSlide({
-        type: type as SlideType,
-        name: name,
-        boxes: boxes,
-        fontSize: fontSize,
-        fontColor: fontColor,
-        slideIndex: formattedText.length,
+        type,
+        name,
+        boxes: currentBoxes.map((_box, index) => {
+          if (index === selectedBox) {
+            return box;
+          } else {
+            return _box;
+          }
+        }),
+        fontSize,
+        fontColor: selectedSlide.boxes[selectedBox].fontColor,
+        slideIndex: formattedSlides.length,
+        background: selectedSlide.boxes[0].background || undefined,
+        isBold: selectedSlide.boxes[selectedBox].isBold,
+        isItalic: selectedSlide.boxes[selectedBox].isItalic,
+        formattedTextDisplayInfo: selectedSlide.formattedTextDisplayInfo,
       })
     );
   }
 
-  // If no slides were created (e.g., empty text), create a default slide
-  if (formattedText.length === 0) {
-    formattedText.push(
-      createNewSlide({
-        type: type as SlideType,
-        name: name,
-        boxes: lastBoxes.map((box) => ({
-          ...box,
-          words: box === lastBoxes[0] ? " " : " ",
-        })),
-        fontSize: fontSize,
-        fontColor: fontColor,
-        slideIndex: 0,
-      })
-    );
-  }
-
-  return formattedText;
+  return formattedSlides;
 };
 
-export const formatFree = (item: ItemState) => {
+export const formatFree = (item: ItemState, isMobile: boolean) => {
   const { selectedSlide, selectedBox } = item;
   let slides = item.slides;
   const slide = slides[selectedSlide];
@@ -384,6 +317,9 @@ export const formatFree = (item: ItemState) => {
 
   const fontSize = slide.boxes[selectedBox].fontSize || 2.5;
   const fontColor = slide.boxes[selectedBox].fontColor || "rgb(255, 255, 255)";
+  const isBold = slide.boxes[selectedBox].isBold || false;
+  const isItalic = slide.boxes[selectedBox].isItalic || false;
+  const formattedTextDisplayInfo = slide.formattedTextDisplayInfo;
   let minFontSize = 0.5; // Minimum font size to try
 
   // Get the current section number from the slide name
@@ -398,7 +334,23 @@ export const formatFree = (item: ItemState) => {
 
   // Get words from selected box of all slides of section
   const sectionWords = currentSectionSlides
-    .map((slide) => slide.boxes[selectedBox]?.words)
+    .map((slide, index) => {
+      const words = slide.boxes[selectedBox]?.words || "";
+
+      // Check if the current slide already ends with a newline
+      const alreadyHasNewline = words.endsWith("\n");
+
+      // Only add newline if:
+      // 1. It's not the last slide
+      // 2. The slide doesn't already end with a newline
+      // 3. The slide has some content (not empty)
+      const shouldAddNewline =
+        index < currentSectionSlides.length - 1 &&
+        !alreadyHasNewline &&
+        words.trim().length > 0;
+
+      return shouldAddNewline ? words + "\n" : words;
+    })
     .join("");
 
   // Get the background from the last slide in the section
@@ -418,6 +370,9 @@ export const formatFree = (item: ItemState) => {
       ({ maxLines, lineHeight } = getMaxLines({
         fontSize: currentFontSize,
         height: slide.boxes[selectedBox].height,
+        isBold,
+        isItalic,
+        isMobile,
       }));
 
       numLines = getNumLines({
@@ -425,6 +380,9 @@ export const formatFree = (item: ItemState) => {
         fontSize: currentFontSize,
         lineHeight,
         width: slide.boxes[selectedBox].width,
+        isBold,
+        isItalic,
+        isMobile,
       });
 
       if (numLines <= maxLines) {
@@ -439,12 +397,11 @@ export const formatFree = (item: ItemState) => {
         text: sectionWords,
         type: slide.type,
         name: slide.name,
-        slides,
+        slides: currentSectionSlides,
         newSlides,
-        lastBoxes: slide.boxes,
         fontSize: minFontSize,
-        fontColor,
-        background,
+        selectedSlide: slide,
+        selectedBox,
       });
     } else {
       // Create a single slide with the adjusted font size
@@ -467,6 +424,9 @@ export const formatFree = (item: ItemState) => {
           slideIndex: 0,
           overflow: "fit",
           background,
+          isBold,
+          isItalic,
+          formattedTextDisplayInfo,
         }),
       ];
     }
@@ -476,12 +436,11 @@ export const formatFree = (item: ItemState) => {
       text: sectionWords,
       type: slide.type,
       name: slide.name,
-      slides,
+      slides: currentSectionSlides,
       newSlides,
-      lastBoxes: slide.boxes,
       fontSize,
-      fontColor,
-      background,
+      selectedSlide: slide,
+      selectedBox,
     });
   }
 
@@ -531,20 +490,24 @@ export const formatFree = (item: ItemState) => {
 
   // Replace all slides of section with updated slides
   updatedSlides.splice(firstSlideLocation, 0, ...formattedSlides);
+
   return {
     ...item,
     slides: updatedSlides,
   };
 };
 
-export const formatLyrics = (item: ItemState) => {
+export const formatLyrics = (item: ItemState, isMobile: boolean) => {
   const selectedArrangement = item.selectedArrangement || 0;
+  const selectedSlide = item.selectedSlide || 1;
   const arrangements = item.arrangements || [];
   let slides = arrangements[selectedArrangement].slides || [];
+  const slide = slides[selectedSlide];
 
   const boxes = slides[0].boxes;
   const lastSlide = slides.length - 1;
   const lastBoxes = slides[lastSlide].boxes;
+
   const newSlides = [
     createNewSlide({
       type: "Title",
@@ -557,10 +520,7 @@ export const formatLyrics = (item: ItemState) => {
   ];
   const songOrder = arrangements[selectedArrangement].songOrder;
   const formattedLyrics = arrangements[selectedArrangement].formattedLyrics;
-  const fontSize: number = slides[1] ? slides[1].boxes[1].fontSize || 2.5 : 2.5;
-  const fontColor: string = slides[1]
-    ? slides[1].boxes[1].fontColor || "rgb(255, 255, 255)"
-    : "rgb(255, 255, 255)";
+  const fontSize: number = slide ? slide.boxes[1].fontSize || 2.5 : 2.5;
 
   for (let i = 0; i < songOrder.length; ++i) {
     let lyrics =
@@ -573,9 +533,10 @@ export const formatLyrics = (item: ItemState) => {
         name: songOrder[i].name,
         slides,
         newSlides,
-        lastBoxes,
         fontSize,
-        fontColor,
+        selectedSlide: slide,
+        selectedBox: 1,
+        isMobile,
       })
     );
   }
@@ -584,13 +545,13 @@ export const formatLyrics = (item: ItemState) => {
   return newSlides;
 };
 
-export const formatSong = (_item: ItemState) => {
+export const formatSong = (_item: ItemState, isMobile: boolean) => {
   const item = {
     ..._item,
     arrangements: _item.arrangements
       ? _item.arrangements.map((el, i): Arrangment => {
           if (i === _item.selectedArrangement) {
-            return { ...el, slides: formatLyrics(_item) };
+            return { ...el, slides: formatLyrics(_item, isMobile) };
           }
           return el;
         })
@@ -623,25 +584,23 @@ export const formatSong = (_item: ItemState) => {
     return { ...ele, slideSpan };
   });
 
+  // Create a map to track how many times we've seen each section
+  const sectionOccurrences = new Map<string, number>();
+
   const updatedSlides = slides.map((slide, index) => {
     const formattedLyric = formattedLyrics.find((e) => e.name === slide.name);
     if (!formattedLyric || formattedLyric.slideSpan < 2) return slide;
 
-    // Find the start of the current consecutive section
-    let sectionStartIndex = index;
-    while (
-      sectionStartIndex > 0 &&
-      slides[sectionStartIndex - 1].name === slide.name
-    ) {
-      sectionStartIndex--;
-    }
+    // Get how many times we've seen this section
+    const occurrence = sectionOccurrences.get(slide.name) || 0;
+    sectionOccurrences.set(slide.name, occurrence + 1);
 
-    // Count occurrences only within the current consecutive section
-    const occurrenceIndex = index - sectionStartIndex;
+    // Calculate which letter to use based on the occurrence and slideSpan
+    const letterIndex = occurrence % Math.ceil(formattedLyric.slideSpan);
 
     return {
       ...slide,
-      name: `${slide.name}${getLetterFromIndex(occurrenceIndex, true)}`,
+      name: `${slide.name}${getLetterFromIndex(letterIndex, true)}`,
     };
   });
 
@@ -664,6 +623,7 @@ type formatBibleType = {
   background?: string;
   brightness?: number;
   isNew?: boolean;
+  isMobile: boolean;
 };
 export const formatBible = ({
   item,
@@ -675,32 +635,48 @@ export const formatBible = ({
   background,
   brightness,
   isNew,
+  isMobile,
 }: formatBibleType): ItemState => {
   let slides = item.slides.length
     ? item.slides
     : [
         createNewSlide({
           type: "Title",
+          itemType: "bible",
           fontSize: 3.5,
           words: ["", item.name],
           background,
           brightness,
         }),
+
         createNewSlide({
+          itemType: "bible",
           type: "Verse",
           fontSize: 2.5,
           background,
           brightness,
+          boxes: [
+            createBox({}),
+            createBox({
+              height: 92,
+            }),
+            createBox({ height: 8 }),
+          ],
+          words: ["", "", ""],
         }),
       ];
   let boxes = slides[0]?.boxes || [];
+
   let newSlides = [
     createNewSlide({
       type: "Title",
+      itemType: "bible",
       fontSize: boxes[1]?.fontSize || 3.5,
       words: ["", boxes[1]?.words || " "],
       background: boxes[0]?.background || background,
       brightness: boxes[0]?.brightness || brightness,
+      isBold: boxes[1]?.isBold || false,
+      isItalic: boxes[1]?.isItalic || false,
     }),
   ];
   let _item = {
@@ -724,6 +700,7 @@ export const formatBible = ({
         chapter: _chapter,
         version: _version,
         isNew,
+        isMobile,
       })
     );
   else
@@ -736,6 +713,7 @@ export const formatBible = ({
         chapter: _chapter,
         version: _version,
         isNew,
+        isMobile,
       })
     );
 
@@ -770,6 +748,7 @@ type formatBibleVersesType = {
   book?: string;
   chapter?: string;
   version?: string;
+  isMobile: boolean;
 };
 const formatBibleVerses = ({
   verses,
@@ -779,16 +758,20 @@ const formatBibleVerses = ({
   chapter,
   version,
   isNew,
+  isMobile,
 }: formatBibleVersesType) => {
   let slides = item.slides || [];
   const referenceIndex = item.selectedSlide > 0 ? item.selectedSlide : 1;
   let currentSlide: ItemSlide = slides[referenceIndex] || {};
-  // let allBoxes = slides.flatMap(x => x.boxes);
-  // let overflowBoxes = allBoxes.filter(e => !e.excludeFromOverflow)
+  const titleSlideText = slides[0]?.boxes[1]?.words?.trim() || "";
+
   let currentBoxes = [...currentSlide.boxes];
   let { maxLines, lineHeight } = getMaxLines({
     fontSize: currentBoxes[1].fontSize || 1,
     height: currentBoxes[1].height || 95,
+    isBold: currentBoxes[1].isBold,
+    isItalic: currentBoxes[1].isItalic,
+    isMobile,
   });
   let formattedVerses = [];
   // let type = currentSlide.type;
@@ -814,6 +797,9 @@ const formatBibleVerses = ({
             fontSize: currentBoxes[1].fontSize || 1,
             lineHeight,
             width: currentBoxes[1].width,
+            isBold: currentBoxes[1].isBold,
+            isItalic: currentBoxes[1].isItalic,
+            isMobile,
           }) <= maxLines
         ) {
           tempSlide = testSlide;
@@ -842,6 +828,9 @@ const formatBibleVerses = ({
             fontSize: currentBoxes[1].fontSize || 1,
             lineHeight,
             width: currentBoxes[1].width,
+            isBold: currentBoxes[1].isBold,
+            isItalic: currentBoxes[1].isItalic,
+            isMobile,
           }) <= maxLines
         ) {
           slide = testSlide;
@@ -870,20 +859,23 @@ const formatBibleVerses = ({
                     ? getLetterFromIndex(verseSplitCounts[verse.name], true)
                     : ""),
                 itemType: "bible",
-                boxes: currentBoxes,
+                boxes: isNew
+                  ? [currentBoxes[0], { ...currentBoxes[1] }]
+                  : [currentBoxes[0], { ...currentBoxes[1] }, currentBoxes[2]],
                 words: [
                   "",
                   currentPrefix + cleanText,
-                  getBibleName({
-                    book,
-                    chapter,
-                    verse:
-                      verse.name +
-                      (needsLetters
-                        ? getLetterFromIndex(verseSplitCounts[verse.name])
-                        : ""),
-                    version,
-                  }),
+                  titleSlideText ||
+                    getBibleName({
+                      book,
+                      chapter,
+                      verse:
+                        verse.name +
+                        (needsLetters
+                          ? getLetterFromIndex(verseSplitCounts[verse.name])
+                          : ""),
+                      version,
+                    }),
                 ],
               })
             );
@@ -918,20 +910,23 @@ const formatBibleVerses = ({
               (needsLetters
                 ? getLetterFromIndex(verseSplitCounts[verse.name], true)
                 : ""),
-            boxes: currentBoxes,
+            boxes: isNew
+              ? [currentBoxes[0], { ...currentBoxes[1] }]
+              : [currentBoxes[0], { ...currentBoxes[1] }, currentBoxes[2]],
             words: [
               "",
               currentPrefix + cleanText,
-              getBibleName({
-                book,
-                chapter,
-                verse:
-                  verse.name +
-                  (needsLetters
-                    ? getLetterFromIndex(verseSplitCounts[verse.name])
-                    : ""),
-                version,
-              }),
+              titleSlideText ||
+                getBibleName({
+                  book,
+                  chapter,
+                  verse:
+                    verse.name +
+                    (needsLetters
+                      ? getLetterFromIndex(verseSplitCounts[verse.name])
+                      : ""),
+                  version,
+                }),
             ],
           })
         );
@@ -945,19 +940,33 @@ const formatBibleVerses = ({
       const verse = verses[i];
       let words = verse.text?.split(" ") || [];
       let slide = "";
-      let currentFontSize = 2.5;
+      let currentFontSize = currentBoxes[1]?.fontSize || 2.5;
       let fitProcessing = true;
+      const versePrefix = "\u200B" + verse.name + ".\u200B ";
+
+      // Update maxLines and lineHeight before each verse
+      ({ maxLines, lineHeight } = getMaxLines({
+        fontSize: currentFontSize,
+        height: currentBoxes[1].height || 95,
+        isBold: currentBoxes[1].isBold,
+        isItalic: currentBoxes[1].isItalic,
+        isMobile,
+      }));
 
       while (fitProcessing) {
         let tempSlide = "";
         for (let j = 0; j < words.length; j++) {
           let update = tempSlide + words[j];
+          // Always include the verse prefix in the line calculation
           if (
             getNumLines({
-              text: update,
+              text: versePrefix + update,
               fontSize: currentFontSize,
               lineHeight,
               width: currentBoxes[1].width,
+              isBold: currentBoxes[1].isBold,
+              isItalic: currentBoxes[1].isItalic,
+              isMobile,
             }) <= maxLines
           )
             tempSlide = update + " ";
@@ -966,6 +975,9 @@ const formatBibleVerses = ({
             ({ maxLines, lineHeight } = getMaxLines({
               fontSize: currentFontSize,
               height: currentBoxes[1].height || 95,
+              isBold: currentBoxes[1].isBold,
+              isItalic: currentBoxes[1].isItalic,
+              isMobile,
             }));
             tempSlide = "";
             break;
@@ -976,12 +988,6 @@ const formatBibleVerses = ({
           fitProcessing = false;
         }
       }
-
-      // Update maxLines and lineHeight for the final slide
-      ({ maxLines, lineHeight } = getMaxLines({
-        fontSize: currentFontSize,
-        height: currentBoxes[1].height || 95,
-      }));
 
       formattedVerses.push(
         createNewSlide({
@@ -1000,8 +1006,9 @@ const formatBibleVerses = ({
               ],
           words: [
             "",
-            "\u200B" + verse.name + ".\u200B " + slide,
-            getBibleName({ book, chapter, verse: verse.name, version }),
+            versePrefix + slide,
+            titleSlideText ||
+              getBibleName({ book, chapter, verse: verse.name, version }),
           ],
         })
       );
@@ -1027,6 +1034,9 @@ const formatBibleVerses = ({
         fontSize: currentFontSize,
         lineHeight,
         width: currentBoxes[1]?.width || 95,
+        isBold: currentBoxes[1].isBold,
+        isItalic: currentBoxes[1].isItalic,
+        isMobile,
       });
 
       // If it doesn't fit, check if adding a letter suffix would make it fit
@@ -1038,6 +1048,9 @@ const formatBibleVerses = ({
           fontSize: currentFontSize,
           lineHeight,
           width: currentBoxes[1]?.width || 95,
+          isBold: currentBoxes[1].isBold,
+          isItalic: currentBoxes[1].isItalic,
+          isMobile,
         });
       }
 
@@ -1050,6 +1063,9 @@ const formatBibleVerses = ({
         fontSize: currentFontSize,
         lineHeight,
         width: currentBoxes[1]?.width || 95,
+        isBold: currentBoxes[1].isBold,
+        isItalic: currentBoxes[1].isItalic,
+        isMobile,
       });
 
       // If it doesn't fit with current slide, check if adding a letter suffix would make it fit
@@ -1064,6 +1080,9 @@ const formatBibleVerses = ({
           fontSize: currentFontSize,
           lineHeight,
           width: currentBoxes[1]?.width || 95,
+          isBold: currentBoxes[1].isBold,
+          isItalic: currentBoxes[1].isItalic,
+          isMobile,
         });
       }
 
@@ -1078,6 +1097,9 @@ const formatBibleVerses = ({
           fontSize: currentFontSize,
           lineHeight,
           width: currentBoxes[1]?.width || 95,
+          isBold: currentBoxes[1].isBold,
+          isItalic: currentBoxes[1].isItalic,
+          isMobile,
         });
         canCombineWithPrevious = combinedWithPreviousLines <= maxLines;
 
@@ -1092,6 +1114,9 @@ const formatBibleVerses = ({
             fontSize: currentFontSize,
             lineHeight,
             width: currentBoxes[1]?.width || 95,
+            isBold: currentBoxes[1].isBold,
+            isItalic: currentBoxes[1].isItalic,
+            isMobile,
           });
           canCombineWithPrevious =
             combinedWithPreviousWithLetterLines <= maxLines;
@@ -1133,12 +1158,13 @@ const formatBibleVerses = ({
               words: [
                 "",
                 currentSlide,
-                getBibleName({
-                  book,
-                  chapter,
-                  verse: formatVerseRange(currentVerses),
-                  version,
-                }),
+                titleSlideText ||
+                  getBibleName({
+                    book,
+                    chapter,
+                    verse: formatVerseRange(currentVerses),
+                    version,
+                  }),
               ],
             })
           );
@@ -1171,6 +1197,9 @@ const formatBibleVerses = ({
                 fontSize: currentFontSize,
                 lineHeight,
                 width: currentBoxes[1]?.width || 95,
+                isBold: currentBoxes[1].isBold,
+                isItalic: currentBoxes[1].isItalic,
+                isMobile,
               }) <= maxLines
             ) {
               tempSlide = testText;
@@ -1214,14 +1243,15 @@ const formatBibleVerses = ({
                     words: [
                       "",
                       versePrefix + cleanText,
-                      getBibleName({
-                        book,
-                        chapter,
-                        verse:
-                          verse.name +
-                          getLetterFromIndex(verseSplitCounts[verse.name]),
-                        version,
-                      }),
+                      titleSlideText ||
+                        getBibleName({
+                          book,
+                          chapter,
+                          verse:
+                            verse.name +
+                            getLetterFromIndex(verseSplitCounts[verse.name]),
+                          version,
+                        }),
                     ],
                   })
                 );
@@ -1233,6 +1263,9 @@ const formatBibleVerses = ({
                 ({ maxLines, lineHeight } = getMaxLines({
                   fontSize: currentFontSize,
                   height: currentBoxes[1].height || 95,
+                  isBold: currentBoxes[1].isBold,
+                  isItalic: currentBoxes[1].isItalic,
+                  isMobile,
                 }));
               }
             }
@@ -1274,14 +1307,15 @@ const formatBibleVerses = ({
                 words: [
                   "",
                   versePrefix + cleanText,
-                  getBibleName({
-                    book,
-                    chapter,
-                    verse:
-                      verse.name +
-                      getLetterFromIndex(verseSplitCounts[verse.name]),
-                    version,
-                  }),
+                  titleSlideText ||
+                    getBibleName({
+                      book,
+                      chapter,
+                      verse:
+                        verse.name +
+                        getLetterFromIndex(verseSplitCounts[verse.name]),
+                      version,
+                    }),
                 ],
               })
             );
@@ -1302,7 +1336,9 @@ const formatBibleVerses = ({
         createNewSlide({
           itemType: "bible",
           type: "Verse",
-          name: "Verses " + formatVerseRange(currentVerses),
+          name:
+            (currentVerses.length > 1 ? "Verses " : "Verse ") +
+            formatVerseRange(currentVerses),
           boxes: isNew
             ? [
                 currentBoxes[0],
@@ -1316,12 +1352,13 @@ const formatBibleVerses = ({
           words: [
             "",
             currentSlide,
-            getBibleName({
-              book,
-              chapter,
-              verse: formatVerseRange(currentVerses),
-              version,
-            }),
+            titleSlideText ||
+              getBibleName({
+                book,
+                chapter,
+                verse: formatVerseRange(currentVerses),
+                version,
+              }),
           ],
         })
       );

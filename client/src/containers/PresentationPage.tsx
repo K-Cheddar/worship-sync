@@ -7,12 +7,14 @@ type PresentationProps = {
   displayInfo: PresentationType;
   prevDisplayInfo: PresentationType;
   timerInfo?: TimerInfo;
+  prevTimerInfo?: TimerInfo;
 };
 
 const Presentation = ({
   displayInfo,
   prevDisplayInfo,
   timerInfo,
+  prevTimerInfo,
 }: PresentationProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -37,6 +39,7 @@ const Presentation = ({
       prevBoxes={prevDisplayInfo.slide?.boxes || []}
       displayType={displayInfo.displayType}
       timerInfo={timerInfo}
+      prevTimerInfo={prevTimerInfo}
       shouldAnimate
       width={100}
     />

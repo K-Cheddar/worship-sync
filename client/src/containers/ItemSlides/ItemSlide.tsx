@@ -18,9 +18,13 @@ type ItemSlideProps = {
   isMobile: boolean;
   timerInfo?: TimerInfo;
   draggedSection: string | null;
+  isTransmitting: boolean;
+  isStreamFormat: boolean;
+  getBibleInfo: (index: number) => { title: string; text: string };
 };
 
 const ItemSlide = ({
+  isTransmitting,
   slide,
   index,
   selectSlide,
@@ -30,6 +34,8 @@ const ItemSlide = ({
   isMobile,
   timerInfo,
   draggedSection,
+  isStreamFormat,
+  getBibleInfo,
 }: ItemSlideProps) => {
   const width =
     (isMobile ? sizeMap.get(size)?.mobileWidth : sizeMap.get(size)?.width) ||
@@ -71,23 +77,28 @@ const ItemSlide = ({
     <li
       ref={setNodeRef}
       style={(() => {
+        const borderStyle = {
+          "--border-width": sizeMap.get(size)?.borderWidth,
+        } as React.CSSProperties;
         if (!isFree) {
-          return undefined;
+          return borderStyle;
         }
         if (isDragging) {
-          return style;
+          return { ...style, ...borderStyle };
         }
         if (isInDraggedSection) {
           return sectionStyle;
         }
-        return undefined;
+        return borderStyle;
       })()}
       {...(isFree && attributes)}
       {...(isFree && listeners)}
       key={slide.id}
       className={cn(
         "item-slide",
-        selectedSlide === index ? "border-cyan-500" : "border-transparent",
+        selectedSlide === index && !isTransmitting && "border-gray-300",
+        selectedSlide === index && isTransmitting && "border-green-500",
+        selectedSlide !== index && "border-transparent",
         isInDraggedSection && "z-10"
       )}
       onClick={() => selectSlide(index)}
@@ -122,10 +133,34 @@ const ItemSlide = ({
       </h4>
       <DisplayWindow
         showBorder
-        boxes={slide.boxes}
+        boxes={
+          isStreamFormat && (itemType === "free" || itemType === "bible")
+            ? []
+            : slide.boxes
+        }
         width={width}
-        displayType="slide"
+        displayType={isStreamFormat ? "stream" : "slide"}
         timerInfo={timerInfo}
+        bibleDisplayInfo={
+          itemType === "bible" ? getBibleInfo(index) : undefined
+        }
+        formattedTextDisplayInfo={
+          itemType === "free"
+            ? {
+                text: slide.boxes[1]?.words?.trim() || "",
+                backgroundColor:
+                  slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
+                textColor:
+                  slide.formattedTextDisplayInfo?.textColor || "#ffffff",
+                fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
+                paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
+                paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
+                isBold: slide.formattedTextDisplayInfo?.isBold || false,
+                isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
+                align: slide.formattedTextDisplayInfo?.align || "left",
+              }
+            : undefined
+        }
       />
     </li>
   );

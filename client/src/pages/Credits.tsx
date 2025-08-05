@@ -15,7 +15,6 @@ const Credits = () => {
   );
   const dispatch = useDispatch();
   const { user, firebaseDb } = useContext(GlobalInfoContext) || {};
-  const [creditsTimeline, setCreditsTimeline] = useState<GSAPTimeline>();
   const [isActive, setIsActive] = useState(false);
 
   useEffect(() => {
@@ -71,7 +70,6 @@ const Credits = () => {
     <CreditsContainer
       credits={publishedList}
       runObsTransition={runObsTransition}
-      setCreditsTimeline={setCreditsTimeline}
     />
   );
 };

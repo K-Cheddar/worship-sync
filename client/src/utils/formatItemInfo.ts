@@ -3,7 +3,11 @@ import { SongOrder, ItemState, DBItem } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatSong } from "./overflow";
 
-export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
+export const formatItemInfo = (
+  item: DBItem,
+  cloud: Cloudinary,
+  isMobile: boolean
+) => {
   const _item: ItemState = {
     name: item.name,
     type: item.type,
@@ -16,6 +20,11 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
     selectedSlide: 0,
     bibleInfo: item.bibleInfo,
     timerInfo: item.timerInfo,
+    shouldSendTo: item.shouldSendTo || {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
   };
 
   let updatedArrangements;
@@ -43,8 +52,8 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
               return {
                 ...box,
                 id: generateRandomId(),
+                excludeFromOverflow: index === 0 ? true : false, // TODO - check if there is a better way to do this
                 background: index === 1 ? "" : boxBackground,
-                isLocked: true,
                 brightness: index !== 0 ? 100 : box.brightness,
                 width: box.width || 100,
                 height: box.height || 100,
@@ -85,7 +94,6 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
               ...box,
               id: generateRandomId(),
               background: index === 1 ? "" : box.background,
-              isLocked: true,
               brightness: index !== 0 ? 100 : box.brightness,
               width: box.width || 100,
               height: box.height || 100,
@@ -99,7 +107,8 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
   _item.arrangements = updatedArrangements || [];
   _item.slides = slides || [];
   if (item.type === "song") {
-    return formatSong(_item);
+    return formatSong(_item, isMobile);
   }
+
   return _item;
 };

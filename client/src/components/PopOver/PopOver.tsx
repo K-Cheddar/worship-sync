@@ -9,9 +9,9 @@ import {
   useInteractions,
   useRole,
 } from "@floating-ui/react";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
-import Button, { ButtonProps } from "../Button/Button";
+import { ButtonProps } from "../Button/Button";
 import { cloneElement, ReactElement, useState } from "react";
+import PopOverContent from "./PopOverContent";
 
 type PopOverProps = {
   children: React.ReactNode;
@@ -50,20 +50,15 @@ const PopOver = ({ children, TriggeringButton }: PopOverProps) => {
       {triggeringButton}
       {isOpen && (
         <FloatingFocusManager context={context} modal>
-          <div
-            className="bg-gray-700 relative rounded-lg shadow-2xl z-30 border-2 border-gray-600"
-            style={floatingStyles}
-            ref={refs.setFloating}
-            {...getFloatingProps()}
+          <PopOverContent
+            floatingStyles={floatingStyles}
+            refs={refs}
+            getFloatingProps={getFloatingProps}
+            setIsOpen={setIsOpen}
+            isOpen={isOpen}
           >
-            <Button
-              className="ml-auto mt-2 mr-2"
-              variant="tertiary"
-              svg={CloseSVG}
-              onClick={() => setIsOpen(false)}
-            />
-            <div className="px-4 pb-4 relative">{children}</div>
-          </div>
+            {children}
+          </PopOverContent>
         </FloatingFocusManager>
       )}
     </>

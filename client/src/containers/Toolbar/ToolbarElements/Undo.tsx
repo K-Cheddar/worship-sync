@@ -5,9 +5,50 @@ import { ActionCreators } from "redux-undo";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useEffect } from "react";
 
+export const UndoButton = ({
+  color,
+  className,
+}: {
+  color?: string;
+  className?: string;
+}) => {
+  const dispatch = useDispatch();
+  const { past } = useSelector((state) => state.undoable);
+  return (
+    <Button
+      svg={UndoSVG}
+      color={color}
+      disabled={!past.length}
+      variant="tertiary"
+      onClick={() => dispatch(ActionCreators.undo())}
+      className={className}
+    />
+  );
+};
+
+export const RedoButton = ({
+  color,
+  className,
+}: {
+  color?: string;
+  className?: string;
+}) => {
+  const dispatch = useDispatch();
+  const { future } = useSelector((state) => state.undoable);
+  return (
+    <Button
+      svg={RedoSVG}
+      color={color}
+      disabled={!future.length}
+      variant="tertiary"
+      onClick={() => dispatch(ActionCreators.redo())}
+      className={className}
+    />
+  );
+};
+
 const Undo = () => {
   const dispatch = useDispatch();
-  const { past, future } = useSelector((state) => state.undoable);
   const { isEditMode } = useSelector((state) => state.undoable.present.item);
 
   useEffect(() => {
@@ -44,18 +85,8 @@ const Undo = () => {
 
   return (
     <div className="flex gap-1">
-      <Button
-        svg={UndoSVG}
-        disabled={!past.length}
-        variant="tertiary"
-        onClick={() => dispatch(ActionCreators.undo())}
-      />
-      <Button
-        svg={RedoSVG}
-        disabled={!future.length}
-        variant="tertiary"
-        onClick={() => dispatch(ActionCreators.redo())}
-      />
+      <UndoButton />
+      <RedoButton />
     </div>
   );
 };

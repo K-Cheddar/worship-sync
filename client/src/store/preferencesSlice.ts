@@ -2,6 +2,7 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import {
   BibleFontMode,
   PreferencesType,
+  ScrollbarWidth,
   Presentation,
   QuickLinkType,
 } from "../types";
@@ -36,12 +37,14 @@ type PreferencesState = {
   formattedLyricsPerRow: number;
   mediaItemsPerRow: number;
   shouldShowItemEditor: boolean;
+  shouldShowStreamFormat: boolean;
   isMediaExpanded: boolean;
   quickLinks: QuickLinkType[];
   defaultQuickLinks: QuickLinkType[];
   selectedQuickLink: QuickLinkType | null;
   tab: PreferencesTabType;
   bibleFontMode: BibleFontMode;
+  scrollbarWidth: ScrollbarWidth;
 };
 
 const initialState: PreferencesState = {
@@ -71,6 +74,7 @@ const initialState: PreferencesState = {
   mediaItemsPerRow: 4,
   shouldShowItemEditor: true,
   isMediaExpanded: false,
+  shouldShowStreamFormat: false,
   isLoading: true,
   selectedPreference: "",
   defaultQuickLinks: [
@@ -100,6 +104,7 @@ const initialState: PreferencesState = {
   selectedQuickLink: null,
   tab: "defaults",
   bibleFontMode: "separate",
+  scrollbarWidth: "thin",
 };
 
 export const preferencesSlice = createSlice({
@@ -351,6 +356,9 @@ export const preferencesSlice = createSlice({
     setShouldShowItemEditor: (state, action: PayloadAction<boolean>) => {
       state.shouldShowItemEditor = action.payload;
     },
+    setShouldShowStreamFormat: (state, action: PayloadAction<boolean>) => {
+      state.shouldShowStreamFormat = action.payload;
+    },
     setIsMediaExpanded: (state, action: PayloadAction<boolean>) => {
       state.isMediaExpanded = action.payload;
     },
@@ -359,6 +367,9 @@ export const preferencesSlice = createSlice({
     },
     setBibleFontMode: (state, action: PayloadAction<BibleFontMode>) => {
       state.bibleFontMode = action.payload;
+    },
+    setScrollbarWidth: (state, action: PayloadAction<ScrollbarWidth>) => {
+      state.scrollbarWidth = action.payload;
     },
     setSelectedPreference: (
       state,
@@ -396,6 +407,7 @@ export const {
   decreaseFormattedLyrics,
   setFormattedLyrics,
   setShouldShowItemEditor,
+  setShouldShowStreamFormat,
   setIsMediaExpanded,
   increaseMediaItems,
   decreaseMediaItems,
@@ -403,6 +415,7 @@ export const {
   setIsLoading,
   setSelectedPreference,
   setBibleFontMode,
+  setScrollbarWidth,
 } = preferencesSlice.actions;
 
 export default preferencesSlice.reducer;

@@ -59,11 +59,11 @@ const BibleSection = ({
     if (updatedFilteredList?.[0] && !isValueInList) {
       setValue(updatedFilteredList[0].index);
     }
-  }, [searchValue, initialList, setValue, type, value, min]);
+  }, [searchValue, initialList, setValue, type, value, min, label]);
 
   return (
     <div
-      className={`flex flex-col gap-2 ${
+      className={`flex flex-col gap-2 h-full ${
         type === "book" ? "lg:w-1/5 max-lg:w-[40%]" : "w-14"
       }`}
     >

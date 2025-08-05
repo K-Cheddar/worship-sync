@@ -70,29 +70,17 @@ registerRoute(
   })
 );
 
+// Handle service worker activation
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
 // This allows the web app to trigger skipWaiting via
 // registration.waiting.postMessage({type: 'SKIP_WAITING'})
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") {
     self.skipWaiting();
   }
-});
-
-// Add event listener for the 'activate' event
-self.addEventListener("activate", (event) => {
-  // Take control of all clients as soon as it's activated
-  event.waitUntil(
-    Promise.all([
-      // Take control of all clients
-      self.clients.claim(),
-      // Force reload all clients to ensure they're using the latest version
-      self.clients.matchAll().then((clients) => {
-        clients.forEach((client) => {
-          client.postMessage({ type: "RELOAD" });
-        });
-      }),
-    ])
-  );
 });
 
 // Any other custom service worker logic can go here.

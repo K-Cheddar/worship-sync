@@ -26,7 +26,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
   const { list, publishedList, initialList, isLoading, selectedCreditId } =
     useSelector((state: RootState) => state.undoable.present.credits);
   const dispatch = useDispatch();
-  // const { isMobile } = useContext(ControllerInfoContext) || {};
 
   const [justAdded, setJustAdded] = useState(false);
   const [justPublished, setJustPublished] = useState(false);
@@ -38,8 +37,18 @@ const CreditsEditor = ({ className }: { className?: string }) => {
   const sensors = useSensors();
 
   const hasUnpublishedChanges = () => {
-    const visibleList = list.filter((credit) => !credit.hidden);
-    const visiblePublishedList = publishedList;
+    const visibleList = list
+      .filter((credit) => !credit.hidden)
+      .map((credit) => ({
+        heading: credit.heading,
+        text: credit.text,
+      }));
+    const visiblePublishedList = publishedList
+      .filter((credit) => !credit.hidden)
+      .map((credit) => ({
+        heading: credit.heading,
+        text: credit.text,
+      }));
     return JSON.stringify(visiblePublishedList) !== JSON.stringify(visibleList);
   };
 

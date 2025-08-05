@@ -23,18 +23,22 @@ export type MenuItemType = {
   text?: string;
   onClick?: React.MouseEventHandler;
   to?: string;
+  element?: React.ReactNode;
+  className?: string;
+  padding?: string;
 };
 
 export type Box = {
   words?: string;
   id?: string;
-  isLocked?: boolean;
   background?: string;
   width: number;
   height: number;
   label?: string;
   fontSize?: number;
   align?: "left" | "right" | "center";
+  isBold?: boolean;
+  isItalic?: boolean;
   brightness?: number;
   x?: number;
   y?: number;
@@ -74,6 +78,7 @@ export type ItemSlide = {
   id: string;
   boxes: Box[];
   overflow?: OverflowMode;
+  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
 };
 
 export type LinkType = "image" | "slide" | "overlay";
@@ -88,17 +93,8 @@ export type QuickLinkType = {
   canDelete: boolean;
 };
 
-export type DBItem = {
-  _id: string;
-  name: string;
-  selectedArrangement: number;
-  skipTitle?: boolean;
-  background?: string;
-  type: ItemType;
-  slides: ItemSlide[];
-  bibleInfo?: BibleInfo;
-  timerInfo?: TimerInfo;
-  arrangements: Arrangment[];
+export type DBItem = ItemProperties & {
+  _rev?: string;
 };
 
 export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";
@@ -121,6 +117,26 @@ export type TimerInfo = {
   showMinutesOnly?: boolean;
 };
 
+export type ShouldSendTo = {
+  projector: boolean;
+  monitor: boolean;
+  stream: boolean;
+};
+
+export type ItemProperties = {
+  name: string;
+  type: ItemType;
+  _id: string;
+  shouldSkipTitle?: boolean;
+  selectedArrangement: number;
+  background?: string;
+  arrangements: Arrangment[];
+  slides: ItemSlide[];
+  bibleInfo?: BibleInfo;
+  timerInfo?: TimerInfo;
+  shouldSendTo: ShouldSendTo;
+};
+
 export type BibleFontMode = "fit" | "separate" | "multiple";
 
 export type BibleInfo = {
@@ -131,44 +147,13 @@ export type BibleInfo = {
   fontMode: BibleFontMode;
 };
 
-export type ItemState = {
-  name: string;
-  type: ItemType;
-  _id: string;
+export type ItemState = ItemProperties & {
   listId?: string;
-  selectedArrangement: number;
-  shouldSkipTitle?: boolean;
-  _rev?: string;
-  background?: string;
-  arrangements: Arrangment[];
   selectedSlide: number;
   selectedBox: number;
-  slides: ItemSlide[];
   isEditMode?: boolean;
-  bibleInfo?: BibleInfo;
   isLoading?: boolean;
   hasPendingUpdate?: boolean;
-  timerInfo?: TimerInfo;
-};
-
-export type OptionalItemState = {
-  name: string;
-  type: ItemType;
-  _id?: string;
-  listId?: string;
-  selectedArrangement?: number;
-  shouldSkipTitle?: boolean;
-  arrangements?: Arrangment[];
-  selectedSlide?: number;
-  selectedBox?: number;
-  slides?: ItemSlide[];
-  isEditMode?: boolean;
-  bibleInfo?: {
-    book: string;
-    chapter: string;
-    verse: string;
-    version: string;
-  };
 };
 
 export type Arrangment = {
@@ -204,6 +189,20 @@ export type Presentation = {
   timerId?: string;
   qrCodeOverlayInfo?: OverlayInfo;
   imageOverlayInfo?: OverlayInfo;
+  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
+};
+
+export type FormattedTextDisplayInfo = {
+  backgroundColor?: string;
+  textColor?: string;
+  fontSize?: number;
+  time?: number;
+  text?: string;
+  paddingX?: number;
+  paddingY?: number;
+  align?: "left" | "right" | "center";
+  isBold?: boolean;
+  isItalic?: boolean;
 };
 
 export type BibleDisplayInfo = {
@@ -253,10 +252,23 @@ export type verseType = {
   text?: string;
 };
 
+export type BibleChapter = {
+  key: string;
+  version: string;
+  book: string;
+  name: string;
+  index: number;
+  verses: verseType[];
+  lastUpdated: string;
+  isFromBibleGateway: boolean;
+};
+
 export type chapterType = {
   name: string;
   verses: verseType[];
   index: number;
+  isFromBibleGateway?: boolean;
+  lastUpdated?: string;
 };
 
 export type bookType = {
@@ -286,6 +298,8 @@ export type PreferencesType = {
   defaultIsMediaExpanded: boolean;
   defaultBibleFontMode: BibleFontMode;
 };
+
+export type ScrollbarWidth = "thin" | "auto" | "none";
 
 export type ItemList = {
   name: string;
@@ -373,6 +387,18 @@ export type DBLogin = {
   logins: DBUserInfo[];
 };
 
+export type DBBible = {
+  books: bookType[];
+  lastUpdated: string;
+  _id: string;
+  _rev: string;
+};
+
+export type DBBibleChapter = BibleChapter & {
+  _id: string;
+  _rev: string;
+};
+
 export type allDocsType = {
   offset: number;
   total_rows: number;
@@ -387,4 +413,12 @@ export type allDocsType = {
       | DBItem
       | DBMedia;
   }[];
+};
+
+export type Instance = {
+  database: string;
+  hostId: string;
+  isOnController: boolean;
+  lastActive: string;
+  user: string;
 };

@@ -16,6 +16,7 @@ import {
   updateImageOverlayInfoFromRemote,
   updateStbOverlayInfoFromRemote,
   updateStreamFromRemote,
+  updateFormattedTextDisplayInfoFromRemote,
 } from "./presentationSlice";
 import { itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
@@ -38,6 +39,7 @@ import {
   DBItemLists,
   DBMedia,
   DBPreferences,
+  FormattedTextDisplayInfo,
   OverlayInfo,
   Presentation,
   TimerInfo,
@@ -65,7 +67,7 @@ const undoableReducers = undoable(
       itemSlice.actions.setItemIsLoading.toString(),
       itemSlice.actions.setActiveItem.toString(),
       itemSlice.actions.setSelectedSlide.toString(),
-      itemSlice.actions.toggleEditMode.toString(),
+      itemSlice.actions.setIsEditMode.toString(),
       itemSlice.actions.setHasPendingUpdate.toString(),
       itemSlice.actions.setSelectedSlide.toString(),
       itemSlice.actions.setSelectedBox.toString(),
@@ -96,6 +98,7 @@ const undoableReducers = undoable(
       preferencesSlice.actions.setIsLoading.toString(),
       preferencesSlice.actions.setSelectedPreference.toString(),
       preferencesSlice.actions.setShouldShowItemEditor.toString(),
+      preferencesSlice.actions.setShouldShowStreamFormat.toString(),
       preferencesSlice.actions.setIsMediaExpanded.toString(),
       preferencesSlice.actions.increaseSlides.toString(),
       preferencesSlice.actions.decreaseSlides.toString(),
@@ -124,7 +127,7 @@ listenerMiddleware.startListening({
         (previousState as RootState).undoable.present.item &&
       action.type !== "item/setSelectedSlide" &&
       action.type !== "item/setSelectedBox" &&
-      action.type !== "item/toggleEditMode" &&
+      action.type !== "item/setIsEditMode" &&
       action.type !== "item/setItemIsLoading" &&
       action.type !== "item/setHasPendingUpdate" &&
       !!(currentState as RootState).undoable.present.item.hasPendingUpdate &&
@@ -138,7 +141,7 @@ listenerMiddleware.startListening({
       state = listenerApi.getOriginalState() as RootState;
     } else {
       listenerApi.cancelActiveListeners();
-      await listenerApi.delay(3500);
+      await listenerApi.delay(2500);
     }
 
     listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
@@ -157,6 +160,7 @@ listenerMiddleware.startListening({
       selectedArrangement: item.selectedArrangement,
       bibleInfo: item.bibleInfo,
       timerInfo: item.timerInfo,
+      shouldSendTo: item.shouldSendTo,
     };
     db.put(db_item);
   },
@@ -271,6 +275,7 @@ listenerMiddleware.startListening({
       action.type !== "overlays/setHasPendingUpdate" &&
       action.type !== "overlays/updateInitialList" &&
       action.type !== "overlays/addToInitialList" &&
+      action.type !== "overlays/setOverlayId" &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
       action.type !== "RESET"
@@ -379,7 +384,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     // update db with lists
-    const { list, publishedList, transitionScene, creditsScene } =
+    const { list, publishedList, transitionScene, creditsScene, scheduleName } =
       state.undoable.present.credits;
 
     if (
@@ -408,6 +413,13 @@ listenerMiddleware.startListening({
           "users/" + globalFireDbInfo.user + "/v2/credits/creditsScene"
         ),
         creditsScene
+      );
+      set(
+        ref(
+          globalFireDbInfo.db,
+          "users/" + globalFireDbInfo.user + "/v2/credits/scheduleName"
+        ),
+        scheduleName
       );
     }
 
@@ -465,10 +477,12 @@ listenerMiddleware.startListening({
       action.type !== "preferences/setMediaItems" &&
       action.type !== "preferences/setShouldShowItemEditor" &&
       action.type !== "preferences/setIsMediaExpanded" &&
+      action.type !== "preferences/setShouldShowStreamFormat" &&
       action.type !== "preferences/setIsLoading" &&
       action.type !== "preferences/setSelectedPreference" &&
       action.type !== "preferences/setSelectedQuickLink" &&
       action.type !== "preferences/setTab" &&
+      action.type !== "preferences/setScrollbarWidth" &&
       action.type !== "RESET"
     );
   },
@@ -518,6 +532,7 @@ listenerMiddleware.startListening({
       action.type !== "presentation/updateBibleDisplayInfoFromRemote" &&
       action.type !== "presentation/updateQrCodeOverlayInfoFromRemote" &&
       action.type !== "presentation/updateImageOverlayInfoFromRemote" &&
+      action.type !== "presentation/updateFormattedTextDisplayInfoFromRemote" &&
       action.type !== "RESET"
     );
   },
@@ -544,6 +559,7 @@ listenerMiddleware.startListening({
       stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
       stream_qrCodeOverlayInfo: streamInfo.qrCodeOverlayInfo,
       stream_imageOverlayInfo: streamInfo.imageOverlayInfo,
+      stream_formattedTextDisplayInfo: streamInfo.formattedTextDisplayInfo,
     };
 
     localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
@@ -568,6 +584,10 @@ listenerMiddleware.startListening({
     localStorage.setItem(
       "stream_imageOverlayInfo",
       JSON.stringify(streamInfo.imageOverlayInfo)
+    );
+    localStorage.setItem(
+      "stream_formattedTextDisplayInfo",
+      JSON.stringify(streamInfo.formattedTextDisplayInfo)
     );
 
     set(
@@ -784,6 +804,34 @@ listenerMiddleware.startListening({
 
     listenerApi.dispatch(
       updateImageOverlayInfoFromRemote(action.payload as OverlayInfo)
+    );
+  },
+});
+
+// handle updating from remote formatted text display info
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    const state = (previousState as RootState).presentation;
+    const info = action.payload as FormattedTextDisplayInfo;
+    return (
+      action.type === "debouncedUpdateFormattedTextDisplayInfo" &&
+      !!(
+        (info.time &&
+          state.streamInfo.formattedTextDisplayInfo?.time &&
+          info.time > state.streamInfo.formattedTextDisplayInfo.time) ||
+        (info.time && !state.streamInfo.formattedTextDisplayInfo?.time)
+      )
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+
+    listenerApi.dispatch(
+      updateFormattedTextDisplayInfoFromRemote(
+        action.payload as FormattedTextDisplayInfo
+      )
     );
   },
 });

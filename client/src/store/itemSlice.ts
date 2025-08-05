@@ -1,5 +1,12 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { Arrangment, BibleInfo, Box, ItemSlide, ItemState } from "../types";
+import {
+  Arrangment,
+  BibleInfo,
+  Box,
+  ItemSlide,
+  ItemState,
+  ShouldSendTo,
+} from "../types";
 import { createAsyncThunk } from "../hooks/reduxHooks";
 import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
@@ -29,6 +36,11 @@ const initialState: ItemState = {
   timerInfo: undefined,
   isLoading: true,
   hasPendingUpdate: false,
+  shouldSendTo: {
+    projector: true,
+    monitor: true,
+    stream: true,
+  },
 };
 
 export const itemSlice = createSlice({
@@ -54,9 +66,14 @@ export const itemSlice = createSlice({
         fontMode: "separate",
       };
       state.timerInfo = action.payload.timerInfo;
+      state.shouldSendTo = action.payload.shouldSendTo || {
+        projector: true,
+        monitor: true,
+        stream: true,
+      };
     },
-    toggleEditMode: (state) => {
-      state.isEditMode = !state.isEditMode;
+    setIsEditMode: (state, action: PayloadAction<boolean>) => {
+      state.isEditMode = action.payload;
     },
     _setName: (state, action: PayloadAction<string>) => {
       state.name = action.payload;
@@ -93,6 +110,13 @@ export const itemSlice = createSlice({
     },
     setSelectedBox: (state, action: PayloadAction<number>) => {
       state.selectedBox = action.payload;
+    },
+    setShouldSendTo: (state, action: PayloadAction<Partial<ShouldSendTo>>) => {
+      state.shouldSendTo = {
+        ...state.shouldSendTo,
+        ...action.payload,
+      };
+      state.hasPendingUpdate = true;
     },
   },
 });
@@ -351,7 +375,7 @@ export const updateBibleInfo = createAsyncThunk(
 export const {
   setSelectedSlide,
   _setSelectedArrangement,
-  toggleEditMode,
+  setIsEditMode,
   _setName,
   _updateArrangements,
   setActiveItem,
@@ -361,6 +385,7 @@ export const {
   setBackground,
   setHasPendingUpdate,
   setSelectedBox,
+  setShouldSendTo,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

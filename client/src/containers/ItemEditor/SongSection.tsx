@@ -38,6 +38,7 @@ const SongSection = ({
   return (
     <>
       <li
+        id={`song-section-${index}`}
         className={cn(
           "flex items-center px-2 max-lg:py-2 lg:py-1 bg-black rounded-lg hover:bg-gray-800 cursor-pointer border-b-4",
           itemSectionBorderColorMap.get(name.split(" ")[0])

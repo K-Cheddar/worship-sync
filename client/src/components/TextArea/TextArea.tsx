@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, HTMLProps } from "react";
+import { useCallback, useEffect, useRef, HTMLProps, useId } from "react";
 import cn from "classnames";
 import "./TextArea.scss";
 
@@ -27,20 +27,20 @@ const TextArea = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const labelRef = useRef<HTMLLabelElement>(null);
+  const id = useId();
 
   const resizeTextArea = useCallback(() => {
-    if (
-      autoResize &&
-      containerRef.current &&
-      textAreaRef.current &&
-      labelRef.current
-    ) {
-      containerRef.current.style.height = "auto";
-      containerRef.current.style.height =
-        textAreaRef.current.scrollHeight +
-        labelRef.current.offsetHeight +
-        4 +
-        "px";
+    if (containerRef.current && textAreaRef.current && labelRef.current) {
+      if (autoResize) {
+        containerRef.current.style.height = "auto";
+        containerRef.current.style.height =
+          textAreaRef.current.scrollHeight +
+          labelRef.current.offsetHeight +
+          4 +
+          "px";
+      } else {
+        containerRef.current.style.height = "";
+      }
     }
   }, [autoResize]);
 
@@ -51,6 +51,7 @@ const TextArea = ({
   return (
     <div ref={containerRef} className={cn("text-area-container", className)}>
       <label
+        htmlFor={id}
         ref={labelRef}
         className={cn(
           "text-sm font-semibold",
@@ -61,6 +62,7 @@ const TextArea = ({
         {label}:
       </label>
       <textarea
+        id={id}
         ref={textAreaRef}
         className="w-full h-full rounded px-2 py-1 select text-black resize-none text-sm"
         value={value}

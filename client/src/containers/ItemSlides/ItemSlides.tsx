@@ -22,7 +22,10 @@ import { useSelector } from "../../hooks";
 import { useDispatch } from "../../hooks";
 import {
   updateBibleDisplayInfo,
-  updatePresentation,
+  updateFormattedTextDisplayInfo,
+  updateMonitor,
+  updateProjector,
+  updateStream,
 } from "../../store/presentationSlice";
 import { createNewSlide } from "../../utils/slideCreation";
 import { addSlide as addSlideAction } from "../../store/itemSlice";
@@ -48,27 +51,82 @@ import generateRandomId from "../../utils/generateRandomId";
 
 export const sizeMap: Map<
   number,
-  { width: number; cols: string; hSize: string; mobileWidth: number }
+  {
+    width: number;
+    cols: string;
+    hSize: string;
+    mobileWidth: number;
+    borderWidth: string;
+  }
 > = new Map([
-  [7, { width: 7, mobileWidth: 10, cols: "grid-cols-7", hSize: "text-xs" }],
-  [6, { width: 8.25, mobileWidth: 12, cols: "grid-cols-6", hSize: "text-xs" }],
-  [5, { width: 10, mobileWidth: 15, cols: "grid-cols-5", hSize: "text-xs" }],
+  [
+    7,
+    {
+      width: 7,
+      mobileWidth: 10,
+      cols: "grid-cols-7",
+      hSize: "text-xs",
+      borderWidth: "clamp(0.2rem, 0.2vw, 0.4rem)",
+    },
+  ],
+  [
+    6,
+    {
+      width: 8.25,
+      mobileWidth: 12,
+      cols: "grid-cols-6",
+      hSize: "text-xs",
+      borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+    },
+  ],
+  [
+    5,
+    {
+      width: 10,
+      mobileWidth: 14.5,
+      cols: "grid-cols-5",
+      hSize: "text-xs",
+      borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+    },
+  ],
   [
     4,
-    { width: 12.75, mobileWidth: 19.25, cols: "grid-cols-4", hSize: "text-sm" },
+    {
+      width: 12.75,
+      mobileWidth: 19,
+      cols: "grid-cols-4",
+      hSize: "text-sm",
+      borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+    },
   ],
   [
     3,
-    { width: 17, mobileWidth: 26.25, cols: "grid-cols-3", hSize: "text-base" },
+    {
+      width: 17,
+      mobileWidth: 25,
+      cols: "grid-cols-3",
+      hSize: "text-base",
+      borderWidth: "clamp(0.35rem, 0.35vw, 0.7rem)",
+    },
   ],
-  [2, { width: 26, mobileWidth: 40, cols: "grid-cols-2", hSize: "text-base" }],
+  [
+    2,
+    {
+      width: 26,
+      mobileWidth: 37.5,
+      cols: "grid-cols-2",
+      hSize: "text-base",
+      borderWidth: "clamp(0.45rem, 0.45vw, 0.9rem)",
+    },
+  ],
   [
     1,
     {
       width: 52.25,
-      mobileWidth: 81.5,
+      mobileWidth: 76,
       cols: "grid-cols-1",
       hSize: "text-base",
+      borderWidth: "clamp(0.5rem, 0.5vw, 1rem)",
     },
   ],
 ]);
@@ -83,7 +141,19 @@ const ItemSlides = () => {
     slides: __slides,
     isLoading,
     _id,
+    shouldSendTo,
   } = useSelector((state: RootState) => state.undoable.present.item);
+
+  const {
+    isMonitorTransmitting,
+    isProjectorTransmitting,
+    isStreamTransmitting,
+  } = useSelector((state) => state.presentation);
+
+  const isTransmitting =
+    (shouldSendTo.monitor && isMonitorTransmitting) ||
+    (shouldSendTo.projector && isProjectorTransmitting) ||
+    (shouldSendTo.stream && isStreamTransmitting);
 
   const timers = useSelector((state: RootState) => state.timers.timers);
   const timerInfo = timers.find((timer) => timer.id === _id);
@@ -94,11 +164,11 @@ const ItemSlides = () => {
     const _slides = arrangement?.slides || __slides || [];
     return isLoading ? [] : _slides;
   }, [isLoading, __slides, arrangement?.slides]);
-  const { slidesPerRow, slidesPerRowMobile } = useSelector(
-    (state: RootState) => state.undoable.present.preferences
-  );
+  const { slidesPerRow, slidesPerRowMobile, shouldShowStreamFormat } =
+    useSelector((state: RootState) => state.undoable.present.preferences);
   const { isMobile } = useContext(ControllerInfoContext) || {};
-  const size = isMobile ? slidesPerRowMobile : slidesPerRow;
+  const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
+  const size = type === "timer" ? Math.min(_size, 3) : _size;
 
   const debounceTime = useRef(0);
 
@@ -163,31 +233,90 @@ const ItemSlides = () => {
     }
   }, [selectedSlide, isMobile]);
 
+  const getBibleInfo = (index: number) => {
+    const slide = slides[index];
+
+    if (!slide) return { title: "", text: "" };
+
+    const titleSlideText = slides[0].boxes[1]?.words?.trim();
+    const slideText = slide.boxes[1]?.words?.trim();
+
+    const title = (slideText ? titleSlideText : "") || "";
+    const text = index > 0 ? slideText || "" : "";
+    return { title, text };
+  };
+
   const selectSlide = (index: number) => {
     dispatch(setSelectedSlide(index));
-    if (type === "bible") {
-      const title =
-        index > 0
-          ? slides[index].boxes[2]?.words || ""
-          : slides[index].boxes[1]?.words || "";
-      const text = index > 0 ? slides[index].boxes[1]?.words || "" : "";
+    const slide = slides[index];
+
+    if (shouldSendTo.stream) {
+      if (type === "bible") {
+        const { title, text } = getBibleInfo(index);
+        dispatch(
+          updateBibleDisplayInfo({
+            title,
+            text,
+          })
+        );
+      } else {
+        dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
+      }
+
+      if (type === "free") {
+        dispatch(
+          updateFormattedTextDisplayInfo({
+            text: slide.boxes[1]?.words || "",
+            backgroundColor:
+              slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
+            textColor: slide.formattedTextDisplayInfo?.textColor || "#ffffff",
+            fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
+            paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
+            paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
+            isBold: slide.formattedTextDisplayInfo?.isBold || false,
+            isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
+            align: slide.formattedTextDisplayInfo?.align || "left",
+          })
+        );
+      } else {
+        dispatch(
+          updateFormattedTextDisplayInfo({
+            text: "",
+          })
+        );
+      }
+
       dispatch(
-        updateBibleDisplayInfo({
-          title,
-          text,
+        updateStream({
+          slide,
+          type,
+          name,
+          timerId: timerInfo?.id,
         })
       );
-    } else {
-      dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
     }
-    dispatch(
-      updatePresentation({
-        slide: slides[index],
-        type,
-        name,
-        timerId: timerInfo?.id,
-      })
-    );
+
+    if (shouldSendTo.projector) {
+      dispatch(
+        updateProjector({
+          slide,
+          type,
+          name,
+          timerId: timerInfo?.id,
+        })
+      );
+    }
+
+    if (shouldSendTo.monitor) {
+      dispatch(
+        updateMonitor({
+          slide,
+          type,
+          name,
+          timerId: timerInfo?.id,
+        })
+      );
+    }
   };
 
   const addSlide = () => {
@@ -349,8 +478,14 @@ const ItemSlides = () => {
           onClick={() => {
             if (isMobile) {
               dispatch(increaseSlidesMobile());
+              if (type === "timer") {
+                dispatch(setSlidesMobile(size + 1));
+              }
             } else {
               dispatch(increaseSlides());
+              if (type === "timer") {
+                dispatch(setSlides(size + 1));
+              }
             }
           }}
         />
@@ -360,8 +495,14 @@ const ItemSlides = () => {
           onClick={() => {
             if (isMobile) {
               dispatch(decreaseSlidesMobile());
+              if (type === "timer") {
+                dispatch(setSlidesMobile(size - 1));
+              }
             } else {
               dispatch(decreaseSlides());
+              if (type === "timer") {
+                dispatch(setSlides(size - 1));
+              }
             }
           }}
         />
@@ -402,6 +543,7 @@ const ItemSlides = () => {
           >
             {debouncedSlides.map((slide, index) => (
               <ItemSlide
+                isTransmitting={isTransmitting}
                 timerInfo={timerInfo}
                 key={slide.id}
                 slide={slide}
@@ -412,6 +554,8 @@ const ItemSlides = () => {
                 itemType={type}
                 isMobile={isMobile || false}
                 draggedSection={draggedSection}
+                isStreamFormat={shouldShowStreamFormat}
+                getBibleInfo={getBibleInfo}
               />
             ))}
           </SortableContext>

@@ -135,6 +135,8 @@ const DisplayBox = ({
     WebkitTextStroke: `${fOS}vw #000`,
     textAlign: box.align || "center",
     lineHeight: 1.25,
+    fontWeight: box.isBold ? "bold" : "normal",
+    fontStyle: box.isItalic ? "italic" : "normal",
   };
 
   const renderContent = () => {
@@ -157,7 +159,7 @@ const DisplayBox = ({
       style={{
         width: boxWidth,
         height: boxHeight,
-        pointerEvents: box.isLocked ? "none" : "all",
+        pointerEvents: "none",
         fontSize: `${fontSizeValue}vw`,
         marginTop,
         marginBottom,

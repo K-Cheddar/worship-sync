@@ -5,6 +5,7 @@ import cn from "classnames";
 import { borderColorMap, iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { Link } from "react-router-dom";
 import "./LeftPanelButton.scss";
+import { formatTime } from "../DisplayWindow/TimerDisplay";
 
 type LeftPanelButtonProps = {
   isSelected: boolean;
@@ -20,6 +21,9 @@ type LeftPanelButtonProps = {
   }[];
   image?: string;
   className?: string;
+  displayId?: string;
+  timerValue?: number;
+  isActive?: boolean;
 };
 
 const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
@@ -34,12 +38,16 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
       style,
       image,
       className,
+      displayId,
+      timerValue,
+      isActive,
       ...rest
     },
     ref
   ) => {
     return (
       <li
+        id={displayId}
         ref={ref}
         style={style}
         className={cn(
@@ -55,13 +63,20 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           className={`left-panel-button ${borderColorMap.get(type)}`}
           iconSize="md"
           wrap
-          svg={svgMap.get(type) || UnknownSVG}
+          svg={image || isActive ? undefined : svgMap.get(type) || UnknownSVG}
           gap="gap-2"
           color={iconColorMap.get(type)}
           isSelected={isSelected}
           padding="py-1 px-2"
         >
-          {image && <img src={image} className="w-10" alt="" />}
+          {image && !isActive && (
+            <img src={image} className="w-14 max-w-[30%]" alt={title} />
+          )}
+          {isActive && (
+            <span className="bg-gray-950 text-white font-semibold rounded-lg px-2 py-1 text-xs">
+              {formatTime(timerValue || 0, false, true)}
+            </span>
+          )}
           <p className="font-semibold pl-1">{title}</p>
           <Link
             to={to}

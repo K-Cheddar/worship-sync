@@ -21691,7 +21691,7 @@ export const bibleStructure = {
       ],
     },
     {
-      name: "Songs of Solomon",
+      name: "Song of Solomon",
       index: 21,
       chapters: [
         {

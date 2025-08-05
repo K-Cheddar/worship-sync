@@ -10,15 +10,14 @@ import { ReactComponent as BibleSVG } from "../../../assets/icons/book.svg";
 import { ReactComponent as AlignLeftSVG } from "../../../assets/icons/align-left.svg";
 import { ReactComponent as AlignCenterSVG } from "../../../assets/icons/align-center.svg";
 import { ReactComponent as AlignRightSVG } from "../../../assets/icons/align-right.svg";
+import { ReactComponent as BoldSVG } from "../../../assets/icons/format-bold.svg";
+import { ReactComponent as ItalicSVG } from "../../../assets/icons/format-italic.svg";
 import Input from "../../../components/Input/Input";
 import { useEffect, useState, useCallback, useRef, useContext } from "react";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useLocation } from "react-router-dom";
 import {
-  updateFontSize,
-  updateBrightness,
-  updateKeepAspectRatio,
-  updateFontColor,
+  updateBoxProperties,
   updateItemTimerColor,
   updateBibleFontMode,
 } from "../../../utils/formatter";
@@ -38,6 +37,7 @@ import RadioButton from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
 import { formatFree } from "../../../utils/overflow";
 import { GlobalInfoContext } from "../../../context/globalInfo";
+import { ControllerInfoContext } from "../../../context/controllerInfo";
 
 const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
@@ -50,8 +50,11 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const [alignment, setAlignment] = useState<"left" | "center" | "right">(
     "left"
   );
+  const [isBold, setIsBold] = useState(false);
+  const [isItalic, setIsItalic] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout>();
   const { hostId } = useContext(GlobalInfoContext) || {};
+  const { isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const item = useSelector((state) => state.undoable.present.item);
   const { slides, selectedSlide, selectedBox, timerInfo, type } = item;
@@ -69,6 +72,8 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     setFontColor(slide?.boxes?.[selectedBox]?.fontColor || "#ffffff");
     setTimerColor(timer?.color || "#ffffff");
     setAlignment(slide?.boxes?.[selectedBox]?.align || "left");
+    setIsBold(slide?.boxes?.[selectedBox]?.isBold || false);
+    setIsItalic(slide?.boxes?.[selectedBox]?.isItalic || false);
   }, [slide, selectedBox, timer]);
 
   const updateItem = useCallback(
@@ -89,23 +94,43 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const _updateFontSize = (val: number) => {
     const _val = Math.round(Math.max(Math.min(val, 150), 1));
     setFontSize(_val);
-    const fSize = _val / 10;
-    const updatedItem = updateFontSize({ fontSize: fSize, item });
-    updateItem(updatedItem);
+
+    // Debounce updateFontSize
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = setTimeout(() => {
+      const fSize = _val / 10;
+      const updatedItem = updateBoxProperties({
+        updatedProperties: { fontSize: fSize },
+        item,
+        shouldFormatItem: true,
+        isMobile,
+      });
+      updateItem(updatedItem);
+    }, 250);
   };
 
   const _updateBrightness = (val: number) => {
     const _val = Math.max(Math.min(val, 100), 10);
     setBrightness(_val);
-    const updatedItem = updateBrightness({ brightness: _val, item });
+    const updatedItem = updateBoxProperties({
+      updatedProperties: { brightness: _val },
+      item,
+      shouldUpdateBgOnly: true,
+      shouldApplyToAll: true,
+      isMobile,
+    });
     updateItem(updatedItem);
   };
 
   const _updateKeepAspectRatio = (val: boolean) => {
     setShouldKeepAspectRatio(val);
-    const updatedItem = updateKeepAspectRatio({
-      shouldKeepAspectRatio: val,
+    const updatedItem = updateBoxProperties({
+      updatedProperties: { shouldKeepAspectRatio: val },
       item,
+      shouldUpdateBgOnly: true,
+      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -124,7 +149,12 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     timeoutRef.current = setTimeout(() => {
       setFontColor(val);
 
-      const updatedItem = updateFontColor({ fontColor: val, item });
+      const updatedItem = updateBoxProperties({
+        updatedProperties: { fontColor: val },
+        item,
+        shouldApplyToAll: true,
+        isMobile,
+      });
       updateItem(updatedItem);
     }, 250);
   };
@@ -149,23 +179,39 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     }, 250);
   };
 
+  const _updateIsBold = () => {
+    setIsBold(!isBold);
+    const updatedItem = updateBoxProperties({
+      updatedProperties: { isBold: !isBold },
+      item,
+      shouldFormatItem: true,
+      shouldApplyToAll: true,
+      isMobile,
+    });
+    updateItem(updatedItem);
+  };
+
+  const _updateIsItalic = () => {
+    setIsItalic(!isItalic);
+    const updatedItem = updateBoxProperties({
+      updatedProperties: { isItalic: !isItalic },
+      item,
+      shouldFormatItem: true,
+      shouldApplyToAll: true,
+      isMobile,
+    });
+    updateItem(updatedItem);
+  };
+
   const _updateAlignment = (align: "left" | "center" | "right") => {
     setAlignment(align);
-    const updatedSlides = slides.map((s, index) => {
-      if (index === selectedSlide) {
-        return {
-          ...s,
-          boxes: s.boxes.map((box, boxIndex) => {
-            if (boxIndex === selectedBox) {
-              return { ...box, align };
-            }
-            return box;
-          }),
-        };
-      }
-      return s;
+    const updatedItem = updateBoxProperties({
+      updatedProperties: { align },
+      item,
+      shouldApplyToAll: true,
+      shouldFormatItem: true,
+      isMobile,
     });
-    const updatedItem = { ...item, slides: updatedSlides };
     updateItem(updatedItem);
   };
 
@@ -179,7 +225,11 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   }, []);
 
   const _updateBibleFontMode = (mode: BibleFontMode) => {
-    const updatedItem = updateBibleFontMode({ fontMode: mode, item });
+    const updatedItem = updateBibleFontMode({
+      fontMode: mode,
+      item,
+      isMobile,
+    });
     updateItem(updatedItem);
   };
 
@@ -191,7 +241,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const controls = (
     <>
-      <div className="flex gap-1 items-center">
+      <div className="flex gap-1 items-center flex-wrap justify-center">
         <Icon svg={TextFieldSVG} className="border-b border-black" />
         <Button
           svg={MinusSVG}
@@ -201,7 +251,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         <Input
           label="Font Size"
           type="number"
-          disabled={item.type === "bible" && item.bibleInfo?.fontMode === "fit"}
           value={fontSize}
           onChange={(val) => _updateFontSize(val as number)}
           className="w-8 2xl:w-10"
@@ -235,23 +284,33 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         </PopOver>
 
         <Button
-          variant="tertiary"
-          svg={AlignLeftSVG}
-          onClick={() => _updateAlignment("left")}
-          className={alignment === "left" ? "bg-gray-200" : ""}
+          variant={isBold ? "secondary" : "tertiary"}
+          svg={BoldSVG}
+          onClick={() => _updateIsBold()}
         />
         <Button
-          variant="tertiary"
-          svg={AlignCenterSVG}
-          onClick={() => _updateAlignment("center")}
-          className={alignment === "center" ? "bg-gray-200" : ""}
+          variant={isItalic ? "secondary" : "tertiary"}
+          svg={ItalicSVG}
+          onClick={() => _updateIsItalic()}
         />
-        <Button
-          variant="tertiary"
-          svg={AlignRightSVG}
-          onClick={() => _updateAlignment("right")}
-          className={alignment === "right" ? "bg-gray-200" : ""}
-        />
+
+        <div className="flex gap-1 items-center">
+          <Button
+            variant={alignment === "left" ? "secondary" : "tertiary"}
+            svg={AlignLeftSVG}
+            onClick={() => _updateAlignment("left")}
+          />
+          <Button
+            variant={alignment === "center" ? "secondary" : "tertiary"}
+            svg={AlignCenterSVG}
+            onClick={() => _updateAlignment("center")}
+          />
+          <Button
+            variant={alignment === "right" ? "secondary" : "tertiary"}
+            svg={AlignRightSVG}
+            onClick={() => _updateAlignment("right")}
+          />
+        </div>
       </div>
 
       <div className="flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4">
@@ -279,28 +338,38 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           <>
             <p className="text-sm font-semibold">Overflow:</p>
             <RadioButton
+              className="text-xs"
               label="Fit"
               value={slide.overflow === "fit"}
               onChange={() => {
-                const updatedItem = formatFree({
-                  ...item,
-                  slides: slides.map((s, index) =>
-                    index === selectedSlide ? { ...s, overflow: "fit" } : s
-                  ),
-                });
+                const updatedItem = formatFree(
+                  {
+                    ...item,
+                    slides: slides.map((s, index) =>
+                      index === selectedSlide ? { ...s, overflow: "fit" } : s
+                    ),
+                  },
+                  isMobile || false
+                );
                 updateItem(updatedItem);
               }}
             />
             <RadioButton
+              className="text-xs"
               label="Separate"
               value={slide.overflow === "separate"}
               onChange={() => {
-                const updatedItem = formatFree({
-                  ...item,
-                  slides: slides.map((s, index) =>
-                    index === selectedSlide ? { ...s, overflow: "separate" } : s
-                  ),
-                });
+                const updatedItem = formatFree(
+                  {
+                    ...item,
+                    slides: slides.map((s, index) =>
+                      index === selectedSlide
+                        ? { ...s, overflow: "separate" }
+                        : s
+                    ),
+                  },
+                  isMobile || false
+                );
                 updateItem(updatedItem);
               }}
             />
@@ -311,16 +380,19 @@ const SlideEditTools = ({ className }: { className?: string }) => {
             <Icon color={iconColorMap.get("bible")} svg={BibleSVG} />
             <p className="text-sm font-semibold">Mode:</p>
             <RadioButton
+              className="text-xs"
               onChange={() => _updateBibleFontMode("fit")}
               value={item.bibleInfo?.fontMode === "fit"}
               label="Fit"
             />
             <RadioButton
+              className="text-xs"
               onChange={() => _updateBibleFontMode("separate")}
               value={item.bibleInfo?.fontMode === "separate"}
               label="Separate"
             />
             <RadioButton
+              className="text-xs"
               onChange={() => _updateBibleFontMode("multiple")}
               value={item.bibleInfo?.fontMode === "multiple"}
               label="Multiple"
@@ -356,7 +428,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
-      <BoxEditor />
+      <BoxEditor updateItem={updateItem} isMobile={isMobile} />
       {canChangeAspectRatio && (
         <Toggle
           label="Keep Aspect Ratio"
@@ -364,6 +436,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onChange={(val) => _updateKeepAspectRatio(val)}
         />
       )}
+      <Button svg={TextFieldSVG} iconSize="lg" className="invisible" />
     </>
   );
 

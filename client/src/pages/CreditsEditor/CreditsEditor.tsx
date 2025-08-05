@@ -11,9 +11,11 @@ import { DBCredits } from "../../types";
 import {
   initiateCreditsList,
   initiateCreditsScene,
+  initiatePublishedCreditsList,
   initiateTransitionScene,
   setCreditsScene,
   setIsLoading,
+  setScheduleName,
   setTransitionScene,
   updateCreditsListFromRemote,
   updateList,
@@ -32,7 +34,7 @@ import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
 import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
 
 const CreditsEditor = () => {
-  const { list, transitionScene, creditsScene } = useSelector(
+  const { list, transitionScene, creditsScene, scheduleName } = useSelector(
     (state) => state.undoable.present.credits
   );
   const { list: overlays } = useSelector(
@@ -90,36 +92,54 @@ const CreditsEditor = () => {
   }, [updater, dispatch]);
 
   useEffect(() => {
-    const getTransitionScene = async () => {
+    const getCreditsFromFirebase = async () => {
       if (!firebaseDb) return;
-      const updateRef = ref(
+      const transitionSceneRef = ref(
         firebaseDb,
         "users/" + user + "/v2/credits/transitionScene"
       );
-      onValue(updateRef, (snapshot) => {
+      onValue(transitionSceneRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
           dispatch(initiateTransitionScene(data));
         }
       });
-    };
 
-    const getCreditsScene = async () => {
-      if (!firebaseDb) return;
-      const updateRef = ref(
+      const creditsSceneRef = ref(
         firebaseDb,
         "users/" + user + "/v2/credits/creditsScene"
       );
-      onValue(updateRef, (snapshot) => {
+      onValue(creditsSceneRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
           dispatch(initiateCreditsScene(data));
         }
       });
+
+      const scheduleNameRef = ref(
+        firebaseDb,
+        "users/" + user + "/v2/credits/scheduleName"
+      );
+      onValue(scheduleNameRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          dispatch(setScheduleName(data));
+        }
+      });
+
+      const getPublishedRef = ref(
+        firebaseDb,
+        "users/" + user + "/v2/credits/publishedList"
+      );
+      onValue(getPublishedRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          dispatch(initiatePublishedCreditsList(data));
+        }
+      });
     };
 
-    getTransitionScene();
-    getCreditsScene();
+    getCreditsFromFirebase();
   }, [dispatch, firebaseDb, user]);
 
   const editorRef = useCallback(
@@ -190,8 +210,17 @@ const CreditsEditor = () => {
           )?.name || "",
       };
 
+      // Dynamically determine the fallback schedule name as '3rd Quarter 2025 - Schedule' (or similar)
+      const now = new Date();
+      const year = now.getFullYear();
+      const quarter = Math.floor(now.getMonth() / 3) + 1;
+      const quarterNames = ["1st", "2nd", "3rd", "4th"];
+      const fallbackScheduleName = `${
+        quarterNames[quarter - 1]
+      } Quarter ${year} - Schedule`;
+
       const schedule = await getScheduleFromExcel(
-        "2nd Quarter 2025 - Schedule.xlsx",
+        `${scheduleName || fallbackScheduleName}.xlsx`,
         "/Media Team Positions.xlsx"
       );
 
@@ -243,7 +272,7 @@ const CreditsEditor = () => {
     } finally {
       setIsGenerating(false);
     }
-  }, [overlays, list, dispatch]);
+  }, [overlays, list, dispatch, scheduleName]);
 
   const controls = (
     <>
@@ -260,6 +289,13 @@ const CreditsEditor = () => {
         value={creditsScene}
         data-ignore-undo="true"
         onChange={(val) => dispatch(setCreditsScene(val as string))}
+      />
+      <Input
+        label="Schedule Name"
+        className="credits-transition-input"
+        value={scheduleName}
+        data-ignore-undo="true"
+        onChange={(val) => dispatch(setScheduleName(val as string))}
       />
       <Button
         className="text-sm"
@@ -295,12 +331,12 @@ const CreditsEditor = () => {
           <div className="border-l-2 border-gray-400 pl-4">
             <Undo />
           </div>
-          <div className="max-md:hidden flex gap-8 items-center border-l-2 border-gray-400 pl-4">
+          <div className="max-lg:hidden flex gap-8 items-center border-l-2 border-gray-400 pl-4">
             {controls}
           </div>
           <PopOver
             TriggeringButton={
-              <Button className="md:hidden" variant="tertiary" svg={ExpandSVG}>
+              <Button className="lg:hidden" variant="tertiary" svg={ExpandSVG}>
                 Tools
               </Button>
             }
@@ -348,7 +384,7 @@ const CreditsEditor = () => {
         </div>
       )}
 
-      <div className="flex gap-2 px-4 pb-4">
+      <div className="flex gap-2 px-4 pb-4 h-full">
         <CreditsEditorContainer
           className={isPreviewOpen ? "max-md:hidden" : ""}
         />

@@ -44,6 +44,16 @@ const TransmitHandler = () => {
   const monitorTimer = timers.find((timer) => timer.id === monitorInfo.timerId);
   const streamTimer = timers.find((timer) => timer.id === streamInfo.timerId);
 
+  const prevProjectorTimer = timers.find(
+    (timer) => timer.id === prevProjectorInfo.timerId
+  );
+  const prevMonitorTimer = timers.find(
+    (timer) => timer.id === prevMonitorInfo.timerId
+  );
+  const prevStreamTimer = timers.find(
+    (timer) => timer.id === prevStreamInfo.timerId
+  );
+
   const dispatch = useDispatch();
 
   const { isMediaExpanded, quickLinks, defaultQuickLinks } = useSelector(
@@ -103,45 +113,50 @@ const TransmitHandler = () => {
             onChange={handleSetTransmitting}
           />
         </div>
-        <Presentation
-          timers={timers}
-          name="Projector"
-          prevInfo={prevProjectorInfo}
-          timerInfo={projectorTimer}
-          info={projectorInfo}
-          isTransmitting={isProjectorTransmitting}
-          toggleIsTransmitting={() => dispatch(toggleProjectorTransmitting())}
-          quickLinks={allQuickLinks.filter(
-            (link) => link.displayType === "projector"
-          )}
-          isMobile={isMobile}
-        />
-        <Presentation
-          timers={timers}
-          name="Monitor"
-          prevInfo={prevMonitorInfo}
-          timerInfo={monitorTimer}
-          info={monitorInfo}
-          isTransmitting={isMonitorTransmitting}
-          toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
-          quickLinks={allQuickLinks.filter(
-            (link) => link.displayType === "monitor"
-          )}
-          isMobile={isMobile}
-        />
-        <Presentation
-          timers={timers}
-          name="Stream"
-          prevInfo={prevStreamInfo}
-          timerInfo={streamTimer}
-          info={streamInfo}
-          isTransmitting={isStreamTransmitting}
-          toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
-          quickLinks={allQuickLinks.filter(
-            (link) => link.displayType === "stream"
-          )}
-          isMobile={isMobile}
-        />
+        <div className="transmit-handler-content">
+          <Presentation
+            timers={timers}
+            name="Projector"
+            prevInfo={prevProjectorInfo}
+            timerInfo={projectorTimer}
+            prevTimerInfo={prevProjectorTimer}
+            info={projectorInfo}
+            isTransmitting={isProjectorTransmitting}
+            toggleIsTransmitting={() => dispatch(toggleProjectorTransmitting())}
+            quickLinks={allQuickLinks.filter(
+              (link) => link.displayType === "projector"
+            )}
+            isMobile={isMobile}
+          />
+          <Presentation
+            timers={timers}
+            name="Monitor"
+            prevInfo={prevMonitorInfo}
+            timerInfo={monitorTimer}
+            prevTimerInfo={prevMonitorTimer}
+            info={monitorInfo}
+            isTransmitting={isMonitorTransmitting}
+            toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
+            quickLinks={allQuickLinks.filter(
+              (link) => link.displayType === "monitor"
+            )}
+            isMobile={isMobile}
+          />
+          <Presentation
+            timers={timers}
+            name="Stream"
+            prevInfo={prevStreamInfo}
+            timerInfo={streamTimer}
+            prevTimerInfo={prevStreamTimer}
+            info={streamInfo}
+            isTransmitting={isStreamTransmitting}
+            toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
+            quickLinks={allQuickLinks.filter(
+              (link) => link.displayType === "stream"
+            )}
+            isMobile={isMobile}
+          />
+        </div>
       </section>
     </div>
   );

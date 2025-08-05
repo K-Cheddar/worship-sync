@@ -3,6 +3,7 @@ import {
   BibleDisplayInfo,
   Box,
   DisplayType,
+  FormattedTextDisplayInfo,
   OverlayInfo,
   TimerInfo,
 } from "../../types";
@@ -15,6 +16,7 @@ import DisplayQrCodeOverlay from "./DisplayQrCodeOverlay";
 import DisplayEditor from "./DisplayEditor";
 import DisplayStreamText from "./DisplayStreamText";
 import DisplayImageOverlay from "./DisplayImageOverlay";
+import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
 
 type DisplayWindowProps = {
   prevBoxes?: Box[];
@@ -43,6 +45,8 @@ type DisplayWindowProps = {
   prevImageOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
   prevBibleDisplayInfo?: BibleDisplayInfo;
+  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
+  prevFormattedTextDisplayInfo?: FormattedTextDisplayInfo;
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
   shouldAnimate?: boolean;
@@ -51,6 +55,7 @@ type DisplayWindowProps = {
   prevTime?: number;
   selectBox?: (index: number) => void;
   selectedBox?: number;
+  isBoxLocked?: boolean[];
 };
 
 const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
@@ -80,6 +85,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       prevTimerInfo,
       selectBox,
       selectedBox,
+      formattedTextDisplayInfo,
+      prevFormattedTextDisplayInfo,
+      isBoxLocked,
     }: DisplayWindowProps,
     ref
   ) => {
@@ -87,7 +95,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const containerRef = ref || fallbackRef;
 
     const aspectRatio = 16 / 9;
-    const fontAdjustment = width === 42 ? 1 : 42.35 / width; // Display editor is 42vw but sometimes the display gets clipped on other windows
+    const fontAdjustment = 43 / width; // Display editor is 42vw but sometimes the display gets clipped on other windows
 
     const showBackground =
       displayType === "projector" ||
@@ -123,6 +131,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 index={index}
                 selectBox={selectBox}
                 isSelected={selectedBox === index}
+                isBoxLocked={isBoxLocked?.[index] ?? true}
               />
             );
           if (isStream)
@@ -172,7 +181,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 shouldPlayVideo={shouldPlayVideo}
                 prevBox={boxes[index]}
                 time={time}
-                timerInfo={timerInfo}
+                timerInfo={prevTimerInfo}
                 isPrev
               />
             );
@@ -184,7 +193,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 box={box}
                 width={width}
                 time={time}
-                timerInfo={timerInfo}
+                timerInfo={prevTimerInfo}
                 isPrev
                 prevBox={boxes[index]}
               />
@@ -232,6 +241,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               imageOverlayInfo={imageOverlayInfo}
               prevImageOverlayInfo={prevImageOverlayInfo}
               ref={containerRef}
+            />
+
+            <DisplayStreamFormattedText
+              width={width}
+              shouldAnimate={shouldAnimate}
+              formattedTextDisplayInfo={formattedTextDisplayInfo}
+              prevFormattedTextDisplayInfo={prevFormattedTextDisplayInfo}
             />
           </>
         )}

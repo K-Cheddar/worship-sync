@@ -1,5 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import Button from "../../components/Button/Button";
+import Input from "../../components/Input/Input";
+import DeleteModal from "../../components/Modal/DeleteModal";
 import { ReactComponent as BgAll } from "../../assets/icons/background-all.svg";
 import { ReactComponent as BGOne } from "../../assets/icons/background-one.svg";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
@@ -25,6 +27,10 @@ import CloudinaryUploadWidget, {
   imageInfoType,
 } from "./CloudinaryUploadWidget";
 import generateRandomId from "../../utils/generateRandomId";
+import {
+  deleteFromCloudinary,
+  extractPublicId,
+} from "../../utils/cloudinaryUtils";
 import {
   decreaseMediaItems,
   increaseMediaItems,
@@ -76,6 +82,19 @@ const Media = () => {
     type: string;
   }>(emptyMedia);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [mediaToDelete, setMediaToDelete] = useState<{
+    id: string;
+    name: string;
+    background: string;
+    thumbnail: string;
+  } | null>(null);
+
+  // Filter media items based on search term
+  const filteredList = list.filter((item) =>
+    item.name?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   const { db, cloud, isMobile, updater } =
     useContext(ControllerInfoContext) || {};
@@ -148,11 +167,57 @@ const Media = () => {
     }
   };
 
-  const deleteBackground = async () => {
-    if (!db) return;
-    const updatedList = list.filter((item) => item.id !== selectedMedia.id);
-    dispatch(updateMediaList(updatedList));
-    setSelectedMedia(emptyMedia);
+  const showDeleteConfirmation = () => {
+    if (!selectedMedia.id) return;
+
+    const mediaItem = list.find((item) => item.id === selectedMedia.id);
+    if (!mediaItem) return;
+
+    setMediaToDelete({
+      id: selectedMedia.id,
+      name: mediaItem.name || "this media",
+      background: mediaItem.background,
+      thumbnail: mediaItem.thumbnail,
+    });
+    setShowDeleteModal(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!db || !cloud || !mediaToDelete) return;
+
+    try {
+      // Extract public_id from the background URL
+      const publicId = extractPublicId(mediaToDelete.background);
+
+      if (publicId) {
+        // Delete from Cloudinary
+        const cloudinarySuccess = await deleteFromCloudinary(cloud, publicId);
+        if (!cloudinarySuccess) {
+          console.warn(
+            "Failed to delete from Cloudinary, but continuing with local deletion"
+          );
+        }
+      }
+
+      // Remove from local list
+      const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
+      dispatch(updateMediaList(updatedList));
+      setSelectedMedia(emptyMedia);
+    } catch (error) {
+      console.error("Error deleting background:", error);
+      // Still remove from local list even if Cloudinary deletion fails
+      const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
+      dispatch(updateMediaList(updatedList));
+      setSelectedMedia(emptyMedia);
+    } finally {
+      setShowDeleteModal(false);
+      setMediaToDelete(null);
+    }
+  };
+
+  const handleCancelDelete = () => {
+    setShowDeleteModal(false);
+    setMediaToDelete(null);
   };
 
   const addNewBackground = ({
@@ -352,7 +417,7 @@ const Media = () => {
           variant="tertiary"
           disabled={selectedMedia.id === ""}
           svg={DeleteSVG}
-          onClick={() => deleteBackground()}
+          onClick={() => showDeleteConfirmation()}
         />
       </div>
       {!isMediaLoading && isMediaExpanded && (
@@ -369,32 +434,44 @@ const Media = () => {
           />
         </div>
       )}
+      {!isMediaLoading && isMediaExpanded && (
+        <div className="px-4 py-2 bg-gray-900 mx-2">
+          <Input
+            type="text"
+            label="Search"
+            value={searchTerm}
+            onChange={(value) => setSearchTerm(value as string)}
+            placeholder="name"
+            className="flex gap-4 items-center"
+            inputWidth="w-full"
+            inputTextSize="text-sm"
+          />
+        </div>
+      )}
       {isMediaLoading && (
         <h3 className="text-center font-lg pt-4 bg-gray-800 mx-2 h-full">
           Loading media...
         </h3>
       )}
-      {!isMediaLoading && list.length !== 0 && (
+      {!isMediaLoading && filteredList.length !== 0 && (
         <ul
           className={`media-items ${
             isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : defaultItemsPerRow
           }`}
         >
-          {list.map(({ id, thumbnail, background, type }) => {
+          {filteredList.map(({ id, thumbnail, background, type, name }) => {
             const isSelected = id === selectedMedia.id;
             return (
-              <li
-                className={`self-center border-2 flex items-center justify-center aspect-video cursor-pointer ${
-                  isSelected
-                    ? "border-cyan-400"
-                    : "border-gray-500 hover:border-gray-300"
-                }`}
-                key={id}
-              >
+              <li key={id}>
                 <Button
                   variant="none"
                   padding="p-0"
-                  className="w-full h-full justify-center"
+                  className={cn(
+                    "w-full h-full justify-center flex flex-col items-center border-2",
+                    isSelected
+                      ? "border-cyan-400"
+                      : "border-gray-500 hover:border-gray-300"
+                  )}
                   onClick={() => {
                     if (type === "video") {
                       // add mp4 extension to the url
@@ -413,18 +490,52 @@ const Media = () => {
                     }
                   }}
                 >
-                  <img
-                    className="max-w-full max-h-full"
-                    alt={id}
-                    src={thumbnail}
-                    loading="lazy"
-                  />
+                  <div
+                    className={cn(
+                      "aspect-video flex items-center justify-center w-full flex-1 overflow-hidden",
+                      isMediaExpanded && "border-b border-gray-500"
+                    )}
+                  >
+                    <img
+                      className="max-w-full max-h-full"
+                      alt={id}
+                      src={thumbnail}
+                      loading="lazy"
+                    />
+                  </div>
+
+                  {isMediaExpanded && name && (
+                    <div className="w-full px-1 py-1 text-center">
+                      <p
+                        className="text-xs text-gray-300 truncate"
+                        title={name}
+                      >
+                        {name.split("/").slice(1).join("/")}
+                      </p>
+                    </div>
+                  )}
                 </Button>
               </li>
             );
           })}
         </ul>
       )}
+      {!isMediaLoading && searchTerm && filteredList.length === 0 && (
+        <div className="text-center py-8 bg-gray-800 mx-2 px-2">
+          <p className="text-gray-400">
+            No media found matching "{searchTerm}"
+          </p>
+        </div>
+      )}
+
+      <DeleteModal
+        isOpen={showDeleteModal}
+        onClose={handleCancelDelete}
+        onConfirm={handleConfirmDelete}
+        itemName={mediaToDelete?.name}
+        title="Delete Media"
+        imageUrl={mediaToDelete?.thumbnail}
+      />
     </>
   );
 };

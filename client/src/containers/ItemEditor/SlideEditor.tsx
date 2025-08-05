@@ -19,6 +19,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -28,12 +29,12 @@ import { useDispatch, useSelector } from "../../hooks";
 import {
   setSelectedBox,
   setSelectedSlide,
-  toggleEditMode,
+  setIsEditMode,
   updateArrangements,
   updateSlides,
 } from "../../store/itemSlice";
 import { setName, updateBoxes } from "../../store/itemSlice";
-import { formatFree, formatSong } from "../../utils/overflow";
+import { formatBible, formatFree, formatSong } from "../../utils/overflow";
 import { Box } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
@@ -62,12 +63,22 @@ const SlideEditor = () => {
 
   const [isEditingName, setIsEditingName] = useState(false);
 
+  const [isBoxLocked, setIsBoxLocked] = useState<boolean[]>([]);
+
+  const numBoxes = useMemo(() => {
+    return slides?.[selectedSlide]?.boxes?.length || 0;
+  }, [slides, selectedSlide]);
+
+  useEffect(() => {
+    setIsBoxLocked(Array(numBoxes).fill(true));
+  }, [numBoxes]);
+
   const [localName, setLocalName] = useState(name);
   const arrangement = arrangements[selectedArrangement];
 
   const slideInfoRef = useRef(null);
 
-  const { db, isMobile } = useContext(ControllerInfoContext) || {};
+  const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const [editorHeight, setEditorHeight] = useState(
     isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
@@ -114,12 +125,14 @@ const SlideEditor = () => {
   useEffect(() => {
     Object.entries(cursorPositions).forEach(([index, position]) => {
       const textBoxElement = document.getElementById(
-        `display-box-text-${index}`
+        `display-editor-box-${index}`
       ) as HTMLTextAreaElement;
       if (textBoxElement && typeof position === "number") {
         textBoxElement.selectionEnd = position;
         textBoxElement.selectionStart = position;
-        textBoxElement.scrollTop = 0;
+        requestAnimationFrame(() => {
+          textBoxElement.scrollTop = 0;
+        });
       }
     });
   }, [cursorPositions]);
@@ -158,29 +171,49 @@ const SlideEditor = () => {
           }
         : b
     );
-    if (type === "bible" || type === "timer") {
+
+    if (type === "timer") {
       dispatch(updateBoxes({ boxes: newBoxes }));
     }
 
-    if (type === "free") {
-      const _item = formatFree({
-        ...item,
-        slides: item.slides.map((slide, index) => {
-          if (index === selectedSlide) {
-            return { ...slide, boxes: newBoxes };
-          }
-          return slide;
-        }),
+    const updatedItem = {
+      ...item,
+      slides: item.slides.map((slide, index) => {
+        if (index === selectedSlide) {
+          return { ...slide, boxes: newBoxes };
+        }
+        return slide;
+      }),
+    };
+
+    if (type === "bible") {
+      const _item = formatBible({
+        item: updatedItem,
+        mode: item.bibleInfo?.fontMode || "separate",
+        isMobile,
       });
       dispatch(updateSlides({ slides: _item.slides }));
     }
 
+    if (type === "free") {
+      const _item = formatFree(
+        {
+          ...updatedItem,
+        },
+        isMobile
+      );
+      dispatch(updateSlides({ slides: _item.slides }));
+    }
+
     if (type === "song") {
+      // Last slide should not be editable
       if (
-        box.excludeFromOverflow ||
-        selectedSlide === 0 ||
-        selectedSlide === arrangements[selectedArrangement]?.slides?.length - 1
+        selectedSlide ===
+        arrangements[selectedArrangement]?.slides?.length - 1
       ) {
+        return;
+      }
+      if (box.excludeFromOverflow || selectedSlide === 0) {
         dispatch(updateBoxes({ boxes: newBoxes }));
       } else {
         const formattedLyrics =
@@ -197,9 +230,24 @@ const SlideEditor = () => {
         let newWords = "";
 
         for (let i = start; i <= end; ++i) {
-          if (i === selectedSlide) newWords += value;
-          else newWords += slides[i].boxes[index].words;
+          if (i === selectedSlide) {
+            // Check if the current slide already ends with a newline
+            const alreadyHasNewline = value.endsWith("\n");
+
+            // Only add newline if:
+            // 1. It's not the last slide in the range
+            // 2. The slide doesn't already end with a newline
+            // 3. The slide has some content (not empty)
+            const shouldAddNewline =
+              i < end && !alreadyHasNewline && value.trim().length > 0;
+
+            newWords += shouldAddNewline ? value + "\n" : value;
+            // newWords += value;
+          } else {
+            newWords += slides[i].boxes[index].words;
+          }
         }
+
         if (newWords !== "") {
           const updatedArrangements = item.arrangements.map(
             (arrangement, index) => {
@@ -233,11 +281,14 @@ const SlideEditor = () => {
             }
           );
 
-          const _item = formatSong({
-            ...item,
-            arrangements: updatedArrangements,
-            selectedArrangement,
-          });
+          const _item = formatSong(
+            {
+              ...item,
+              arrangements: updatedArrangements,
+              selectedArrangement,
+            },
+            isMobile
+          );
 
           dispatch(updateArrangements({ arrangements: _item.arrangements }));
         }
@@ -255,7 +306,7 @@ const SlideEditor = () => {
   const canDeleteBox = useCallback(
     (index: number) => {
       if (type === "bible") {
-        return index > 2;
+        return selectedSlide > 0 ? index > 2 : index > 1;
       }
 
       if (type === "song") {
@@ -268,7 +319,7 @@ const SlideEditor = () => {
 
       return false;
     },
-    [type]
+    [type, selectedSlide]
   );
 
   const isEmpty = _boxes.length === 0;
@@ -320,7 +371,7 @@ const SlideEditor = () => {
           <Button
             className="text-sm"
             disabled={isLoading}
-            onClick={() => dispatch(toggleEditMode())}
+            onClick={() => dispatch(setIsEditMode(true))}
             svg={EditTextSVG}
           >
             {isMobile ? "" : "Edit Lyrics"}
@@ -382,17 +433,15 @@ const SlideEditor = () => {
                   </p>
                 </Button>
                 <Button
-                  svg={box.isLocked ? LockSVG : UnlockSVG}
-                  color={box.isLocked ? "gray" : "green"}
+                  svg={isBoxLocked[index] ? LockSVG : UnlockSVG}
+                  color={isBoxLocked[index] ? "gray" : "green"}
                   variant="tertiary"
                   onClick={() => {
-                    dispatch(
-                      updateBoxes({
-                        boxes: boxes.map((b, i) =>
-                          i === index ? { ...b, isLocked: !b.isLocked } : b
-                        ),
-                      })
-                    );
+                    setIsBoxLocked((prev) => {
+                      const newLocked = [...prev];
+                      newLocked[index] = !newLocked[index];
+                      return newLocked;
+                    });
                   }}
                 />
                 {canDeleteBox(index) && (
@@ -406,6 +455,11 @@ const SlideEditor = () => {
                           boxes: boxes.filter((b, i) => i !== index),
                         })
                       );
+                      if (boxes[index - 1]) {
+                        dispatch(setSelectedBox(index - 1));
+                      } else {
+                        dispatch(setSelectedBox(boxes.length - 1));
+                      }
                     }}
                   />
                 )}
@@ -415,20 +469,22 @@ const SlideEditor = () => {
           <Button
             className="text-xs w-full justify-center"
             svg={AddSVG}
-            onClick={() =>
+            onClick={() => {
               dispatch(
                 updateBoxes({
                   boxes: [
                     ...boxes,
                     createBox({
-                      width: 25,
-                      height: 25,
-                      excludeFromOverflow: true,
+                      width: 75,
+                      height: 75,
+                      x: 12.5,
+                      y: 12.5,
                     }),
                   ],
                 })
-              )
-            }
+              );
+              dispatch(setSelectedBox(boxes.length));
+            }}
           >
             Add Box
           </Button>
@@ -442,9 +498,10 @@ const SlideEditor = () => {
             onChange={(onChangeInfo) => {
               onChange(onChangeInfo);
             }}
-            width={isMobile ? 84 : 42}
+            width={isMobile ? 80 : 42}
             displayType="editor"
             selectedBox={selectedBox}
+            isBoxLocked={isBoxLocked}
           />
         ) : (
           <p

@@ -49,6 +49,8 @@ import { sortNamesInList } from "../../utils/sort";
 import {
   deleteUnusedBibleItems,
   // formatAllSongs,
+  // formatAllDocs,
+  // formatAllItems,
   updateAllDocs,
 } from "../../utils/dbUtils";
 import Timers from "../../containers/Timers/Timers";
@@ -58,6 +60,7 @@ import {
   initiateQuickLinks,
   setIsLoading,
 } from "../../store/preferencesSlice";
+import { setIsEditMode } from "../../store/itemSlice";
 
 // Here for future to implement resizable
 
@@ -89,6 +92,10 @@ const Controller = () => {
     (state) => state.undoable.present.itemLists
   );
 
+  const { scrollbarWidth } = useSelector(
+    (state) => state.undoable.present.preferences
+  );
+
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
   const [toolbarHeight, setToolbarHeight] = useState(0);
@@ -96,16 +103,22 @@ const Controller = () => {
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
 
-  const { db, cloud, updater, setIsMobile, dbProgress } =
+  const { db, cloud, updater, setIsMobile, setIsPhone, dbProgress } =
     useContext(ControllerInfoContext) || {};
 
   const { user } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
-    if (location.pathname === "/controller") {
+    if (
+      location.pathname === "/controller" ||
+      location.pathname === "/controller/"
+    ) {
       setIsLeftPanelOpen(true);
     }
-  }, [location.pathname]);
+    if (!location.pathname.includes("/controller/item")) {
+      dispatch(setIsEditMode(false));
+    }
+  }, [location.pathname, dispatch]);
 
   useEffect(() => {
     // delete unused bible items
@@ -215,6 +228,11 @@ const Controller = () => {
       if (node) {
         const resizeObserver = new ResizeObserver((entries) => {
           const width = entries[0].borderBoxSize[0].inlineSize;
+          if (width < 576) {
+            setIsPhone?.(true);
+          } else {
+            setIsPhone?.(false);
+          }
           if (width < 1024) {
             setIsMobile?.(true);
           } else {
@@ -225,7 +243,7 @@ const Controller = () => {
         resizeObserver.observe(node);
       }
     },
-    [setIsMobile]
+    [setIsMobile, setIsPhone]
   );
 
   const toolbarRef = useCallback((node: HTMLDivElement) => {
@@ -269,6 +287,7 @@ const Controller = () => {
         style={
           {
             "--toolbar-height": `${toolbarHeight}px`,
+            "--scrollbar-width": scrollbarWidth,
           } as CSSProperties
         }
       >
@@ -276,7 +295,11 @@ const Controller = () => {
           ref={toolbarRef}
           className="flex border-b-2 border-gray-500 text-sm min-h-fit"
         />
-        <div className="controller-main" ref={controllerRef}>
+        <div
+          id="controller-main"
+          className="controller-main"
+          ref={controllerRef}
+        >
           <LyricsEditor />
           <Button
             className="lg:hidden mr-2 h-1/4 z-10"
@@ -284,7 +307,7 @@ const Controller = () => {
             onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
           />
           <div
-            className={`flex flex-col border-r-2 border-gray-500 bg-gray-700 h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${
+            className={`flex flex-col border-r-2 border-gray-500 bg-gray-700 h-full lg:w-[15%] max-lg:fixed max-lg:left-0 max-lg:h-[calc(100vh-var(--toolbar-height))] transition-all ${
               isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
             }`}
             ref={leftPanelRef}
@@ -326,7 +349,7 @@ const Controller = () => {
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
           />
           <div
-            className={`flex flex-col lg:w-[30%] bg-gray-700 border-gray-500 max-lg:absolute h-full transition-all border-l-2 max-lg:right-0 ${
+            className={`flex flex-col lg:w-[30%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:fixed max-lg:h-[calc(100vh-var(--toolbar-height))] ${
               isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
             }`}
             ref={rightPanelRef}

@@ -101,9 +101,61 @@ export const updateAllDocs = async (dispatch: Function) => {
   }
 };
 
+export const formatAllDocs = async (
+  db: PouchDB.Database,
+  cloud: Cloudinary,
+  isMobile: boolean
+) => {
+  if (!db) return;
+  try {
+    const allDocs: allDocsType = (await db.allDocs({
+      include_docs: true,
+    })) as allDocsType;
+
+    const allItems = allDocs.rows.filter(
+      (row) =>
+        (row.doc as any)?.type === "song" ||
+        (row.doc as any)?.type === "free" ||
+        (row.doc as any)?.type === "timer" ||
+        (row.doc as any)?.type === "bible"
+    );
+
+    for (const item of allItems) {
+      try {
+        const formattedItem = formatItemInfo(
+          item.doc as DBItem,
+          cloud,
+          isMobile
+        );
+        const updatedItem = {
+          ...item.doc,
+          name: formattedItem.name,
+          background: formattedItem.background,
+          arrangements: formattedItem.arrangements,
+          selectedArrangement: formattedItem.selectedArrangement,
+          slides: formattedItem.slides,
+          timerInfo: formattedItem.timerInfo,
+          bibleInfo: formattedItem.bibleInfo,
+          shouldSendTo: formattedItem.shouldSendTo,
+        };
+        if (item.doc) {
+          await db.put(updatedItem);
+        }
+        console.log("formattedItem", updatedItem);
+      } catch (error) {
+        console.log("Failed to format item", item.doc);
+        console.error("Failed to format item", error);
+      }
+    }
+  } catch (error) {
+    console.error("Failed to format all items", error);
+  }
+};
+
 export const formatAllSongs = async (
   db: PouchDB.Database,
-  cloud: Cloudinary
+  cloud: Cloudinary,
+  isMobile: boolean
 ) => {
   if (!db) return;
   try {
@@ -116,8 +168,8 @@ export const formatAllSongs = async (
 
     for (const song of allSongs) {
       const retrievedSong: DBItem | undefined = await db.get(song._id);
-      const formattedItem = formatItemInfo(retrievedSong, cloud);
-      const formattedSong = formatSong(formattedItem);
+      const formattedItem = formatItemInfo(retrievedSong, cloud, isMobile);
+      const formattedSong = formatSong(formattedItem, isMobile);
       const updatedItem = {
         ...retrievedSong,
         name: formattedSong.name,
@@ -135,5 +187,29 @@ export const formatAllSongs = async (
     }
   } catch (error) {
     console.error("Failed to format all songs", error);
+  }
+};
+
+export const formatAllItems = async (
+  db: PouchDB.Database,
+  cloud: Cloudinary
+) => {
+  if (!db) return;
+  try {
+    const allItems: DBAllItems | undefined = await db.get("allItems");
+    const formattedItems = allItems?.items.map((item) => {
+      const updatedBackground =
+        item.background?.includes("http") || !item.background
+          ? item.background
+          : `https://res.cloudinary.com/portable-media/image/upload/v1/${item.background}`;
+      return {
+        ...item,
+        background: updatedBackground,
+      };
+    });
+    await db.put({ ...allItems, items: formattedItems });
+    console.log("formattedItems", formattedItems);
+  } catch (error) {
+    console.error("Failed to format all items", error);
   }
 };

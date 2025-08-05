@@ -73,10 +73,10 @@ const Menu = ({ menuItems, TriggeringButton, ...rest }: MenuProps) => {
             {...getFloatingProps()}
             {...rest}
           >
-            {menuItemsWIds.map(({ onClick, text, to, id }) => {
+            {menuItemsWIds.map(({ text, id, element, ...rest }) => {
               return (
-                <MenuItem key={id} onClick={onClick} to={to}>
-                  {text}
+                <MenuItem key={id} {...rest}>
+                  {element || text}
                 </MenuItem>
               );
             })}

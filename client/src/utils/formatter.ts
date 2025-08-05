@@ -1,35 +1,10 @@
-import { BibleFontMode, ItemSlide, ItemState } from "../types";
+import {
+  BibleFontMode,
+  FormattedTextDisplayInfo,
+  Box,
+  ItemState,
+} from "../types";
 import { formatBible, formatFree, formatSong } from "./overflow";
-
-type UpdateSlideBgPropertyType = {
-  property: string;
-  value: any;
-  slideIndex?: number;
-  slides: ItemSlide[];
-};
-
-export const updateSlideBgProperty = ({
-  property,
-  value,
-  slideIndex,
-  slides,
-}: UpdateSlideBgPropertyType): ItemSlide[] => {
-  const updatedSlides = slides.map((slide, sIndex) => {
-    if (slideIndex !== undefined && slideIndex !== sIndex) return slide;
-    return {
-      ...slide,
-      boxes: slide.boxes.map((box, boxIndex) => {
-        if (boxIndex !== 0) return box;
-        return {
-          ...box,
-          [property]: value,
-        };
-      }),
-    };
-  });
-
-  return [...updatedSlides];
-};
 
 const getSlidesFromItem = (item: ItemState) => {
   let { selectedSlide } = item;
@@ -43,14 +18,22 @@ const getSlidesFromItem = (item: ItemState) => {
   return { slides, slide };
 };
 
-type UpdateFontSizeType = {
-  fontSize: number;
+type UpdateBoxPropertiesType = {
+  updatedProperties: Partial<Box>;
   item: ItemState;
+  shouldApplyToAll?: boolean;
+  shouldFormatItem?: boolean;
+  shouldUpdateBgOnly?: boolean;
+  isMobile: boolean;
 };
-export const updateFontSize = ({
-  fontSize,
+export const updateBoxProperties = ({
+  updatedProperties,
   item,
-}: UpdateFontSizeType): ItemState => {
+  shouldApplyToAll = false,
+  shouldFormatItem = false,
+  shouldUpdateBgOnly = false,
+  isMobile,
+}: UpdateBoxPropertiesType): ItemState => {
   let { selectedSlide, selectedBox } = item;
   let _item = { ...item };
 
@@ -59,14 +42,20 @@ export const updateFontSize = ({
   if (!slide) return item;
 
   slides = slides.map((slide, slideIndex) => {
-    if (slideIndex !== selectedSlide) return slide;
+    if (item.type === "song") {
+      // If the first slide isn't selected, don't apply changes
+      if (slideIndex === 0 && selectedSlide !== 0) return slide;
+    }
+
+    if (slideIndex !== selectedSlide && !shouldApplyToAll) return slide;
     return {
       ...slide,
       boxes: slide.boxes.map((box, boxIndex) => {
-        if (boxIndex !== selectedBox) return box;
+        if (shouldUpdateBgOnly && boxIndex !== 0) return box;
+        if (boxIndex !== selectedBox && !shouldUpdateBgOnly) return box;
         return {
           ...box,
-          fontSize: fontSize,
+          ...updatedProperties,
         };
       }),
     };
@@ -74,16 +63,20 @@ export const updateFontSize = ({
 
   _item = { ...item, slides: [...slides] };
 
-  if (item.type === "bible" && selectedSlide !== 0)
+  if (item.type === "bible" && selectedSlide !== 0 && shouldFormatItem)
     _item = formatBible({
       item: _item,
       mode: item.bibleInfo?.fontMode || "separate",
+      isMobile,
     });
 
-  if (item.type === "free") {
-    _item = formatFree({
-      ..._item,
-    });
+  if (item.type === "free" && shouldFormatItem) {
+    _item = formatFree(
+      {
+        ..._item,
+      },
+      isMobile
+    );
   }
 
   if (item.type === "song") {
@@ -94,7 +87,9 @@ export const updateFontSize = ({
         return { ...arr, slides: [...slides] };
       }),
     };
-    _item = formatSong(_item);
+    if (shouldFormatItem) {
+      _item = formatSong(_item, isMobile);
+    }
   }
 
   if (selectedSlide >= slides.length) selectedSlide = slides.length - 1;
@@ -103,109 +98,6 @@ export const updateFontSize = ({
     ..._item,
     selectedSlide: selectedSlide,
     selectedBox,
-  };
-};
-
-type UpdateFontColorType = {
-  fontColor: string;
-  item: ItemState;
-};
-
-export const updateFontColor = ({
-  fontColor,
-  item,
-}: UpdateFontColorType): ItemState => {
-  let { selectedSlide, selectedBox } = item;
-  let _item = { ...item };
-
-  let { slides, slide } = getSlidesFromItem(item);
-
-  if (!slide) return item;
-
-  slides = slides.map((slide, slideIndex) => {
-    if (slideIndex !== selectedSlide) return slide;
-    return {
-      ...slide,
-      boxes: slide.boxes.map((box, boxIndex) => {
-        if (boxIndex !== selectedBox) return box;
-        return {
-          ...box,
-          fontColor: fontColor,
-        };
-      }),
-    };
-  });
-
-  if (item.type === "song") {
-    _item = {
-      ...item,
-      arrangements: _item.arrangements.map((arr, index) => {
-        if (index !== item.selectedArrangement) return arr;
-        return { ...arr, slides: [...slides] };
-      }),
-    };
-  }
-
-  _item = { ..._item, slides: [...slides] };
-
-  return _item;
-};
-
-type UpdateBrightnessType = {
-  brightness: number;
-  item: ItemState;
-};
-
-export const updateBrightness = ({
-  brightness,
-  item,
-}: UpdateBrightnessType): ItemState => {
-  //use boxIndex
-  let { slides, slide } = getSlidesFromItem(item);
-
-  if (!slide) return item;
-
-  slides = updateSlideBgProperty({
-    property: "brightness",
-    value: brightness,
-    slides: [...slides],
-    slideIndex: item.type === "free" ? item.selectedSlide : undefined,
-  });
-
-  const arrangements = item.arrangements.map((arr, index) => {
-    if (index !== item.selectedArrangement) return arr;
-    return { ...arr, slides: [...slides] };
-  });
-
-  return {
-    ...item,
-    slides: [...slides],
-    arrangements: [...arrangements],
-  };
-};
-
-type UpdateKeepAspectRatioProps = {
-  shouldKeepAspectRatio: boolean;
-  item: ItemState;
-};
-
-export const updateKeepAspectRatio = ({
-  shouldKeepAspectRatio,
-  item,
-}: UpdateKeepAspectRatioProps): ItemState => {
-  let { slides, slide } = getSlidesFromItem(item);
-  if (!slide) return item;
-
-  slides = updateSlideBgProperty({
-    property: "shouldKeepAspectRatio",
-    value: shouldKeepAspectRatio,
-    slideIndex: item.selectedSlide,
-    slides: [...slides],
-  });
-
-  return {
-    ...item,
-    slides: [...slides],
   };
 };
 
@@ -226,15 +118,39 @@ export const updateItemTimerColor = ({
 type UpdateBibleFontModeType = {
   fontMode: BibleFontMode;
   item: ItemState;
+  isMobile: boolean;
 };
 
 export const updateBibleFontMode = ({
   fontMode,
   item,
+  isMobile,
 }: UpdateBibleFontModeType): ItemState => {
   const updatedItem = formatBible({
     item,
     mode: fontMode,
+    isMobile,
   });
   return updatedItem;
+};
+
+type UpdateFormattedTextDisplayInfoType = {
+  formattedTextDisplayInfo: FormattedTextDisplayInfo;
+  item: ItemState;
+  shouldApplyToAll: boolean;
+};
+
+export const updateFormattedTextDisplayInfo = ({
+  formattedTextDisplayInfo,
+  item,
+  shouldApplyToAll,
+}: UpdateFormattedTextDisplayInfoType): ItemState => {
+  const { slides, selectedSlide } = item;
+
+  let updatedSlides = slides.map((slide, slideIndex) => {
+    if (slideIndex !== selectedSlide && !shouldApplyToAll) return slide;
+    return { ...slide, formattedTextDisplayInfo: formattedTextDisplayInfo };
+  });
+
+  return { ...item, slides: [...updatedSlides] };
 };

@@ -1,10 +1,26 @@
-import { Box, SlideType, OverflowMode } from "../types";
+import {
+  Box,
+  SlideType,
+  OverflowMode,
+  FormattedTextDisplayInfo,
+} from "../types";
 import generateRandomId from "./generateRandomId";
+
+export const defaultFormattedTextDisplayInfo: FormattedTextDisplayInfo = {
+  backgroundColor: "#eb8934",
+  textColor: "#ffffff",
+  fontSize: 1.5,
+  paddingX: 2,
+  paddingY: 1,
+  align: "left",
+  isBold: false,
+  isItalic: false,
+  text: "",
+};
 
 type CreateBoxType = {
   words?: string;
   id?: string;
-  isLocked?: boolean;
   background?: string;
   width?: number;
   height?: number;
@@ -21,6 +37,8 @@ type CreateBoxType = {
   topMargin?: number;
   sideMargin?: number;
   slideIndex?: number;
+  isBold?: boolean;
+  isItalic?: boolean;
 };
 
 export const createBox = ({
@@ -38,11 +56,12 @@ export const createBox = ({
   excludeFromOverflow,
   align,
   shouldKeepAspectRatio,
-  isLocked,
   background,
   brightness,
   label,
   slideIndex,
+  isBold,
+  isItalic,
 }: CreateBoxType): Box => {
   return {
     brightness: brightness ?? 100,
@@ -54,7 +73,6 @@ export const createBox = ({
     y: y ?? 0,
     fontSize: fontSize ?? 2.5,
     id: generateRandomId(),
-    isLocked: isLocked ?? true,
     background: background ?? "",
     fontColor: fontColor ?? "rgba(255, 255, 255, 1)",
     shouldKeepAspectRatio: shouldKeepAspectRatio ?? false,
@@ -64,6 +82,8 @@ export const createBox = ({
     align: align ?? "center",
     slideIndex: slideIndex ?? 0,
     label: label ?? "",
+    isBold: isBold ?? false,
+    isItalic: isItalic ?? false,
   };
 };
 
@@ -81,6 +101,9 @@ type CreateNewSlideType = {
   textFontSize?: number;
   fontColor?: string;
   overflow?: OverflowMode;
+  isBold?: boolean;
+  isItalic?: boolean;
+  formattedTextDisplayInfo?: FormattedTextDisplayInfo;
 };
 
 export const createNewSlide = ({
@@ -97,6 +120,9 @@ export const createNewSlide = ({
   textFontSize,
   fontColor,
   overflow,
+  isBold,
+  isItalic,
+  formattedTextDisplayInfo,
 }: CreateNewSlideType) => {
   const defaultBox = createBox({});
 
@@ -125,9 +151,9 @@ export const createNewSlide = ({
         height: 92,
         y: 8,
         width: 100,
-        isLocked: true,
         topMargin: 3,
         sideMargin: 4,
+        align: "left",
       });
     });
     boxes.push(
@@ -138,11 +164,12 @@ export const createNewSlide = ({
         height: 20,
         width: 100,
         words: words[2],
-        isLocked: true,
-        align: "left",
+        align: "center",
         topMargin: 1,
         sideMargin: 2,
         excludeFromOverflow: true,
+        isBold: isBold ?? false,
+        isItalic: isItalic ?? false,
       })
     );
   } else if (newBoxes.length) {
@@ -160,8 +187,9 @@ export const createNewSlide = ({
         transparent: true,
         topMargin: 1,
         sideMargin: 2.5,
-        excludeFromOverflow: true,
         words: words ? words[0] : " ",
+        isBold: isBold ?? false,
+        isItalic: isItalic ?? false,
       })
     );
     boxes.push(
@@ -174,7 +202,6 @@ export const createNewSlide = ({
         transparent: true,
         topMargin: 1,
         sideMargin: 2.5,
-        excludeFromOverflow: true,
         words: words ? words[1] : " ",
       })
     );
@@ -182,7 +209,6 @@ export const createNewSlide = ({
     boxes.push(
       createBox({
         ...box,
-        excludeFromOverflow: true,
       })
     );
     boxes.push(
@@ -190,7 +216,6 @@ export const createNewSlide = ({
         ...box,
         background: "",
         transparent: true,
-        isLocked: true,
         topMargin: 3,
         sideMargin: 4,
         words: words[1] || " ",
@@ -204,6 +229,12 @@ export const createNewSlide = ({
     boxes: JSON.parse(JSON.stringify(boxes)),
     id: generateRandomId(),
     ...(overflow && { overflow }),
+    ...(formattedTextDisplayInfo && {
+      formattedTextDisplayInfo: {
+        ...defaultFormattedTextDisplayInfo,
+        ...formattedTextDisplayInfo,
+      },
+    }),
   };
 
   if (typeof slideIndex === "number" && slideIndex >= 0)

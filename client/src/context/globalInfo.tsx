@@ -18,7 +18,7 @@ import {
   onDisconnect,
 } from "firebase/database";
 import PouchDB from "pouchdb";
-import { DBLogin, TimerInfo } from "../types";
+import { DBLogin, Instance, TimerInfo } from "../types";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import generateRandomId from "../utils/generateRandomId";
@@ -48,7 +48,7 @@ type GlobalInfoContextType = {
   setLoginState: (val: LoginStateType) => void;
   firebaseDb: Database | undefined;
   hostId: string;
-  activeInstances: number;
+  activeInstances: Instance[];
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
@@ -88,7 +88,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     globalHostId = id;
     return id;
   });
-  const [activeInstances, setActiveInstances] = useState(0);
+  const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const location = useLocation();
   const isOnController = useMemo(() => {
@@ -104,6 +104,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_stbOverlayInfo: Unsubscribe | undefined;
     stream_qrCodeOverlayInfo: Unsubscribe | undefined;
     stream_imageOverlayInfo: Unsubscribe | undefined;
+    stream_formattedTextDisplayInfo: Unsubscribe | undefined;
     timerInfo: Unsubscribe | undefined;
   }>({
     projectorInfo: undefined,
@@ -114,6 +115,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_stbOverlayInfo: undefined,
     stream_qrCodeOverlayInfo: undefined,
     stream_imageOverlayInfo: undefined,
+    stream_formattedTextDisplayInfo: undefined,
     timerInfo: undefined,
   });
 
@@ -159,6 +161,10 @@ const GlobalInfoProvider = ({ children }: any) => {
         stream_imageOverlayInfo: {
           info: data.stream_imageOverlayInfo,
           updateAction: "debouncedUpdateImageOverlayInfo",
+        },
+        stream_formattedTextDisplayInfo: {
+          info: data.stream_formattedTextDisplayInfo,
+          updateAction: "debouncedUpdateFormattedTextDisplayInfo",
         },
         timerInfo: {
           info: data.timerInfo,
@@ -293,13 +299,31 @@ const GlobalInfoProvider = ({ children }: any) => {
     const unsubscribe = onValue(activeInstancesRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        // Only count instances that are on the controller page
-        const count = Object.values(data).filter(
-          (instance: any) => instance.isOnController
-        ).length;
-        setActiveInstances(count);
+        // Clean up stale instances (older than 1 hour)
+        const now = Date.now();
+        const staleInstances = Object.entries(data).filter(
+          ([_, instance]: [string, any]) => {
+            const lastActive = new Date(instance.lastActive).getTime();
+            return now - lastActive > 60 * 60 * 1000; // 1 hour
+          }
+        );
+
+        // Remove stale instances
+        staleInstances.forEach(([hostId]) => {
+          const staleRef = ref(
+            firebaseDb,
+            `users/${user}/v2/activeInstances/${hostId}`
+          );
+          set(staleRef, null);
+        });
+        const _activeInstances = Object.values(data).filter(
+          (instance: any): instance is Instance =>
+            instance.isOnController &&
+            now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
+        );
+        setActiveInstances(_activeInstances);
       } else {
-        setActiveInstances(0);
+        setActiveInstances([]);
       }
     });
 
@@ -325,6 +349,9 @@ const GlobalInfoProvider = ({ children }: any) => {
     // Initial setup
     updateInstance();
 
+    // Set up periodic updates while the component is mounted
+    const updateInterval = setInterval(updateInstance, 30 * 60 * 1000); // Update every 30 minutes
+
     // Remove this instance when the user disconnects
     if (instanceRef.current) {
       onDisconnect(instanceRef.current).remove();
@@ -333,6 +360,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     // Cleanup function
     return () => {
       unsubscribe();
+      clearInterval(updateInterval);
       if (instanceRef.current) {
         set(instanceRef.current, null);
       }

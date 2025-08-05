@@ -1,5 +1,10 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { BibleDisplayInfo, OverlayInfo, Presentation } from "../types";
+import {
+  BibleDisplayInfo,
+  FormattedTextDisplayInfo,
+  OverlayInfo,
+  Presentation,
+} from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
 type PresentationState = {
@@ -41,6 +46,10 @@ const initialState: PresentationState = {
     stbOverlayInfo: { heading: "", time: Date.now(), id: generateRandomId() },
     qrCodeOverlayInfo: { time: Date.now(), id: generateRandomId() },
     imageOverlayInfo: { time: Date.now(), id: generateRandomId() },
+    formattedTextDisplayInfo: {
+      text: "",
+      time: Date.now(),
+    },
   },
 };
 
@@ -84,7 +93,7 @@ export const presentationSlice = createSlice({
         state.prevStreamInfo.type = state.streamInfo.type;
         state.prevStreamInfo.time = state.streamInfo.time;
         state.prevStreamInfo.timerId = state.streamInfo.timerId;
-        if (action.payload.type !== "bible") {
+        if (action.payload.type !== "bible" && action.payload.type !== "free") {
           state.streamInfo.slide = action.payload.slide;
         }
 
@@ -260,7 +269,7 @@ export const presentationSlice = createSlice({
         time: action.payload.time,
       };
       // clear other overlays
-      if (action.payload.url || action.payload.description) {
+      if (action.payload.imageUrl) {
         state.prevStreamInfo.bibleDisplayInfo =
           state.streamInfo.bibleDisplayInfo;
         state.prevStreamInfo.participantOverlayInfo =
@@ -460,6 +469,85 @@ export const presentationSlice = createSlice({
         };
       }
     },
+    updateFormattedTextDisplayInfo: (
+      state,
+      action: PayloadAction<FormattedTextDisplayInfo>
+    ) => {
+      if (state.isStreamTransmitting) {
+        // set previous info for cross animation
+        state.prevStreamInfo.formattedTextDisplayInfo =
+          state.streamInfo.formattedTextDisplayInfo;
+        state.streamInfo.formattedTextDisplayInfo = {
+          ...action.payload,
+          time: Date.now(),
+        };
+        if (action.payload.text) {
+          state.prevStreamInfo.qrCodeOverlayInfo =
+            state.streamInfo.qrCodeOverlayInfo;
+          state.prevStreamInfo.imageOverlayInfo =
+            state.streamInfo.imageOverlayInfo;
+          state.prevStreamInfo.participantOverlayInfo =
+            state.streamInfo.participantOverlayInfo;
+          state.prevStreamInfo.slide = state.streamInfo.slide;
+
+          state.streamInfo.slide = null;
+          state.streamInfo.participantOverlayInfo = {
+            name: "",
+            time: Date.now(),
+            id: generateRandomId(),
+          };
+          state.streamInfo.qrCodeOverlayInfo = {
+            description: "",
+            time: Date.now(),
+            id: generateRandomId(),
+          };
+          state.streamInfo.imageOverlayInfo = {
+            name: "",
+            imageUrl: "",
+            time: Date.now(),
+            id: generateRandomId(),
+          };
+        }
+      }
+    },
+    updateFormattedTextDisplayInfoFromRemote: (
+      state,
+      action: PayloadAction<FormattedTextDisplayInfo>
+    ) => {
+      state.prevStreamInfo.formattedTextDisplayInfo =
+        state.streamInfo.formattedTextDisplayInfo;
+      state.streamInfo.formattedTextDisplayInfo = {
+        ...action.payload,
+        time: action.payload.time,
+      };
+      if (action.payload.text) {
+        state.prevStreamInfo.qrCodeOverlayInfo =
+          state.streamInfo.qrCodeOverlayInfo;
+        state.prevStreamInfo.imageOverlayInfo =
+          state.streamInfo.imageOverlayInfo;
+        state.prevStreamInfo.participantOverlayInfo =
+          state.streamInfo.participantOverlayInfo;
+        state.prevStreamInfo.slide = state.streamInfo.slide;
+
+        state.streamInfo.slide = null;
+        state.streamInfo.participantOverlayInfo = {
+          name: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+        state.streamInfo.qrCodeOverlayInfo = {
+          description: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+        state.streamInfo.imageOverlayInfo = {
+          name: "",
+          imageUrl: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+      }
+    },
     clearProjector: (state) => {
       // set previous info for fading out
       state.prevProjectorInfo.slide = state.projectorInfo.slide;
@@ -500,6 +588,8 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.qrCodeOverlayInfo =
         state.streamInfo.qrCodeOverlayInfo;
       state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
+      state.prevStreamInfo.formattedTextDisplayInfo =
+        state.streamInfo.formattedTextDisplayInfo;
 
       state.streamInfo = {
         ...initialState.streamInfo,
@@ -525,6 +615,10 @@ export const presentationSlice = createSlice({
           imageUrl: "",
           time: Date.now(),
           id: generateRandomId(),
+        },
+        formattedTextDisplayInfo: {
+          text: "",
+          time: Date.now(),
         },
       };
     },
@@ -554,6 +648,8 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.qrCodeOverlayInfo =
         state.streamInfo.qrCodeOverlayInfo;
       state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
+      state.prevStreamInfo.formattedTextDisplayInfo =
+        state.streamInfo.formattedTextDisplayInfo;
 
       state.projectorInfo = {
         ...initialState.projectorInfo,
@@ -587,6 +683,10 @@ export const presentationSlice = createSlice({
           imageUrl: "",
           time: Date.now(),
           id: generateRandomId(),
+        },
+        formattedTextDisplayInfo: {
+          text: "",
+          time: Date.now(),
         },
       };
     },
@@ -711,6 +811,15 @@ export const presentationSlice = createSlice({
             id: generateRandomId(),
           };
         }
+        if (action.payload.formattedTextDisplayInfo) {
+          state.streamInfo.formattedTextDisplayInfo =
+            action.payload.formattedTextDisplayInfo;
+        } else {
+          state.streamInfo.formattedTextDisplayInfo = {
+            text: "",
+            time: Date.now(),
+          };
+        }
 
         state.streamInfo.name = action.payload.name;
         state.streamInfo.type = action.payload.type;
@@ -720,10 +829,59 @@ export const presentationSlice = createSlice({
     },
     updateStreamFromRemote: (state, action: PayloadAction<Presentation>) => {
       // set previous info for cross animation
+
       state.prevStreamInfo = { ...state.streamInfo };
 
-      if (action.payload.type !== "bible") {
+      if (action.payload.type !== "bible" && action.payload.type !== "free") {
         state.streamInfo.slide = action.payload.slide;
+      }
+
+      if (action.payload.participantOverlayInfo) {
+        state.streamInfo.participantOverlayInfo =
+          action.payload.participantOverlayInfo;
+      } else {
+        state.streamInfo.participantOverlayInfo = {
+          name: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+      }
+      if (action.payload.stbOverlayInfo) {
+        state.streamInfo.stbOverlayInfo = action.payload.stbOverlayInfo;
+      } else {
+        state.streamInfo.stbOverlayInfo = {
+          heading: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+      }
+      if (action.payload.qrCodeOverlayInfo) {
+        state.streamInfo.qrCodeOverlayInfo = action.payload.qrCodeOverlayInfo;
+      } else {
+        state.streamInfo.qrCodeOverlayInfo = {
+          description: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+      }
+      if (action.payload.imageOverlayInfo) {
+        state.streamInfo.imageOverlayInfo = action.payload.imageOverlayInfo;
+      } else {
+        state.streamInfo.imageOverlayInfo = {
+          name: "",
+          imageUrl: "",
+          time: Date.now(),
+          id: generateRandomId(),
+        };
+      }
+      if (action.payload.formattedTextDisplayInfo) {
+        state.streamInfo.formattedTextDisplayInfo =
+          action.payload.formattedTextDisplayInfo;
+      } else {
+        state.streamInfo.formattedTextDisplayInfo = {
+          text: "",
+          time: Date.now(),
+        };
       }
 
       state.streamInfo.name = action.payload.name;
@@ -760,6 +918,8 @@ export const {
   updateStbOverlayInfoFromRemote,
   updateQrCodeOverlayInfoFromRemote,
   updateImageOverlayInfoFromRemote,
+  updateFormattedTextDisplayInfoFromRemote,
+  updateFormattedTextDisplayInfo,
 } = presentationSlice.actions;
 
 export default presentationSlice.reducer;

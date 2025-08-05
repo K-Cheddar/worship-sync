@@ -26,6 +26,7 @@ type DisplayEditorProps = {
   index: number;
   selectBox?: Function;
   isSelected?: boolean;
+  isBoxLocked?: boolean;
 };
 
 const DisplayEditor = ({
@@ -36,6 +37,7 @@ const DisplayEditor = ({
   selectBox,
   index,
   isSelected,
+  isBoxLocked,
 }: DisplayEditorProps) => {
   const [boxWidth, setBoxWidth] = useState(`${box.width}%`);
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
@@ -199,17 +201,19 @@ const DisplayEditor = ({
     lineHeight: 1.25,
     fontSize: `${fontSizeValue}vw`,
     color: box.fontColor,
+    fontWeight: box.isBold ? "bold" : "normal",
+    fontStyle: box.isItalic ? "italic" : "normal",
   };
   return (
     <Rnd
       size={{ width: boxWidth, height: boxHeight }}
       className={cn(
-        (!box.isLocked || isSelected) &&
+        (!isBoxLocked || isSelected) &&
           "outline outline-1 outline-gray-300 -outline-offset-2",
         isSelected && !box.background && "z-10"
       )}
       position={{ x, y }}
-      disableDragging={box.isLocked}
+      disableDragging={isBoxLocked}
       onDragStop={handleDragStop}
       onResizeStop={handleResizeStop}
       minWidth={"7.5%"}
@@ -221,16 +225,16 @@ const DisplayEditor = ({
       bounds={"parent"}
       ref={rndRef}
       onClick={() => selectBox?.(index)}
-      enableUserSelectHack={!box.isLocked}
+      enableUserSelectHack={!isBoxLocked}
       enableResizing={{
-        top: !box.isLocked,
-        topLeft: !box.isLocked,
-        topRight: !box.isLocked,
-        bottom: !box.isLocked,
-        bottomLeft: !box.isLocked,
-        bottomRight: !box.isLocked,
-        left: !box.isLocked,
-        right: !box.isLocked,
+        top: !isBoxLocked,
+        topLeft: !isBoxLocked,
+        topRight: !isBoxLocked,
+        bottom: !isBoxLocked,
+        bottomLeft: !isBoxLocked,
+        bottomRight: !isBoxLocked,
+        left: !isBoxLocked,
+        right: !isBoxLocked,
       }}
     >
       {box.background && (
@@ -253,7 +257,7 @@ const DisplayEditor = ({
               "display-editor",
               showOverflow ? "overflow-y-visible" : "overflow-y-clip"
             )}
-            id={`display-box-text-${index}`}
+            id={`display-editor-box-${index}`}
             ref={textAreaRef}
             value={words}
             style={{

@@ -3,5 +3,5 @@
 
   height: calc(100% - clamp(4rem, 4.5vw, 10.5rem));
 
-  scrollbar-width: thin;
+  scrollbar-width: var(--scrollbar-width);
 }

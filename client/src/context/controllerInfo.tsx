@@ -3,7 +3,6 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
-import getBibles, { checkBibles } from "../utils/getBibles";
 import { useLocation } from "react-router-dom";
 
 type ControllerInfoContextType = {
@@ -12,8 +11,11 @@ type ControllerInfoContextType = {
   cloud: Cloudinary;
   updater: EventTarget;
   isMobile: boolean;
+  isPhone: boolean;
   dbProgress: number;
+  bibleDbProgress: number;
   setIsMobile: (val: boolean) => void;
+  setIsPhone: (val: boolean) => void;
   logout: () => Promise<void>;
   login: ({
     username,
@@ -28,6 +30,7 @@ export const ControllerInfoContext =
   createContext<ControllerInfoContextType | null>(null);
 
 export let globalDb: PouchDB.Database | undefined = undefined;
+export let globalBibleDb: PouchDB.Database | undefined = undefined;
 
 const cloud = new Cloudinary({
   cloud: {
@@ -45,8 +48,11 @@ const ControllerInfoProvider = ({ children }: any) => {
     undefined
   );
   const [dbProgress, setDbProgress] = useState(0);
+  const [bibleDbProgress, setBibleDbProgress] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
+  const [isPhone, setIsPhone] = useState(false);
   const [isDbSetup, setIsDbSetup] = useState(false);
+  const [isBibleDbSetup, setIsBibleDbSetup] = useState(false);
 
   const location = useLocation();
 
@@ -55,6 +61,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>();
+  const bibleSyncRef = useRef<any>();
 
   useEffect(() => {
     const setupDb = async () => {
@@ -109,20 +116,58 @@ const ControllerInfoProvider = ({ children }: any) => {
   }, [loginState, database, location.pathname, isDbSetup]);
 
   useEffect(() => {
-    const setupDb = async () => {
-      const _db = new PouchDB("bibles-v2");
+    const setupBibleDb = async () => {
+      let remoteURL =
+        process.env.REACT_APP_DATABASE_STRING + "worship-sync-bibles";
+      const remoteDb = new PouchDB(remoteURL);
+      const localDb = new PouchDB("worship-sync-bibles");
 
-      let bibles = await checkBibles(_db);
-
-      if (bibles.some((e) => e === false)) {
-        await getBibles(_db);
-      }
-
-      setBibleDb(_db);
+      remoteDb.replicate
+        .to(localDb, { retry: true })
+        .on("change", (info) => {
+          const pending: number = (info as any).pending; // this property exists when printing info
+          pendingMax = pendingMax < pending ? pending : pendingMax;
+          if (pendingMax > 0) {
+            setBibleDbProgress(Math.floor((1 - pending / pendingMax) * 100));
+          } else {
+            setBibleDbProgress(100);
+          }
+        })
+        .on("complete", () => {
+          setBibleDbProgress(100);
+          setBibleDb(localDb);
+          setIsBibleDbSetup(true);
+          globalBibleDb = localDb;
+          console.log("Bible Replication completed");
+          if (loginState === "success") {
+            bibleSyncRef.current = localDb
+              .sync(remoteDb, { retry: true, live: true })
+              .on("change", (event) => {
+                if (event.direction === "push") {
+                  console.log("updating bible from local", event);
+                }
+                if (event.direction === "pull") {
+                  console.log("updating bible from remote", event);
+                  updater.current.dispatchEvent(
+                    new CustomEvent("updateBible", {
+                      detail: event.change.docs,
+                    })
+                  );
+                }
+              });
+          }
+        });
     };
 
-    setupDb();
-  }, []);
+    if (
+      (loginState === "success" || loginState === "demo") &&
+      location.pathname !== "/" &&
+      location.pathname !== "/login" &&
+      !isBibleDbSetup
+    ) {
+      setupBibleDb();
+    }
+  }, [loginState, location.pathname, isBibleDbSetup]);
 
   const _logout = async () => {
     setLoginState?.("loading");
@@ -177,9 +222,12 @@ const ControllerInfoProvider = ({ children }: any) => {
         cloud,
         updater: updater.current,
         bibleDb,
+        bibleDbProgress,
         logout: _logout,
         isMobile,
         setIsMobile,
+        isPhone,
+        setIsPhone,
         dbProgress,
         login: _login,
       }}
