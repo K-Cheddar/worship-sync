@@ -95,6 +95,11 @@ app.get("/bible", async (req, res) => {
 app.use("/db*", async (req, res) => {
   const path = req.originalUrl.replace("/db", ""); // strips `/db` prefix
   const couchURL = `https://${process.env.COUCHDB_HOST}${path}`;
+  console.log("--------------START------------------");
+  console.log("couchURL", couchURL);
+  console.log("path", path);
+  console.log("req.originalUrl", req.originalUrl);
+  console.log("--------------END------------------");
 
   try {
     const response = await axios({
