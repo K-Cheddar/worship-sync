@@ -347,113 +347,116 @@ const Bible = () => {
     </div>
   );
 
-  if (bibleDbProgress !== 100) {
-    return (
-      <div
-        data-testid="loading-overlay"
-        className="absolute top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8"
-      >
-        <p>
-          Setting up <span className="font-bold">Bible</span>
-        </p>
-        <Spinner />
-        <p>
-          Progress: <span className="text-orange-500">{bibleDbProgress}%</span>
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div
-      className="text-base px-2 py-4 h-full flex flex-col gap-2"
-      style={
-        {
-          "--bible-version-selector-height": `${versionSelectorHeight}px`,
-        } as CSSProperties
-      }
-    >
-      <div ref={versionSelectorRef} className="flex gap-4 items-end flex-wrap">
-        <Select
-          value={version}
-          onChange={(val) => dispatch(setVersion(val))}
-          label="Version"
-          className="max-lg:w-full flex justify-center"
-          hideLabel
-          options={versionOptions}
-        />
-        <ButtonGroup className="w-full lg:hidden my-4">
-          <ButtonGroupItem
-            onClick={() => setShowVersesDisplaySection(false)}
-            isActive={!showVersesDisplaySection}
-          >
-            Verse Selector
-          </ButtonGroupItem>
-          <ButtonGroupItem
-            onClick={() => setShowVersesDisplaySection(true)}
-            isActive={showVersesDisplaySection}
-          >
-            Selected Verses
-          </ButtonGroupItem>
-        </ButtonGroup>
-      </div>
-      {!books.length && (
-        <div className="text-2xl w-full text-center semi-bold mt-10">
-          Loading Bibles...
+    <>
+      {bibleDbProgress !== 100 && (
+        <div
+          data-testid="loading-overlay"
+          className="absolute top-0 left-0 z-[5] bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8"
+        >
+          <p>
+            Setting up <span className="font-bold">Bible</span>
+          </p>
+          <Spinner />
+          <p>
+            Progress:{" "}
+            <span className="text-orange-500">{bibleDbProgress}%</span>
+          </p>
         </div>
       )}
-
-      {isMobile && showVersesDisplaySection && versesDisplaySection}
-      {((isMobile && !showVersesDisplaySection) || !isMobile) &&
-        !!books.length && (
-          <div className="bible-section-container">
-            <BibleSection
-              initialList={books as bookType[]}
-              setValue={(val) => dispatch(setBook(val))}
-              searchValue={searchValues.book}
-              setSearchValue={(val) =>
-                dispatch(setSearchValue({ type: "book", value: val }))
-              }
-              value={book}
-              type="book"
-            />
-            <BibleSection
-              initialList={chapters as chapterType[]}
-              setValue={(val) => dispatch(setChapter(val))}
-              searchValue={searchValues.chapter}
-              setSearchValue={(val) =>
-                dispatch(setSearchValue({ type: "chapter", value: val }))
-              }
-              value={chapter}
-              type="chapter"
-            />
-            <BibleSection
-              initialList={verses as verseType[]}
-              setValue={(val) => dispatch(setStartVerse(val))}
-              searchValue={searchValues.startVerse}
-              setSearchValue={(val) =>
-                dispatch(setSearchValue({ type: "startVerse", value: val }))
-              }
-              value={startVerse}
-              type="verse"
-              label="Start"
-            />
-            <BibleSection
-              initialList={verses as verseType[]}
-              setValue={(val) => dispatch(setEndVerse(val))}
-              searchValue={searchValues.endVerse}
-              setSearchValue={(val) =>
-                dispatch(setSearchValue({ type: "endVerse", value: val }))
-              }
-              value={endVerse}
-              type="verse"
-              min={startVerse}
-              label="End"
-            />
-            {!isMobile && versesDisplaySection}
+      <div
+        className="text-base px-2 py-4 h-full flex flex-col gap-2"
+        style={
+          {
+            "--bible-version-selector-height": `${versionSelectorHeight}px`,
+          } as CSSProperties
+        }
+      >
+        <div
+          ref={versionSelectorRef}
+          className="flex gap-4 items-end flex-wrap"
+        >
+          <Select
+            value={version}
+            onChange={(val) => dispatch(setVersion(val))}
+            label="Version"
+            className="max-lg:w-full flex justify-center"
+            hideLabel
+            options={versionOptions}
+          />
+          <ButtonGroup className="w-full lg:hidden my-4">
+            <ButtonGroupItem
+              onClick={() => setShowVersesDisplaySection(false)}
+              isActive={!showVersesDisplaySection}
+            >
+              Verse Selector
+            </ButtonGroupItem>
+            <ButtonGroupItem
+              onClick={() => setShowVersesDisplaySection(true)}
+              isActive={showVersesDisplaySection}
+            >
+              Selected Verses
+            </ButtonGroupItem>
+          </ButtonGroup>
+        </div>
+        {!books.length && (
+          <div className="text-2xl w-full text-center semi-bold mt-10">
+            Loading Bibles...
           </div>
         )}
-    </div>
+
+        {isMobile && showVersesDisplaySection && versesDisplaySection}
+        {((isMobile && !showVersesDisplaySection) || !isMobile) &&
+          !!books.length && (
+            <div className="bible-section-container">
+              <BibleSection
+                initialList={books as bookType[]}
+                setValue={(val) => dispatch(setBook(val))}
+                searchValue={searchValues.book}
+                setSearchValue={(val) =>
+                  dispatch(setSearchValue({ type: "book", value: val }))
+                }
+                value={book}
+                type="book"
+              />
+              <BibleSection
+                initialList={chapters as chapterType[]}
+                setValue={(val) => dispatch(setChapter(val))}
+                searchValue={searchValues.chapter}
+                setSearchValue={(val) =>
+                  dispatch(setSearchValue({ type: "chapter", value: val }))
+                }
+                value={chapter}
+                type="chapter"
+              />
+              <BibleSection
+                initialList={verses as verseType[]}
+                setValue={(val) => dispatch(setStartVerse(val))}
+                searchValue={searchValues.startVerse}
+                setSearchValue={(val) =>
+                  dispatch(setSearchValue({ type: "startVerse", value: val }))
+                }
+                value={startVerse}
+                type="verse"
+                label="Start"
+              />
+              <BibleSection
+                initialList={verses as verseType[]}
+                setValue={(val) => dispatch(setEndVerse(val))}
+                searchValue={searchValues.endVerse}
+                setSearchValue={(val) =>
+                  dispatch(setSearchValue({ type: "endVerse", value: val }))
+                }
+                value={endVerse}
+                type="verse"
+                min={startVerse}
+                label="End"
+              />
+              {!isMobile && versesDisplaySection}
+            </div>
+          )}
+      </div>
+    </>
   );
 };
 

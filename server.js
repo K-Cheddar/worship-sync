@@ -45,48 +45,19 @@ app.listen(port, () => console.log(`Listening on port ${port}`));
 app.use(bodyParser.json({ limit: "10mb", extended: true }));
 app.use(express.json());
 
-app.use(cors());
-app.use(function (req, res, next) {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Credentials", true);
-  res.header("Access-Control-Allow-Methods", "GET,PUT,POST,DELETE,OPTIONS");
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Origin,X-Requested-With,Content-Type,Accept,content-type,application/json"
-  );
-  next();
-});
+app.use(
+  cors({
+    origin: "http://localhost:3000",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Origin", "X-Requested-With", "Content-Type", "Accept"],
+    credentials: true,
+  })
+);
 
 // API calls
 app.get("/api/hello", (req, res) => {
   res.send({ express: "Hello From Express" });
 });
-
-// app.post('/api/updateUsers', (req, res) => {
-// 	const { user, action } = req.body;
-// 	const { users } = status;
-// 	if (action === 'add') {
-// 		const currentUser = users.find(e => e.user === user);
-// 		if(currentUser) {
-// 			currentUser.count += 1;
-// 		}
-// 		else {
-// 			status.users.push({user, count: 1 });
-// 		}
-// 	}
-// 	else if (action === 'remove') {
-// 		const currentUser = users.find(e => e.user === user);
-// 		if(currentUser) {
-// 			if(currentUser.count > 1) {
-// 				currentUser.count -= 1;
-// 			}
-// 			else {
-// 				status.users = users.filter(e => e.user !== currentUser.user);
-// 			}
-// 		}
-// 	}
-// 	console.log(status.users);
-// });
 
 app.get("/api/bible", async (req, res) => {
   let book = req.query.book;
@@ -121,86 +92,30 @@ app.get("/bible", async (req, res) => {
   res.send(bible);
 });
 
-// app.post("/api/currentInfo", (req, res) => {
-//   let obj = req.body;
-//   let t = obj.words;
-//   res.send({ t });
-// });
+app.use("/db*", async (req, res) => {
+  const path = req.originalUrl.replace("/db", ""); // strips `/db` prefix
+  const couchURL = `https://${process.env.COUCHDB_HOST}${path}`;
 
-// app.post("/api/getLyrics", (req, res) => {
-//   search(req.body.name, res);
-// });
-
-// app.post("/api/getHymnal", (req, res) => {
-//   searchHymnal(req.body.number, res);
-// });
-
-// const hymnURL = "http://sdahymnals.com/Hymnal/";
-
-// function searchHymnal(query, send) {
-//   let url = hymnURL + query;
-//   let song = {};
-//   request(url, function (err, res, body) {
-//     if (!err) {
-//       $ = cheerio.load(body);
-//       $("h1.title").each(function () {
-//         song.title = $(this).text();
-//         // Break From Each Loop
-//         return false;
-//       });
-//       $("div.thecontent p").each(function () {
-//         let text = $(this).text().split("\n");
-//         song[text[0]] = text.slice(1);
-//       });
-//       send.send({ song: song });
-//     } else {
-//       console.log("Error : ", err);
-//     }
-//   });
-// }
-
-// const baseURL = "http://search.azlyrics.com";
-
-// function search(query, send) {
-//   let url = baseURL + "/search.php?q=" + qs.escape(query);
-
-//   request(url, function (err, res, body) {
-//     if (!err) {
-//       $ = cheerio.load(body);
-
-//       $("td.text-left a").each(function () {
-//         url = $(this).attr("href");
-
-//         // Get Lyrics
-//         lyrics(url, send);
-
-//         // Break From Each Loop
-//         return false;
-//       });
-//     } else {
-//       console.log("Error : ", err);
-//     }
-//   });
-// }
-
-// function lyrics(url, send) {
-//   console.log("Getting lyrics from: ", url);
-
-//   request(url, { ciphers: "DES-CBC3-SHA" }, function (err, res, body) {
-//     if (!err) {
-//       $ = cheerio.load(body);
-
-//       $("div:not([class])").each(function () {
-//         var lyrics = h2p($(this).html());
-//         if (lyrics != "") {
-//           send.send({ lyrics: lyrics });
-//         }
-//       });
-//     } else {
-//       console.log("Error in Getting Lyrics : ", err);
-//     }
-//   });
-// }
+  try {
+    const response = await axios({
+      method: req.method,
+      url: couchURL,
+      headers: {
+        Authorization:
+          "Basic " +
+          Buffer.from(
+            `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`
+          ).toString("base64"),
+        "Content-Type": "application/json",
+      },
+      data: req.body,
+    });
+    res.status(response.status).send(response.data);
+  } catch (err) {
+    console.log(err);
+    res.status(err.response?.status || 500).send(err);
+  }
+});
 
 async function getAccessToken() {
   const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
