@@ -164,11 +164,12 @@ const ControllerInfoProvider = ({ children }: any) => {
       (loginState === "success" || loginState === "demo") &&
       location.pathname !== "/" &&
       location.pathname !== "/login" &&
-      !isBibleDbSetup
+      !isBibleDbSetup &&
+      isDbSetup
     ) {
       setupBibleDb();
     }
-  }, [loginState, location.pathname, isBibleDbSetup]);
+  }, [loginState, location.pathname, isBibleDbSetup, isDbSetup]);
 
   const _logout = async () => {
     setLoginState?.("loading");

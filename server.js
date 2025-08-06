@@ -92,8 +92,8 @@ app.get("/bible", async (req, res) => {
   res.send(bible);
 });
 
-app.use("/db*", async (req, res) => {
-  const path = req.originalUrl.replace("/db", ""); // strips `/db` prefix
+app.use("/db", async (req, res) => {
+  const path = req.originalUrl.replace(/^\/db/, ""); // strips `/db` prefix
   const couchURL = `https://${process.env.COUCHDB_HOST}${path}`;
   console.log("--------------START------------------");
   console.log("couchURL", couchURL);
