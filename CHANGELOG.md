@@ -1,3 +1,22 @@
+# [1.10.0](https://github.com/K-Cheddar/worship-sync/compare/v1.9.5...v1.10.0) (2025-08-06)
+
+
+### Bug Fixes
+
+* Correct remote database configurations ([eec9d01](https://github.com/K-Cheddar/worship-sync/commit/eec9d016f90cbd9bd4f4c4c6b540713c0864f0c1))
+* Improve mobile overflow on creating new items ([3492b54](https://github.com/K-Cheddar/worship-sync/commit/3492b5488112ad4ebdd205760b7f97710e117c49))
+* Improve mobile right panel responsiveness ([6186db2](https://github.com/K-Cheddar/worship-sync/commit/6186db283eac3d5775afbcc5262126d898a30043))
+* **Media:** Correct delete functionality ([ec91616](https://github.com/K-Cheddar/worship-sync/commit/ec91616301e4d3a662df6e0cb58ba81634b09492))
+
+
+### Features
+
+* **Bible:** Automatically get verses from bible gateway ([95afa55](https://github.com/K-Cheddar/worship-sync/commit/95afa5573a899160843e5bf7b4c19a2b6caacb67))
+* **Bible:** Get selected chapter from Bible Gateway and save it for later ([a19bbac](https://github.com/K-Cheddar/worship-sync/commit/a19bbaca02bd04a2dd44093e8ec3c58d7f3a5f67))
+* **Media:** Add ability to search by name ([d14c28e](https://github.com/K-Cheddar/worship-sync/commit/d14c28e149c32d6fd8e929f1e234795539b6280b))
+* **Media:** Add delete confirmation ([2f84dfb](https://github.com/K-Cheddar/worship-sync/commit/2f84dfbf9bc133175e1d36d899e4269d65b6b3c0))
+* Use faster database ([8fc54ca](https://github.com/K-Cheddar/worship-sync/commit/8fc54ca27e9ef1a0026d5cc714ddcefd37629b2a))
+
 ## [1.9.5](https://github.com/K-Cheddar/worship-sync/compare/v1.9.4...v1.9.5) (2025-07-30)
 
 
