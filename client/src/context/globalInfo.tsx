@@ -394,6 +394,7 @@ const GlobalInfoProvider = ({ children }: any) => {
       const dbName = "worship-sync-logins";
       const remoteUrl = `${process.env.REACT_APP_API_BASE_PATH}db/${dbName}`;
       const loginDb = new PouchDB(remoteUrl);
+      console.log("remoteUrl", remoteUrl);
       const db_logins: DBLogin = await loginDb.get("logins");
       let user = db_logins.logins.find(
         (e) => e.username === username && e.password === password
