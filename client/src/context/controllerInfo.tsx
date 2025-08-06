@@ -4,7 +4,7 @@ import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
 import { useLocation } from "react-router-dom";
-import axios from "axios";
+import { getDbBasePath } from "../utils/serverUtils";
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
@@ -68,7 +68,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     const setupDb = async () => {
       const dbName = `worship-sync-${database}`;
       const localDb = new PouchDB(dbName);
-      const remoteUrl = `${process.env.REACT_APP_API_BASE_PATH}db/${dbName}`;
+      const remoteUrl = `${getDbBasePath()}db/${dbName}`;
       const remoteDb = new PouchDB(remoteUrl);
 
       remoteDb.replicate
@@ -120,7 +120,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     const setupBibleDb = async () => {
       const dbName = "worship-sync-bibles";
       const localDb = new PouchDB(dbName);
-      const remoteUrl = `${process.env.REACT_APP_API_BASE_PATH}db/${dbName}`;
+      const remoteUrl = `${getDbBasePath()}db/${dbName}`;
       const remoteDb = new PouchDB(remoteUrl);
 
       remoteDb.replicate

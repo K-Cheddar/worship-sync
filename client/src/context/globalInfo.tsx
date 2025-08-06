@@ -29,6 +29,7 @@ import {
   Presentation as PresentationType,
 } from "../types";
 import { ActionCreators } from "redux-undo";
+import { getDbBasePath } from "../utils/serverUtils";
 
 type LoginStateType = "idle" | "loading" | "error" | "success" | "demo";
 
@@ -392,9 +393,8 @@ const GlobalInfoProvider = ({ children }: any) => {
 
     try {
       const dbName = "worship-sync-logins";
-      const remoteUrl = `${process.env.REACT_APP_API_BASE_PATH}db/${dbName}`;
+      const remoteUrl = `${getDbBasePath()}db/${dbName}`;
       const loginDb = new PouchDB(remoteUrl);
-      console.log("remoteUrl", remoteUrl);
       const db_logins: DBLogin = await loginDb.get("logins");
       let user = db_logins.logins.find(
         (e) => e.username === username && e.password === password
