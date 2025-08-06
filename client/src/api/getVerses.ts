@@ -19,6 +19,7 @@ export const getVerses = async ({ book, chapter, version }: getVersesType) => {
         ""
       )
     );
+
     const text = await response.text();
     data = await parseData(text, _chapter, book);
   } catch (error) {
@@ -59,10 +60,10 @@ const parseData = async (textHtml: string, chapter: number, book: string) => {
       name: (verses.length + 1).toString(), // verse number comes first
       text: filteredSplitText[1]
         .replace(/\[[^\]]{1,2}\]/g, "")
-        .replaceAll(" ", " ")
-        .replaceAll("’", "'")
-        .replaceAll("‘", "'")
-        .replace("\n", "")
+        .replaceAll(" ", " ") // Replace invisible character
+        .replaceAll("’", "'") // Replace curly apostrophe
+        .replaceAll("‘", "'") // Replace curly apostrophe
+        .replace("\n", "") // Remove new line
         .trim(),
     });
     currentText = "";

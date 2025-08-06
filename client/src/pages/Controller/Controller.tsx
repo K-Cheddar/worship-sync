@@ -349,7 +349,7 @@ const Controller = () => {
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
           />
           <div
-            className={`flex flex-col lg:w-[30%] bg-gray-700 border-gray-500 h-full transition-all border-l-2 max-lg:right-0 max-lg:fixed ${
+            className={`flex flex-col lg:w-[30%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:fixed max-lg:h-[calc(100vh-var(--toolbar-height))] ${
               isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
             }`}
             ref={rightPanelRef}

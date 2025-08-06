@@ -10,23 +10,20 @@ import {
 import Select from "../../components/Select/Select";
 import "./Bible.scss";
 import BibleSection from "./BibleSection";
-import { bibleType, bookType, chapterType, verseType } from "../../types";
+import { bookType, chapterType, DBBibleChapter, verseType } from "../../types";
 import { Button, ButtonGroup, ButtonGroupItem } from "../../components/Button";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   setBook,
-  setBooks,
   setChapter,
-  setChapters,
   setEndVerse,
   setStartVerse,
   setVerses,
   setVersion,
   setSearchValue,
 } from "../../store/bibleSlice";
-import { bibleVersions, internalBibleVersions } from "../../utils/getBibles";
+import { bibleVersions } from "../../utils/bibleVersions";
 import { getVerses as getVersesApi } from "../../api/getVerses";
-import { bibleStructure } from "../../utils/bibleStructure";
 import BibleVersesList from "./BibleVersesList";
 import { useSearchParams } from "react-router-dom";
 import { formatBible } from "../../utils/overflow";
@@ -34,7 +31,6 @@ import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
-import { ReactComponent as DownloadSVG } from "../../assets/icons/download.svg";
 import {
   updateBibleDisplayInfo,
   updatePresentation,
@@ -45,13 +41,10 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { setCreateItem } from "../../store/createItemSlice";
 import { RootState } from "../../store/store";
+import useDebouncedEffect from "../../hooks/useDebouncedEffect";
+import Spinner from "../../components/Spinner/Spinner";
 
 const Bible = () => {
-  const [isLoading, setIsLoading] = useState(false);
-  const [bibleType, setBibleType] = useState<"internal" | "external">(
-    "internal"
-  );
-  const [hasExternalVerses, setHasExternalVerses] = useState(false);
   const dispatch = useDispatch();
   const [searchParams] = useSearchParams();
 
@@ -98,22 +91,25 @@ const Bible = () => {
 
   const [versionSelectorHeight, setVersionSelectorHeight] = useState(0);
   const [justAdded, setJustAdded] = useState(false);
-  const [justGotChapter, setJustGotChapter] = useState(false);
   const [isLoadingChapter, setIsLoadingChapter] = useState(false);
+  const [fetchedChapters, setFetchedChapters] = useState<Set<string>>(
+    new Set()
+  );
 
   const createItemName = decodeURI(searchParams.get("name") || "");
 
   const {
     db,
     bibleDb,
+    bibleDbProgress,
     isMobile = false,
   } = useContext(ControllerInfoContext) || {};
 
   const bibleItemName = useMemo(() => {
-    const bookName = books[book]?.name || "";
-    const chapterName = chapters[chapter]?.name || "";
-    const startVerseName = verses[startVerse]?.name || "";
-    const endVerseName = verses[endVerse]?.name || "";
+    const bookName = books?.[book]?.name || "";
+    const chapterName = chapters?.[chapter]?.name || "";
+    const startVerseName = verses?.[startVerse]?.name || "";
+    const endVerseName = verses?.[endVerse]?.name || "";
 
     const verseName =
       startVerse === endVerse
@@ -123,118 +119,117 @@ const Bible = () => {
     return `${bookName} ${chapterName}:${verseName} ${version.toUpperCase()}`;
   }, [books, book, chapters, chapter, verses, endVerse, startVerse, version]);
 
-  useEffect(() => {
-    const getBibles = async () => {
-      if (internalBibleVersions.some((el) => el.value === version)) {
-        setIsLoading(true);
-        setBibleType("internal");
-        let bible: bibleType | undefined;
-        try {
-          bible = await bibleDb?.get(version);
-        } catch (error) {
-          console.error(error);
+  useDebouncedEffect(
+    () => {
+      const getChapter = async () => {
+        const bookName = books[book]?.name || "";
+        const chapterName = chapters[chapter]?.name || "";
+        if (bibleDb && bookName && chapterName) {
+          const key = `${version}-${bookName}-${chapterName}`;
+          let chapterDoc: DBBibleChapter | null = null;
+
+          let newVerses: verseType[] = [];
+
+          try {
+            chapterDoc = (await bibleDb.get(key)) as DBBibleChapter;
+          } catch (error) {
+            await bibleDb.put({
+              _id: key,
+              verses: [],
+              book: bookName,
+              chapter: chapterName,
+              version,
+              lastUpdated: new Date().toISOString(),
+              isFromBibleGateway: false,
+            });
+            console.error(error);
+          }
+
+          if (chapterDoc) {
+            const lastUpdated = new Date(chapterDoc.lastUpdated);
+            const oneYearAgo = new Date();
+            oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+            if (lastUpdated > oneYearAgo && chapterDoc.isFromBibleGateway) {
+              newVerses = chapterDoc.verses;
+            }
+          }
+
+          if (!newVerses.length) {
+            setIsLoadingChapter(true);
+
+            let data: chapterType | null = null;
+
+            try {
+              const chapterKey = `${bookName}-${chapterName}-${version}`;
+              if (!fetchedChapters.has(chapterKey)) {
+                setFetchedChapters((prev) => new Set(prev).add(chapterKey));
+                // Fetch from Bible Gateway if we don't have an updated version
+                data = await getVersesApi({
+                  book: bookName,
+                  chapter,
+                  version,
+                });
+                if (data?.verses?.length) {
+                  newVerses = data.verses;
+
+                  try {
+                    chapterDoc = (await bibleDb.get(key)) as DBBibleChapter;
+                    chapterDoc.verses = data.verses;
+                    chapterDoc.lastUpdated = new Date().toISOString();
+                    chapterDoc.isFromBibleGateway = true;
+                    await bibleDb.put(chapterDoc);
+                  } catch (error) {
+                    console.error(error);
+                  }
+                } else {
+                  if (chapterDoc?.verses.length) {
+                    newVerses = chapterDoc.verses;
+                  } else {
+                    newVerses = [];
+                  }
+                }
+              } else {
+                newVerses = chapterDoc?.verses || [];
+              }
+            } catch (error) {
+              newVerses = [];
+              console.error(error);
+            }
+          }
+          dispatch(setVerses(newVerses));
+          if (!searchValues.endVerse) {
+            dispatch(setEndVerse(newVerses.length - 1) || 0);
+          }
+
+          if (!searchValues.startVerse) {
+            dispatch(setStartVerse(0));
+          }
+          setIsLoadingChapter(false);
         }
-
-        setIsLoading(false);
-
-        if (!bible) return;
-
-        dispatch(setBooks(bible.books));
-        dispatch(
-          setChapters(bible.books[book]?.chapters || bible.books[0]?.chapters)
-        );
-        dispatch(
-          setVerses(
-            bible.books[book]?.chapters[chapter]?.verses ||
-              bible.books[0]?.chapters[0]?.verses
-          )
-        );
-      } else {
-        setBibleType("external");
-        setHasExternalVerses(false);
-        dispatch(setBooks(bibleStructure.books));
-        dispatch(setChapters(bibleStructure.books[book].chapters));
-        dispatch(
-          setVerses(bibleStructure.books[book].chapters[chapter].verses)
-        );
-      }
-      setJustGotChapter(false);
-    };
-    getBibles();
-    // we only want this to update on version change, not book or chapter change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bibleDb, version]);
-
-  const getVersesFromGateway = async () => {
-    setIsLoadingChapter(true);
-    try {
-      setIsLoading(true);
-      const data = await getVersesApi({
-        book: books[book].name,
-        chapter,
-        version,
-      });
-      const dataHasVerses = !!data?.verses?.length;
-      setIsLoading(false);
-      setHasExternalVerses(dataHasVerses);
-      if (dataHasVerses) {
-        dispatch(setVerses(data.verses));
-        setJustGotChapter(true);
-        setShowVersesDisplaySection(true);
-      }
-    } catch (error) {
-      setIsLoading(false);
-      console.error(error);
-    }
-    setIsLoadingChapter(false);
-  };
-
-  useEffect(() => {
-    if (chapters) {
-      dispatch(
-        setVerses(chapters[chapter]?.verses || chapters[0]?.verses || [])
-      );
-      setHasExternalVerses(false);
-      setJustGotChapter(false);
-    }
-  }, [chapter, chapters, dispatch]);
-
-  useEffect(() => {
-    if (chapters?.[chapter]) {
-      if (!searchValues.endVerse) {
-        dispatch(setEndVerse(chapters[chapter]?.verses?.length - 1 || 0));
-      }
-    }
-  }, [chapter, chapters, dispatch, searchValues.endVerse]);
-
-  useEffect(() => {
-    if (chapters?.[chapter]) {
-      if (!searchValues.startVerse) {
-        dispatch(setStartVerse(0));
-      }
-    }
-  }, [chapter, chapters, dispatch, searchValues.startVerse]);
-
-  useEffect(() => {
-    if (books) {
-      dispatch(setChapters(books[book]?.chapters || books[0]?.chapters || []));
-    }
-  }, [book, books, isLoading, dispatch]);
+      };
+      getChapter();
+    },
+    [chapter, dispatch, bibleDb, version, books, book, chapters],
+    500,
+    true
+  );
 
   const versionOptions = bibleVersions.map(({ value, label }) => {
     return { value, label };
   });
 
   const submitVerses = async () => {
+    let versesToUse = verses.filter(
+      ({ index }) => index >= startVerse && index <= endVerse
+    );
+
     const item = await createNewBible({
       fontMode: defaultBibleFontMode,
       name: createItemName || bibleItemName,
       book: books[book].name,
       chapter: chapters[chapter].name,
       version,
-      verses: verses.filter(
-        ({ index }) => index >= startVerse && index <= endVerse
-      ),
+      verses: versesToUse,
       db,
       list,
       background: defaultBibleBackground,
@@ -259,11 +254,13 @@ const Bible = () => {
     setTimeout(() => setJustAdded(false), 2000);
   };
 
-  const sendVerse = (verse: verseType) => {
+  const sendVerse = async (verse: verseType) => {
+    let verseToUse = verse;
+
     const bookName = books[book]?.name || "";
     const chapterName = chapters[chapter]?.name || "";
     const sendItemName = `${bookName} ${chapterName}:${
-      verse.name
+      verseToUse.name
     } ${version.toUpperCase()}`;
     const _item = createItemFromProps({
       name: sendItemName,
@@ -276,7 +273,7 @@ const Bible = () => {
       book: books[book].name,
       chapter: chapters[chapter].name,
       version,
-      verses: [verse],
+      verses: [verseToUse],
       background: defaultBibleBackground,
       brightness: defaultBibleBackgroundBrightness,
       isMobile,
@@ -324,9 +321,7 @@ const Bible = () => {
       )}
       <h3 className="text-xl font-semibold">{bibleItemName}</h3>
       <BibleVersesList
-        isLoading={isLoading}
-        bibleType={bibleType}
-        hasExternalVerses={hasExternalVerses}
+        isLoading={isLoadingChapter}
         verses={verses}
         startVerse={startVerse}
         endVerse={endVerse}
@@ -342,7 +337,8 @@ const Bible = () => {
         padding="px-4 py-1"
         className="ml-auto mt-auto mb-2"
         onClick={submitVerses}
-        disabled={(bibleType === "external" && !hasExternalVerses) || justAdded}
+        isLoading={isLoadingChapter}
+        disabled={isLoadingChapter}
         color={justAdded ? "#67e8f9" : undefined}
         svg={justAdded ? CheckSVG : AddSVG}
       >
@@ -352,107 +348,115 @@ const Bible = () => {
   );
 
   return (
-    <div
-      className="text-base px-2 py-4 h-full flex flex-col gap-2"
-      style={
-        {
-          "--bible-version-selector-height": `${versionSelectorHeight}px`,
-        } as CSSProperties
-      }
-    >
-      <div ref={versionSelectorRef} className="flex gap-4 items-end flex-wrap">
-        <Select
-          value={version}
-          onChange={(val) => dispatch(setVersion(val))}
-          label="Version"
-          className="max-lg:w-full flex justify-center"
-          hideLabel
-          options={versionOptions}
-        />
-        <Button
-          className="lg:h-fit max-lg:flex-1 max-lg:justify-center"
-          onClick={getVersesFromGateway}
-          isLoading={isLoadingChapter}
-          disabled={isLoadingChapter || justGotChapter}
-          color={justGotChapter ? "#84cc16" : "#22d3ee"}
-          svg={justGotChapter ? CheckSVG : DownloadSVG}
+    <>
+      {bibleDbProgress !== 100 && (
+        <div
+          data-testid="loading-overlay"
+          className="absolute top-0 left-0 z-[5] bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8"
         >
-          {justGotChapter
-            ? "Got chapter from Bible Gateway!"
-            : "Get chapter from Bible Gateway"}
-        </Button>
-        <ButtonGroup className="w-full lg:hidden my-4">
-          <ButtonGroupItem
-            onClick={() => setShowVersesDisplaySection(false)}
-            isActive={!showVersesDisplaySection}
-          >
-            Verse Selector
-          </ButtonGroupItem>
-          <ButtonGroupItem
-            onClick={() => setShowVersesDisplaySection(true)}
-            isActive={showVersesDisplaySection}
-          >
-            Selected Verses
-          </ButtonGroupItem>
-        </ButtonGroup>
-      </div>
-      {!books.length && (
-        <div className="text-2xl w-full text-center semi-bold mt-10">
-          Loading Bibles...
+          <p>
+            Setting up <span className="font-bold">Bible</span>
+          </p>
+          <Spinner />
+          <p>
+            Progress:{" "}
+            <span className="text-orange-500">{bibleDbProgress}%</span>
+          </p>
         </div>
       )}
-
-      {isMobile && showVersesDisplaySection && versesDisplaySection}
-      {((isMobile && !showVersesDisplaySection) || !isMobile) &&
-        !!books.length && (
-          <div className="bible-section-container">
-            <BibleSection
-              initialList={books as bookType[]}
-              setValue={(val) => dispatch(setBook(val))}
-              searchValue={searchValues.book}
-              setSearchValue={(val) =>
-                dispatch(setSearchValue({ type: "book", value: val }))
-              }
-              value={book}
-              type="book"
-            />
-            <BibleSection
-              initialList={chapters as chapterType[]}
-              setValue={(val) => dispatch(setChapter(val))}
-              searchValue={searchValues.chapter}
-              setSearchValue={(val) =>
-                dispatch(setSearchValue({ type: "chapter", value: val }))
-              }
-              value={chapter}
-              type="chapter"
-            />
-            <BibleSection
-              initialList={verses as verseType[]}
-              setValue={(val) => dispatch(setStartVerse(val))}
-              searchValue={searchValues.startVerse}
-              setSearchValue={(val) =>
-                dispatch(setSearchValue({ type: "startVerse", value: val }))
-              }
-              value={startVerse}
-              type="verse"
-              label="Start"
-            />
-            <BibleSection
-              initialList={verses as verseType[]}
-              setValue={(val) => dispatch(setEndVerse(val))}
-              searchValue={searchValues.endVerse}
-              setSearchValue={(val) =>
-                dispatch(setSearchValue({ type: "endVerse", value: val }))
-              }
-              value={endVerse}
-              type="verse"
-              min={startVerse}
-              label="End"
-            />
-            {!isMobile && versesDisplaySection}
+      <div
+        className="text-base px-2 py-4 h-full flex flex-col gap-2"
+        style={
+          {
+            "--bible-version-selector-height": `${versionSelectorHeight}px`,
+          } as CSSProperties
+        }
+      >
+        <div
+          ref={versionSelectorRef}
+          className="flex gap-4 items-end flex-wrap"
+        >
+          <Select
+            value={version}
+            onChange={(val) => dispatch(setVersion(val))}
+            label="Version"
+            className="max-lg:w-full flex justify-center"
+            hideLabel
+            options={versionOptions}
+          />
+          <ButtonGroup className="w-full lg:hidden my-4">
+            <ButtonGroupItem
+              onClick={() => setShowVersesDisplaySection(false)}
+              isActive={!showVersesDisplaySection}
+            >
+              Verse Selector
+            </ButtonGroupItem>
+            <ButtonGroupItem
+              onClick={() => setShowVersesDisplaySection(true)}
+              isActive={showVersesDisplaySection}
+            >
+              Selected Verses
+            </ButtonGroupItem>
+          </ButtonGroup>
+        </div>
+        {!books.length && (
+          <div className="text-2xl w-full text-center semi-bold mt-10">
+            Loading Bibles...
           </div>
         )}
-    </div>
+
+        {isMobile && showVersesDisplaySection && versesDisplaySection}
+        {((isMobile && !showVersesDisplaySection) || !isMobile) &&
+          !!books.length && (
+            <div className="bible-section-container">
+              <BibleSection
+                initialList={books as bookType[]}
+                setValue={(val) => dispatch(setBook(val))}
+                searchValue={searchValues.book}
+                setSearchValue={(val) =>
+                  dispatch(setSearchValue({ type: "book", value: val }))
+                }
+                value={book}
+                type="book"
+              />
+              <BibleSection
+                initialList={chapters as chapterType[]}
+                setValue={(val) => dispatch(setChapter(val))}
+                searchValue={searchValues.chapter}
+                setSearchValue={(val) =>
+                  dispatch(setSearchValue({ type: "chapter", value: val }))
+                }
+                value={chapter}
+                type="chapter"
+              />
+              <BibleSection
+                initialList={verses as verseType[]}
+                setValue={(val) => dispatch(setStartVerse(val))}
+                searchValue={searchValues.startVerse}
+                setSearchValue={(val) =>
+                  dispatch(setSearchValue({ type: "startVerse", value: val }))
+                }
+                value={startVerse}
+                type="verse"
+                label="Start"
+              />
+              <BibleSection
+                initialList={verses as verseType[]}
+                setValue={(val) => dispatch(setEndVerse(val))}
+                searchValue={searchValues.endVerse}
+                setSearchValue={(val) =>
+                  dispatch(setSearchValue({ type: "endVerse", value: val }))
+                }
+                value={endVerse}
+                type="verse"
+                min={startVerse}
+                label="End"
+              />
+              {!isMobile && versesDisplaySection}
+            </div>
+          )}
+      </div>
+    </>
   );
 };
 

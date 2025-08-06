@@ -153,6 +153,7 @@ export const createNewSlide = ({
         width: 100,
         topMargin: 3,
         sideMargin: 4,
+        align: "left",
       });
     });
     boxes.push(
@@ -163,7 +164,7 @@ export const createNewSlide = ({
         height: 20,
         width: 100,
         words: words[2],
-        align: "left",
+        align: "center",
         topMargin: 1,
         sideMargin: 2,
         excludeFromOverflow: true,

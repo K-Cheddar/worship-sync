@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useContext, useMemo } from "react";
-import { useLocation } from "react-router-dom";
 import {
   cacheChangelog,
   getCachedChangelog,
@@ -15,6 +14,14 @@ import Button from "./Button/Button";
 import Modal from "./Modal/Modal";
 import MarkdownRenderer from "./MarkdownRenderer/MarkdownRenderer";
 
+const isControllerRoute = () => {
+  const hash = window.location.hash.replace("#", "");
+  const controllerRoutes = ["/", "/controller", "/login", "/credits-editor"];
+  return controllerRoutes.some(
+    (route) => hash === route || hash.startsWith("/controller/")
+  );
+};
+
 const VersionCheck: React.FC = () => {
   const {
     versionUpdate,
@@ -29,7 +36,6 @@ const VersionCheck: React.FC = () => {
     setIsLoadingChangelog,
   } = useVersionContext();
 
-  const location = useLocation();
   const { hostId, activeInstances } = useContext(GlobalInfoContext) || {};
 
   // Store timeout IDs to clear on unmount
@@ -41,15 +47,6 @@ const VersionCheck: React.FC = () => {
   }, [hostId, activeInstances]);
 
   const wasActiveRef = useRef<boolean>(false);
-
-  const isControllerRoute = useCallback(() => {
-    const controllerRoutes = ["/", "/controller", "/login", "/credits-editor"];
-    return controllerRoutes.some(
-      (route) =>
-        location.pathname === route ||
-        location.pathname.startsWith("/controller/")
-    );
-  }, [location.pathname]);
 
   const handleUpdate = useCallback(() => {
     setIsUpdating(true);
@@ -150,7 +147,7 @@ const VersionCheck: React.FC = () => {
     } catch (error) {
       console.error("VersionCheck: Error checking version:", error);
     }
-  }, [fetchChangelog, isControllerRoute, setVersionUpdate, handleUpdate]);
+  }, [fetchChangelog, setVersionUpdate, handleUpdate]);
 
   // Set up periodic version checking
   useEffect(() => {

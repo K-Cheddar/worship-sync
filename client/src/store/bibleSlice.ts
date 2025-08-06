@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { bookType, chapterType, verseType } from "../types";
+import { bibleStructure } from "../utils/bibleStructure";
 
 type BibleState = {
   version: string;
@@ -10,7 +11,6 @@ type BibleState = {
   verses: verseType[];
   startVerse: number;
   endVerse: number;
-  retrievedVerses: string[];
   searchValues: {
     book: string;
     chapter: string;
@@ -21,14 +21,13 @@ type BibleState = {
 
 const initialState: BibleState = {
   version: "nkjv",
-  books: [],
+  books: bibleStructure.books,
   book: 0,
-  chapters: [],
+  chapters: bibleStructure.books[0].chapters,
   chapter: 0,
-  verses: [],
+  verses: bibleStructure.books[0].chapters[0].verses,
   startVerse: 0,
   endVerse: 0,
-  retrievedVerses: [],
   searchValues: { book: "", chapter: "", startVerse: "", endVerse: "" },
 };
 
@@ -53,9 +52,6 @@ export const bibleSlice = createSlice({
     },
     setVerses: (state, action: PayloadAction<verseType[]>) => {
       state.verses = action.payload;
-    },
-    setRetrievedVerses: (state, action: PayloadAction<string[]>) => {
-      state.retrievedVerses = action.payload;
     },
     setStartVerse: (state, action: PayloadAction<number>) => {
       state.startVerse = action.payload;
@@ -104,7 +100,6 @@ export const {
   setVerses,
   setStartVerse,
   setEndVerse,
-  setRetrievedVerses,
   setSearchValue,
 } = bibleSlice.actions;
 

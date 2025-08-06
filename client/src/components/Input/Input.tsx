@@ -94,7 +94,8 @@ const Input = ({
           <Button
             svg={svg}
             variant="tertiary"
-            className={`absolute bottom-0 top-0 my-auto ${svgClassName}`}
+            position="absolute"
+            className={`bottom-0 top-0 my-auto ${svgClassName}`}
             padding={svgPadding}
             color={color}
             onClick={svgAction}

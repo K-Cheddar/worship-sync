@@ -171,10 +171,10 @@ export const updateWordMatches = ({
 
 type handleKeyDownTraverseType = {
   event: React.KeyboardEvent;
-  advance: () => void;
-  previous: () => void;
+  advance: () => void | Promise<void>;
+  previous: () => void | Promise<void>;
 };
-export const handleKeyDownTraverse = ({
+export const handleKeyDownTraverse = async ({
   event,
   advance,
   previous,
@@ -185,7 +185,7 @@ export const handleKeyDownTraverse = ({
     event.key === "ArrowDown"
   ) {
     event.preventDefault();
-    advance();
+    await advance();
   }
   if (
     (event.key === " " && event.shiftKey) ||
@@ -193,7 +193,7 @@ export const handleKeyDownTraverse = ({
     event.key === "ArrowUp"
   ) {
     event.preventDefault();
-    previous();
+    await previous();
   }
 };
 

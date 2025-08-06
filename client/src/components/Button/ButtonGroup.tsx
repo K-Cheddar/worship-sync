@@ -6,12 +6,14 @@ export type ButtonGroupProps = {
   children: ReactNode;
   className?: string;
   orientation?: "horizontal" | "vertical";
+  display?: string;
 };
 
 const ButtonGroup: React.FC<ButtonGroupProps> = ({
   children,
   className,
   orientation = "horizontal",
+  display,
 }) => {
   return (
     <div
@@ -21,6 +23,7 @@ const ButtonGroup: React.FC<ButtonGroupProps> = ({
           "flex-col": orientation === "vertical",
         },
         "button-group",
+        display ? display : "inline-flex",
         className
       )}
     >

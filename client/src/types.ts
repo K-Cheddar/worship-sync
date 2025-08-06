@@ -252,10 +252,23 @@ export type verseType = {
   text?: string;
 };
 
+export type BibleChapter = {
+  key: string;
+  version: string;
+  book: string;
+  name: string;
+  index: number;
+  verses: verseType[];
+  lastUpdated: string;
+  isFromBibleGateway: boolean;
+};
+
 export type chapterType = {
   name: string;
   verses: verseType[];
   index: number;
+  isFromBibleGateway?: boolean;
+  lastUpdated?: string;
 };
 
 export type bookType = {
@@ -372,6 +385,18 @@ export type DBLogin = {
   _id: string;
   _rev: string;
   logins: DBUserInfo[];
+};
+
+export type DBBible = {
+  books: bookType[];
+  lastUpdated: string;
+  _id: string;
+  _rev: string;
+};
+
+export type DBBibleChapter = BibleChapter & {
+  _id: string;
+  _rev: string;
 };
 
 export type allDocsType = {
