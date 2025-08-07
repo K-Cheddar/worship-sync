@@ -402,7 +402,12 @@ const Media = () => {
         <Button
           className="lg:ml-2 max-lg:mx-auto"
           svg={isMediaExpanded ? CollapseSVG : ExpandSVG}
-          onClick={() => dispatch(setIsMediaExpanded(!isMediaExpanded))}
+          onClick={() => {
+            dispatch(setIsMediaExpanded(!isMediaExpanded));
+            if (isMediaExpanded) {
+              setSearchTerm("");
+            }
+          }}
         />
         <CloudinaryUploadWidget
           uwConfig={{
