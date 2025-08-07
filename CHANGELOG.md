@@ -1,3 +1,16 @@
+## [1.10.1](https://github.com/K-Cheddar/worship-sync/compare/v1.10.0...v1.10.1) (2025-08-07)
+
+
+### Bug Fixes
+
+* **Bible:** Correct shown chapters when the book changes ([b0f15ec](https://github.com/K-Cheddar/worship-sync/commit/b0f15ec188f938ed7c20b712cb96cf0d8798dc78))
+* **Media:** Clear search on collapse ([19f2abf](https://github.com/K-Cheddar/worship-sync/commit/19f2abf2fa8d0d586ef725f87fff59982e940f5a))
+
+
+### Performance Improvements
+
+* Speed up database setup ([ea9df9d](https://github.com/K-Cheddar/worship-sync/commit/ea9df9dbb6d131beea576adb3b0b7a69974ed6f2))
+
 # [1.10.0](https://github.com/K-Cheddar/worship-sync/compare/v1.9.5...v1.10.0) (2025-08-06)
 
 
