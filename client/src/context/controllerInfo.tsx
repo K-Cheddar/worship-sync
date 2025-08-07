@@ -72,7 +72,7 @@ const ControllerInfoProvider = ({ children }: any) => {
       const remoteDb = new PouchDB(remoteUrl);
 
       remoteDb.replicate
-        .to(localDb, { retry: true })
+        .to(localDb, { retry: true, batch_size: 200, batches_limit: 15 })
         .on("change", (info) => {
           const pending: number = (info as any).pending; // this property exists when printing info
           pendingMax = pendingMax < pending ? pending : pendingMax;
@@ -124,7 +124,7 @@ const ControllerInfoProvider = ({ children }: any) => {
       const remoteDb = new PouchDB(remoteUrl);
 
       remoteDb.replicate
-        .to(localDb, { retry: true })
+        .to(localDb, { retry: true, batch_size: 1000, batches_limit: 25 })
         .on("change", (info) => {
           const pending: number = (info as any).pending; // this property exists when printing info
           pendingMax = pendingMax < pending ? pending : pendingMax;
