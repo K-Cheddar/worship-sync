@@ -21,6 +21,7 @@ import {
   setVerses,
   setVersion,
   setSearchValue,
+  setChapters,
 } from "../../store/bibleSlice";
 import { bibleVersions } from "../../utils/bibleVersions";
 import { getVerses as getVersesApi } from "../../api/getVerses";
@@ -123,7 +124,7 @@ const Bible = () => {
     () => {
       const getChapter = async () => {
         const bookName = books[book]?.name || "";
-        const chapterName = chapters[chapter]?.name || "";
+        const chapterName = books[book]?.chapters?.[chapter]?.name || "";
         if (bibleDb && bookName && chapterName) {
           const key = `${version}-${bookName}-${chapterName}`;
           let chapterDoc: DBBibleChapter | null = null;
@@ -209,7 +210,7 @@ const Bible = () => {
       };
       getChapter();
     },
-    [chapter, dispatch, bibleDb, version, books, book, chapters],
+    [chapter, dispatch, bibleDb, version, books, book],
     500,
     true
   );
@@ -307,6 +308,12 @@ const Bible = () => {
       resizeObserver.observe(node);
     }
   }, []);
+
+  useEffect(() => {
+    if (books[book]?.chapters) {
+      dispatch(setChapters(books[book].chapters));
+    }
+  }, [book, books, dispatch]);
 
   const versesDisplaySection = books && chapters && verses && (
     <div
