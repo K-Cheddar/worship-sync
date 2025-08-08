@@ -1,3 +1,15 @@
+# [1.11.0](https://github.com/K-Cheddar/worship-sync/compare/v1.10.1...v1.11.0) (2025-08-08)
+
+
+### Features
+
+* **Media:** Add ability to remove the background from an item ([7aa18a1](https://github.com/K-Cheddar/worship-sync/commit/7aa18a1db21a87204fa937a5d1cf934a29770406))
+
+
+### Performance Improvements
+
+* Improve database synchronization ([b32a53b](https://github.com/K-Cheddar/worship-sync/commit/b32a53b6550972df97adc073983a0a7547900a1a))
+
 ## [1.10.1](https://github.com/K-Cheddar/worship-sync/compare/v1.10.0...v1.10.1) (2025-08-07)
 
 
