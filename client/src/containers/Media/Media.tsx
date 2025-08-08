@@ -143,6 +143,7 @@ const Media = () => {
         const updates = event.detail;
         for (const _update of updates) {
           if (_update._id === "images") {
+            console.log("updating media list from remote");
             const update = _update as DBMedia;
             const images = retrieveImages({
               backgrounds: update.backgrounds,
