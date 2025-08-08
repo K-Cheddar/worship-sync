@@ -276,9 +276,11 @@ const Controller = () => {
             <span className="font-semibold">{user}</span>
           </p>
           <Spinner />
-          <p>
-            Progress: <span className="text-orange-500">{dbProgress}%</span>
-          </p>
+          {dbProgress !== 0 && (
+            <p>
+              Progress: <span className="text-orange-500">{dbProgress}%</span>
+            </p>
+          )}
         </div>
       )}
       <div
