@@ -41,6 +41,7 @@ const Presentation = ({
       timerInfo={timerInfo}
       prevTimerInfo={prevTimerInfo}
       shouldAnimate
+      shouldPlayVideo
       width={100}
     />
   ) : (

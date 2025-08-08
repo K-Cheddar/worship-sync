@@ -4,7 +4,7 @@ import {
   FormattedLyrics,
   SongOrder,
   ItemState,
-  Media,
+  MediaType,
   ServiceItem,
   DBItem,
   verseType,
@@ -434,37 +434,17 @@ export const createNewTimer = async ({
 };
 
 type RetriveImagesProps = {
-  backgrounds: Media[];
-  cloud: Cloudinary;
+  backgrounds: MediaType[];
 };
 export const retrieveImages = ({
   backgrounds,
-  cloud,
-}: RetriveImagesProps): Media[] => {
-  const images: Media[] = [];
+}: RetriveImagesProps): MediaType[] => {
+  const images: MediaType[] = [];
   for (let i = 0; i < backgrounds.length; i++) {
     let element = backgrounds[i];
-    // const image = cloud.image(element.name).resize(fill().width(250));
-    let thumbnail = "";
-    let background = "";
-    if (element.type === "image") {
-      background = cloud.image(element.name).toURL();
-      thumbnail = cloud.image(element.name).resize(fill().width(250)).toURL();
-    }
-    if (element.type === "video") {
-      background = cloud.video(element.name).toURL();
-      const scaledDownVideo = cloud
-        .video(element.name)
-        .resize(fill().width(250))
-        .toURL();
-      const [videoUrl] = scaledDownVideo.split("?");
-      thumbnail = videoUrl + ".png?type=video";
-    }
 
     images.push({
       ...element,
-      background,
-      thumbnail,
       id: generateRandomId(),
     });
   }

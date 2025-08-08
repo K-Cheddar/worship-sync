@@ -24,6 +24,7 @@
     "dotenv": "^16.5.0",
     "express": "^4.17.1",
     "firebase": "^8.3.2",
+    "hls.js": "^1.6.9",
     "html2plaintext": "^2.1.2",
     "imap": "^0.8.19",
     "jade": "^1.11.0",

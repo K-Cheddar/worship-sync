@@ -2,7 +2,8 @@ import { Cloudinary } from "@cloudinary/url-gen";
 
 export const deleteFromCloudinary = async (
   cloud: Cloudinary,
-  publicId: string
+  publicId: string,
+  resourceType?: "image" | "video"
 ): Promise<boolean> => {
   try {
     const response = await fetch(
@@ -12,7 +13,7 @@ export const deleteFromCloudinary = async (
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ publicId }),
+        body: JSON.stringify({ publicId, resourceType }),
       }
     );
 

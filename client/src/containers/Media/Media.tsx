@@ -17,7 +17,7 @@ import {
   updateSlideBackground,
 } from "../../store/itemSlice";
 import "./Media.scss";
-import { DBMedia } from "../../types";
+import { DBMedia, MediaType } from "../../types";
 import {
   initiateMediaList,
   updateMediaList,
@@ -25,7 +25,7 @@ import {
 } from "../../store/mediaSlice";
 import { retrieveImages } from "../../utils/itemUtil";
 import CloudinaryUploadWidget, {
-  imageInfoType,
+  mediaInfoType,
 } from "./CloudinaryUploadWidget";
 import generateRandomId from "../../utils/generateRandomId";
 import {
@@ -44,6 +44,7 @@ import { useLocation } from "react-router-dom";
 import cn from "classnames";
 import { updateOverlayPartial } from "../../store/overlaysSlice";
 import { RootState } from "../../store/store";
+import { fill } from "@cloudinary/url-gen/actions/resize";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -54,7 +55,24 @@ const sizeMap: Map<number, string> = new Map([
   [2, "grid-cols-2"],
 ]);
 
-const emptyMedia = { id: "", background: "", type: "" };
+const emptyMedia: MediaType = {
+  id: "",
+  background: "",
+  type: "image",
+  path: "",
+  createdAt: "",
+  updatedAt: "",
+  format: "",
+  height: 0,
+  width: 0,
+  publicId: "",
+  name: "",
+  thumbnail: "",
+  placeholderImage: "",
+  frameRate: 0,
+  duration: 0,
+  hasAudio: false,
+};
 
 const Media = () => {
   const dispatch = useDispatch();
@@ -77,20 +95,11 @@ const Media = () => {
     selectedQuickLink,
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
-  const [selectedMedia, setSelectedMedia] = useState<{
-    id: string;
-    background: string;
-    type: string;
-  }>(emptyMedia);
+  const [selectedMedia, setSelectedMedia] = useState<MediaType>(emptyMedia);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [mediaToDelete, setMediaToDelete] = useState<{
-    id: string;
-    name: string;
-    background: string;
-    thumbnail: string;
-  } | null>(null);
+  const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
 
   // Filter media items based on search term
   const filteredList = list.filter((item) =>
@@ -119,7 +128,7 @@ const Media = () => {
       if (!db || !cloud) return;
       const response: DBMedia | undefined = await db?.get("images");
       const backgrounds = response?.backgrounds || [];
-      const images = retrieveImages({ backgrounds, cloud });
+      const images = retrieveImages({ backgrounds });
       dispatch(initiateMediaList(images));
       setIsMediaLoading(false);
     };
@@ -134,11 +143,10 @@ const Media = () => {
         const updates = event.detail;
         for (const _update of updates) {
           if (_update._id === "images") {
-            console.log("updating media from remote");
+            console.log("updating media list from remote");
             const update = _update as DBMedia;
             const images = retrieveImages({
               backgrounds: update.backgrounds,
-              cloud,
             });
             dispatch(updateMediaListFromRemote(images));
           }
@@ -174,12 +182,7 @@ const Media = () => {
     const mediaItem = list.find((item) => item.id === selectedMedia.id);
     if (!mediaItem) return;
 
-    setMediaToDelete({
-      id: selectedMedia.id,
-      name: mediaItem.name || "this media",
-      background: mediaItem.background,
-      thumbnail: mediaItem.thumbnail,
-    });
+    setMediaToDelete(mediaItem);
     setShowDeleteModal(true);
   };
 
@@ -187,12 +190,19 @@ const Media = () => {
     if (!db || !cloud || !mediaToDelete) return;
 
     try {
-      // Extract public_id from the background URL
-      const publicId = extractPublicId(mediaToDelete.background);
+      let publicId = mediaToDelete.publicId;
+      if (!publicId) {
+        // Extract public_id from the background URL
+        publicId = extractPublicId(mediaToDelete.background) || "";
+      }
 
       if (publicId) {
         // Delete from Cloudinary
-        const cloudinarySuccess = await deleteFromCloudinary(cloud, publicId);
+        const cloudinarySuccess = await deleteFromCloudinary(
+          cloud,
+          publicId,
+          mediaToDelete.type
+        );
         if (!cloudinarySuccess) {
           console.warn(
             "Failed to delete from Cloudinary, but continuing with local deletion"
@@ -224,20 +234,52 @@ const Media = () => {
   const addNewBackground = ({
     public_id,
     secure_url,
+    playback_url,
     resource_type,
-    thumbnail_url,
-  }: imageInfoType) => {
-    const updatedList = [
-      ...list,
-      {
-        category: "uncategorized",
-        name: public_id,
-        type: resource_type,
-        id: generateRandomId(),
-        background: secure_url,
-        thumbnail: thumbnail_url,
-      },
-    ];
+    created_at,
+    format,
+    height,
+    width,
+    original_filename,
+    frame_rate,
+    duration,
+    is_audio,
+  }: mediaInfoType) => {
+    let placeholderImage = "";
+    let thumbnailUrl = "";
+    if (resource_type === "video") {
+      // replace extension to get a static image:
+      placeholderImage = secure_url.replace(/\.[^.]*$/, ".png");
+      const smallVideo =
+        cloud?.video(public_id).resize(fill().width(250)).toURL() || "";
+      thumbnailUrl = smallVideo
+        .replace(/\?.*$/, "") // Remove query string
+        .replace(/\/([^\/]+)$/, "/$1.png");
+    } else {
+      thumbnailUrl =
+        cloud?.image(public_id).resize(fill().width(250)).toURL() || "";
+    }
+
+    const newMedia: MediaType = {
+      path: "",
+      createdAt: created_at,
+      updatedAt: created_at,
+      format,
+      height,
+      width,
+      publicId: public_id,
+      name: original_filename,
+      type: resource_type,
+      id: generateRandomId(),
+      background: playback_url || secure_url,
+      thumbnail: thumbnailUrl,
+      placeholderImage,
+      frameRate: frame_rate,
+      duration,
+      hasAudio: is_audio,
+    };
+
+    const updatedList = [...list, newMedia];
     dispatch(updateMediaList(updatedList));
   };
 
@@ -283,6 +325,7 @@ const Media = () => {
               dispatch(
                 updateAllSlideBackgrounds({
                   background: selectedMedia.background,
+                  mediaInfo: selectedMedia,
                 })
               );
             }
@@ -310,7 +353,10 @@ const Media = () => {
           onClick={() => {
             if (selectedMedia.background && db) {
               dispatch(
-                updateSlideBackground({ background: selectedMedia.background })
+                updateSlideBackground({
+                  background: selectedMedia.background,
+                  mediaInfo: selectedMedia,
+                })
               );
             }
           }}
@@ -486,7 +532,8 @@ const Media = () => {
             isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : defaultItemsPerRow
           }`}
         >
-          {filteredList.map(({ id, thumbnail, background, type, name }) => {
+          {filteredList.map((mediaItem) => {
+            const { id, thumbnail, background, type, name } = mediaItem;
             const isSelected = id === selectedMedia.id;
             return (
               <li key={id}>
@@ -500,21 +547,7 @@ const Media = () => {
                       : "border-gray-500 hover:border-gray-300"
                   )}
                   onClick={() => {
-                    if (type === "video") {
-                      // add mp4 extension to the url
-                      // Insert before the ?
-                      // Comes in the format:
-                      // https://res.cloudinary.com/portable-media/video/upload/v1/backgrounds/Lower_thirds_1_1920_x_300_px_y9g3pq?_a=DATAg1AAZAA0
-                      const updatedBackground =
-                        background.slice(0, background.indexOf("?")) + ".mp4";
-                      setSelectedMedia({
-                        id,
-                        background: updatedBackground,
-                        type,
-                      });
-                    } else {
-                      setSelectedMedia({ id, background, type });
-                    }
+                    setSelectedMedia(mediaItem);
                   }}
                 >
                   <div

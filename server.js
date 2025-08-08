@@ -258,13 +258,15 @@ app.get("/api/changelog", async (req, res) => {
 
 app.delete("/api/cloudinary/delete", async (req, res) => {
   try {
-    const { publicId } = req.body;
+    const { publicId, resourceType } = req.body;
 
     if (!publicId) {
       return res.status(400).json({ error: "publicId is required" });
     }
 
-    const result = await cloudinary.uploader.destroy(publicId);
+    const result = await cloudinary.uploader.destroy(publicId, {
+      resource_type: resourceType,
+    });
 
     if (result.result === "ok") {
       res.json({ success: true, message: "Image deleted successfully" });

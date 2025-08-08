@@ -43,6 +43,10 @@ const DisplayEditor = ({
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
   const [showOverflow, setShowOverflow] = useState(false);
   const [isTextAreaFocused, setIsTextAreaFocused] = useState(false);
+  const isVideoBg = box.mediaInfo?.type === "video";
+  const background = isVideoBg
+    ? box.mediaInfo?.placeholderImage
+    : box.background;
   let textAreaFocusTimeout: NodeJS.Timeout | null = null;
 
   const [isOverflowing, setIsOverflowing] = useState(() => {
@@ -237,7 +241,7 @@ const DisplayEditor = ({
         right: !isBoxLocked,
       }}
     >
-      {box.background && (
+      {background && (
         <img
           className={cn(
             "display-box-background",
@@ -246,7 +250,7 @@ const DisplayEditor = ({
           style={{
             filter: `brightness(${box.brightness}%)`,
           }}
-          src={box.background}
+          src={background}
           alt={box.label}
         />
       )}
