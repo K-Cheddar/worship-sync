@@ -9,6 +9,7 @@ import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
 import { ReactComponent as CollapseSVG } from "../../assets/icons/collapse.svg";
 import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
 import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
+import { ReactComponent as ClearBackgroundSVG } from "../../assets/icons/hide-image.svg";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -249,6 +250,27 @@ const Media = () => {
       >
         <Button
           variant="tertiary"
+          disabled={isLoading}
+          className={cn(
+            "mr-2",
+            !location.pathname.includes("item") && "hidden",
+            visibleButtons["clearBackground"] && "button-appear"
+          )}
+          svg={ClearBackgroundSVG}
+          onClick={() => {
+            if (db) {
+              dispatch(
+                updateSlideBackground({
+                  background: "",
+                })
+              );
+            }
+          }}
+        >
+          {isMobile ? "" : "Remove"}
+        </Button>
+        <Button
+          variant="tertiary"
           disabled={selectedMedia.id === "" || isLoading}
           className={cn(
             "mr-2",
@@ -446,7 +468,7 @@ const Media = () => {
             label="Search"
             value={searchTerm}
             onChange={(value) => setSearchTerm(value as string)}
-            placeholder="name"
+            placeholder="Name"
             className="flex gap-4 items-center"
             inputWidth="w-full"
             inputTextSize="text-sm"
