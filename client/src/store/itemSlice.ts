@@ -5,6 +5,7 @@ import {
   Box,
   ItemSlide,
   ItemState,
+  MediaType,
   ShouldSendTo,
 } from "../types";
 import { createAsyncThunk } from "../hooks/reduxHooks";
@@ -235,7 +236,10 @@ export const updateArrangements = createAsyncThunk(
 
 export const updateAllSlideBackgrounds = createAsyncThunk(
   "item/updateAllSlideBackgrounds",
-  async (args: { background: string }, { dispatch, getState }) => {
+  async (
+    args: { background: string; mediaInfo?: MediaType },
+    { dispatch, getState }
+  ) => {
     const state = getState();
     const item = state.undoable.present.item;
 
@@ -248,7 +252,11 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
           boxes: [
             ...slide.boxes.map((box, index) => {
               if (index === 0) {
-                return { ...box, background: args.background };
+                return {
+                  ...box,
+                  background: args.background,
+                  mediaInfo: args.mediaInfo,
+                };
               }
               return box;
             }),
@@ -274,7 +282,10 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
     dispatch(setBackground(args.background));
 
     _updateItemInLists({
-      value: args.background,
+      value:
+        args.mediaInfo?.type === "video"
+          ? args.mediaInfo?.placeholderImage
+          : args.background,
       property: "background",
       state,
       dispatch,
@@ -284,7 +295,10 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
 
 export const updateSlideBackground = createAsyncThunk(
   "item/updateSlideBackground",
-  async (args: { background: string }, { dispatch, getState }) => {
+  async (
+    args: { background: string; mediaInfo?: MediaType },
+    { dispatch, getState }
+  ) => {
     const state = getState();
     const item = state.undoable.present.item;
 
@@ -305,7 +319,11 @@ export const updateSlideBackground = createAsyncThunk(
                 ...slide,
                 boxes: slide.boxes.map((box, index) => {
                   if (index !== 0) return box;
-                  return { ...box, background: args.background };
+                  return {
+                    ...box,
+                    background: args.background,
+                    mediaInfo: args.mediaInfo,
+                  };
                 }),
               };
             }),
@@ -320,7 +338,11 @@ export const updateSlideBackground = createAsyncThunk(
         ...slide,
         boxes: slide.boxes.map((box, index) => {
           if (index !== 0) return box;
-          return { ...box, background: args.background };
+          return {
+            ...box,
+            background: args.background,
+            mediaInfo: args.mediaInfo,
+          };
         }),
       };
     });
@@ -331,7 +353,10 @@ export const updateSlideBackground = createAsyncThunk(
     if (item.selectedSlide === 0) {
       dispatch(setBackground(args.background));
       _updateItemInLists({
-        value: args.background,
+        value:
+          args.mediaInfo?.type === "video"
+            ? args.mediaInfo?.placeholderImage
+            : args.background,
         property: "background",
         state,
         dispatch,

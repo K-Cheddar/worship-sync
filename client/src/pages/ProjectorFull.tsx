@@ -33,6 +33,7 @@ const ProjectorFull = () => {
       prevBoxes={prevProjectorInfo.slide?.boxes || []}
       displayType={projectorInfo.displayType}
       shouldAnimate
+      shouldPlayVideo
       width={100}
       timerInfo={projectorTimer}
       prevTimerInfo={prevProjectorTimer}
