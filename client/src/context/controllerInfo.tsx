@@ -43,6 +43,8 @@ const cloud = new Cloudinary({
 
 let pendingMax = 0;
 
+let syncTimeout: NodeJS.Timeout | null = null;
+
 const ControllerInfoProvider = ({ children }: any) => {
   const [db, setDb] = useState<PouchDB.Database | undefined>(undefined);
   const [bibleDb, setBibleDb] = useState<PouchDB.Database | undefined>(
@@ -71,8 +73,12 @@ const ControllerInfoProvider = ({ children }: any) => {
       const remoteUrl = `${getDbBasePath()}db/${dbName}`;
       const remoteDb = new PouchDB(remoteUrl);
 
+      if (syncRef.current) {
+        syncRef.current.cancel();
+      }
+
       remoteDb.replicate
-        .to(localDb, { retry: true, batch_size: 200, batches_limit: 15 })
+        .to(localDb, { retry: true, batch_size: 150, batches_limit: 15 })
         .on("change", (info) => {
           const pending: number = (info as any).pending; // this property exists when printing info
           pendingMax = pendingMax < pending ? pending : pendingMax;
@@ -123,6 +129,10 @@ const ControllerInfoProvider = ({ children }: any) => {
       const remoteUrl = `${getDbBasePath()}db/${dbName}`;
       const remoteDb = new PouchDB(remoteUrl);
 
+      if (bibleSyncRef.current) {
+        bibleSyncRef.current.cancel();
+      }
+
       remoteDb.replicate
         .to(localDb, { retry: true, batch_size: 1000, batches_limit: 25 })
         .on("change", (info) => {
@@ -142,19 +152,12 @@ const ControllerInfoProvider = ({ children }: any) => {
           console.log("Bible Replication completed");
           if (loginState === "success") {
             bibleSyncRef.current = localDb
-              .sync(remoteDb, { retry: true, live: true })
-              .on("change", (event) => {
-                if (event.direction === "push") {
-                  console.log("updating bible from local", event);
-                }
-                if (event.direction === "pull") {
-                  console.log("updating bible from remote", event);
-                  updater.current.dispatchEvent(
-                    new CustomEvent("updateBible", {
-                      detail: event.change.docs,
-                    })
-                  );
-                }
+              .changes({ since: "now", live: true })
+              .on("change", () => {
+                if (syncTimeout) clearTimeout(syncTimeout);
+                syncTimeout = setTimeout(() => {
+                  localDb.sync(remoteDb, { retry: true });
+                }, 10000); // Wait 10 second after last change
               });
           }
         });
@@ -174,6 +177,7 @@ const ControllerInfoProvider = ({ children }: any) => {
   const _logout = async () => {
     setLoginState?.("loading");
     await syncRef.current?.cancel();
+    await bibleSyncRef.current?.cancel();
     globalDb = undefined;
     setDb(undefined);
     setDbProgress(0);

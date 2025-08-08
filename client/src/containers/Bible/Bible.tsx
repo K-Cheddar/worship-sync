@@ -365,10 +365,12 @@ const Bible = () => {
             Setting up <span className="font-bold">Bible</span>
           </p>
           <Spinner />
-          <p>
-            Progress:{" "}
-            <span className="text-orange-500">{bibleDbProgress}%</span>
-          </p>
+          {bibleDbProgress !== 0 && (
+            <p>
+              Progress:{" "}
+              <span className="text-orange-500">{bibleDbProgress}%</span>
+            </p>
+          )}
         </div>
       )}
       <div
