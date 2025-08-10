@@ -7,7 +7,7 @@ import { ReactComponent as SyncSVG } from "../../assets/icons/sync-alt.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { DBCredits } from "../../types";
+import { DBCredits, DBItemListDetails, ItemLists } from "../../types";
 import {
   initiateCreditsList,
   initiateCreditsScene,
@@ -32,13 +32,16 @@ import "./CreditsEditor.scss";
 import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
 import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
+import { setItemListIsLoading } from "../../store/itemListSlice";
+import { initiateOverlayList } from "../../store/overlaysSlice";
 
 const CreditsEditor = () => {
   const { list, transitionScene, creditsScene, scheduleName } = useSelector(
-    (state) => state.undoable.present.credits,
+    (state) => state.undoable.present.credits
   );
+
   const { list: overlays } = useSelector(
-    (state) => state.undoable.present.overlays,
+    (state) => state.undoable.present.overlays
   );
   const { db, dbProgress, setIsMobile, updater } =
     useContext(ControllerInfoContext) || {};
@@ -50,7 +53,31 @@ const CreditsEditor = () => {
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
-    const getCredits = async() => {
+    const getItemList = async () => {
+      if (!db) return;
+      dispatch(setItemListIsLoading(true));
+      try {
+        const itemListsResponse: ItemLists | undefined =
+          await db?.get("ItemLists");
+        const selectedList = itemListsResponse?.selectedList;
+        const response: DBItemListDetails | undefined = await db?.get(
+          selectedList._id
+        );
+        const overlays = response?.overlays || [];
+
+        dispatch(initiateOverlayList(overlays));
+      } catch (e) {
+        console.error(e);
+      }
+      dispatch(setItemListIsLoading(false));
+    };
+    if (overlays.length === 0) {
+      getItemList();
+    }
+  }, [overlays.length, dispatch, db]);
+
+  useEffect(() => {
+    const getCredits = async () => {
       if (!db) return;
 
       try {
@@ -70,7 +97,7 @@ const CreditsEditor = () => {
 
   useEffect(() => {
     if (!updater) return;
-    const updateAllItemsAndList = async(event: CustomEventInit) => {
+    const updateAllItemsAndList = async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
@@ -92,11 +119,11 @@ const CreditsEditor = () => {
   }, [updater, dispatch]);
 
   useEffect(() => {
-    const getCreditsFromFirebase = async() => {
+    const getCreditsFromFirebase = async () => {
       if (!firebaseDb) return;
       const transitionSceneRef = ref(
         firebaseDb,
-        "users/" + user + "/v2/credits/transitionScene",
+        "users/" + user + "/v2/credits/transitionScene"
       );
       onValue(transitionSceneRef, (snapshot) => {
         const data = snapshot.val();
@@ -107,7 +134,7 @@ const CreditsEditor = () => {
 
       const creditsSceneRef = ref(
         firebaseDb,
-        "users/" + user + "/v2/credits/creditsScene",
+        "users/" + user + "/v2/credits/creditsScene"
       );
       onValue(creditsSceneRef, (snapshot) => {
         const data = snapshot.val();
@@ -118,7 +145,7 @@ const CreditsEditor = () => {
 
       const scheduleNameRef = ref(
         firebaseDb,
-        "users/" + user + "/v2/credits/scheduleName",
+        "users/" + user + "/v2/credits/scheduleName"
       );
       onValue(scheduleNameRef, (snapshot) => {
         const data = snapshot.val();
@@ -129,7 +156,7 @@ const CreditsEditor = () => {
 
       const getPublishedRef = ref(
         firebaseDb,
-        "users/" + user + "/v2/credits/publishedList",
+        "users/" + user + "/v2/credits/publishedList"
       );
       onValue(getPublishedRef, (snapshot) => {
         const data = snapshot.val();
@@ -157,7 +184,7 @@ const CreditsEditor = () => {
         resizeObserver.observe(node);
       }
     },
-    [setIsMobile],
+    [setIsMobile]
   );
 
   useEffect(() => {
@@ -165,48 +192,49 @@ const CreditsEditor = () => {
     window.scrollTo(0, 0);
   }, []);
 
-  const generateFromOverlays = useCallback(async() => {
+  const generateFromOverlays = useCallback(async () => {
     setIsGenerating(true);
     try {
       const eventNameMapping: { [key: string]: string } = {
         "sabbath school": overlays
           .filter((overlay) =>
-            overlay.event?.toLowerCase().includes("sabbath school"),
+            overlay.event?.toLowerCase().includes("sabbath school")
           )
           .map((overlay) => overlay.name)
           .join("\n")
           .trim(),
         welcome:
           overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("welcome"),
+            overlay.event?.toLowerCase().includes("welcome")
           )?.name || "",
         "call to praise":
           overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("call to praise"),
+            overlay.event?.toLowerCase().includes("call to praise")
           )?.name || "",
         invocation:
           overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("invocation"),
+            overlay.event?.toLowerCase().includes("invocation")
           )?.name || "",
         reading:
           overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("reading"),
+            overlay.event?.toLowerCase().includes("reading")
           )?.name || "",
         intercessor:
           overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("intercessor"),
+            overlay.event?.toLowerCase().includes("intercessor")
           )?.name || "",
         offertory:
           overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("offertory"),
+            overlay.event?.toLowerCase().includes("offertory")
           )?.name || "",
-        special:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("special"),
-          )?.name || "",
+        special: overlays
+          .filter((overlay) => overlay.event?.toLowerCase().includes("special"))
+          .map((overlay) => overlay.name)
+          .join("\n")
+          .trim(),
         sermon:
           overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("sermon"),
+            overlay.event?.toLowerCase().includes("sermon")
           )?.name || "",
       };
 
@@ -221,14 +249,14 @@ const CreditsEditor = () => {
 
       const schedule = await getScheduleFromExcel(
         `${scheduleName || fallbackScheduleName}.xlsx`,
-        "/Media Team Positions.xlsx",
+        "/Media Team Positions.xlsx"
       );
 
       let updatedList = list.map((credit) => {
         // Find matching schedule entry
         const scheduleEntry = schedule.find(
           (entry) =>
-            entry.heading.toLowerCase() === credit.heading.toLowerCase(),
+            entry.heading.toLowerCase() === credit.heading.toLowerCase()
         );
 
         if (scheduleEntry) {
@@ -240,7 +268,7 @@ const CreditsEditor = () => {
 
         // If no schedule match, try overlay mapping
         const eventKey = Object.keys(eventNameMapping).find((key) =>
-          credit.heading.toLowerCase().includes(key),
+          credit.heading.toLowerCase().includes(key)
         );
 
         if (eventKey) {
@@ -393,7 +421,7 @@ const CreditsEditor = () => {
           data-testid="credits-preview-container"
           className={cn(
             "flex-1 text-center",
-            !isPreviewOpen && "max-md:hidden",
+            !isPreviewOpen && "max-md:hidden"
           )}
         >
           <h2 className="text-lg font-semibold">Preview</h2>
