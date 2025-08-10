@@ -12,7 +12,7 @@
     "jsx-quotes": ["warn", "prefer-double"], // Enforce double quotes in JSX
     "comma-dangle": ["warn", "always-multiline"], // Allow trailing commas in multiline
     "prettier/prettier": ["off", {
-      "trailingComma": "none",
+      "trailingComma": "all",
       "tabWidth": 2,
       "semi": true
     }]

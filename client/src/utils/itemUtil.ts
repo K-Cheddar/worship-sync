@@ -1,4 +1,3 @@
-import { Cloudinary } from "@cloudinary/url-gen";
 import {
   Arrangment,
   FormattedLyrics,
@@ -19,7 +18,6 @@ import generateRandomId from "./generateRandomId";
 import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
-import { fill } from "@cloudinary/url-gen/actions/resize";
 
 type CreateSectionsType = {
   formattedLyrics?: FormattedLyrics[];

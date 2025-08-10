@@ -254,7 +254,7 @@ const Media = () => {
         cloud?.video(public_id).resize(fill().width(250)).toURL() || "";
       thumbnailUrl = smallVideo
         .replace(/\?.*$/, "") // Remove query string
-        .replace(/\/([^\/]+)$/, "/$1.png");
+        .replace(/\/([^/]+)$/, "/$1.png");
     } else {
       thumbnailUrl =
         cloud?.image(public_id).resize(fill().width(250)).toURL() || "";
@@ -533,7 +533,7 @@ const Media = () => {
           }`}
         >
           {filteredList.map((mediaItem) => {
-            const { id, thumbnail, background, type, name } = mediaItem;
+            const { id, thumbnail, name } = mediaItem;
             const isSelected = id === selectedMedia.id;
             return (
               <li key={id}>

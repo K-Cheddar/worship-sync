@@ -73,11 +73,6 @@ jest.mock("../../../utils/getScheduleFromExcel", () => {
   });
 });
 
-// Get the mock function for verification
-const mockGetScheduleFromExcel = jest.requireMock(
-  "../../../utils/getScheduleFromExcel",
-);
-
 // Create a mock PouchDB instance
 const mockPouchDB = {
   get: jest.fn().mockResolvedValue({ _id: "credits", list: [] }),
@@ -138,6 +133,9 @@ const mockControllerContext = {
     },
   }),
   isMobile: false,
+  isPhone: false,
+  bibleDbProgress: 100,
+  setIsPhone: jest.fn(),
   logout: jest.fn(),
   login: jest.fn(),
 };
@@ -153,6 +151,8 @@ const mockGlobalContext = {
   setUser: jest.fn(),
   uploadPreset: "",
   setLoginState: jest.fn(),
+  hostId: "test-host",
+  activeInstances: [],
 };
 
 // Mock redux hooks
@@ -291,7 +291,7 @@ describe("CreditsEditor", () => {
     expect(loadingOverlay).toHaveTextContent(/Progress: 50%/);
   });
 
-  it("toggles preview mode on mobile", async() => {
+  it("toggles preview mode on mobile", async () => {
     renderWithProviders(<CreditsEditor />);
 
     const showPreviewButton = screen.getByRole("button", {
@@ -308,7 +308,6 @@ describe("CreditsEditor", () => {
     // Click preview button and wait for state update
     fireEvent.click(showPreviewButton);
     await waitFor(() => {
-      const editor = screen.getByTestId("credits-editor");
       const editorContainer = screen.getByTestId("credits-editor-container");
       expect(editorContainer).toHaveClass("hidden");
     });
@@ -316,13 +315,12 @@ describe("CreditsEditor", () => {
     // Click editor button and wait for state update
     fireEvent.click(showEditorButton);
     await waitFor(() => {
-      const preview = screen.getByTestId("credits-preview");
       const previewContainer = screen.getByTestId("credits-preview-container");
       expect(previewContainer).toHaveClass("hidden");
     });
   });
 
-  it("updates transition and credits scenes", async() => {
+  it("updates transition and credits scenes", async () => {
     renderWithProviders(<CreditsEditor />);
 
     const transitionInput = screen.getByRole("textbox", {
@@ -486,7 +484,7 @@ describe("CreditsEditor", () => {
   //   );
   // });
 
-  it("handles database errors gracefully", async() => {
+  it("handles database errors gracefully", async () => {
     const contextWithError = {
       ...mockControllerContext,
       db: {
