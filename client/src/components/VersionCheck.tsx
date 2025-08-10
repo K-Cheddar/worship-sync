@@ -18,7 +18,7 @@ const isControllerRoute = () => {
   const hash = window.location.hash.replace("#", "");
   const controllerRoutes = ["/", "/controller", "/login", "/credits-editor"];
   return controllerRoutes.some(
-    (route) => hash === route || hash.startsWith("/controller/"),
+    (route) => hash === route || hash.startsWith("/controller/")
   );
 };
 
@@ -58,14 +58,14 @@ const VersionCheck: React.FC = () => {
         // Wait a bit for unregister, then reload
         setTimeout(() => {
           window.location.replace(
-            window.location.href.split("?")[0] + "?cacheBust=" + Date.now(),
+            window.location.href.split("?")[0] + "?cacheBust=" + Date.now()
           );
         }, 1000);
       });
     } else {
       setTimeout(() => {
         window.location.replace(
-          window.location.href.split("?")[0] + "?cacheBust=" + Date.now(),
+          window.location.href.split("?")[0] + "?cacheBust=" + Date.now()
         );
       }, 1000);
     }
@@ -73,7 +73,7 @@ const VersionCheck: React.FC = () => {
 
   // Fetch changelog for the new version (with caching)
   const fetchChangelog = useCallback(
-    async(version: string) => {
+    async (version: string) => {
       setIsLoadingChangelog(true);
       try {
         // Get current version for changelog range
@@ -93,7 +93,7 @@ const VersionCheck: React.FC = () => {
         // Fetch from server if not cached
         const changelogContent = await getChangelogForVersion(
           version,
-          currentVersion || undefined,
+          currentVersion || undefined
         );
         setChangelog(changelogContent);
 
@@ -108,20 +108,18 @@ const VersionCheck: React.FC = () => {
         setIsLoadingChangelog(false);
       }
     },
-    [setChangelog, setIsLoadingChangelog],
+    [setChangelog, setIsLoadingChangelog]
   );
 
   // Check version directly from the server
-  const checkVersion = useCallback(async() => {
+  const checkVersion = useCallback(async () => {
     try {
-      const baseUrl = window.location.origin;
-      const apiPath = baseUrl.includes("localhost")
-        ? "http://localhost:5000"
-        : baseUrl;
-
-      const response = await fetch(`${apiPath}/api/version`, {
-        cache: "no-cache",
-      });
+      const response = await fetch(
+        `${process.env.REACT_APP_API_BASE_PATH}api/version`,
+        {
+          cache: "no-cache",
+        }
+      );
 
       if (response.ok) {
         const { version } = await response.json();
@@ -155,10 +153,13 @@ const VersionCheck: React.FC = () => {
     checkVersion();
 
     const startPeriodicCheck = () => {
-      versionCheckTimeoutRef.current = setTimeout(() => {
-        checkVersion();
-        startPeriodicCheck(); // Schedule next check
-      }, 6 * 60 * 60 * 1000); // 6 hours
+      versionCheckTimeoutRef.current = setTimeout(
+        () => {
+          checkVersion();
+          startPeriodicCheck(); // Schedule next check
+        },
+        6 * 60 * 60 * 1000
+      ); // 6 hours
     };
 
     startPeriodicCheck();

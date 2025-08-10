@@ -17,11 +17,11 @@ import {
   set,
   onDisconnect,
 } from "firebase/database";
-import PouchDB from "pouchdb";
-import { DBLogin, Instance, TimerInfo } from "../types";
+import { Instance, TimerInfo } from "../types";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import generateRandomId from "../utils/generateRandomId";
+import { loginUser } from "../api/login";
 
 import {
   BibleDisplayInfo,
@@ -29,7 +29,6 @@ import {
   Presentation as PresentationType,
 } from "../types";
 import { ActionCreators } from "redux-undo";
-import { getDbBasePath } from "../utils/serverUtils";
 
 type LoginStateType = "idle" | "loading" | "error" | "success" | "demo";
 
@@ -53,7 +52,7 @@ type GlobalInfoContextType = {
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
-  null,
+  null
 );
 
 const firebaseConfig = {
@@ -183,7 +182,7 @@ const GlobalInfoProvider = ({ children }: any) => {
         dispatch({ type: updateAction, payload: info });
       }
     },
-    [dispatch],
+    [dispatch]
   );
 
   // get info from local storage on startup
@@ -220,7 +219,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     signInWithEmailAndPassword(
       auth,
       "eliathahsdatechteam@gmail.com",
-      "TamTam7550",
+      "TamTam7550"
     );
   }, [loginState]);
 
@@ -233,6 +232,7 @@ const GlobalInfoProvider = ({ children }: any) => {
       if (snap.val() === true) {
         // When we reconnect, re-establish the active instance if we're on the controller page
         if (isOnController && instanceRef.current) {
+          console.log("connected");
           set(instanceRef.current, {
             lastActive: new Date().toISOString(),
             user: user,
@@ -262,7 +262,7 @@ const GlobalInfoProvider = ({ children }: any) => {
 
         const updateRef = ref(
           firebaseDb,
-          "users/" + user + "/v2/presentation/" + key,
+          "users/" + user + "/v2/presentation/" + key
         );
 
         onValueRef.current[_key] = onValue(updateRef, (snapshot) => {
@@ -293,7 +293,7 @@ const GlobalInfoProvider = ({ children }: any) => {
 
     const activeInstancesRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/activeInstances",
+      "users/" + user + "/v2/activeInstances"
     );
 
     // Listen for changes in active instances
@@ -306,21 +306,21 @@ const GlobalInfoProvider = ({ children }: any) => {
           ([_, instance]: [string, any]) => {
             const lastActive = new Date(instance.lastActive).getTime();
             return now - lastActive > 60 * 60 * 1000; // 1 hour
-          },
+          }
         );
 
         // Remove stale instances
         staleInstances.forEach(([hostId]) => {
           const staleRef = ref(
             firebaseDb,
-            `users/${user}/v2/activeInstances/${hostId}`,
+            `users/${user}/v2/activeInstances/${hostId}`
           );
           set(staleRef, null);
         });
         const _activeInstances = Object.values(data).filter(
           (instance: any): instance is Instance =>
             instance.isOnController &&
-            now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000,
+            now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
         );
         setActiveInstances(_activeInstances);
       } else {
@@ -331,7 +331,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     // Set this instance as active only if on controller page
     instanceRef.current = ref(
       firebaseDb,
-      `users/${user}/v2/activeInstances/${hostId}`,
+      `users/${user}/v2/activeInstances/${hostId}`
     );
 
     // Function to update the instance
@@ -382,7 +382,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     };
   }, []); // Empty dependency array means this only runs once on mount
 
-  const login = async({
+  const login = async ({
     username,
     password,
   }: {
@@ -392,16 +392,15 @@ const GlobalInfoProvider = ({ children }: any) => {
     setLoginState("loading");
 
     try {
-      const dbName = "worship-sync-logins";
-      const remoteUrl = `${getDbBasePath()}db/${dbName}`;
-      const loginDb = new PouchDB(remoteUrl);
-      const db_logins: DBLogin = await loginDb.get("logins");
-      const user = db_logins.logins.find(
-        (e) => e.username === username && e.password === password,
+      const { success, errorMessage, user } = await loginUser(
+        username,
+        password
       );
-      if (!user) {
+
+      if (!success) {
+        console.error("Login failed:", errorMessage);
         setLoginState("error");
-      } else {
+      } else if (user) {
         dispatch({ type: "RESET" });
         setLoginState("success");
         localStorage.setItem("loggedIn", "true");
@@ -413,9 +412,13 @@ const GlobalInfoProvider = ({ children }: any) => {
         setDatabase(user.database);
         setUploadPreset(user.upload_preset);
         navigate("/");
+      } else {
+        console.error("Login failed:", errorMessage);
+        setLoginState("error");
       }
     } catch (e) {
-      console.error(e);
+      console.error("Login error:", e);
+      setLoginState("error");
     }
   };
 
