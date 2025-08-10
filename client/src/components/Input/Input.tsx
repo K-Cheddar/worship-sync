@@ -51,7 +51,7 @@ const Input = ({
       className={cn(
         className,
         "input-container",
-        hideSpinButtons && "hide-spin-buttons"
+        hideSpinButtons && "hide-spin-buttons",
       )}
     >
       <label
@@ -59,7 +59,7 @@ const Input = ({
         className={cn(
           `${labelFontSize} font-semibold`,
           hideLabel && "sr-only",
-          labelClassName
+          labelClassName,
         )}
       >
         {label}:
@@ -71,7 +71,7 @@ const Input = ({
             svg ? "pr-6" : "pr-2",
             disabled && "opacity-50",
             inputTextSize,
-            inputWidth
+            inputWidth,
           )}
           type={type}
           value={value}

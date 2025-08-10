@@ -2,8 +2,8 @@ export const sortNamesInList = (list: any[]) => {
   if (!list) return list;
   try {
     return [...list].sort((a, b) => {
-      let nameA = a.name.toUpperCase();
-      let nameB = b.name.toUpperCase();
+      const nameA = a.name.toUpperCase();
+      const nameB = b.name.toUpperCase();
       return nameA.localeCompare(nameB, "en", { numeric: true });
     });
   } catch (err) {
@@ -15,8 +15,8 @@ export const sortNamesInList = (list: any[]) => {
 export const sortList = (list: any[]) => {
   try {
     return [...list].sort((a, b) => {
-      let nameA = a.toUpperCase();
-      let nameB = b.toUpperCase();
+      const nameA = a.toUpperCase();
+      const nameB = b.toUpperCase();
       return nameA.localeCompare(nameB, "en", { numeric: true });
     });
   } catch (err) {

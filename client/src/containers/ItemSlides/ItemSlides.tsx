@@ -257,7 +257,7 @@ const ItemSlides = () => {
           updateBibleDisplayInfo({
             title,
             text,
-          })
+          }),
         );
       } else {
         dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
@@ -276,13 +276,13 @@ const ItemSlides = () => {
             isBold: slide.formattedTextDisplayInfo?.isBold || false,
             isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
             align: slide.formattedTextDisplayInfo?.align || "left",
-          })
+          }),
         );
       } else {
         dispatch(
           updateFormattedTextDisplayInfo({
             text: "",
-          })
+          }),
         );
       }
 
@@ -292,7 +292,7 @@ const ItemSlides = () => {
           type,
           name,
           timerId: timerInfo?.id,
-        })
+        }),
       );
     }
 
@@ -303,7 +303,7 @@ const ItemSlides = () => {
           type,
           name,
           timerId: timerInfo?.id,
-        })
+        }),
       );
     }
 
@@ -314,7 +314,7 @@ const ItemSlides = () => {
           type,
           name,
           timerId: timerInfo?.id,
-        })
+        }),
       );
     }
   };
@@ -395,7 +395,7 @@ const ItemSlides = () => {
 
     // Find all slides in the same section
     const sectionSlides = slides.filter((slide) =>
-      slide.name.includes(`Section ${sectionNum}`)
+      slide.name.includes(`Section ${sectionNum}`),
     );
 
     // Find the target position
@@ -412,12 +412,12 @@ const ItemSlides = () => {
       if (targetSectionNum !== sectionNum) {
         // Find the boundaries of the target section
         const targetSectionStart = slides.findIndex((slide) =>
-          slide.name.includes(`Section ${targetSectionNum}`)
+          slide.name.includes(`Section ${targetSectionNum}`),
         );
         const targetSectionEnd = slides.findIndex(
           (slide, index) =>
             index > targetSectionStart &&
-            !slide.name.includes(`Section ${targetSectionNum}`)
+            !slide.name.includes(`Section ${targetSectionNum}`),
         );
 
         // If target is within another section, adjust the target index to be before or after that section
@@ -440,7 +440,7 @@ const ItemSlides = () => {
 
     // Get the indices of the first and last slides in the section
     const firstSectionIndex = slides.findIndex((slide) =>
-      slide.name.includes(`Section ${sectionNum}`)
+      slide.name.includes(`Section ${sectionNum}`),
     );
 
     // Remove all slides in the section

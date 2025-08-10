@@ -17,11 +17,11 @@ import {
   set,
   onDisconnect,
 } from "firebase/database";
-import PouchDB from "pouchdb";
-import { DBLogin, Instance, TimerInfo } from "../types";
+import { Instance, TimerInfo } from "../types";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import generateRandomId from "../utils/generateRandomId";
+import { loginUser } from "../api/login";
 
 import {
   BibleDisplayInfo,
@@ -29,7 +29,6 @@ import {
   Presentation as PresentationType,
 } from "../types";
 import { ActionCreators } from "redux-undo";
-import { getDbBasePath } from "../utils/serverUtils";
 
 type LoginStateType = "idle" | "loading" | "error" | "success" | "demo";
 
@@ -71,7 +70,7 @@ type globalFireBaseInfoType = {
   user: string;
 };
 
-export let globalFireDbInfo: globalFireBaseInfoType = {
+export const globalFireDbInfo: globalFireBaseInfoType = {
   db: undefined,
   user: "Demo",
 };
@@ -233,6 +232,7 @@ const GlobalInfoProvider = ({ children }: any) => {
       if (snap.val() === true) {
         // When we reconnect, re-establish the active instance if we're on the controller page
         if (isOnController && instanceRef.current) {
+          console.log("connected");
           set(instanceRef.current, {
             lastActive: new Date().toISOString(),
             user: user,
@@ -392,16 +392,15 @@ const GlobalInfoProvider = ({ children }: any) => {
     setLoginState("loading");
 
     try {
-      const dbName = "worship-sync-logins";
-      const remoteUrl = `${getDbBasePath()}db/${dbName}`;
-      const loginDb = new PouchDB(remoteUrl);
-      const db_logins: DBLogin = await loginDb.get("logins");
-      let user = db_logins.logins.find(
-        (e) => e.username === username && e.password === password
+      const { success, errorMessage, user } = await loginUser(
+        username,
+        password
       );
-      if (!user) {
+
+      if (!success) {
+        console.error("Login failed:", errorMessage);
         setLoginState("error");
-      } else {
+      } else if (user) {
         dispatch({ type: "RESET" });
         setLoginState("success");
         localStorage.setItem("loggedIn", "true");
@@ -413,9 +412,13 @@ const GlobalInfoProvider = ({ children }: any) => {
         setDatabase(user.database);
         setUploadPreset(user.upload_preset);
         navigate("/");
+      } else {
+        console.error("Login failed:", errorMessage);
+        setLoginState("error");
       }
     } catch (e) {
-      console.error(e);
+      console.error("Login error:", e);
+      setLoginState("error");
     }
   };
 

@@ -47,7 +47,7 @@ export const overlaysSlice = createSlice({
     addOverlay: (state, action: PayloadAction<OverlayInfo>) => {
       // get index of selected overlay
       const existingIndex = state.list.findIndex(
-        (overlay) => overlay.id === state.id
+        (overlay) => overlay.id === state.id,
       );
       const newItem = { ...action.payload };
       if (existingIndex !== -1) {
@@ -91,7 +91,7 @@ export const overlaysSlice = createSlice({
     },
     updateOverlayListFromRemote: (
       state,
-      action: PayloadAction<OverlayInfo[]>
+      action: PayloadAction<OverlayInfo[]>,
     ) => {
       if (action.payload.length === 0) {
         state.list = [];
@@ -104,7 +104,7 @@ export const overlaysSlice = createSlice({
     },
     deleteOverlay: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter(
-        (overlay) => overlay.id !== action.payload
+        (overlay) => overlay.id !== action.payload,
       );
       if (state.id === action.payload) {
         state.id = "";
@@ -148,7 +148,7 @@ export const overlaysSlice = createSlice({
     },
     updateOverlayPartial: (
       state,
-      action: PayloadAction<Partial<OverlayInfo>>
+      action: PayloadAction<Partial<OverlayInfo>>,
     ) => {
       const updatedOverlayInfo = {
         id: action.payload.id || state.id,

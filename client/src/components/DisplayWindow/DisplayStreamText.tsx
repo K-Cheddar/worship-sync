@@ -48,7 +48,7 @@ const DisplayStreamText = ({
             opacity: 0,
             duration: textDuration,
             ease: "power1.inOut",
-          }
+          },
         );
       } else {
         boxTimeline.current = gsap.timeline();
@@ -59,11 +59,11 @@ const DisplayStreamText = ({
             opacity: 1,
             duration: textDuration,
             ease: "power1.inOut",
-          }
+          },
         );
       }
     },
-    { scope: boxRef, dependencies: [box, time] }
+    { scope: boxRef, dependencies: [box, time] },
   );
 
   const bFontSize = 1.1;
@@ -117,7 +117,7 @@ const DisplayStreamText = ({
       }}
     >
       <p
-        className={`display-box-text h-fit bottom-0 text-center`}
+        className={"display-box-text h-fit bottom-0 text-center"}
         style={textStyles}
       >
         {renderContent()}

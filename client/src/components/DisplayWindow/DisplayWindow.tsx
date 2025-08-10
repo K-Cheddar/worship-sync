@@ -1,4 +1,4 @@
-import { forwardRef, useRef } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import {
   BibleDisplayInfo,
   Box,
@@ -17,6 +17,7 @@ import DisplayEditor from "./DisplayEditor";
 import DisplayStreamText from "./DisplayStreamText";
 import DisplayImageOverlay from "./DisplayImageOverlay";
 import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
+import HLSPlayer from "./HLSVideoPlayer";
 
 type DisplayWindowProps = {
   prevBoxes?: Box[];
@@ -89,7 +90,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       prevFormattedTextDisplayInfo,
       isBoxLocked,
     }: DisplayWindowProps,
-    ref
+    ref,
   ) => {
     const fallbackRef = useRef<HTMLDivElement | null>(null);
     const containerRef = ref || fallbackRef;
@@ -105,6 +106,34 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isEditor = displayType === "editor";
     const isDisplay = !isStream && !isEditor;
 
+    // Determine the active background video (if any) from boxes
+    const { videoBox, desiredVideoUrl } = useMemo(() => {
+      if (!shouldPlayVideo || !isDisplay || !showBackground)
+        return { videoBox: undefined, desiredVideoUrl: undefined };
+      const videoBox = boxes.find(
+        (b) => b.mediaInfo?.type === "video" && b.mediaInfo?.background,
+      );
+      return { videoBox, desiredVideoUrl: videoBox?.mediaInfo?.background };
+    }, [boxes, isDisplay, showBackground, shouldPlayVideo]);
+
+    const [activeVideoUrl, setActiveVideoUrl] = useState<string | undefined>(
+      undefined,
+    );
+    const [isWindowVideoLoaded, setIsWindowVideoLoaded] = useState(false);
+
+    // Keep the video element mounted and update src only when the URL changes
+    useEffect(() => {
+      if (desiredVideoUrl && desiredVideoUrl !== activeVideoUrl) {
+        setIsWindowVideoLoaded(false);
+        setActiveVideoUrl(desiredVideoUrl);
+      }
+      if (!desiredVideoUrl) {
+        // If there is no desired video, clear active video
+        setActiveVideoUrl(undefined);
+        setIsWindowVideoLoaded(false);
+      }
+    }, [desiredVideoUrl, activeVideoUrl]);
+
     return (
       <div
         className={`display-window ${
@@ -119,6 +148,14 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           } as React.CSSProperties
         }
       >
+        {isDisplay && showBackground && shouldPlayVideo && activeVideoUrl && (
+          <HLSPlayer
+            src={activeVideoUrl}
+            onLoadedData={() => setIsWindowVideoLoaded(true)}
+            onError={() => setIsWindowVideoLoaded(false)}
+            videoBox={videoBox}
+          />
+        )}
         {boxes.map((box, index) => {
           if (isEditor)
             return (
@@ -158,10 +195,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 fontAdjustment={fontAdjustment}
                 index={index}
                 shouldAnimate={shouldAnimate}
-                shouldPlayVideo={shouldPlayVideo}
                 prevBox={prevBoxes[index]}
                 time={time}
                 timerInfo={timerInfo}
+                activeVideoUrl={activeVideoUrl}
+                isWindowVideoLoaded={isWindowVideoLoaded}
               />
             );
           return null;
@@ -178,10 +216,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 fontAdjustment={fontAdjustment}
                 index={index}
                 shouldAnimate={shouldAnimate}
-                shouldPlayVideo={shouldPlayVideo}
                 prevBox={boxes[index]}
                 time={time}
                 timerInfo={prevTimerInfo}
+                activeVideoUrl={activeVideoUrl}
+                isWindowVideoLoaded={isWindowVideoLoaded}
                 isPrev
               />
             );
@@ -253,7 +292,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         )}
       </div>
     );
-  }
+  },
 );
 
 export default DisplayWindow;

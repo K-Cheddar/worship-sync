@@ -33,12 +33,12 @@ export const itemListsSlice = createSlice({
     },
     selectItemList: (state, action: PayloadAction<string>) => {
       state.selectedList = state.currentLists.find(
-        (item) => item._id === action.payload
+        (item) => item._id === action.payload,
       );
     },
     setInitialItemList: (state, action: PayloadAction<string>) => {
       state.selectedList = state.currentLists.find(
-        (item) => item._id === action.payload
+        (item) => item._id === action.payload,
       );
     },
   },

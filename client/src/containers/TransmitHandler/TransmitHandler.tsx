@@ -39,25 +39,25 @@ const TransmitHandler = () => {
 
   const timers = useSelector((state) => state.timers.timers);
   const projectorTimer = timers.find(
-    (timer) => timer.id === projectorInfo.timerId
+    (timer) => timer.id === projectorInfo.timerId,
   );
   const monitorTimer = timers.find((timer) => timer.id === monitorInfo.timerId);
   const streamTimer = timers.find((timer) => timer.id === streamInfo.timerId);
 
   const prevProjectorTimer = timers.find(
-    (timer) => timer.id === prevProjectorInfo.timerId
+    (timer) => timer.id === prevProjectorInfo.timerId,
   );
   const prevMonitorTimer = timers.find(
-    (timer) => timer.id === prevMonitorInfo.timerId
+    (timer) => timer.id === prevMonitorInfo.timerId,
   );
   const prevStreamTimer = timers.find(
-    (timer) => timer.id === prevStreamInfo.timerId
+    (timer) => timer.id === prevStreamInfo.timerId,
   );
 
   const dispatch = useDispatch();
 
   const { isMediaExpanded, quickLinks, defaultQuickLinks } = useSelector(
-    (state) => state.undoable.present.preferences
+    (state) => state.undoable.present.preferences,
   );
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
@@ -76,7 +76,7 @@ const TransmitHandler = () => {
 
   useEffect(() => {
     setIsTransmitting(
-      isMonitorTransmitting && isProjectorTransmitting && isStreamTransmitting
+      isMonitorTransmitting && isProjectorTransmitting && isStreamTransmitting,
     );
   }, [isMonitorTransmitting, isProjectorTransmitting, isStreamTransmitting]);
 
@@ -124,7 +124,7 @@ const TransmitHandler = () => {
             isTransmitting={isProjectorTransmitting}
             toggleIsTransmitting={() => dispatch(toggleProjectorTransmitting())}
             quickLinks={allQuickLinks.filter(
-              (link) => link.displayType === "projector"
+              (link) => link.displayType === "projector",
             )}
             isMobile={isMobile}
           />
@@ -138,7 +138,7 @@ const TransmitHandler = () => {
             isTransmitting={isMonitorTransmitting}
             toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
             quickLinks={allQuickLinks.filter(
-              (link) => link.displayType === "monitor"
+              (link) => link.displayType === "monitor",
             )}
             isMobile={isMobile}
           />
@@ -152,7 +152,7 @@ const TransmitHandler = () => {
             isTransmitting={isStreamTransmitting}
             toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
             quickLinks={allQuickLinks.filter(
-              (link) => link.displayType === "stream"
+              (link) => link.displayType === "stream",
             )}
             isMobile={isMobile}
           />

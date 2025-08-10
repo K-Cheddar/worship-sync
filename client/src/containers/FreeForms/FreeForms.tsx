@@ -5,7 +5,7 @@ import { RootState } from "../../store/store";
 
 const FreeForms = () => {
   const { list, isAllItemsLoading, freeFormSearchValue } = useSelector(
-    (state: RootState) => state.allItems
+    (state: RootState) => state.allItems,
   );
   const { allFreeFormDocs } = useSelector((state: RootState) => state.allDocs);
   const dispatch = useDispatch();

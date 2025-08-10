@@ -170,7 +170,7 @@ export const createNewSlide = ({
         excludeFromOverflow: true,
         isBold: isBold ?? false,
         isItalic: isItalic ?? false,
-      })
+      }),
     );
   } else if (newBoxes.length) {
     boxes = [...newBoxes];
@@ -190,7 +190,7 @@ export const createNewSlide = ({
         words: words ? words[0] : " ",
         isBold: isBold ?? false,
         isItalic: isItalic ?? false,
-      })
+      }),
     );
     boxes.push(
       createBox({
@@ -203,13 +203,13 @@ export const createNewSlide = ({
         topMargin: 1,
         sideMargin: 2.5,
         words: words ? words[1] : " ",
-      })
+      }),
     );
   } else if (!boxes.length) {
     boxes.push(
       createBox({
         ...box,
-      })
+      }),
     );
     boxes.push(
       createBox({
@@ -219,11 +219,11 @@ export const createNewSlide = ({
         topMargin: 3,
         sideMargin: 4,
         words: words[1] || " ",
-      })
+      }),
     );
   }
 
-  let obj = {
+  const obj = {
     type: type,
     name: name,
     boxes: JSON.parse(JSON.stringify(boxes)),

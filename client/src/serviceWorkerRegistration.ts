@@ -10,8 +10,13 @@
 // To learn more about the benefits of this model and instructions on how to
 // opt-in, read https://cra.link/PWA
 
+const frontEndHost =
+  process.env.NODE_ENV === "development"
+    ? "local.worshipsync.net"
+    : "localhost";
+
 const isLocalhost = Boolean(
-  window.location.hostname === "localhost" ||
+  window.location.hostname === frontEndHost ||
     // [::1] is the IPv6 localhost address.
     window.location.hostname === "[::1]" ||
     // 127.0.0.0/8 are considered localhost for IPv4.

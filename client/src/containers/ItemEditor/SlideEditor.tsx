@@ -58,7 +58,7 @@ const SlideEditor = () => {
   } = item;
 
   const { shouldShowItemEditor } = useSelector(
-    (state: RootState) => state.undoable.present.preferences
+    (state: RootState) => state.undoable.present.preferences,
   );
 
   const [isEditingName, setIsEditingName] = useState(false);
@@ -81,11 +81,11 @@ const SlideEditor = () => {
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const [editorHeight, setEditorHeight] = useState(
-    isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
+    isMobile ? "calc(47.25vw + 60px)" : "23.625vw",
   );
 
   const [emptySlideHeight, setEmptySlideHeight] = useState(
-    isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
+    isMobile ? "calc(47.25vw + 60px)" : "23.625vw",
   );
 
   const [cursorPositions, setCursorPositions] = useState<
@@ -125,7 +125,7 @@ const SlideEditor = () => {
   useEffect(() => {
     Object.entries(cursorPositions).forEach(([index, position]) => {
       const textBoxElement = document.getElementById(
-        `display-editor-box-${index}`
+        `display-editor-box-${index}`,
       ) as HTMLTextAreaElement;
       if (textBoxElement && typeof position === "number") {
         textBoxElement.selectionEnd = position;
@@ -162,14 +162,14 @@ const SlideEditor = () => {
     const newBoxes = boxes.map((b, i) =>
       i === index
         ? {
-            ...b,
-            x: box.x,
-            y: box.y,
-            width: box.width,
-            height: box.height,
-            words: type === "bible" ? box.words : value,
-          }
-        : b
+          ...b,
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          words: type === "bible" ? box.words : value,
+        }
+        : b,
     );
 
     if (type === "timer") {
@@ -200,7 +200,7 @@ const SlideEditor = () => {
         {
           ...updatedItem,
         },
-        isMobile
+        isMobile,
       );
       dispatch(updateSlides({ slides: _item.slides }));
     }
@@ -220,7 +220,7 @@ const SlideEditor = () => {
           item.arrangements[item.selectedArrangement].formattedLyrics;
         const slides = item.arrangements[item.selectedArrangement].slides;
         const _index = formattedLyrics.findIndex((e) =>
-          slides[selectedSlide].name.startsWith(e.name)
+          slides[selectedSlide].name.startsWith(e.name),
         );
 
         const start =
@@ -278,7 +278,7 @@ const SlideEditor = () => {
               } else {
                 return arrangement;
               }
-            }
+            },
           );
 
           const _item = formatSong(
@@ -287,7 +287,7 @@ const SlideEditor = () => {
               arrangements: updatedArrangements,
               selectedArrangement,
             },
-            isMobile
+            isMobile,
           );
 
           dispatch(updateArrangements({ arrangements: _item.arrangements }));
@@ -296,7 +296,7 @@ const SlideEditor = () => {
     }
   };
 
-  let _boxes =
+  const _boxes =
     slides?.[selectedSlide]?.boxes ||
     arrangement?.slides[selectedSlide]?.boxes ||
     [];
@@ -319,7 +319,7 @@ const SlideEditor = () => {
 
       return false;
     },
-    [type, selectedSlide]
+    [type, selectedSlide],
   );
 
   const isEmpty = _boxes.length === 0;
@@ -329,7 +329,7 @@ const SlideEditor = () => {
       <section className="flex justify-end w-full pr-2 bg-gray-900 h-8 mb-1 gap-1 overflow-hidden">
         <span
           className={`slide-editor-song-name-container ${borderColorMap.get(
-            type
+            type,
           )}`}
         >
           {isEditingName && (
@@ -401,7 +401,7 @@ const SlideEditor = () => {
         <section
           className={cn(
             "ml-1 lg:w-[12vw] max-lg:w-[100%]",
-            isEmpty && "hidden"
+            isEmpty && "hidden",
           )}
           ref={slideInfoRef}
         >
@@ -428,7 +428,7 @@ const SlideEditor = () => {
                       box.words?.trim() ||
                       box.background?.replace(
                         /https:\/\/res\.cloudinary\.com\/.+\/.+\/upload\/v.+\/.+\//g,
-                        ""
+                        "",
                       )}
                   </p>
                 </Button>
@@ -453,7 +453,7 @@ const SlideEditor = () => {
                       dispatch(
                         updateBoxes({
                           boxes: boxes.filter((b, i) => i !== index),
-                        })
+                        }),
                       );
                       if (boxes[index - 1]) {
                         dispatch(setSelectedBox(index - 1));
@@ -481,7 +481,7 @@ const SlideEditor = () => {
                       y: 12.5,
                     }),
                   ],
-                })
+                }),
               );
               dispatch(setSelectedBox(boxes.length));
             }}

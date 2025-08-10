@@ -11,7 +11,7 @@ import { GlobalInfoContext } from "../context/globalInfo";
 
 const Credits = () => {
   const { publishedList, transitionScene, creditsScene } = useSelector(
-    (state) => state.undoable.present.credits
+    (state) => state.undoable.present.credits,
   );
   const dispatch = useDispatch();
   const { user, firebaseDb } = useContext(GlobalInfoContext) || {};
@@ -22,7 +22,7 @@ const Credits = () => {
 
     const getPublishedRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/credits/publishedList"
+      "users/" + user + "/v2/credits/publishedList",
     );
     onValue(getPublishedRef, (snapshot) => {
       const data = snapshot.val();
@@ -33,7 +33,7 @@ const Credits = () => {
 
     const getTransitionSceneRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/credits/transitionScene"
+      "users/" + user + "/v2/credits/transitionScene",
     );
     onValue(getTransitionSceneRef, (snapshot) => {
       const data = snapshot.val();
@@ -44,7 +44,7 @@ const Credits = () => {
 
     const getCreditsSceneRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/credits/creditsScene"
+      "users/" + user + "/v2/credits/creditsScene",
     );
     onValue(getCreditsSceneRef, (snapshot) => {
       const data = snapshot.val();

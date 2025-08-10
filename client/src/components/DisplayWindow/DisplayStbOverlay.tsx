@@ -19,7 +19,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       prevStbOverlayInfo = {},
       shouldAnimate = false,
     },
-    containerRef
+    containerRef,
   ) => {
     const stbOverlayRef = useRef<HTMLDivElement | null>(null);
     const prevStbOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -50,18 +50,18 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
                 setYPercent(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                        stbOverlayRef.current,
-                        "yPercent"
-                      ) as number)
-                    : 0
+                      stbOverlayRef.current,
+                      "yPercent",
+                    ) as number)
+                    : 0,
                 );
                 setOpacity(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                        stbOverlayRef.current,
-                        "opacity"
-                      ) as number)
-                    : 1
+                      stbOverlayRef.current,
+                      "opacity",
+                    ) as number)
+                    : 1,
                 );
               },
             })
@@ -75,18 +75,18 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
                 setYPercent(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                        stbOverlayRef.current,
-                        "yPercent"
-                      ) as number)
-                    : 0
+                      stbOverlayRef.current,
+                      "yPercent",
+                    ) as number)
+                    : 0,
                 );
                 setOpacity(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                        stbOverlayRef.current,
-                        "opacity"
-                      ) as number)
-                    : 1
+                      stbOverlayRef.current,
+                      "opacity",
+                    ) as number)
+                    : 1,
                 );
               },
             });
@@ -95,7 +95,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       {
         scope: stbOverlayRef,
         dependencies: [stbOverlayInfo, prevStbOverlayInfo],
-      }
+      },
     );
 
     useGSAP(
@@ -124,7 +124,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       {
         scope: prevStbOverlayRef,
         dependencies: [prevStbOverlayInfo, yPercent, opacity],
-      }
+      },
     );
 
     return (
@@ -179,7 +179,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
         </div>
       </>
     );
-  }
+  },
 );
 
 export default DisplayStbOverlay;

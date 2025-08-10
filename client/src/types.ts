@@ -32,6 +32,7 @@ export type Box = {
   words?: string;
   id?: string;
   background?: string;
+  mediaInfo?: MediaType;
   width: number;
   height: number;
   label?: string;
@@ -359,19 +360,29 @@ export type DBAllItems = {
   items: ServiceItem[];
 };
 
-export type Media = {
-  category: string;
+export type MediaType = {
+  path: string;
+  createdAt: string;
+  updatedAt: string;
+  format: string;
+  height: number;
+  width: number;
   name: string;
-  type: string;
+  publicId: string;
+  type: "image" | "video";
   id: string;
   background: string;
   thumbnail: string;
+  placeholderImage?: string;
+  frameRate?: number;
+  hasAudio?: boolean;
+  duration?: number;
 };
 
 export type DBMedia = {
   _id: string;
   _rev: string;
-  backgrounds: Media[];
+  backgrounds: MediaType[];
 };
 
 export type DBUserInfo = {

@@ -51,7 +51,7 @@ const SongSections = ({
 
   useEffect(() => {
     const itemElement = document.getElementById(
-      `song-section-${selectedIndex}`
+      `song-section-${selectedIndex}`,
     );
     const parentElement = document.getElementById("song-sections-list");
 

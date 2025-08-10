@@ -1,10 +1,9 @@
-import { Cloudinary } from "@cloudinary/url-gen";
 import {
   Arrangment,
   FormattedLyrics,
   SongOrder,
   ItemState,
-  Media,
+  MediaType,
   ServiceItem,
   DBItem,
   verseType,
@@ -19,7 +18,6 @@ import generateRandomId from "./generateRandomId";
 import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
-import { fill } from "@cloudinary/url-gen/actions/resize";
 
 type CreateSectionsType = {
   formattedLyrics?: FormattedLyrics[];
@@ -243,9 +241,9 @@ export const updateFormattedSections = ({
   const formattedLyrics = [..._formattedLyrics];
   let songOrder = _songOrder.length > 0 ? [..._songOrder] : [];
 
-  let sections: string[] = [];
-  let sectionUpdates: any = {};
-  let sectionCounter: any = {};
+  const sections: string[] = [];
+  const sectionUpdates: any = {};
+  const sectionCounter: any = {};
 
   for (let i = 0; i < formattedLyrics.length; i++) {
     if (formattedLyrics[i].type in sectionCounter) {
@@ -258,9 +256,9 @@ export const updateFormattedSections = ({
   }
 
   for (let i = 0; i < formattedLyrics.length; i++) {
-    let type = formattedLyrics[i].type;
-    let max = sectionCounter[type];
-    let counter = sectionCounter[type + "_counter"];
+    const type = formattedLyrics[i].type;
+    const max = sectionCounter[type];
+    const counter = sectionCounter[type + "_counter"];
     let name;
 
     if (max === 1) {
@@ -281,7 +279,7 @@ export const updateFormattedSections = ({
   }
 
   for (let i = 0; i < songOrder.length; i++) {
-    let section = songOrder[i];
+    const section = songOrder[i];
     if (sectionUpdates[section.name] && sectionUpdates[section.name].changed) {
       const songOrderObj = { ...songOrder[i] };
       songOrderObj.name = sectionUpdates[section.name].newName;
@@ -434,37 +432,17 @@ export const createNewTimer = async ({
 };
 
 type RetriveImagesProps = {
-  backgrounds: Media[];
-  cloud: Cloudinary;
+  backgrounds: MediaType[];
 };
 export const retrieveImages = ({
   backgrounds,
-  cloud,
-}: RetriveImagesProps): Media[] => {
-  const images: Media[] = [];
+}: RetriveImagesProps): MediaType[] => {
+  const images: MediaType[] = [];
   for (let i = 0; i < backgrounds.length; i++) {
-    let element = backgrounds[i];
-    // const image = cloud.image(element.name).resize(fill().width(250));
-    let thumbnail = "";
-    let background = "";
-    if (element.type === "image") {
-      background = cloud.image(element.name).toURL();
-      thumbnail = cloud.image(element.name).resize(fill().width(250)).toURL();
-    }
-    if (element.type === "video") {
-      background = cloud.video(element.name).toURL();
-      const scaledDownVideo = cloud
-        .video(element.name)
-        .resize(fill().width(250))
-        .toURL();
-      const [videoUrl] = scaledDownVideo.split("?");
-      thumbnail = videoUrl + ".png?type=video";
-    }
+    const element = backgrounds[i];
 
     images.push({
       ...element,
-      background,
-      thumbnail,
       id: generateRandomId(),
     });
   }
@@ -478,7 +456,7 @@ type MakeUniqueType = {
 };
 
 export const makeUnique = ({ value, property, list }: MakeUniqueType) => {
-  let element = list.find((e) => e[property] === value);
+  const element = list.find((e) => e[property] === value);
 
   if (element) {
     let counter = 1;

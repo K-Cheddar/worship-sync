@@ -9,6 +9,7 @@ import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
 import { ReactComponent as CollapseSVG } from "../../assets/icons/collapse.svg";
 import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
 import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
+import { ReactComponent as ClearBackgroundSVG } from "../../assets/icons/hide-image.svg";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -16,7 +17,7 @@ import {
   updateSlideBackground,
 } from "../../store/itemSlice";
 import "./Media.scss";
-import { DBMedia } from "../../types";
+import { DBMedia, MediaType } from "../../types";
 import {
   initiateMediaList,
   updateMediaList,
@@ -24,7 +25,7 @@ import {
 } from "../../store/mediaSlice";
 import { retrieveImages } from "../../utils/itemUtil";
 import CloudinaryUploadWidget, {
-  imageInfoType,
+  mediaInfoType,
 } from "./CloudinaryUploadWidget";
 import generateRandomId from "../../utils/generateRandomId";
 import {
@@ -43,6 +44,7 @@ import { useLocation } from "react-router-dom";
 import cn from "classnames";
 import { updateOverlayPartial } from "../../store/overlaysSlice";
 import { RootState } from "../../store/store";
+import { fill } from "@cloudinary/url-gen/actions/resize";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -53,20 +55,37 @@ const sizeMap: Map<number, string> = new Map([
   [2, "grid-cols-2"],
 ]);
 
-const emptyMedia = { id: "", background: "", type: "" };
+const emptyMedia: MediaType = {
+  id: "",
+  background: "",
+  type: "image",
+  path: "",
+  createdAt: "",
+  updatedAt: "",
+  format: "",
+  height: 0,
+  width: 0,
+  publicId: "",
+  name: "",
+  thumbnail: "",
+  placeholderImage: "",
+  frameRate: 0,
+  duration: 0,
+  hasAudio: false,
+};
 
 const Media = () => {
   const dispatch = useDispatch();
   const location = useLocation();
 
   const { list } = useSelector(
-    (state: RootState) => state.undoable.present.media
+    (state: RootState) => state.undoable.present.media,
   );
   const { isLoading } = useSelector(
-    (state: RootState) => state.undoable.present.item
+    (state: RootState) => state.undoable.present.item,
   );
   const { type: selectedOverlayType, id: selectedOverlayId } = useSelector(
-    (state: RootState) => state.undoable.present.overlays
+    (state: RootState) => state.undoable.present.overlays,
   );
   const {
     isMediaExpanded,
@@ -76,24 +95,15 @@ const Media = () => {
     selectedQuickLink,
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
-  const [selectedMedia, setSelectedMedia] = useState<{
-    id: string;
-    background: string;
-    type: string;
-  }>(emptyMedia);
+  const [selectedMedia, setSelectedMedia] = useState<MediaType>(emptyMedia);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [mediaToDelete, setMediaToDelete] = useState<{
-    id: string;
-    name: string;
-    background: string;
-    thumbnail: string;
-  } | null>(null);
+  const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
 
   // Filter media items based on search term
   const filteredList = list.filter((item) =>
-    item.name?.toLowerCase().includes(searchTerm.toLowerCase())
+    item.name?.toLowerCase().includes(searchTerm.toLowerCase()),
   );
 
   const { db, cloud, isMobile, updater } =
@@ -114,11 +124,11 @@ const Media = () => {
   }, [isMobile, dispatch]);
 
   useEffect(() => {
-    const getAllItems = async () => {
+    const getAllItems = async() => {
       if (!db || !cloud) return;
       const response: DBMedia | undefined = await db?.get("images");
       const backgrounds = response?.backgrounds || [];
-      const images = retrieveImages({ backgrounds, cloud });
+      const images = retrieveImages({ backgrounds });
       dispatch(initiateMediaList(images));
       setIsMediaLoading(false);
     };
@@ -128,16 +138,15 @@ const Media = () => {
   useEffect(() => {
     if (!updater || !cloud) return;
 
-    const updateMediaList = async (event: CustomEventInit) => {
+    const updateMediaList = async(event: CustomEventInit) => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
           if (_update._id === "images") {
-            console.log("updating media from remote");
+            console.log("updating media list from remote");
             const update = _update as DBMedia;
             const images = retrieveImages({
               backgrounds: update.backgrounds,
-              cloud,
             });
             dispatch(updateMediaListFromRemote(images));
           }
@@ -160,7 +169,7 @@ const Media = () => {
   const handleButtonVisibility = (
     buttonId: string,
     isVisible: boolean,
-    isDisabled?: boolean
+    isDisabled?: boolean,
   ) => {
     if (isVisible && !isDisabled && !visibleButtons[buttonId]) {
       setVisibleButtons((prev) => ({ ...prev, [buttonId]: true }));
@@ -173,28 +182,30 @@ const Media = () => {
     const mediaItem = list.find((item) => item.id === selectedMedia.id);
     if (!mediaItem) return;
 
-    setMediaToDelete({
-      id: selectedMedia.id,
-      name: mediaItem.name || "this media",
-      background: mediaItem.background,
-      thumbnail: mediaItem.thumbnail,
-    });
+    setMediaToDelete(mediaItem);
     setShowDeleteModal(true);
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = async() => {
     if (!db || !cloud || !mediaToDelete) return;
 
     try {
-      // Extract public_id from the background URL
-      const publicId = extractPublicId(mediaToDelete.background);
+      let publicId = mediaToDelete.publicId;
+      if (!publicId) {
+        // Extract public_id from the background URL
+        publicId = extractPublicId(mediaToDelete.background) || "";
+      }
 
       if (publicId) {
         // Delete from Cloudinary
-        const cloudinarySuccess = await deleteFromCloudinary(cloud, publicId);
+        const cloudinarySuccess = await deleteFromCloudinary(
+          cloud,
+          publicId,
+          mediaToDelete.type,
+        );
         if (!cloudinarySuccess) {
           console.warn(
-            "Failed to delete from Cloudinary, but continuing with local deletion"
+            "Failed to delete from Cloudinary, but continuing with local deletion",
           );
         }
       }
@@ -223,20 +234,52 @@ const Media = () => {
   const addNewBackground = ({
     public_id,
     secure_url,
+    playback_url,
     resource_type,
-    thumbnail_url,
-  }: imageInfoType) => {
-    const updatedList = [
-      ...list,
-      {
-        category: "uncategorized",
-        name: public_id,
-        type: resource_type,
-        id: generateRandomId(),
-        background: secure_url,
-        thumbnail: thumbnail_url,
-      },
-    ];
+    created_at,
+    format,
+    height,
+    width,
+    original_filename,
+    frame_rate,
+    duration,
+    is_audio,
+  }: mediaInfoType) => {
+    let placeholderImage = "";
+    let thumbnailUrl = "";
+    if (resource_type === "video") {
+      // replace extension to get a static image:
+      placeholderImage = secure_url.replace(/\.[^.]*$/, ".png");
+      const smallVideo =
+        cloud?.video(public_id).resize(fill().width(250)).toURL() || "";
+      thumbnailUrl = smallVideo
+        .replace(/\?.*$/, "") // Remove query string
+        .replace(/\/([^/]+)$/, "/$1.png");
+    } else {
+      thumbnailUrl =
+        cloud?.image(public_id).resize(fill().width(250)).toURL() || "";
+    }
+
+    const newMedia: MediaType = {
+      path: "",
+      createdAt: created_at,
+      updatedAt: created_at,
+      format,
+      height,
+      width,
+      publicId: public_id,
+      name: original_filename,
+      type: resource_type,
+      id: generateRandomId(),
+      background: playback_url || secure_url,
+      thumbnail: thumbnailUrl,
+      placeholderImage,
+      frameRate: frame_rate,
+      duration,
+      hasAudio: is_audio,
+    };
+
+    const updatedList = [...list, newMedia];
     dispatch(updateMediaList(updatedList));
   };
 
@@ -249,11 +292,32 @@ const Media = () => {
       >
         <Button
           variant="tertiary"
+          disabled={isLoading}
+          className={cn(
+            "mr-2",
+            !location.pathname.includes("item") && "hidden",
+            visibleButtons["clearBackground"] && "button-appear",
+          )}
+          svg={ClearBackgroundSVG}
+          onClick={() => {
+            if (db) {
+              dispatch(
+                updateSlideBackground({
+                  background: "",
+                }),
+              );
+            }
+          }}
+        >
+          {isMobile ? "" : "Remove"}
+        </Button>
+        <Button
+          variant="tertiary"
           disabled={selectedMedia.id === "" || isLoading}
           className={cn(
             "mr-2",
             !location.pathname.includes("item") && "hidden",
-            visibleButtons["setItem"] && "button-appear"
+            visibleButtons["setItem"] && "button-appear",
           )}
           svg={BgAll}
           onClick={() => {
@@ -261,7 +325,8 @@ const Media = () => {
               dispatch(
                 updateAllSlideBackgrounds({
                   background: selectedMedia.background,
-                })
+                  mediaInfo: selectedMedia,
+                }),
               );
             }
           }}
@@ -282,13 +347,16 @@ const Media = () => {
           disabled={selectedMedia.id === "" || isLoading}
           className={cn(
             !location.pathname.includes("item") && "hidden",
-            visibleButtons["setSlide"] && "button-appear"
+            visibleButtons["setSlide"] && "button-appear",
           )}
           svg={BGOne}
           onClick={() => {
             if (selectedMedia.background && db) {
               dispatch(
-                updateSlideBackground({ background: selectedMedia.background })
+                updateSlideBackground({
+                  background: selectedMedia.background,
+                  mediaInfo: selectedMedia,
+                }),
               );
             }
           }}
@@ -312,7 +380,7 @@ const Media = () => {
               location.pathname.includes("overlays") &&
               selectedOverlayType === "image"
             ) && "hidden",
-            visibleButtons["setImageOverlay"] && "button-appear"
+            visibleButtons["setImageOverlay"] && "button-appear",
           )}
           svg={BGOne}
           onClick={() => {
@@ -321,7 +389,7 @@ const Media = () => {
                 updateOverlayPartial({
                   imageUrl: selectedMedia.background,
                   id: selectedOverlayId,
-                })
+                }),
               );
             }
           }}
@@ -331,7 +399,7 @@ const Media = () => {
                 "setImageOverlay",
                 location.pathname.includes("overlays") &&
                   selectedOverlayType === "image",
-                selectedMedia.id === ""
+                selectedMedia.id === "",
               );
             }
           }}
@@ -345,14 +413,14 @@ const Media = () => {
             (!location.pathname.includes("preferences") ||
               tab !== "defaults") &&
               "hidden",
-            visibleButtons["setBackground"] && "button-appear"
+            visibleButtons["setBackground"] && "button-appear",
           )}
           svg={BGOne}
           onClick={() => {
             dispatch(
               setDefaultPreferences({
                 [selectedPreference]: selectedMedia.background,
-              })
+              }),
             );
           }}
           ref={(el) => {
@@ -360,7 +428,7 @@ const Media = () => {
               handleButtonVisibility(
                 "setBackground",
                 location.pathname.includes("preferences") && tab === "defaults",
-                selectedMedia.id === "" || !selectedPreference
+                selectedMedia.id === "" || !selectedPreference,
               );
             }
           }}
@@ -375,7 +443,7 @@ const Media = () => {
               tab !== "quickLinks" ||
               selectedQuickLink?.linkType !== "image") &&
               "hidden",
-            visibleButtons["setQuickLink"] && "button-appear"
+            visibleButtons["setQuickLink"] && "button-appear",
           )}
           svg={BGOne}
           onClick={() => {
@@ -386,12 +454,12 @@ const Media = () => {
               const isVisible = Boolean(
                 location.pathname.includes("preferences") &&
                   tab === "quickLinks" &&
-                  selectedQuickLink?.linkType === "image"
+                  selectedQuickLink?.linkType === "image",
               );
               const isDisabled = Boolean(
                 !selectedQuickLink ||
                   selectedMedia.id === "" ||
-                  selectedQuickLink?.linkType !== "image"
+                  selectedQuickLink?.linkType !== "image",
               );
               handleButtonVisibility("setQuickLink", isVisible, isDisabled);
             }
@@ -402,7 +470,12 @@ const Media = () => {
         <Button
           className="lg:ml-2 max-lg:mx-auto"
           svg={isMediaExpanded ? CollapseSVG : ExpandSVG}
-          onClick={() => dispatch(setIsMediaExpanded(!isMediaExpanded))}
+          onClick={() => {
+            dispatch(setIsMediaExpanded(!isMediaExpanded));
+            if (isMediaExpanded) {
+              setSearchTerm("");
+            }
+          }}
         />
         <CloudinaryUploadWidget
           uwConfig={{
@@ -441,7 +514,7 @@ const Media = () => {
             label="Search"
             value={searchTerm}
             onChange={(value) => setSearchTerm(value as string)}
-            placeholder="name"
+            placeholder="Name"
             className="flex gap-4 items-center"
             inputWidth="w-full"
             inputTextSize="text-sm"
@@ -459,7 +532,8 @@ const Media = () => {
             isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : defaultItemsPerRow
           }`}
         >
-          {filteredList.map(({ id, thumbnail, background, type, name }) => {
+          {filteredList.map((mediaItem) => {
+            const { id, thumbnail, name } = mediaItem;
             const isSelected = id === selectedMedia.id;
             return (
               <li key={id}>
@@ -470,30 +544,16 @@ const Media = () => {
                     "w-full h-full justify-center flex flex-col items-center border-2",
                     isSelected
                       ? "border-cyan-400"
-                      : "border-gray-500 hover:border-gray-300"
+                      : "border-gray-500 hover:border-gray-300",
                   )}
                   onClick={() => {
-                    if (type === "video") {
-                      // add mp4 extension to the url
-                      // Insert before the ?
-                      // Comes in the format:
-                      // https://res.cloudinary.com/portable-media/video/upload/v1/backgrounds/Lower_thirds_1_1920_x_300_px_y9g3pq?_a=DATAg1AAZAA0
-                      const updatedBackground =
-                        background.slice(0, background.indexOf("?")) + ".mp4";
-                      setSelectedMedia({
-                        id,
-                        background: updatedBackground,
-                        type,
-                      });
-                    } else {
-                      setSelectedMedia({ id, background, type });
-                    }
+                    setSelectedMedia(mediaItem);
                   }}
                 >
                   <div
                     className={cn(
                       "aspect-video flex items-center justify-center w-full flex-1 overflow-hidden",
-                      isMediaExpanded && "border-b border-gray-500"
+                      isMediaExpanded && "border-b border-gray-500",
                     )}
                   >
                     <img

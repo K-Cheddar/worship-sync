@@ -1,7 +1,7 @@
 import { Box, DisplayType, TimerInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 import cn from "classnames";
 import TimerDisplay from "./TimerDisplay";
 import VerseDisplay from "./VerseDisplay";
@@ -17,8 +17,9 @@ type DisplayBoxProps = {
   shouldAnimate?: boolean;
   isPrev?: boolean;
   time?: number;
-  shouldPlayVideo?: boolean;
   timerInfo?: TimerInfo;
+  activeVideoUrl?: string;
+  isWindowVideoLoaded?: boolean;
 };
 
 const DisplayBox = ({
@@ -30,17 +31,30 @@ const DisplayBox = ({
   fontAdjustment,
   index,
   shouldAnimate,
-  shouldPlayVideo,
   isPrev,
   time,
   timerInfo,
+  activeVideoUrl,
+  isWindowVideoLoaded,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline>();
-  const shouldShowBackground = showBackground && box.background;
-  // This should be done outside the boxes to keep it playing when slides change. In that case maybe only one video per item.
-  // const isVideoBg = box.background?.endsWith("?type=video");
-  // const videoUrl = box.background?.split('.png')[0]
+  const isVideoBg = box.mediaInfo?.type === "video";
+  const videoUrl = box.mediaInfo?.background;
+  const shouldImageBeHidden = useMemo(
+    () =>
+      isVideoBg &&
+      videoUrl &&
+      videoUrl === activeVideoUrl &&
+      isWindowVideoLoaded,
+    [isVideoBg, videoUrl, activeVideoUrl, isWindowVideoLoaded],
+  );
+
+  const background = box.background;
+  const shouldShowBackground = showBackground && background;
+  const videoPlaceholderImage = box.mediaInfo?.placeholderImage;
+  const image = isVideoBg ? videoPlaceholderImage : background;
+  const targetCurrentImgOpacity = shouldImageBeHidden ? 0 : 1;
 
   useGSAP(
     () => {
@@ -51,7 +65,7 @@ const DisplayBox = ({
       const skipTextAnimation =
         prevBox && prevBox.words?.trim() === box.words?.trim();
       const skipBackgroundAnimation =
-        prevBox && prevBox.background === box.background;
+        (prevBox && prevBox.background === background) || shouldImageBeHidden;
       const textDuration = skipTextAnimation ? 0 : 0.35;
       const backgroundDuration = skipBackgroundAnimation ? 0 : 0.5;
 
@@ -66,7 +80,9 @@ const DisplayBox = ({
 
       if (isPrev) {
         if (!skipBackgroundAnimation && shouldShowBackground) {
-          boxTimeline.current.set(".display-box-background", { opacity: 1 });
+          boxTimeline.current.set(".display-box-background", {
+            opacity: targetCurrentImgOpacity,
+          });
         }
         boxTimeline.current.fromTo(
           ".display-box-text",
@@ -75,14 +91,14 @@ const DisplayBox = ({
             opacity: 0,
             duration: textDuration,
             ease: "power1.inOut",
-          }
+          },
         );
 
         if (shouldShowBackground) {
           boxTimeline.current.to(
             ".display-box-background",
             { opacity: 0, duration: backgroundDuration, ease: "power1.inOut" },
-            `-=${textDuration}`
+            `-=${textDuration}`,
           );
         }
       } else {
@@ -96,19 +112,23 @@ const DisplayBox = ({
             opacity: 1,
             duration: textDuration,
             ease: "power1.inOut",
-          }
+          },
         );
 
         if (shouldShowBackground) {
           boxTimeline.current.to(
             ".display-box-background",
-            { opacity: 1, duration: backgroundDuration, ease: "power1.inOut" },
-            `-=${textDuration}`
+            {
+              opacity: targetCurrentImgOpacity,
+              duration: backgroundDuration,
+              ease: "power1.inOut",
+            },
+            `-=${textDuration}`,
           );
         }
       }
     },
-    { scope: boxRef, dependencies: [box, time] }
+    { scope: boxRef, dependencies: [box, time, shouldImageBeHidden] },
   );
 
   const bFontSize = box.fontSize;
@@ -175,9 +195,10 @@ const DisplayBox = ({
         <img
           className={cn(
             "display-box-background",
-            box.shouldKeepAspectRatio && "object-contain"
+            box.shouldKeepAspectRatio && "object-contain",
+            shouldImageBeHidden ? "opacity-0" : "opacity-100",
           )}
-          src={box.background}
+          src={image}
           alt={box.label}
         />
       )}

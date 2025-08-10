@@ -10,7 +10,7 @@ import { ControllerInfoContext } from "../context/controllerInfo";
 const Login = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [hasError, setHasError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const navigate = useNavigate();
 
@@ -22,7 +22,7 @@ const Login = () => {
 
   useEffect(() => {
     if (loginState === "error") {
-      setHasError(true);
+      setErrorMessage("Invalid username or password");
     }
   }, [loginState]);
 
@@ -32,9 +32,17 @@ const Login = () => {
       setShowPassword(false);
       setUsername("");
       setPassword("");
-      setHasError(false);
+      setErrorMessage("");
     };
   }, [setLoginState, loginState, navigate]);
+
+  const handleLogin = () => {
+    if (!username || !password) {
+      setErrorMessage("Username and password are required");
+      return;
+    }
+    login?.({ username, password });
+  };
 
   return (
     <div className="h-screen w-screen bg-gray-700 flex items-center justify-center">
@@ -42,7 +50,7 @@ const Login = () => {
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault();
-          login?.({ username, password });
+          handleLogin();
         }}
         className="bg-gray-800 rounded-xl w-[300px] max-w-[75%] p-8 text-white flex flex-col items-center"
       >
@@ -71,10 +79,6 @@ const Login = () => {
           className="text-lg mt-4 w-full justify-center"
           isLoading={loginState === "loading"}
           disabled={loginState === "loading"}
-          onClick={() => {
-            if (!login) return;
-            login({ username, password });
-          }}
         >
           Login
         </Button>
@@ -84,9 +88,9 @@ const Login = () => {
         >
           Home
         </Button>
-        {hasError && (
+        {errorMessage && (
           <p className="text-red-500 mt-4 text-base">
-            Invalid username or password
+            {errorMessage}
           </p>
         )}
       </form>

@@ -1,8 +1,8 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { Media } from "../types";
+import { MediaType } from "../types";
 
 type MediaState = {
-  list: Media[];
+  list: MediaType[];
 };
 
 const initialState: MediaState = {
@@ -13,19 +13,19 @@ export const mediaItemsSlice = createSlice({
   name: "media",
   initialState,
   reducers: {
-    updateMediaList: (state, action: PayloadAction<Media[]>) => {
+    updateMediaList: (state, action: PayloadAction<MediaType[]>) => {
       state.list = action.payload;
     },
-    initiateMediaList: (state, action: PayloadAction<Media[]>) => {
+    initiateMediaList: (state, action: PayloadAction<MediaType[]>) => {
       state.list = action.payload;
     },
-    updateMediaListFromRemote: (state, action: PayloadAction<Media[]>) => {
+    updateMediaListFromRemote: (state, action: PayloadAction<MediaType[]>) => {
       state.list = action.payload;
     },
     removeItemFromMediaList: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((item) => item.id !== action.payload);
     },
-    addItemToMediaList: (state, action: PayloadAction<Media>) => {
+    addItemToMediaList: (state, action: PayloadAction<MediaType>) => {
       state.list.push(action.payload);
     },
   },

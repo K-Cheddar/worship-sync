@@ -15,10 +15,10 @@ interface QuickLinkSelectionProps {
 const QuickLinkSelection = ({ isMobile }: QuickLinkSelectionProps) => {
   const dispatch = useDispatch();
   const { selectedQuickLink } = useSelector(
-    (state) => state.undoable.present.preferences
+    (state) => state.undoable.present.preferences,
   );
   const { type, selectedSlide, slides, name, timerInfo } = useSelector(
-    (state) => state.undoable.present.item
+    (state) => state.undoable.present.item,
   );
   const overlayInfo = useSelector((state) => state.undoable.present.overlays);
 
@@ -57,7 +57,7 @@ const QuickLinkSelection = ({ isMobile }: QuickLinkSelectionProps) => {
                   title,
                   text,
                 },
-              })
+              }),
             );
           }}
         >

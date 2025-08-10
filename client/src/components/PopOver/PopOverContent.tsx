@@ -33,7 +33,7 @@ const PopOverContent = ({
       className={cn(
         "bg-gray-700 rounded-lg shadow-2xl z-30 border-2 border-gray-600 max-w-[85vw] overflow-x-hidden",
         position,
-        className
+        className,
       )}
       style={floatingStyles}
       ref={refs?.setFloating}

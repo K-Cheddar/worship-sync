@@ -38,7 +38,7 @@ const LyricBoxes = ({
   isMobile,
 }: FormattedLyricsProps) => {
   const { formattedLyricsPerRow } = useSelector(
-    (state: RootState) => state.undoable.present.preferences
+    (state: RootState) => state.undoable.present.preferences,
   );
 
   const [newSectionType, setNewSectionType] = useState("Verse");
@@ -83,7 +83,7 @@ const LyricBoxes = ({
         <li key={id} className="text-sm px-2">
           <div
             className={`formatted-lyrics-section ${itemSectionBgColorMap.get(
-              type
+              type,
             )}`}
           >
             <Select
@@ -125,7 +125,7 @@ const LyricBoxes = ({
           value={newSectionType}
           options={sectionTypes.map((type) => ({ value: type, label: type }))}
           className={`formatted-lyrics-section ${itemSectionBgColorMap.get(
-            newSectionType
+            newSectionType,
           )}`}
           textColor="text-white"
         />

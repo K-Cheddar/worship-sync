@@ -114,14 +114,12 @@ const VersionCheck: React.FC = () => {
   // Check version directly from the server
   const checkVersion = useCallback(async () => {
     try {
-      const baseUrl = window.location.origin;
-      const apiPath = baseUrl.includes("localhost")
-        ? "http://localhost:5000"
-        : baseUrl;
-
-      const response = await fetch(`${apiPath}/api/version`, {
-        cache: "no-cache",
-      });
+      const response = await fetch(
+        `${process.env.REACT_APP_API_BASE_PATH}api/version`,
+        {
+          cache: "no-cache",
+        }
+      );
 
       if (response.ok) {
         const { version } = await response.json();
@@ -155,10 +153,13 @@ const VersionCheck: React.FC = () => {
     checkVersion();
 
     const startPeriodicCheck = () => {
-      versionCheckTimeoutRef.current = setTimeout(() => {
-        checkVersion();
-        startPeriodicCheck(); // Schedule next check
-      }, 6 * 60 * 60 * 1000); // 6 hours
+      versionCheckTimeoutRef.current = setTimeout(
+        () => {
+          checkVersion();
+          startPeriodicCheck(); // Schedule next check
+        },
+        6 * 60 * 60 * 1000
+      ); // 6 hours
     };
 
     startPeriodicCheck();

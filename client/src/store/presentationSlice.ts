@@ -119,7 +119,7 @@ export const presentationSlice = createSlice({
     },
     updateParticipantOverlayInfo: (
       state,
-      action: PayloadAction<OverlayInfo>
+      action: PayloadAction<OverlayInfo>,
     ) => {
       if (state.isStreamTransmitting) {
         // set previous info for cross animation
@@ -260,7 +260,7 @@ export const presentationSlice = createSlice({
     },
     updateImageOverlayInfoFromRemote: (
       state,
-      action: PayloadAction<OverlayInfo>
+      action: PayloadAction<OverlayInfo>,
     ) => {
       // set previous info for cross animation
       state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
@@ -298,7 +298,7 @@ export const presentationSlice = createSlice({
     },
     updateParticipantOverlayInfoFromRemote: (
       state,
-      action: PayloadAction<OverlayInfo>
+      action: PayloadAction<OverlayInfo>,
     ) => {
       // set previous info for cross animation
       state.prevStreamInfo.participantOverlayInfo =
@@ -337,7 +337,7 @@ export const presentationSlice = createSlice({
     },
     updateStbOverlayInfoFromRemote: (
       state,
-      action: PayloadAction<OverlayInfo>
+      action: PayloadAction<OverlayInfo>,
     ) => {
       // set previous info for cross animation
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
@@ -355,7 +355,7 @@ export const presentationSlice = createSlice({
     },
     updateQrCodeOverlayInfoFromRemote: (
       state,
-      action: PayloadAction<OverlayInfo>
+      action: PayloadAction<OverlayInfo>,
     ) => {
       // set previous info for cross animation
       state.prevStreamInfo.qrCodeOverlayInfo =
@@ -394,7 +394,7 @@ export const presentationSlice = createSlice({
     },
     updateBibleDisplayInfo: (
       state,
-      action: PayloadAction<BibleDisplayInfo>
+      action: PayloadAction<BibleDisplayInfo>,
     ) => {
       if (state.isStreamTransmitting) {
         // set previous info for cross animation
@@ -436,7 +436,7 @@ export const presentationSlice = createSlice({
     },
     updateBibleDisplayInfoFromRemote: (
       state,
-      action: PayloadAction<BibleDisplayInfo>
+      action: PayloadAction<BibleDisplayInfo>,
     ) => {
       // set previous info for cross animation
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
@@ -471,7 +471,7 @@ export const presentationSlice = createSlice({
     },
     updateFormattedTextDisplayInfo: (
       state,
-      action: PayloadAction<FormattedTextDisplayInfo>
+      action: PayloadAction<FormattedTextDisplayInfo>,
     ) => {
       if (state.isStreamTransmitting) {
         // set previous info for cross animation
@@ -512,7 +512,7 @@ export const presentationSlice = createSlice({
     },
     updateFormattedTextDisplayInfoFromRemote: (
       state,
-      action: PayloadAction<FormattedTextDisplayInfo>
+      action: PayloadAction<FormattedTextDisplayInfo>,
     ) => {
       state.prevStreamInfo.formattedTextDisplayInfo =
         state.streamInfo.formattedTextDisplayInfo;
@@ -692,7 +692,7 @@ export const presentationSlice = createSlice({
     },
     updateProjector: (
       state,
-      action: PayloadAction<Presentation & { skipTransmissionCheck?: boolean }>
+      action: PayloadAction<Presentation & { skipTransmissionCheck?: boolean }>,
     ) => {
       // set previous info for cross animation
       if (
@@ -728,7 +728,7 @@ export const presentationSlice = createSlice({
     },
     updateMonitor: (
       state,
-      action: PayloadAction<Presentation & { skipTransmissionCheck?: boolean }>
+      action: PayloadAction<Presentation & { skipTransmissionCheck?: boolean }>,
     ) => {
       // set previous info for cross animation
       if (state.isMonitorTransmitting || action.payload.skipTransmissionCheck) {
@@ -761,7 +761,7 @@ export const presentationSlice = createSlice({
     },
     updateStream: (
       state,
-      action: PayloadAction<Presentation & { skipTransmissionCheck?: boolean }>
+      action: PayloadAction<Presentation & { skipTransmissionCheck?: boolean }>,
     ) => {
       // set previous info for cross animation
       if (state.isStreamTransmitting || action.payload.skipTransmissionCheck) {

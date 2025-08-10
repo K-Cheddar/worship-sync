@@ -79,7 +79,7 @@ const QuickLink = ({
     <li
       className={cn(
         "flex gap-4 items-center justify-around flex-wrap border-b-2 border-gray-400 p-2 max-lg:pb-6 rounded-md",
-        index % 2 === 0 && "bg-gray-600"
+        index % 2 === 0 && "bg-gray-600",
       )}
       id={`quick-link-${id}`}
     >
@@ -130,7 +130,7 @@ const QuickLink = ({
           content={
             presentationInfo?.slide?.boxes[0]?.background?.replace(
               baseImgUrl,
-              ""
+              "",
             ) || ""
           }
           helpText="Click to select image from media."

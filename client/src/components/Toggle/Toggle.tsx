@@ -23,7 +23,7 @@ const Toggle = ({ label, value, onChange, className }: ToggleProps) => {
       <div className={`${value ? "on" : "off"} toggle-input-container`}>
         <Icon
           svg={CircleSVG}
-          className={`toggle-circle`}
+          className={"toggle-circle"}
           size={isMobile ? "lg" : "md"}
         />
       </div>

@@ -30,7 +30,7 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = ({
       className={cn(
         "text-xs rounded-none",
         isActive && "bg-gray-800",
-        hidden && "hidden"
+        hidden && "hidden",
       )}
     >
       {children}

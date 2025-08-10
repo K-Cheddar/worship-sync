@@ -23,7 +23,7 @@ const DisplayImageOverlay = forwardRef<
       prevImageOverlayInfo = {},
       shouldAnimate = false,
     },
-    containerRef
+    containerRef,
   ) => {
     const imageOverlayRef = useRef<HTMLDivElement | null>(null);
     const prevImageOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -59,9 +59,9 @@ const DisplayImageOverlay = forwardRef<
               onUpdate: () => {
                 currentOpacity.current = imageOverlayRef.current
                   ? (gsap.getProperty(
-                      imageOverlayRef.current,
-                      "opacity"
-                    ) as number)
+                    imageOverlayRef.current,
+                    "opacity",
+                  ) as number)
                   : 1;
               },
             })
@@ -73,9 +73,9 @@ const DisplayImageOverlay = forwardRef<
               onUpdate: () => {
                 currentOpacity.current = imageOverlayRef.current
                   ? (gsap.getProperty(
-                      imageOverlayRef.current,
-                      "opacity"
-                    ) as number)
+                    imageOverlayRef.current,
+                    "opacity",
+                  ) as number)
                   : 1;
               },
             });
@@ -84,7 +84,7 @@ const DisplayImageOverlay = forwardRef<
       {
         scope: imageOverlayRef,
         dependencies: [imageOverlayInfo, prevImageOverlayInfo],
-      }
+      },
     );
 
     useGSAP(
@@ -111,7 +111,7 @@ const DisplayImageOverlay = forwardRef<
           });
         }
       },
-      { scope: prevImageOverlayRef, dependencies: [prevImageOverlayInfo] }
+      { scope: prevImageOverlayRef, dependencies: [prevImageOverlayInfo] },
     );
 
     return (
@@ -154,7 +154,7 @@ const DisplayImageOverlay = forwardRef<
         </div>
       </>
     );
-  }
+  },
 );
 
 export default DisplayImageOverlay;

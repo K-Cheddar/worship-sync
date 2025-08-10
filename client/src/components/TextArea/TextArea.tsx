@@ -56,7 +56,7 @@ const TextArea = ({
         className={cn(
           "text-sm font-semibold",
           hideLabel && "sr-only",
-          labelClassName
+          labelClassName,
         )}
       >
         {label}:

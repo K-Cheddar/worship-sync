@@ -4,17 +4,17 @@ import { useEffect } from "react";
 
 const Monitor = () => {
   const { monitorInfo, prevMonitorInfo } = useSelector(
-    (state) => state.presentation
+    (state) => state.presentation,
   );
 
   const timers = useSelector((state) => state.timers.timers);
   const monitorTimer = timers.find((timer) => timer.id === monitorInfo.timerId);
   const prevMonitorTimer = timers.find(
-    (timer) => timer.id === prevMonitorInfo.timerId
+    (timer) => timer.id === prevMonitorInfo.timerId,
   );
 
   useEffect(() => {
-    const keepScreenOn = async () => {
+    const keepScreenOn = async() => {
       try {
         await navigator.wakeLock.request("screen");
       } catch (err) {

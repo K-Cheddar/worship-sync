@@ -30,7 +30,7 @@ export const allItemsSlice = createSlice({
     },
     updateAllItemsListFromRemote: (
       state,
-      action: PayloadAction<ServiceItem[]>
+      action: PayloadAction<ServiceItem[]>,
     ) => {
       state.list = action.payload;
     },

@@ -31,7 +31,7 @@ const Arrangement = ({
     <>
       <li
         key={arrangement.name}
-        className={`flex flex-col items-center rounded-md bg-gray-900 border border-transparent hover:border-gray-500 p-1`}
+        className={"flex flex-col items-center rounded-md bg-gray-900 border border-transparent hover:border-gray-500 p-1"}
       >
         <div className="flex justify-end w-full px-2 bg-black h-6 rounded-t-sm">
           {isEditMode && (
@@ -43,7 +43,7 @@ const Arrangement = ({
               if (isEditMode) {
                 const copiedArrangements = [...localArrangements];
                 const index = copiedArrangements.findIndex(
-                  ({ name }) => name === arrangement.name
+                  ({ name }) => name === arrangement.name,
                 );
                 const updatedArrangement = { ...arrangement, name: value };
                 copiedArrangements[index] = updatedArrangement;
@@ -76,7 +76,7 @@ const Arrangement = ({
               variant="tertiary"
               onClick={() => {
                 const copiedArrangements = [...localArrangements].filter(
-                  (_, i) => i !== index
+                  (_, i) => i !== index,
                 );
                 setLocalArrangements(copiedArrangements);
               }}

@@ -22,7 +22,7 @@ const QuickLinkButton = ({
     variant="tertiary"
     className={cn(
       "flex flex-col gap-2 items-center border-2",
-      isSelected ? "border-cyan-500" : "border-transparent"
+      isSelected ? "border-cyan-500" : "border-transparent",
     )}
     onClick={onClick}
   >

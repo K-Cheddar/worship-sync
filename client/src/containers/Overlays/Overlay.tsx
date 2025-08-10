@@ -93,7 +93,7 @@ const Overlay = ({
               backgroundColor: "rgba(255, 255, 255, 0.75)",
               duration: 0.5,
               ease: "power1.inOut",
-            }
+            },
           )
           .to(overlayRef.current, {
             backgroundColor: overlayRef.current.style.backgroundColor,
@@ -113,7 +113,7 @@ const Overlay = ({
             opacity: 0,
             duration: 0.5,
             ease: "power1.inOut",
-          }
+          },
         );
       } else if (!initialList.includes(overlay.id)) {
         // initial animation for new items
@@ -130,14 +130,14 @@ const Overlay = ({
               opacity: 1,
               duration: 0.5,
               ease: "power1.inOut",
-            }
+            },
           )
           .then(() => {
             dispatch(addToInitialList([overlay.id]));
           });
       }
     },
-    { scope: overlayRef, dependencies: [overlay, isDeleting] }
+    { scope: overlayRef, dependencies: [overlay, isDeleting] },
   );
 
   const deleteOverlayHandler = () => {
@@ -254,7 +254,7 @@ const Overlay = ({
                   title: overlay.title,
                   duration: overlay.duration,
                   id: overlay.id,
-                })
+                }),
               );
             } else if (overlay.type === "stick-to-bottom") {
               dispatch(
@@ -264,7 +264,7 @@ const Overlay = ({
                   duration: overlay.duration,
                   type: overlay.type,
                   id: overlay.id,
-                })
+                }),
               );
             } else if (overlay.type === "qr-code") {
               dispatch(
@@ -275,7 +275,7 @@ const Overlay = ({
                   duration: overlay.duration,
                   type: overlay.type,
                   id: overlay.id,
-                })
+                }),
               );
             } else if (overlay.type === "image") {
               dispatch(
@@ -284,7 +284,7 @@ const Overlay = ({
                   duration: overlay.duration,
                   type: overlay.type,
                   id: overlay.id,
-                })
+                }),
               );
             }
           }}

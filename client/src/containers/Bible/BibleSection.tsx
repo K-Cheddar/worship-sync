@@ -32,12 +32,12 @@ const BibleSection = ({
 
     if (type === "book") {
       updatedFilteredList = (initialList as bookType[]).filter(({ name }) =>
-        name.toLowerCase().includes(searchValue.toLowerCase())
+        name.toLowerCase().includes(searchValue.toLowerCase()),
       );
       setFilteredList(updatedFilteredList);
     } else if (type === "chapter") {
       updatedFilteredList = (initialList as chapterType[]).filter(({ name }) =>
-        name.includes(searchValue)
+        name.includes(searchValue),
       );
       setFilteredList(updatedFilteredList);
     } else if (type === "verse") {
@@ -47,13 +47,13 @@ const BibleSection = ({
             return name.includes(searchValue) && index >= min;
           }
           return name.includes(searchValue);
-        }
+        },
       );
       setFilteredList(updatedFilteredList);
     }
 
     const isValueInList = updatedFilteredList?.some(
-      ({ index }) => index === value
+      ({ index }) => index === value,
     );
 
     if (updatedFilteredList?.[0] && !isValueInList) {

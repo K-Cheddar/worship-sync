@@ -5,6 +5,7 @@ import {
   Box,
   ItemSlide,
   ItemState,
+  MediaType,
   ShouldSendTo,
 } from "../types";
 import { createAsyncThunk } from "../hooks/reduxHooks";
@@ -156,7 +157,7 @@ const _updateItemInLists = ({
 
 export const setName = createAsyncThunk(
   "item/updateName",
-  async (args: { name: string }, { dispatch, getState }) => {
+  async(args: { name: string }, { dispatch, getState }) => {
     const newName = args.name;
 
     const state = getState();
@@ -169,19 +170,19 @@ export const setName = createAsyncThunk(
       state,
       dispatch,
     });
-  }
+  },
 );
 
 export const setSelectedArrangement = createAsyncThunk(
   "item/setSelectedArrangement",
-  async (args: { selectedArrangement: number }, { dispatch }) => {
+  async(args: { selectedArrangement: number }, { dispatch }) => {
     dispatch(_setSelectedArrangement(args.selectedArrangement));
-  }
+  },
 );
 
 export const updateBoxes = createAsyncThunk(
   "item/updateBoxes",
-  async (args: { boxes: Box[] }, { dispatch, getState }) => {
+  async(args: { boxes: Box[] }, { dispatch, getState }) => {
     const item = getState().undoable.present.item;
     let arrangements = [...item.arrangements];
     if (item.arrangements[item.selectedArrangement]?.slides?.length > 0) {
@@ -206,17 +207,17 @@ export const updateBoxes = createAsyncThunk(
     });
 
     dispatch(_updateSlides(slides));
-  }
+  },
 );
 
 export const updateArrangements = createAsyncThunk(
   "item/updateArrangements",
-  async (
+  async(
     args: {
       arrangements: Arrangment[];
       selectedArrangement?: number;
     },
-    { dispatch, getState }
+    { dispatch, getState },
   ) => {
     const { selectedArrangement: currentArrangement } =
       getState().undoable.present.item;
@@ -227,15 +228,18 @@ export const updateArrangements = createAsyncThunk(
     }
     dispatch(
       _updateSlides(
-        arrangements[selectedArrangement ?? currentArrangement].slides
-      )
+        arrangements[selectedArrangement ?? currentArrangement].slides,
+      ),
     );
-  }
+  },
 );
 
 export const updateAllSlideBackgrounds = createAsyncThunk(
   "item/updateAllSlideBackgrounds",
-  async (args: { background: string }, { dispatch, getState }) => {
+  async(
+    args: { background: string; mediaInfo?: MediaType },
+    { dispatch, getState },
+  ) => {
     const state = getState();
     const item = state.undoable.present.item;
 
@@ -248,7 +252,11 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
           boxes: [
             ...slide.boxes.map((box, index) => {
               if (index === 0) {
-                return { ...box, background: args.background };
+                return {
+                  ...box,
+                  background: args.background,
+                  mediaInfo: args.mediaInfo,
+                };
               }
               return box;
             }),
@@ -274,17 +282,23 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
     dispatch(setBackground(args.background));
 
     _updateItemInLists({
-      value: args.background,
+      value:
+        args.mediaInfo?.type === "video"
+          ? args.mediaInfo?.placeholderImage
+          : args.background,
       property: "background",
       state,
       dispatch,
     });
-  }
+  },
 );
 
 export const updateSlideBackground = createAsyncThunk(
   "item/updateSlideBackground",
-  async (args: { background: string }, { dispatch, getState }) => {
+  async(
+    args: { background: string; mediaInfo?: MediaType },
+    { dispatch, getState },
+  ) => {
     const state = getState();
     const item = state.undoable.present.item;
 
@@ -305,7 +319,11 @@ export const updateSlideBackground = createAsyncThunk(
                 ...slide,
                 boxes: slide.boxes.map((box, index) => {
                   if (index !== 0) return box;
-                  return { ...box, background: args.background };
+                  return {
+                    ...box,
+                    background: args.background,
+                    mediaInfo: args.mediaInfo,
+                  };
                 }),
               };
             }),
@@ -320,7 +338,11 @@ export const updateSlideBackground = createAsyncThunk(
         ...slide,
         boxes: slide.boxes.map((box, index) => {
           if (index !== 0) return box;
-          return { ...box, background: args.background };
+          return {
+            ...box,
+            background: args.background,
+            mediaInfo: args.mediaInfo,
+          };
         }),
       };
     });
@@ -331,45 +353,48 @@ export const updateSlideBackground = createAsyncThunk(
     if (item.selectedSlide === 0) {
       dispatch(setBackground(args.background));
       _updateItemInLists({
-        value: args.background,
+        value:
+          args.mediaInfo?.type === "video"
+            ? args.mediaInfo?.placeholderImage
+            : args.background,
         property: "background",
         state,
         dispatch,
       });
     }
-  }
+  },
 );
 
 export const addSlide = createAsyncThunk(
   "item/addSlide",
-  async (args: { slide: ItemSlide }, { dispatch, getState }) => {
+  async(args: { slide: ItemSlide }, { dispatch, getState }) => {
     const item = getState().undoable.present.item;
     const newSlides = [...item.slides, args.slide];
     dispatch(updateSlides({ slides: newSlides }));
-  }
+  },
 );
 
 export const removeSlide = createAsyncThunk(
   "item/removeSlide",
-  async (args: { index: number }, { dispatch, getState }) => {
+  async(args: { index: number }, { dispatch, getState }) => {
     const item = getState().undoable.present.item;
     const newSlides = item.slides.filter((_, index) => index !== args.index);
     dispatch(updateSlides({ slides: newSlides }));
-  }
+  },
 );
 
 export const updateSlides = createAsyncThunk(
   "item/updateSlides",
-  async (args: { slides: ItemSlide[] }, { dispatch }) => {
+  async(args: { slides: ItemSlide[] }, { dispatch }) => {
     dispatch(_updateSlides(args.slides));
-  }
+  },
 );
 
 export const updateBibleInfo = createAsyncThunk(
   "item/updateBibleInfo",
-  async (args: { bibleInfo: BibleInfo }, { dispatch }) => {
+  async(args: { bibleInfo: BibleInfo }, { dispatch }) => {
     dispatch(_updateBibleInfo(args.bibleInfo));
-  }
+  },
 );
 
 export const {
