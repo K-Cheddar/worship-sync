@@ -37,7 +37,7 @@ export const VersionProvider: React.FC<VersionProviderProps> = ({
   children,
 }) => {
   const [versionUpdate, setVersionUpdate] = useState<VersionUpdate | null>(
-    null
+    null,
   );
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);

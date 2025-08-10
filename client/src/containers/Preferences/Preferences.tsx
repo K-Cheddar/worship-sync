@@ -155,13 +155,13 @@ const Preferences = () => {
                     "w-48 self-center border-4 flex gap-2 items-center justify-center aspect-video",
                     selectedPreference === preference
                       ? "border-cyan-400"
-                      : "border-gray-500 hover:border-gray-300"
+                      : "border-gray-500 hover:border-gray-300",
                   )}
                   onClick={() => {
                     dispatch(
                       setSelectedPreference(
-                        preference as SelectedPreferenceType
-                      )
+                        preference as SelectedPreferenceType,
+                      ),
                     );
                   }}
                 >
@@ -214,7 +214,7 @@ const Preferences = () => {
                 />
               </section>
             </li>
-          )
+          ),
         )}
       </ul>
       <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
@@ -291,7 +291,7 @@ const Preferences = () => {
           <li
             key={label}
             className={cn(
-              "grid grid-cols-2 gap-2 items-center p-2 justify-center"
+              "grid grid-cols-2 gap-2 items-center p-2 justify-center",
             )}
           >
             <p className="font-semibold text-right">{label}:</p>

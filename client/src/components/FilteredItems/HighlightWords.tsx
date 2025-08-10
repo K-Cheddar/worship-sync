@@ -29,12 +29,12 @@ const HighlightWords = ({
         .replace(punctuationRegex, "")
         .split(" ")
         .filter((e) => e.trim()),
-    [searchValue]
+    [searchValue],
   );
 
   const words = useMemo(
     () => string.replaceAll("\n", " ").split(" "),
-    [string]
+    [string],
   );
 
   const getHighlightClass = (word: string, index: number) => {
@@ -82,7 +82,7 @@ const HighlightWords = ({
             className={cn(
               highlightClass,
               isHighlighted && "transition-colors duration-200",
-              "hover:opacity-80"
+              "hover:opacity-80",
             )}
           >
             {word}

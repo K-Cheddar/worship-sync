@@ -20,7 +20,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
       bibleDisplayInfo,
       prevBibleDisplayInfo,
     }: DisplayStreamBibleProps,
-    containerRef
+    containerRef,
   ) => {
     const bibleRef = useRef<HTMLDivElement | null>(null);
     const prevBibleRef = useRef<HTMLDivElement | null>(null);
@@ -48,7 +48,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
               opacity: 0,
               yPercent: 0,
             },
-            { opacity: 1, duration: 0.35, ease: "power1.inOut" }
+            { opacity: 1, duration: 0.35, ease: "power1.inOut" },
           );
         } else {
           bibleTimeline.current = gsap.timeline();
@@ -66,12 +66,12 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
                 opacity: 1,
                 duration: 1.5,
                 ease: "power1.inOut",
-              }
+              },
             );
           }
         }
       },
-      { scope: bibleRef, dependencies: [bibleDisplayInfo] }
+      { scope: bibleRef, dependencies: [bibleDisplayInfo] },
     );
 
     useGSAP(
@@ -93,7 +93,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
               opacity: 1,
               yPercent: 0,
             },
-            { opacity: 0, duration: 0.35, ease: "power1.inOut" }
+            { opacity: 0, duration: 0.35, ease: "power1.inOut" },
           );
         } else {
           prevBibleTimeline.current = gsap.timeline().fromTo(
@@ -104,11 +104,11 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
               opacity: 0,
               duration: 1.5,
               ease: "power1.inOut",
-            }
+            },
           );
         }
       },
-      { scope: prevBibleRef, dependencies: [prevBibleDisplayInfo] }
+      { scope: prevBibleRef, dependencies: [prevBibleDisplayInfo] },
     );
 
     const renderContent = (text: string) => {
@@ -164,7 +164,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
         </div>
       </>
     );
-  }
+  },
 );
 
 export default DisplayStreamBible;

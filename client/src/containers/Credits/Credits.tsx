@@ -25,7 +25,7 @@ const Credits = ({
       ...credits.filter((credit) => !credit.hidden).map((credit) => credit),
       ...(!isPreview ? [{ heading: "", id: "ending-credits", text: "" }] : []),
     ],
-    [credits, isPreview]
+    [credits, isPreview],
   );
 
   useGSAP(
@@ -43,7 +43,7 @@ const Credits = ({
           ease: "none",
         });
     },
-    { scope: containerRef, dependencies: [isPreview, credits] }
+    { scope: containerRef, dependencies: [isPreview, credits] },
   );
 
   useEffect(() => {
@@ -67,7 +67,7 @@ const Credits = ({
       ref={containerRef}
       className={cn(
         !isPreview && "published-credits-list",
-        isPreview && "h-full max-h-full credits-list"
+        isPreview && "h-full max-h-full credits-list",
       )}
     >
       {adjustedCredits.map(({ heading, id, text }) => {

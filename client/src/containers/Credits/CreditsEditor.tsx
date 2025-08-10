@@ -61,7 +61,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     const updatedCredits = [...list];
     const newIndex = updatedCredits.findIndex((credit) => credit.id === overId);
     const oldIndex = updatedCredits.findIndex(
-      (credit) => credit.id === activeId
+      (credit) => credit.id === activeId,
     );
     const element = list[oldIndex];
     updatedCredits.splice(oldIndex, 1);
@@ -72,11 +72,11 @@ const CreditsEditor = ({ className }: { className?: string }) => {
   // keep the selected credit in view
   useEffect(() => {
     const selectedCredit = list.find(
-      (credit) => credit.id === selectedCreditId
+      (credit) => credit.id === selectedCreditId,
     );
     if (selectedCredit) {
       const creditElement = document.getElementById(
-        `credit-editor-${selectedCreditId}`
+        `credit-editor-${selectedCreditId}`,
       );
       const creditsList = document.getElementById("credits-list");
       if (creditElement && creditsList) {
@@ -94,7 +94,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         data-testid="credits-editor-container"
         className={cn(
           "flex flex-col p-2 gap-2 max-md:w-full md:w-1/2 h-full",
-          className
+          className,
         )}
       >
         <h2 className="text-xl font-semibold text-center h-fit">

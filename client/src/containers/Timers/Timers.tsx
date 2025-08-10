@@ -4,7 +4,7 @@ import { setTimerSearchValue } from "../../store/allItemsSlice";
 
 const Timers = () => {
   const { list, isAllItemsLoading, timerSearchValue } = useSelector(
-    (state) => state.allItems
+    (state) => state.allItems,
   );
   const { allTimerDocs } = useSelector((state) => state.allDocs);
   const dispatch = useDispatch();

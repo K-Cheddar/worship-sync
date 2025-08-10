@@ -23,21 +23,21 @@ export const timersSlice = createSlice({
     },
     setTimersFromDocs: (
       state,
-      action: PayloadAction<(TimerInfo | undefined)[]>
+      action: PayloadAction<(TimerInfo | undefined)[]>,
     ) => {
       state.timersFromDocs = action.payload.filter(
-        (timer) => timer !== undefined
+        (timer) => timer !== undefined,
       ) as TimerInfo[];
     },
     syncTimers: (state, action: PayloadAction<(TimerInfo | undefined)[]>) => {
       // Create a map of existing timers for quick lookup
       const existingTimersMap = new Map(
-        state.timers.map((timer) => [timer.id, timer])
+        state.timers.map((timer) => [timer.id, timer]),
       );
 
       const newTimers = action.payload.map((timerInfo) => {
         const existingTimer = state.timers.find(
-          (timer) => timer.id === timerInfo?.id
+          (timer) => timer.id === timerInfo?.id,
         );
         if (!timerInfo) return null;
 
@@ -51,7 +51,7 @@ export const timersSlice = createSlice({
           timerInfo,
           isStarting,
           isResuming,
-          existingTimer
+          existingTimer,
         );
 
         // Preserve existing timer state if available
@@ -90,7 +90,7 @@ export const timersSlice = createSlice({
     },
     syncTimersFromRemote: (state, action: PayloadAction<TimerInfo[]>) => {
       const existingTimersMap = new Map(
-        state.timers.map((timer) => [timer.id, timer])
+        state.timers.map((timer) => [timer.id, timer]),
       );
       action.payload.forEach((timerInfo) => {
         existingTimersMap.set(timerInfo.id, timerInfo);
@@ -103,7 +103,7 @@ export const timersSlice = createSlice({
     },
     updateTimer: (
       state,
-      action: PayloadAction<{ id: string; timerInfo: TimerInfo }>
+      action: PayloadAction<{ id: string; timerInfo: TimerInfo }>,
     ) => {
       const { id, timerInfo } = action.payload;
       state.timers = state.timers.map((timer) => {
@@ -117,7 +117,7 @@ export const timersSlice = createSlice({
             timerInfo,
             isStarting,
             isResuming,
-            timer
+            timer,
           );
 
           return {
@@ -143,7 +143,7 @@ export const timersSlice = createSlice({
     },
     updateTimerColor: (
       state,
-      action: PayloadAction<{ id: string; color: string; hostId?: string }>
+      action: PayloadAction<{ id: string; color: string; hostId?: string }>,
     ) => {
       const { id, color, hostId } = action.payload;
       state.timers = state.timers.map((timer) => {

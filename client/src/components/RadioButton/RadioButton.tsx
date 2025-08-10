@@ -30,7 +30,7 @@ const RadioButton = ({
           type="radio"
           checked={value}
           onChange={(e) => onChange(e.target.checked)}
-          className={`w-full h-full absolute opacity-0 cursor-pointer left-0 top-0`}
+          className={"w-full h-full absolute opacity-0 cursor-pointer left-0 top-0"}
         />
         <Icon
           svg={value ? CheckedSVG : UncheckedSVG}

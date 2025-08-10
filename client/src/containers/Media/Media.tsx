@@ -79,13 +79,13 @@ const Media = () => {
   const location = useLocation();
 
   const { list } = useSelector(
-    (state: RootState) => state.undoable.present.media
+    (state: RootState) => state.undoable.present.media,
   );
   const { isLoading } = useSelector(
-    (state: RootState) => state.undoable.present.item
+    (state: RootState) => state.undoable.present.item,
   );
   const { type: selectedOverlayType, id: selectedOverlayId } = useSelector(
-    (state: RootState) => state.undoable.present.overlays
+    (state: RootState) => state.undoable.present.overlays,
   );
   const {
     isMediaExpanded,
@@ -103,7 +103,7 @@ const Media = () => {
 
   // Filter media items based on search term
   const filteredList = list.filter((item) =>
-    item.name?.toLowerCase().includes(searchTerm.toLowerCase())
+    item.name?.toLowerCase().includes(searchTerm.toLowerCase()),
   );
 
   const { db, cloud, isMobile, updater } =
@@ -124,7 +124,7 @@ const Media = () => {
   }, [isMobile, dispatch]);
 
   useEffect(() => {
-    const getAllItems = async () => {
+    const getAllItems = async() => {
       if (!db || !cloud) return;
       const response: DBMedia | undefined = await db?.get("images");
       const backgrounds = response?.backgrounds || [];
@@ -138,7 +138,7 @@ const Media = () => {
   useEffect(() => {
     if (!updater || !cloud) return;
 
-    const updateMediaList = async (event: CustomEventInit) => {
+    const updateMediaList = async(event: CustomEventInit) => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
@@ -169,7 +169,7 @@ const Media = () => {
   const handleButtonVisibility = (
     buttonId: string,
     isVisible: boolean,
-    isDisabled?: boolean
+    isDisabled?: boolean,
   ) => {
     if (isVisible && !isDisabled && !visibleButtons[buttonId]) {
       setVisibleButtons((prev) => ({ ...prev, [buttonId]: true }));
@@ -186,7 +186,7 @@ const Media = () => {
     setShowDeleteModal(true);
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = async() => {
     if (!db || !cloud || !mediaToDelete) return;
 
     try {
@@ -201,11 +201,11 @@ const Media = () => {
         const cloudinarySuccess = await deleteFromCloudinary(
           cloud,
           publicId,
-          mediaToDelete.type
+          mediaToDelete.type,
         );
         if (!cloudinarySuccess) {
           console.warn(
-            "Failed to delete from Cloudinary, but continuing with local deletion"
+            "Failed to delete from Cloudinary, but continuing with local deletion",
           );
         }
       }
@@ -296,7 +296,7 @@ const Media = () => {
           className={cn(
             "mr-2",
             !location.pathname.includes("item") && "hidden",
-            visibleButtons["clearBackground"] && "button-appear"
+            visibleButtons["clearBackground"] && "button-appear",
           )}
           svg={ClearBackgroundSVG}
           onClick={() => {
@@ -304,7 +304,7 @@ const Media = () => {
               dispatch(
                 updateSlideBackground({
                   background: "",
-                })
+                }),
               );
             }
           }}
@@ -317,7 +317,7 @@ const Media = () => {
           className={cn(
             "mr-2",
             !location.pathname.includes("item") && "hidden",
-            visibleButtons["setItem"] && "button-appear"
+            visibleButtons["setItem"] && "button-appear",
           )}
           svg={BgAll}
           onClick={() => {
@@ -326,7 +326,7 @@ const Media = () => {
                 updateAllSlideBackgrounds({
                   background: selectedMedia.background,
                   mediaInfo: selectedMedia,
-                })
+                }),
               );
             }
           }}
@@ -347,7 +347,7 @@ const Media = () => {
           disabled={selectedMedia.id === "" || isLoading}
           className={cn(
             !location.pathname.includes("item") && "hidden",
-            visibleButtons["setSlide"] && "button-appear"
+            visibleButtons["setSlide"] && "button-appear",
           )}
           svg={BGOne}
           onClick={() => {
@@ -356,7 +356,7 @@ const Media = () => {
                 updateSlideBackground({
                   background: selectedMedia.background,
                   mediaInfo: selectedMedia,
-                })
+                }),
               );
             }
           }}
@@ -380,7 +380,7 @@ const Media = () => {
               location.pathname.includes("overlays") &&
               selectedOverlayType === "image"
             ) && "hidden",
-            visibleButtons["setImageOverlay"] && "button-appear"
+            visibleButtons["setImageOverlay"] && "button-appear",
           )}
           svg={BGOne}
           onClick={() => {
@@ -389,7 +389,7 @@ const Media = () => {
                 updateOverlayPartial({
                   imageUrl: selectedMedia.background,
                   id: selectedOverlayId,
-                })
+                }),
               );
             }
           }}
@@ -399,7 +399,7 @@ const Media = () => {
                 "setImageOverlay",
                 location.pathname.includes("overlays") &&
                   selectedOverlayType === "image",
-                selectedMedia.id === ""
+                selectedMedia.id === "",
               );
             }
           }}
@@ -413,14 +413,14 @@ const Media = () => {
             (!location.pathname.includes("preferences") ||
               tab !== "defaults") &&
               "hidden",
-            visibleButtons["setBackground"] && "button-appear"
+            visibleButtons["setBackground"] && "button-appear",
           )}
           svg={BGOne}
           onClick={() => {
             dispatch(
               setDefaultPreferences({
                 [selectedPreference]: selectedMedia.background,
-              })
+              }),
             );
           }}
           ref={(el) => {
@@ -428,7 +428,7 @@ const Media = () => {
               handleButtonVisibility(
                 "setBackground",
                 location.pathname.includes("preferences") && tab === "defaults",
-                selectedMedia.id === "" || !selectedPreference
+                selectedMedia.id === "" || !selectedPreference,
               );
             }
           }}
@@ -443,7 +443,7 @@ const Media = () => {
               tab !== "quickLinks" ||
               selectedQuickLink?.linkType !== "image") &&
               "hidden",
-            visibleButtons["setQuickLink"] && "button-appear"
+            visibleButtons["setQuickLink"] && "button-appear",
           )}
           svg={BGOne}
           onClick={() => {
@@ -454,12 +454,12 @@ const Media = () => {
               const isVisible = Boolean(
                 location.pathname.includes("preferences") &&
                   tab === "quickLinks" &&
-                  selectedQuickLink?.linkType === "image"
+                  selectedQuickLink?.linkType === "image",
               );
               const isDisabled = Boolean(
                 !selectedQuickLink ||
                   selectedMedia.id === "" ||
-                  selectedQuickLink?.linkType !== "image"
+                  selectedQuickLink?.linkType !== "image",
               );
               handleButtonVisibility("setQuickLink", isVisible, isDisabled);
             }
@@ -544,7 +544,7 @@ const Media = () => {
                     "w-full h-full justify-center flex flex-col items-center border-2",
                     isSelected
                       ? "border-cyan-400"
-                      : "border-gray-500 hover:border-gray-300"
+                      : "border-gray-500 hover:border-gray-300",
                   )}
                   onClick={() => {
                     setSelectedMedia(mediaItem);
@@ -553,7 +553,7 @@ const Media = () => {
                   <div
                     className={cn(
                       "aspect-video flex items-center justify-center w-full flex-1 overflow-hidden",
-                      isMediaExpanded && "border-b border-gray-500"
+                      isMediaExpanded && "border-b border-gray-500",
                     )}
                   >
                     <img

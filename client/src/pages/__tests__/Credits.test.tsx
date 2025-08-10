@@ -79,7 +79,7 @@ describe("Credits Component", () => {
         <GlobalInfoContext.Provider value={{ ...mockGlobalInfo, user }}>
           <Credits />
         </GlobalInfoContext.Provider>
-      </Provider>
+      </Provider>,
     );
   };
 
@@ -110,15 +110,15 @@ describe("Credits Component", () => {
 
     expect(ref).toHaveBeenCalledWith(
       mockFirebaseDb,
-      `users/${mockUser}/v2/credits/publishedList`
+      `users/${mockUser}/v2/credits/publishedList`,
     );
     expect(ref).toHaveBeenCalledWith(
       mockFirebaseDb,
-      `users/${mockUser}/v2/credits/transitionScene`
+      `users/${mockUser}/v2/credits/transitionScene`,
     );
     expect(ref).toHaveBeenCalledWith(
       mockFirebaseDb,
-      `users/${mockUser}/v2/credits/creditsScene`
+      `users/${mockUser}/v2/credits/creditsScene`,
     );
   });
 
@@ -134,7 +134,7 @@ describe("Credits Component", () => {
     expect(mockObsStudio.getCurrentScene).toHaveBeenCalled();
   });
 
-  it("should set transition scene when active", async () => {
+  it("should set transition scene when active", async() => {
     const store = createMockStore({
       publishedList: mockPublishedList,
       transitionScene: mockTransitionScene,

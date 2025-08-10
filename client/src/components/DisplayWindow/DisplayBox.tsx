@@ -47,7 +47,7 @@ const DisplayBox = ({
       videoUrl &&
       videoUrl === activeVideoUrl &&
       isWindowVideoLoaded,
-    [isVideoBg, videoUrl, activeVideoUrl, isWindowVideoLoaded]
+    [isVideoBg, videoUrl, activeVideoUrl, isWindowVideoLoaded],
   );
 
   const background = box.background;
@@ -91,14 +91,14 @@ const DisplayBox = ({
             opacity: 0,
             duration: textDuration,
             ease: "power1.inOut",
-          }
+          },
         );
 
         if (shouldShowBackground) {
           boxTimeline.current.to(
             ".display-box-background",
             { opacity: 0, duration: backgroundDuration, ease: "power1.inOut" },
-            `-=${textDuration}`
+            `-=${textDuration}`,
           );
         }
       } else {
@@ -112,7 +112,7 @@ const DisplayBox = ({
             opacity: 1,
             duration: textDuration,
             ease: "power1.inOut",
-          }
+          },
         );
 
         if (shouldShowBackground) {
@@ -123,12 +123,12 @@ const DisplayBox = ({
               duration: backgroundDuration,
               ease: "power1.inOut",
             },
-            `-=${textDuration}`
+            `-=${textDuration}`,
           );
         }
       }
     },
-    { scope: boxRef, dependencies: [box, time, shouldImageBeHidden] }
+    { scope: boxRef, dependencies: [box, time, shouldImageBeHidden] },
   );
 
   const bFontSize = box.fontSize;
@@ -196,7 +196,7 @@ const DisplayBox = ({
           className={cn(
             "display-box-background",
             box.shouldKeepAspectRatio && "object-contain",
-            shouldImageBeHidden ? "opacity-0" : "opacity-100"
+            shouldImageBeHidden ? "opacity-0" : "opacity-100",
           )}
           src={image}
           alt={box.label}

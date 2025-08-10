@@ -64,7 +64,7 @@ const FilteredItems = ({
   const [numShownItems, setNumShownItems] = useState(20);
   const [debouncedSearchValue, setDebouncedSearchValue] = useState("");
   const [itemToBeDeleted, setItemToBeDeleted] = useState<ServiceItem | null>(
-    null
+    null,
   );
 
   const [showWords, setShowWords] = useState(false);
@@ -76,7 +76,7 @@ const FilteredItems = ({
 
   // Memoize the search function
   const searchItems = useMemo(() => {
-    return async (searchValue: string) => {
+    return async(searchValue: string) => {
       const cleanSearchValue = searchValue
         .replace(punctuationRegex, "")
         .toLowerCase()
@@ -86,15 +86,15 @@ const FilteredItems = ({
         return listOfType;
       }
 
-      const searchPromises = listOfType.map(async (item) => {
+      const searchPromises = listOfType.map(async(item) => {
         const name = item.name.toLowerCase();
-        let match = getMatchForString({
+        const match = getMatchForString({
           string: name,
           searchValue: cleanSearchValue,
           allowPartial: true,
         });
-        let matchedWords = "";
-        let wordMatches = [];
+        const matchedWords = "";
+        const wordMatches = [];
         let hasLyricMatch = false;
 
         if (type === "song") {
@@ -157,7 +157,7 @@ const FilteredItems = ({
       return results
         .filter((item) => item.matchRank > 0)
         .sort(
-          (a, b) => b.matchRank - a.matchRank || a.name.localeCompare(b.name)
+          (a, b) => b.matchRank - a.matchRank || a.name.localeCompare(b.name),
         );
     };
   }, [listOfType, allDocs, type]);
@@ -173,7 +173,7 @@ const FilteredItems = ({
 
   // Search effect
   useEffect(() => {
-    const performSearch = async () => {
+    const performSearch = async() => {
       const results = await searchItems(debouncedSearchValue);
       setFilteredList(results);
       setNumShownItems(30);
@@ -199,7 +199,7 @@ const FilteredItems = ({
     };
   }, []);
 
-  const deleteItem = async (item: ServiceItem) => {
+  const deleteItem = async(item: ServiceItem) => {
     setItemToBeDeleted(null);
     dispatch(removeItemFromAllItemsList(item._id));
     dispatch(removeItemFromListById(item._id));
@@ -286,7 +286,7 @@ const FilteredItems = ({
               <Link
                 className="h-full w-full"
                 to={`/controller/create?type=${type}&name=${encodeURI(
-                  searchValue
+                  searchValue,
                 )}`}
               >
                 Create a new {label}

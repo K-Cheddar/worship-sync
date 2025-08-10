@@ -38,14 +38,14 @@ const Select = ({
             "p-1 font-semibold",
             hideLabel && "sr-only",
             labelClassName,
-            labelFontSize
+            labelFontSize,
           )}
         >
           {label}:
         </label>
       )}
       <select
-        className={cn(`select`, selectClassName, textColor)}
+        className={cn("select", selectClassName, textColor)}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         {...rest}

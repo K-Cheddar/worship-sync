@@ -165,7 +165,7 @@ describe("App Component", () => {
     return render(
       <Provider store={store}>
         <App />
-      </Provider>
+      </Provider>,
     );
   };
 

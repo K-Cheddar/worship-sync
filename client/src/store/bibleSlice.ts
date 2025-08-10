@@ -64,7 +64,7 @@ export const bibleSlice = createSlice({
       action: PayloadAction<{
         type: "book" | "chapter" | "startVerse" | "endVerse";
         value: string;
-      }>
+      }>,
     ) => {
       const { type } = action.payload;
       state.searchValues[type] = action.payload.value;

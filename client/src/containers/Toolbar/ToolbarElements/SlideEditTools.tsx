@@ -48,7 +48,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const [fontColor, setFontColor] = useState("#ffffff");
   const [timerColor, setTimerColor] = useState("#ffffff");
   const [alignment, setAlignment] = useState<"left" | "center" | "right">(
-    "left"
+    "left",
   );
   const [isBold, setIsBold] = useState(false);
   const [isItalic, setIsItalic] = useState(false);
@@ -81,14 +81,14 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       dispatch(updateSlides({ slides: updatedItem.slides }));
       if (updatedItem.arrangements.length > 0) {
         dispatch(
-          updateArrangements({ arrangements: updatedItem.arrangements })
+          updateArrangements({ arrangements: updatedItem.arrangements }),
         );
       }
       if (updatedItem.bibleInfo) {
         dispatch(updateBibleInfo({ bibleInfo: updatedItem.bibleInfo }));
       }
     },
-    [dispatch]
+    [dispatch],
   );
 
   const _updateFontSize = (val: number) => {
@@ -346,10 +346,10 @@ const SlideEditTools = ({ className }: { className?: string }) => {
                   {
                     ...item,
                     slides: slides.map((s, index) =>
-                      index === selectedSlide ? { ...s, overflow: "fit" } : s
+                      index === selectedSlide ? { ...s, overflow: "fit" } : s,
                     ),
                   },
-                  isMobile || false
+                  isMobile || false,
                 );
                 updateItem(updatedItem);
               }}
@@ -365,10 +365,10 @@ const SlideEditTools = ({ className }: { className?: string }) => {
                     slides: slides.map((s, index) =>
                       index === selectedSlide
                         ? { ...s, overflow: "separate" }
-                        : s
+                        : s,
                     ),
                   },
-                  isMobile || false
+                  isMobile || false,
                 );
                 updateItem(updatedItem);
               }}
@@ -402,7 +402,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       </div>
 
       <div
-        className={`flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4`}
+        className={"flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4"}
       >
         <Icon size="xl" svg={BrightnessSVG} color="#fbbf24" />
         <Button

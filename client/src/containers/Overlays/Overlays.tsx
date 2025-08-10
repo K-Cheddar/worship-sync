@@ -65,10 +65,10 @@ const Overlays = () => {
     initialList,
   } = useSelector((state: RootState) => state.undoable.present.overlays);
   const { isStreamTransmitting } = useSelector(
-    (state: RootState) => state.presentation
+    (state: RootState) => state.presentation,
   );
   const { isLoading } = useSelector(
-    (state: RootState) => state.undoable.present.itemList
+    (state: RootState) => state.undoable.present.itemList,
   );
   const [localName, setLocalName] = useState(name || "#16a34a");
   const [localTitle, setLocalTitle] = useState(title || "");
@@ -131,10 +131,10 @@ const Overlays = () => {
     const { id: activeId } = active;
     const updatedOverlays = [...list];
     const newIndex = updatedOverlays.findIndex(
-      (overlay) => overlay.id === overId
+      (overlay) => overlay.id === overId,
     );
     const oldIndex = updatedOverlays.findIndex(
-      (overlay) => overlay.id === activeId
+      (overlay) => overlay.id === activeId,
     );
     const element = list[oldIndex];
     updatedOverlays.splice(oldIndex, 1);
@@ -165,7 +165,7 @@ const Overlays = () => {
   useEffect(() => {
     const selectedOverlayId = list.find((overlay) => overlay.id === id)?.id;
     const overlayElement = document.getElementById(
-      `overlay-${selectedOverlayId}`
+      `overlay-${selectedOverlayId}`,
     );
     const parentElement = document.getElementById("overlays-list");
 
@@ -267,7 +267,7 @@ const Overlays = () => {
                       type: localType,
                       imageUrl: localImageUrl,
                       id: newId,
-                    })
+                    }),
                   );
                   setTimeout(() => {
                     dispatch(setOverlayId(newId));
@@ -302,47 +302,47 @@ const Overlays = () => {
                         participantOverlayInfo={
                           localType === "participant"
                             ? {
-                                name: localName,
-                                title: localTitle,
-                                event: localEvent,
-                                duration: localDuration,
-                                type: localType,
-                                id,
-                              }
+                              name: localName,
+                              title: localTitle,
+                              event: localEvent,
+                              duration: localDuration,
+                              type: localType,
+                              id,
+                            }
                             : undefined
                         }
                         stbOverlayInfo={
                           localType === "stick-to-bottom"
                             ? {
-                                heading: localHeading,
-                                subHeading: localSubHeading,
-                                duration: localDuration,
-                                type: localType,
-                                id,
-                              }
+                              heading: localHeading,
+                              subHeading: localSubHeading,
+                              duration: localDuration,
+                              type: localType,
+                              id,
+                            }
                             : undefined
                         }
                         qrCodeOverlayInfo={
                           localType === "qr-code"
                             ? {
-                                url: localUrl,
-                                description: localDescription,
-                                color: localColor,
-                                duration: localDuration,
-                                type: localType,
-                                id,
-                              }
+                              url: localUrl,
+                              description: localDescription,
+                              color: localColor,
+                              duration: localDuration,
+                              type: localType,
+                              id,
+                            }
                             : undefined
                         }
                         imageOverlayInfo={
                           localType === "image"
                             ? {
-                                imageUrl: localImageUrl,
-                                name: localName,
-                                duration: localDuration,
-                                type: localType,
-                                id,
-                              }
+                              imageUrl: localImageUrl,
+                              name: localName,
+                              duration: localDuration,
+                              type: localType,
+                              id,
+                            }
                             : undefined
                         }
                         displayType="stream"
@@ -487,7 +487,7 @@ const Overlays = () => {
                             duration: localDuration,
                             type: localType,
                             imageUrl: localImageUrl,
-                          })
+                          }),
                         );
                         setTimeout(() => setJustUpdated(false), 2000);
                       }}

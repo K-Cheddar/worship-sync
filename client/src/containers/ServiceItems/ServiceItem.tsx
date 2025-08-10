@@ -89,7 +89,7 @@ const ServiceItem = ({
               backgroundColor: "rgba(255, 255, 255, 0.75)",
               duration: 0.5,
               ease: "power1.inOut",
-            }
+            },
           )
           .to(serviceItemRef.current, {
             backgroundColor: serviceItemRef.current.style.backgroundColor,
@@ -113,7 +113,7 @@ const ServiceItem = ({
             borderBottomWidth: 0,
             duration: 0.5,
             ease: "power1.inOut",
-          }
+          },
         );
       } else if (!initialItems.includes(item.listId)) {
         // initial animation for new items
@@ -134,14 +134,14 @@ const ServiceItem = ({
               duration: 0.5,
               borderBottomWidth: "2px",
               ease: "power1.inOut",
-            }
+            },
           )
           .then(() => {
             dispatch(addToInitialItems([item.listId]));
           });
       }
     },
-    { scope: serviceItemRef, dependencies: [item, isDeleting] }
+    { scope: serviceItemRef, dependencies: [item, isDeleting] },
   );
 
   return (
@@ -156,11 +156,11 @@ const ServiceItem = ({
       title={item.name}
       className={cn(
         "border-b-2 border-r-4 overflow-hidden",
-        isSelected ? "border-l-cyan-500" : "border-transparent"
+        isSelected ? "border-l-cyan-500" : "border-transparent",
       )}
       isSelected={isSelected && location.pathname.includes("item")}
       to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(
-        encodeURI(item.listId)
+        encodeURI(item.listId),
       )}`}
       type={item.type}
       image={item.background}

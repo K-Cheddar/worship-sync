@@ -1,17 +1,17 @@
-const getScheduleFromExcel = async (
+const getScheduleFromExcel = async(
   fileName: string,
-  membersFileName: string
+  membersFileName: string,
 ) => {
   const response = await fetch(
     `${
       process.env.REACT_APP_API_BASE_PATH
-    }getSchedule?fileName=${encodeURIComponent(fileName)}`
+    }getSchedule?fileName=${encodeURIComponent(fileName)}`,
   );
 
   const membersResponse = await fetch(
     `${
       process.env.REACT_APP_API_BASE_PATH
-    }getMembers?fileName=${encodeURIComponent(membersFileName)}`
+    }getMembers?fileName=${encodeURIComponent(membersFileName)}`,
   );
 
   const data = await response.json();
@@ -160,7 +160,7 @@ const getClosestUpcomingSchedule = (data: any) => {
 const normalizeName = (name: string, members: string[][]): string => {
   // Try to find an exact match first
   const exactMatch = members.find(
-    (member) => member[0].toLowerCase() === name.toLowerCase()
+    (member) => member[0].toLowerCase() === name.toLowerCase(),
   );
 
   if (exactMatch) {
@@ -191,9 +191,9 @@ interface ScheduleEntry {
   names: string;
 }
 
-export const transformSchedule = async (
+export const transformSchedule = async(
   schedule: Schedule | null,
-  members: string[][]
+  members: string[][],
 ): Promise<ScheduleEntry[]> => {
   if (!schedule || !schedule.positions) {
     return [];
@@ -226,7 +226,7 @@ export const transformSchedule = async (
   for (const [position, name] of Object.entries(schedule.positions)) {
     // Find the new heading for this position
     const newHeading = Object.entries(reverseMapping).find(([oldHeading]) =>
-      position.toLowerCase().includes(oldHeading.toLowerCase())
+      position.toLowerCase().includes(oldHeading.toLowerCase()),
     )?.[1];
 
     if (newHeading) {
@@ -239,7 +239,7 @@ export const transformSchedule = async (
         ? [
             name.match(/(.*?)\s*\((.*?)\)/)![1].trim(),
             name.match(/(.*?)\s*\((.*?)\)/)![2].trim(),
-          ]
+        ]
         : [name];
 
       // Normalize each name and add to the schedule
@@ -250,7 +250,7 @@ export const transformSchedule = async (
         if (newHeading === "Audio Engineers") {
           if (position.toLowerCase().includes("front of house")) {
             transformedSchedule[newHeading].push(
-              `Front of House - ${normalizedName}`
+              `Front of House - ${normalizedName}`,
             );
           } else if (position.toLowerCase().includes("stream")) {
             transformedSchedule[newHeading].push(`Online - ${normalizedName}`);

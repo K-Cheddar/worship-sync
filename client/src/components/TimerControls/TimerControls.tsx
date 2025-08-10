@@ -25,13 +25,13 @@ const TimerControls = ({ className }: { className?: string }) => {
 
   const [duration, setDuration] = useState<number>(timer?.duration || 60);
   const [countdownTime, setCountdownTime] = useState<string>(
-    timer?.countdownTime || "00:00"
+    timer?.countdownTime || "00:00",
   );
   const [timerType, setTimerType] = useState<"timer" | "countdown">(
-    timer?.timerType || "timer"
+    timer?.timerType || "timer",
   );
   const [showMinutesOnly, setShowMinutesOnly] = useState<boolean>(
-    timer?.showMinutesOnly || false
+    timer?.showMinutesOnly || false,
   );
 
   useEffect(() => {
@@ -97,7 +97,7 @@ const TimerControls = ({ className }: { className?: string }) => {
     <div
       className={cn(
         "timer-controls flex gap-2 items-center max-lg:flex-col max-lg:gap-4",
-        className
+        className,
       )}
     >
       <TimerTypeSelector

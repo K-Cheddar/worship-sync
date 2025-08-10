@@ -48,7 +48,7 @@ let syncTimeout: NodeJS.Timeout | null = null;
 const ControllerInfoProvider = ({ children }: any) => {
   const [db, setDb] = useState<PouchDB.Database | undefined>(undefined);
   const [bibleDb, setBibleDb] = useState<PouchDB.Database | undefined>(
-    undefined
+    undefined,
   );
   const [dbProgress, setDbProgress] = useState(0);
   const [bibleDbProgress, setBibleDbProgress] = useState(0);
@@ -67,7 +67,7 @@ const ControllerInfoProvider = ({ children }: any) => {
   const bibleSyncRef = useRef<any>();
 
   useEffect(() => {
-    const setupDb = async () => {
+    const setupDb = async() => {
       const dbName = `worship-sync-${database}`;
       const localDb = new PouchDB(dbName);
       const remoteUrl = `${getDbBasePath()}db/${dbName}`;
@@ -104,7 +104,7 @@ const ControllerInfoProvider = ({ children }: any) => {
                 if (event.direction === "pull") {
                   console.log("updating from remote", event);
                   updater.current.dispatchEvent(
-                    new CustomEvent("update", { detail: event.change.docs })
+                    new CustomEvent("update", { detail: event.change.docs }),
                   );
                 }
               });
@@ -123,7 +123,7 @@ const ControllerInfoProvider = ({ children }: any) => {
   }, [loginState, database, location.pathname, isDbSetup]);
 
   useEffect(() => {
-    const setupBibleDb = async () => {
+    const setupBibleDb = async() => {
       const dbName = "worship-sync-bibles";
       const localDb = new PouchDB(dbName);
       const remoteUrl = `${getDbBasePath()}db/${dbName}`;
@@ -174,7 +174,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     }
   }, [loginState, location.pathname, isBibleDbSetup, isDbSetup]);
 
-  const _logout = async () => {
+  const _logout = async() => {
     setLoginState?.("loading");
     await syncRef.current?.cancel();
     await bibleSyncRef.current?.cancel();
@@ -196,7 +196,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     }
   };
 
-  const _login = async ({
+  const _login = async({
     username,
     password,
   }: {

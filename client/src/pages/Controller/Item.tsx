@@ -29,12 +29,12 @@ const Item = () => {
   }, [listId]);
 
   const [status, setStatus] = useState<"loading" | "success" | "error">(
-    "loading"
+    "loading",
   );
   const dispatch = useDispatch();
 
   useEffect(() => {
-    const selectItem = async () => {
+    const selectItem = async() => {
       if (!db || !cloud) return;
       try {
         dispatch(setItemIsLoading(true));

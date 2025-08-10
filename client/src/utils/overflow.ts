@@ -44,7 +44,7 @@ export const getMaxLines = ({
       : windowWidth * 0.23625;
     const containerWidth = isMobile ? windowWidth * 0.8 : windowWidth * 0.42;
 
-    const editorOuterContainer = document.getElementById(`display-editor`);
+    const editorOuterContainer = document.getElementById("display-editor");
 
     const editorOuterContainerWidth =
       editorOuterContainer?.getBoundingClientRect().width || containerWidth;
@@ -131,7 +131,7 @@ export const getNumLines = ({
     const windowWidth = window.innerWidth;
     const sideMargin = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.92;
     const containerWidth = isMobile ? windowWidth * 0.8 : windowWidth * 0.42;
-    const editorOuterContainer = document.getElementById(`display-editor`);
+    const editorOuterContainer = document.getElementById("display-editor");
 
     const editorOuterContainerWidth =
       editorOuterContainer?.getBoundingClientRect().width || containerWidth;
@@ -219,8 +219,8 @@ export const formatSection = ({
   selectedSlide,
   isMobile,
 }: FormatSectionType): ItemSlide[] => {
-  let lines = text.split("\n");
-  let formattedSlides = [];
+  const lines = text.split("\n");
+  const formattedSlides = [];
   let currentBoxes = [];
 
   let maxLines = 0,
@@ -256,7 +256,7 @@ export const formatSection = ({
 
       if (i + counter < lines.length - 1) testWords += "\n";
 
-      let lineCount = getNumLines({
+      const lineCount = getNumLines({
         text: lines[i + counter],
         fontSize,
         lineHeight,
@@ -302,7 +302,7 @@ export const formatSection = ({
         isBold: selectedSlide.boxes[selectedBox].isBold,
         isItalic: selectedSlide.boxes[selectedBox].isItalic,
         formattedTextDisplayInfo: selectedSlide.formattedTextDisplayInfo,
-      })
+      }),
     );
   }
 
@@ -311,16 +311,16 @@ export const formatSection = ({
 
 export const formatFree = (item: ItemState, isMobile: boolean) => {
   const { selectedSlide, selectedBox } = item;
-  let slides = item.slides;
+  const slides = item.slides;
   const slide = slides[selectedSlide];
-  let newSlides: ItemSlide[] = [];
+  const newSlides: ItemSlide[] = [];
 
   const fontSize = slide.boxes[selectedBox].fontSize || 2.5;
   const fontColor = slide.boxes[selectedBox].fontColor || "rgb(255, 255, 255)";
   const isBold = slide.boxes[selectedBox].isBold || false;
   const isItalic = slide.boxes[selectedBox].isItalic || false;
   const formattedTextDisplayInfo = slide.formattedTextDisplayInfo;
-  let minFontSize = 0.5; // Minimum font size to try
+  const minFontSize = 0.5; // Minimum font size to try
 
   // Get the current section number from the slide name
   const currentSectionMatch = slide.name.match(/Section (\d+)/);
@@ -329,7 +329,7 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
     : 1;
 
   const currentSectionSlides = slides.filter((slide) =>
-    slide.name.includes(`Section ${currentSectionNum}`)
+    slide.name.includes(`Section ${currentSectionNum}`),
   );
 
   // Get words from selected box of all slides of section
@@ -482,10 +482,10 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
 
   // Remove all slides from current section and save location
   const firstSlideLocation = slides.findIndex((slide) =>
-    slide.name.includes(`Section ${currentSectionNum}`)
+    slide.name.includes(`Section ${currentSectionNum}`),
   );
   const updatedSlides = slides.filter(
-    (slide) => !slide.name.includes(`Section ${currentSectionNum}`)
+    (slide) => !slide.name.includes(`Section ${currentSectionNum}`),
   );
 
   // Replace all slides of section with updated slides
@@ -501,7 +501,7 @@ export const formatLyrics = (item: ItemState, isMobile: boolean) => {
   const selectedArrangement = item.selectedArrangement || 0;
   const selectedSlide = item.selectedSlide || 1;
   const arrangements = item.arrangements || [];
-  let slides = arrangements[selectedArrangement].slides || [];
+  const slides = arrangements[selectedArrangement].slides || [];
   const slide = slides[selectedSlide];
 
   const boxes = slides[0].boxes;
@@ -523,7 +523,7 @@ export const formatLyrics = (item: ItemState, isMobile: boolean) => {
   const fontSize: number = slide ? slide.boxes[1].fontSize || 2.5 : 2.5;
 
   for (let i = 0; i < songOrder.length; ++i) {
-    let lyrics =
+    const lyrics =
       formattedLyrics.find((e) => e.name === songOrder[i].name)?.words || "";
 
     newSlides.push(
@@ -537,7 +537,7 @@ export const formatLyrics = (item: ItemState, isMobile: boolean) => {
         selectedSlide: slide,
         selectedBox: 1,
         isMobile,
-      })
+      }),
     );
   }
 
@@ -550,24 +550,24 @@ export const formatSong = (_item: ItemState, isMobile: boolean) => {
     ..._item,
     arrangements: _item.arrangements
       ? _item.arrangements.map((el, i): Arrangment => {
-          if (i === _item.selectedArrangement) {
-            return { ...el, slides: formatLyrics(_item, isMobile) };
-          }
-          return el;
-        })
+        if (i === _item.selectedArrangement) {
+          return { ...el, slides: formatLyrics(_item, isMobile) };
+        }
+        return el;
+      })
       : [],
   };
 
   const selectedArrangement = item.selectedArrangement || 0;
 
-  let slides = item.arrangements[selectedArrangement].slides;
+  const slides = item.arrangements[selectedArrangement].slides;
 
-  let songOrder = item.arrangements[selectedArrangement].songOrder;
+  const songOrder = item.arrangements[selectedArrangement].songOrder;
 
   const formattedLyrics = item.arrangements[
     selectedArrangement
   ].formattedLyrics.map((ele) => {
-    let type = ele.name;
+    const type = ele.name;
     let counter = 0;
     let songOrderCounter = 0;
     let slideSpan = 0;
@@ -637,37 +637,37 @@ export const formatBible = ({
   isNew,
   isMobile,
 }: formatBibleType): ItemState => {
-  let slides = item.slides.length
+  const slides = item.slides.length
     ? item.slides
     : [
-        createNewSlide({
-          type: "Title",
-          itemType: "bible",
-          fontSize: 3.5,
-          words: ["", item.name],
-          background,
-          brightness,
-        }),
+      createNewSlide({
+        type: "Title",
+        itemType: "bible",
+        fontSize: 3.5,
+        words: ["", item.name],
+        background,
+        brightness,
+      }),
 
-        createNewSlide({
-          itemType: "bible",
-          type: "Verse",
-          fontSize: 2.5,
-          background,
-          brightness,
-          boxes: [
-            createBox({}),
-            createBox({
-              height: 92,
-            }),
-            createBox({ height: 8 }),
-          ],
-          words: ["", "", ""],
-        }),
-      ];
-  let boxes = slides[0]?.boxes || [];
+      createNewSlide({
+        itemType: "bible",
+        type: "Verse",
+        fontSize: 2.5,
+        background,
+        brightness,
+        boxes: [
+          createBox({}),
+          createBox({
+            height: 92,
+          }),
+          createBox({ height: 8 }),
+        ],
+        words: ["", "", ""],
+      }),
+    ];
+  const boxes = slides[0]?.boxes || [];
 
-  let newSlides = [
+  const newSlides = [
     createNewSlide({
       type: "Title",
       itemType: "bible",
@@ -679,7 +679,7 @@ export const formatBible = ({
       isItalic: boxes[1]?.isItalic || false,
     }),
   ];
-  let _item = {
+  const _item = {
     ...item,
     background: item.background || background,
     slides: [...slides],
@@ -701,7 +701,7 @@ export const formatBible = ({
         version: _version,
         isNew,
         isMobile,
-      })
+      }),
     );
   else
     newSlides.push(
@@ -714,7 +714,7 @@ export const formatBible = ({
         version: _version,
         isNew,
         isMobile,
-      })
+      }),
     );
 
   _item.slides = [...newSlides];
@@ -760,12 +760,12 @@ const formatBibleVerses = ({
   isNew,
   isMobile,
 }: formatBibleVersesType) => {
-  let slides = item.slides || [];
+  const slides = item.slides || [];
   const referenceIndex = item.selectedSlide > 0 ? item.selectedSlide : 1;
-  let currentSlide: ItemSlide = slides[referenceIndex] || {};
+  const currentSlide: ItemSlide = slides[referenceIndex] || {};
   const titleSlideText = slides[0]?.boxes[1]?.words?.trim() || "";
 
-  let currentBoxes = [...currentSlide.boxes];
+  const currentBoxes = [...currentSlide.boxes];
   let { maxLines, lineHeight } = getMaxLines({
     fontSize: currentBoxes[1].fontSize || 1,
     height: currentBoxes[1].height || 95,
@@ -773,23 +773,23 @@ const formatBibleVerses = ({
     isItalic: currentBoxes[1].isItalic,
     isMobile,
   });
-  let formattedVerses = [];
+  const formattedVerses = [];
   // let type = currentSlide.type;
 
   if (mode === "separate" && verses) {
     for (let i = 0; i < verses.length; ++i) {
       const verse = verses[i];
-      let words = verse.text?.split(" ") || [];
+      const words = verse.text?.split(" ") || [];
       let slide = "";
-      let verseSplitCounts: { [key: string]: number } = {}; // Track splits per verse
+      const verseSplitCounts: { [key: string]: number } = {}; // Track splits per verse
       let needsLetters = false; // Track if this verse will be split
 
       // First pass to check if we need letters
       let tempSlide = "";
       for (let j = 0; j < words.length; j++) {
-        let testSlide = tempSlide + (tempSlide ? " " : "") + words[j];
-        let versePrefix = "\u200B" + verse.name + ".\u200B ";
-        let fullText = versePrefix + testSlide;
+        const testSlide = tempSlide + (tempSlide ? " " : "") + words[j];
+        const versePrefix = "\u200B" + verse.name + ".\u200B ";
+        const fullText = versePrefix + testSlide;
 
         if (
           getNumLines({
@@ -812,15 +812,15 @@ const formatBibleVerses = ({
       // Reset for actual processing
       tempSlide = "";
       for (let j = 0; j < words.length; j++) {
-        let testSlide = slide + (slide ? " " : "") + words[j];
-        let versePrefix =
+        const testSlide = slide + (slide ? " " : "") + words[j];
+        const versePrefix =
           "\u200B" +
           verse.name +
           (needsLetters
             ? getLetterFromIndex(verseSplitCounts[verse.name] || 0)
             : "") +
           ".\u200B ";
-        let fullText = versePrefix + testSlide;
+        const fullText = versePrefix + testSlide;
 
         if (
           getNumLines({
@@ -877,7 +877,7 @@ const formatBibleVerses = ({
                       version,
                     }),
                 ],
-              })
+              }),
             );
             verseSplitCounts[verse.name]++;
           }
@@ -928,7 +928,7 @@ const formatBibleVerses = ({
                   version,
                 }),
             ],
-          })
+          }),
         );
         verseSplitCounts[verse.name]++;
       }
@@ -938,7 +938,7 @@ const formatBibleVerses = ({
   if (mode === "fit" && verses) {
     for (let i = 0; i < verses.length; ++i) {
       const verse = verses[i];
-      let words = verse.text?.split(" ") || [];
+      const words = verse.text?.split(" ") || [];
       let slide = "";
       let currentFontSize = currentBoxes[1]?.fontSize || 2.5;
       let fitProcessing = true;
@@ -956,7 +956,7 @@ const formatBibleVerses = ({
       while (fitProcessing) {
         let tempSlide = "";
         for (let j = 0; j < words.length; j++) {
-          let update = tempSlide + words[j];
+          const update = tempSlide + words[j];
           // Always include the verse prefix in the line calculation
           if (
             getNumLines({
@@ -996,21 +996,21 @@ const formatBibleVerses = ({
           name: "Verse " + verse.name,
           boxes: isNew
             ? [
-                currentBoxes[0],
-                { ...currentBoxes[1], fontSize: currentFontSize },
-              ]
+              currentBoxes[0],
+              { ...currentBoxes[1], fontSize: currentFontSize },
+            ]
             : [
-                currentBoxes[0],
-                { ...currentBoxes[1], fontSize: currentFontSize },
-                currentBoxes[2],
-              ],
+              currentBoxes[0],
+              { ...currentBoxes[1], fontSize: currentFontSize },
+              currentBoxes[2],
+            ],
           words: [
             "",
             versePrefix + slide,
             titleSlideText ||
               getBibleName({ book, chapter, verse: verse.name, version }),
           ],
-        })
+        }),
       );
     }
   }
@@ -1020,13 +1020,13 @@ const formatBibleVerses = ({
     let currentVerses: verseType[] = [];
     let currentFontSize = currentBoxes[1]?.fontSize || 2.5;
     let previousVerse: verseType | null = null;
-    let verseSplitCounts: { [key: string]: number } = {}; // Track splits per verse
+    const verseSplitCounts: { [key: string]: number } = {}; // Track splits per verse
 
     for (let i = 0; i < verses.length; ++i) {
       const verse = verses[i];
       if (!verse?.text) continue; // Skip verses without text
 
-      let verseText = "\u200B" + verse.name + ".\u200B " + verse.text;
+      const verseText = "\u200B" + verse.name + ".\u200B " + verse.text;
 
       // First check if this verse can fit on its own
       let singleVerseLines = getNumLines({
@@ -1041,7 +1041,7 @@ const formatBibleVerses = ({
 
       // If it doesn't fit, check if adding a letter suffix would make it fit
       if (singleVerseLines > maxLines) {
-        let verseTextWithLetter =
+        const verseTextWithLetter =
           "\u200B" + verse.name + "a.\u200B " + verse.text;
         singleVerseLines = getNumLines({
           text: verseTextWithLetter,
@@ -1055,7 +1055,7 @@ const formatBibleVerses = ({
       }
 
       // Then check if it can fit with the current slide
-      let combinedText = currentSlide
+      const combinedText = currentSlide
         ? currentSlide + " " + verseText
         : verseText;
       let combinedLines = getNumLines({
@@ -1070,9 +1070,9 @@ const formatBibleVerses = ({
 
       // If it doesn't fit with current slide, check if adding a letter suffix would make it fit
       if (combinedLines > maxLines) {
-        let verseTextWithLetter =
+        const verseTextWithLetter =
           "\u200B" + verse.name + "a.\u200B " + verse.text;
-        let combinedTextWithLetter = currentSlide
+        const combinedTextWithLetter = currentSlide
           ? currentSlide + " " + verseTextWithLetter
           : verseTextWithLetter;
         combinedLines = getNumLines({
@@ -1089,10 +1089,10 @@ const formatBibleVerses = ({
       // If we have a previous verse on its own slide, check if we can combine with it
       let canCombineWithPrevious = false;
       if (previousVerse && !currentSlide) {
-        let previousText =
+        const previousText =
           "\u200B" + previousVerse.name + ".\u200B " + previousVerse.text;
-        let combinedWithPrevious = previousText + " " + verseText;
-        let combinedWithPreviousLines = getNumLines({
+        const combinedWithPrevious = previousText + " " + verseText;
+        const combinedWithPreviousLines = getNumLines({
           text: combinedWithPrevious,
           fontSize: currentFontSize,
           lineHeight,
@@ -1105,11 +1105,11 @@ const formatBibleVerses = ({
 
         // If it doesn't fit with previous verse, check if adding a letter suffix would make it fit
         if (!canCombineWithPrevious) {
-          let verseTextWithLetter =
+          const verseTextWithLetter =
             "\u200B" + verse.name + "a.\u200B " + verse.text;
-          let combinedWithPreviousWithLetter =
+          const combinedWithPreviousWithLetter =
             previousText + " " + verseTextWithLetter;
-          let combinedWithPreviousWithLetterLines = getNumLines({
+          const combinedWithPreviousWithLetterLines = getNumLines({
             text: combinedWithPreviousWithLetter,
             fontSize: currentFontSize,
             lineHeight,
@@ -1130,7 +1130,7 @@ const formatBibleVerses = ({
         previousVerse = null;
       } else if (canCombineWithPrevious) {
         // Can combine with previous verse
-        let previousText =
+        const previousText =
           "\u200B" + previousVerse!.name + ".\u200B " + previousVerse!.text;
         currentSlide = previousText + " " + verseText;
         currentVerses = [previousVerse!, verse];
@@ -1147,14 +1147,14 @@ const formatBibleVerses = ({
                 formatVerseRange(currentVerses),
               boxes: isNew
                 ? [
-                    currentBoxes[0],
-                    { ...currentBoxes[1], fontSize: currentFontSize },
-                  ]
+                  currentBoxes[0],
+                  { ...currentBoxes[1], fontSize: currentFontSize },
+                ]
                 : [
-                    currentBoxes[0],
-                    { ...currentBoxes[1], fontSize: currentFontSize },
-                    currentBoxes[2],
-                  ],
+                  currentBoxes[0],
+                  { ...currentBoxes[1], fontSize: currentFontSize },
+                  currentBoxes[2],
+                ],
               words: [
                 "",
                 currentSlide,
@@ -1166,7 +1166,7 @@ const formatBibleVerses = ({
                     version,
                   }),
               ],
-            })
+            }),
           );
         }
 
@@ -1177,19 +1177,19 @@ const formatBibleVerses = ({
           previousVerse = null;
         } else {
           // Handle the verse that didn't fit
-          let words = verseText.split(" ");
+          const words = verseText.split(" ");
           let tempSlide = "";
-          let remainingWords = [...words];
+          const remainingWords = [...words];
 
           while (remainingWords.length > 0) {
-            let word = remainingWords[0];
-            let testText = tempSlide ? tempSlide + " " + word : word;
-            let versePrefix =
+            const word = remainingWords[0];
+            const testText = tempSlide ? tempSlide + " " + word : word;
+            const versePrefix =
               "\u200B" +
               verse.name +
               getLetterFromIndex(verseSplitCounts[verse.name] || 0) +
               ".\u200B ";
-            let fullText = versePrefix + testText;
+            const fullText = versePrefix + testText;
 
             if (
               getNumLines({
@@ -1219,7 +1219,7 @@ const formatBibleVerses = ({
                 // Remove the existing verse number from the text
                 const cleanText = tempSlide.replace(
                   /^\u200B\d+\.\u200B\s*/,
-                  ""
+                  "",
                 );
 
                 formattedVerses.push(
@@ -1232,14 +1232,14 @@ const formatBibleVerses = ({
                       getLetterFromIndex(verseSplitCounts[verse.name], true),
                     boxes: isNew
                       ? [
-                          currentBoxes[0],
-                          { ...currentBoxes[1], fontSize: currentFontSize },
-                        ]
+                        currentBoxes[0],
+                        { ...currentBoxes[1], fontSize: currentFontSize },
+                      ]
                       : [
-                          currentBoxes[0],
-                          { ...currentBoxes[1], fontSize: currentFontSize },
-                          currentBoxes[2],
-                        ],
+                        currentBoxes[0],
+                        { ...currentBoxes[1], fontSize: currentFontSize },
+                        currentBoxes[2],
+                      ],
                     words: [
                       "",
                       versePrefix + cleanText,
@@ -1253,7 +1253,7 @@ const formatBibleVerses = ({
                           version,
                         }),
                     ],
-                  })
+                  }),
                 );
                 verseSplitCounts[verse.name]++; // Increment split count for this verse
                 tempSlide = "";
@@ -1296,14 +1296,14 @@ const formatBibleVerses = ({
                   getLetterFromIndex(verseSplitCounts[verse.name], true),
                 boxes: isNew
                   ? [
-                      currentBoxes[0],
-                      { ...currentBoxes[1], fontSize: currentFontSize },
-                    ]
+                    currentBoxes[0],
+                    { ...currentBoxes[1], fontSize: currentFontSize },
+                  ]
                   : [
-                      currentBoxes[0],
-                      { ...currentBoxes[1], fontSize: currentFontSize },
-                      currentBoxes[2],
-                    ],
+                    currentBoxes[0],
+                    { ...currentBoxes[1], fontSize: currentFontSize },
+                    currentBoxes[2],
+                  ],
                 words: [
                   "",
                   versePrefix + cleanText,
@@ -1317,7 +1317,7 @@ const formatBibleVerses = ({
                       version,
                     }),
                 ],
-              })
+              }),
             );
             verseSplitCounts[verse.name]++; // Increment split count for this verse
           }
@@ -1341,14 +1341,14 @@ const formatBibleVerses = ({
             formatVerseRange(currentVerses),
           boxes: isNew
             ? [
-                currentBoxes[0],
-                { ...currentBoxes[1], fontSize: currentFontSize },
-              ]
+              currentBoxes[0],
+              { ...currentBoxes[1], fontSize: currentFontSize },
+            ]
             : [
-                currentBoxes[0],
-                { ...currentBoxes[1], fontSize: currentFontSize },
-                currentBoxes[2],
-              ],
+              currentBoxes[0],
+              { ...currentBoxes[1], fontSize: currentFontSize },
+              currentBoxes[2],
+            ],
           words: [
             "",
             currentSlide,
@@ -1360,7 +1360,7 @@ const formatBibleVerses = ({
                 version,
               }),
           ],
-        })
+        }),
       );
     }
   }
@@ -1370,7 +1370,7 @@ const formatBibleVerses = ({
       type: "Blank",
       boxes: currentBoxes,
       words: ["", " "],
-    })
+    }),
   );
 
   return formattedVerses;

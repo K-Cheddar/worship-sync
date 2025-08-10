@@ -23,7 +23,7 @@ const MenuItem = ({
       className={cn(
         "bg-gray-200 font-semibold hover:bg-gray-300 active:bg-gray-400 cursor-pointer w-full text-sm text-black",
         !isLinkOrButton && padding,
-        className
+        className,
       )}
     >
       {onClick && (

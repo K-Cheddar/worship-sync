@@ -30,7 +30,7 @@ jest.mock("../../../containers/Credits/CreditsEditor", () => () => (
 ));
 jest.mock(
   "../../../containers/Toolbar/ToolbarElements/UserSection",
-  () => () => <div data-testid="user-section">User Section</div>
+  () => () => <div data-testid="user-section">User Section</div>,
 );
 jest.mock("../../../containers/Toolbar/ToolbarElements/Undo", () => () => (
   <div data-testid="undo">Undo</div>
@@ -75,7 +75,7 @@ jest.mock("../../../utils/getScheduleFromExcel", () => {
 
 // Get the mock function for verification
 const mockGetScheduleFromExcel = jest.requireMock(
-  "../../../utils/getScheduleFromExcel"
+  "../../../utils/getScheduleFromExcel",
 );
 
 // Create a mock PouchDB instance
@@ -224,7 +224,7 @@ describe("CreditsEditor", () => {
             <BrowserRouter>{component}</BrowserRouter>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
-      </Provider>
+      </Provider>,
     );
   };
 
@@ -248,7 +248,7 @@ describe("CreditsEditor", () => {
           },
           {
             filter: () => true,
-          }
+          },
         ),
       },
     });
@@ -281,7 +281,7 @@ describe("CreditsEditor", () => {
             </BrowserRouter>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
-      </Provider>
+      </Provider>,
     );
 
     // Check for the loading overlay
@@ -291,7 +291,7 @@ describe("CreditsEditor", () => {
     expect(loadingOverlay).toHaveTextContent(/Progress: 50%/);
   });
 
-  it("toggles preview mode on mobile", async () => {
+  it("toggles preview mode on mobile", async() => {
     renderWithProviders(<CreditsEditor />);
 
     const showPreviewButton = screen.getByRole("button", {
@@ -322,7 +322,7 @@ describe("CreditsEditor", () => {
     });
   });
 
-  it("updates transition and credits scenes", async () => {
+  it("updates transition and credits scenes", async() => {
     renderWithProviders(<CreditsEditor />);
 
     const transitionInput = screen.getByRole("textbox", {
@@ -338,7 +338,7 @@ describe("CreditsEditor", () => {
         expect.objectContaining({
           type: expect.stringContaining("credits/setTransitionScene"),
           payload: "New Transition",
-        })
+        }),
       );
     });
 
@@ -348,7 +348,7 @@ describe("CreditsEditor", () => {
         expect.objectContaining({
           type: expect.stringContaining("credits/setCreditsScene"),
           payload: "New Credits",
-        })
+        }),
       );
     });
   });
@@ -486,7 +486,7 @@ describe("CreditsEditor", () => {
   //   );
   // });
 
-  it("handles database errors gracefully", async () => {
+  it("handles database errors gracefully", async() => {
     const contextWithError = {
       ...mockControllerContext,
       db: {
@@ -504,7 +504,7 @@ describe("CreditsEditor", () => {
             </BrowserRouter>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
-      </Provider>
+      </Provider>,
     );
 
     await waitFor(() => {
@@ -512,7 +512,7 @@ describe("CreditsEditor", () => {
         expect.objectContaining({
           type: expect.stringContaining("credits/initiateCreditsList"),
           payload: [],
-        })
+        }),
       );
     });
 

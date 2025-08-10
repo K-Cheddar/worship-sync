@@ -63,7 +63,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
 
   const runUpdate = (
     field: fieldType,
-    updatedValue: string | number | boolean
+    updatedValue: string | number | boolean,
   ) => {
     const updatedItem = updateFormattedTextDisplayInfo({
       formattedTextDisplayInfo: {
@@ -146,7 +146,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           onClick={() =>
             handleChange(
               "fontSize",
-              (formattedTextState.fontSize - 1).toString()
+              (formattedTextState.fontSize - 1).toString(),
             )
           }
         />
@@ -166,7 +166,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           onClick={() =>
             handleChange(
               "fontSize",
-              (formattedTextState.fontSize + 1).toString()
+              (formattedTextState.fontSize + 1).toString(),
             )
           }
         />
@@ -204,7 +204,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           onClick={() =>
             handleChange(
               "isItalic",
-              formattedTextState.isItalic ? "false" : "true"
+              formattedTextState.isItalic ? "false" : "true",
             )
           }
         />

@@ -57,8 +57,8 @@ const QuickLink = ({
         } else if (presentationInfo.participantOverlayInfo) {
           dispatch(
             updateParticipantOverlayInfo(
-              presentationInfo.participantOverlayInfo
-            )
+              presentationInfo.participantOverlayInfo,
+            ),
           );
         } else if (presentationInfo.stbOverlayInfo) {
           dispatch(updateStbOverlayInfo(presentationInfo.stbOverlayInfo));

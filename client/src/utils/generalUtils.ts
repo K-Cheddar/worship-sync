@@ -39,7 +39,7 @@ export const levenshteinDistance = (str1: string, str2: string): number => {
         dp[i][j] = Math.min(
           dp[i - 1][j - 1] + 1, // substitution
           dp[i - 1][j] + 1, // deletion
-          dp[i][j - 1] + 1 // insertion
+          dp[i][j - 1] + 1, // insertion
         );
       }
     }
@@ -113,7 +113,7 @@ export const getMatchForString = ({
     } else if (allowPartial && cleanString.includes(lastSearchTerm)) {
       // only allow partial match on last word
       const foundIndex = stringWords.findIndex((word) =>
-        word.includes(lastSearchTerm)
+        word.includes(lastSearchTerm),
       );
       const indexRank = 1 / (foundIndex + 1);
       match += 0.125 * indexRank;
@@ -174,7 +174,7 @@ type handleKeyDownTraverseType = {
   advance: () => void | Promise<void>;
   previous: () => void | Promise<void>;
 };
-export const handleKeyDownTraverse = async ({
+export const handleKeyDownTraverse = async({
   event,
   advance,
   previous,
@@ -257,7 +257,7 @@ export const checkMediaType = (mediaUrl?: string) => {
 
 export const getLetterFromIndex = (
   index: number,
-  shouldWrapInZeroWidth = false
+  shouldWrapInZeroWidth = false,
 ) => {
   let letter = "";
   if (index < 26) {

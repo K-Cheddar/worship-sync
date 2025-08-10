@@ -32,7 +32,7 @@ const BibleVersesList = ({
 
   useEffect(() => {
     const verseElement = document.getElementById(
-      `bible-verse-${selectedVerse + startVerse}`
+      `bible-verse-${selectedVerse + startVerse}`,
     );
     const parentElement = document.getElementById("bible-verses-list");
     if (verseElement && parentElement) {

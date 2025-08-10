@@ -43,7 +43,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
       isActive,
       ...rest
     },
-    ref
+    ref,
   ) => {
     return (
       <li
@@ -54,7 +54,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           "flex min-h-8",
           actions && !isSelected && "hover:bg-gray-500 active:bg-gray-400",
           isSelected && "bg-gray-900",
-          className
+          className,
         )}
         {...rest}
       >
@@ -95,7 +95,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           ))}
       </li>
     );
-  }
+  },
 );
 
 export default LeftPanelButton;

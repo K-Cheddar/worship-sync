@@ -57,7 +57,7 @@ export const itemListSlice = createSlice({
     addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
       const newItem = { ...action.payload, listId: generateRandomId() };
       const selectedIndex = state.list.findIndex(
-        (e) => e.listId === state.selectedItemListId
+        (e) => e.listId === state.selectedItemListId,
       );
       if (selectedIndex !== -1) {
         state.list.splice(selectedIndex + 1, 0, newItem);

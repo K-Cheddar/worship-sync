@@ -53,7 +53,7 @@ type GlobalInfoContextType = {
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
-  null
+  null,
 );
 
 const firebaseConfig = {
@@ -71,7 +71,7 @@ type globalFireBaseInfoType = {
   user: string;
 };
 
-export let globalFireDbInfo: globalFireBaseInfoType = {
+export const globalFireDbInfo: globalFireBaseInfoType = {
   db: undefined,
   user: "Demo",
 };
@@ -183,7 +183,7 @@ const GlobalInfoProvider = ({ children }: any) => {
         dispatch({ type: updateAction, payload: info });
       }
     },
-    [dispatch]
+    [dispatch],
   );
 
   // get info from local storage on startup
@@ -220,7 +220,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     signInWithEmailAndPassword(
       auth,
       "eliathahsdatechteam@gmail.com",
-      "TamTam7550"
+      "TamTam7550",
     );
   }, [loginState]);
 
@@ -262,7 +262,7 @@ const GlobalInfoProvider = ({ children }: any) => {
 
         const updateRef = ref(
           firebaseDb,
-          "users/" + user + "/v2/presentation/" + key
+          "users/" + user + "/v2/presentation/" + key,
         );
 
         onValueRef.current[_key] = onValue(updateRef, (snapshot) => {
@@ -293,7 +293,7 @@ const GlobalInfoProvider = ({ children }: any) => {
 
     const activeInstancesRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/activeInstances"
+      "users/" + user + "/v2/activeInstances",
     );
 
     // Listen for changes in active instances
@@ -306,21 +306,21 @@ const GlobalInfoProvider = ({ children }: any) => {
           ([_, instance]: [string, any]) => {
             const lastActive = new Date(instance.lastActive).getTime();
             return now - lastActive > 60 * 60 * 1000; // 1 hour
-          }
+          },
         );
 
         // Remove stale instances
         staleInstances.forEach(([hostId]) => {
           const staleRef = ref(
             firebaseDb,
-            `users/${user}/v2/activeInstances/${hostId}`
+            `users/${user}/v2/activeInstances/${hostId}`,
           );
           set(staleRef, null);
         });
         const _activeInstances = Object.values(data).filter(
           (instance: any): instance is Instance =>
             instance.isOnController &&
-            now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
+            now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000,
         );
         setActiveInstances(_activeInstances);
       } else {
@@ -331,7 +331,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     // Set this instance as active only if on controller page
     instanceRef.current = ref(
       firebaseDb,
-      `users/${user}/v2/activeInstances/${hostId}`
+      `users/${user}/v2/activeInstances/${hostId}`,
     );
 
     // Function to update the instance
@@ -382,7 +382,7 @@ const GlobalInfoProvider = ({ children }: any) => {
     };
   }, []); // Empty dependency array means this only runs once on mount
 
-  const login = async ({
+  const login = async({
     username,
     password,
   }: {
@@ -396,8 +396,8 @@ const GlobalInfoProvider = ({ children }: any) => {
       const remoteUrl = `${getDbBasePath()}db/${dbName}`;
       const loginDb = new PouchDB(remoteUrl);
       const db_logins: DBLogin = await loginDb.get("logins");
-      let user = db_logins.logins.find(
-        (e) => e.username === username && e.password === password
+      const user = db_logins.logins.find(
+        (e) => e.username === username && e.password === password,
       );
       if (!user) {
         setLoginState("error");

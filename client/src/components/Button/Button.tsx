@@ -53,7 +53,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       position = "relative",
       ...rest
     },
-    ref
+    ref,
   ) => {
     const fallbackRef = useRef(null);
     const buttonRef = ref || fallbackRef;
@@ -86,7 +86,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
             : "whitespace-nowrap",
           truncate && "truncate",
           position,
-          className
+          className,
         )}
         type={type}
         ref={buttonRef}
@@ -105,7 +105,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         )}
       </button>
     );
-  }
+  },
 );
 
 export default Button;

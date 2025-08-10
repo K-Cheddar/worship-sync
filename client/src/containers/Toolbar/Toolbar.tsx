@@ -31,14 +31,14 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
   ({ className }, ref) => {
     const location = useLocation();
     const { isEditMode, type } = useSelector(
-      (state) => state.undoable.present.item
+      (state) => state.undoable.present.item,
     );
     const [section, setSection] = useState<sections>("settings");
     const { isMobile, isPhone } = useContext(ControllerInfoContext) || {};
     const dispatch = useDispatch();
     const onItemPage = useMemo(
       () => location.pathname.includes("controller/item"),
-      [location.pathname]
+      [location.pathname],
     );
 
     useEffect(() => {
@@ -115,7 +115,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
           <div
             className={cn(
               "px-2 py-1 flex gap-1 items-center flex-1 overflow-x-auto w-full",
-              isEditMode && "hidden"
+              isEditMode && "hidden",
             )}
           >
             <Outlines className={cn(section !== "settings" && "hidden")} />
@@ -137,7 +137,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
             />
             <TimerControls
               className={cn(
-                (section !== "timer-manager" || type !== "timer") && "hidden"
+                (section !== "timer-manager" || type !== "timer") && "hidden",
               )}
             />
             <ItemEditTools
@@ -150,7 +150,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
         </div>
       </div>
     );
-  }
+  },
 );
 
 export default Toolbar;
