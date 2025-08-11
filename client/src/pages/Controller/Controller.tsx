@@ -59,6 +59,7 @@ import {
   initiatePreferences,
   initiateQuickLinks,
   setIsLoading,
+  updatePreferencesFromRemote,
 } from "../../store/preferencesSlice";
 import { setIsEditMode } from "../../store/itemSlice";
 
@@ -89,11 +90,11 @@ const Controller = () => {
   const location = useLocation();
 
   const { selectedList } = useSelector(
-    (state) => state.undoable.present.itemLists,
+    (state) => state.undoable.present.itemLists
   );
 
   const { scrollbarWidth } = useSelector(
-    (state) => state.undoable.present.preferences,
+    (state) => state.undoable.present.preferences
   );
 
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
@@ -122,7 +123,7 @@ const Controller = () => {
 
   useEffect(() => {
     // delete unused bible items
-    const getAllItems = async() => {
+    const getAllItems = async () => {
       if (!db) return;
       const allItems: DBAllItems | undefined = await db.get("allItems");
       const items = allItems?.items || [];
@@ -146,11 +147,10 @@ const Controller = () => {
 
   useEffect(() => {
     if (!db) return;
-    const getPreferences = async() => {
+    const getPreferences = async () => {
       try {
-        const preferences: DBPreferences | undefined = await db.get(
-          "preferences",
-        );
+        const preferences: DBPreferences | undefined =
+          await db.get("preferences");
         dispatch(initiatePreferences(preferences.preferences));
         dispatch(initiateQuickLinks(preferences.quickLinks));
       } catch (e) {
@@ -163,12 +163,12 @@ const Controller = () => {
   }, [dispatch, db]);
 
   useEffect(() => {
-    const getItemList = async() => {
+    const getItemList = async () => {
       if (!selectedList || !db || !cloud) return;
       dispatch(setItemListIsLoading(true));
       try {
         const response: DBItemListDetails | undefined = await db?.get(
-          selectedList._id,
+          selectedList._id
         );
         const itemList = response?.items || [];
         const overlays = response?.overlays || [];
@@ -187,7 +187,7 @@ const Controller = () => {
 
   useEffect(() => {
     if (!updater || !selectedList) return;
-    const updateAllItemsAndList = async(event: CustomEventInit) => {
+    const updateAllItemsAndList = async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
@@ -199,7 +199,7 @@ const Controller = () => {
             const overlays = update.overlays;
             if (cloud) {
               dispatch(
-                updateItemListFromRemote(formatItemList(itemList, cloud)),
+                updateItemListFromRemote(formatItemList(itemList, cloud))
               );
             }
             dispatch(updateOverlayListFromRemote(overlays));
@@ -223,6 +223,29 @@ const Controller = () => {
     return () => updater.removeEventListener("update", updateAllItemsAndList);
   }, [updater, dispatch, cloud, selectedList]);
 
+  useEffect(() => {
+    if (!updater) return;
+
+    const updatePreferences = async (event: CustomEventInit) => {
+      try {
+        const updates = event.detail;
+        for (const _update of updates) {
+          if (_update._id === "preferences") {
+            console.log("updating preferences from remote");
+            const update = _update as DBPreferences;
+            dispatch(updatePreferencesFromRemote(update));
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    updater.addEventListener("update", updatePreferences);
+
+    return () => updater.removeEventListener("update", updatePreferences);
+  }, [updater, dispatch]);
+
   const controllerRef = useCallback(
     (node: HTMLDivElement) => {
       if (node) {
@@ -243,7 +266,7 @@ const Controller = () => {
         resizeObserver.observe(node);
       }
     },
-    [setIsMobile, setIsPhone],
+    [setIsMobile, setIsPhone]
   );
 
   const toolbarRef = useCallback((node: HTMLDivElement) => {

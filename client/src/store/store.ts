@@ -112,9 +112,10 @@ const undoableReducers = undoable(
       preferencesSlice.actions.increaseMediaItems.toString(),
       preferencesSlice.actions.decreaseMediaItems.toString(),
       preferencesSlice.actions.setMediaItems.toString(),
+      preferencesSlice.actions.updatePreferencesFromRemote.toString(),
     ]),
     limit: 100,
-  },
+  }
 );
 
 const listenerMiddleware = createListenerMiddleware();
@@ -135,7 +136,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     let state = listenerApi.getState() as RootState;
     if (action.type === "item/setActiveItem") {
       state = listenerApi.getOriginalState() as RootState;
@@ -185,7 +186,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     let state = listenerApi.getState() as RootState;
     if (action.type === "itemLists/selectItemList") {
       state = listenerApi.getOriginalState() as RootState;
@@ -219,7 +220,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
@@ -249,7 +250,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
@@ -282,7 +283,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     let state = listenerApi.getState() as RootState;
     if (action.type === "itemLists/selectItemList") {
       state = listenerApi.getOriginalState() as RootState;
@@ -319,7 +320,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
@@ -337,7 +338,7 @@ listenerMiddleware.startListening({
         // Get current timers from Firebase
         const timersRef = ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/timers",
+          "users/" + globalFireDbInfo.user + "/v2/timers"
         );
 
         // Get current timers and merge with own timers
@@ -349,7 +350,7 @@ listenerMiddleware.startListening({
         const mergedTimers = mergeTimers(
           currentTimers,
           ownTimers,
-          globalHostId,
+          globalHostId
         );
 
         set(timersRef, cleanObject(mergedTimers));
@@ -378,7 +379,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
@@ -396,30 +397,30 @@ listenerMiddleware.startListening({
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/publishedList",
+          "users/" + globalFireDbInfo.user + "/v2/credits/publishedList"
         ),
-        cleanObject(publishedList),
+        cleanObject(publishedList)
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/transitionScene",
+          "users/" + globalFireDbInfo.user + "/v2/credits/transitionScene"
         ),
-        transitionScene,
+        transitionScene
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/creditsScene",
+          "users/" + globalFireDbInfo.user + "/v2/credits/creditsScene"
         ),
-        creditsScene,
+        creditsScene
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/scheduleName",
+          "users/" + globalFireDbInfo.user + "/v2/credits/scheduleName"
         ),
-        scheduleName,
+        scheduleName
       );
     }
 
@@ -442,7 +443,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
@@ -483,11 +484,12 @@ listenerMiddleware.startListening({
       action.type !== "preferences/setSelectedQuickLink" &&
       action.type !== "preferences/setTab" &&
       action.type !== "preferences/setScrollbarWidth" &&
+      action.type !== "preferences/updatePreferencesFromRemote" &&
       action.type !== "RESET"
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
@@ -537,7 +539,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     if (!globalFireDbInfo.db) return;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
@@ -567,35 +569,35 @@ listenerMiddleware.startListening({
     localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
     localStorage.setItem(
       "stream_bibleInfo",
-      JSON.stringify(streamInfo.bibleDisplayInfo),
+      JSON.stringify(streamInfo.bibleDisplayInfo)
     );
     localStorage.setItem(
       "stream_participantOverlayInfo",
-      JSON.stringify(streamInfo.participantOverlayInfo),
+      JSON.stringify(streamInfo.participantOverlayInfo)
     );
     localStorage.setItem(
       "stream_stbOverlayInfo",
-      JSON.stringify(streamInfo.stbOverlayInfo),
+      JSON.stringify(streamInfo.stbOverlayInfo)
     );
     localStorage.setItem(
       "stream_qrCodeOverlayInfo",
-      JSON.stringify(streamInfo.qrCodeOverlayInfo),
+      JSON.stringify(streamInfo.qrCodeOverlayInfo)
     );
     localStorage.setItem(
       "stream_imageOverlayInfo",
-      JSON.stringify(streamInfo.imageOverlayInfo),
+      JSON.stringify(streamInfo.imageOverlayInfo)
     );
     localStorage.setItem(
       "stream_formattedTextDisplayInfo",
-      JSON.stringify(streamInfo.formattedTextDisplayInfo),
+      JSON.stringify(streamInfo.formattedTextDisplayInfo)
     );
 
     set(
       ref(
         globalFireDbInfo.db,
-        "users/" + globalFireDbInfo.user + "/v2/presentation",
+        "users/" + globalFireDbInfo.user + "/v2/presentation"
       ),
-      cleanObject(presentationUpdate),
+      cleanObject(presentationUpdate)
     );
   },
 });
@@ -616,12 +618,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateProjectorFromRemote(action.payload as Presentation),
+      updateProjectorFromRemote(action.payload as Presentation)
     );
   },
 });
@@ -642,12 +644,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateMonitorFromRemote(action.payload as Presentation),
+      updateMonitorFromRemote(action.payload as Presentation)
     );
   },
 });
@@ -668,12 +670,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateStreamFromRemote(action.payload as Presentation),
+      updateStreamFromRemote(action.payload as Presentation)
     );
   },
 });
@@ -694,12 +696,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo),
+      updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo)
     );
   },
 });
@@ -720,12 +722,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -746,12 +748,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateStbOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateStbOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -772,12 +774,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -798,12 +800,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateImageOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateImageOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -824,14 +826,14 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
       updateFormattedTextDisplayInfoFromRemote(
-        action.payload as FormattedTextDisplayInfo,
-      ),
+        action.payload as FormattedTextDisplayInfo
+      )
     );
   },
 });
@@ -853,7 +855,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     console.log("Updating timer from remote", action.payload);
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
