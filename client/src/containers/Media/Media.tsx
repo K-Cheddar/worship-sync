@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import DeleteModal from "../../components/Modal/DeleteModal";
@@ -42,10 +42,11 @@ import {
 } from "../../store/preferencesSlice";
 import { useLocation } from "react-router-dom";
 import cn from "classnames";
-import { updateOverlayPartial } from "../../store/overlaysSlice";
+import { updateOverlay } from "../../store/overlaysSlice";
 import { RootState } from "../../store/store";
 import { fill } from "@cloudinary/url-gen/actions/resize";
 import Toggle from "../../components/Toggle/Toggle";
+import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -85,8 +86,12 @@ const Media = () => {
   const { isLoading } = useSelector(
     (state: RootState) => state.undoable.present.item
   );
-  const { type: selectedOverlayType, id: selectedOverlayId } = useSelector(
+  const { selectedId, list: overlaysList } = useSelector(
     (state: RootState) => state.undoable.present.overlays
+  );
+  const selectedOverlay = useMemo(
+    () => overlaysList.find((overlay) => overlay.id === selectedId),
+    [overlaysList, selectedId]
   );
   const {
     isMediaExpanded,
@@ -137,10 +142,8 @@ const Media = () => {
     getAllItems();
   }, [dispatch, db, cloud]);
 
-  useEffect(() => {
-    if (!updater || !cloud) return;
-
-    const updateMediaList = async (event: CustomEventInit) => {
+  const updateMediaListFromExternal = useCallback(
+    async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
@@ -156,12 +159,21 @@ const Media = () => {
       } catch (e) {
         console.error(e);
       }
+    },
+    [dispatch]
+  );
+
+  useEffect(() => {
+    if (!updater) return;
+
+    updater.addEventListener("update", updateMediaListFromExternal);
+
+    return () => {
+      updater.removeEventListener("update", updateMediaListFromExternal);
     };
+  }, [updater, updateMediaListFromExternal]);
 
-    updater.addEventListener("update", updateMediaList);
-
-    return () => updater.removeEventListener("update", updateMediaList);
-  }, [updater, dispatch, cloud]);
+  useGlobalBroadcast(updateMediaListFromExternal);
 
   useEffect(() => {
     // Reset visibility states when pathname changes
@@ -380,7 +392,7 @@ const Media = () => {
           className={cn(
             !(
               location.pathname.includes("overlays") &&
-              selectedOverlayType === "image"
+              selectedOverlay?.type === "image"
             ) && "hidden",
             visibleButtons["setImageOverlay"] && "button-appear"
           )}
@@ -388,9 +400,9 @@ const Media = () => {
           onClick={() => {
             if (selectedMedia.background && db) {
               dispatch(
-                updateOverlayPartial({
+                updateOverlay({
                   imageUrl: selectedMedia.background,
-                  id: selectedOverlayId,
+                  id: selectedId,
                 })
               );
             }
@@ -400,7 +412,7 @@ const Media = () => {
               handleButtonVisibility(
                 "setImageOverlay",
                 location.pathname.includes("overlays") &&
-                  selectedOverlayType === "image",
+                  selectedOverlay?.type === "image",
                 selectedMedia.id === ""
               );
             }
@@ -443,25 +455,25 @@ const Media = () => {
           className={cn(
             (!location.pathname.includes("preferences") ||
               tab !== "quickLinks" ||
-              selectedQuickLink?.linkType !== "image") &&
+              selectedQuickLink?.linkType !== "media") &&
               "hidden",
             visibleButtons["setQuickLink"] && "button-appear"
           )}
           svg={BGOne}
           onClick={() => {
-            dispatch(setSelectedQuickLinkImage(selectedMedia.background));
+            dispatch(setSelectedQuickLinkImage(selectedMedia));
           }}
           ref={(el) => {
             if (el) {
               const isVisible = Boolean(
                 location.pathname.includes("preferences") &&
                   tab === "quickLinks" &&
-                  selectedQuickLink?.linkType === "image"
+                  selectedQuickLink?.linkType === "media"
               );
               const isDisabled = Boolean(
                 !selectedQuickLink ||
                   selectedMedia.id === "" ||
-                  selectedQuickLink?.linkType !== "image"
+                  selectedQuickLink?.linkType !== "media"
               );
               handleButtonVisibility("setQuickLink", isVisible, isDisabled);
             }
