@@ -22,7 +22,7 @@ const DisplayParticipantOverlay = forwardRef<
       prevParticipantOverlayInfo = {},
       shouldAnimate = false,
     },
-    containerRef
+    containerRef,
   ) => {
     const participantOverlayRef = useRef<HTMLDivElement | null>(null);
     const prevParticipantOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -65,11 +65,11 @@ const DisplayParticipantOverlay = forwardRef<
                 if (participantOverlayRef.current) {
                   containerXPercent.current = gsap.getProperty(
                     participantOverlayRef.current,
-                    "xPercent"
+                    "xPercent",
                   ) as number;
                   containerOpacity.current = gsap.getProperty(
                     participantOverlayRef.current,
-                    "opacity"
+                    "opacity",
                   ) as number;
                 }
               },
@@ -83,7 +83,7 @@ const DisplayParticipantOverlay = forwardRef<
                 ease: "power1.out",
                 stagger: 0.5,
               },
-              "-=2.25"
+              "-=2.25",
             )
             .to(participantOverlayRef.current, {
               xPercent: -105,
@@ -95,11 +95,11 @@ const DisplayParticipantOverlay = forwardRef<
                 if (participantOverlayRef.current) {
                   containerXPercent.current = gsap.getProperty(
                     participantOverlayRef.current,
-                    "xPercent"
+                    "xPercent",
                   ) as number;
                   containerOpacity.current = gsap.getProperty(
                     participantOverlayRef.current,
-                    "opacity"
+                    "opacity",
                   ) as number;
                 }
               },
@@ -109,7 +109,7 @@ const DisplayParticipantOverlay = forwardRef<
       {
         scope: participantOverlayRef,
         dependencies: [participantOverlayInfo, prevParticipantOverlayInfo],
-      }
+      },
     );
 
     useGSAP(
@@ -147,11 +147,11 @@ const DisplayParticipantOverlay = forwardRef<
                 if (prevParticipantOverlayRef.current) {
                   containerXPercent.current = gsap.getProperty(
                     prevParticipantOverlayRef.current,
-                    "xPercent"
+                    "xPercent",
                   ) as number;
                   containerOpacity.current = gsap.getProperty(
                     prevParticipantOverlayRef.current,
-                    "opacity"
+                    "opacity",
                   ) as number;
                 }
               },
@@ -161,7 +161,7 @@ const DisplayParticipantOverlay = forwardRef<
       {
         scope: prevParticipantOverlayRef,
         dependencies: [prevParticipantOverlayInfo],
-      }
+      },
     );
 
     return (
@@ -180,7 +180,7 @@ const DisplayParticipantOverlay = forwardRef<
                 participantOverlayInfo.name ||
                 participantOverlayInfo.title ||
                 participantOverlayInfo.event
-                  ? `0 2.5% 1% 2.5%`
+                  ? "0 2.5% 1% 2.5%"
                   : "0",
             } as CSSProperties
           }
@@ -215,7 +215,7 @@ const DisplayParticipantOverlay = forwardRef<
                 prevParticipantOverlayInfo.name ||
                 prevParticipantOverlayInfo.title ||
                 prevParticipantOverlayInfo.event
-                  ? `0 2.5% 1% 2.5%`
+                  ? "0 2.5% 1% 2.5%"
                   : "0",
             } as CSSProperties
           }
@@ -238,7 +238,7 @@ const DisplayParticipantOverlay = forwardRef<
         </div>
       </>
     );
-  }
+  },
 );
 
 export default DisplayParticipantOverlay;

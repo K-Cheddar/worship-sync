@@ -2,13 +2,15 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import bodyParser from "body-parser";
-import fs from "fs/promises";
+import fsPromise from "fs/promises";
+import fs from "fs";
 import axios from "axios";
 import qs from "qs";
 import * as XLSX from "xlsx";
 import dotenv from "dotenv";
 import packageJson from "./package.json" assert { type: "json" };
 import { v2 as cloudinary } from "cloudinary";
+import https from "https";
 
 dotenv.config();
 // Validate required environment variables
@@ -30,8 +32,12 @@ const dirname = import.meta.dirname;
 const tenantId = process.env.AZURE_TENANT_ID;
 const clientId = process.env.AZURE_CLIENT_ID;
 const clientSecret = process.env.AZURE_CLIENT_SECRET;
+const isDevelopment = process.env.NODE_ENV === "development";
 
 const port = process.env.PORT || 5000;
+const frontEndHost = isDevelopment
+  ? "https://local.worshipsync.net:3000"
+  : "http://localhost:3000";
 
 // Configure Cloudinary
 cloudinary.config({
@@ -40,14 +46,26 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-app.listen(port, () => console.log(`Listening on port ${port}`));
+if (isDevelopment) {
+  console.log("isDevelopment");
+  const options = {
+    key: fs.readFileSync("./local.worshipsync.net-key.pem"),
+    cert: fs.readFileSync("./local.worshipsync.net.pem"),
+  };
+
+  https.createServer(options, app).listen(5000, "local.worshipsync.net", () => {
+    console.log("HTTPS server running at https://local.worshipsync.net:5000");
+  });
+} else {
+  app.listen(port, () => console.log(`Listening on port ${port}`));
+}
 
 app.use(bodyParser.json({ limit: "10mb", extended: true }));
 app.use(express.json());
 
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: frontEndHost,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Origin", "X-Requested-With", "Content-Type", "Accept"],
     credentials: true,
@@ -80,7 +98,7 @@ app.get("/api/bible", async (req, res) => {
 app.get("/bible", async (req, res) => {
   let version = req.query.version;
 
-  const bible = await fs.readFile(
+  const bible = await fsPromise.readFile(
     `./bibles/${version}.json`,
     "utf8",
     function (err, data) {
@@ -247,12 +265,61 @@ app.get("/api/version", (req, res) => {
 app.get("/api/changelog", async (req, res) => {
   try {
     const changelogPath = path.join(dirname, "CHANGELOG.md");
-    const changelogContent = await fs.readFile(changelogPath, "utf8");
+    const changelogContent = await fsPromise.readFile(changelogPath, "utf8");
     res.setHeader("Content-Type", "text/plain");
     res.send(changelogContent);
   } catch (error) {
     console.error("Error reading changelog:", error);
     res.status(500).json({ error: "Failed to load changelog" });
+  }
+});
+
+app.post("/api/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    // Create a PouchDB instance to check credentials
+    const dbName = "worship-sync-logins";
+    const couchURL = `https://${process.env.COUCHDB_HOST}/${dbName}`;
+
+    const response = await axios({
+      method: "GET",
+      url: `${couchURL}/logins`,
+      headers: {
+        Authorization:
+          "Basic " +
+          Buffer.from(
+            `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`
+          ).toString("base64"),
+        "Content-Type": "application/json",
+      },
+    });
+
+    const db_logins = response.data;
+    const user = db_logins.logins.find(
+      (e) => e.username === username && e.password === password
+    );
+
+    if (!user) {
+      return res
+        .status(401)
+        .json({ success: false, errorMessage: "Invalid credentials" });
+    }
+
+    // Return user info (excluding password for security)
+    res.json({
+      success: true,
+      user: {
+        username: user.username,
+        database: user.database,
+        upload_preset: user.upload_preset,
+      },
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    res
+      .status(500)
+      .json({ success: false, errorMessage: `Login failed: ${error.message}` });
   }
 });
 
@@ -278,6 +345,49 @@ app.delete("/api/cloudinary/delete", async (req, res) => {
     res
       .status(500)
       .json({ error: "Failed to delete image", details: error.message });
+  }
+});
+
+app.get("/api/getDbSession", async (req, res) => {
+  try {
+    const couchURL = `https://${process.env.COUCHDB_HOST}/_session`;
+
+    const response = await axios({
+      method: "POST",
+      url: couchURL,
+      headers: {
+        Authorization:
+          "Basic " +
+          Buffer.from(
+            `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`
+          ).toString("base64"),
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      data: `name=${process.env.COUCHDB_USER}&password=${process.env.COUCHDB_PASSWORD}`,
+    });
+
+    const cookies = response.headers["set-cookie"];
+
+    if (cookies?.length) {
+      cookies.forEach((cookie) => {
+        const updatedCookie = cookie.replace(
+          /; HttpOnly/,
+          "; HttpOnly; SameSite=None; Secure; Domain=.worshipsync.net;"
+        );
+        res.append("Set-Cookie", updatedCookie);
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Session established",
+    });
+  } catch (error) {
+    console.error("Error getting CouchDB session:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to establish session",
+    });
   }
 });
 

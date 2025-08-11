@@ -16,7 +16,7 @@ const TimerManager = () => {
   const dispatch = useDispatch();
   const { user, firebaseDb, hostId } = useContext(GlobalInfoContext) || {};
   const { timers, timersFromDocs } = useSelector(
-    (state: RootState) => state.timers
+    (state: RootState) => state.timers,
   );
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -27,7 +27,7 @@ const TimerManager = () => {
     onValue(getTimersRef, (snapshot) => {
       const data = snapshot.val();
       const remoteTimers = data?.filter(
-        (timer: TimerInfo) => timer?.hostId !== hostId
+        (timer: TimerInfo) => timer?.hostId !== hostId,
       );
 
       if (remoteTimers?.length > 0) {
@@ -37,17 +37,17 @@ const TimerManager = () => {
   }, [firebaseDb, user, dispatch, hostId]);
 
   useEffect(() => {
-    const removeInactiveTimers = async () => {
+    const removeInactiveTimers = async() => {
       if (!firebaseDb || user === "Demo" || !hostId) return;
 
       const activeInstancesRef = ref(
         firebaseDb,
-        "users/" + user + "/v2/activeInstances"
+        "users/" + user + "/v2/activeInstances",
       );
       const timersRef = ref(firebaseDb, "users/" + user + "/v2/timers");
       const timers = await get(timersRef).then((snapshot) => snapshot.val());
       const hostIds = await get(activeInstancesRef).then((snapshot) =>
-        snapshot.val() ? Object.keys(snapshot.val()) : []
+        snapshot.val() ? Object.keys(snapshot.val()) : [],
       );
 
       const timersWithActiveHosts =
@@ -57,7 +57,7 @@ const TimerManager = () => {
       const mergedTimers = mergeTimers(
         timersWithActiveHosts,
         timersFromDocs,
-        hostId
+        hostId,
       );
 
       dispatch(setShouldUpdateTimers(true));
@@ -72,7 +72,7 @@ const TimerManager = () => {
 
     const activeInstancesRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/activeInstances"
+      "users/" + user + "/v2/activeInstances",
     );
     onValue(activeInstancesRef, (snapshot) => {
       const data = snapshot.val();
@@ -85,7 +85,7 @@ const TimerManager = () => {
 
     // Only set up interval if there are running timers
     const hasRunningTimers = timers.some(
-      (timer) => timer.isActive && timer.status === "running"
+      (timer) => timer.isActive && timer.status === "running",
     );
 
     if (hasRunningTimers) {
@@ -93,7 +93,7 @@ const TimerManager = () => {
         const now = Date.now();
         const runningTimers = timers.filter(
           (timer) =>
-            timer.isActive && timer.status === "running" && timer.endTime
+            timer.isActive && timer.status === "running" && timer.endTime,
         );
 
         // Check if any timer needs updating

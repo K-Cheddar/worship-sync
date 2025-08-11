@@ -10,7 +10,7 @@ import { TimerInfo } from "../types";
 export const mergeTimers = (
   currentTimers: TimerInfo[] = [],
   ownTimers: TimerInfo[] = [],
-  hostId: string
+  hostId: string,
 ): TimerInfo[] => {
   const timerMap = new Map();
 
@@ -28,7 +28,7 @@ export const mergeTimers = (
 
   // Convert map back to array and filter out any undefined values
   return Array.from(timerMap.values()).filter(
-    (timer): timer is TimerInfo => timer !== undefined
+    (timer): timer is TimerInfo => timer !== undefined,
   );
 };
 
@@ -36,7 +36,7 @@ export const calculateEndTime = (
   timerInfo: TimerInfo,
   isStarting: boolean,
   isResuming: boolean,
-  existingTimer?: TimerInfo
+  existingTimer?: TimerInfo,
 ): string | undefined => {
   if (isStarting) {
     if (timerInfo.timerType === "timer" && timerInfo.duration) {
@@ -57,7 +57,7 @@ export const calculateEndTime = (
   } else if (isResuming && existingTimer?.remainingTime) {
     // For resuming timers, set endTime based on remaining time
     return new Date(
-      Date.now() + existingTimer.remainingTime * 1000
+      Date.now() + existingTimer.remainingTime * 1000,
     ).toISOString();
   } else if (existingTimer?.endTime && existingTimer.status === "running") {
     // Preserve existing endTime for running timers
@@ -118,7 +118,7 @@ export const calculateRemainingTime = ({
       const endTime = new Date(timerInfo.endTime);
       const now = new Date();
       const remainingSeconds = Math.floor(
-        (endTime.getTime() - now.getTime()) / 1000
+        (endTime.getTime() - now.getTime()) / 1000,
       );
       return Math.max(0, remainingSeconds); // Ensure we don't return negative time
     }

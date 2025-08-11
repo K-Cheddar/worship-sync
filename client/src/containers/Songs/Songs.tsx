@@ -4,7 +4,7 @@ import { setSongSearchValue } from "../../store/allItemsSlice";
 
 const Songs = () => {
   const { list, isAllItemsLoading, songSearchValue } = useSelector(
-    (state) => state.allItems
+    (state) => state.allItems,
   );
   const { allSongDocs } = useSelector((state) => state.allDocs);
   const dispatch = useDispatch();

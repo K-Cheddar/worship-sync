@@ -25,6 +25,7 @@ const QuickLinkButton = ({
       isSelected ? "border-cyan-500" : "border-transparent"
     )}
     onClick={onClick}
+    isSelected={isSelected}
   >
     <p className="text-sm">{title}:</p>
     <p className="text-xs w-48 overflow-hidden text-ellipsis whitespace-nowrap bg-gray-200 p-2 rounded-md text-black">

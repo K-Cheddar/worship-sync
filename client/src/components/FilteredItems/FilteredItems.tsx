@@ -12,7 +12,6 @@ import {
   addItemToItemList,
   removeItemFromListById,
 } from "../../store/itemListSlice";
-import { Link } from "react-router-dom";
 import { removeItemFromAllItemsList } from "../../store/allItemsSlice";
 import { DBItem, ServiceItem } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -88,13 +87,13 @@ const FilteredItems = ({
 
       const searchPromises = listOfType.map(async (item) => {
         const name = item.name.toLowerCase();
-        let match = getMatchForString({
+        const match = getMatchForString({
           string: name,
           searchValue: cleanSearchValue,
           allowPartial: true,
         });
-        let matchedWords = "";
-        let wordMatches = [];
+        const matchedWords = "";
+        const wordMatches = [];
         let hasLyricMatch = false;
 
         if (type === "song") {
@@ -282,15 +281,12 @@ const FilteredItems = ({
               className="relative"
               svg={CreateSVG}
               color="#84cc16"
+              component="link"
+              to={`/controller/create?type=${type}&name=${encodeURI(
+                searchValue
+              )}`}
             >
-              <Link
-                className="h-full w-full"
-                to={`/controller/create?type=${type}&name=${encodeURI(
-                  searchValue
-                )}`}
-              >
-                Create a new {label}
-              </Link>
+              Create a new {label}
             </Button>
           </li>
         )}

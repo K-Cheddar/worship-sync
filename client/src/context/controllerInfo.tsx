@@ -1,10 +1,16 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
 import { useLocation } from "react-router-dom";
-import { getDbBasePath } from "../utils/serverUtils";
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
@@ -32,6 +38,14 @@ export const ControllerInfoContext =
 
 export let globalDb: PouchDB.Database | undefined = undefined;
 export let globalBibleDb: PouchDB.Database | undefined = undefined;
+export let globalBroadcastRef: BroadcastChannel = new BroadcastChannel(
+  "local-app-updates"
+);
+
+export type CouchResponse = {
+  success: boolean;
+  message: string;
+};
 
 const cloud = new Cloudinary({
   cloud: {
@@ -56,6 +70,7 @@ const ControllerInfoProvider = ({ children }: any) => {
   const [isPhone, setIsPhone] = useState(false);
   const [isDbSetup, setIsDbSetup] = useState(false);
   const [isBibleDbSetup, setIsBibleDbSetup] = useState(false);
+  const [hasCouchSession, setHasCouchSession] = useState(false);
 
   const location = useLocation();
 
@@ -66,12 +81,110 @@ const ControllerInfoProvider = ({ children }: any) => {
   const syncRef = useRef<any>();
   const bibleSyncRef = useRef<any>();
 
+  const getCouchSession = useCallback(async () => {
+    const response = await fetch(
+      `${process.env.REACT_APP_API_BASE_PATH}api/getDbSession`,
+      {
+        credentials: "include",
+      }
+    );
+    const data = await response.json();
+    setHasCouchSession(data.success);
+    return data.success;
+  }, []);
+
+  const syncDb = useCallback(
+    async (localDb: PouchDB.Database, remoteDb: PouchDB.Database) => {
+      let retry = 0;
+      if (syncRef.current) {
+        syncRef.current.cancel();
+      }
+
+      syncRef.current = localDb
+        .sync(remoteDb, { retry: true, live: true })
+        .on("change", (event) => {
+          if (event.direction === "push") {
+            console.log("updating from local", event);
+          }
+          if (event.direction === "pull") {
+            console.log("updating from remote", event);
+            updater.current.dispatchEvent(
+              new CustomEvent("update", { detail: event.change.docs })
+            );
+          }
+        })
+        .on("error", async (error: any) => {
+          if (error.status === 401 || error.status === 403) {
+            setHasCouchSession(false);
+            const success = await getCouchSession();
+            if (!success) {
+              retry++;
+              if (retry > 3) {
+                return;
+              }
+              return;
+            }
+            syncDb(localDb, remoteDb);
+          }
+        });
+    },
+    [getCouchSession]
+  );
+
+  const bibleSyncDb = useCallback(
+    async (localDb: PouchDB.Database, remoteDb: PouchDB.Database) => {
+      let retry = 0;
+      if (bibleSyncRef.current) {
+        bibleSyncRef.current.cancel();
+      }
+
+      bibleSyncRef.current = localDb
+        .changes({ since: "now", live: true })
+        .on("change", () => {
+          if (syncTimeout) clearTimeout(syncTimeout);
+          syncTimeout = setTimeout(() => {
+            localDb.sync(remoteDb, { retry: true });
+          }, 10000); // Wait 10 second after last change
+        })
+        .on("error", async (error: any) => {
+          if (error.status === 401 || error.status === 403) {
+            setHasCouchSession(false);
+            const success = await getCouchSession();
+            if (!success) {
+              retry++;
+              if (retry > 3) {
+                return;
+              }
+              return;
+            }
+            bibleSyncDb(localDb, remoteDb);
+          }
+        });
+    },
+    [getCouchSession]
+  );
+
+  useEffect(() => {
+    if (
+      (loginState === "success" || loginState === "demo") &&
+      location.pathname !== "/" &&
+      location.pathname !== "/login"
+    ) {
+      getCouchSession();
+    }
+  }, [getCouchSession, loginState, location.pathname]);
+
   useEffect(() => {
     const setupDb = async () => {
       const dbName = `worship-sync-${database}`;
       const localDb = new PouchDB(dbName);
-      const remoteUrl = `${getDbBasePath()}db/${dbName}`;
-      const remoteDb = new PouchDB(remoteUrl);
+      const remoteUrl = `${process.env.REACT_APP_COUCHDB_HOST}/${dbName}`;
+      const remoteDb = new PouchDB(remoteUrl, {
+        fetch: (url, options: any) => {
+          options.credentials = "include";
+          return fetch(url, options);
+        },
+      });
 
       if (syncRef.current) {
         syncRef.current.cancel();
@@ -88,6 +201,11 @@ const ControllerInfoProvider = ({ children }: any) => {
             setDbProgress(100);
           }
         })
+        .on("error", (error: any) => {
+          if (error.status === 401 || error.status === 403) {
+            window.location.reload();
+          }
+        })
         .on("complete", () => {
           setDbProgress(100);
           setDb(localDb);
@@ -95,19 +213,7 @@ const ControllerInfoProvider = ({ children }: any) => {
           globalDb = localDb;
           console.log("Replication completed");
           if (loginState === "success") {
-            syncRef.current = localDb
-              .sync(remoteDb, { retry: true, live: true })
-              .on("change", (event) => {
-                if (event.direction === "push") {
-                  console.log("updating from local", event);
-                }
-                if (event.direction === "pull") {
-                  console.log("updating from remote", event);
-                  updater.current.dispatchEvent(
-                    new CustomEvent("update", { detail: event.change.docs })
-                  );
-                }
-              });
+            syncDb(localDb, remoteDb);
           }
         });
     };
@@ -116,18 +222,31 @@ const ControllerInfoProvider = ({ children }: any) => {
       (loginState === "success" || loginState === "demo") &&
       location.pathname !== "/" &&
       location.pathname !== "/login" &&
-      !isDbSetup
+      !isDbSetup &&
+      hasCouchSession
     ) {
       setupDb();
     }
-  }, [loginState, database, location.pathname, isDbSetup]);
+  }, [
+    loginState,
+    database,
+    location.pathname,
+    isDbSetup,
+    hasCouchSession,
+    syncDb,
+  ]);
 
   useEffect(() => {
     const setupBibleDb = async () => {
       const dbName = "worship-sync-bibles";
       const localDb = new PouchDB(dbName);
-      const remoteUrl = `${getDbBasePath()}db/${dbName}`;
-      const remoteDb = new PouchDB(remoteUrl);
+      const remoteUrl = `${process.env.REACT_APP_COUCHDB_HOST}/${dbName}`;
+      const remoteDb = new PouchDB(remoteUrl, {
+        fetch: (url, options: any) => {
+          options.credentials = "include";
+          return fetch(url, options);
+        },
+      });
 
       if (bibleSyncRef.current) {
         bibleSyncRef.current.cancel();
@@ -144,6 +263,11 @@ const ControllerInfoProvider = ({ children }: any) => {
             setBibleDbProgress(100);
           }
         })
+        .on("error", (error: any) => {
+          if (error.status === 401 || error.status === 403) {
+            window.location.reload();
+          }
+        })
         .on("complete", () => {
           setBibleDbProgress(100);
           setBibleDb(localDb);
@@ -151,14 +275,7 @@ const ControllerInfoProvider = ({ children }: any) => {
           globalBibleDb = localDb;
           console.log("Bible Replication completed");
           if (loginState === "success") {
-            bibleSyncRef.current = localDb
-              .changes({ since: "now", live: true })
-              .on("change", () => {
-                if (syncTimeout) clearTimeout(syncTimeout);
-                syncTimeout = setTimeout(() => {
-                  localDb.sync(remoteDb, { retry: true });
-                }, 10000); // Wait 10 second after last change
-              });
+            bibleSyncDb(localDb, remoteDb);
           }
         });
     };
@@ -168,11 +285,19 @@ const ControllerInfoProvider = ({ children }: any) => {
       location.pathname !== "/" &&
       location.pathname !== "/login" &&
       !isBibleDbSetup &&
-      isDbSetup
+      isDbSetup &&
+      hasCouchSession
     ) {
       setupBibleDb();
     }
-  }, [loginState, location.pathname, isBibleDbSetup, isDbSetup]);
+  }, [
+    loginState,
+    location.pathname,
+    isBibleDbSetup,
+    isDbSetup,
+    hasCouchSession,
+    bibleSyncDb,
+  ]);
 
   const _logout = async () => {
     setLoginState?.("loading");

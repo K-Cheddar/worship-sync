@@ -10,7 +10,7 @@ interface TimerDisplayProps {
 export const formatTime = (
   seconds: number,
   showMinutesOnly?: boolean,
-  separateSections = false
+  separateSections = false,
 ) => {
   const hours = Math.floor(seconds / 3600)
     .toString()
@@ -53,7 +53,7 @@ export const formatTime = (
 
 const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   const timer = useSelector((state: RootState) =>
-    state.timers.timers.find((t) => t.id === timerInfo?.id)
+    state.timers.timers.find((t) => t.id === timerInfo?.id),
   );
 
   if (!timerInfo) return <>{words.replace("{{timer}}", "")}</>;

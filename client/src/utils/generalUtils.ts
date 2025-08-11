@@ -272,3 +272,6 @@ export const getLetterFromIndex = (
 
   return shouldWrapInZeroWidth ? "\u200B" + letter + "\u200B" : letter;
 };
+
+export const delay = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));

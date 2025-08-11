@@ -6,7 +6,7 @@ import { formatSong } from "./overflow";
 export const formatItemInfo = (
   item: DBItem,
   cloud: Cloudinary,
-  isMobile: boolean
+  isMobile: boolean,
 ) => {
   const _item: ItemState = {
     name: item.name,

@@ -7,7 +7,7 @@ type getVersesType = {
   version: string;
 };
 
-export const getVerses = async ({ book, chapter, version }: getVersesType) => {
+export const getVerses = async({ book, chapter, version }: getVersesType) => {
   let data = null;
 
   const _chapter = chapter + 1;
@@ -16,8 +16,8 @@ export const getVerses = async ({ book, chapter, version }: getVersesType) => {
     const response = await fetch(
       `${process.env.REACT_APP_API_BASE_PATH}api/bible/?book=${book}&chapter=${_chapter}&version=${version}`.replaceAll(
         " ",
-        ""
-      )
+        "",
+      ),
     );
 
     const text = await response.text();
@@ -29,7 +29,7 @@ export const getVerses = async ({ book, chapter, version }: getVersesType) => {
   return data;
 };
 
-const parseData = async (textHtml: string, chapter: number, book: string) => {
+const parseData = async(textHtml: string, chapter: number, book: string) => {
   const el = document.createElement("html");
   el.innerHTML = textHtml;
 
@@ -37,14 +37,14 @@ const parseData = async (textHtml: string, chapter: number, book: string) => {
 
   const unwantedText =
     textArea?.querySelectorAll(
-      "h1, h2, h3, h4, h5, h6, .crossreference, .footnote"
+      "h1, h2, h3, h4, h5, h6, .crossreference, .footnote",
     ) || [];
   for (let i = 0; i < unwantedText.length; ++i) {
     unwantedText[i]?.remove();
   }
 
   const versesHtml = textArea?.querySelectorAll(
-    `span.text[class*="${bookMap[book as keyof typeof bookMap]}-${chapter}-"`
+    `span.text[class*="${bookMap[book as keyof typeof bookMap]}-${chapter}-"`,
   );
 
   const verses: verseType[] = [];

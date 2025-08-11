@@ -12,8 +12,12 @@ import cn from "classnames";
 import "./Button.scss";
 import Spinner from "../Spinner/Spinner";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { Link } from "react-router-dom";
 
-export type ButtonProps = Omit<React.HTMLProps<HTMLButtonElement>, "wrap"> & {
+export type ButtonProps = Omit<
+  React.HTMLProps<HTMLButtonElement | HTMLAnchorElement>,
+  "wrap"
+> & {
   children?: ReactNode;
   svg?: FunctionComponent<React.SVGProps<SVGSVGElement>>;
   image?: string;
@@ -30,9 +34,11 @@ export type ButtonProps = Omit<React.HTMLProps<HTMLButtonElement>, "wrap"> & {
   type?: "button" | "submit" | "reset" | undefined;
   isLoading?: boolean;
   position?: "relative" | "absolute";
+  component?: "button" | "link";
+  to?: string;
 };
 
-const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
   (
     {
       children,
@@ -51,16 +57,15 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       isLoading = false,
       image,
       position = "relative",
+      component = "button",
       ...rest
     },
     ref
   ) => {
-    const fallbackRef = useRef(null);
+    const fallbackRef = useRef<HTMLButtonElement | HTMLAnchorElement>(null);
     const buttonRef = ref || fallbackRef;
 
     const { isMobile } = useContext(ControllerInfoContext) || {};
-    // const _iconSize = typeof iconSize === "number" ? iconSize :  undefined;
-    // const _iconSize = isMobile && !iconSize ? 'lg'
 
     const iconSize = useMemo(() => {
       if (isMobile) {
@@ -75,23 +80,18 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 
     const _padding = padding ? padding : children ? "py-1 px-2" : "p-1";
 
-    return (
-      <button
-        className={cn(
-          `font-semibold rounded-md flex items-center max-w-full disabled:opacity-65 disabled:pointer-events-none ${gap}`,
-          _padding,
-          !isSelected && variant,
-          wrap
-            ? "whitespace-normal text-left button-wrap"
-            : "whitespace-nowrap",
-          truncate && "truncate",
-          position,
-          className
-        )}
-        type={type}
-        ref={buttonRef}
-        {...rest}
-      >
+    const commonClassName = cn(
+      `font-semibold rounded-md flex items-center max-w-full disabled:opacity-65 disabled:pointer-events-none ${gap}`,
+      _padding,
+      !isSelected && variant,
+      wrap ? "whitespace-normal text-left button-wrap" : "whitespace-nowrap",
+      truncate && "truncate",
+      position,
+      className
+    );
+
+    const commonContent = (
+      <>
         {svg && iconPosition === "left" && iconWProps}
         {children}
         {svg && iconPosition === "right" && iconWProps}
@@ -103,6 +103,30 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
             borderWidth="3px"
           />
         )}
+      </>
+    );
+
+    if (component === "link") {
+      return (
+        <Link
+          className={commonClassName}
+          ref={buttonRef as React.Ref<HTMLAnchorElement>}
+          to={rest.href || "#"}
+          {...rest}
+        >
+          {commonContent}
+        </Link>
+      );
+    }
+
+    return (
+      <button
+        className={commonClassName}
+        type={type}
+        ref={buttonRef as React.Ref<HTMLButtonElement>}
+        {...rest}
+      >
+        {commonContent}
       </button>
     );
   }

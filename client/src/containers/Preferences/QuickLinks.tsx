@@ -154,7 +154,7 @@ const QuickLinks = () => {
             padding="px-4 py-1"
             svg={AddSVG}
             onClick={() => {
-              let linkType: LinkType = "image";
+              let linkType: LinkType = "media";
               if (newQuickLinkDisplayType === "monitor") {
                 linkType = "slide";
               }

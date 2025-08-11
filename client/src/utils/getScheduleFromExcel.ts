@@ -40,8 +40,9 @@ const getClosestUpcomingSchedule = (data: any) => {
     const row = data[i];
     const dateStr = row[0];
     const timeStr = row[12];
-    // const durationStr = row[13]; // TODO Factor in duration
-    // const durationInMinutes = durationStr ? parseInt(durationStr) : 0;
+
+    const durationStr = row[13];
+    const durationInMinutes = durationStr ? parseInt(durationStr) : 0;
 
     // Skip if dateStr is not a valid date in MM/DD/YY or MM/DD/YYYY format
     if (typeof dateStr !== "string") continue;
@@ -64,15 +65,14 @@ const getClosestUpcomingSchedule = (data: any) => {
     const fullYear = year.length === 2 ? parseInt(year) + 2000 : parseInt(year);
     const rowDate = new Date(fullYear, parseInt(month) - 1, parseInt(day));
 
-    // Parse time if available format: "10:00:00 AM"
+    // Parse time if available format: "10:00 AM"
     if (timeStr && typeof timeStr === "string") {
       // Handle format like "10:00:00 AM" or "2:30:45 PM"
-      const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$/i);
+      const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
       if (timeMatch) {
         let hours = parseInt(timeMatch[1]);
         const minutes = parseInt(timeMatch[2]);
-        const seconds = parseInt(timeMatch[3]);
-        const period = timeMatch[4].toUpperCase();
+        const period = timeMatch[3].toUpperCase();
 
         // Convert 12-hour format to 24-hour format
         if (period === "PM" && hours !== 12) {
@@ -84,36 +84,12 @@ const getClosestUpcomingSchedule = (data: any) => {
         if (
           !isNaN(hours) &&
           !isNaN(minutes) &&
-          !isNaN(seconds) &&
           hours >= 0 &&
           hours <= 23 &&
           minutes >= 0 &&
-          minutes <= 59 &&
-          seconds >= 0 &&
-          seconds <= 59
+          minutes <= 59
         ) {
-          rowDate.setHours(hours, minutes, seconds, 0);
-        } else {
-          rowDate.setHours(0, 0, 0, 0);
-        }
-      } else {
-        // Fallback to simple HH:MM format if AM/PM format doesn't match
-        const timeParts = timeStr.split(":");
-        if (timeParts.length >= 2) {
-          const hours = parseInt(timeParts[0]);
-          const minutes = parseInt(timeParts[1]);
-          if (
-            !isNaN(hours) &&
-            !isNaN(minutes) &&
-            hours >= 0 &&
-            hours <= 23 &&
-            minutes >= 0 &&
-            minutes <= 59
-          ) {
-            rowDate.setHours(hours, minutes, 0, 0);
-          } else {
-            rowDate.setHours(0, 0, 0, 0);
-          }
+          rowDate.setHours(hours, minutes + durationInMinutes, 0, 0);
         } else {
           rowDate.setHours(0, 0, 0, 0);
         }

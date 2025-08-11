@@ -27,7 +27,7 @@ import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
-import { globalDb as db } from "../context/controllerInfo";
+import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
 import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
 import { ref, set, get } from "firebase/database";
 import {
@@ -112,6 +112,7 @@ const undoableReducers = undoable(
       preferencesSlice.actions.increaseMediaItems.toString(),
       preferencesSlice.actions.decreaseMediaItems.toString(),
       preferencesSlice.actions.setMediaItems.toString(),
+      preferencesSlice.actions.updatePreferencesFromRemote.toString(),
     ]),
     limit: 100,
   }
@@ -163,6 +164,15 @@ listenerMiddleware.startListening({
       shouldSendTo: item.shouldSendTo,
     };
     db.put(db_item);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_item,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -200,9 +210,18 @@ listenerMiddleware.startListening({
     const { list } = state.undoable.present.itemList;
     const { selectedList } = state.undoable.present.itemLists;
     if (!db || !selectedList) return;
-    let db_itemList: DBItemListDetails = await db.get(selectedList._id);
+    const db_itemList: DBItemListDetails = await db.get(selectedList._id);
     db_itemList.items = [...list];
     db.put(db_itemList);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_itemList,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -232,6 +251,15 @@ listenerMiddleware.startListening({
     db_itemLists.itemLists = [...currentLists];
     db_itemLists.selectedList = selectedList;
     db.put(db_itemLists);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_itemLists,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -260,6 +288,15 @@ listenerMiddleware.startListening({
     const db_allItems: DBAllItems = await db.get("allItems");
     db_allItems.items = [...list];
     db.put(db_allItems);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_allItems,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -275,7 +312,6 @@ listenerMiddleware.startListening({
       action.type !== "overlays/setHasPendingUpdate" &&
       action.type !== "overlays/updateInitialList" &&
       action.type !== "overlays/addToInitialList" &&
-      action.type !== "overlays/setOverlayId" &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
       action.type !== "RESET"
@@ -301,6 +337,15 @@ listenerMiddleware.startListening({
     const db_itemList: DBItemListDetails = await db.get(selectedList._id);
     db_itemList.overlays = [...list];
     db.put(db_itemList);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_itemList,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -379,7 +424,7 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    let state = listenerApi.getState() as RootState;
+    const state = listenerApi.getState() as RootState;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
@@ -427,6 +472,14 @@ listenerMiddleware.startListening({
     const db_credits: DBCredits = await db.get("credits");
     db_credits.list = list;
     db.put(db_credits);
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_credits,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -454,6 +507,15 @@ listenerMiddleware.startListening({
     const db_backgrounds: DBMedia = await db.get("images");
     db_backgrounds.backgrounds = [...list];
     db.put(db_backgrounds);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_backgrounds,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -483,6 +545,7 @@ listenerMiddleware.startListening({
       action.type !== "preferences/setSelectedQuickLink" &&
       action.type !== "preferences/setTab" &&
       action.type !== "preferences/setScrollbarWidth" &&
+      action.type !== "preferences/updatePreferencesFromRemote" &&
       action.type !== "RESET"
     );
   },
@@ -501,6 +564,14 @@ listenerMiddleware.startListening({
       db_preferences.preferences = preferences;
       db_preferences.quickLinks = quickLinks;
       db.put(db_preferences);
+      // Local machine updates
+      globalBroadcastRef.postMessage({
+        type: "update",
+        data: {
+          docs: db_preferences,
+          hostId: globalHostId,
+        },
+      });
     } catch (error) {
       // if the preferences are not found, create a new one
       console.error(error);

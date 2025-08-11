@@ -4,19 +4,19 @@ import { useEffect } from "react";
 
 const Projector = () => {
   const { projectorInfo, prevProjectorInfo } = useSelector(
-    (state) => state.presentation
+    (state) => state.presentation,
   );
 
   const timers = useSelector((state) => state.timers.timers);
   const projectorTimer = timers.find(
-    (timer) => timer.id === projectorInfo.timerId
+    (timer) => timer.id === projectorInfo.timerId,
   );
   const prevProjectorTimer = timers.find(
-    (timer) => timer.id === prevProjectorInfo.timerId
+    (timer) => timer.id === prevProjectorInfo.timerId,
   );
 
   useEffect(() => {
-    const keepScreenOn = async () => {
+    const keepScreenOn = async() => {
       try {
         await navigator.wakeLock.request("screen");
       } catch (err) {

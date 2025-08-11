@@ -30,7 +30,7 @@ jest.mock("../../../containers/Credits/CreditsEditor", () => () => (
 ));
 jest.mock(
   "../../../containers/Toolbar/ToolbarElements/UserSection",
-  () => () => <div data-testid="user-section">User Section</div>
+  () => () => <div data-testid="user-section">User Section</div>,
 );
 jest.mock("../../../containers/Toolbar/ToolbarElements/Undo", () => () => (
   <div data-testid="undo">Undo</div>
@@ -72,11 +72,6 @@ jest.mock("../../../utils/getScheduleFromExcel", () => {
     return Promise.resolve(mockSchedule);
   });
 });
-
-// Get the mock function for verification
-const mockGetScheduleFromExcel = jest.requireMock(
-  "../../../utils/getScheduleFromExcel"
-);
 
 // Create a mock PouchDB instance
 const mockPouchDB = {
@@ -138,6 +133,9 @@ const mockControllerContext = {
     },
   }),
   isMobile: false,
+  isPhone: false,
+  bibleDbProgress: 100,
+  setIsPhone: jest.fn(),
   logout: jest.fn(),
   login: jest.fn(),
 };
@@ -153,6 +151,8 @@ const mockGlobalContext = {
   setUser: jest.fn(),
   uploadPreset: "",
   setLoginState: jest.fn(),
+  hostId: "test-host",
+  activeInstances: [],
 };
 
 // Mock redux hooks
@@ -224,7 +224,7 @@ describe("CreditsEditor", () => {
             <BrowserRouter>{component}</BrowserRouter>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
-      </Provider>
+      </Provider>,
     );
   };
 
@@ -248,7 +248,7 @@ describe("CreditsEditor", () => {
           },
           {
             filter: () => true,
-          }
+          },
         ),
       },
     });
@@ -281,7 +281,7 @@ describe("CreditsEditor", () => {
             </BrowserRouter>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
-      </Provider>
+      </Provider>,
     );
 
     // Check for the loading overlay
@@ -308,7 +308,6 @@ describe("CreditsEditor", () => {
     // Click preview button and wait for state update
     fireEvent.click(showPreviewButton);
     await waitFor(() => {
-      const editor = screen.getByTestId("credits-editor");
       const editorContainer = screen.getByTestId("credits-editor-container");
       expect(editorContainer).toHaveClass("hidden");
     });
@@ -316,7 +315,6 @@ describe("CreditsEditor", () => {
     // Click editor button and wait for state update
     fireEvent.click(showEditorButton);
     await waitFor(() => {
-      const preview = screen.getByTestId("credits-preview");
       const previewContainer = screen.getByTestId("credits-preview-container");
       expect(previewContainer).toHaveClass("hidden");
     });
@@ -338,7 +336,7 @@ describe("CreditsEditor", () => {
         expect.objectContaining({
           type: expect.stringContaining("credits/setTransitionScene"),
           payload: "New Transition",
-        })
+        }),
       );
     });
 
@@ -348,7 +346,7 @@ describe("CreditsEditor", () => {
         expect.objectContaining({
           type: expect.stringContaining("credits/setCreditsScene"),
           payload: "New Credits",
-        })
+        }),
       );
     });
   });
@@ -504,7 +502,7 @@ describe("CreditsEditor", () => {
             </BrowserRouter>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
-      </Provider>
+      </Provider>,
     );
 
     await waitFor(() => {
@@ -512,7 +510,7 @@ describe("CreditsEditor", () => {
         expect.objectContaining({
           type: expect.stringContaining("credits/initiateCreditsList"),
           payload: [],
-        })
+        }),
       );
     });
 

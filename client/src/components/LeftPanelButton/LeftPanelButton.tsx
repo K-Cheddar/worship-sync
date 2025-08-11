@@ -3,7 +3,6 @@ import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-documen
 import { forwardRef, FunctionComponent } from "react";
 import cn from "classnames";
 import { borderColorMap, iconColorMap, svgMap } from "../../utils/itemTypeMaps";
-import { Link } from "react-router-dom";
 import "./LeftPanelButton.scss";
 import { formatTime } from "../DisplayWindow/TimerDisplay";
 
@@ -68,6 +67,8 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           color={iconColorMap.get(type)}
           isSelected={isSelected}
           padding="py-1 px-2"
+          component="link"
+          to={to}
         >
           {image && !isActive && (
             <img src={image} className="w-14 max-w-[30%]" alt={title} />
@@ -78,10 +79,6 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
             </span>
           )}
           <p className="font-semibold pl-1">{title}</p>
-          <Link
-            to={to}
-            className="font-semibold w-full h-full flex items-center absolute left-0"
-          />
         </Button>
         {actions &&
           actions.map((action) => (

@@ -69,7 +69,7 @@ export type SlideType =
   | "Section"
   | "Timer"
   | "Announcement"
-  | "Image";
+  | "Media";
 
 export type OverflowMode = "fit" | "separate";
 
@@ -82,7 +82,7 @@ export type ItemSlide = {
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
 };
 
-export type LinkType = "image" | "slide" | "overlay";
+export type LinkType = "media" | "slide" | "overlay";
 
 export type QuickLinkType = {
   label: string;

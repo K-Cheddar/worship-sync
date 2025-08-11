@@ -24,7 +24,7 @@ const ButtonGroup: React.FC<ButtonGroupProps> = ({
         },
         "button-group",
         display ? display : "inline-flex",
-        className
+        className,
       )}
     >
       {children}

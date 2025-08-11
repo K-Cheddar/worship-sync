@@ -24,7 +24,7 @@ const DisplayQRCodeOverlay = forwardRef<
       prevQrCodeOverlayInfo = {},
       shouldAnimate = false,
     },
-    containerRef
+    containerRef,
   ) => {
     const qrCodeOverlayRef = useRef<HTMLDivElement | null>(null);
     const prevQrCodeOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -60,16 +60,16 @@ const DisplayQRCodeOverlay = forwardRef<
               onUpdate: () => {
                 opacity.current = qrCodeOverlayRef.current
                   ? (gsap.getProperty(
-                      qrCodeOverlayRef.current,
-                      "opacity"
-                    ) as number)
+                    qrCodeOverlayRef.current,
+                    "opacity",
+                  ) as number)
                   : 1;
               },
             })
             .to(
               innerElements,
               { xPercent: 0, opacity: 1, duration: 2, ease: "power1.out" },
-              "-=2.25"
+              "-=2.25",
             )
             .to(qrCodeOverlayRef.current, {
               opacity: 0,
@@ -79,23 +79,23 @@ const DisplayQRCodeOverlay = forwardRef<
               onUpdate: () => {
                 opacity.current = qrCodeOverlayRef.current
                   ? (gsap.getProperty(
-                      qrCodeOverlayRef.current,
-                      "opacity"
-                    ) as number)
+                    qrCodeOverlayRef.current,
+                    "opacity",
+                  ) as number)
                   : 1;
               },
             })
             .to(
               innerElements,
               { xPercent: 80, duration: 2, opacity: 0, ease: "power1.out" },
-              "-=1.25"
+              "-=1.25",
             );
         }
       },
       {
         scope: qrCodeOverlayRef,
         dependencies: [qrCodeOverlayInfo, prevQrCodeOverlayInfo],
-      }
+      },
     );
 
     useGSAP(
@@ -123,7 +123,7 @@ const DisplayQRCodeOverlay = forwardRef<
       {
         scope: prevQrCodeOverlayRef,
         dependencies: [prevQrCodeOverlayInfo, opacity],
-      }
+      },
     );
 
     return (
@@ -138,7 +138,7 @@ const DisplayQRCodeOverlay = forwardRef<
               "--overlay-qr-code-info-gap": `${width / 40}vw`,
               "--overlay-qr-code-info-padding":
                 qrCodeOverlayInfo.url && qrCodeOverlayInfo.description
-                  ? `1% 2.5%`
+                  ? "1% 2.5%"
                   : "0",
               "--overlay-qr-code-info-color": qrCodeOverlayInfo.color,
             } as CSSProperties
@@ -168,7 +168,7 @@ const DisplayQRCodeOverlay = forwardRef<
               "--overlay-qr-code-info-gap": `${width / 40}vw`,
               "--overlay-qr-code-info-padding":
                 prevQrCodeOverlayInfo.url && prevQrCodeOverlayInfo.description
-                  ? `1% 2.5%`
+                  ? "1% 2.5%"
                   : "0",
               "--overlay-qr-code-info-color": prevQrCodeOverlayInfo.color,
             } as CSSProperties
@@ -190,7 +190,7 @@ const DisplayQRCodeOverlay = forwardRef<
         </div>
       </>
     );
-  }
+  },
 );
 
 export default DisplayQRCodeOverlay;

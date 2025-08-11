@@ -38,15 +38,15 @@ const LyricsEditor = () => {
 
   const localFormattedLyrics = useMemo(
     () => localArrangements[localSelectedArrangement]?.formattedLyrics || [],
-    [localArrangements, localSelectedArrangement]
+    [localArrangements, localSelectedArrangement],
   );
   const songOrder = useMemo(
     () => localArrangements[localSelectedArrangement]?.songOrder || [],
-    [localArrangements, localSelectedArrangement]
+    [localArrangements, localSelectedArrangement],
   );
   const arrangementName = useMemo(
     () => localArrangements[localSelectedArrangement]?.name || "Master",
-    [localArrangements, localSelectedArrangement]
+    [localArrangements, localSelectedArrangement],
   );
 
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
@@ -113,7 +113,7 @@ const LyricsEditor = () => {
     const sections = sortList(localFormattedLyrics.map(({ name }) => name));
     return {
       availableSections: Array.from(
-        new Set([...sortList(sectionTypes), ...sections])
+        new Set([...sortList(sectionTypes), ...sections]),
       ).map((section) => ({ label: section, value: section })),
       currentSections: sections.map((section) => ({
         label: section,
@@ -124,7 +124,7 @@ const LyricsEditor = () => {
 
   const updateFormattedLyricsAndSongOrder = (
     _lyrics: FormattedLyricsType[],
-    songOrderParam?: SongOrder[]
+    songOrderParam?: SongOrder[],
   ) => {
     const { formattedLyrics: _formattedLyrics, songOrder: _songOrder } =
       updateFormattedSections({
@@ -169,14 +169,14 @@ const LyricsEditor = () => {
         arrangements: _arrangements,
         selectedArrangement: localSelectedArrangement,
       },
-      isMobile
+      isMobile,
     );
 
     dispatch(
       updateArrangements({
         arrangements: _item.arrangements,
         selectedArrangement: localSelectedArrangement,
-      })
+      }),
     );
   };
 

@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import DeleteModal from "../../components/Modal/DeleteModal";
@@ -42,9 +42,11 @@ import {
 } from "../../store/preferencesSlice";
 import { useLocation } from "react-router-dom";
 import cn from "classnames";
-import { updateOverlayPartial } from "../../store/overlaysSlice";
+import { updateOverlay } from "../../store/overlaysSlice";
 import { RootState } from "../../store/store";
 import { fill } from "@cloudinary/url-gen/actions/resize";
+import Toggle from "../../components/Toggle/Toggle";
+import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -84,8 +86,12 @@ const Media = () => {
   const { isLoading } = useSelector(
     (state: RootState) => state.undoable.present.item
   );
-  const { type: selectedOverlayType, id: selectedOverlayId } = useSelector(
+  const { selectedId, list: overlaysList } = useSelector(
     (state: RootState) => state.undoable.present.overlays
+  );
+  const selectedOverlay = useMemo(
+    () => overlaysList.find((overlay) => overlay.id === selectedId),
+    [overlaysList, selectedId]
   );
   const {
     isMediaExpanded,
@@ -100,6 +106,7 @@ const Media = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
+  const [showName, setShowName] = useState(false);
 
   // Filter media items based on search term
   const filteredList = list.filter((item) =>
@@ -135,10 +142,8 @@ const Media = () => {
     getAllItems();
   }, [dispatch, db, cloud]);
 
-  useEffect(() => {
-    if (!updater || !cloud) return;
-
-    const updateMediaList = async (event: CustomEventInit) => {
+  const updateMediaListFromExternal = useCallback(
+    async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
@@ -154,12 +159,21 @@ const Media = () => {
       } catch (e) {
         console.error(e);
       }
+    },
+    [dispatch]
+  );
+
+  useEffect(() => {
+    if (!updater) return;
+
+    updater.addEventListener("update", updateMediaListFromExternal);
+
+    return () => {
+      updater.removeEventListener("update", updateMediaListFromExternal);
     };
+  }, [updater, updateMediaListFromExternal]);
 
-    updater.addEventListener("update", updateMediaList);
-
-    return () => updater.removeEventListener("update", updateMediaList);
-  }, [updater, dispatch, cloud]);
+  useGlobalBroadcast(updateMediaListFromExternal);
 
   useEffect(() => {
     // Reset visibility states when pathname changes
@@ -254,7 +268,7 @@ const Media = () => {
         cloud?.video(public_id).resize(fill().width(250)).toURL() || "";
       thumbnailUrl = smallVideo
         .replace(/\?.*$/, "") // Remove query string
-        .replace(/\/([^\/]+)$/, "/$1.png");
+        .replace(/\/([^/]+)$/, "/$1.png");
     } else {
       thumbnailUrl =
         cloud?.image(public_id).resize(fill().width(250)).toURL() || "";
@@ -378,7 +392,7 @@ const Media = () => {
           className={cn(
             !(
               location.pathname.includes("overlays") &&
-              selectedOverlayType === "image"
+              selectedOverlay?.type === "image"
             ) && "hidden",
             visibleButtons["setImageOverlay"] && "button-appear"
           )}
@@ -386,9 +400,9 @@ const Media = () => {
           onClick={() => {
             if (selectedMedia.background && db) {
               dispatch(
-                updateOverlayPartial({
+                updateOverlay({
                   imageUrl: selectedMedia.background,
-                  id: selectedOverlayId,
+                  id: selectedId,
                 })
               );
             }
@@ -398,7 +412,7 @@ const Media = () => {
               handleButtonVisibility(
                 "setImageOverlay",
                 location.pathname.includes("overlays") &&
-                  selectedOverlayType === "image",
+                  selectedOverlay?.type === "image",
                 selectedMedia.id === ""
               );
             }
@@ -441,25 +455,25 @@ const Media = () => {
           className={cn(
             (!location.pathname.includes("preferences") ||
               tab !== "quickLinks" ||
-              selectedQuickLink?.linkType !== "image") &&
+              selectedQuickLink?.linkType !== "media") &&
               "hidden",
             visibleButtons["setQuickLink"] && "button-appear"
           )}
           svg={BGOne}
           onClick={() => {
-            dispatch(setSelectedQuickLinkImage(selectedMedia.background));
+            dispatch(setSelectedQuickLinkImage(selectedMedia));
           }}
           ref={(el) => {
             if (el) {
               const isVisible = Boolean(
                 location.pathname.includes("preferences") &&
                   tab === "quickLinks" &&
-                  selectedQuickLink?.linkType === "image"
+                  selectedQuickLink?.linkType === "media"
               );
               const isDisabled = Boolean(
                 !selectedQuickLink ||
                   selectedMedia.id === "" ||
-                  selectedQuickLink?.linkType !== "image"
+                  selectedQuickLink?.linkType !== "media"
               );
               handleButtonVisibility("setQuickLink", isVisible, isDisabled);
             }
@@ -508,16 +522,27 @@ const Media = () => {
         </div>
       )}
       {!isMediaLoading && isMediaExpanded && (
-        <div className="px-4 py-2 bg-gray-900 mx-2">
+        <div className="px-4 py-2 bg-gray-900 mx-2 flex items-center max-md:flex-col max-md:gap-4">
           <Input
             type="text"
             label="Search"
             value={searchTerm}
-            onChange={(value) => setSearchTerm(value as string)}
+            onChange={(value) => {
+              setSearchTerm(value as string);
+              if (value) {
+                setShowName(true);
+              }
+            }}
             placeholder="Name"
-            className="flex gap-4 items-center"
+            className="flex gap-4 items-center flex-1"
             inputWidth="w-full"
             inputTextSize="text-sm"
+          />
+          <Toggle
+            className="ml-2"
+            label="Show Name"
+            value={showName}
+            onChange={() => setShowName(!showName)}
           />
         </div>
       )}
@@ -533,7 +558,7 @@ const Media = () => {
           }`}
         >
           {filteredList.map((mediaItem) => {
-            const { id, thumbnail, background, type, name } = mediaItem;
+            const { id, thumbnail, name } = mediaItem;
             const isSelected = id === selectedMedia.id;
             return (
               <li key={id}>
@@ -564,7 +589,7 @@ const Media = () => {
                     />
                   </div>
 
-                  {isMediaExpanded && name && (
+                  {isMediaExpanded && name && showName && (
                     <div className="w-full px-1 py-1 text-center">
                       <p
                         className="text-xs text-gray-300 truncate"

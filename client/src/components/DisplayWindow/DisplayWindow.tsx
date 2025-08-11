@@ -90,7 +90,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       prevFormattedTextDisplayInfo,
       isBoxLocked,
     }: DisplayWindowProps,
-    ref
+    ref,
   ) => {
     const fallbackRef = useRef<HTMLDivElement | null>(null);
     const containerRef = ref || fallbackRef;
@@ -111,16 +111,15 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       if (!shouldPlayVideo || !isDisplay || !showBackground)
         return { videoBox: undefined, desiredVideoUrl: undefined };
       const videoBox = boxes.find(
-        (b) => b.mediaInfo?.type === "video" && b.mediaInfo?.background
+        (b) => b.mediaInfo?.type === "video" && b.mediaInfo?.background,
       );
       return { videoBox, desiredVideoUrl: videoBox?.mediaInfo?.background };
     }, [boxes, isDisplay, showBackground, shouldPlayVideo]);
 
     const [activeVideoUrl, setActiveVideoUrl] = useState<string | undefined>(
-      undefined
+      undefined,
     );
     const [isWindowVideoLoaded, setIsWindowVideoLoaded] = useState(false);
-    const windowVideoRef = useRef<HTMLVideoElement | null>(null);
 
     // Keep the video element mounted and update src only when the URL changes
     useEffect(() => {
@@ -293,7 +292,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         )}
       </div>
     );
-  }
+  },
 );
 
 export default DisplayWindow;

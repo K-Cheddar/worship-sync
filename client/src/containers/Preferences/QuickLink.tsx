@@ -12,7 +12,7 @@ const baseImgUrl =
   "https://res.cloudinary.com/portable-media/image/upload/v1/backgrounds";
 
 const baseLinkTypeOptions = [
-  { label: "Image", value: "image" },
+  { label: "Media", value: "media" },
   { label: "Slide", value: "slide" },
   { label: "Overlay", value: "overlay" },
 ];
@@ -44,7 +44,7 @@ const QuickLink = ({
 }: QuickLinkProps) => {
   const [linkType, setLinkType] = useState<LinkType>(() => {
     if (displayType === "projector") {
-      return _linkType || "image";
+      return _linkType || "media";
     }
     if (displayType === "monitor") {
       return _linkType || "slide";
@@ -52,7 +52,7 @@ const QuickLink = ({
     if (displayType === "stream") {
       return _linkType || "overlay";
     }
-    return "image";
+    return "media";
   });
 
   const linkTypeOptions = useMemo(() => {
@@ -74,6 +74,8 @@ const QuickLink = ({
     }
     return undefined;
   }, [timers, presentationInfo, _linkType]);
+
+  console.log("presentationInfo", presentationInfo);
 
   return (
     <li
@@ -124,17 +126,17 @@ const QuickLink = ({
         }}
       />
 
-      {linkType === "image" && (
+      {linkType === "media" && (
         <QuickLinkButton
-          title="Image"
+          title="Media"
           content={
             presentationInfo?.slide?.boxes[0]?.background?.replace(
               baseImgUrl,
               ""
             ) || ""
           }
-          helpText="Click to select image from media."
-          selectedText="Now select an image and click set."
+          helpText="Click to select media."
+          selectedText="Now select media and click set."
           isSelected={isSelected}
           onClick={setSelectedQuickLink}
         />

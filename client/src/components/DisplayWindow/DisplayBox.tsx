@@ -81,7 +81,7 @@ const DisplayBox = ({
       if (isPrev) {
         if (!skipBackgroundAnimation && shouldShowBackground) {
           boxTimeline.current.set(".display-box-background", {
-            opacity: targetCurrentImgOpacity,
+            opacity: 1,
           });
         }
         boxTimeline.current.fromTo(

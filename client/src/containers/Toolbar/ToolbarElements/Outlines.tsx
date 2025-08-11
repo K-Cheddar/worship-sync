@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { ReactComponent as AddSVG } from "../../../assets/icons/add.svg";
 import { ReactComponent as CheckSVG } from "../../../assets/icons/check.svg";
 import { ReactComponent as ListSVG } from "../../../assets/icons/list.svg";
@@ -27,6 +27,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useGlobalBroadcast } from "../../../hooks/useGlobalBroadcast";
 
 const Services = ({ className }: { className: string }) => {
   const { currentLists, selectedList } = useSelector(
@@ -83,10 +84,8 @@ const Services = ({ className }: { className: string }) => {
     getItemLists();
   }, [db, dispatch, updater]);
 
-  useEffect(() => {
-    if (!updater) return;
-
-    const updateItemLists = async (event: CustomEventInit) => {
+  const updateItemListsFromExternal = useCallback(
+    async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
@@ -99,12 +98,19 @@ const Services = ({ className }: { className: string }) => {
       } catch (e) {
         console.error(e);
       }
-    };
+    },
+    [dispatch]
+  );
 
-    updater.addEventListener("update", updateItemLists);
+  useEffect(() => {
+    if (!updater) return;
+    updater.addEventListener("update", updateItemListsFromExternal);
 
-    return () => updater.removeEventListener("update", updateItemLists);
-  }, [updater, dispatch]);
+    return () =>
+      updater.removeEventListener("update", updateItemListsFromExternal);
+  }, [updater, updateItemListsFromExternal]);
+
+  useGlobalBroadcast(updateItemListsFromExternal);
 
   const _updateItemLists = (list: ItemList) => {
     dispatch(

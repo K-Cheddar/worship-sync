@@ -7,7 +7,7 @@ import { ReactComponent as SyncSVG } from "../../assets/icons/sync-alt.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { DBCredits } from "../../types";
+import { DBCredits, DBItemListDetails, ItemLists } from "../../types";
 import {
   initiateCreditsList,
   initiateCreditsScene,
@@ -24,7 +24,6 @@ import Spinner from "../../components/Spinner/Spinner";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import Button from "../../components/Button/Button";
 import cn from "classnames";
-import { Link } from "react-router-dom";
 import { onValue, ref } from "firebase/database";
 import PopOver from "../../components/PopOver/PopOver";
 import Input from "../../components/Input/Input";
@@ -32,11 +31,15 @@ import "./CreditsEditor.scss";
 import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
 import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
+import { setItemListIsLoading } from "../../store/itemListSlice";
+import { initiateOverlayList } from "../../store/overlaysSlice";
+import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 
 const CreditsEditor = () => {
   const { list, transitionScene, creditsScene, scheduleName } = useSelector(
     (state) => state.undoable.present.credits
   );
+
   const { list: overlays } = useSelector(
     (state) => state.undoable.present.overlays
   );
@@ -48,6 +51,30 @@ const CreditsEditor = () => {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [justGenerated, setJustGenerated] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+
+  useEffect(() => {
+    const getItemList = async () => {
+      if (!db) return;
+      dispatch(setItemListIsLoading(true));
+      try {
+        const itemListsResponse: ItemLists | undefined =
+          await db?.get("ItemLists");
+        const selectedList = itemListsResponse?.selectedList;
+        const response: DBItemListDetails | undefined = await db?.get(
+          selectedList._id
+        );
+        const overlays = response?.overlays || [];
+
+        dispatch(initiateOverlayList(overlays));
+      } catch (e) {
+        console.error(e);
+      }
+      dispatch(setItemListIsLoading(false));
+    };
+    if (overlays.length === 0) {
+      getItemList();
+    }
+  }, [overlays.length, dispatch, db]);
 
   useEffect(() => {
     const getCredits = async () => {
@@ -68,9 +95,8 @@ const CreditsEditor = () => {
     getCredits();
   }, [db, dispatch]);
 
-  useEffect(() => {
-    if (!updater) return;
-    const updateAllItemsAndList = async (event: CustomEventInit) => {
+  const updateCreditsListFromExternal = useCallback(
+    async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
@@ -84,12 +110,20 @@ const CreditsEditor = () => {
       } catch (e) {
         console.error(e);
       }
-    };
+    },
+    [dispatch]
+  );
 
-    updater.addEventListener("update", updateAllItemsAndList);
+  useEffect(() => {
+    if (!updater) return;
 
-    return () => updater.removeEventListener("update", updateAllItemsAndList);
-  }, [updater, dispatch]);
+    updater.addEventListener("update", updateCreditsListFromExternal);
+
+    return () =>
+      updater.removeEventListener("update", updateCreditsListFromExternal);
+  }, [updater, updateCreditsListFromExternal]);
+
+  useGlobalBroadcast(updateCreditsListFromExternal);
 
   useEffect(() => {
     const getCreditsFromFirebase = async () => {
@@ -200,10 +234,11 @@ const CreditsEditor = () => {
           overlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("offertory")
           )?.name || "",
-        special:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("special")
-          )?.name || "",
+        special: overlays
+          .filter((overlay) => overlay.event?.toLowerCase().includes("special"))
+          .map((overlay) => overlay.name)
+          .join("\n")
+          .trim(),
         sermon:
           overlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("sermon")
@@ -310,8 +345,8 @@ const CreditsEditor = () => {
         {isGenerating
           ? "Generating Credits..."
           : justGenerated
-          ? "Generated Credits!"
-          : "Generate Credits"}
+            ? "Generated Credits!"
+            : "Generate Credits"}
       </Button>
     </>
   );
@@ -323,10 +358,14 @@ const CreditsEditor = () => {
     >
       <div>
         <div className="bg-gray-800 w-full px-4 py-1 flex gap-2 items-center">
-          <Button variant="tertiary" className="w-fit" padding="p-0">
-            <Link className="h-full w-full px-2 py-1" to="/">
-              <BackArrowSVG />
-            </Link>
+          <Button
+            variant="tertiary"
+            className="w-fit"
+            padding="p-0"
+            component="link"
+            to="/"
+          >
+            <BackArrowSVG />
           </Button>
           <div className="border-l-2 border-gray-400 pl-4">
             <Undo />

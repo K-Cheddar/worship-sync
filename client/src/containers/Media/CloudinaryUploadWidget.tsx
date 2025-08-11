@@ -110,13 +110,13 @@ const CloudinaryUploadWidget = ({
 
   const initializeCloudinaryWidget = () => {
     if (loaded) {
-      var myWidget = window.cloudinary.createUploadWidget(
+      const myWidget = window.cloudinary.createUploadWidget(
         uwConfig,
         (error: any, result: any) => {
           if (!error && result && result.event === "success") {
             onComplete(result.info);
           }
-        }
+        },
       );
 
       myWidget.open();

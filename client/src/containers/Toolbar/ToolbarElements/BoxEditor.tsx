@@ -38,7 +38,7 @@ const BoxEditor = ({
   }, [boxes, selectedBox]);
 
   const [shouldApplyToAll, setShouldApplyToAll] = useState(
-    item.type === "free" ? false : true
+    item.type === "free" ? false : true,
   );
 
   useEffect(() => {
@@ -68,7 +68,7 @@ const BoxEditor = ({
 
   const handleInputChange = (
     field: "x" | "y" | "width" | "height",
-    value: string
+    value: string,
   ) => {
     let numValue = parseFloat(value);
     if (field === "x" || field === "y") {

@@ -15,7 +15,7 @@ type DisplayStreamFormattedTextProps = {
 
 const generateFormattedTextStyles = (
   width: number,
-  displayInfo?: FormattedTextDisplayInfo
+  displayInfo?: FormattedTextDisplayInfo,
 ): CSSProperties =>
   ({
     "--formatted-text-background-color":
@@ -56,14 +56,14 @@ const DisplayStreamFormattedText = ({
           {
             opacity: 0,
           },
-          { opacity: 1, duration: 0.35, ease: "power1.inOut" }
+          { opacity: 1, duration: 0.35, ease: "power1.inOut" },
         );
       }
     },
     {
       scope: formattedTextRef,
       dependencies: [formattedTextDisplayInfo, isPrev],
-    }
+    },
   );
 
   useGSAP(
@@ -78,14 +78,14 @@ const DisplayStreamFormattedText = ({
           {
             opacity: 1,
           },
-          { opacity: 0, duration: 0.35, ease: "power1.inOut" }
+          { opacity: 0, duration: 0.35, ease: "power1.inOut" },
         );
       }
     },
     {
       scope: prevFormattedTextRef,
       dependencies: [prevFormattedTextDisplayInfo],
-    }
+    },
   );
 
   const renderContent = (text: string) => {

@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+build/
+dist/
+
+# Build outputs
+*.min.js
+*.bundle.js
+
+# Generated files
+service-worker.js
+serviceWorkerRegistration.js
+
+# Test coverage
+coverage/
+
+# Environment files
+.env*
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

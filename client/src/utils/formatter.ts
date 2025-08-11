@@ -7,14 +7,14 @@ import {
 import { formatBible, formatFree, formatSong } from "./overflow";
 
 const getSlidesFromItem = (item: ItemState) => {
-  let { selectedSlide } = item;
+  const { selectedSlide } = item;
   let slides;
   if (item.type === "song") {
     slides = item.arrangements[item.selectedArrangement].slides || null;
   } else {
     slides = item.slides || null;
   }
-  let slide = slides ? slides[selectedSlide] : null;
+  const slide = slides ? slides[selectedSlide] : null;
   return { slides, slide };
 };
 
@@ -75,7 +75,7 @@ export const updateBoxProperties = ({
       {
         ..._item,
       },
-      isMobile
+      isMobile,
     );
   }
 
@@ -147,7 +147,7 @@ export const updateFormattedTextDisplayInfo = ({
 }: UpdateFormattedTextDisplayInfoType): ItemState => {
   const { slides, selectedSlide } = item;
 
-  let updatedSlides = slides.map((slide, slideIndex) => {
+  const updatedSlides = slides.map((slide, slideIndex) => {
     if (slideIndex !== selectedSlide && !shouldApplyToAll) return slide;
     return { ...slide, formattedTextDisplayInfo: formattedTextDisplayInfo };
   });

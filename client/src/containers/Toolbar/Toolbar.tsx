@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { ReactComponent as SettingsSVG } from "../../assets/icons/settings.svg";
 import { ReactComponent as EditSquareSVG } from "../../assets/icons/edit-square.svg";
 import { ReactComponent as TimerSVG } from "../../assets/icons/timer.svg";
@@ -123,10 +123,10 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
               className={cn(section !== "settings" && "hidden")}
               variant="tertiary"
               svg={SettingsSVG}
+              component="link"
+              to="/controller/preferences"
             >
-              <Link className="h-full w-full" to="/controller/preferences">
-                Preferences
-              </Link>
+              Preferences
             </Button>
             <QuickLinkSelection isMobile={isMobile} />
             <SlideEditTools

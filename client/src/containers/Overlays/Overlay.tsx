@@ -18,7 +18,7 @@ import {
 import { OverlayInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 
 type OverlayProps = {
@@ -39,6 +39,8 @@ const Overlay = ({
   const previousOverlay = useRef<OverlayInfo | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const overlayRef = useRef<HTMLLIElement | null>(null);
+
+  // const [debouncedOverlay, setDebouncedOverlay] = useState(overlay);
 
   const isSelected = selectedId === overlay.id;
   const hasData =
@@ -61,9 +63,17 @@ const Overlay = ({
     transition,
   };
 
-  useEffect(() => {
-    previousOverlay.current = overlay;
-  }, [overlay]);
+  // useDebouncedEffect(
+  //   () => {
+  //     setDebouncedOverlay((prev) => {
+  //       previousOverlay.current = prev;
+  //       return overlay;
+  //     });
+  //   },
+  //   [overlay],
+  //   500,
+  //   true
+  // );
 
   useGSAP(
     () => {
@@ -84,22 +94,24 @@ const Overlay = ({
           previousOverlay.current.duration !== overlay.duration ||
           previousOverlay.current.imageUrl !== overlay.imageUrl)
       ) {
-        gsap
-          .timeline()
-          .fromTo(
-            overlayRef.current,
-            { backgroundColor: overlayRef.current.style.backgroundColor },
-            {
-              backgroundColor: "rgba(255, 255, 255, 0.75)",
-              duration: 0.5,
-              ease: "power1.inOut",
-            }
-          )
-          .to(overlayRef.current, {
-            backgroundColor: overlayRef.current.style.backgroundColor,
-            duration: 0.5,
-            ease: "power1.inOut",
-          });
+        // TODO - See if this can be done nicely with the update changes.
+        // Right now it is too loud
+        // gsap
+        //   .timeline()
+        //   .fromTo(
+        //     overlayRef.current,
+        //     { backgroundColor: overlayRef.current.style.backgroundColor },
+        //     {
+        //       backgroundColor: "rgba(255, 255, 255, 0.75)",
+        //       duration: 0.5,
+        //       ease: "power1.inOut",
+        //     }
+        //   )
+        //   .to(overlayRef.current, {
+        //     backgroundColor: overlayRef.current.style.backgroundColor,
+        //     duration: 0.5,
+        //     ease: "power1.inOut",
+        //   });
       } else if (isDeleting) {
         // delete animation
         gsap.timeline().fromTo(
@@ -168,7 +180,7 @@ const Overlay = ({
         className="flex-col flex-1 h-full leading-4 text-center"
         padding="px-2 py-1.5"
         gap="gap-1"
-        onClick={() => dispatch(selectOverlay(overlay))}
+        onClick={() => dispatch(selectOverlay(overlay.id))}
       >
         {overlay.type === "participant" && (
           <>

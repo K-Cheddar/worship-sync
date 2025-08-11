@@ -16,7 +16,7 @@ const ButtonGroupItem = forwardRef<HTMLButtonElement, ButtonGroupItemProps>(
         {...props}
       />
     );
-  }
+  },
 );
 
 ButtonGroupItem.displayName = "ButtonGroupItem";

@@ -80,13 +80,13 @@ const CreateItem = () => {
 
   const [searchParams] = useSearchParams();
   const initialType = decodeURI(
-    searchParams.get("type") || savedType || "song"
+    searchParams.get("type") || savedType || "song",
   );
   const initialName = decodeURI(searchParams.get("name") || savedName || "");
   const [text, setText] = useState<string>(savedText);
   const [selectedType, setSelectedType] = useState<string>(initialType);
   const [itemTypes, setItemTypes] = useState<ItemTypesType[]>(
-    types.map((type) => ({ ...type, selected: type.type === initialType }))
+    types.map((type) => ({ ...type, selected: type.type === initialType })),
   );
   const [itemName, setItemName] = useState<string>(initialName);
   const [duration, setDuration] = useState<number>(60);
@@ -105,7 +105,7 @@ const CreateItem = () => {
       return (list as ServiceItem[]).find(
         (item) =>
           item.name.toLowerCase().trim() === itemName.toLowerCase().trim() &&
-          item.type === selectedType
+          item.type === selectedType,
       );
     }
     return undefined;
@@ -124,7 +124,7 @@ const CreateItem = () => {
     dispatch(addItemToAllItemsList(listItem));
   };
 
-  const createItem = async () => {
+  const createItem = async() => {
     if (selectedType === "song") {
       const { formattedLyrics: _formattedLyrics, songOrder: _songOrder } =
         createSections({
@@ -170,7 +170,7 @@ const CreateItem = () => {
           name: itemName,
           type: selectedType,
           text,
-        })
+        }),
       );
       naviagte(`/controller/bible?name=${encodeURI(itemName)}`);
     }
@@ -255,7 +255,7 @@ const CreateItem = () => {
                     prev.map((item) => ({
                       ...item,
                       selected: item.type === itemType.type,
-                    }))
+                    })),
                   );
                 }}
               />
@@ -314,7 +314,7 @@ const CreateItem = () => {
                     setDuration(
                       Number(val) * 3600 +
                         Math.floor((duration % 3600) / 60) * 60 +
-                        (duration % 60)
+                        (duration % 60),
                     )
                   }
                   data-ignore-undo="true"
@@ -330,7 +330,7 @@ const CreateItem = () => {
                     setDuration(
                       Math.floor(duration / 3600) * 3600 +
                         Number(val) * 60 +
-                        (duration % 60)
+                        (duration % 60),
                     )
                   }
                   data-ignore-undo="true"
@@ -346,7 +346,7 @@ const CreateItem = () => {
                     setDuration(
                       Math.floor(duration / 3600) * 3600 +
                         Math.floor((duration % 3600) / 60) * 60 +
-                        Number(val)
+                        Number(val),
                     )
                   }
                   data-ignore-undo="true"

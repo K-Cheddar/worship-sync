@@ -94,7 +94,7 @@ const Bible = () => {
   const [justAdded, setJustAdded] = useState(false);
   const [isLoadingChapter, setIsLoadingChapter] = useState(false);
   const [fetchedChapters, setFetchedChapters] = useState<Set<string>>(
-    new Set()
+    new Set(),
   );
 
   const createItemName = decodeURI(searchParams.get("name") || "");
@@ -122,7 +122,7 @@ const Bible = () => {
 
   useDebouncedEffect(
     () => {
-      const getChapter = async () => {
+      const getChapter = async() => {
         const bookName = books[book]?.name || "";
         const chapterName = books[book]?.chapters?.[chapter]?.name || "";
         if (bibleDb && bookName && chapterName) {
@@ -212,16 +212,16 @@ const Bible = () => {
     },
     [chapter, dispatch, bibleDb, version, books, book],
     500,
-    true
+    true,
   );
 
   const versionOptions = bibleVersions.map(({ value, label }) => {
     return { value, label };
   });
 
-  const submitVerses = async () => {
-    let versesToUse = verses.filter(
-      ({ index }) => index >= startVerse && index <= endVerse
+  const submitVerses = async() => {
+    const versesToUse = verses.filter(
+      ({ index }) => index >= startVerse && index <= endVerse,
     );
 
     const item = await createNewBible({
@@ -255,8 +255,8 @@ const Bible = () => {
     setTimeout(() => setJustAdded(false), 2000);
   };
 
-  const sendVerse = async (verse: verseType) => {
-    let verseToUse = verse;
+  const sendVerse = async(verse: verseType) => {
+    const verseToUse = verse;
 
     const bookName = books[book]?.name || "";
     const chapterName = chapters[chapter]?.name || "";
@@ -288,14 +288,14 @@ const Bible = () => {
       updateBibleDisplayInfo({
         title,
         text,
-      })
+      }),
     );
     dispatch(
       updatePresentation({
         slide: slides[1],
         type: "bible",
         name: createItemName || bibleItemName,
-      })
+      }),
     );
   };
 
@@ -417,53 +417,53 @@ const Bible = () => {
         {isMobile && showVersesDisplaySection && versesDisplaySection}
         {((isMobile && !showVersesDisplaySection) || !isMobile) &&
           !!books.length && (
-            <div className="bible-section-container">
-              <BibleSection
-                initialList={books as bookType[]}
-                setValue={(val) => dispatch(setBook(val))}
-                searchValue={searchValues.book}
-                setSearchValue={(val) =>
-                  dispatch(setSearchValue({ type: "book", value: val }))
-                }
-                value={book}
-                type="book"
-              />
-              <BibleSection
-                initialList={chapters as chapterType[]}
-                setValue={(val) => dispatch(setChapter(val))}
-                searchValue={searchValues.chapter}
-                setSearchValue={(val) =>
-                  dispatch(setSearchValue({ type: "chapter", value: val }))
-                }
-                value={chapter}
-                type="chapter"
-              />
-              <BibleSection
-                initialList={verses as verseType[]}
-                setValue={(val) => dispatch(setStartVerse(val))}
-                searchValue={searchValues.startVerse}
-                setSearchValue={(val) =>
-                  dispatch(setSearchValue({ type: "startVerse", value: val }))
-                }
-                value={startVerse}
-                type="verse"
-                label="Start"
-              />
-              <BibleSection
-                initialList={verses as verseType[]}
-                setValue={(val) => dispatch(setEndVerse(val))}
-                searchValue={searchValues.endVerse}
-                setSearchValue={(val) =>
-                  dispatch(setSearchValue({ type: "endVerse", value: val }))
-                }
-                value={endVerse}
-                type="verse"
-                min={startVerse}
-                label="End"
-              />
-              {!isMobile && versesDisplaySection}
-            </div>
-          )}
+          <div className="bible-section-container">
+            <BibleSection
+              initialList={books as bookType[]}
+              setValue={(val) => dispatch(setBook(val))}
+              searchValue={searchValues.book}
+              setSearchValue={(val) =>
+                dispatch(setSearchValue({ type: "book", value: val }))
+              }
+              value={book}
+              type="book"
+            />
+            <BibleSection
+              initialList={chapters as chapterType[]}
+              setValue={(val) => dispatch(setChapter(val))}
+              searchValue={searchValues.chapter}
+              setSearchValue={(val) =>
+                dispatch(setSearchValue({ type: "chapter", value: val }))
+              }
+              value={chapter}
+              type="chapter"
+            />
+            <BibleSection
+              initialList={verses as verseType[]}
+              setValue={(val) => dispatch(setStartVerse(val))}
+              searchValue={searchValues.startVerse}
+              setSearchValue={(val) =>
+                dispatch(setSearchValue({ type: "startVerse", value: val }))
+              }
+              value={startVerse}
+              type="verse"
+              label="Start"
+            />
+            <BibleSection
+              initialList={verses as verseType[]}
+              setValue={(val) => dispatch(setEndVerse(val))}
+              searchValue={searchValues.endVerse}
+              setSearchValue={(val) =>
+                dispatch(setSearchValue({ type: "endVerse", value: val }))
+              }
+              value={endVerse}
+              type="verse"
+              min={startVerse}
+              label="End"
+            />
+            {!isMobile && versesDisplaySection}
+          </div>
+        )}
       </div>
     </>
   );

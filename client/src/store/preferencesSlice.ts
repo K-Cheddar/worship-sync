@@ -5,6 +5,8 @@ import {
   ScrollbarWidth,
   Presentation,
   QuickLinkType,
+  DBPreferences,
+  MediaType,
 } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
@@ -192,20 +194,21 @@ export const preferencesSlice = createSlice({
       state.selectedQuickLink =
         state.quickLinks.find((ql) => ql.id === action.payload) || null;
     },
-    setSelectedQuickLinkImage: (state, action: PayloadAction<string>) => {
+    setSelectedQuickLinkImage: (state, action: PayloadAction<MediaType>) => {
       state.quickLinks.map((ql) => {
         if (ql.id === state.selectedQuickLink?.id) {
           ql.presentationInfo = {
-            type: "image",
+            type: "media",
             name: state.selectedQuickLink?.label || "",
             slide: {
-              type: "Image",
+              type: "Media",
               name: "",
               id: generateRandomId(),
               boxes: [
                 {
                   id: generateRandomId(),
-                  background: action.payload,
+                  background: action.payload.background,
+                  mediaInfo: action.payload,
                   height: 100,
                   width: 100,
                 },
@@ -301,6 +304,17 @@ export const preferencesSlice = createSlice({
         action.payload.defaultIsMediaExpanded || initialState.isMediaExpanded;
       state.bibleFontMode =
         action.payload.defaultBibleFontMode || initialState.bibleFontMode;
+    },
+
+    updatePreferencesFromRemote: (
+      state,
+      action: PayloadAction<DBPreferences>
+    ) => {
+      state.preferences = {
+        ...state.preferences,
+        ...action.payload.preferences,
+      };
+      state.quickLinks = action.payload.quickLinks;
     },
 
     // Temporary Preferences Below
@@ -416,6 +430,7 @@ export const {
   setSelectedPreference,
   setBibleFontMode,
   setScrollbarWidth,
+  updatePreferencesFromRemote,
 } = preferencesSlice.actions;
 
 export default preferencesSlice.reducer;

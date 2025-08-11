@@ -11,10 +11,10 @@ const ChangelogModal = ({ isOpen, onClose }: ChangelogModalProps) => {
   const [changelogContent, setChangelogContent] = useState("");
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchChangelog = useCallback(async () => {
+  const fetchChangelog = useCallback(async() => {
     try {
       const response = await fetch(
-        `${process.env.REACT_APP_API_BASE_PATH}api/changelog`
+        `${process.env.REACT_APP_API_BASE_PATH}api/changelog`,
       );
       const text = await response.text();
       setChangelogContent(text);

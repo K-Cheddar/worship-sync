@@ -64,7 +64,7 @@ const Credit = ({
             opacity: 0,
             duration: 0.5,
             ease: "power1.inOut",
-          }
+          },
         );
       }
       // else if (!initialList.includes(id)) {
@@ -84,7 +84,7 @@ const Credit = ({
       //   );
       // }
     },
-    { scope: creditRef, dependencies: [isDeleting] }
+    { scope: creditRef, dependencies: [isDeleting] },
   );
 
   const deleteOverlayHandler = () => {
@@ -104,7 +104,7 @@ const Credit = ({
       className={cn(
         "flex items-center rounded-lg w-full overflow-clip leading-3 bg-gray-800",
         hidden ? "opacity-50" : "",
-        selectedCreditId === id && "bg-gray-950"
+        selectedCreditId === id && "bg-gray-950",
       )}
       ref={(element) => {
         setNodeRef(element);
@@ -132,7 +132,7 @@ const Credit = ({
           value={heading}
           onChange={(val) => {
             dispatch(
-              updateCredit({ id, heading: val as string, text, hidden })
+              updateCredit({ id, heading: val as string, text, hidden }),
             );
           }}
           data-ignore-undo="true"
@@ -147,7 +147,7 @@ const Credit = ({
           data-ignore-undo="true"
           onChange={(val) => {
             dispatch(
-              updateCredit({ id, heading, text: val as string, hidden })
+              updateCredit({ id, heading, text: val as string, hidden }),
             );
           }}
         />

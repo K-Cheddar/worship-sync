@@ -7,13 +7,13 @@ export const VERSION_UPDATE_DISMISSED_KEY =
 export const CHANGELOG_CACHE_KEY = "worshipSync_changelogCache";
 
 // Function to fetch and parse changelog for versions between current and new version
-export const getChangelogForVersion = async (
+export const getChangelogForVersion = async(
   newVersion: string,
-  currentVersion?: string
+  currentVersion?: string,
 ): Promise<string | null> => {
   try {
     const response = await fetch(
-      `${process.env.REACT_APP_API_BASE_PATH}api/changelog`
+      `${process.env.REACT_APP_API_BASE_PATH}api/changelog`,
     );
     if (!response.ok) {
       throw new Error("Failed to fetch changelog");
@@ -24,7 +24,7 @@ export const getChangelogForVersion = async (
     // Parse the changelog to find all versions between current and new
     const lines = changelogContent.split("\n");
     let inRelevantSection = false;
-    let changelogSections: string[] = [];
+    const changelogSections: string[] = [];
     let currentSection: string[] = [];
 
     for (const line of lines) {
@@ -86,7 +86,7 @@ export const getChangelogForVersion = async (
 // Helper function to check if a version is newer
 export const isNewerVersion = (
   newVersion: string,
-  currentVersion: string
+  currentVersion: string,
 ): boolean => {
   const v1Parts = newVersion.split(".").map(Number);
   const v2Parts = currentVersion.split(".").map(Number);
@@ -113,7 +113,7 @@ export const markVersionUpdateDismissed = (version: string): void => {
       JSON.stringify({
         version,
         timestamp: Date.now(),
-      })
+      }),
     );
   } catch (error) {
     console.error("Error marking version as dismissed:", error);
@@ -175,7 +175,7 @@ export const cacheChangelog = (version: string, changelog: string): void => {
         version,
         changelog,
         timestamp: Date.now(),
-      })
+      }),
     );
   } catch (error) {
     console.error("Error caching changelog:", error);

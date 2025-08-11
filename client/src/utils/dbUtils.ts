@@ -24,10 +24,10 @@ type propsType = {
   allItems: DBAllItems;
 };
 
-export const deleteUnusedBibleItems = async ({ db, allItems }: propsType) => {
+export const deleteUnusedBibleItems = async({ db, allItems }: propsType) => {
   const items = allItems.items;
 
-  let bibleItems = items.filter((item) => item.type === "bible");
+  const bibleItems = items.filter((item) => item.type === "bible");
 
   const allItemLists: DBItemLists | undefined = await db.get("ItemLists");
   const itemLists = allItemLists?.itemLists || [];
@@ -37,21 +37,21 @@ export const deleteUnusedBibleItems = async ({ db, allItems }: propsType) => {
     const listDetails: DBItemListDetails = await db.get(itemList._id);
     const listItems = listDetails?.items || [];
     bibleItemsInLists.push(
-      ...listItems.filter((item) => item.type === "bible")
+      ...listItems.filter((item) => item.type === "bible"),
     );
   }
 
   const bibleItemsToBeDeleted = bibleItems.filter(
     (bibleItem) =>
       !bibleItemsInLists.some(
-        (bibleItemInList) => bibleItemInList._id === bibleItem._id
-      )
+        (bibleItemInList) => bibleItemInList._id === bibleItem._id,
+      ),
   );
 
   if (bibleItemsToBeDeleted.length === 0) return; // nothing to delete
 
   const updatedItems = items.filter(
-    (item) => !bibleItemsToBeDeleted.includes(item)
+    (item) => !bibleItemsToBeDeleted.includes(item),
   );
 
   // Remove bible items from all items and delete them individually
@@ -66,7 +66,7 @@ export const deleteUnusedBibleItems = async ({ db, allItems }: propsType) => {
   }
 };
 
-export const updateAllDocs = async (dispatch: Function) => {
+export const updateAllDocs = async(dispatch: Function) => {
   if (!globalDb) return;
   try {
     const allDocs: allDocsType = (await globalDb.allDocs({
@@ -101,10 +101,10 @@ export const updateAllDocs = async (dispatch: Function) => {
   }
 };
 
-export const formatAllDocs = async (
+export const formatAllDocs = async(
   db: PouchDB.Database,
   cloud: Cloudinary,
-  isMobile: boolean
+  isMobile: boolean,
 ) => {
   if (!db) return;
   try {
@@ -117,7 +117,7 @@ export const formatAllDocs = async (
         (row.doc as any)?.type === "song" ||
         (row.doc as any)?.type === "free" ||
         (row.doc as any)?.type === "timer" ||
-        (row.doc as any)?.type === "bible"
+        (row.doc as any)?.type === "bible",
     );
 
     for (const item of allItems) {
@@ -125,7 +125,7 @@ export const formatAllDocs = async (
         const formattedItem = formatItemInfo(
           item.doc as DBItem,
           cloud,
-          isMobile
+          isMobile,
         );
         const updatedItem = {
           ...item.doc,
@@ -152,10 +152,10 @@ export const formatAllDocs = async (
   }
 };
 
-export const formatAllSongs = async (
+export const formatAllSongs = async(
   db: PouchDB.Database,
   cloud: Cloudinary,
-  isMobile: boolean
+  isMobile: boolean,
 ) => {
   if (!db) return;
   try {
@@ -190,9 +190,9 @@ export const formatAllSongs = async (
   }
 };
 
-export const formatAllItems = async (
+export const formatAllItems = async(
   db: PouchDB.Database,
-  cloud: Cloudinary
+  cloud: Cloudinary,
 ) => {
   if (!db) return;
   try {
