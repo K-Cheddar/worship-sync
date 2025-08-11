@@ -38,6 +38,9 @@ export const ControllerInfoContext =
 
 export let globalDb: PouchDB.Database | undefined = undefined;
 export let globalBibleDb: PouchDB.Database | undefined = undefined;
+export let globalBroadcastRef: BroadcastChannel = new BroadcastChannel(
+  "local-app-updates"
+);
 
 export type CouchResponse = {
   success: boolean;

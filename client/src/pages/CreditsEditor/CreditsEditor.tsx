@@ -33,6 +33,7 @@ import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
 import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
 import { setItemListIsLoading } from "../../store/itemListSlice";
 import { initiateOverlayList } from "../../store/overlaysSlice";
+import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 
 const CreditsEditor = () => {
   const { list, transitionScene, creditsScene, scheduleName } = useSelector(
@@ -94,9 +95,8 @@ const CreditsEditor = () => {
     getCredits();
   }, [db, dispatch]);
 
-  useEffect(() => {
-    if (!updater) return;
-    const updateAllItemsAndList = async (event: CustomEventInit) => {
+  const updateCreditsListFromExternal = useCallback(
+    async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
@@ -110,12 +110,20 @@ const CreditsEditor = () => {
       } catch (e) {
         console.error(e);
       }
-    };
+    },
+    [dispatch]
+  );
 
-    updater.addEventListener("update", updateAllItemsAndList);
+  useEffect(() => {
+    if (!updater) return;
 
-    return () => updater.removeEventListener("update", updateAllItemsAndList);
-  }, [updater, dispatch]);
+    updater.addEventListener("update", updateCreditsListFromExternal);
+
+    return () =>
+      updater.removeEventListener("update", updateCreditsListFromExternal);
+  }, [updater, updateCreditsListFromExternal]);
+
+  useGlobalBroadcast(updateCreditsListFromExternal);
 
   useEffect(() => {
     const getCreditsFromFirebase = async () => {

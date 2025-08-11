@@ -62,6 +62,7 @@ import {
   updatePreferencesFromRemote,
 } from "../../store/preferencesSlice";
 import { setIsEditMode } from "../../store/itemSlice";
+import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 
 // Here for future to implement resizable
 
@@ -185,14 +186,14 @@ const Controller = () => {
     getItemList();
   }, [dispatch, db, selectedList, cloud]);
 
-  useEffect(() => {
-    if (!updater || !selectedList) return;
-    const updateAllItemsAndList = async (event: CustomEventInit) => {
+  const updateAllItemsAndListFromExternal = useCallback(
+    async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
+        console.log("updates", event);
         for (const _update of updates) {
           // check if the list we have selected was updated
-          if (_update._id === selectedList._id) {
+          if (selectedList && _update._id === selectedList._id) {
             console.log("updating selected item list from remote", event);
             const update = _update as DBItemListDetails;
             const itemList = update.items;
@@ -216,17 +217,23 @@ const Controller = () => {
       } catch (e) {
         console.error(e);
       }
-    };
-
-    updater.addEventListener("update", updateAllItemsAndList);
-
-    return () => updater.removeEventListener("update", updateAllItemsAndList);
-  }, [updater, dispatch, cloud, selectedList]);
+    },
+    [dispatch, cloud, selectedList]
+  );
 
   useEffect(() => {
     if (!updater) return;
 
-    const updatePreferences = async (event: CustomEventInit) => {
+    updater.addEventListener("update", updateAllItemsAndListFromExternal);
+
+    return () =>
+      updater.removeEventListener("update", updateAllItemsAndListFromExternal);
+  }, [updater, updateAllItemsAndListFromExternal]);
+
+  useGlobalBroadcast(updateAllItemsAndListFromExternal);
+
+  const updatePreferencesFromExternal = useCallback(
+    async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
@@ -239,12 +246,20 @@ const Controller = () => {
       } catch (e) {
         console.error(e);
       }
-    };
+    },
+    [dispatch]
+  );
 
-    updater.addEventListener("update", updatePreferences);
+  useEffect(() => {
+    if (!updater) return;
 
-    return () => updater.removeEventListener("update", updatePreferences);
-  }, [updater, dispatch]);
+    updater.addEventListener("update", updatePreferencesFromExternal);
+
+    return () =>
+      updater.removeEventListener("update", updatePreferencesFromExternal);
+  }, [updater, updatePreferencesFromExternal]);
+
+  useGlobalBroadcast(updatePreferencesFromExternal);
 
   const controllerRef = useCallback(
     (node: HTMLDivElement) => {

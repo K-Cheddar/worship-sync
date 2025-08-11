@@ -1,11 +1,10 @@
 import Button from "../../components/Button/Button";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
-import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   addOverlay,
-  setOverlayId,
+  selectOverlay,
   updateInitialList,
   updateList,
   updateOverlay,
@@ -48,39 +47,31 @@ const colorOptions = [
 ];
 
 const Overlays = () => {
-  const {
-    list,
-    id,
-    name,
-    title,
-    event,
-    heading,
-    subHeading,
-    url,
-    description,
-    color,
-    duration,
-    type,
-    imageUrl,
-    initialList,
-  } = useSelector((state: RootState) => state.undoable.present.overlays);
+  const { list, selectedId, initialList } = useSelector(
+    (state: RootState) => state.undoable.present.overlays
+  );
   const { isStreamTransmitting } = useSelector(
     (state: RootState) => state.presentation
   );
   const { isLoading } = useSelector(
     (state: RootState) => state.undoable.present.itemList
   );
-  const [localName, setLocalName] = useState(name || "#16a34a");
-  const [localTitle, setLocalTitle] = useState(title || "");
-  const [localEvent, setLocalEvent] = useState(event || "");
-  const [localHeading, setLocalHeading] = useState(heading || "");
-  const [localSubHeading, setLocalSubHeading] = useState(subHeading || "");
-  const [localUrl, setLocalUrl] = useState(url || "");
-  const [localDescription, setLocalDescription] = useState(description || "");
-  const [localColor, setLocalColor] = useState(color || "");
-  const [localDuration, setLocalDuration] = useState(duration || 7);
-  const [localImageUrl, setLocalImageUrl] = useState(imageUrl || "");
-  const [localType, setLocalType] = useState(type);
+
+  const selectedOverlay = list.find((overlay) => overlay.id === selectedId) || {
+    name: "",
+    url: "",
+    type: "participant",
+    duration: 7,
+    color: "",
+    imageUrl: "",
+    heading: "",
+    subHeading: "",
+    event: "",
+    title: "",
+    description: "",
+    id: "",
+  };
+
   const dispatch = useDispatch();
   const { isMobile } = useContext(ControllerInfoContext) || {};
 
@@ -88,34 +79,6 @@ const Overlays = () => {
   const [overlayHeaderHeight, setOverlayHeaderHeight] = useState(0);
   const [showPreview, setShowPreview] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
-  const [justUpdated, setJustUpdated] = useState(false);
-
-  useEffect(() => {
-    setLocalName(name || "");
-    setLocalTitle(title || "");
-    setLocalEvent(event || "");
-    setLocalHeading(heading || "");
-    setLocalSubHeading(subHeading || "");
-    setLocalUrl(url || "");
-    setLocalDescription(description || "");
-    setLocalColor(color || "#16a34a");
-    setLocalDuration(duration || 7);
-    setLocalType(type);
-    setLocalImageUrl(imageUrl || "");
-  }, [
-    name,
-    title,
-    event,
-    heading,
-    subHeading,
-    url,
-    description,
-    color,
-    id,
-    duration,
-    type,
-    imageUrl,
-  ]);
 
   const { setNodeRef } = useDroppable({
     id: "overlays-list",
@@ -163,7 +126,9 @@ const Overlays = () => {
   }, []);
 
   useEffect(() => {
-    const selectedOverlayId = list.find((overlay) => overlay.id === id)?.id;
+    const selectedOverlayId = list.find(
+      (overlay) => overlay.id === selectedId
+    )?.id;
     const overlayElement = document.getElementById(
       `overlay-${selectedOverlayId}`
     );
@@ -185,7 +150,7 @@ const Overlays = () => {
     } else {
       scrollToElement();
     }
-  }, [id, list, isMobile]);
+  }, [selectedId, list, isMobile]);
 
   useEffect(() => {
     return () => {
@@ -199,7 +164,10 @@ const Overlays = () => {
     "data-ignore-undo": "true",
   };
 
-  const addButtonText = localName || localUrl ? "Copy Overlay" : "Add Overlay";
+  const addButtonText =
+    selectedOverlay.name || selectedOverlay.url
+      ? "Copy Overlay"
+      : "Add Overlay";
 
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
@@ -240,7 +208,7 @@ const Overlays = () => {
                         key={overlay.id}
                         initialList={initialList}
                         overlay={overlay}
-                        selectedId={id}
+                        selectedId={selectedId}
                         isStreamTransmitting={isStreamTransmitting}
                       />
                     );
@@ -255,24 +223,9 @@ const Overlays = () => {
                 onClick={() => {
                   setJustAdded(true);
                   const newId = generateRandomId();
-                  dispatch(
-                    addOverlay({
-                      name: localName,
-                      title: localTitle,
-                      event: localEvent,
-                      heading: localHeading,
-                      subHeading: localSubHeading,
-                      url: localUrl,
-                      description: localDescription,
-                      color: localColor,
-                      duration: localDuration,
-                      type: localType,
-                      imageUrl: localImageUrl,
-                      id: newId,
-                    })
-                  );
+                  dispatch(addOverlay({ ...selectedOverlay, id: newId }));
                   setTimeout(() => {
-                    dispatch(setOverlayId(newId));
+                    dispatch(selectOverlay(newId));
                     setJustAdded(false);
                   }, 500);
                 }}
@@ -284,7 +237,7 @@ const Overlays = () => {
               ref={overlayEditorRef}
               className="flex flex-col items-center gap-4 flex-1"
             >
-              {id && (
+              {selectedId && (
                 <>
                   <Button
                     className="lg:hidden text-sm w-full justify-center"
@@ -302,48 +255,48 @@ const Overlays = () => {
                         showBorder
                         width={isMobile ? 50 : 25}
                         participantOverlayInfo={
-                          localType === "participant"
+                          selectedOverlay.type === "participant"
                             ? {
-                                name: localName,
-                                title: localTitle,
-                                event: localEvent,
-                                duration: localDuration,
-                                type: localType,
-                                id,
+                                name: selectedOverlay.name,
+                                title: selectedOverlay.title,
+                                event: selectedOverlay.event,
+                                duration: selectedOverlay.duration,
+                                type: selectedOverlay.type,
+                                id: selectedOverlay.id,
                               }
                             : undefined
                         }
                         stbOverlayInfo={
-                          localType === "stick-to-bottom"
+                          selectedOverlay.type === "stick-to-bottom"
                             ? {
-                                heading: localHeading,
-                                subHeading: localSubHeading,
-                                duration: localDuration,
-                                type: localType,
-                                id,
+                                heading: selectedOverlay.heading,
+                                subHeading: selectedOverlay.subHeading,
+                                duration: selectedOverlay.duration,
+                                type: selectedOverlay.type,
+                                id: selectedOverlay.id,
                               }
                             : undefined
                         }
                         qrCodeOverlayInfo={
-                          localType === "qr-code"
+                          selectedOverlay.type === "qr-code"
                             ? {
-                                url: localUrl,
-                                description: localDescription,
-                                color: localColor,
-                                duration: localDuration,
-                                type: localType,
-                                id,
+                                url: selectedOverlay.url,
+                                description: selectedOverlay.description,
+                                color: selectedOverlay.color,
+                                duration: selectedOverlay.duration,
+                                type: selectedOverlay.type,
+                                id: selectedOverlay.id,
                               }
                             : undefined
                         }
                         imageOverlayInfo={
-                          localType === "image"
+                          selectedOverlay.type === "image"
                             ? {
-                                imageUrl: localImageUrl,
-                                name: localName,
-                                duration: localDuration,
-                                type: localType,
-                                id,
+                                imageUrl: selectedOverlay.imageUrl,
+                                name: selectedOverlay.name,
+                                duration: selectedOverlay.duration,
+                                type: selectedOverlay.type,
+                                id: selectedOverlay.id,
                               }
                             : undefined
                         }
@@ -352,82 +305,152 @@ const Overlays = () => {
                     </div>
                   )}
                   <section className="overlays-editing-section">
-                    {localType === "participant" && (
+                    {selectedOverlay.type === "participant" && (
                       <>
                         <Input
                           {...commonInputProps}
                           label="Name"
-                          value={localName}
-                          onChange={(val) => setLocalName(val as string)}
+                          value={selectedOverlay.name || ""}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                name: val as string,
+                              })
+                            )
+                          }
                         />
                         <Input
                           {...commonInputProps}
                           label="Title"
-                          value={localTitle}
-                          onChange={(val) => setLocalTitle(val as string)}
+                          value={selectedOverlay.title || ""}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                title: val as string,
+                              })
+                            )
+                          }
                         />
                         <Input
                           {...commonInputProps}
                           label="Event"
-                          value={localEvent}
-                          onChange={(val) => setLocalEvent(val as string)}
+                          value={selectedOverlay.event || ""}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                event: val as string,
+                              })
+                            )
+                          }
                         />
                       </>
                     )}
-                    {localType === "stick-to-bottom" && (
+                    {selectedOverlay.type === "stick-to-bottom" && (
                       <>
                         <Input
                           {...commonInputProps}
                           label="Heading"
-                          value={localHeading}
-                          onChange={(val) => setLocalHeading(val as string)}
+                          value={selectedOverlay.heading || ""}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                heading: val as string,
+                              })
+                            )
+                          }
                         />
                         <Input
                           {...commonInputProps}
                           label="Subheading"
-                          value={localSubHeading}
-                          onChange={(val) => setLocalSubHeading(val as string)}
+                          value={selectedOverlay.subHeading || ""}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                subHeading: val as string,
+                              })
+                            )
+                          }
                         />
                       </>
                     )}
-                    {localType === "qr-code" && (
+                    {selectedOverlay.type === "qr-code" && (
                       <>
                         <Input
                           {...commonInputProps}
                           label="URL"
-                          value={localUrl}
-                          onChange={(val) => setLocalUrl(val as string)}
+                          value={selectedOverlay.url || ""}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                url: val as string,
+                              })
+                            )
+                          }
                         />
                         <TextArea
                           {...commonInputProps}
                           label="Info"
-                          value={localDescription}
-                          onChange={(val) => setLocalDescription(val as string)}
+                          value={selectedOverlay.description || ""}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                description: val as string,
+                              })
+                            )
+                          }
                         />
                         <Select
                           {...commonInputProps}
                           className={commonInputProps.className + " w-[90%]"}
                           label="Color"
-                          value={localColor}
-                          onChange={(val) => setLocalColor(val as string)}
+                          value={selectedOverlay.color || ""}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                color: val as string,
+                              })
+                            )
+                          }
                           options={colorOptions}
                           selectClassName="w-full"
                         />
                       </>
                     )}
-                    {localType === "image" && ( // TODO - Select from image library
+                    {selectedOverlay.type === "image" && ( // TODO - Select from image library
                       <>
                         <Input
                           {...commonInputProps}
                           label="Name"
-                          value={localName}
-                          onChange={(val) => setLocalName(val as string)}
+                          value={selectedOverlay.name || ""}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                name: val as string,
+                              })
+                            )
+                          }
                         />
                         <Input
                           {...commonInputProps}
                           label="Image URL"
-                          value={localImageUrl}
-                          onChange={(val) => setLocalImageUrl(val as string)}
+                          value={selectedOverlay.imageUrl || ""}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                imageUrl: val as string,
+                              })
+                            )
+                          }
                         />
                       </>
                     )}
@@ -435,9 +458,16 @@ const Overlays = () => {
                       className="text-sm flex gap-2 items-center"
                       labelClassName="w-24"
                       label="Duration"
-                      value={localDuration || ""}
+                      value={selectedOverlay.duration || ""}
                       type="number"
-                      onChange={(val) => setLocalDuration(val as number)}
+                      onChange={(val) =>
+                        dispatch(
+                          updateOverlay({
+                            ...selectedOverlay,
+                            duration: val as number,
+                          })
+                        )
+                      }
                       data-ignore-undo="true"
                     />
                     <h4 className="text-center text-base">Type:</h4>
@@ -445,57 +475,53 @@ const Overlays = () => {
                       <RadioButton
                         label="Participant"
                         className="w-full"
-                        value={localType === "participant"}
-                        onChange={(val) => setLocalType("participant")}
+                        value={selectedOverlay.type === "participant"}
+                        onChange={(val) =>
+                          dispatch(
+                            updateOverlay({
+                              ...selectedOverlay,
+                              type: "participant",
+                            })
+                          )
+                        }
                       />
                       <RadioButton
                         label="Stick to Bottom"
                         className="w-full"
-                        value={localType === "stick-to-bottom"}
-                        onChange={(val) => setLocalType("stick-to-bottom")}
+                        value={selectedOverlay.type === "stick-to-bottom"}
+                        onChange={(val) =>
+                          dispatch(
+                            updateOverlay({
+                              ...selectedOverlay,
+                              type: "stick-to-bottom",
+                            })
+                          )
+                        }
                       />
                       <RadioButton
                         label="QR Code"
                         className="w-full"
-                        value={localType === "qr-code"}
-                        onChange={(val) => setLocalType("qr-code")}
+                        value={selectedOverlay.type === "qr-code"}
+                        onChange={(val) =>
+                          dispatch(
+                            updateOverlay({
+                              ...selectedOverlay,
+                              type: "qr-code",
+                            })
+                          )
+                        }
                       />
                       <RadioButton
                         label="Image"
                         className="w-full"
-                        value={localType === "image"}
-                        onChange={(val) => setLocalType("image")}
+                        value={selectedOverlay.type === "image"}
+                        onChange={(val) =>
+                          dispatch(
+                            updateOverlay({ ...selectedOverlay, type: "image" })
+                          )
+                        }
                       />
                     </div>
-
-                    <Button
-                      className="text-sm w-full justify-center"
-                      svg={justUpdated ? CheckSVG : SaveSVG}
-                      color={justAdded ? "#84cc16" : "#22d3ee"}
-                      disabled={justAdded}
-                      onClick={() => {
-                        setJustUpdated(true);
-                        dispatch(
-                          updateOverlay({
-                            id,
-                            name: localName,
-                            title: localTitle,
-                            event: localEvent,
-                            heading: localHeading,
-                            subHeading: localSubHeading,
-                            url: localUrl,
-                            description: localDescription,
-                            color: localColor,
-                            duration: localDuration,
-                            type: localType,
-                            imageUrl: localImageUrl,
-                          })
-                        );
-                        setTimeout(() => setJustUpdated(false), 2000);
-                      }}
-                    >
-                      {justUpdated ? "Updated!" : "Update Overlay"}
-                    </Button>
                   </section>
                 </>
               )}

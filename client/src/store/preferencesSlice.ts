@@ -6,6 +6,7 @@ import {
   Presentation,
   QuickLinkType,
   DBPreferences,
+  MediaType,
 } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
@@ -193,20 +194,21 @@ export const preferencesSlice = createSlice({
       state.selectedQuickLink =
         state.quickLinks.find((ql) => ql.id === action.payload) || null;
     },
-    setSelectedQuickLinkImage: (state, action: PayloadAction<string>) => {
+    setSelectedQuickLinkImage: (state, action: PayloadAction<MediaType>) => {
       state.quickLinks.map((ql) => {
         if (ql.id === state.selectedQuickLink?.id) {
           ql.presentationInfo = {
-            type: "image",
+            type: "media",
             name: state.selectedQuickLink?.label || "",
             slide: {
-              type: "Image",
+              type: "Media",
               name: "",
               id: generateRandomId(),
               boxes: [
                 {
                   id: generateRandomId(),
-                  background: action.payload,
+                  background: action.payload.background,
+                  mediaInfo: action.payload,
                   height: 100,
                   width: 100,
                 },
