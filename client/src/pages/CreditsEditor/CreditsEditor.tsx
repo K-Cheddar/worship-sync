@@ -24,7 +24,6 @@ import Spinner from "../../components/Spinner/Spinner";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import Button from "../../components/Button/Button";
 import cn from "classnames";
-import { Link } from "react-router-dom";
 import { onValue, ref } from "firebase/database";
 import PopOver from "../../components/PopOver/PopOver";
 import Input from "../../components/Input/Input";
@@ -351,10 +350,14 @@ const CreditsEditor = () => {
     >
       <div>
         <div className="bg-gray-800 w-full px-4 py-1 flex gap-2 items-center">
-          <Button variant="tertiary" className="w-fit" padding="p-0">
-            <Link className="h-full w-full px-2 py-1" to="/">
-              <BackArrowSVG />
-            </Link>
+          <Button
+            variant="tertiary"
+            className="w-fit"
+            padding="p-0"
+            component="link"
+            to="/"
+          >
+            <BackArrowSVG />
           </Button>
           <div className="border-l-2 border-gray-400 pl-4">
             <Undo />

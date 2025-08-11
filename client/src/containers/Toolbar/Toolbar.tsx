@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { ReactComponent as SettingsSVG } from "../../assets/icons/settings.svg";
 import { ReactComponent as EditSquareSVG } from "../../assets/icons/edit-square.svg";
 import { ReactComponent as TimerSVG } from "../../assets/icons/timer.svg";
@@ -31,14 +31,14 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
   ({ className }, ref) => {
     const location = useLocation();
     const { isEditMode, type } = useSelector(
-      (state) => state.undoable.present.item,
+      (state) => state.undoable.present.item
     );
     const [section, setSection] = useState<sections>("settings");
     const { isMobile, isPhone } = useContext(ControllerInfoContext) || {};
     const dispatch = useDispatch();
     const onItemPage = useMemo(
       () => location.pathname.includes("controller/item"),
-      [location.pathname],
+      [location.pathname]
     );
 
     useEffect(() => {
@@ -115,7 +115,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
           <div
             className={cn(
               "px-2 py-1 flex gap-1 items-center flex-1 overflow-x-auto w-full",
-              isEditMode && "hidden",
+              isEditMode && "hidden"
             )}
           >
             <Outlines className={cn(section !== "settings" && "hidden")} />
@@ -123,10 +123,10 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
               className={cn(section !== "settings" && "hidden")}
               variant="tertiary"
               svg={SettingsSVG}
+              component="link"
+              to="/controller/preferences"
             >
-              <Link className="h-full w-full" to="/controller/preferences">
-                Preferences
-              </Link>
+              Preferences
             </Button>
             <QuickLinkSelection isMobile={isMobile} />
             <SlideEditTools
@@ -137,7 +137,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
             />
             <TimerControls
               className={cn(
-                (section !== "timer-manager" || type !== "timer") && "hidden",
+                (section !== "timer-manager" || type !== "timer") && "hidden"
               )}
             />
             <ItemEditTools
@@ -150,7 +150,7 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
         </div>
       </div>
     );
-  },
+  }
 );
 
 export default Toolbar;

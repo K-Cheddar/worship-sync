@@ -1,33 +1,20 @@
-import { Link } from "react-router-dom";
 import WorshipSyncImage from "../assets/WorshipSyncImage.png";
 import Button from "../components/Button/Button";
-import { ReactNode, useContext } from "react";
+import { useContext } from "react";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ControllerInfoContext } from "../context/controllerInfo";
-import cn from "classnames";
 
-type LinkButtonProps = {
-  to: string;
-  children: ReactNode;
-  variant?: "primary" | "secondary" | "tertiary" | "cta" | "none";
-  className?: string;
-};
-const LinkButton = ({
+const HomeButton = ({
   to,
   children,
-  variant = "tertiary",
-  className,
-}: LinkButtonProps) => {
+}: {
+  to: string;
+  children: React.ReactNode;
+}) => {
   return (
-    <Button
-      padding="p-0"
-      className={cn("text-2xl", className)}
-      variant={variant}
-    >
-      <Link className="h-full w-full px-4 py-2" to={to}>
-        {children}
-      </Link>
+    <Button variant="tertiary" className="text-2xl" to={to} component="link">
+      {children}
     </Button>
   );
 };
@@ -42,15 +29,11 @@ const Welcome = () => {
         <Button
           variant="tertiary"
           onClick={isLoggedIn && logout ? logout : undefined}
-          padding={`${isLoggedIn ? "px-4 py-1" : "p-0"}`}
+          padding="px-4 py-1"
+          component={!isLoggedIn ? "link" : "button"}
+          to={!isLoggedIn ? "/login" : "/"}
         >
-          {!isLoggedIn ? (
-            <Link className="h-full w-full px-4 py-1" to="/login">
-              Login
-            </Link>
-          ) : (
-            "Logout"
-          )}
+          {!isLoggedIn ? "Login" : "Logout"}
         </Button>
         <UserSection />
       </div>
@@ -71,8 +54,8 @@ const Welcome = () => {
         <div className="text-center">
           <h3 className="text-lg border-b-4 border-black">Editors</h3>
           <section className="flex gap-4">
-            <LinkButton to="/controller">Main Controller</LinkButton>
-            <LinkButton to="/credits-editor">Credits Editor</LinkButton>
+            <HomeButton to="/controller">Main Controller</HomeButton>
+            <HomeButton to="/credits-editor">Credits Editor</HomeButton>
           </section>
         </div>
         <div className="text-center bg-gray-700 rounded-md">
@@ -80,16 +63,16 @@ const Welcome = () => {
             Standalone Displays
           </h3>
           <section className="flex gap-4">
-            <LinkButton to="/monitor">Monitor</LinkButton>
-            <LinkButton to="/projector">Projector</LinkButton>
+            <HomeButton to="/monitor">Monitor</HomeButton>
+            <HomeButton to="/projector">Projector</HomeButton>
           </section>
         </div>
         <div className="text-center bg-gray-700 rounded-md">
           <h3 className="text-lg border-b-4 border-black">OBS Displays</h3>
           <section className="flex gap-4">
-            <LinkButton to="/stream">Stream</LinkButton>
-            <LinkButton to="/projector-full">Projector</LinkButton>
-            <LinkButton to="/credits">Credits</LinkButton>
+            <HomeButton to="/stream">Stream</HomeButton>
+            <HomeButton to="/projector-full">Projector</HomeButton>
+            <HomeButton to="/credits">Credits</HomeButton>
           </section>
         </div>
       </section>
