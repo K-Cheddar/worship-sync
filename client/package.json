@@ -1,6 +1,6 @@
 {
   "name": "worship-sync",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "private": true,
   "dependencies": {
     "@cloudinary/react": "^1.13.1",

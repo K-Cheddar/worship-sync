@@ -1,3 +1,21 @@
+# [1.12.0](https://github.com/K-Cheddar/worship-sync/compare/v1.11.0...v1.12.0) (2025-08-11)
+
+
+### Bug Fixes
+
+* Fixed preferences button being hard to click ([c7480a2](https://github.com/K-Cheddar/worship-sync/commit/c7480a2e5cce130165ecd36b5df5d7dd541ff600))
+* Generate credits now works without visiting controller ([0045740](https://github.com/K-Cheddar/worship-sync/commit/004574004587fce0d1fdf8e5401b7694dde5e354))
+* Improve video background support ([7c218ef](https://github.com/K-Cheddar/worship-sync/commit/7c218ef54f07b1a9de10efff397e054e7071b0e2))
+* Improved consistency of credits from schedule ([d380be9](https://github.com/K-Cheddar/worship-sync/commit/d380be9dac3eda60b2b1adcfc166bdbe5037e5f6))
+* **Preferences:** Now gets live updates ([a0aa9ff](https://github.com/K-Cheddar/worship-sync/commit/a0aa9ffb56821a1b0e0378dd1db0dc6207ce358c))
+* **QuickLinks:** Allow videos for Media type ([e740106](https://github.com/K-Cheddar/worship-sync/commit/e740106c5432bad50e6ef427fb27379c131db3a7))
+
+
+### Features
+
+* Adding video support for backgrounds ([c4de2fd](https://github.com/K-Cheddar/worship-sync/commit/c4de2fd6320691ff999195675a74eee3a7b15f91))
+* **Overlays:** Changes now autosave ([b6b6975](https://github.com/K-Cheddar/worship-sync/commit/b6b6975ad5172b4cea2c03764a6b7466d480ccd9))
+
 # [1.11.0](https://github.com/K-Cheddar/worship-sync/compare/v1.10.1...v1.11.0) (2025-08-08)
 
 
