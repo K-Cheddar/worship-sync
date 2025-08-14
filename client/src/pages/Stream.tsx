@@ -4,17 +4,17 @@ import { useEffect } from "react";
 
 const Stream = () => {
   const { streamInfo, prevStreamInfo } = useSelector(
-    (state) => state.presentation,
+    (state) => state.presentation
   );
 
   const timers = useSelector((state) => state.timers.timers);
   const streamTimer = timers.find((timer) => timer.id === streamInfo.timerId);
   const prevStreamTimer = timers.find(
-    (timer) => timer.id === prevStreamInfo.timerId,
+    (timer) => timer.id === prevStreamInfo.timerId
   );
 
   useEffect(() => {
-    const keepScreenOn = async() => {
+    const keepScreenOn = async () => {
       try {
         await navigator.wakeLock.request("screen");
       } catch (err) {

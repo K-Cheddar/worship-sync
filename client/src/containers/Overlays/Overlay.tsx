@@ -14,6 +14,7 @@ import {
   updateParticipantOverlayInfo,
   updateQrCodeOverlayInfo,
   updateStbOverlayInfo,
+  updateStream,
 } from "../../store/presentationSlice";
 import { OverlayInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
@@ -89,7 +90,6 @@ const Overlay = ({
           previousOverlay.current.subHeading !== overlay.subHeading ||
           previousOverlay.current.url !== overlay.url ||
           previousOverlay.current.description !== overlay.description ||
-          previousOverlay.current.color !== overlay.color ||
           previousOverlay.current.type !== overlay.type ||
           previousOverlay.current.duration !== overlay.duration ||
           previousOverlay.current.imageUrl !== overlay.imageUrl)
@@ -258,6 +258,13 @@ const Overlay = ({
           disabled={!isStreamTransmitting}
           svg={OverlaysSVG}
           onClick={() => {
+            dispatch(
+              updateStream({
+                slide: null,
+                type: "clear",
+                name: "",
+              })
+            );
             if (overlay.type === "participant") {
               dispatch(
                 updateParticipantOverlayInfo({
@@ -266,6 +273,7 @@ const Overlay = ({
                   title: overlay.title,
                   duration: overlay.duration,
                   id: overlay.id,
+                  formatting: overlay.formatting,
                 })
               );
             } else if (overlay.type === "stick-to-bottom") {
@@ -276,6 +284,7 @@ const Overlay = ({
                   duration: overlay.duration,
                   type: overlay.type,
                   id: overlay.id,
+                  formatting: overlay.formatting,
                 })
               );
             } else if (overlay.type === "qr-code") {
@@ -283,10 +292,10 @@ const Overlay = ({
                 updateQrCodeOverlayInfo({
                   url: overlay.url,
                   description: overlay.description,
-                  color: overlay.color,
                   duration: overlay.duration,
                   type: overlay.type,
                   id: overlay.id,
+                  formatting: overlay.formatting,
                 })
               );
             } else if (overlay.type === "image") {
@@ -296,6 +305,7 @@ const Overlay = ({
                   duration: overlay.duration,
                   type: overlay.type,
                   id: overlay.id,
+                  formatting: overlay.formatting,
                 })
               );
             }

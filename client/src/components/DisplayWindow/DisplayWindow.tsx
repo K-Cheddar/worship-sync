@@ -90,7 +90,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       prevFormattedTextDisplayInfo,
       isBoxLocked,
     }: DisplayWindowProps,
-    ref,
+    ref
   ) => {
     const fallbackRef = useRef<HTMLDivElement | null>(null);
     const containerRef = ref || fallbackRef;
@@ -111,13 +111,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       if (!shouldPlayVideo || !isDisplay || !showBackground)
         return { videoBox: undefined, desiredVideoUrl: undefined };
       const videoBox = boxes.find(
-        (b) => b.mediaInfo?.type === "video" && b.mediaInfo?.background,
+        (b) => b.mediaInfo?.type === "video" && b.mediaInfo?.background
       );
       return { videoBox, desiredVideoUrl: videoBox?.mediaInfo?.background };
     }, [boxes, isDisplay, showBackground, shouldPlayVideo]);
 
     const [activeVideoUrl, setActiveVideoUrl] = useState<string | undefined>(
-      undefined,
+      undefined
     );
     const [isWindowVideoLoaded, setIsWindowVideoLoaded] = useState(false);
 
@@ -141,12 +141,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         } ${displayType !== "stream" ? "bg-black" : ""}`}
         ref={containerRef}
         id={isEditor ? "display-editor" : undefined}
-        style={
-          {
-            "--slide-editor-height": `${width / aspectRatio}vw`,
-            "--slide-editor-width": `${width}vw`,
-          } as React.CSSProperties
-        }
+        style={{
+          width: `${width}vw`,
+          height: `${width / aspectRatio}vw`,
+        }}
       >
         {isDisplay && showBackground && shouldPlayVideo && activeVideoUrl && (
           <HLSPlayer
@@ -292,7 +290,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         )}
       </div>
     );
-  },
+  }
 );
 
 export default DisplayWindow;

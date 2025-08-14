@@ -50,15 +50,25 @@ const QuickLink = ({
       } else if (displayType === "stream") {
         if (presentationInfo.slide) {
           dispatch(updateStream(presentationInfo));
-        } else if (presentationInfo.bibleDisplayInfo) {
+        } else {
+          dispatch(
+            updateStream({
+              slide: null,
+              type: "clear",
+              name: "",
+            })
+          );
+        }
+
+        if (presentationInfo.bibleDisplayInfo) {
           dispatch(updateBibleDisplayInfo(presentationInfo.bibleDisplayInfo));
         } else if (presentationInfo.imageOverlayInfo) {
           dispatch(updateImageOverlayInfo(presentationInfo.imageOverlayInfo));
         } else if (presentationInfo.participantOverlayInfo) {
           dispatch(
             updateParticipantOverlayInfo(
-              presentationInfo.participantOverlayInfo,
-            ),
+              presentationInfo.participantOverlayInfo
+            )
           );
         } else if (presentationInfo.stbOverlayInfo) {
           dispatch(updateStbOverlayInfo(presentationInfo.stbOverlayInfo));
