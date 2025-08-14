@@ -4,7 +4,8 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { defaultImageOverlayStyles } from "./defaultOverlayStyles";
 import "./DisplayWindow.scss";
-import { checkMediaType } from "../../utils/generalUtils";
+import { checkMediaType, getImageFromVideoUrl } from "../../utils/generalUtils";
+import HLSPlayer from "./HLSVideoPlayer";
 
 type DisplayImageOverlayProps = {
   width: number;
@@ -149,12 +150,9 @@ const DisplayImageOverlay = forwardRef<
         >
           {imageOverlayInfo.imageUrl &&
             (isVideo ? (
-              <video
-                className="max-w-full max-h-full object-contain"
-                src={imageOverlayInfo.imageUrl}
-                autoPlay
-                loop
-                muted
+              <HLSPlayer
+                src={imageOverlayInfo.imageUrl || ""}
+                className="max-w-full max-h-full w-full h-full object-contain"
               />
             ) : (
               <img
@@ -185,16 +183,14 @@ const DisplayImageOverlay = forwardRef<
         >
           {prevImageOverlayInfo.imageUrl &&
             (isPrevVideo ? (
-              <video
-                className="max-w-full max-h-full object-contain"
-                src={prevImageOverlayInfo.imageUrl}
-                loop
-                muted
-                autoPlay={false}
+              <img
+                className="max-w-full max-h-full w-full h-full object-contain"
+                src={getImageFromVideoUrl(prevImageOverlayInfo.imageUrl)}
+                alt={prevImageOverlayInfo.name}
               />
             ) : (
               <img
-                className="max-w-full max-h-full object-contain"
+                className="max-w-full max-h-full w-full h-full object-contain"
                 src={prevImageOverlayInfo.imageUrl}
                 alt={prevImageOverlayInfo.name}
               />

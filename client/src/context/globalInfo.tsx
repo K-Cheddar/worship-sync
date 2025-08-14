@@ -232,7 +232,6 @@ const GlobalInfoProvider = ({ children }: any) => {
       if (snap.val() === true) {
         // When we reconnect, re-establish the active instance if we're on the controller page
         if (isOnController && instanceRef.current) {
-          console.log("connected");
           set(instanceRef.current, {
             lastActive: new Date().toISOString(),
             user: user,

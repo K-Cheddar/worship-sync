@@ -240,19 +240,19 @@ export const keepElementInView = ({
 };
 
 export const checkMediaType = (mediaUrl?: string) => {
-  if (!mediaUrl) return "unknown";
-  const urlParts = mediaUrl.split(".");
-  const extension = urlParts[urlParts.length - 1];
-  const imageExtensions = ["jpg", "jpeg", "png", "gif", "webp"];
-  const videoExtensions = ["mp4", "mov", "avi", "webm"];
+  if (!mediaUrl) return "image";
 
-  if (imageExtensions.includes(extension.toLowerCase())) {
-    return "image";
-  } else if (videoExtensions.includes(extension.toLowerCase())) {
+  if (mediaUrl.includes("portable-media/video/upload")) {
     return "video";
-  } else {
-    return "unknown";
   }
+  return "image";
+};
+
+export const getImageFromVideoUrl = (videoUrl?: string) => {
+  if (!videoUrl) return "";
+  let updatedUrl = videoUrl.split("?")[0];
+  updatedUrl = updatedUrl.replace(/sp_auto\/|\.m3u8/g, "");
+  return updatedUrl + ".png";
 };
 
 export const getLetterFromIndex = (

@@ -14,6 +14,7 @@ import {
   updateParticipantOverlayInfo,
   updateQrCodeOverlayInfo,
   updateStbOverlayInfo,
+  updateStream,
 } from "../../store/presentationSlice";
 import { OverlayInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
@@ -257,6 +258,13 @@ const Overlay = ({
           disabled={!isStreamTransmitting}
           svg={OverlaysSVG}
           onClick={() => {
+            dispatch(
+              updateStream({
+                slide: null,
+                type: "clear",
+                name: "",
+              })
+            );
             if (overlay.type === "participant") {
               dispatch(
                 updateParticipantOverlayInfo({

@@ -4,13 +4,15 @@ import { Box } from "../../types";
 
 type HLSPlayerProps = {
   src: string;
-  onLoadedData: () => void;
-  onError: () => void;
+  className?: string;
+  onLoadedData?: () => void;
+  onError?: () => void;
   videoBox?: Box;
 };
 
 const HLSPlayer = ({
   src,
+  className,
   onLoadedData,
   onError,
   videoBox,
@@ -18,7 +20,8 @@ const HLSPlayer = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
-    if (!videoRef.current) return;
+    // If not a HLS video no need to do this logic, src will be a normal video url
+    if (!videoRef.current || !src.includes(".m3u8")) return;
     const video = videoRef.current;
 
     if (Hls.isSupported()) {
@@ -48,7 +51,8 @@ const HLSPlayer = ({
   return (
     <video
       ref={videoRef}
-      className="absolute inset-0 w-full h-full object-cover z-0"
+      src={src}
+      className={className || "absolute inset-0 w-full h-full object-cover z-0"}
       style={{
         filter: videoBox?.brightness
           ? `brightness(${videoBox.brightness}%)`

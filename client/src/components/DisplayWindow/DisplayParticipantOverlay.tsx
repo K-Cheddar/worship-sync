@@ -33,6 +33,16 @@ const DisplayParticipantOverlay = forwardRef<
     const containerXPercent = useRef(0);
     const containerOpacity = useRef(1);
 
+    const currentStyles = {
+      ...defaultParticipantOverlayStyles,
+      ...participantOverlayInfo.formatting,
+    };
+
+    const prevStyles = {
+      ...defaultParticipantOverlayStyles,
+      ...prevParticipantOverlayInfo.formatting,
+    };
+
     useGSAP(
       () => {
         if (!participantOverlayRef.current || !shouldAnimate) return;
@@ -59,7 +69,7 @@ const DisplayParticipantOverlay = forwardRef<
           overlayTimeline.current = gsap
             .timeline()
             .to(participantOverlayRef.current, {
-              xPercent: 10,
+              xPercent: currentStyles.left || 10,
               duration: 2.5,
               ease: "power1.out",
               opacity: 1,
@@ -165,17 +175,6 @@ const DisplayParticipantOverlay = forwardRef<
         dependencies: [prevParticipantOverlayInfo],
       }
     );
-
-    // Merge default styles with custom formatting
-    const currentStyles = {
-      ...defaultParticipantOverlayStyles,
-      ...participantOverlayInfo.formatting,
-    };
-
-    const prevStyles = {
-      ...defaultParticipantOverlayStyles,
-      ...prevParticipantOverlayInfo.formatting,
-    };
 
     const needsPadding =
       participantOverlayInfo.name ||
