@@ -1,3 +1,16 @@
+# [1.13.0](https://github.com/K-Cheddar/worship-sync/compare/v1.12.0...v1.13.0) (2025-08-14)
+
+
+### Bug Fixes
+
+* **Overlays:** Improve cross fade transitions ([451ceb1](https://github.com/K-Cheddar/worship-sync/commit/451ceb1594e2eec8d465b4aba3b610db895a4d1f))
+
+
+### Features
+
+* Added templates to reset overlay styles to default ([fa98158](https://github.com/K-Cheddar/worship-sync/commit/fa981581d918668614519ab246045745b6ab3c40))
+* **Overlays:** Added ability to customize overlay styles ([1f511fc](https://github.com/K-Cheddar/worship-sync/commit/1f511fce85bd4a77f53a2af46d9c9bb27a5103bd))
+
 # [1.12.0](https://github.com/K-Cheddar/worship-sync/compare/v1.11.0...v1.12.0) (2025-08-11)
 
 
