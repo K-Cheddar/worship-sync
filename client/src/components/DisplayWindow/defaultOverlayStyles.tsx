@@ -2,12 +2,16 @@ import { OverlayFormatting } from "../../types";
 
 export const defaultParticipantOverlayStyles: OverlayFormatting = {
   backgroundColor: "#1F293BBF",
-  borderColor: "#15803d", // green-700
+  borderColor: "#15803d",
   borderType: "solid",
   borderLeftWidth: 5,
+  borderLeftColor: "#15803d",
   borderRightWidth: 0,
+  borderRightColor: "transparent",
   borderTopWidth: 0,
+  borderTopColor: "transparent",
   borderBottomWidth: 0,
+  borderBottomColor: "transparent",
   borderRadiusTopRight: "3% 10%",
   borderRadiusBottomRight: "3% 10%",
   borderRadiusTopLeft: "0% 0%",

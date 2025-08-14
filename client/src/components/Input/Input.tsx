@@ -9,7 +9,7 @@ export type InputProps = HTMLProps<HTMLInputElement> & {
   value: string | number;
   label?: string;
   hideLabel?: boolean;
-  onChange: (value: string | number | Date) => void;
+  onChange: (value: string | number) => void;
   labelClassName?: string;
   labelFontSize?: string;
   svg?: FunctionComponent<SVGProps<SVGSVGElement>>;
@@ -100,10 +100,8 @@ const Input = ({
             const val = e.target.value;
             if (type === "number") {
               onChange(Number(val));
-            } else if (type === "date") {
-              onChange(new Date(val));
             } else {
-              onChange(e.target.value);
+              onChange(val as string);
             }
           }}
           id={inputId}

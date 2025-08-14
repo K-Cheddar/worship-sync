@@ -1,4 +1,4 @@
-import { CSSProperties, forwardRef, MutableRefObject, useRef } from "react";
+import { forwardRef, MutableRefObject, useRef } from "react";
 import { BibleDisplayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -20,7 +20,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
       bibleDisplayInfo,
       prevBibleDisplayInfo,
     }: DisplayStreamBibleProps,
-    containerRef,
+    containerRef
   ) => {
     const bibleRef = useRef<HTMLDivElement | null>(null);
     const prevBibleRef = useRef<HTMLDivElement | null>(null);
@@ -48,7 +48,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
               opacity: 0,
               yPercent: 0,
             },
-            { opacity: 1, duration: 0.35, ease: "power1.inOut" },
+            { opacity: 1, duration: 0.35, ease: "power1.inOut" }
           );
         } else {
           bibleTimeline.current = gsap.timeline();
@@ -66,12 +66,12 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
                 opacity: 1,
                 duration: 1.5,
                 ease: "power1.inOut",
-              },
+              }
             );
           }
         }
       },
-      { scope: bibleRef, dependencies: [bibleDisplayInfo] },
+      { scope: bibleRef, dependencies: [bibleDisplayInfo] }
     );
 
     useGSAP(
@@ -93,7 +93,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
               opacity: 1,
               yPercent: 0,
             },
-            { opacity: 0, duration: 0.35, ease: "power1.inOut" },
+            { opacity: 0, duration: 0.35, ease: "power1.inOut" }
           );
         } else {
           prevBibleTimeline.current = gsap.timeline().fromTo(
@@ -104,11 +104,11 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
               opacity: 0,
               duration: 1.5,
               ease: "power1.inOut",
-            },
+            }
           );
         }
       },
-      { scope: prevBibleRef, dependencies: [prevBibleDisplayInfo] },
+      { scope: prevBibleRef, dependencies: [prevBibleDisplayInfo] }
     );
 
     const renderContent = (text: string) => {
@@ -121,50 +121,68 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
 
     return (
       <>
-        <div
-          ref={bibleRef}
-          className="bible-info-container"
-          style={
-            {
-              "--bible-info-title-size": `${width / 58}vw`,
-              "--bible-info-text-size": `${width / 55}vw`,
-            } as CSSProperties
-          }
-        >
+        <div ref={bibleRef} className="bible-info-container">
           {bibleDisplayInfo?.title?.trim() && (
-            <p className="bible-info-title">{bibleDisplayInfo.title}</p>
+            <p
+              className="bible-info-title"
+              style={{
+                borderTopLeftRadius: "5% 20%",
+                borderTopRightRadius: "5% 20%",
+                padding: "0.5% 4% 0.5%",
+                fontSize: `${width / 58}vw`,
+              }}
+            >
+              {bibleDisplayInfo.title}
+            </p>
           )}
           {bibleDisplayInfo?.text?.trim() && (
-            <p className="bible-info-text">
+            <p
+              className="bible-info-text"
+              style={{
+                padding: "1.5% 2.5%",
+                borderTopRightRadius: "2.5% 20%",
+                borderBottomRightRadius: "2.5% 20%",
+                borderBottomLeftRadius: "2.5% 20%",
+                fontSize: `${width / 55}vw`,
+              }}
+            >
               {renderContent(bibleDisplayInfo.text)}
             </p>
           )}
         </div>
 
-        <div
-          ref={prevBibleRef}
-          className="prev-bible-info-container"
-          style={
-            {
-              "--bible-info-title-size": `${width / 58}vw`,
-              "--bible-info-text-size": `${width / 55}vw`,
-            } as CSSProperties
-          }
-        >
+        <div ref={prevBibleRef} className="prev-bible-info-container">
           {prevBibleDisplayInfo?.title?.trim() && (
-            <p className="prev-bible-info-title">
+            <p
+              className="prev-bible-info-title"
+              style={{
+                borderTopLeftRadius: "5% 20%",
+                borderTopRightRadius: "5% 20%",
+                padding: "0.5% 4% 0.5%",
+                fontSize: `${width / 58}vw`,
+              }}
+            >
               {prevBibleDisplayInfo.title}
             </p>
           )}
           {prevBibleDisplayInfo?.text?.trim() && (
-            <p className="prev-bible-info-text">
+            <p
+              className="prev-bible-info-text"
+              style={{
+                padding: "1.5% 2.5%",
+                borderTopRightRadius: "2.5% 20%",
+                borderBottomRightRadius: "2.5% 20%",
+                borderBottomLeftRadius: "2.5% 20%",
+                fontSize: `${width / 55}vw`,
+              }}
+            >
               {renderContent(prevBibleDisplayInfo.text)}
             </p>
           )}
         </div>
       </>
     );
-  },
+  }
 );
 
 export default DisplayStreamBible;

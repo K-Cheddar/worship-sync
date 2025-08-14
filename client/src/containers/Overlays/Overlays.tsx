@@ -2,6 +2,8 @@ import Button from "../../components/Button/Button";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
+import { ReactComponent as TemplateSVG } from "../../assets/icons/style.svg";
+import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   addOverlay,
@@ -38,6 +40,20 @@ import { RootState } from "../../store/store";
 import Drawer from "../../components/Drawer";
 import StyleEditor from "../../components/StyleEditor";
 import { OverlayFormatting } from "../../types";
+import {
+  defaultImageOverlayStyles,
+  defaultParticipantOverlayStyles,
+  defaultQrCodeOverlayStyles,
+  defaultStbOverlayStyles,
+} from "../../components/DisplayWindow/defaultOverlayStyles";
+import OverlayPreview from "./OverlayPreview";
+
+const typeToName = {
+  participant: "Participant",
+  "stick-to-bottom": "Stick to Bottom",
+  "qr-code": "QR Code",
+  image: "Image",
+};
 
 const Overlays = () => {
   const { list, selectedId, initialList } = useSelector(
@@ -65,13 +81,27 @@ const Overlays = () => {
   };
 
   const dispatch = useDispatch();
-  const { isMobile } = useContext(ControllerInfoContext) || {};
+  const { isMobile } = useContext(ControllerInfoContext) || { isMobile: false };
 
   const [overlayEditorHeight, setOverlayEditorHeight] = useState(0);
   const [overlayHeaderHeight, setOverlayHeaderHeight] = useState(0);
   const [showPreview, setShowPreview] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
   const [isStyleDrawerOpen, setIsStyleDrawerOpen] = useState(false);
+  const [isTemplateDrawerOpen, setIsTemplateDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    if (isTemplateDrawerOpen) {
+      setIsStyleDrawerOpen(false);
+    }
+  }, [isTemplateDrawerOpen]);
+
+  useEffect(() => {
+    if (!selectedOverlay.id) {
+      setIsStyleDrawerOpen(false);
+      setIsTemplateDrawerOpen(false);
+    }
+  }, [selectedOverlay.id]);
 
   const { setNodeRef } = useDroppable({
     id: "overlays-list",
@@ -459,14 +489,25 @@ const Overlays = () => {
                       }
                       data-ignore-undo="true"
                     />
-                    <Button
-                      className="w-full justify-center text-sm"
-                      svg={EditSVG}
-                      color="#22d3ee"
-                      onClick={() => setIsStyleDrawerOpen(true)}
-                    >
-                      Edit Style
-                    </Button>
+                    <div className="flex gap-2 w-full">
+                      <Button
+                        className="flex-1 justify-center text-sm"
+                        svg={EditSVG}
+                        color="#22d3ee"
+                        onClick={() => setIsStyleDrawerOpen(true)}
+                      >
+                        Edit Style
+                      </Button>
+                      <Button
+                        className="flex-1 justify-center text-sm"
+                        variant="secondary"
+                        svg={TemplateSVG}
+                        color="#22d3ee"
+                        onClick={() => setIsTemplateDrawerOpen(true)}
+                      >
+                        Templates
+                      </Button>
+                    </div>
                     <h4 className="text-center text-base">Type:</h4>
                     <div className="flex gap-2 justify-between flex-col">
                       <RadioButton
@@ -534,12 +575,87 @@ const Overlays = () => {
         position={isMobile ? "bottom" : "right"}
         title="Edit Overlay Style"
         closeOnBackdropClick={false}
-        closeOnEscape={true}
+        closeOnEscape
       >
         <StyleEditor
           formatting={selectedOverlay.formatting || {}}
           onChange={handleFormattingChange}
         />
+      </Drawer>
+      <Drawer
+        isOpen={isTemplateDrawerOpen}
+        onClose={() => setIsTemplateDrawerOpen(false)}
+        size={isMobile ? "lg" : "xl"}
+        position={isMobile ? "bottom" : "right"}
+        title={`${typeToName[selectedOverlay.type as keyof typeof typeToName]} Templates`}
+        showBackdrop
+        closeOnBackdropClick
+        closeOnEscape
+      >
+        {selectedOverlay.type === "participant" && (
+          <OverlayPreview
+            overlay={selectedOverlay}
+            defaultStyles={defaultParticipantOverlayStyles}
+            onApply={() => {
+              dispatch(
+                updateOverlay({
+                  ...selectedOverlay,
+                  formatting: defaultParticipantOverlayStyles,
+                })
+              );
+              setIsTemplateDrawerOpen(false);
+            }}
+            isMobile={isMobile}
+          />
+        )}
+        {selectedOverlay.type === "stick-to-bottom" && (
+          <OverlayPreview
+            overlay={selectedOverlay}
+            defaultStyles={defaultStbOverlayStyles}
+            onApply={() => {
+              dispatch(
+                updateOverlay({
+                  ...selectedOverlay,
+                  formatting: defaultStbOverlayStyles,
+                })
+              );
+              setIsTemplateDrawerOpen(false);
+            }}
+            isMobile={isMobile}
+          />
+        )}
+        {selectedOverlay.type === "qr-code" && (
+          <OverlayPreview
+            overlay={selectedOverlay}
+            defaultStyles={defaultQrCodeOverlayStyles}
+            onApply={() => {
+              dispatch(
+                updateOverlay({
+                  ...selectedOverlay,
+                  formatting: defaultQrCodeOverlayStyles,
+                })
+              );
+              setIsTemplateDrawerOpen(false);
+            }}
+            isMobile={isMobile}
+          />
+        )}
+        {selectedOverlay.type === "image" && (
+          <OverlayPreview
+            overlay={selectedOverlay}
+            defaultStyles={defaultImageOverlayStyles}
+            onApply={() => {
+              dispatch(
+                updateOverlay({
+                  ...selectedOverlay,
+                  formatting: defaultImageOverlayStyles,
+                })
+              );
+              setIsTemplateDrawerOpen(false);
+            }}
+            isMobile={isMobile}
+          />
+        )}
       </Drawer>
     </DndContext>
   );

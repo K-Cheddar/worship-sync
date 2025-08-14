@@ -77,8 +77,8 @@ export const overlaysSlice = createSlice({
           ...overlay,
           id: overlay.id || generateRandomId(),
           formatting: {
-            // ...overlay.formatting,
             ...getDefaultFormatting(overlay.type),
+            ...overlay.formatting,
           },
         };
       });
@@ -107,7 +107,6 @@ export const overlaysSlice = createSlice({
       state.hasPendingUpdate = true;
     },
     updateOverlay: (state, action: PayloadAction<Partial<OverlayInfo>>) => {
-      console.log({ action });
       state.list = state.list.map((overlay) => {
         if (overlay.id === action.payload.id) {
           return { ...overlay, ...action.payload };

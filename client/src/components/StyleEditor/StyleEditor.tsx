@@ -1,242 +1,17 @@
 import React from "react";
 import { OverlayFormatting } from "../../types";
-import Input, { InputProps } from "../Input/Input";
-import Select, { SelectProps } from "../Select/Select";
-import { HexAlphaColorPicker, HexColorInput } from "react-colorful";
-import PopOver from "../PopOver/PopOver";
-import Button from "../Button/Button";
+import Section from "./Section";
+import InputField from "./InputField";
+import SelectField from "./SelectField";
+import WidthHeightField from "./WidthHeightField";
+import ColorField from "../ColorField/ColorField";
 
 interface StyleEditorProps {
   formatting: OverlayFormatting;
   onChange: (formatting: OverlayFormatting) => void;
 }
 
-interface SectionProps {
-  title: string;
-  children: React.ReactNode;
-  shouldShow?: boolean;
-}
-
-// Extend InputProps with StyleEditor-specific fields
-interface InputFieldProps extends Omit<InputProps, "onChange"> {
-  labelKey?: string;
-  onChange: (value: string | number) => void;
-  formatting?: OverlayFormatting;
-}
-
-// Extend SelectProps with StyleEditor-specific fields
-interface SelectFieldProps extends Omit<SelectProps, "onChange"> {
-  labelKey?: string;
-  onChange: (value: string) => void;
-  formatting?: OverlayFormatting;
-}
-
-const getContrastingTextColor = (hex: string) => {
-  // Remove '#' if present
-  hex = hex.replace(/^#/, "");
-
-  // Expand shorthand (e.g. #abc → #aabbcc)
-  if (hex.length === 3) {
-    hex = hex
-      .split("")
-      .map((c) => c + c)
-      .join("");
-  }
-
-  // Parse RGB values
-  const r = parseInt(hex.slice(0, 2), 16);
-  const g = parseInt(hex.slice(2, 4), 16);
-  const b = parseInt(hex.slice(4, 6), 16);
-
-  // Calculate luminance using the WCAG formula
-  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
-  // Return black for light backgrounds, white for dark
-  return luminance > 128 ? "#000000" : "#FFFFFF";
-};
-
-const Section: React.FC<SectionProps> = ({
-  title,
-  children,
-  shouldShow = true,
-}) => {
-  if (!shouldShow) return null;
-
-  return (
-    <div className="space-y-4">
-      <h3 className="text-lg font-semibold text-white border-b border-gray-700 pb-2">
-        {title}
-      </h3>
-      <div className="flex flex-wrap gap-4">{children}</div>
-    </div>
-  );
-};
-
-const InputField: React.FC<InputFieldProps> = ({
-  label,
-  labelKey,
-  value,
-  onChange,
-  placeholder,
-  type = "text",
-  formatting,
-  ...rest
-}) => (
-  <Input
-    label={
-      labelKey && formatting
-        ? `${formatting[labelKey as keyof OverlayFormatting] as string} ${label}`
-        : label
-    }
-    type={type}
-    value={value || ""}
-    onChange={(value) => {
-      if (type === "number") {
-        onChange(Number(value));
-      } else {
-        onChange(value as string);
-      }
-    }}
-    className="w-28"
-    placeholder={placeholder}
-    {...rest}
-  />
-);
-
-const SelectField: React.FC<SelectFieldProps> = ({
-  label,
-  labelKey,
-  value,
-  onChange,
-  options,
-  formatting,
-  ...rest
-}) => (
-  <Select
-    label={
-      labelKey && formatting
-        ? `${formatting[labelKey as keyof OverlayFormatting] as string} ${label}`
-        : label
-    }
-    value={value}
-    onChange={onChange}
-    options={options}
-    className="w-28"
-    selectClassName="w-full"
-    {...rest}
-  />
-);
-
-const ColorField: React.FC<{
-  label: string;
-  labelKey?: string;
-  value: string;
-  onChange: (value: string) => void;
-  defaultColor?: string;
-  formatting?: OverlayFormatting;
-}> = ({
-  label,
-  labelKey,
-  value,
-  onChange,
-  defaultColor = "#ffffff",
-  formatting,
-}) => {
-  const val = value || defaultColor;
-  return (
-    <div className="flex flex-col gap-2 items-center">
-      <label className="block text-sm font-medium text-white whitespace-nowrap">
-        {labelKey && formatting
-          ? `${formatting[labelKey as keyof OverlayFormatting] as string} ${label}`
-          : label}
-        :
-      </label>
-      <PopOver
-        TriggeringButton={
-          <Button
-            variant="tertiary"
-            className="w-full h-6 border-2"
-            style={{
-              backgroundColor: val,
-              borderColor: getContrastingTextColor(val),
-              color: getContrastingTextColor(val),
-            }}
-          >
-            {val}
-          </Button>
-        }
-      >
-        <HexAlphaColorPicker color={val} onChange={onChange} />
-        <HexColorInput
-          color={val}
-          prefixed
-          onChange={onChange}
-          className="text-black w-full mt-2"
-        />
-      </PopOver>
-    </div>
-  );
-};
-
 type HeightWidthType = "fit-content" | "percent" | "auto" | "unset" | "number";
-
-const WidthHeightField: React.FC<{
-  label: string;
-  labelKey?: string;
-  value: HeightWidthType;
-  onChange: (value: HeightWidthType) => void;
-  formatting?: OverlayFormatting;
-}> = ({ label, labelKey, value, onChange, formatting }) => {
-  const [type, setType] = React.useState<HeightWidthType>(value);
-
-  const handleTypeChange = (newType: HeightWidthType) => {
-    setType(newType);
-    onChange(newType);
-  };
-
-  const handleValueChange = (newValue: string | number) => {
-    onChange(newValue as HeightWidthType);
-  };
-
-  return (
-    <div>
-      <label className="block text-sm font-medium text-white mb-1">
-        {labelKey && formatting
-          ? `${formatting[labelKey as keyof OverlayFormatting] as string} ${label}`
-          : label}
-        :
-      </label>
-      <div className="flex gap-4">
-        <Select
-          hideLabel
-          value={type}
-          onChange={(value) => handleTypeChange(value as HeightWidthType)}
-          options={[
-            { label: "Fit Content", value: "fit-content" },
-            { label: "Percent", value: "percent" },
-            { label: "Auto", value: "auto" },
-            { label: "Unset", value: "unset" },
-          ]}
-          className="w-28"
-        />
-        {type === "percent" && (
-          <Input
-            hideLabel
-            type="number"
-            value={typeof value === "number" ? value : 0}
-            onChange={(value) => handleValueChange(value as HeightWidthType)}
-            placeholder="0"
-            endAdornment={<div className="text-gray-500 text-sm">%</div>}
-            min={0}
-            max={100}
-            step={0.5}
-            className="w-28"
-          />
-        )}
-      </div>
-    </div>
-  );
-};
 
 const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
   const updateFormatting = (updates: Partial<OverlayFormatting>) => {
@@ -1074,7 +849,14 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
       {/* Colors Section */}
       <Section
         title="Colors"
-        shouldShow={shouldShowSection(["backgroundColor", "borderColor"])}
+        shouldShow={shouldShowSection([
+          "backgroundColor",
+          "borderColor",
+          "borderLeftColor",
+          "borderRightColor",
+          "borderTopColor",
+          "borderBottomColor",
+        ])}
       >
         {shouldShowField("backgroundColor") && (
           <ColorField
@@ -1093,6 +875,50 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
             value={formatting.borderColor || "#ffffff"}
             onChange={(value) =>
               updateFormatting({ borderColor: value as string })
+            }
+            defaultColor="#ffffff"
+            formatting={formatting}
+          />
+        )}
+        {shouldShowField("borderLeftColor") && (
+          <ColorField
+            label="Border Left Color"
+            value={formatting.borderLeftColor || "#ffffff"}
+            onChange={(value) =>
+              updateFormatting({ borderLeftColor: value as string })
+            }
+            defaultColor="#ffffff"
+            formatting={formatting}
+          />
+        )}
+        {shouldShowField("borderRightColor") && (
+          <ColorField
+            label="Border Right Color"
+            value={formatting.borderRightColor || "#ffffff"}
+            onChange={(value) =>
+              updateFormatting({ borderRightColor: value as string })
+            }
+            defaultColor="#ffffff"
+            formatting={formatting}
+          />
+        )}
+        {shouldShowField("borderTopColor") && (
+          <ColorField
+            label="Border Top Color"
+            value={formatting.borderTopColor || "#ffffff"}
+            onChange={(value) =>
+              updateFormatting({ borderTopColor: value as string })
+            }
+            defaultColor="#ffffff"
+            formatting={formatting}
+          />
+        )}
+        {shouldShowField("borderBottomColor") && (
+          <ColorField
+            label="Border Bottom Color"
+            value={formatting.borderBottomColor || "#ffffff"}
+            onChange={(value) =>
+              updateFormatting({ borderBottomColor: value as string })
             }
             defaultColor="#ffffff"
             formatting={formatting}

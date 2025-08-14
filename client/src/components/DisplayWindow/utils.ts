@@ -10,7 +10,7 @@ export const getFontSize = ({
 
 export const getBorderWidth = ({
   width,
-  borderWidth = 1,
+  borderWidth,
 }: {
   width: number;
   borderWidth?: number;

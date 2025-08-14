@@ -1,4 +1,4 @@
-import { CSSProperties, forwardRef, useRef } from "react";
+import { forwardRef, useRef } from "react";
 import { OverlayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -187,117 +187,115 @@ const DisplayParticipantOverlay = forwardRef<
       prevParticipantOverlayInfo.title ||
       prevParticipantOverlayInfo.event;
 
-    console.log({ currentStyles, prevStyles });
-
     return (
       <>
         <div
           ref={participantOverlayRef}
           className="overlay-participant-info-container"
-          style={
-            {
-              "--overlay-participant-info-padding-top": needsPadding
-                ? `${currentStyles.paddingTop}%`
-                : "0",
-              "--overlay-participant-info-padding-bottom": needsPadding
-                ? `${currentStyles.paddingBottom}%`
-                : "0",
-              "--overlay-participant-info-padding-left": needsPadding
-                ? `${currentStyles.paddingLeft}%`
-                : "0",
-              "--overlay-participant-info-padding-right": needsPadding
-                ? `${currentStyles.paddingRight}%`
-                : "0",
-              "--overlay-participant-width":
-                typeof currentStyles.width === "number"
-                  ? `${currentStyles.width}%`
-                  : currentStyles.width,
-              "--overlay-participant-bg-color": currentStyles.backgroundColor,
-              "--overlay-participant-border-color": currentStyles.borderColor,
-              "--overlay-participant-border-type": currentStyles.borderType,
-              "--overlay-participant-border-left-width": getBorderWidth({
-                width,
-                borderWidth: currentStyles.borderLeftWidth,
-              }),
-              "--overlay-participant-border-radius-top-right":
-                currentStyles.borderRadiusTopRight,
-              "--overlay-participant-border-radius-bottom-right":
-                currentStyles.borderRadiusBottomRight,
-              "--overlay-participant-border-radius-top-left":
-                currentStyles.borderRadiusTopLeft,
-              "--overlay-participant-border-radius-bottom-left":
-                currentStyles.borderRadiusBottomLeft,
-              "--overlay-participant-max-width": `${currentStyles.maxWidth}%`,
-              "--overlay-participant-bottom": `${currentStyles.bottom}%`,
-              "--overlay-participant-left": `${currentStyles.left}%`,
-              "--overlay-participant-child1-font-size": getFontSize({
-                width,
-                fontSize: currentStyles.child1FontSize,
-              }),
-              "--overlay-participant-child2-font-size": getFontSize({
-                width,
-                fontSize: currentStyles.child2FontSize,
-              }),
-              "--overlay-participant-child3-font-size": getFontSize({
-                width,
-                fontSize: currentStyles.child3FontSize,
-              }),
-              "--overlay-participant-child1-font-color":
-                currentStyles.child1FontColor,
-              "--overlay-participant-child2-font-color":
-                currentStyles.child2FontColor,
-              "--overlay-participant-child3-font-color":
-                currentStyles.child3FontColor,
-              "--overlay-participant-child1-font-weight":
-                currentStyles.child1FontWeight,
-              "--overlay-participant-child2-font-weight":
-                currentStyles.child2FontWeight,
-              "--overlay-participant-child3-font-weight":
-                currentStyles.child3FontWeight,
-              "--overlay-participant-child1-font-style":
-                currentStyles.child1FontStyle,
-              "--overlay-participant-child2-font-style":
-                currentStyles.child2FontStyle,
-              "--overlay-participant-child3-font-style":
-                currentStyles.child3FontStyle,
-              "--overlay-participant-child1-text-align":
-                currentStyles.child1TextAlign,
-              "--overlay-participant-child2-text-align":
-                currentStyles.child2TextAlign,
-              "--overlay-participant-child3-text-align":
-                currentStyles.child3TextAlign,
-              "--overlay-participant-child1-width":
-                typeof currentStyles.child1Width === "number"
-                  ? `${currentStyles.child1Width}%`
-                  : currentStyles.child1Width,
-              "--overlay-participant-child2-width":
-                typeof currentStyles.child2Width === "number"
-                  ? `${currentStyles.child2Width}%`
-                  : currentStyles.child2Width,
-              "--overlay-participant-child3-width":
-                typeof currentStyles.child3Width === "number"
-                  ? `${currentStyles.child3Width}%`
-                  : currentStyles.child3Width,
-              "--overlay-participant-display": currentStyles.display,
-              "--overlay-participant-flex-direction":
-                currentStyles.flexDirection,
-              "--overlay-participant-gap": `${currentStyles.gap}%`,
-              "--overlay-participant-align-items": currentStyles.alignItems,
-            } as CSSProperties
-          }
+          style={{
+            width:
+              typeof currentStyles.width === "number"
+                ? `${currentStyles.width}%`
+                : currentStyles.width,
+            backgroundColor: currentStyles.backgroundColor,
+            borderColor: currentStyles.borderColor,
+            borderStyle: currentStyles.borderType || "solid",
+            borderLeftWidth: getBorderWidth({
+              width,
+              borderWidth: currentStyles.borderLeftWidth,
+            }),
+            borderLeftColor: currentStyles.borderLeftColor,
+            borderRightWidth: getBorderWidth({
+              width,
+              borderWidth: currentStyles.borderRightWidth,
+            }),
+            borderRightColor: currentStyles.borderRightColor,
+            borderTopWidth: getBorderWidth({
+              width,
+              borderWidth: currentStyles.borderTopWidth,
+            }),
+            borderTopColor: currentStyles.borderTopColor,
+            borderBottomWidth: getBorderWidth({
+              width,
+              borderWidth: currentStyles.borderBottomWidth,
+            }),
+            borderTopLeftRadius: currentStyles.borderRadiusTopLeft,
+            borderBottomLeftRadius: currentStyles.borderRadiusBottomLeft,
+            borderTopRightRadius: currentStyles.borderRadiusTopRight,
+            borderBottomRightRadius: currentStyles.borderRadiusBottomRight,
+            paddingTop: needsPadding ? `${currentStyles.paddingTop}%` : 0,
+            paddingBottom: needsPadding ? `${currentStyles.paddingBottom}%` : 0,
+            paddingLeft: needsPadding ? `${currentStyles.paddingLeft}%` : 0,
+            paddingRight: needsPadding ? `${currentStyles.paddingRight}%` : 0,
+            maxWidth: `${currentStyles.maxWidth}%`,
+            bottom: `${currentStyles.bottom}%`,
+            left: currentStyles.left ? `${currentStyles.left}%` : undefined,
+            display: currentStyles.display || "flex",
+            flexDirection: currentStyles.flexDirection || "column",
+            gap: `${currentStyles.gap}%`,
+            alignItems: currentStyles.alignItems,
+          }}
         >
           {participantOverlayInfo.name && (
-            <p className="overlay-participant-info-name">
+            <p
+              className="overlay-participant-info-name"
+              style={{
+                fontSize: getFontSize({
+                  width,
+                  fontSize: currentStyles.child1FontSize,
+                }),
+                color: currentStyles.child1FontColor,
+                fontWeight: currentStyles.child1FontWeight,
+                fontStyle: currentStyles.child1FontStyle,
+                textAlign: currentStyles.child1TextAlign,
+                width:
+                  typeof currentStyles.child1Width === "number"
+                    ? `${currentStyles.child1Width}%`
+                    : currentStyles.child1Width,
+              }}
+            >
               {participantOverlayInfo.name}
             </p>
           )}
           {participantOverlayInfo.title && (
-            <p className="overlay-participant-info-title">
+            <p
+              className="overlay-participant-info-title"
+              style={{
+                fontSize: getFontSize({
+                  width,
+                  fontSize: currentStyles.child2FontSize,
+                }),
+                fontStyle: currentStyles.child2FontStyle,
+                color: currentStyles.child2FontColor,
+                fontWeight: currentStyles.child2FontWeight,
+                textAlign: currentStyles.child2TextAlign,
+                width:
+                  typeof currentStyles.child2Width === "number"
+                    ? `${currentStyles.child2Width}%`
+                    : currentStyles.child2Width,
+              }}
+            >
               {participantOverlayInfo.title}
             </p>
           )}
           {participantOverlayInfo.event && (
-            <p className="overlay-participant-info-event">
+            <p
+              className="overlay-participant-info-event"
+              style={{
+                fontSize: getFontSize({
+                  width,
+                  fontSize: currentStyles.child3FontSize,
+                }),
+                color: currentStyles.child3FontColor,
+                fontWeight: currentStyles.child3FontWeight,
+                fontStyle: currentStyles.child3FontStyle,
+                textAlign: currentStyles.child3TextAlign,
+                width:
+                  typeof currentStyles.child3Width === "number"
+                    ? `${currentStyles.child3Width}%`
+                    : currentStyles.child3Width,
+              }}
+            >
               {participantOverlayInfo.event}
             </p>
           )}
@@ -305,103 +303,102 @@ const DisplayParticipantOverlay = forwardRef<
         <div
           ref={prevParticipantOverlayRef}
           className="overlay-participant-info-container"
-          style={
-            {
-              "--overlay-participant-info-padding-top": prevNeedsPadding
-                ? `${prevStyles.paddingTop}%`
-                : "0",
-              "--overlay-participant-info-padding-bottom": prevNeedsPadding
-                ? `${prevStyles.paddingBottom}%`
-                : "0",
-              "--overlay-participant-info-padding-left": prevNeedsPadding
-                ? `${prevStyles.paddingLeft}%`
-                : "0",
-              "--overlay-participant-info-padding-right": prevNeedsPadding
-                ? `${prevStyles.paddingRight}%`
-                : "0",
-              // Default style CSS variables (can be overridden by formatting)
-              "--overlay-participant-width":
-                typeof prevStyles.width === "number"
-                  ? `${prevStyles.width}%`
-                  : prevStyles.width,
-              "--overlay-participant-bg-color": prevStyles.backgroundColor,
-              "--overlay-participant-border-color": prevStyles.borderColor,
-              "--overlay-participant-border-type": prevStyles.borderType,
-              "--overlay-participant-border-left-width": `${prevStyles.borderLeftWidth}px`,
-              "--overlay-participant-border-radius-top-right":
-                prevStyles.borderRadiusTopRight,
-              "--overlay-participant-border-radius-bottom-right":
-                prevStyles.borderRadiusBottomRight,
-              "--overlay-participant-border-radius-top-left":
-                prevStyles.borderRadiusTopLeft,
-              "--overlay-participant-border-radius-bottom-left":
-                prevStyles.borderRadiusBottomLeft,
-              "--overlay-participant-max-width": `${prevStyles.maxWidth}%`,
-              "--overlay-participant-bottom": `${prevStyles.bottom}%`,
-              "--overlay-participant-left": `${prevStyles.left}%`,
-              "--overlay-participant-child1-font-size": getFontSize({
-                width,
-                fontSize: prevStyles.child1FontSize,
-              }),
-              "--overlay-participant-child2-font-size": getFontSize({
-                width,
-                fontSize: prevStyles.child2FontSize,
-              }),
-              "--overlay-participant-child3-font-size": getFontSize({
-                width,
-                fontSize: prevStyles.child3FontSize,
-              }),
-              "--overlay-participant-child1-font-color":
-                prevStyles.child1FontColor,
-              "--overlay-participant-child2-font-color":
-                prevStyles.child2FontColor,
-              "--overlay-participant-child3-font-color":
-                prevStyles.child3FontColor,
-              "--overlay-participant-child1-font-weight":
-                prevStyles.child1FontWeight,
-              "--overlay-participant-child2-font-weight":
-                prevStyles.child2FontWeight,
-              "--overlay-participant-child3-font-weight":
-                prevStyles.child3FontWeight,
-              "--overlay-participant-child1-font-style":
-                prevStyles.child1FontStyle,
-              "--overlay-participant-child1-text-align":
-                prevStyles.child1TextAlign,
-              "--overlay-participant-child2-text-align":
-                prevStyles.child2TextAlign,
-              "--overlay-participant-child3-text-align":
-                prevStyles.child3TextAlign,
-              "--overlay-participant-child1-width":
-                typeof prevStyles.child1Width === "number"
-                  ? `${prevStyles.child1Width}%`
-                  : prevStyles.child1Width,
-              "--overlay-participant-child2-width":
-                typeof prevStyles.child2Width === "number"
-                  ? `${prevStyles.child2Width}%`
-                  : prevStyles.child2Width,
-              "--overlay-participant-child3-width":
-                typeof prevStyles.child3Width === "number"
-                  ? `${prevStyles.child3Width}%`
-                  : prevStyles.child3Width,
-              "--overlay-participant-display": prevStyles.display,
-              "--overlay-participant-flex-direction": prevStyles.flexDirection,
-              "--overlay-participant-align-items": prevStyles.alignItems,
-              "--overlay-participant-gap": `${prevStyles.gap}%`,
-            } as CSSProperties
-          }
+          style={{
+            position: "absolute",
+            overflow: "hidden",
+            width:
+              typeof prevStyles.width === "number"
+                ? `${prevStyles.width}%`
+                : prevStyles.width,
+            backgroundColor: prevStyles.backgroundColor,
+            borderColor: prevStyles.borderColor,
+            borderStyle: prevStyles.borderType || "solid",
+            borderLeftWidth: `${getBorderWidth({ width, borderWidth: prevStyles.borderLeftWidth })}px`,
+            borderLeftColor: prevStyles.borderLeftColor,
+            borderRightWidth: `${getBorderWidth({ width, borderWidth: prevStyles.borderRightWidth })}px`,
+            borderRightColor: prevStyles.borderRightColor,
+            borderTopWidth: `${getBorderWidth({ width, borderWidth: prevStyles.borderTopWidth })}px`,
+            borderTopColor: prevStyles.borderTopColor,
+            borderBottomWidth: `${getBorderWidth({ width, borderWidth: prevStyles.borderBottomWidth })}px`,
+            borderTopLeftRadius: prevStyles.borderRadiusTopLeft,
+            borderBottomLeftRadius: prevStyles.borderRadiusBottomLeft,
+            borderTopRightRadius: prevStyles.borderRadiusTopRight,
+            borderBottomRightRadius: prevStyles.borderRadiusBottomRight,
+            paddingTop: prevNeedsPadding ? `${prevStyles.paddingTop}%` : 0,
+            paddingBottom: prevNeedsPadding
+              ? `${prevStyles.paddingBottom}%`
+              : 0,
+            paddingLeft: prevNeedsPadding ? `${prevStyles.paddingLeft}%` : 0,
+            paddingRight: prevNeedsPadding ? `${prevStyles.paddingRight}%` : 0,
+            maxWidth: `${prevStyles.maxWidth}%`,
+            bottom: `${prevStyles.bottom}%`,
+            left: prevStyles.left ? `${prevStyles.left}%` : undefined,
+            display: prevStyles.display || "flex",
+            flexDirection: prevStyles.flexDirection || "column",
+            alignItems: prevStyles.alignItems,
+            gap: `${prevStyles.gap}%`,
+          }}
         >
           {prevParticipantOverlayInfo.name && (
-            <p className="prev-overlay-participant-info-name">
+            <p
+              className="prev-overlay-participant-info-name"
+              style={{
+                fontSize: getFontSize({
+                  width,
+                  fontSize: prevStyles.child1FontSize,
+                }),
+                color: prevStyles.child1FontColor,
+                fontWeight: prevStyles.child1FontWeight,
+                fontStyle: prevStyles.child1FontStyle,
+                textAlign: prevStyles.child1TextAlign,
+                width:
+                  typeof prevStyles.child1Width === "number"
+                    ? `${prevStyles.child1Width}%`
+                    : prevStyles.child1Width,
+              }}
+            >
               {prevParticipantOverlayInfo.name}
             </p>
           )}
           {prevParticipantOverlayInfo.title && (
-            <p className="prev-overlay-participant-info-title">
+            <p
+              className="prev-overlay-participant-info-title"
+              style={{
+                fontSize: getFontSize({
+                  width,
+                  fontSize: prevStyles.child2FontSize,
+                }),
+                fontStyle: prevStyles.child2FontStyle,
+                color: prevStyles.child2FontColor,
+                fontWeight: prevStyles.child2FontWeight,
+                textAlign: prevStyles.child2TextAlign,
+                width:
+                  typeof prevStyles.child2Width === "number"
+                    ? `${prevStyles.child2Width}%`
+                    : prevStyles.child2Width,
+              }}
+            >
               {prevParticipantOverlayInfo.title}
             </p>
           )}
           {prevParticipantOverlayInfo.event && (
-            <p className="prev-overlay-participant-info-event">
+            <p
+              className="prev-overlay-participant-info-event"
+              style={{
+                fontSize: getFontSize({
+                  width,
+                  fontSize: prevStyles.child3FontSize,
+                }),
+                color: prevStyles.child3FontColor,
+                fontWeight: prevStyles.child3FontWeight,
+                fontStyle: prevStyles.child3FontStyle,
+                textAlign: prevStyles.child3TextAlign,
+                width:
+                  typeof prevStyles.child3Width === "number"
+                    ? `${prevStyles.child3Width}%`
+                    : prevStyles.child3Width,
+              }}
+            >
               {prevParticipantOverlayInfo.event}
             </p>
           )}

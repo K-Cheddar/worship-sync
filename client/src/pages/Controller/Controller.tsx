@@ -190,7 +190,6 @@ const Controller = () => {
     async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
-        console.log("updates", event);
         for (const _update of updates) {
           // check if the list we have selected was updated
           if (selectedList && _update._id === selectedList._id) {

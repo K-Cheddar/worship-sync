@@ -1,4 +1,4 @@
-import { CSSProperties, forwardRef, useRef } from "react";
+import { forwardRef, useRef } from "react";
 import { OverlayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -131,23 +131,21 @@ const DisplayImageOverlay = forwardRef<
         <div
           ref={imageOverlayRef}
           className="overlay-image-container"
-          style={
-            {
-              "--overlay-image-max-width": `${currentStyles.maxWidth}%`,
-              "--overlay-image-max-height": `${currentStyles.maxHeight}%`,
-              "--overlay-image-bottom": `${currentStyles.bottom}%`,
-              "--overlay-image-left": `${currentStyles.left}%`,
-              "--overlay-image-right": `${currentStyles.right}%`,
-              "--overlay-image-width":
-                typeof currentStyles.width === "number"
-                  ? `${currentStyles.width}%`
-                  : currentStyles.width,
-              "--overlay-image-height":
-                typeof currentStyles.height === "number"
-                  ? `${currentStyles.height}%`
-                  : currentStyles.height,
-            } as CSSProperties
-          }
+          style={{
+            maxHeight: `${currentStyles.maxHeight}%`,
+            maxWidth: `${currentStyles.maxWidth}%`,
+            bottom: `${currentStyles.bottom}%`,
+            left: currentStyles.left ? `${currentStyles.left}%` : 0,
+            right: currentStyles.right ? `${currentStyles.right}%` : 0,
+            width:
+              typeof currentStyles.width === "number"
+                ? `${currentStyles.width}%`
+                : currentStyles.width,
+            height:
+              typeof currentStyles.height === "number"
+                ? `${currentStyles.height}%`
+                : currentStyles.height,
+          }}
         >
           {imageOverlayInfo.imageUrl &&
             (isVideo ? (
@@ -169,23 +167,21 @@ const DisplayImageOverlay = forwardRef<
         <div
           ref={prevImageOverlayRef}
           className="overlay-image-container"
-          style={
-            {
-              "--overlay-image-max-width": `${prevStyles.maxWidth}%`,
-              "--overlay-image-max-height": `${prevStyles.maxHeight}%`,
-              "--overlay-image-bottom": `${prevStyles.bottom}%`,
-              "--overlay-image-left": `${prevStyles.left}%`,
-              "--overlay-image-right": `${prevStyles.right}%`,
-              "--overlay-image-width":
-                typeof prevStyles.width === "number"
-                  ? `${prevStyles.width}%`
-                  : prevStyles.width,
-              "--overlay-image-height":
-                typeof prevStyles.height === "number"
-                  ? `${prevStyles.height}%`
-                  : prevStyles.height,
-            } as CSSProperties
-          }
+          style={{
+            maxHeight: `${prevStyles.maxHeight}%`,
+            maxWidth: `${prevStyles.maxWidth}%`,
+            bottom: `${prevStyles.bottom}%`,
+            left: prevStyles.left ? `${prevStyles.left}%` : 0,
+            right: prevStyles.right ? `${prevStyles.right}%` : 0,
+            width:
+              typeof prevStyles.width === "number"
+                ? `${prevStyles.width}%`
+                : prevStyles.width,
+            height:
+              typeof prevStyles.height === "number"
+                ? `${prevStyles.height}%`
+                : prevStyles.height,
+          }}
         >
           {prevImageOverlayInfo.imageUrl &&
             (isPrevVideo ? (

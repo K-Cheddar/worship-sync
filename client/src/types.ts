@@ -217,9 +217,13 @@ export type OverlayFormatting = {
   borderColor?: string;
   borderType?: "solid" | "dashed" | "dotted";
   borderLeftWidth?: number;
+  borderLeftColor?: string;
   borderRightWidth?: number;
+  borderRightColor?: string;
   borderTopWidth?: number;
+  borderTopColor?: string;
   borderBottomWidth?: number;
+  borderBottomColor?: string;
   borderRadius?: string;
   borderRadiusTopLeft?: string;
   borderRadiusTopRight?: string;

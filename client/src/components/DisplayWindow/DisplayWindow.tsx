@@ -141,12 +141,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         } ${displayType !== "stream" ? "bg-black" : ""}`}
         ref={containerRef}
         id={isEditor ? "display-editor" : undefined}
-        style={
-          {
-            "--slide-editor-height": `${width / aspectRatio}vw`,
-            "--slide-editor-width": `${width}vw`,
-          } as React.CSSProperties
-        }
+        style={{
+          width: `${width}vw`,
+          height: `${width / aspectRatio}vw`,
+        }}
       >
         {isDisplay && showBackground && shouldPlayVideo && activeVideoUrl && (
           <HLSPlayer

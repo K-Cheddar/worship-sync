@@ -1,4 +1,4 @@
-import { CSSProperties, useRef } from "react";
+import { useRef } from "react";
 import { FormattedTextDisplayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -15,22 +15,18 @@ type DisplayStreamFormattedTextProps = {
 
 const generateFormattedTextStyles = (
   width: number,
-  displayInfo?: FormattedTextDisplayInfo,
-): CSSProperties =>
-  ({
-    "--formatted-text-background-color":
-      displayInfo?.backgroundColor || "#eb8934",
-    "--formatted-text-text-color": displayInfo?.textColor || "#ffffff",
-    "--formatted-text-font-size": `${
-      (displayInfo?.fontSize || 1.5) * (width / 100)
-    }vw`,
-    "--formatted-text-padding": displayInfo?.text
-      ? `${displayInfo?.paddingY}% ${displayInfo?.paddingX}%`
-      : "0",
-    "--formatted-text-align": displayInfo?.align || "center",
-    "--formatted-text-font-weight": displayInfo?.isBold ? "bold" : "normal",
-    "--formatted-text-font-style": displayInfo?.isItalic ? "italic" : "normal",
-  } as CSSProperties);
+  displayInfo?: FormattedTextDisplayInfo
+): React.CSSProperties => ({
+  backgroundColor: displayInfo?.backgroundColor || "#eb8934",
+  color: displayInfo?.textColor || "#ffffff",
+  fontSize: `${(displayInfo?.fontSize || 1.5) * (width / 100)}vw`,
+  padding: displayInfo?.text
+    ? `${displayInfo?.paddingY}% ${displayInfo?.paddingX}%`
+    : 0,
+  fontWeight: displayInfo?.isBold ? "bold" : "normal",
+  fontStyle: displayInfo?.isItalic ? "italic" : "normal",
+  textAlign: displayInfo?.align || "center",
+});
 
 const DisplayStreamFormattedText = ({
   width,
@@ -56,14 +52,14 @@ const DisplayStreamFormattedText = ({
           {
             opacity: 0,
           },
-          { opacity: 1, duration: 0.35, ease: "power1.inOut" },
+          { opacity: 1, duration: 0.35, ease: "power1.inOut" }
         );
       }
     },
     {
       scope: formattedTextRef,
       dependencies: [formattedTextDisplayInfo, isPrev],
-    },
+    }
   );
 
   useGSAP(
@@ -78,14 +74,14 @@ const DisplayStreamFormattedText = ({
           {
             opacity: 1,
           },
-          { opacity: 0, duration: 0.35, ease: "power1.inOut" },
+          { opacity: 0, duration: 0.35, ease: "power1.inOut" }
         );
       }
     },
     {
       scope: prevFormattedTextRef,
       dependencies: [prevFormattedTextDisplayInfo],
-    },
+    }
   );
 
   const renderContent = (text: string) => {
