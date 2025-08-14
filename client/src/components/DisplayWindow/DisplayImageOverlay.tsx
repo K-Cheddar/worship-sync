@@ -1,7 +1,8 @@
-import { forwardRef, useRef } from "react";
+import { CSSProperties, forwardRef, useRef } from "react";
 import { OverlayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
+import { defaultImageOverlayStyles } from "./defaultOverlayStyles";
 import "./DisplayWindow.scss";
 import { checkMediaType } from "../../utils/generalUtils";
 
@@ -23,7 +24,7 @@ const DisplayImageOverlay = forwardRef<
       prevImageOverlayInfo = {},
       shouldAnimate = false,
     },
-    containerRef,
+    containerRef
   ) => {
     const imageOverlayRef = useRef<HTMLDivElement | null>(null);
     const prevImageOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -59,9 +60,9 @@ const DisplayImageOverlay = forwardRef<
               onUpdate: () => {
                 currentOpacity.current = imageOverlayRef.current
                   ? (gsap.getProperty(
-                    imageOverlayRef.current,
-                    "opacity",
-                  ) as number)
+                      imageOverlayRef.current,
+                      "opacity"
+                    ) as number)
                   : 1;
               },
             })
@@ -73,9 +74,9 @@ const DisplayImageOverlay = forwardRef<
               onUpdate: () => {
                 currentOpacity.current = imageOverlayRef.current
                   ? (gsap.getProperty(
-                    imageOverlayRef.current,
-                    "opacity",
-                  ) as number)
+                      imageOverlayRef.current,
+                      "opacity"
+                    ) as number)
                   : 1;
               },
             });
@@ -84,7 +85,7 @@ const DisplayImageOverlay = forwardRef<
       {
         scope: imageOverlayRef,
         dependencies: [imageOverlayInfo, prevImageOverlayInfo],
-      },
+      }
     );
 
     useGSAP(
@@ -111,12 +112,43 @@ const DisplayImageOverlay = forwardRef<
           });
         }
       },
-      { scope: prevImageOverlayRef, dependencies: [prevImageOverlayInfo] },
+      { scope: prevImageOverlayRef, dependencies: [prevImageOverlayInfo] }
     );
+
+    // Merge default styles with custom formatting
+    const currentStyles = {
+      ...defaultImageOverlayStyles,
+      ...imageOverlayInfo.formatting,
+    };
+
+    const prevStyles = {
+      ...defaultImageOverlayStyles,
+      ...prevImageOverlayInfo.formatting,
+    };
 
     return (
       <>
-        <div ref={imageOverlayRef} className="overlay-image-container">
+        <div
+          ref={imageOverlayRef}
+          className="overlay-image-container"
+          style={
+            {
+              "--overlay-image-max-width": `${currentStyles.maxWidth}%`,
+              "--overlay-image-max-height": `${currentStyles.maxHeight}%`,
+              "--overlay-image-bottom": `${currentStyles.bottom}%`,
+              "--overlay-image-left": `${currentStyles.left}%`,
+              "--overlay-image-right": `${currentStyles.right}%`,
+              "--overlay-image-width":
+                typeof currentStyles.width === "number"
+                  ? `${currentStyles.width}%`
+                  : currentStyles.width,
+              "--overlay-image-height":
+                typeof currentStyles.height === "number"
+                  ? `${currentStyles.height}%`
+                  : currentStyles.height,
+            } as CSSProperties
+          }
+        >
           {imageOverlayInfo.imageUrl &&
             (isVideo ? (
               <video
@@ -134,7 +166,27 @@ const DisplayImageOverlay = forwardRef<
               />
             ))}
         </div>
-        <div ref={prevImageOverlayRef} className="overlay-image-container">
+        <div
+          ref={prevImageOverlayRef}
+          className="overlay-image-container"
+          style={
+            {
+              "--overlay-image-max-width": `${prevStyles.maxWidth}%`,
+              "--overlay-image-max-height": `${prevStyles.maxHeight}%`,
+              "--overlay-image-bottom": `${prevStyles.bottom}%`,
+              "--overlay-image-left": `${prevStyles.left}%`,
+              "--overlay-image-right": `${prevStyles.right}%`,
+              "--overlay-image-width":
+                typeof prevStyles.width === "number"
+                  ? `${prevStyles.width}%`
+                  : prevStyles.width,
+              "--overlay-image-height":
+                typeof prevStyles.height === "number"
+                  ? `${prevStyles.height}%`
+                  : prevStyles.height,
+            } as CSSProperties
+          }
+        >
           {prevImageOverlayInfo.imageUrl &&
             (isPrevVideo ? (
               <video
@@ -154,7 +206,7 @@ const DisplayImageOverlay = forwardRef<
         </div>
       </>
     );
-  },
+  }
 );
 
 export default DisplayImageOverlay;

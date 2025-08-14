@@ -136,7 +136,6 @@ const QuickLinkSelection = ({ isMobile }: QuickLinkSelectionProps) => {
                   ...info,
                   url: selectedOverlay.url,
                   description: selectedOverlay.description,
-                  color: selectedOverlay.color,
                 },
               };
             }

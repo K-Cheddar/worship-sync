@@ -1,6 +1,7 @@
 import Button from "../../components/Button/Button";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
+import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   addOverlay,
@@ -30,21 +31,13 @@ import {
 } from "@dnd-kit/sortable";
 import RadioButton from "../../components/RadioButton/RadioButton";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import Select from "../../components/Select/Select";
 import generateRandomId from "../../utils/generateRandomId";
 import TextArea from "../../components/TextArea/TextArea";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
-
-const colorOptions = [
-  { label: "Red", value: "#dc2626" },
-  { label: "Orange", value: "#ea580c" },
-  { label: "Yellow", value: "#eab308" },
-  { label: "Green", value: "#16a34a" },
-  { label: "Cyan", value: "#0891b2" },
-  { label: "Blue", value: "#2563eb" },
-  { label: "Purple", value: "#9333ea" },
-];
+import Drawer from "../../components/Drawer";
+import StyleEditor from "../../components/StyleEditor";
+import { OverlayFormatting } from "../../types";
 
 const Overlays = () => {
   const { list, selectedId, initialList } = useSelector(
@@ -62,7 +55,6 @@ const Overlays = () => {
     url: "",
     type: "participant",
     duration: 7,
-    color: "",
     imageUrl: "",
     heading: "",
     subHeading: "",
@@ -79,6 +71,7 @@ const Overlays = () => {
   const [overlayHeaderHeight, setOverlayHeaderHeight] = useState(0);
   const [showPreview, setShowPreview] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
+  const [isStyleDrawerOpen, setIsStyleDrawerOpen] = useState(false);
 
   const { setNodeRef } = useDroppable({
     id: "overlays-list",
@@ -168,6 +161,15 @@ const Overlays = () => {
     selectedOverlay.name || selectedOverlay.url
       ? "Copy Overlay"
       : "Add Overlay";
+
+  const handleFormattingChange = (formatting: OverlayFormatting) => {
+    dispatch(
+      updateOverlay({
+        id: selectedOverlay.id,
+        formatting: formatting,
+      })
+    );
+  };
 
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
@@ -263,6 +265,7 @@ const Overlays = () => {
                                 duration: selectedOverlay.duration,
                                 type: selectedOverlay.type,
                                 id: selectedOverlay.id,
+                                formatting: selectedOverlay.formatting,
                               }
                             : undefined
                         }
@@ -274,6 +277,7 @@ const Overlays = () => {
                                 duration: selectedOverlay.duration,
                                 type: selectedOverlay.type,
                                 id: selectedOverlay.id,
+                                formatting: selectedOverlay.formatting,
                               }
                             : undefined
                         }
@@ -282,10 +286,10 @@ const Overlays = () => {
                             ? {
                                 url: selectedOverlay.url,
                                 description: selectedOverlay.description,
-                                color: selectedOverlay.color,
                                 duration: selectedOverlay.duration,
                                 type: selectedOverlay.type,
                                 id: selectedOverlay.id,
+                                formatting: selectedOverlay.formatting,
                               }
                             : undefined
                         }
@@ -297,6 +301,7 @@ const Overlays = () => {
                                 duration: selectedOverlay.duration,
                                 type: selectedOverlay.type,
                                 id: selectedOverlay.id,
+                                formatting: selectedOverlay.formatting,
                               }
                             : undefined
                         }
@@ -406,22 +411,6 @@ const Overlays = () => {
                             )
                           }
                         />
-                        <Select
-                          {...commonInputProps}
-                          className={commonInputProps.className + " w-[90%]"}
-                          label="Color"
-                          value={selectedOverlay.color || ""}
-                          onChange={(val) =>
-                            dispatch(
-                              updateOverlay({
-                                ...selectedOverlay,
-                                color: val as string,
-                              })
-                            )
-                          }
-                          options={colorOptions}
-                          selectClassName="w-full"
-                        />
                       </>
                     )}
                     {selectedOverlay.type === "image" && ( // TODO - Select from image library
@@ -470,6 +459,14 @@ const Overlays = () => {
                       }
                       data-ignore-undo="true"
                     />
+                    <Button
+                      className="w-full justify-center text-sm"
+                      svg={EditSVG}
+                      color="#22d3ee"
+                      onClick={() => setIsStyleDrawerOpen(true)}
+                    >
+                      Edit Style
+                    </Button>
                     <h4 className="text-center text-base">Type:</h4>
                     <div className="flex gap-2 justify-between flex-col">
                       <RadioButton
@@ -529,6 +526,21 @@ const Overlays = () => {
           </div>
         )}
       </div>
+
+      <Drawer
+        isOpen={isStyleDrawerOpen}
+        onClose={() => setIsStyleDrawerOpen(false)}
+        size={isMobile ? "lg" : "xl"}
+        position={isMobile ? "bottom" : "right"}
+        title="Edit Overlay Style"
+        closeOnBackdropClick={false}
+        closeOnEscape={true}
+      >
+        <StyleEditor
+          formatting={selectedOverlay.formatting || {}}
+          onChange={handleFormattingChange}
+        />
+      </Drawer>
     </DndContext>
   );
 };

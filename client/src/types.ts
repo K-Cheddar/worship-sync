@@ -212,6 +212,87 @@ export type BibleDisplayInfo = {
   time?: number;
 };
 
+export type OverlayFormatting = {
+  backgroundColor?: string;
+  borderColor?: string;
+  borderType?: "solid" | "dashed" | "dotted";
+  borderLeftWidth?: number;
+  borderRightWidth?: number;
+  borderTopWidth?: number;
+  borderBottomWidth?: number;
+  borderRadius?: string;
+  borderRadiusTopLeft?: string;
+  borderRadiusTopRight?: string;
+  borderRadiusBottomLeft?: string;
+  borderRadiusBottomRight?: string;
+  paddingTop?: number;
+  paddingBottom?: number;
+  paddingLeft?: number;
+  paddingRight?: number;
+  marginTop?: number;
+  marginBottom?: number;
+  marginLeft?: number;
+  marginRight?: number;
+  top?: number;
+  bottom?: number;
+  left?: number;
+  right?: number;
+  fontSize?: number;
+  child1FontSize?: number;
+  child2FontSize?: number;
+  child3FontSize?: number;
+  child4FontSize?: number;
+  child1Text?: string;
+  child2Text?: string;
+  child3Text?: string;
+  child4Text?: string;
+  fontColor?: string;
+  fontWeight?: number;
+  fontStyle?: "normal" | "italic";
+  child1FontColor?: string;
+  child2FontColor?: string;
+  child1FontWeight?: number;
+  child2FontWeight?: number;
+  child1FontStyle?: "normal" | "italic";
+  child2FontStyle?: "normal" | "italic";
+  child3FontColor?: string;
+  child3FontWeight?: number;
+  child3FontStyle?: "normal" | "italic";
+  child4FontColor?: string;
+  child4FontWeight?: number;
+  child4FontStyle?: "normal" | "italic";
+  child1TextAlign?: "left" | "right" | "center";
+  child2TextAlign?: "left" | "right" | "center";
+  child3TextAlign?: "left" | "right" | "center";
+  child4TextAlign?: "left" | "right" | "center";
+  child1Width?: number | string;
+  child2Width?: number | string;
+  child3Width?: number | string;
+  child4Width?: number | string;
+  child1Height?: number | string;
+  child2Height?: number | string;
+  child3Height?: number | string;
+  child4Height?: number | string;
+  maxWidth?: number | string;
+  maxHeight?: number | string;
+  minWidth?: number | string;
+  minHeight?: number | string;
+  width?: number | string;
+  height?: number | string;
+  textAlign?: "left" | "right" | "center";
+  gap?: number;
+  display?: "flex" | "block";
+  flexDirection?: "row" | "column";
+  justifyContent?:
+    | "flex-start"
+    | "flex-end"
+    | "center"
+    | "space-between"
+    | "space-around";
+  alignItems?: "flex-start" | "flex-end" | "center" | "baseline" | "stretch";
+  flexWrap?: "nowrap" | "wrap" | "wrap-reverse";
+};
+
 export type OverlayInfo = {
   // participant
   name?: string;
@@ -223,7 +304,6 @@ export type OverlayInfo = {
   // qr-code
   url?: string;
   description?: string;
-  color?: string;
   // image
   imageUrl?: string;
   // shared
@@ -231,6 +311,7 @@ export type OverlayInfo = {
   type?: "participant" | "stick-to-bottom" | "qr-code" | "image";
   time?: number;
   id: string;
+  formatting?: OverlayFormatting;
 };
 
 export type CreditsInfo = {

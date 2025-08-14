@@ -2,7 +2,9 @@ import { CSSProperties, forwardRef, useRef, useState } from "react";
 import { OverlayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
+import { defaultStbOverlayStyles } from "./defaultOverlayStyles";
 import "./DisplayWindow.scss";
+import { getFontSize } from "./utils";
 
 type DisplayStbOverlayProps = {
   width: number;
@@ -19,7 +21,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       prevStbOverlayInfo = {},
       shouldAnimate = false,
     },
-    containerRef,
+    containerRef
   ) => {
     const stbOverlayRef = useRef<HTMLDivElement | null>(null);
     const prevStbOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -50,18 +52,18 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
                 setYPercent(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                      stbOverlayRef.current,
-                      "yPercent",
-                    ) as number)
-                    : 0,
+                        stbOverlayRef.current,
+                        "yPercent"
+                      ) as number)
+                    : 0
                 );
                 setOpacity(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                      stbOverlayRef.current,
-                      "opacity",
-                    ) as number)
-                    : 1,
+                        stbOverlayRef.current,
+                        "opacity"
+                      ) as number)
+                    : 1
                 );
               },
             })
@@ -75,18 +77,18 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
                 setYPercent(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                      stbOverlayRef.current,
-                      "yPercent",
-                    ) as number)
-                    : 0,
+                        stbOverlayRef.current,
+                        "yPercent"
+                      ) as number)
+                    : 0
                 );
                 setOpacity(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                      stbOverlayRef.current,
-                      "opacity",
-                    ) as number)
-                    : 1,
+                        stbOverlayRef.current,
+                        "opacity"
+                      ) as number)
+                    : 1
                 );
               },
             });
@@ -95,7 +97,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       {
         scope: stbOverlayRef,
         dependencies: [stbOverlayInfo, prevStbOverlayInfo],
-      },
+      }
     );
 
     useGSAP(
@@ -124,8 +126,26 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       {
         scope: prevStbOverlayRef,
         dependencies: [prevStbOverlayInfo, yPercent, opacity],
-      },
+      }
     );
+
+    // Merge default styles with custom formatting
+    const currentStyles = {
+      ...defaultStbOverlayStyles,
+      ...stbOverlayInfo.formatting,
+    };
+
+    const prevStyles = {
+      ...defaultStbOverlayStyles,
+      ...prevStbOverlayInfo.formatting,
+    };
+
+    const needsPadding = stbOverlayInfo.heading || stbOverlayInfo.subHeading;
+
+    const prevNeedsPadding =
+      prevStbOverlayInfo.heading || prevStbOverlayInfo.subHeading;
+
+    console.log({ currentStyles, prevStyles });
 
     return (
       <>
@@ -134,12 +154,51 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
           className="overlay-stb-info-container"
           style={
             {
-              "--overlay-stb-info-border-width": `${width / 150}vw`,
-              "--overlay-stb-info-text-size": `${width / 50}vw`,
-              "--overlay-stb-info-padding":
-                stbOverlayInfo.heading || stbOverlayInfo.subHeading
-                  ? "0.5% 2.5%"
-                  : "0",
+              "--overlay-stb-info-padding-top": needsPadding
+                ? `${currentStyles.paddingTop}%`
+                : "0",
+              "--overlay-stb-info-padding-bottom": needsPadding
+                ? `${currentStyles.paddingBottom}%`
+                : "0",
+              "--overlay-stb-info-padding-left": needsPadding
+                ? `${currentStyles.paddingLeft}%`
+                : "0",
+              "--overlay-stb-info-padding-right": needsPadding
+                ? `${currentStyles.paddingRight}%`
+                : "0",
+              "--overlay-stb-bg-color": currentStyles.backgroundColor,
+              "--overlay-stb-border-color": currentStyles.borderColor,
+              "--overlay-stb-border-type": currentStyles.borderType,
+              "--overlay-stb-min-width": currentStyles.minWidth,
+              "--overlay-stb-height":
+                typeof currentStyles.height === "number"
+                  ? `${currentStyles.height}%`
+                  : currentStyles.height,
+              "--overlay-stb-bottom": `${currentStyles.bottom}%`,
+              "--overlay-stb-left": `${currentStyles.left}%`,
+              "--overlay-stb-right": `${currentStyles.right}%`,
+              "--overlay-stb-child1-font-size": getFontSize({
+                width,
+                fontSize: currentStyles.child1FontSize,
+              }),
+              "--overlay-stb-child2-font-size": getFontSize({
+                width,
+                fontSize: currentStyles.child2FontSize,
+              }),
+              "--overlay-stb-child1-font-color": currentStyles.child1FontColor,
+              "--overlay-stb-child2-font-color": currentStyles.child2FontColor,
+              "--overlay-stb-child1-font-weight":
+                currentStyles.child1FontWeight,
+              "--overlay-stb-child2-font-weight":
+                currentStyles.child2FontWeight,
+              "--overlay-stb-child1-font-style": currentStyles.child1FontStyle,
+              "--overlay-stb-child2-font-style": currentStyles.child2FontStyle,
+              "--overlay-stb-text-align": currentStyles.textAlign,
+              "--overlay-stb-display": currentStyles.display,
+              "--overlay-stb-flex-direction": currentStyles.flexDirection,
+              "--overlay-stb-justify-content": currentStyles.justifyContent,
+              "--overlay-stb-align-items": currentStyles.alignItems,
+              "--overlay-stb-gap": currentStyles.gap,
             } as CSSProperties
           }
         >
@@ -157,12 +216,49 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
           className="overlay-stb-info-container"
           style={
             {
-              "--overlay-stb-info-border-width": `${width / 150}vw`,
-              "--overlay-stb-info-text-size": `${width / 50}vw`,
-              "--overlay-stb-info-padding":
-                prevStbOverlayInfo.heading || prevStbOverlayInfo.subHeading
-                  ? "0.5% 2.5%"
-                  : "0",
+              "--overlay-stb-info-padding-top": prevNeedsPadding
+                ? `${prevStyles.paddingTop}%`
+                : "0",
+              "--overlay-stb-info-padding-bottom": prevNeedsPadding
+                ? `${prevStyles.paddingBottom}%`
+                : "0",
+              "--overlay-stb-info-padding-left": prevNeedsPadding
+                ? `${prevStyles.paddingLeft}%`
+                : "0",
+              "--overlay-stb-info-padding-right": prevNeedsPadding
+                ? `${prevStyles.paddingRight}%`
+                : "0",
+              "--overlay-stb-bg-color": prevStyles.backgroundColor,
+              "--overlay-stb-border-color": prevStyles.borderColor,
+              "--overlay-stb-border-type": prevStyles.borderType,
+              "--overlay-stb-min-width": prevStyles.minWidth,
+              "--overlay-stb-height":
+                typeof prevStyles.height === "number"
+                  ? `${prevStyles.height}%`
+                  : prevStyles.height,
+              "--overlay-stb-bottom": `${prevStyles.bottom}%`,
+              "--overlay-stb-left": `${prevStyles.left}%`,
+              "--overlay-stb-right": `${prevStyles.right}%`,
+              "--overlay-stb-child1-font-size": getFontSize({
+                width,
+                fontSize: prevStyles.child1FontSize,
+              }),
+              "--overlay-stb-child2-font-size": getFontSize({
+                width,
+                fontSize: prevStyles.child2FontSize,
+              }),
+              "--overlay-stb-child1-font-color": prevStyles.child1FontColor,
+              "--overlay-stb-child2-font-color": prevStyles.child2FontColor,
+              "--overlay-stb-child1-font-weight": prevStyles.child1FontWeight,
+              "--overlay-stb-child2-font-weight": prevStyles.child2FontWeight,
+              "--overlay-stb-child1-font-style": prevStyles.child1FontStyle,
+              "--overlay-stb-child2-font-style": prevStyles.child2FontStyle,
+              "--overlay-stb-text-align": prevStyles.textAlign,
+              "--overlay-stb-display": prevStyles.display,
+              "--overlay-stb-flex-direction": prevStyles.flexDirection,
+              "--overlay-stb-justify-content": prevStyles.justifyContent,
+              "--overlay-stb-align-items": prevStyles.alignItems,
+              "--overlay-stb-gap": prevStyles.gap,
             } as CSSProperties
           }
         >
@@ -179,7 +275,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
         </div>
       </>
     );
-  },
+  }
 );
 
 export default DisplayStbOverlay;

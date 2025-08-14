@@ -1,6 +1,27 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { OverlayInfo } from "../types";
+import { OverlayFormatting, OverlayInfo } from "../types";
 import generateRandomId from "../utils/generateRandomId";
+import {
+  defaultImageOverlayStyles,
+  defaultParticipantOverlayStyles,
+  defaultQrCodeOverlayStyles,
+  defaultStbOverlayStyles,
+} from "../components/DisplayWindow/defaultOverlayStyles";
+
+const getDefaultFormatting = (type?: string): OverlayFormatting => {
+  switch (type) {
+    case "participant":
+      return defaultParticipantOverlayStyles;
+    case "stick-to-bottom":
+      return defaultStbOverlayStyles;
+    case "qr-code":
+      return defaultQrCodeOverlayStyles;
+    case "image":
+      return defaultImageOverlayStyles;
+  }
+
+  return defaultParticipantOverlayStyles;
+};
 
 type OverlaysState = {
   list: OverlayInfo[];
@@ -28,7 +49,10 @@ export const overlaysSlice = createSlice({
       const existingIndex = state.list.findIndex(
         (overlay) => overlay.id === state.selectedId
       );
-      const newItem = { ...action.payload };
+      const newItem = {
+        formatting: getDefaultFormatting(action.payload.type),
+        ...action.payload,
+      };
       if (existingIndex !== -1) {
         state.list.splice(existingIndex + 1, 0, newItem);
       } else {
@@ -48,10 +72,16 @@ export const overlaysSlice = createSlice({
         state.list = [];
         return;
       }
-      state.list = action.payload.map((overlay) => ({
-        ...overlay,
-        id: overlay.id || generateRandomId(),
-      }));
+      state.list = action.payload.map((overlay) => {
+        return {
+          ...overlay,
+          id: overlay.id || generateRandomId(),
+          formatting: {
+            // ...overlay.formatting,
+            ...getDefaultFormatting(overlay.type),
+          },
+        };
+      });
       state.initialList = state.list.map((overlay) => overlay.id);
     },
     updateOverlayListFromRemote: (
@@ -77,6 +107,7 @@ export const overlaysSlice = createSlice({
       state.hasPendingUpdate = true;
     },
     updateOverlay: (state, action: PayloadAction<Partial<OverlayInfo>>) => {
+      console.log({ action });
       state.list = state.list.map((overlay) => {
         if (overlay.id === action.payload.id) {
           return { ...overlay, ...action.payload };

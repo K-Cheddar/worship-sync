@@ -18,7 +18,6 @@ export const useGlobalBroadcast = (
 
     const handleMessage = (msg: MessageEvent) => {
       if (msg.data.type === "update") {
-        console.log("message", msg.data);
         // Clear existing timeout
         if (timeoutRef.current) {
           clearTimeout(timeoutRef.current);
@@ -26,6 +25,8 @@ export const useGlobalBroadcast = (
 
         // Set new timeout for debounced callback
         timeoutRef.current = setTimeout(() => {
+          console.log("Updating from local machine", msg.data);
+
           callbackRef.current({ detail: [msg.data.data.docs] });
         }, delay);
       }

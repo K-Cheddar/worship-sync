@@ -75,8 +75,6 @@ const QuickLink = ({
     return undefined;
   }, [timers, presentationInfo, _linkType]);
 
-  console.log("presentationInfo", presentationInfo);
-
   return (
     <li
       className={cn(
