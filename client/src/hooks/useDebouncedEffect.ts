@@ -3,8 +3,8 @@ import { useEffect, useRef } from "react";
 const useDebouncedEffect = (
   effect: () => void,
   deps: any[],
-  delay: number,
-  runImmediately: boolean = false,
+  delay: number = 500,
+  runImmediately: boolean = false
 ) => {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const hasRunImmediately = useRef(false);

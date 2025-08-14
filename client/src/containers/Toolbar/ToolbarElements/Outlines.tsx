@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { ReactComponent as AddSVG } from "../../../assets/icons/add.svg";
 import { ReactComponent as CheckSVG } from "../../../assets/icons/check.svg";
 import { ReactComponent as ListSVG } from "../../../assets/icons/list.svg";
@@ -27,10 +27,11 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useGlobalBroadcast } from "../../../hooks/useGlobalBroadcast";
 
 const Services = ({ className }: { className: string }) => {
   const { currentLists, selectedList } = useSelector(
-    (state) => state.undoable.present.itemLists,
+    (state) => state.undoable.present.itemLists
   );
 
   const heading = `Current Outlines (${currentLists.length})`;
@@ -56,7 +57,7 @@ const Services = ({ className }: { className: string }) => {
     const updatedItemLists = [...currentLists];
     const newIndex = updatedItemLists.findIndex((list) => list._id === id);
     const oldIndex = updatedItemLists.findIndex(
-      (list) => list._id === activeId,
+      (list) => list._id === activeId
     );
     const element = currentLists[oldIndex];
     updatedItemLists.splice(oldIndex, 1);
@@ -65,7 +66,7 @@ const Services = ({ className }: { className: string }) => {
   };
 
   useEffect(() => {
-    const getItemLists = async() => {
+    const getItemLists = async () => {
       if (!db) return;
       try {
         const response: ItemLists | undefined = await db?.get("ItemLists");
@@ -83,10 +84,8 @@ const Services = ({ className }: { className: string }) => {
     getItemLists();
   }, [db, dispatch, updater]);
 
-  useEffect(() => {
-    if (!updater) return;
-
-    const updateItemLists = async(event: CustomEventInit) => {
+  const updateItemListsFromExternal = useCallback(
+    async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
@@ -99,18 +98,25 @@ const Services = ({ className }: { className: string }) => {
       } catch (e) {
         console.error(e);
       }
-    };
+    },
+    [dispatch]
+  );
 
-    updater.addEventListener("update", updateItemLists);
+  useEffect(() => {
+    if (!updater) return;
+    updater.addEventListener("update", updateItemListsFromExternal);
 
-    return () => updater.removeEventListener("update", updateItemLists);
-  }, [updater, dispatch]);
+    return () =>
+      updater.removeEventListener("update", updateItemListsFromExternal);
+  }, [updater, updateItemListsFromExternal]);
+
+  useGlobalBroadcast(updateItemListsFromExternal);
 
   const _updateItemLists = (list: ItemList) => {
     dispatch(
       updateItemLists(
-        currentLists.map((item) => (item._id === list._id ? list : item)),
-      ),
+        currentLists.map((item) => (item._id === list._id ? list : item))
+      )
     );
     if (list._id === selectedList?._id) {
       dispatch(selectItemList(list._id));
@@ -152,7 +158,7 @@ const Services = ({ className }: { className: string }) => {
                         selectList={(listId) =>
                           dispatch(selectItemList(listId))
                         }
-                        copyList={async(list) => {
+                        copyList={async (list) => {
                           const newList = await createItemListFromExisting({
                             db,
                             currentLists,
@@ -160,26 +166,26 @@ const Services = ({ className }: { className: string }) => {
                           });
                           if (newList) {
                             dispatch(
-                              updateItemLists([...currentLists, newList]),
+                              updateItemLists([...currentLists, newList])
                             );
                           }
                         }}
                         deleteList={
                           index === 0
                             ? undefined
-                            : async(id) => {
-                              dispatch(removeFromItemLists(id));
-                              if (db) {
-                                const existingList: DBItemListDetails =
+                            : async (id) => {
+                                dispatch(removeFromItemLists(id));
+                                if (db) {
+                                  const existingList: DBItemListDetails =
                                     await db.get(id);
-                                db.remove(existingList);
-                                if (selectedList?._id === id) {
-                                  dispatch(
-                                    selectItemList(currentLists[0]._id),
-                                  );
+                                  db.remove(existingList);
+                                  if (selectedList?._id === id) {
+                                    dispatch(
+                                      selectItemList(currentLists[0]._id)
+                                    );
+                                  }
                                 }
                               }
-                            }
                         }
                         updateList={(list) => {
                           _updateItemLists(list);
@@ -195,7 +201,7 @@ const Services = ({ className }: { className: string }) => {
               color={justAdded ? "#84cc16" : "#22d3ee"}
               className="w-full justify-center text-base"
               disabled={justAdded}
-              onClick={async() => {
+              onClick={async () => {
                 const newList = await createNewItemList({
                   db,
                   name: "New Outline",

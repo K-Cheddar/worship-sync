@@ -5,6 +5,8 @@ import {
   ScrollbarWidth,
   Presentation,
   QuickLinkType,
+  DBPreferences,
+  MediaType,
 } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
@@ -115,68 +117,68 @@ export const preferencesSlice = createSlice({
 
     setDefaultPreferences: (
       state,
-      action: PayloadAction<Partial<PreferencesType>>,
+      action: PayloadAction<Partial<PreferencesType>>
     ) => {
       state.preferences = { ...state.preferences, ...action.payload };
     },
     setDefaultSongBackgroundBrightness: (
       state,
-      action: PayloadAction<number>,
+      action: PayloadAction<number>
     ) => {
       state.preferences.defaultSongBackgroundBrightness = Math.min(
         Math.max(action.payload, 10),
-        100,
+        100
       );
     },
     setDefaultTimerBackgroundBrightness: (
       state,
-      action: PayloadAction<number>,
+      action: PayloadAction<number>
     ) => {
       state.preferences.defaultTimerBackgroundBrightness = Math.min(
         Math.max(action.payload, 10),
-        100,
+        100
       );
     },
     setDefaultBibleBackgroundBrightness: (
       state,
-      action: PayloadAction<number>,
+      action: PayloadAction<number>
     ) => {
       state.preferences.defaultBibleBackgroundBrightness = Math.min(
         Math.max(action.payload, 10),
-        100,
+        100
       );
     },
     setDefaultFreeFormBackgroundBrightness: (
       state,
-      action: PayloadAction<number>,
+      action: PayloadAction<number>
     ) => {
       state.preferences.defaultFreeFormBackgroundBrightness = Math.min(
         Math.max(action.payload, 10),
-        100,
+        100
       );
     },
     setDefaultSlidesPerRow: (state, action: PayloadAction<number>) => {
       state.preferences.defaultSlidesPerRow = Math.min(
         Math.max(action.payload, 1),
-        7,
+        7
       );
     },
     setDefaultSlidesPerRowMobile: (state, action: PayloadAction<number>) => {
       state.preferences.defaultSlidesPerRowMobile = Math.min(
         Math.max(action.payload, 1),
-        7,
+        7
       );
     },
     setDefaultFormattedLyricsPerRow: (state, action: PayloadAction<number>) => {
       state.preferences.defaultFormattedLyricsPerRow = Math.min(
         Math.max(action.payload, 1),
-        4,
+        4
       );
     },
     setDefaultMediaItemsPerRow: (state, action: PayloadAction<number>) => {
       state.preferences.defaultMediaItemsPerRow = Math.min(
         Math.max(action.payload, 1),
-        7,
+        7
       );
     },
 
@@ -192,20 +194,21 @@ export const preferencesSlice = createSlice({
       state.selectedQuickLink =
         state.quickLinks.find((ql) => ql.id === action.payload) || null;
     },
-    setSelectedQuickLinkImage: (state, action: PayloadAction<string>) => {
+    setSelectedQuickLinkImage: (state, action: PayloadAction<MediaType>) => {
       state.quickLinks.map((ql) => {
         if (ql.id === state.selectedQuickLink?.id) {
           ql.presentationInfo = {
-            type: "image",
+            type: "media",
             name: state.selectedQuickLink?.label || "",
             slide: {
-              type: "Image",
+              type: "Media",
               name: "",
               id: generateRandomId(),
               boxes: [
                 {
                   id: generateRandomId(),
-                  background: action.payload,
+                  background: action.payload.background,
+                  mediaInfo: action.payload,
                   height: 100,
                   width: 100,
                 },
@@ -218,7 +221,7 @@ export const preferencesSlice = createSlice({
     },
     setSelectedQuickLinkPresentation: (
       state,
-      action: PayloadAction<Presentation>,
+      action: PayloadAction<Presentation>
     ) => {
       state.quickLinks.map((ql) => {
         if (ql.id === state.selectedQuickLink?.id) {
@@ -303,6 +306,17 @@ export const preferencesSlice = createSlice({
         action.payload.defaultBibleFontMode || initialState.bibleFontMode;
     },
 
+    updatePreferencesFromRemote: (
+      state,
+      action: PayloadAction<DBPreferences>
+    ) => {
+      state.preferences = {
+        ...state.preferences,
+        ...action.payload.preferences,
+      };
+      state.quickLinks = action.payload.quickLinks;
+    },
+
     // Temporary Preferences Below
 
     increaseSlides: (state) => {
@@ -311,7 +325,7 @@ export const preferencesSlice = createSlice({
     increaseSlidesMobile: (state) => {
       state.slidesPerRowMobile = Math.min(
         (state.slidesPerRowMobile || 4) + 1,
-        7,
+        7
       );
     },
     decreaseSlides: (state) => {
@@ -320,7 +334,7 @@ export const preferencesSlice = createSlice({
     decreaseSlidesMobile: (state) => {
       state.slidesPerRowMobile = Math.max(
         (state.slidesPerRowMobile || 3) - 1,
-        1,
+        1
       );
     },
     setSlides: (state, action: PayloadAction<number>) => {
@@ -332,13 +346,13 @@ export const preferencesSlice = createSlice({
     increaseFormattedLyrics: (state) => {
       state.formattedLyricsPerRow = Math.min(
         (state.formattedLyricsPerRow || 3) + 1,
-        4,
+        4
       );
     },
     decreaseFormattedLyrics: (state) => {
       state.formattedLyricsPerRow = Math.max(
         (state.formattedLyricsPerRow || 3) - 1,
-        1,
+        1
       );
     },
     setFormattedLyrics: (state, action: PayloadAction<number>) => {
@@ -373,7 +387,7 @@ export const preferencesSlice = createSlice({
     },
     setSelectedPreference: (
       state,
-      action: PayloadAction<SelectedPreferenceType>,
+      action: PayloadAction<SelectedPreferenceType>
     ) => {
       state.selectedPreference = action.payload;
     },
@@ -416,6 +430,7 @@ export const {
   setSelectedPreference,
   setBibleFontMode,
   setScrollbarWidth,
+  updatePreferencesFromRemote,
 } = preferencesSlice.actions;
 
 export default preferencesSlice.reducer;

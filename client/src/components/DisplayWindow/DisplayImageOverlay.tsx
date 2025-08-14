@@ -2,8 +2,10 @@ import { forwardRef, useRef } from "react";
 import { OverlayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
+import { defaultImageOverlayStyles } from "./defaultOverlayStyles";
 import "./DisplayWindow.scss";
-import { checkMediaType } from "../../utils/generalUtils";
+import { checkMediaType, getImageFromVideoUrl } from "../../utils/generalUtils";
+import HLSPlayer from "./HLSVideoPlayer";
 
 type DisplayImageOverlayProps = {
   width: number;
@@ -23,7 +25,7 @@ const DisplayImageOverlay = forwardRef<
       prevImageOverlayInfo = {},
       shouldAnimate = false,
     },
-    containerRef,
+    containerRef
   ) => {
     const imageOverlayRef = useRef<HTMLDivElement | null>(null);
     const prevImageOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -59,9 +61,9 @@ const DisplayImageOverlay = forwardRef<
               onUpdate: () => {
                 currentOpacity.current = imageOverlayRef.current
                   ? (gsap.getProperty(
-                    imageOverlayRef.current,
-                    "opacity",
-                  ) as number)
+                      imageOverlayRef.current,
+                      "opacity"
+                    ) as number)
                   : 1;
               },
             })
@@ -73,9 +75,9 @@ const DisplayImageOverlay = forwardRef<
               onUpdate: () => {
                 currentOpacity.current = imageOverlayRef.current
                   ? (gsap.getProperty(
-                    imageOverlayRef.current,
-                    "opacity",
-                  ) as number)
+                      imageOverlayRef.current,
+                      "opacity"
+                    ) as number)
                   : 1;
               },
             });
@@ -84,7 +86,7 @@ const DisplayImageOverlay = forwardRef<
       {
         scope: imageOverlayRef,
         dependencies: [imageOverlayInfo, prevImageOverlayInfo],
-      },
+      }
     );
 
     useGSAP(
@@ -111,20 +113,46 @@ const DisplayImageOverlay = forwardRef<
           });
         }
       },
-      { scope: prevImageOverlayRef, dependencies: [prevImageOverlayInfo] },
+      { scope: prevImageOverlayRef, dependencies: [prevImageOverlayInfo] }
     );
+
+    // Merge default styles with custom formatting
+    const currentStyles = {
+      ...defaultImageOverlayStyles,
+      ...imageOverlayInfo.formatting,
+    };
+
+    const prevStyles = {
+      ...defaultImageOverlayStyles,
+      ...prevImageOverlayInfo.formatting,
+    };
 
     return (
       <>
-        <div ref={imageOverlayRef} className="overlay-image-container">
+        <div
+          ref={imageOverlayRef}
+          className="overlay-image-container"
+          style={{
+            maxHeight: `${currentStyles.maxHeight}%`,
+            maxWidth: `${currentStyles.maxWidth}%`,
+            bottom: `${currentStyles.bottom}%`,
+            left: currentStyles.left ? `${currentStyles.left}%` : 0,
+            right: currentStyles.right ? `${currentStyles.right}%` : 0,
+            width:
+              typeof currentStyles.width === "number"
+                ? `${currentStyles.width}%`
+                : currentStyles.width,
+            height:
+              typeof currentStyles.height === "number"
+                ? `${currentStyles.height}%`
+                : currentStyles.height,
+          }}
+        >
           {imageOverlayInfo.imageUrl &&
             (isVideo ? (
-              <video
-                className="max-w-full max-h-full object-contain"
-                src={imageOverlayInfo.imageUrl}
-                autoPlay
-                loop
-                muted
+              <HLSPlayer
+                src={imageOverlayInfo.imageUrl || ""}
+                className="max-w-full max-h-full w-full h-full object-contain"
               />
             ) : (
               <img
@@ -134,19 +162,35 @@ const DisplayImageOverlay = forwardRef<
               />
             ))}
         </div>
-        <div ref={prevImageOverlayRef} className="overlay-image-container">
+        <div
+          ref={prevImageOverlayRef}
+          className="overlay-image-container"
+          style={{
+            maxHeight: `${prevStyles.maxHeight}%`,
+            maxWidth: `${prevStyles.maxWidth}%`,
+            bottom: `${prevStyles.bottom}%`,
+            left: prevStyles.left ? `${prevStyles.left}%` : 0,
+            right: prevStyles.right ? `${prevStyles.right}%` : 0,
+            width:
+              typeof prevStyles.width === "number"
+                ? `${prevStyles.width}%`
+                : prevStyles.width,
+            height:
+              typeof prevStyles.height === "number"
+                ? `${prevStyles.height}%`
+                : prevStyles.height,
+          }}
+        >
           {prevImageOverlayInfo.imageUrl &&
             (isPrevVideo ? (
-              <video
-                className="max-w-full max-h-full object-contain"
-                src={prevImageOverlayInfo.imageUrl}
-                loop
-                muted
-                autoPlay={false}
+              <img
+                className="max-w-full max-h-full w-full h-full object-contain"
+                src={getImageFromVideoUrl(prevImageOverlayInfo.imageUrl)}
+                alt={prevImageOverlayInfo.name}
               />
             ) : (
               <img
-                className="max-w-full max-h-full object-contain"
+                className="max-w-full max-h-full w-full h-full object-contain"
                 src={prevImageOverlayInfo.imageUrl}
                 alt={prevImageOverlayInfo.name}
               />
@@ -154,7 +198,7 @@ const DisplayImageOverlay = forwardRef<
         </div>
       </>
     );
-  },
+  }
 );
 
 export default DisplayImageOverlay;

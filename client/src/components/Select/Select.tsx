@@ -2,7 +2,7 @@ import { Option } from "../../types";
 import "./Select.scss";
 import cn from "classnames";
 
-type SelectProps = {
+export type SelectProps = {
   options: Option[];
   className?: string;
   value: string;
@@ -38,7 +38,7 @@ const Select = ({
             "p-1 font-semibold",
             hideLabel && "sr-only",
             labelClassName,
-            labelFontSize,
+            labelFontSize
           )}
         >
           {label}:

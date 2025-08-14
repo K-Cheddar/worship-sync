@@ -1,17 +1,17 @@
-const getScheduleFromExcel = async(
+const getScheduleFromExcel = async (
   fileName: string,
-  membersFileName: string,
+  membersFileName: string
 ) => {
   const response = await fetch(
     `${
       process.env.REACT_APP_API_BASE_PATH
-    }getSchedule?fileName=${encodeURIComponent(fileName)}`,
+    }getSchedule?fileName=${encodeURIComponent(fileName)}`
   );
 
   const membersResponse = await fetch(
     `${
       process.env.REACT_APP_API_BASE_PATH
-    }getMembers?fileName=${encodeURIComponent(membersFileName)}`,
+    }getMembers?fileName=${encodeURIComponent(membersFileName)}`
   );
 
   const data = await response.json();
@@ -40,8 +40,9 @@ const getClosestUpcomingSchedule = (data: any) => {
     const row = data[i];
     const dateStr = row[0];
     const timeStr = row[12];
-    // const durationStr = row[13]; // TODO Factor in duration
-    // const durationInMinutes = durationStr ? parseInt(durationStr) : 0;
+
+    const durationStr = row[13];
+    const durationInMinutes = durationStr ? parseInt(durationStr) : 0;
 
     // Skip if dateStr is not a valid date in MM/DD/YY or MM/DD/YYYY format
     if (typeof dateStr !== "string") continue;
@@ -64,15 +65,14 @@ const getClosestUpcomingSchedule = (data: any) => {
     const fullYear = year.length === 2 ? parseInt(year) + 2000 : parseInt(year);
     const rowDate = new Date(fullYear, parseInt(month) - 1, parseInt(day));
 
-    // Parse time if available format: "10:00:00 AM"
+    // Parse time if available format: "10:00 AM"
     if (timeStr && typeof timeStr === "string") {
       // Handle format like "10:00:00 AM" or "2:30:45 PM"
-      const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$/i);
+      const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
       if (timeMatch) {
         let hours = parseInt(timeMatch[1]);
         const minutes = parseInt(timeMatch[2]);
-        const seconds = parseInt(timeMatch[3]);
-        const period = timeMatch[4].toUpperCase();
+        const period = timeMatch[3].toUpperCase();
 
         // Convert 12-hour format to 24-hour format
         if (period === "PM" && hours !== 12) {
@@ -84,36 +84,12 @@ const getClosestUpcomingSchedule = (data: any) => {
         if (
           !isNaN(hours) &&
           !isNaN(minutes) &&
-          !isNaN(seconds) &&
           hours >= 0 &&
           hours <= 23 &&
           minutes >= 0 &&
-          minutes <= 59 &&
-          seconds >= 0 &&
-          seconds <= 59
+          minutes <= 59
         ) {
-          rowDate.setHours(hours, minutes, seconds, 0);
-        } else {
-          rowDate.setHours(0, 0, 0, 0);
-        }
-      } else {
-        // Fallback to simple HH:MM format if AM/PM format doesn't match
-        const timeParts = timeStr.split(":");
-        if (timeParts.length >= 2) {
-          const hours = parseInt(timeParts[0]);
-          const minutes = parseInt(timeParts[1]);
-          if (
-            !isNaN(hours) &&
-            !isNaN(minutes) &&
-            hours >= 0 &&
-            hours <= 23 &&
-            minutes >= 0 &&
-            minutes <= 59
-          ) {
-            rowDate.setHours(hours, minutes, 0, 0);
-          } else {
-            rowDate.setHours(0, 0, 0, 0);
-          }
+          rowDate.setHours(hours, minutes + durationInMinutes, 0, 0);
         } else {
           rowDate.setHours(0, 0, 0, 0);
         }
@@ -160,7 +136,7 @@ const getClosestUpcomingSchedule = (data: any) => {
 const normalizeName = (name: string, members: string[][]): string => {
   // Try to find an exact match first
   const exactMatch = members.find(
-    (member) => member[0].toLowerCase() === name.toLowerCase(),
+    (member) => member[0].toLowerCase() === name.toLowerCase()
   );
 
   if (exactMatch) {
@@ -191,9 +167,9 @@ interface ScheduleEntry {
   names: string;
 }
 
-export const transformSchedule = async(
+export const transformSchedule = async (
   schedule: Schedule | null,
-  members: string[][],
+  members: string[][]
 ): Promise<ScheduleEntry[]> => {
   if (!schedule || !schedule.positions) {
     return [];
@@ -226,7 +202,7 @@ export const transformSchedule = async(
   for (const [position, name] of Object.entries(schedule.positions)) {
     // Find the new heading for this position
     const newHeading = Object.entries(reverseMapping).find(([oldHeading]) =>
-      position.toLowerCase().includes(oldHeading.toLowerCase()),
+      position.toLowerCase().includes(oldHeading.toLowerCase())
     )?.[1];
 
     if (newHeading) {
@@ -239,7 +215,7 @@ export const transformSchedule = async(
         ? [
             name.match(/(.*?)\s*\((.*?)\)/)![1].trim(),
             name.match(/(.*?)\s*\((.*?)\)/)![2].trim(),
-        ]
+          ]
         : [name];
 
       // Normalize each name and add to the schedule
@@ -250,7 +226,7 @@ export const transformSchedule = async(
         if (newHeading === "Audio Engineers") {
           if (position.toLowerCase().includes("front of house")) {
             transformedSchedule[newHeading].push(
-              `Front of House - ${normalizedName}`,
+              `Front of House - ${normalizedName}`
             );
           } else if (position.toLowerCase().includes("stream")) {
             transformedSchedule[newHeading].push(`Online - ${normalizedName}`);

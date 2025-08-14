@@ -7,6 +7,7 @@ import {
   setSelectedQuickLink,
   setSelectedQuickLinkPresentation,
 } from "../../../store/preferencesSlice";
+import { useMemo } from "react";
 
 interface QuickLinkSelectionProps {
   isMobile?: boolean;
@@ -15,12 +16,18 @@ interface QuickLinkSelectionProps {
 const QuickLinkSelection = ({ isMobile }: QuickLinkSelectionProps) => {
   const dispatch = useDispatch();
   const { selectedQuickLink } = useSelector(
-    (state) => state.undoable.present.preferences,
+    (state) => state.undoable.present.preferences
   );
   const { type, selectedSlide, slides, name, timerInfo } = useSelector(
-    (state) => state.undoable.present.item,
+    (state) => state.undoable.present.item
   );
-  const overlayInfo = useSelector((state) => state.undoable.present.overlays);
+  const { selectedId, list: overlaysList } = useSelector(
+    (state) => state.undoable.present.overlays
+  );
+  const selectedOverlay = useMemo(
+    () => overlaysList.find((overlay) => overlay.id === selectedId),
+    [overlaysList, selectedId]
+  );
 
   if (!selectedQuickLink) return null;
 
@@ -57,7 +64,7 @@ const QuickLinkSelection = ({ isMobile }: QuickLinkSelectionProps) => {
                   title,
                   text,
                 },
-              }),
+              })
             );
           }}
         >
@@ -83,62 +90,62 @@ const QuickLinkSelection = ({ isMobile }: QuickLinkSelectionProps) => {
         <Button
           variant="cta"
           className="justify-center rounded-r-none"
-          disabled={!overlayInfo?.id}
+          disabled={!selectedOverlay?.id}
           svg={DoneAllSVG}
           onClick={() => {
+            if (!selectedOverlay) return;
             let presentationInfo: Presentation = {
-              name: overlayInfo.name || overlayInfo.description || "",
+              name: selectedOverlay.name || selectedOverlay.description || "",
               slide: null,
               type: "overlay",
             };
 
             const info: OverlayInfo = {
-              id: overlayInfo.id,
-              type: overlayInfo.type,
-              duration: overlayInfo.duration,
+              id: selectedOverlay.id,
+              type: selectedOverlay.type,
+              duration: selectedOverlay.duration,
             };
 
-            if (overlayInfo.type === "participant") {
+            if (selectedOverlay.type === "participant") {
               presentationInfo = {
                 ...presentationInfo,
                 participantOverlayInfo: {
                   ...info,
-                  name: overlayInfo.name,
-                  event: overlayInfo.event,
-                  title: overlayInfo.title,
+                  name: selectedOverlay.name,
+                  event: selectedOverlay.event,
+                  title: selectedOverlay.title,
                 },
               };
             }
 
-            if (overlayInfo.type === "stick-to-bottom") {
+            if (selectedOverlay.type === "stick-to-bottom") {
               presentationInfo = {
                 ...presentationInfo,
                 stbOverlayInfo: {
                   ...info,
-                  subHeading: overlayInfo.subHeading,
-                  title: overlayInfo.title,
+                  subHeading: selectedOverlay.subHeading,
+                  title: selectedOverlay.title,
                 },
               };
             }
 
-            if (overlayInfo.type === "qr-code") {
+            if (selectedOverlay.type === "qr-code") {
               presentationInfo = {
                 ...presentationInfo,
                 qrCodeOverlayInfo: {
                   ...info,
-                  url: overlayInfo.url,
-                  description: overlayInfo.description,
-                  color: overlayInfo.color,
+                  url: selectedOverlay.url,
+                  description: selectedOverlay.description,
                 },
               };
             }
 
-            if (overlayInfo.type === "image") {
+            if (selectedOverlay.type === "image") {
               presentationInfo = {
                 ...presentationInfo,
                 imageOverlayInfo: {
                   ...info,
-                  imageUrl: overlayInfo.imageUrl,
+                  imageUrl: selectedOverlay.imageUrl,
                 },
               };
             }

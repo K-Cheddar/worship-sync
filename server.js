@@ -32,12 +32,12 @@ const dirname = import.meta.dirname;
 const tenantId = process.env.AZURE_TENANT_ID;
 const clientId = process.env.AZURE_CLIENT_ID;
 const clientSecret = process.env.AZURE_CLIENT_SECRET;
+const isDevelopment = process.env.NODE_ENV === "development";
 
 const port = process.env.PORT || 5000;
-const frontEndHost =
-  process.env.NODE_ENV === "development"
-    ? "https://local.worshipsync.net:3000"
-    : "http://localhost:3000";
+const frontEndHost = isDevelopment
+  ? "https://local.worshipsync.net:3000"
+  : "http://localhost:3000";
 
 // Configure Cloudinary
 cloudinary.config({
@@ -46,9 +46,8 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const isDevelopment = process.env.NODE_ENV === "development";
-
 if (isDevelopment) {
+  console.log("isDevelopment");
   const options = {
     key: fs.readFileSync("./local.worshipsync.net-key.pem"),
     cert: fs.readFileSync("./local.worshipsync.net.pem"),

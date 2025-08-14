@@ -27,7 +27,7 @@ import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
-import { globalDb as db } from "../context/controllerInfo";
+import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
 import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
 import { ref, set, get } from "firebase/database";
 import {
@@ -112,9 +112,10 @@ const undoableReducers = undoable(
       preferencesSlice.actions.increaseMediaItems.toString(),
       preferencesSlice.actions.decreaseMediaItems.toString(),
       preferencesSlice.actions.setMediaItems.toString(),
+      preferencesSlice.actions.updatePreferencesFromRemote.toString(),
     ]),
     limit: 100,
-  },
+  }
 );
 
 const listenerMiddleware = createListenerMiddleware();
@@ -135,7 +136,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     let state = listenerApi.getState() as RootState;
     if (action.type === "item/setActiveItem") {
       state = listenerApi.getOriginalState() as RootState;
@@ -163,6 +164,15 @@ listenerMiddleware.startListening({
       shouldSendTo: item.shouldSendTo,
     };
     db.put(db_item);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_item,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -185,7 +195,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     let state = listenerApi.getState() as RootState;
     if (action.type === "itemLists/selectItemList") {
       state = listenerApi.getOriginalState() as RootState;
@@ -203,6 +213,15 @@ listenerMiddleware.startListening({
     const db_itemList: DBItemListDetails = await db.get(selectedList._id);
     db_itemList.items = [...list];
     db.put(db_itemList);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_itemList,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -219,7 +238,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
@@ -232,6 +251,15 @@ listenerMiddleware.startListening({
     db_itemLists.itemLists = [...currentLists];
     db_itemLists.selectedList = selectedList;
     db.put(db_itemLists);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_itemLists,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -249,7 +277,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
@@ -260,6 +288,15 @@ listenerMiddleware.startListening({
     const db_allItems: DBAllItems = await db.get("allItems");
     db_allItems.items = [...list];
     db.put(db_allItems);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_allItems,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -275,14 +312,13 @@ listenerMiddleware.startListening({
       action.type !== "overlays/setHasPendingUpdate" &&
       action.type !== "overlays/updateInitialList" &&
       action.type !== "overlays/addToInitialList" &&
-      action.type !== "overlays/setOverlayId" &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
       action.type !== "RESET"
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     let state = listenerApi.getState() as RootState;
     if (action.type === "itemLists/selectItemList") {
       state = listenerApi.getOriginalState() as RootState;
@@ -301,6 +337,15 @@ listenerMiddleware.startListening({
     const db_itemList: DBItemListDetails = await db.get(selectedList._id);
     db_itemList.overlays = [...list];
     db.put(db_itemList);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_itemList,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -319,7 +364,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
@@ -337,7 +382,7 @@ listenerMiddleware.startListening({
         // Get current timers from Firebase
         const timersRef = ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/timers",
+          "users/" + globalFireDbInfo.user + "/v2/timers"
         );
 
         // Get current timers and merge with own timers
@@ -349,7 +394,7 @@ listenerMiddleware.startListening({
         const mergedTimers = mergeTimers(
           currentTimers,
           ownTimers,
-          globalHostId,
+          globalHostId
         );
 
         set(timersRef, cleanObject(mergedTimers));
@@ -378,7 +423,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
@@ -396,30 +441,30 @@ listenerMiddleware.startListening({
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/publishedList",
+          "users/" + globalFireDbInfo.user + "/v2/credits/publishedList"
         ),
-        cleanObject(publishedList),
+        cleanObject(publishedList)
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/transitionScene",
+          "users/" + globalFireDbInfo.user + "/v2/credits/transitionScene"
         ),
-        transitionScene,
+        transitionScene
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/creditsScene",
+          "users/" + globalFireDbInfo.user + "/v2/credits/creditsScene"
         ),
-        creditsScene,
+        creditsScene
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/scheduleName",
+          "users/" + globalFireDbInfo.user + "/v2/credits/scheduleName"
         ),
-        scheduleName,
+        scheduleName
       );
     }
 
@@ -427,6 +472,14 @@ listenerMiddleware.startListening({
     const db_credits: DBCredits = await db.get("credits");
     db_credits.list = list;
     db.put(db_credits);
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_credits,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -442,7 +495,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
@@ -454,6 +507,15 @@ listenerMiddleware.startListening({
     const db_backgrounds: DBMedia = await db.get("images");
     db_backgrounds.backgrounds = [...list];
     db.put(db_backgrounds);
+
+    // Local machine updates
+    globalBroadcastRef.postMessage({
+      type: "update",
+      data: {
+        docs: db_backgrounds,
+        hostId: globalHostId,
+      },
+    });
   },
 });
 
@@ -483,11 +545,12 @@ listenerMiddleware.startListening({
       action.type !== "preferences/setSelectedQuickLink" &&
       action.type !== "preferences/setTab" &&
       action.type !== "preferences/setScrollbarWidth" &&
+      action.type !== "preferences/updatePreferencesFromRemote" &&
       action.type !== "RESET"
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
@@ -501,6 +564,14 @@ listenerMiddleware.startListening({
       db_preferences.preferences = preferences;
       db_preferences.quickLinks = quickLinks;
       db.put(db_preferences);
+      // Local machine updates
+      globalBroadcastRef.postMessage({
+        type: "update",
+        data: {
+          docs: db_preferences,
+          hostId: globalHostId,
+        },
+      });
     } catch (error) {
       // if the preferences are not found, create a new one
       console.error(error);
@@ -537,7 +608,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     if (!globalFireDbInfo.db) return;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
@@ -567,35 +638,35 @@ listenerMiddleware.startListening({
     localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
     localStorage.setItem(
       "stream_bibleInfo",
-      JSON.stringify(streamInfo.bibleDisplayInfo),
+      JSON.stringify(streamInfo.bibleDisplayInfo)
     );
     localStorage.setItem(
       "stream_participantOverlayInfo",
-      JSON.stringify(streamInfo.participantOverlayInfo),
+      JSON.stringify(streamInfo.participantOverlayInfo)
     );
     localStorage.setItem(
       "stream_stbOverlayInfo",
-      JSON.stringify(streamInfo.stbOverlayInfo),
+      JSON.stringify(streamInfo.stbOverlayInfo)
     );
     localStorage.setItem(
       "stream_qrCodeOverlayInfo",
-      JSON.stringify(streamInfo.qrCodeOverlayInfo),
+      JSON.stringify(streamInfo.qrCodeOverlayInfo)
     );
     localStorage.setItem(
       "stream_imageOverlayInfo",
-      JSON.stringify(streamInfo.imageOverlayInfo),
+      JSON.stringify(streamInfo.imageOverlayInfo)
     );
     localStorage.setItem(
       "stream_formattedTextDisplayInfo",
-      JSON.stringify(streamInfo.formattedTextDisplayInfo),
+      JSON.stringify(streamInfo.formattedTextDisplayInfo)
     );
 
     set(
       ref(
         globalFireDbInfo.db,
-        "users/" + globalFireDbInfo.user + "/v2/presentation",
+        "users/" + globalFireDbInfo.user + "/v2/presentation"
       ),
-      cleanObject(presentationUpdate),
+      cleanObject(presentationUpdate)
     );
   },
 });
@@ -616,12 +687,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateProjectorFromRemote(action.payload as Presentation),
+      updateProjectorFromRemote(action.payload as Presentation)
     );
   },
 });
@@ -642,12 +713,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateMonitorFromRemote(action.payload as Presentation),
+      updateMonitorFromRemote(action.payload as Presentation)
     );
   },
 });
@@ -668,12 +739,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateStreamFromRemote(action.payload as Presentation),
+      updateStreamFromRemote(action.payload as Presentation)
     );
   },
 });
@@ -694,12 +765,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo),
+      updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo)
     );
   },
 });
@@ -720,12 +791,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -746,12 +817,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateStbOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateStbOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -772,12 +843,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -798,12 +869,12 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateImageOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateImageOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -824,14 +895,14 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
       updateFormattedTextDisplayInfoFromRemote(
-        action.payload as FormattedTextDisplayInfo,
-      ),
+        action.payload as FormattedTextDisplayInfo
+      )
     );
   },
 });
@@ -853,7 +924,7 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async(action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     console.log("Updating timer from remote", action.payload);
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);

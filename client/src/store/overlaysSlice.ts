@@ -1,26 +1,37 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { OverlayInfo } from "../types";
+import { OverlayFormatting, OverlayInfo } from "../types";
 import generateRandomId from "../utils/generateRandomId";
+import {
+  defaultImageOverlayStyles,
+  defaultParticipantOverlayStyles,
+  defaultQrCodeOverlayStyles,
+  defaultStbOverlayStyles,
+} from "../components/DisplayWindow/defaultOverlayStyles";
 
-type OverlaysState = OverlayInfo & {
+const getDefaultFormatting = (type?: string): OverlayFormatting => {
+  switch (type) {
+    case "participant":
+      return defaultParticipantOverlayStyles;
+    case "stick-to-bottom":
+      return defaultStbOverlayStyles;
+    case "qr-code":
+      return defaultQrCodeOverlayStyles;
+    case "image":
+      return defaultImageOverlayStyles;
+  }
+
+  return defaultParticipantOverlayStyles;
+};
+
+type OverlaysState = {
   list: OverlayInfo[];
   hasPendingUpdate: boolean;
   initialList: string[];
+  selectedId: string;
 };
 
 const initialState: OverlaysState = {
-  name: "",
-  title: "",
-  event: "",
-  heading: "",
-  subHeading: "",
-  url: "",
-  description: "",
-  color: "#16a34a",
-  id: "",
-  duration: 7,
-  type: "participant",
-  imageUrl: "",
+  selectedId: "",
   hasPendingUpdate: false,
   list: [],
   initialList: [],
@@ -30,26 +41,18 @@ export const overlaysSlice = createSlice({
   name: "overlays",
   initialState,
   reducers: {
-    selectOverlay: (state, action: PayloadAction<OverlayInfo>) => {
-      state.name = action.payload.name;
-      state.title = action.payload.title;
-      state.event = action.payload.event;
-      state.heading = action.payload.heading;
-      state.subHeading = action.payload.subHeading;
-      state.url = action.payload.url;
-      state.description = action.payload.description;
-      state.color = action.payload.color;
-      state.id = action.payload.id;
-      state.duration = action.payload.duration;
-      state.type = action.payload.type;
-      state.imageUrl = action.payload.imageUrl;
+    selectOverlay: (state, action: PayloadAction<string>) => {
+      state.selectedId = action.payload;
     },
     addOverlay: (state, action: PayloadAction<OverlayInfo>) => {
       // get index of selected overlay
       const existingIndex = state.list.findIndex(
-        (overlay) => overlay.id === state.id,
+        (overlay) => overlay.id === state.selectedId
       );
-      const newItem = { ...action.payload };
+      const newItem = {
+        formatting: getDefaultFormatting(action.payload.type),
+        ...action.payload,
+      };
       if (existingIndex !== -1) {
         state.list.splice(existingIndex + 1, 0, newItem);
       } else {
@@ -57,41 +60,33 @@ export const overlaysSlice = createSlice({
       }
       state.hasPendingUpdate = true;
     },
-    setOverlayId: (state, action: PayloadAction<string>) => {
-      state.id = action.payload;
-    },
     updateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
       state.list = action.payload;
       state.hasPendingUpdate = true;
     },
     initiateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
       // reset state when loading an item list
-      state.id = "";
-      state.color = "#16a34a";
-      state.name = "";
-      state.title = "";
-      state.event = "";
-      state.heading = "";
-      state.subHeading = "";
-      state.url = "";
-      state.description = "";
-      state.duration = 7;
-      state.type = "participant";
-      state.imageUrl = "";
+      state.selectedId = "";
 
       if (action.payload.length === 0) {
         state.list = [];
         return;
       }
-      state.list = action.payload.map((overlay) => ({
-        ...overlay,
-        id: overlay.id || generateRandomId(),
-      }));
+      state.list = action.payload.map((overlay) => {
+        return {
+          ...overlay,
+          id: overlay.id || generateRandomId(),
+          formatting: {
+            ...getDefaultFormatting(overlay.type),
+            ...overlay.formatting,
+          },
+        };
+      });
       state.initialList = state.list.map((overlay) => overlay.id);
     },
     updateOverlayListFromRemote: (
       state,
-      action: PayloadAction<OverlayInfo[]>,
+      action: PayloadAction<OverlayInfo[]>
     ) => {
       if (action.payload.length === 0) {
         state.list = [];
@@ -104,70 +99,17 @@ export const overlaysSlice = createSlice({
     },
     deleteOverlay: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter(
-        (overlay) => overlay.id !== action.payload,
+        (overlay) => overlay.id !== action.payload
       );
-      if (state.id === action.payload) {
-        state.id = "";
-        state.color = "#16a34a";
-        state.name = "";
-        state.title = "";
-        state.event = "";
-        state.heading = "";
-        state.subHeading = "";
-        state.url = "";
-        state.description = "";
-        state.duration = 7;
-        state.type = "participant";
-        state.imageUrl = "";
+      if (state.selectedId === action.payload) {
+        state.selectedId = "";
       }
       state.hasPendingUpdate = true;
     },
-    updateOverlay: (state, action: PayloadAction<OverlayInfo>) => {
-      const updatedOverlayInfo = {
-        id: action.payload.id,
-        name: action.payload.name,
-        title: action.payload.title,
-        event: action.payload.event,
-        heading: action.payload.heading,
-        subHeading: action.payload.subHeading,
-        url: action.payload.url,
-        description: action.payload.description,
-        color: action.payload.color,
-        duration: action.payload.duration,
-        type: action.payload.type,
-        imageUrl: action.payload.imageUrl,
-      };
-      state.imageUrl = updatedOverlayInfo.imageUrl;
+    updateOverlay: (state, action: PayloadAction<Partial<OverlayInfo>>) => {
       state.list = state.list.map((overlay) => {
         if (overlay.id === action.payload.id) {
-          return { ...updatedOverlayInfo };
-        }
-        return overlay;
-      });
-      state.hasPendingUpdate = true;
-    },
-    updateOverlayPartial: (
-      state,
-      action: PayloadAction<Partial<OverlayInfo>>,
-    ) => {
-      const updatedOverlayInfo = {
-        id: action.payload.id || state.id,
-        name: action.payload.name || state.name,
-        title: action.payload.title || state.title,
-        event: action.payload.event || state.event,
-        heading: action.payload.heading || state.heading,
-        subHeading: action.payload.subHeading || state.subHeading,
-        url: action.payload.url || state.url,
-        description: action.payload.description || state.description,
-        color: action.payload.color || state.color,
-        duration: action.payload.duration || state.duration,
-        type: action.payload.type || state.type,
-        imageUrl: action.payload.imageUrl || state.imageUrl,
-      };
-      state.imageUrl = updatedOverlayInfo.imageUrl;
-      state.list = state.list.map((overlay) => {
-        if (overlay.id === action.payload.id) {
-          return { ...updatedOverlayInfo };
+          return { ...overlay, ...action.payload };
         }
         return overlay;
       });
@@ -191,13 +133,11 @@ export const {
   updateOverlayList: updateList,
   deleteOverlay,
   updateOverlay,
-  updateOverlayPartial,
   initiateOverlayList,
   updateOverlayListFromRemote,
   setHasPendingUpdate,
   updateInitialList,
   addToInitialList,
-  setOverlayId,
 } = overlaysSlice.actions;
 
 export default overlaysSlice.reducer;

@@ -18,7 +18,7 @@ const maxQuickLinks = 5;
 const QuickLinks = () => {
   const dispatch = useDispatch();
   const { quickLinks, selectedQuickLink } = useSelector(
-    (state) => state.undoable.present.preferences,
+    (state) => state.undoable.present.preferences
   );
 
   const { timers } = useSelector((state) => state.timers);
@@ -29,13 +29,13 @@ const QuickLinks = () => {
     useState<DisplayType>("projector");
 
   const projectorQuickLinks = quickLinks.filter(
-    (ql) => ql.displayType === "projector",
+    (ql) => ql.displayType === "projector"
   );
   const monitorQuickLinks = quickLinks.filter(
-    (ql) => ql.displayType === "monitor",
+    (ql) => ql.displayType === "monitor"
   );
   const streamQuickLinks = quickLinks.filter(
-    (ql) => ql.displayType === "stream",
+    (ql) => ql.displayType === "stream"
   );
 
   const newQuickLinkOptions = useMemo(() => {
@@ -55,28 +55,28 @@ const QuickLinks = () => {
   const updateQuickLink = (
     id: string,
     key: keyof QuickLinkType,
-    value: any,
+    value: any
   ) => {
     dispatch(
       setQuickLinks(
-        quickLinks.map((ql) => (ql.id === id ? { ...ql, [key]: value } : ql)),
-      ),
+        quickLinks.map((ql) => (ql.id === id ? { ...ql, [key]: value } : ql))
+      )
     );
   };
 
   const updateNewQuickLinkDisplayType = (
-    updatedQuickLinks: QuickLinkType[],
+    updatedQuickLinks: QuickLinkType[]
   ) => {
     let newDisplayType = newQuickLinkDisplayType;
 
     const projectorQuickLinks = updatedQuickLinks.filter(
-      (ql) => ql.displayType === "projector",
+      (ql) => ql.displayType === "projector"
     );
     const monitorQuickLinks = updatedQuickLinks.filter(
-      (ql) => ql.displayType === "monitor",
+      (ql) => ql.displayType === "monitor"
     );
     const streamQuickLinks = updatedQuickLinks.filter(
-      (ql) => ql.displayType === "stream",
+      (ql) => ql.displayType === "stream"
     );
 
     if (
@@ -129,7 +129,7 @@ const QuickLinks = () => {
               updateQuickLink={(key, value) => updateQuickLink(id, key, value)}
               removeQuickLink={() => {
                 const updatedQuickLinks = quickLinks.filter(
-                  (ql) => ql.id !== id,
+                  (ql) => ql.id !== id
                 );
                 dispatch(setQuickLinks(updatedQuickLinks));
                 updateNewQuickLinkDisplayType(updatedQuickLinks);
@@ -154,7 +154,7 @@ const QuickLinks = () => {
             padding="px-4 py-1"
             svg={AddSVG}
             onClick={() => {
-              let linkType: LinkType = "image";
+              let linkType: LinkType = "media";
               if (newQuickLinkDisplayType === "monitor") {
                 linkType = "slide";
               }
