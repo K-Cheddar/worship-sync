@@ -71,6 +71,7 @@ const ControllerInfoProvider = ({ children }: any) => {
   const [isDbSetup, setIsDbSetup] = useState(false);
   const [isBibleDbSetup, setIsBibleDbSetup] = useState(false);
   const [hasCouchSession, setHasCouchSession] = useState(false);
+  const [hasCheckedSession, setHasCheckedSession] = useState(false);
 
   const location = useLocation();
 
@@ -168,11 +169,13 @@ const ControllerInfoProvider = ({ children }: any) => {
     if (
       (loginState === "success" || loginState === "demo") &&
       location.pathname !== "/" &&
-      location.pathname !== "/login"
+      location.pathname !== "/login" &&
+      !hasCheckedSession
     ) {
       getCouchSession();
+      setHasCheckedSession(true);
     }
-  }, [getCouchSession, loginState, location.pathname]);
+  }, [getCouchSession, loginState, location.pathname, hasCheckedSession]);
 
   useEffect(() => {
     const setupDb = async () => {

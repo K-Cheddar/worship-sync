@@ -1,3 +1,117 @@
+# [1.12.0](https://github.com/K-Cheddar/worship-sync/compare/v1.11.0...v1.12.0) (2025-08-11)
+
+
+### Bug Fixes
+
+* Fixed preferences button being hard to click ([c7480a2](https://github.com/K-Cheddar/worship-sync/commit/c7480a2e5cce130165ecd36b5df5d7dd541ff600))
+* Generate credits now works without visiting controller ([0045740](https://github.com/K-Cheddar/worship-sync/commit/004574004587fce0d1fdf8e5401b7694dde5e354))
+* Improve video background support ([7c218ef](https://github.com/K-Cheddar/worship-sync/commit/7c218ef54f07b1a9de10efff397e054e7071b0e2))
+* Improved consistency of credits from schedule ([d380be9](https://github.com/K-Cheddar/worship-sync/commit/d380be9dac3eda60b2b1adcfc166bdbe5037e5f6))
+* **Preferences:** Now gets live updates ([a0aa9ff](https://github.com/K-Cheddar/worship-sync/commit/a0aa9ffb56821a1b0e0378dd1db0dc6207ce358c))
+* **QuickLinks:** Allow videos for Media type ([e740106](https://github.com/K-Cheddar/worship-sync/commit/e740106c5432bad50e6ef427fb27379c131db3a7))
+
+
+### Features
+
+* Adding video support for backgrounds ([c4de2fd](https://github.com/K-Cheddar/worship-sync/commit/c4de2fd6320691ff999195675a74eee3a7b15f91))
+* **Overlays:** Changes now autosave ([b6b6975](https://github.com/K-Cheddar/worship-sync/commit/b6b6975ad5172b4cea2c03764a6b7466d480ccd9))
+
+# [1.11.0](https://github.com/K-Cheddar/worship-sync/compare/v1.10.1...v1.11.0) (2025-08-08)
+
+
+### Features
+
+* **Media:** Add ability to remove the background from an item ([7aa18a1](https://github.com/K-Cheddar/worship-sync/commit/7aa18a1db21a87204fa937a5d1cf934a29770406))
+
+
+### Performance Improvements
+
+* Improve database synchronization ([b32a53b](https://github.com/K-Cheddar/worship-sync/commit/b32a53b6550972df97adc073983a0a7547900a1a))
+
+## [1.10.1](https://github.com/K-Cheddar/worship-sync/compare/v1.10.0...v1.10.1) (2025-08-07)
+
+
+### Bug Fixes
+
+* **Bible:** Correct shown chapters when the book changes ([b0f15ec](https://github.com/K-Cheddar/worship-sync/commit/b0f15ec188f938ed7c20b712cb96cf0d8798dc78))
+* **Media:** Clear search on collapse ([19f2abf](https://github.com/K-Cheddar/worship-sync/commit/19f2abf2fa8d0d586ef725f87fff59982e940f5a))
+
+
+### Performance Improvements
+
+* Speed up database setup ([ea9df9d](https://github.com/K-Cheddar/worship-sync/commit/ea9df9dbb6d131beea576adb3b0b7a69974ed6f2))
+
+# [1.10.0](https://github.com/K-Cheddar/worship-sync/compare/v1.9.5...v1.10.0) (2025-08-06)
+
+
+### Bug Fixes
+
+* Correct remote database configurations ([eec9d01](https://github.com/K-Cheddar/worship-sync/commit/eec9d016f90cbd9bd4f4c4c6b540713c0864f0c1))
+* Improve mobile overflow on creating new items ([3492b54](https://github.com/K-Cheddar/worship-sync/commit/3492b5488112ad4ebdd205760b7f97710e117c49))
+* Improve mobile right panel responsiveness ([6186db2](https://github.com/K-Cheddar/worship-sync/commit/6186db283eac3d5775afbcc5262126d898a30043))
+* **Media:** Correct delete functionality ([ec91616](https://github.com/K-Cheddar/worship-sync/commit/ec91616301e4d3a662df6e0cb58ba81634b09492))
+
+
+### Features
+
+* **Bible:** Automatically get verses from bible gateway ([95afa55](https://github.com/K-Cheddar/worship-sync/commit/95afa5573a899160843e5bf7b4c19a2b6caacb67))
+* **Bible:** Get selected chapter from Bible Gateway and save it for later ([a19bbac](https://github.com/K-Cheddar/worship-sync/commit/a19bbaca02bd04a2dd44093e8ec3c58d7f3a5f67))
+* **Media:** Add ability to search by name ([d14c28e](https://github.com/K-Cheddar/worship-sync/commit/d14c28e149c32d6fd8e929f1e234795539b6280b))
+* **Media:** Add delete confirmation ([2f84dfb](https://github.com/K-Cheddar/worship-sync/commit/2f84dfbf9bc133175e1d36d899e4269d65b6b3c0))
+* Use faster database ([8fc54ca](https://github.com/K-Cheddar/worship-sync/commit/8fc54ca27e9ef1a0026d5cc714ddcefd37629b2a))
+
+## [1.9.5](https://github.com/K-Cheddar/worship-sync/compare/v1.9.4...v1.9.5) (2025-07-30)
+
+
+### Bug Fixes
+
+* Hide lyrics editor when navigating away ([e736985](https://github.com/K-Cheddar/worship-sync/commit/e736985ac39cdacf9adfe45921f1a75e641165bc))
+* Improved UI responsiveness and readability ([03e77e4](https://github.com/K-Cheddar/worship-sync/commit/03e77e4dfa5c3180cd17553e506a543e32a4b08f))
+* **Overflow:** Improve overflow on mobile ([d5b10a2](https://github.com/K-Cheddar/worship-sync/commit/d5b10a2eb62ff8d79d94e343c61f5bb903deb73b))
+
+## [1.9.4](https://github.com/K-Cheddar/worship-sync/compare/v1.9.3...v1.9.4) (2025-07-26)
+
+
+### Bug Fixes
+
+* **Credits:** Use time when generating credits from schedule ([327c43c](https://github.com/K-Cheddar/worship-sync/commit/327c43cb98d5cf2e41b85118b02772fb3aa9c5a8))
+
+## [1.9.3](https://github.com/K-Cheddar/worship-sync/compare/v1.9.2...v1.9.3) (2025-07-26)
+
+
+### Bug Fixes
+
+* **Schedule:** Get next schedule after current day ([19b477f](https://github.com/K-Cheddar/worship-sync/commit/19b477f92280b18a378221cc03ccf589aef2e396))
+
+## [1.9.2](https://github.com/K-Cheddar/worship-sync/compare/v1.9.1...v1.9.2) (2025-07-25)
+
+
+### Bug Fixes
+
+* **Bible:** Add to outline button now always visible on mobile ([39b3826](https://github.com/K-Cheddar/worship-sync/commit/39b38268aef469dfe909a9a49b9690ede0b5bbfb))
+* **Toolbar:** Improve button visibility ([0278425](https://github.com/K-Cheddar/worship-sync/commit/027842526cfe53f00e8577ecb5639740071cee01))
+
+## [1.9.1](https://github.com/K-Cheddar/worship-sync/compare/v1.9.0...v1.9.1) (2025-07-20)
+
+
+### Bug Fixes
+
+* Correct reload for version updates ([8429c23](https://github.com/K-Cheddar/worship-sync/commit/8429c2346d634ed058a69341285700b50fe15c85))
+
+# [1.9.0](https://github.com/K-Cheddar/worship-sync/compare/v1.8.3...v1.9.0) (2025-07-17)
+
+
+### Features
+
+* **Credits:** Generate from next available schedule instead of only Saturdays ([907f78d](https://github.com/K-Cheddar/worship-sync/commit/907f78d475470a77ac9f61ea488af98549c88c81))
+
+## [1.8.3](https://github.com/K-Cheddar/worship-sync/compare/v1.8.2...v1.8.3) (2025-07-08)
+
+
+### Bug Fixes
+
+* Improve update mechanism ([4adae7a](https://github.com/K-Cheddar/worship-sync/commit/4adae7a1d0a5fabfe6836fcdd9c8bd6017188ba7))
+
 ## [1.8.2](https://github.com/K-Cheddar/worship-sync/compare/v1.8.1...v1.8.2) (2025-07-08)
 
 
