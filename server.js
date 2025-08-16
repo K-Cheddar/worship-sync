@@ -391,6 +391,39 @@ app.get("/api/getDbSession", async (req, res) => {
   }
 });
 
+// Error logging endpoint
+app.post("/api/logError", async (req, res) => {
+  try {
+    const { error, errorInfo, componentStack, userAgent, url, timestamp } =
+      req.body;
+
+    // Log error to console for development/debugging
+    console.error("Client Error Logged:", {
+      error: error?.message || error,
+      stack: error?.stack,
+      errorInfo,
+      componentStack: componentStack || "No component stack available",
+      userAgent,
+      url,
+      timestamp: new Date(timestamp).toISOString(),
+    });
+
+    // In production, you could also log to a file or database
+    // For now, we'll just acknowledge receipt
+    res.json({
+      success: true,
+      message: "Error logged successfully",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("Error logging failed:", error);
+    res.status(500).json({
+      success: false,
+      errorMessage: "Failed to log error",
+    });
+  }
+});
+
 // Serve any static files
 app.use(express.static(path.join(dirname, "/client/build")));
 // Handle React routing, return all requests to React app
