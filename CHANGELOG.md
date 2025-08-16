@@ -1,3 +1,10 @@
+## [1.13.1](https://github.com/K-Cheddar/worship-sync/compare/v1.13.0...v1.13.1) (2025-08-16)
+
+
+### Performance Improvements
+
+* Catch errors and allow component reloading ([3249929](https://github.com/K-Cheddar/worship-sync/commit/3249929741ce927417d1dbc00a7bba675cc1c679))
+
 # [1.13.0](https://github.com/K-Cheddar/worship-sync/compare/v1.12.0...v1.13.0) (2025-08-14)
 
 
