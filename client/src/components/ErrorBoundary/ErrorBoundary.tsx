@@ -67,7 +67,13 @@ class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    return <div key={this.state.key}>{this.props.children}</div>;
+    // Return children directly without wrapping in a div to avoid height issues
+    // Use React.Fragment to add the key prop without extra DOM nodes
+    return (
+      <React.Fragment key={this.state.key}>
+        {this.props.children}
+      </React.Fragment>
+    );
   }
 }
 
