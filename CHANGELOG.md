@@ -1,3 +1,10 @@
+## [1.13.2](https://github.com/K-Cheddar/worship-sync/compare/v1.13.1...v1.13.2) (2025-08-16)
+
+
+### Bug Fixes
+
+* Fixed scrolling issues from error handling ([de97aa8](https://github.com/K-Cheddar/worship-sync/commit/de97aa82bb985783e12c10edab1d8644e63c03b6))
+
 ## [1.13.1](https://github.com/K-Cheddar/worship-sync/compare/v1.13.0...v1.13.1) (2025-08-16)
 
 
