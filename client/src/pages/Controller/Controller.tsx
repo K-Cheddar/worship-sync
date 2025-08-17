@@ -31,7 +31,13 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import FreeForms from "../../containers/FreeForms/FreeForms";
-import { DBAllItems, DBItemListDetails, DBPreferences } from "../../types";
+import {
+  DBAllItems,
+  DBItemListDetails,
+  DBOverlay,
+  DBPreferences,
+  OverlayInfo,
+} from "../../types";
 import {
   initiateItemList,
   setItemListIsLoading,
@@ -48,6 +54,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { sortNamesInList } from "../../utils/sort";
 import {
   deleteUnusedBibleItems,
+  deleteUnusedOverlays,
   // formatAllSongs,
   // formatAllDocs,
   // formatAllItems,
@@ -136,6 +143,9 @@ const Controller = () => {
 
       // delete unneeded bible items
       deleteUnusedBibleItems({ db, allItems });
+
+      // delete unused overlays
+      deleteUnusedOverlays(db);
     };
     getAllItems();
   }, [dispatch, db]);
@@ -143,7 +153,7 @@ const Controller = () => {
   // Leaving this in case we need to reformat all songs in the db
   // useEffect(() => {
   //   if (!db || !cloud) return;
-  //   formatAllSongs(db, cloud);
+  //   // formatAllSongs(db, cloud);
   // }, [db, cloud]);
 
   useEffect(() => {
@@ -172,11 +182,23 @@ const Controller = () => {
           selectedList._id
         );
         const itemList = response?.items || [];
-        const overlays = response?.overlays || [];
+        const overlayIds = response?.overlays || [];
         if (cloud) {
           dispatch(initiateItemList(formatItemList(itemList, cloud)));
         }
-        dispatch(initiateOverlayList(overlays));
+
+        const formattedOverlays: OverlayInfo[] = [];
+
+        for (const overlayId of overlayIds) {
+          const overlayDetails: DBOverlay | undefined = await db?.get(
+            `overlay-${overlayId}`
+          );
+          if (overlayDetails && !overlayDetails.isHidden) {
+            formattedOverlays.push(overlayDetails);
+          }
+        }
+
+        dispatch(initiateOverlayList(formattedOverlays));
       } catch (e) {
         console.error(e);
       }
@@ -196,13 +218,24 @@ const Controller = () => {
             console.log("updating selected item list from remote", event);
             const update = _update as DBItemListDetails;
             const itemList = update.items;
-            const overlays = update.overlays;
+            const overlaysIds = update.overlays;
             if (cloud) {
               dispatch(
                 updateItemListFromRemote(formatItemList(itemList, cloud))
               );
             }
-            dispatch(updateOverlayListFromRemote(overlays));
+
+            const formattedOverlays: OverlayInfo[] = [];
+
+            for (const overlayId of overlaysIds) {
+              const overlayDetails: DBOverlay | undefined = await db?.get(
+                `overlay-${overlayId}`
+              );
+              if (overlayDetails && !overlayDetails.isHidden) {
+                formattedOverlays.push(overlayDetails);
+              }
+            }
+            dispatch(updateOverlayListFromRemote(formattedOverlays));
           }
           if (_update._id === "allItems") {
             console.log("updating all items from remote", event);
@@ -217,7 +250,7 @@ const Controller = () => {
         console.error(e);
       }
     },
-    [dispatch, cloud, selectedList]
+    [dispatch, cloud, selectedList, db]
   );
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import DeleteModal from "../../components/Modal/DeleteModal";
@@ -42,12 +42,13 @@ import {
 } from "../../store/preferencesSlice";
 import { useLocation } from "react-router-dom";
 import cn from "classnames";
-import { updateOverlay } from "../../store/overlaysSlice";
+import { updateOverlayInList } from "../../store/overlaysSlice";
 import { RootState } from "../../store/store";
 import { fill } from "@cloudinary/url-gen/actions/resize";
 import Toggle from "../../components/Toggle/Toggle";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import { updateOverlay } from "../../store/overlaySlice";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -87,13 +88,10 @@ const Media = () => {
   const { isLoading } = useSelector(
     (state: RootState) => state.undoable.present.item
   );
-  const { selectedId, list: overlaysList } = useSelector(
-    (state: RootState) => state.undoable.present.overlays
+  const { selectedOverlay } = useSelector(
+    (state: RootState) => state.undoable.present.overlay
   );
-  const selectedOverlay = useMemo(
-    () => overlaysList.find((overlay) => overlay.id === selectedId),
-    [overlaysList, selectedId]
-  );
+
   const {
     isMediaExpanded,
     mediaItemsPerRow,
@@ -403,7 +401,14 @@ const Media = () => {
               dispatch(
                 updateOverlay({
                   imageUrl: selectedMedia.background,
-                  id: selectedId,
+                  id: selectedOverlay?.id,
+                })
+              );
+              // Update state
+              dispatch(
+                updateOverlayInList({
+                  imageUrl: selectedMedia.background,
+                  id: selectedOverlay?.id,
                 })
               );
             }

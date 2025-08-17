@@ -143,6 +143,8 @@ const Bible = () => {
               version,
               lastUpdated: new Date().toISOString(),
               isFromBibleGateway: false,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
             });
             console.error(error);
           }
@@ -179,6 +181,7 @@ const Bible = () => {
                     chapterDoc.verses = data.verses;
                     chapterDoc.lastUpdated = new Date().toISOString();
                     chapterDoc.isFromBibleGateway = true;
+                    chapterDoc.updatedAt = new Date().toISOString();
                     await bibleDb.put(chapterDoc);
                   } catch (error) {
                     console.error(error);

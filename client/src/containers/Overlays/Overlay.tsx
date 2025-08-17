@@ -2,11 +2,7 @@ import Button from "../../components/Button/Button";
 import { ReactComponent as OverlaysSVG } from "../../assets/icons/overlays.svg";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import { useDispatch } from "../../hooks";
-import {
-  addToInitialList,
-  deleteOverlay,
-  selectOverlay,
-} from "../../store/overlaysSlice";
+import { addToInitialList } from "../../store/overlaysSlice";
 import "./Overlays.scss";
 import gsap from "gsap";
 import {
@@ -27,6 +23,8 @@ type OverlayProps = {
   selectedId: string;
   isStreamTransmitting: boolean;
   initialList: string[];
+  selectAndLoadOverlay: (overlayId: string) => void;
+  handleDeleteOverlay: (overlayId: string) => void;
 };
 
 const Overlay = ({
@@ -34,6 +32,8 @@ const Overlay = ({
   selectedId,
   isStreamTransmitting,
   initialList,
+  selectAndLoadOverlay,
+  handleDeleteOverlay,
 }: OverlayProps) => {
   const dispatch = useDispatch();
 
@@ -155,7 +155,7 @@ const Overlay = ({
   const deleteOverlayHandler = () => {
     setIsDeleting(true);
     setTimeout(() => {
-      dispatch(deleteOverlay(overlay.id));
+      handleDeleteOverlay(overlay.id);
       setIsDeleting(false);
     }, 500);
   };
@@ -180,7 +180,7 @@ const Overlay = ({
         className="flex-col flex-1 h-full leading-4 text-center"
         padding="px-2 py-1.5"
         gap="gap-1"
-        onClick={() => dispatch(selectOverlay(overlay.id))}
+        onClick={() => selectAndLoadOverlay(overlay.id)}
       >
         {overlay.type === "participant" && (
           <>

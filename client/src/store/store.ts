@@ -27,6 +27,7 @@ import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
+import { overlaySlice } from "./overlaySlice";
 import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
 import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
 import { ref, set, get } from "firebase/database";
@@ -38,6 +39,7 @@ import {
   DBItemListDetails,
   DBItemLists,
   DBMedia,
+  DBOverlay,
   DBPreferences,
   FormattedTextDisplayInfo,
   OverlayInfo,
@@ -55,6 +57,7 @@ const cleanObject = (obj: Object) =>
 const undoableReducers = undoable(
   combineReducers({
     item: itemSlice.reducer,
+    overlay: overlaySlice.reducer,
     overlays: overlaysSlice.reducer,
     credits: creditsSlice.reducer,
     itemList: itemListSlice.reducer,
@@ -71,7 +74,6 @@ const undoableReducers = undoable(
       itemSlice.actions.setHasPendingUpdate.toString(),
       itemSlice.actions.setSelectedSlide.toString(),
       itemSlice.actions.setSelectedBox.toString(),
-      overlaysSlice.actions.selectOverlay.toString(),
       overlaysSlice.actions.initiateOverlayList.toString(),
       overlaysSlice.actions.updateOverlayListFromRemote.toString(),
       overlaysSlice.actions.setHasPendingUpdate.toString(),
@@ -113,6 +115,9 @@ const undoableReducers = undoable(
       preferencesSlice.actions.decreaseMediaItems.toString(),
       preferencesSlice.actions.setMediaItems.toString(),
       preferencesSlice.actions.updatePreferencesFromRemote.toString(),
+      overlaySlice.actions.setIsOverlayLoading.toString(),
+      overlaySlice.actions.setHasPendingUpdate.toString(),
+      overlaySlice.actions.selectOverlay.toString(),
     ]),
     limit: 100,
   }
@@ -162,6 +167,7 @@ listenerMiddleware.startListening({
       bibleInfo: item.bibleInfo,
       timerInfo: item.timerInfo,
       shouldSendTo: item.shouldSendTo,
+      updatedAt: new Date().toISOString(),
     };
     db.put(db_item);
 
@@ -212,6 +218,7 @@ listenerMiddleware.startListening({
     if (!db || !selectedList) return;
     const db_itemList: DBItemListDetails = await db.get(selectedList._id);
     db_itemList.items = [...list];
+    db_itemList.updatedAt = new Date().toISOString();
     db.put(db_itemList);
 
     // Local machine updates
@@ -250,6 +257,7 @@ listenerMiddleware.startListening({
     const db_itemLists: DBItemLists = await db.get("ItemLists");
     db_itemLists.itemLists = [...currentLists];
     db_itemLists.selectedList = selectedList;
+    db_itemLists.updatedAt = new Date().toISOString();
     db.put(db_itemLists);
 
     // Local machine updates
@@ -287,6 +295,7 @@ listenerMiddleware.startListening({
     if (!db) return;
     const db_allItems: DBAllItems = await db.get("allItems");
     db_allItems.items = [...list];
+    db_allItems.updatedAt = new Date().toISOString();
     db.put(db_allItems);
 
     // Local machine updates
@@ -300,6 +309,40 @@ listenerMiddleware.startListening({
   },
 });
 
+// handle updating overlay
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).undoable.present.overlay !==
+        (previousState as RootState).undoable.present.overlay &&
+      action.type !== "overlay/setHasPendingUpdate" &&
+      action.type !== "overlay/setIsOverlayLoading" &&
+      action.type !== "RESET"
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    let state = listenerApi.getState() as RootState;
+    if (action.type === "overlay/selectOverlay") {
+      state = listenerApi.getOriginalState() as RootState;
+    } else {
+      listenerApi.cancelActiveListeners();
+      await listenerApi.delay(1500);
+    }
+
+    // update overlay
+    const { selectedOverlay } = state.undoable.present.overlay;
+
+    if (!db || !selectedOverlay) return;
+    const db_overlay: DBOverlay = await db.get(`overlay-${selectedOverlay.id}`);
+    db.put({
+      ...db_overlay,
+      ...selectedOverlay,
+      updatedAt: new Date().toISOString(),
+    });
+  },
+});
+
 // handle updating overlays
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
@@ -308,7 +351,6 @@ listenerMiddleware.startListening({
         (previousState as RootState).undoable.present.overlays &&
       action.type !== "overlays/initiateOverlayList" &&
       action.type !== "overlays/updateOverlayListFromRemote" &&
-      action.type !== "overlays/selectOverlay" &&
       action.type !== "overlays/setHasPendingUpdate" &&
       action.type !== "overlays/updateInitialList" &&
       action.type !== "overlays/addToInitialList" &&
@@ -335,7 +377,8 @@ listenerMiddleware.startListening({
 
     if (!db || !selectedList) return;
     const db_itemList: DBItemListDetails = await db.get(selectedList._id);
-    db_itemList.overlays = [...list];
+    db_itemList.overlays = list.map((overlay) => overlay.id);
+    db_itemList.updatedAt = new Date().toISOString();
     db.put(db_itemList);
 
     // Local machine updates
@@ -471,6 +514,7 @@ listenerMiddleware.startListening({
     if (!db) return;
     const db_credits: DBCredits = await db.get("credits");
     db_credits.list = list;
+    db_credits.updatedAt = new Date().toISOString();
     db.put(db_credits);
     // Local machine updates
     globalBroadcastRef.postMessage({
@@ -506,6 +550,7 @@ listenerMiddleware.startListening({
     if (!db) return;
     const db_backgrounds: DBMedia = await db.get("images");
     db_backgrounds.backgrounds = [...list];
+    db_backgrounds.updatedAt = new Date().toISOString();
     db.put(db_backgrounds);
 
     // Local machine updates
@@ -563,6 +608,7 @@ listenerMiddleware.startListening({
       const db_preferences: DBPreferences = await db.get("preferences");
       db_preferences.preferences = preferences;
       db_preferences.quickLinks = quickLinks;
+      db_preferences.updatedAt = new Date().toISOString();
       db.put(db_preferences);
       // Local machine updates
       globalBroadcastRef.postMessage({
@@ -579,6 +625,8 @@ listenerMiddleware.startListening({
         preferences: preferences,
         quickLinks: quickLinks,
         _id: "preferences",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
       db.put(db_preferences);
     }
