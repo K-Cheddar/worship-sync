@@ -3,6 +3,7 @@ import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
 import Button from "../../components/Button/Button";
 import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
 import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { ReactComponent as CopySVG } from "../../assets/icons/copy.svg";
 import "./ItemSlides.scss";
 import {
@@ -468,106 +469,108 @@ const ItemSlides = () => {
   // if (!arrangement && !hasSlides && type !== "free") return null;
 
   return (
-    <DndContext
-      sensors={sensors}
-      onDragEnd={onDragEnd}
-      onDragStart={onDragStart}
-    >
-      <div className="flex w-full px-2 bg-gray-900 h-6 mb-2 gap-1">
-        <Button
-          variant="tertiary"
-          svg={ZoomOutSVG}
-          onClick={() => {
-            if (isMobile) {
-              dispatch(increaseSlidesMobile());
-              if (type === "timer") {
-                dispatch(setSlidesMobile(size + 1));
+    <ErrorBoundary>
+      <DndContext
+        sensors={sensors}
+        onDragEnd={onDragEnd}
+        onDragStart={onDragStart}
+      >
+        <div className="flex w-full px-2 bg-gray-900 h-6 mb-2 gap-1">
+          <Button
+            variant="tertiary"
+            svg={ZoomOutSVG}
+            onClick={() => {
+              if (isMobile) {
+                dispatch(increaseSlidesMobile());
+                if (type === "timer") {
+                  dispatch(setSlidesMobile(size + 1));
+                }
+              } else {
+                dispatch(increaseSlides());
+                if (type === "timer") {
+                  dispatch(setSlides(size + 1));
+                }
               }
-            } else {
-              dispatch(increaseSlides());
-              if (type === "timer") {
-                dispatch(setSlides(size + 1));
+            }}
+          />
+          <Button
+            variant="tertiary"
+            svg={ZoomInSVG}
+            onClick={() => {
+              if (isMobile) {
+                dispatch(decreaseSlidesMobile());
+                if (type === "timer") {
+                  dispatch(setSlidesMobile(size - 1));
+                }
+              } else {
+                dispatch(decreaseSlides());
+                if (type === "timer") {
+                  dispatch(setSlides(size - 1));
+                }
               }
-            }
-          }}
-        />
-        <Button
-          variant="tertiary"
-          svg={ZoomInSVG}
-          onClick={() => {
-            if (isMobile) {
-              dispatch(decreaseSlidesMobile());
-              if (type === "timer") {
-                dispatch(setSlidesMobile(size - 1));
-              }
-            } else {
-              dispatch(decreaseSlides());
-              if (type === "timer") {
-                dispatch(setSlides(size - 1));
-              }
-            }
-          }}
-        />
-        {type === "free" && (
-          <>
-            <Button
-              variant="tertiary"
-              className="ml-auto"
-              svg={AddSVG}
-              onClick={() => addSlide()}
-            />
-            <Button variant="tertiary" svg={CopySVG} onClick={copySlide} />
-            <Button
-              variant="tertiary"
-              svg={DeleteSVG}
-              onClick={() => dispatch(removeSlide({ index: selectedSlide }))}
-            />
-          </>
-        )}
-      </div>
-      {hasSlides ? (
-        <ul
-          ref={setNodeRef}
-          tabIndex={0}
-          id="item-slides-container"
-          onKeyDown={(e) =>
-            handleKeyDownTraverse({
-              event: e,
-              advance: advanceSlide,
-              previous: previousSlide,
-            })
-          }
-          className={`item-slides-container ${sizeMap.get(size)?.cols}`}
-        >
-          <SortableContext
-            items={slides.map((slide) => slide.id || "")}
-            strategy={rectSortingStrategy}
-          >
-            {debouncedSlides.map((slide, index) => (
-              <ItemSlide
-                isTransmitting={isTransmitting}
-                timerInfo={timerInfo}
-                key={slide.id}
-                slide={slide}
-                index={index}
-                selectSlide={selectSlide}
-                selectedSlide={selectedSlide}
-                size={size}
-                itemType={type}
-                isMobile={isMobile || false}
-                draggedSection={draggedSection}
-                isStreamFormat={shouldShowStreamFormat}
-                getBibleInfo={getBibleInfo}
+            }}
+          />
+          {type === "free" && (
+            <>
+              <Button
+                variant="tertiary"
+                className="ml-auto"
+                svg={AddSVG}
+                onClick={() => addSlide()}
               />
-            ))}
-          </SortableContext>
-        </ul>
-      ) : (
-        <div className="flex w-full items-center justify-center h-6 mb-2 gap-1">
-          <p className="text-gray-300">No slides for selected item</p>
+              <Button variant="tertiary" svg={CopySVG} onClick={copySlide} />
+              <Button
+                variant="tertiary"
+                svg={DeleteSVG}
+                onClick={() => dispatch(removeSlide({ index: selectedSlide }))}
+              />
+            </>
+          )}
         </div>
-      )}
-    </DndContext>
+        {hasSlides ? (
+          <ul
+            ref={setNodeRef}
+            tabIndex={0}
+            id="item-slides-container"
+            onKeyDown={(e) =>
+              handleKeyDownTraverse({
+                event: e,
+                advance: advanceSlide,
+                previous: previousSlide,
+              })
+            }
+            className={`item-slides-container ${sizeMap.get(size)?.cols}`}
+          >
+            <SortableContext
+              items={slides.map((slide) => slide.id || "")}
+              strategy={rectSortingStrategy}
+            >
+              {debouncedSlides.map((slide, index) => (
+                <ItemSlide
+                  isTransmitting={isTransmitting}
+                  timerInfo={timerInfo}
+                  key={slide.id}
+                  slide={slide}
+                  index={index}
+                  selectSlide={selectSlide}
+                  selectedSlide={selectedSlide}
+                  size={size}
+                  itemType={type}
+                  isMobile={isMobile || false}
+                  draggedSection={draggedSection}
+                  isStreamFormat={shouldShowStreamFormat}
+                  getBibleInfo={getBibleInfo}
+                />
+              ))}
+            </SortableContext>
+          </ul>
+        ) : (
+          <div className="flex w-full items-center justify-center h-6 mb-2 gap-1">
+            <p className="text-gray-300">No slides for selected item</p>
+          </div>
+        )}
+      </DndContext>
+    </ErrorBoundary>
   );
 };
 

@@ -32,7 +32,6 @@ import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import FreeForms from "../../containers/FreeForms/FreeForms";
 import { DBAllItems, DBItemListDetails, DBPreferences } from "../../types";
-import ErrorBoundary from "../../components/ErrorBoundary";
 import {
   initiateItemList,
   setItemListIsLoading,
@@ -367,77 +366,19 @@ const Controller = () => {
               <Route
                 path="/"
                 element={
-                  <ErrorBoundary>
-                    <h2 className="text-2xl text-center mt-4 font-bold">
-                      No Item Selected
-                    </h2>
-                  </ErrorBoundary>
+                  <h2 className="text-2xl text-center mt-4 font-bold">
+                    No Item Selected
+                  </h2>
                 }
               />
-              <Route
-                path="/item/:itemId/:listId"
-                element={
-                  <ErrorBoundary>
-                    <Item />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="overlays"
-                element={
-                  <ErrorBoundary>
-                    <Overlays />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="bible"
-                element={
-                  <ErrorBoundary>
-                    <Bible />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="songs"
-                element={
-                  <ErrorBoundary>
-                    <Songs />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="free"
-                element={
-                  <ErrorBoundary>
-                    <FreeForms />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="timers"
-                element={
-                  <ErrorBoundary>
-                    <Timers />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="create"
-                element={
-                  <ErrorBoundary>
-                    <CreateItem />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="preferences"
-                element={
-                  <ErrorBoundary>
-                    <Preferences />
-                  </ErrorBoundary>
-                }
-              />
+              <Route path="/item/:itemId/:listId" element={<Item />} />
+              <Route path="overlays" element={<Overlays />} />
+              <Route path="bible" element={<Bible />} />
+              <Route path="songs" element={<Songs />} />
+              <Route path="free" element={<FreeForms />} />
+              <Route path="timers" element={<Timers />} />
+              <Route path="create" element={<CreateItem />} />
+              <Route path="preferences" element={<Preferences />} />
             </Routes>
           </div>
 

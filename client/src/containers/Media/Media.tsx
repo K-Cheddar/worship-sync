@@ -47,6 +47,7 @@ import { RootState } from "../../store/store";
 import { fill } from "@cloudinary/url-gen/actions/resize";
 import Toggle from "../../components/Toggle/Toggle";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -298,7 +299,7 @@ const Media = () => {
   };
 
   return (
-    <>
+    <ErrorBoundary>
       <div
         className={`mx-2 px-2 bg-gray-900 rounded-t-md flex items-center text-sm relative z-10 transition-all ${
           isMediaExpanded ? "mt-2" : "mt-4"
@@ -621,7 +622,7 @@ const Media = () => {
         title="Delete Media"
         imageUrl={mediaToDelete?.thumbnail}
       />
-    </>
+    </ErrorBoundary>
   );
 };
 

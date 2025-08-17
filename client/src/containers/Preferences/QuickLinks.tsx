@@ -12,6 +12,7 @@ import {
 import { useState } from "react";
 import QuickLink from "./QuickLink";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 const maxQuickLinks = 5;
 
@@ -107,7 +108,7 @@ const QuickLinks = () => {
   useEffect(() => {}, []);
 
   return (
-    <>
+    <ErrorBoundary>
       <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
         Quick Links
       </h2>
@@ -181,7 +182,7 @@ const QuickLinks = () => {
       ) : (
         <p className="text-center">Max Quick Links Reached</p>
       )}
-    </>
+    </ErrorBoundary>
   );
 };
 

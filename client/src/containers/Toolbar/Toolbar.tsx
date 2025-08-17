@@ -19,6 +19,7 @@ import cn from "classnames";
 import "./ToolbarElements/Toolbar.scss";
 import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
 import { setShouldShowStreamFormat } from "../../store/preferencesSlice";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 type sections =
   | "settings"
@@ -60,95 +61,97 @@ const Toolbar = forwardRef<HTMLDivElement, { className: string }>(
     }, [section, dispatch]);
 
     return (
-      <div ref={ref} className={className}>
-        <div className="px-2 py-1 flex gap-1 border-r-2 border-gray-500 items-center">
-          <Menu isPhone={isPhone} isEditMode={isEditMode} />
-          {!isEditMode && !isPhone && <Undo />}
-        </div>
-        <div className={cn("toolbar-middle", isEditMode && "invisible")}>
-          <div className="flex gap-1 overflow-x-auto w-full">
-            <ToolbarButton
-              svg={SettingsSVG}
-              onClick={() => setSection("settings")}
-              isActive={section === "settings"}
-            >
-              Settings
-            </ToolbarButton>
-            <ToolbarButton
-              svg={EditSquareSVG}
-              onClick={() => setSection("slide-tools")}
-              disabled={!onItemPage}
-              hidden={!onItemPage}
-              isActive={section === "slide-tools"}
-            >
-              Slide Tools
-            </ToolbarButton>
-            <ToolbarButton
-              svg={EditSquareSVG}
-              onClick={() => setSection("stream-format")}
-              disabled={!onItemPage}
-              hidden={!onItemPage}
-              isActive={section === "stream-format"}
-            >
-              Stream Format
-            </ToolbarButton>
-            <ToolbarButton
-              svg={TimerSVG}
-              onClick={() => setSection("timer-manager")}
-              disabled={!onItemPage || type !== "timer"}
-              hidden={!onItemPage}
-              isActive={section === "timer-manager"}
-            >
-              Timer Manager
-            </ToolbarButton>
-            <ToolbarButton
-              svg={EditSquareSVG}
-              onClick={() => setSection("item-tools")}
-              disabled={!onItemPage}
-              hidden={!onItemPage}
-              isActive={section === "item-tools"}
-            >
-              Item Tools
-            </ToolbarButton>
+      <ErrorBoundary>
+        <div ref={ref} className={className}>
+          <div className="px-2 py-1 flex gap-1 border-r-2 border-gray-500 items-center">
+            <Menu isPhone={isPhone} isEditMode={isEditMode} />
+            {!isEditMode && !isPhone && <Undo />}
           </div>
-          <hr className="border-gray-500 w-full border-t-2 sticky left-0" />
-          <div
-            className={cn(
-              "px-2 py-1 flex gap-1 items-center flex-1 overflow-x-auto w-full",
-              isEditMode && "hidden"
-            )}
-          >
-            <Outlines className={cn(section !== "settings" && "hidden")} />
-            <Button
-              className={cn(section !== "settings" && "hidden")}
-              variant="tertiary"
-              svg={SettingsSVG}
-              component="link"
-              to="/controller/preferences"
-            >
-              Preferences
-            </Button>
-            <QuickLinkSelection isMobile={isMobile} />
-            <SlideEditTools
-              className={cn(section !== "slide-tools" && "hidden")}
-            />
-            <FormattedTextEditor
-              className={cn(section !== "stream-format" && "hidden")}
-            />
-            <TimerControls
+          <div className={cn("toolbar-middle", isEditMode && "invisible")}>
+            <div className="flex gap-1 overflow-x-auto w-full">
+              <ToolbarButton
+                svg={SettingsSVG}
+                onClick={() => setSection("settings")}
+                isActive={section === "settings"}
+              >
+                Settings
+              </ToolbarButton>
+              <ToolbarButton
+                svg={EditSquareSVG}
+                onClick={() => setSection("slide-tools")}
+                disabled={!onItemPage}
+                hidden={!onItemPage}
+                isActive={section === "slide-tools"}
+              >
+                Slide Tools
+              </ToolbarButton>
+              <ToolbarButton
+                svg={EditSquareSVG}
+                onClick={() => setSection("stream-format")}
+                disabled={!onItemPage}
+                hidden={!onItemPage}
+                isActive={section === "stream-format"}
+              >
+                Stream Format
+              </ToolbarButton>
+              <ToolbarButton
+                svg={TimerSVG}
+                onClick={() => setSection("timer-manager")}
+                disabled={!onItemPage || type !== "timer"}
+                hidden={!onItemPage}
+                isActive={section === "timer-manager"}
+              >
+                Timer Manager
+              </ToolbarButton>
+              <ToolbarButton
+                svg={EditSquareSVG}
+                onClick={() => setSection("item-tools")}
+                disabled={!onItemPage}
+                hidden={!onItemPage}
+                isActive={section === "item-tools"}
+              >
+                Item Tools
+              </ToolbarButton>
+            </div>
+            <hr className="border-gray-500 w-full border-t-2 sticky left-0" />
+            <div
               className={cn(
-                (section !== "timer-manager" || type !== "timer") && "hidden"
+                "px-2 py-1 flex gap-1 items-center flex-1 overflow-x-auto w-full",
+                isEditMode && "hidden"
               )}
-            />
-            <ItemEditTools
-              className={cn(section !== "item-tools" && "hidden")}
-            />
+            >
+              <Outlines className={cn(section !== "settings" && "hidden")} />
+              <Button
+                className={cn(section !== "settings" && "hidden")}
+                variant="tertiary"
+                svg={SettingsSVG}
+                component="link"
+                to="/controller/preferences"
+              >
+                Preferences
+              </Button>
+              <QuickLinkSelection isMobile={isMobile} />
+              <SlideEditTools
+                className={cn(section !== "slide-tools" && "hidden")}
+              />
+              <FormattedTextEditor
+                className={cn(section !== "stream-format" && "hidden")}
+              />
+              <TimerControls
+                className={cn(
+                  (section !== "timer-manager" || type !== "timer") && "hidden"
+                )}
+              />
+              <ItemEditTools
+                className={cn(section !== "item-tools" && "hidden")}
+              />
+            </div>
+          </div>
+          <div className="px-2 py-1 flex gap-1 items-center border-l-2 border-gray-500">
+            <UserSection />
           </div>
         </div>
-        <div className="px-2 py-1 flex gap-1 items-center border-l-2 border-gray-500">
-          <UserSection />
-        </div>
-      </div>
+      </ErrorBoundary>
     );
   }
 );

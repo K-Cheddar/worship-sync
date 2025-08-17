@@ -4,6 +4,7 @@ import gsap from "gsap";
 import cn from "classnames";
 import { useEffect, useMemo, useRef } from "react";
 import "./Credits.scss";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 const Credits = ({
   credits,
@@ -25,7 +26,7 @@ const Credits = ({
       ...credits.filter((credit) => !credit.hidden).map((credit) => credit),
       ...(!isPreview ? [{ heading: "", id: "ending-credits", text: "" }] : []),
     ],
-    [credits, isPreview],
+    [credits, isPreview]
   );
 
   useGSAP(
@@ -43,7 +44,7 @@ const Credits = ({
           ease: "none",
         });
     },
-    { scope: containerRef, dependencies: [isPreview, credits] },
+    { scope: containerRef, dependencies: [isPreview, credits] }
   );
 
   useEffect(() => {
@@ -63,39 +64,41 @@ const Credits = ({
   }, [runObsTransition]);
 
   return (
-    <ul
-      ref={containerRef}
-      className={cn(
-        !isPreview && "published-credits-list",
-        isPreview && "h-full max-h-full credits-list",
-      )}
-    >
-      {adjustedCredits.map(({ heading, id, text }) => {
-        const isEnding = id === "ending-credits";
-        const isStarting = id === "starting-credits";
-        return (
-          <li key={id} id={`credits-${id}`}>
-            {id === "starting-credits" && (
-              <div id={id} className="mb-[100vh]" />
-            )}
-            {id === "ending-credits" && (
-              <div ref={endingRef} id={id} className="mt-[100vh]" />
-            )}
+    <ErrorBoundary>
+      <ul
+        ref={containerRef}
+        className={cn(
+          !isPreview && "published-credits-list",
+          isPreview && "h-full max-h-full credits-list"
+        )}
+      >
+        {adjustedCredits.map(({ heading, id, text }) => {
+          const isEnding = id === "ending-credits";
+          const isStarting = id === "starting-credits";
+          return (
+            <li key={id} id={`credits-${id}`}>
+              {id === "starting-credits" && (
+                <div id={id} className="mb-[100vh]" />
+              )}
+              {id === "ending-credits" && (
+                <div ref={endingRef} id={id} className="mt-[100vh]" />
+              )}
 
-            {!isStarting && !isEnding && (
-              <>
-                <h2 className="text-[2.25vw] max-md:text-[3.5vw] font-semibold">
-                  {heading}
-                </h2>
-                <p className="text-[2vw] max-md:text-[3vw] whitespace-pre-line">
-                  {text}
-                </p>
-              </>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+              {!isStarting && !isEnding && (
+                <>
+                  <h2 className="text-[2.25vw] max-md:text-[3.5vw] font-semibold">
+                    {heading}
+                  </h2>
+                  <p className="text-[2vw] max-md:text-[3vw] whitespace-pre-line">
+                    {text}
+                  </p>
+                </>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </ErrorBoundary>
   );
 };
 

@@ -47,6 +47,7 @@ import {
   defaultStbOverlayStyles,
 } from "../../components/DisplayWindow/defaultOverlayStyles";
 import OverlayPreview from "./OverlayPreview";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 const typeToName = {
   participant: "Participant",
@@ -202,462 +203,471 @@ const Overlays = () => {
   };
 
   return (
-    <DndContext onDragEnd={onDragEnd} sensors={sensors}>
-      <div
-        className="flex flex-col w-full h-full p-2 gap-2"
-        style={
-          {
-            "--overlay-editor-height": `${overlayEditorHeight}px`,
-            "--overlay-header-height": `${overlayHeaderHeight}px`,
-          } as CSSProperties
-        }
-      >
-        <h2
-          ref={overlayHeaderRef}
-          className="text-xl font-semibold text-center h-fit"
+    <ErrorBoundary>
+      <DndContext onDragEnd={onDragEnd} sensors={sensors}>
+        <div
+          className="flex flex-col w-full h-full p-2 gap-2"
+          style={
+            {
+              "--overlay-editor-height": `${overlayEditorHeight}px`,
+              "--overlay-header-height": `${overlayHeaderHeight}px`,
+            } as CSSProperties
+          }
         >
-          Overlays
-        </h2>
-        {!isLoading && list.length === 0 && (
-          <p className="text-sm px-2">
-            This outline doesn't have any overlays yet. Click the button below
-            to add some.
-          </p>
-        )}
-        {isLoading ? (
-          <h3 className="text-lg text-center">Loading overlays...</h3>
-        ) : (
-          <div className="overlays-list-container">
-            <section className="flex-1 flex flex-col gap-2">
-              <ul id="overlays-list" className="overlays-list" ref={setNodeRef}>
-                <SortableContext
-                  items={list.map((overlay) => overlay.id)}
-                  strategy={verticalListSortingStrategy}
+          <h2
+            ref={overlayHeaderRef}
+            className="text-xl font-semibold text-center h-fit"
+          >
+            Overlays
+          </h2>
+          {!isLoading && list.length === 0 && (
+            <p className="text-sm px-2">
+              This outline doesn't have any overlays yet. Click the button below
+              to add some.
+            </p>
+          )}
+          {isLoading ? (
+            <h3 className="text-lg text-center">Loading overlays...</h3>
+          ) : (
+            <div className="overlays-list-container">
+              <section className="flex-1 flex flex-col gap-2">
+                <ul
+                  id="overlays-list"
+                  className="overlays-list"
+                  ref={setNodeRef}
                 >
-                  {list.map((overlay) => {
-                    return (
-                      <Overlay
-                        key={overlay.id}
-                        initialList={initialList}
-                        overlay={overlay}
-                        selectedId={selectedId}
-                        isStreamTransmitting={isStreamTransmitting}
-                      />
-                    );
-                  })}
-                </SortableContext>
-              </ul>
-              <Button
-                className="text-sm w-full justify-center mt-2"
-                svg={justAdded ? CheckSVG : AddSVG}
-                color={justAdded ? "#84cc16" : "#22d3ee"}
-                disabled={justAdded}
-                onClick={() => {
-                  setJustAdded(true);
-                  const newId = generateRandomId();
-                  dispatch(addOverlay({ ...selectedOverlay, id: newId }));
-                  setTimeout(() => {
-                    dispatch(selectOverlay(newId));
-                    setJustAdded(false);
-                  }, 500);
-                }}
-              >
-                {justAdded ? "Added!" : addButtonText}
-              </Button>
-            </section>
-            <div
-              ref={overlayEditorRef}
-              className="flex flex-col items-center gap-4 flex-1"
-            >
-              {selectedId && (
-                <>
-                  <Button
-                    className="lg:hidden text-sm w-full justify-center"
-                    variant="tertiary"
-                    onClick={() => setShowPreview((val) => !val)}
+                  <SortableContext
+                    items={list.map((overlay) => overlay.id)}
+                    strategy={verticalListSortingStrategy}
                   >
-                    {showPreview ? "Hide" : "Show"} Preview
-                  </Button>
-                  {(!isMobile || showPreview) && (
-                    <div>
-                      <h2 className="bg-gray-900 text-center font-semibold text-base">
-                        Preview
-                      </h2>
-                      <DisplayWindow
-                        showBorder
-                        width={isMobile ? 50 : 25}
-                        participantOverlayInfo={
-                          selectedOverlay.type === "participant"
-                            ? {
-                                name: selectedOverlay.name,
-                                title: selectedOverlay.title,
-                                event: selectedOverlay.event,
-                                duration: selectedOverlay.duration,
-                                type: selectedOverlay.type,
-                                id: selectedOverlay.id,
-                                formatting: selectedOverlay.formatting,
-                              }
-                            : undefined
-                        }
-                        stbOverlayInfo={
-                          selectedOverlay.type === "stick-to-bottom"
-                            ? {
-                                heading: selectedOverlay.heading,
-                                subHeading: selectedOverlay.subHeading,
-                                duration: selectedOverlay.duration,
-                                type: selectedOverlay.type,
-                                id: selectedOverlay.id,
-                                formatting: selectedOverlay.formatting,
-                              }
-                            : undefined
-                        }
-                        qrCodeOverlayInfo={
-                          selectedOverlay.type === "qr-code"
-                            ? {
-                                url: selectedOverlay.url,
-                                description: selectedOverlay.description,
-                                duration: selectedOverlay.duration,
-                                type: selectedOverlay.type,
-                                id: selectedOverlay.id,
-                                formatting: selectedOverlay.formatting,
-                              }
-                            : undefined
-                        }
-                        imageOverlayInfo={
-                          selectedOverlay.type === "image"
-                            ? {
-                                imageUrl: selectedOverlay.imageUrl,
-                                name: selectedOverlay.name,
-                                duration: selectedOverlay.duration,
-                                type: selectedOverlay.type,
-                                id: selectedOverlay.id,
-                                formatting: selectedOverlay.formatting,
-                              }
-                            : undefined
-                        }
-                        displayType="stream"
-                      />
-                    </div>
-                  )}
-                  <section className="overlays-editing-section">
-                    {selectedOverlay.type === "participant" && (
-                      <>
-                        <Input
-                          {...commonInputProps}
-                          label="Name"
-                          value={selectedOverlay.name || ""}
-                          onChange={(val) =>
-                            dispatch(
-                              updateOverlay({
-                                ...selectedOverlay,
-                                name: val as string,
-                              })
-                            )
-                          }
+                    {list.map((overlay) => {
+                      return (
+                        <Overlay
+                          key={overlay.id}
+                          initialList={initialList}
+                          overlay={overlay}
+                          selectedId={selectedId}
+                          isStreamTransmitting={isStreamTransmitting}
                         />
-                        <Input
-                          {...commonInputProps}
-                          label="Title"
-                          value={selectedOverlay.title || ""}
-                          onChange={(val) =>
-                            dispatch(
-                              updateOverlay({
-                                ...selectedOverlay,
-                                title: val as string,
-                              })
-                            )
+                      );
+                    })}
+                  </SortableContext>
+                </ul>
+                <Button
+                  className="text-sm w-full justify-center mt-2"
+                  svg={justAdded ? CheckSVG : AddSVG}
+                  color={justAdded ? "#84cc16" : "#22d3ee"}
+                  disabled={justAdded}
+                  onClick={() => {
+                    setJustAdded(true);
+                    const newId = generateRandomId();
+                    dispatch(addOverlay({ ...selectedOverlay, id: newId }));
+                    setTimeout(() => {
+                      dispatch(selectOverlay(newId));
+                      setJustAdded(false);
+                    }, 500);
+                  }}
+                >
+                  {justAdded ? "Added!" : addButtonText}
+                </Button>
+              </section>
+              <div
+                ref={overlayEditorRef}
+                className="flex flex-col items-center gap-4 flex-1"
+              >
+                {selectedId && (
+                  <>
+                    <Button
+                      className="lg:hidden text-sm w-full justify-center"
+                      variant="tertiary"
+                      onClick={() => setShowPreview((val) => !val)}
+                    >
+                      {showPreview ? "Hide" : "Show"} Preview
+                    </Button>
+                    {(!isMobile || showPreview) && (
+                      <div>
+                        <h2 className="bg-gray-900 text-center font-semibold text-base">
+                          Preview
+                        </h2>
+                        <DisplayWindow
+                          showBorder
+                          width={isMobile ? 50 : 25}
+                          participantOverlayInfo={
+                            selectedOverlay.type === "participant"
+                              ? {
+                                  name: selectedOverlay.name,
+                                  title: selectedOverlay.title,
+                                  event: selectedOverlay.event,
+                                  duration: selectedOverlay.duration,
+                                  type: selectedOverlay.type,
+                                  id: selectedOverlay.id,
+                                  formatting: selectedOverlay.formatting,
+                                }
+                              : undefined
                           }
-                        />
-                        <Input
-                          {...commonInputProps}
-                          label="Event"
-                          value={selectedOverlay.event || ""}
-                          onChange={(val) =>
-                            dispatch(
-                              updateOverlay({
-                                ...selectedOverlay,
-                                event: val as string,
-                              })
-                            )
+                          stbOverlayInfo={
+                            selectedOverlay.type === "stick-to-bottom"
+                              ? {
+                                  heading: selectedOverlay.heading,
+                                  subHeading: selectedOverlay.subHeading,
+                                  duration: selectedOverlay.duration,
+                                  type: selectedOverlay.type,
+                                  id: selectedOverlay.id,
+                                  formatting: selectedOverlay.formatting,
+                                }
+                              : undefined
                           }
+                          qrCodeOverlayInfo={
+                            selectedOverlay.type === "qr-code"
+                              ? {
+                                  url: selectedOverlay.url,
+                                  description: selectedOverlay.description,
+                                  duration: selectedOverlay.duration,
+                                  type: selectedOverlay.type,
+                                  id: selectedOverlay.id,
+                                  formatting: selectedOverlay.formatting,
+                                }
+                              : undefined
+                          }
+                          imageOverlayInfo={
+                            selectedOverlay.type === "image"
+                              ? {
+                                  imageUrl: selectedOverlay.imageUrl,
+                                  name: selectedOverlay.name,
+                                  duration: selectedOverlay.duration,
+                                  type: selectedOverlay.type,
+                                  id: selectedOverlay.id,
+                                  formatting: selectedOverlay.formatting,
+                                }
+                              : undefined
+                          }
+                          displayType="stream"
                         />
-                      </>
+                      </div>
                     )}
-                    {selectedOverlay.type === "stick-to-bottom" && (
-                      <>
-                        <Input
-                          {...commonInputProps}
-                          label="Heading"
-                          value={selectedOverlay.heading || ""}
-                          onChange={(val) =>
-                            dispatch(
-                              updateOverlay({
-                                ...selectedOverlay,
-                                heading: val as string,
-                              })
-                            )
-                          }
-                        />
-                        <Input
-                          {...commonInputProps}
-                          label="Subheading"
-                          value={selectedOverlay.subHeading || ""}
-                          onChange={(val) =>
-                            dispatch(
-                              updateOverlay({
-                                ...selectedOverlay,
-                                subHeading: val as string,
-                              })
-                            )
-                          }
-                        />
-                      </>
-                    )}
-                    {selectedOverlay.type === "qr-code" && (
-                      <>
-                        <Input
-                          {...commonInputProps}
-                          label="URL"
-                          value={selectedOverlay.url || ""}
-                          onChange={(val) =>
-                            dispatch(
-                              updateOverlay({
-                                ...selectedOverlay,
-                                url: val as string,
-                              })
-                            )
-                          }
-                        />
-                        <TextArea
-                          {...commonInputProps}
-                          label="Info"
-                          value={selectedOverlay.description || ""}
-                          onChange={(val) =>
-                            dispatch(
-                              updateOverlay({
-                                ...selectedOverlay,
-                                description: val as string,
-                              })
-                            )
-                          }
-                        />
-                      </>
-                    )}
-                    {selectedOverlay.type === "image" && ( // TODO - Select from image library
-                      <>
-                        <Input
-                          {...commonInputProps}
-                          label="Name"
-                          value={selectedOverlay.name || ""}
-                          onChange={(val) =>
-                            dispatch(
-                              updateOverlay({
-                                ...selectedOverlay,
-                                name: val as string,
-                              })
-                            )
-                          }
-                        />
-                        <Input
-                          {...commonInputProps}
-                          label="Image URL"
-                          value={selectedOverlay.imageUrl || ""}
-                          onChange={(val) =>
-                            dispatch(
-                              updateOverlay({
-                                ...selectedOverlay,
-                                imageUrl: val as string,
-                              })
-                            )
-                          }
-                        />
-                      </>
-                    )}
-                    <Input
-                      className="text-sm flex gap-2 items-center"
-                      labelClassName="w-24"
-                      label="Duration"
-                      value={selectedOverlay.duration || ""}
-                      type="number"
-                      onChange={(val) =>
-                        dispatch(
-                          updateOverlay({
-                            ...selectedOverlay,
-                            duration: val as number,
-                          })
-                        )
-                      }
-                      data-ignore-undo="true"
-                    />
-                    <div className="flex gap-2 w-full">
-                      <Button
-                        className="flex-1 justify-center text-sm"
-                        svg={EditSVG}
-                        color="#22d3ee"
-                        onClick={() => setIsStyleDrawerOpen(true)}
-                      >
-                        Edit Style
-                      </Button>
-                      <Button
-                        className="flex-1 justify-center text-sm"
-                        variant="secondary"
-                        svg={TemplateSVG}
-                        color="#22d3ee"
-                        onClick={() => setIsTemplateDrawerOpen(true)}
-                      >
-                        Templates
-                      </Button>
-                    </div>
-                    <h4 className="text-center text-base">Type:</h4>
-                    <div className="flex gap-2 justify-between flex-col">
-                      <RadioButton
-                        label="Participant"
-                        className="w-full"
-                        value={selectedOverlay.type === "participant"}
+                    <section className="overlays-editing-section">
+                      {selectedOverlay.type === "participant" && (
+                        <>
+                          <Input
+                            {...commonInputProps}
+                            label="Name"
+                            value={selectedOverlay.name || ""}
+                            onChange={(val) =>
+                              dispatch(
+                                updateOverlay({
+                                  ...selectedOverlay,
+                                  name: val as string,
+                                })
+                              )
+                            }
+                          />
+                          <Input
+                            {...commonInputProps}
+                            label="Title"
+                            value={selectedOverlay.title || ""}
+                            onChange={(val) =>
+                              dispatch(
+                                updateOverlay({
+                                  ...selectedOverlay,
+                                  title: val as string,
+                                })
+                              )
+                            }
+                          />
+                          <Input
+                            {...commonInputProps}
+                            label="Event"
+                            value={selectedOverlay.event || ""}
+                            onChange={(val) =>
+                              dispatch(
+                                updateOverlay({
+                                  ...selectedOverlay,
+                                  event: val as string,
+                                })
+                              )
+                            }
+                          />
+                        </>
+                      )}
+                      {selectedOverlay.type === "stick-to-bottom" && (
+                        <>
+                          <Input
+                            {...commonInputProps}
+                            label="Heading"
+                            value={selectedOverlay.heading || ""}
+                            onChange={(val) =>
+                              dispatch(
+                                updateOverlay({
+                                  ...selectedOverlay,
+                                  heading: val as string,
+                                })
+                              )
+                            }
+                          />
+                          <Input
+                            {...commonInputProps}
+                            label="Subheading"
+                            value={selectedOverlay.subHeading || ""}
+                            onChange={(val) =>
+                              dispatch(
+                                updateOverlay({
+                                  ...selectedOverlay,
+                                  subHeading: val as string,
+                                })
+                              )
+                            }
+                          />
+                        </>
+                      )}
+                      {selectedOverlay.type === "qr-code" && (
+                        <>
+                          <Input
+                            {...commonInputProps}
+                            label="URL"
+                            value={selectedOverlay.url || ""}
+                            onChange={(val) =>
+                              dispatch(
+                                updateOverlay({
+                                  ...selectedOverlay,
+                                  url: val as string,
+                                })
+                              )
+                            }
+                          />
+                          <TextArea
+                            {...commonInputProps}
+                            label="Info"
+                            value={selectedOverlay.description || ""}
+                            onChange={(val) =>
+                              dispatch(
+                                updateOverlay({
+                                  ...selectedOverlay,
+                                  description: val as string,
+                                })
+                              )
+                            }
+                          />
+                        </>
+                      )}
+                      {selectedOverlay.type === "image" && ( // TODO - Select from image library
+                        <>
+                          <Input
+                            {...commonInputProps}
+                            label="Name"
+                            value={selectedOverlay.name || ""}
+                            onChange={(val) =>
+                              dispatch(
+                                updateOverlay({
+                                  ...selectedOverlay,
+                                  name: val as string,
+                                })
+                              )
+                            }
+                          />
+                          <Input
+                            {...commonInputProps}
+                            label="Image URL"
+                            value={selectedOverlay.imageUrl || ""}
+                            onChange={(val) =>
+                              dispatch(
+                                updateOverlay({
+                                  ...selectedOverlay,
+                                  imageUrl: val as string,
+                                })
+                              )
+                            }
+                          />
+                        </>
+                      )}
+                      <Input
+                        className="text-sm flex gap-2 items-center"
+                        labelClassName="w-24"
+                        label="Duration"
+                        value={selectedOverlay.duration || ""}
+                        type="number"
                         onChange={(val) =>
                           dispatch(
                             updateOverlay({
                               ...selectedOverlay,
-                              type: "participant",
+                              duration: val as number,
                             })
                           )
                         }
+                        data-ignore-undo="true"
                       />
-                      <RadioButton
-                        label="Stick to Bottom"
-                        className="w-full"
-                        value={selectedOverlay.type === "stick-to-bottom"}
-                        onChange={(val) =>
-                          dispatch(
-                            updateOverlay({
-                              ...selectedOverlay,
-                              type: "stick-to-bottom",
-                            })
-                          )
-                        }
-                      />
-                      <RadioButton
-                        label="QR Code"
-                        className="w-full"
-                        value={selectedOverlay.type === "qr-code"}
-                        onChange={(val) =>
-                          dispatch(
-                            updateOverlay({
-                              ...selectedOverlay,
-                              type: "qr-code",
-                            })
-                          )
-                        }
-                      />
-                      <RadioButton
-                        label="Image"
-                        className="w-full"
-                        value={selectedOverlay.type === "image"}
-                        onChange={(val) =>
-                          dispatch(
-                            updateOverlay({ ...selectedOverlay, type: "image" })
-                          )
-                        }
-                      />
-                    </div>
-                  </section>
-                </>
-              )}
+                      <div className="flex gap-2 w-full">
+                        <Button
+                          className="flex-1 justify-center text-sm"
+                          svg={EditSVG}
+                          color="#22d3ee"
+                          onClick={() => setIsStyleDrawerOpen(true)}
+                        >
+                          Edit Style
+                        </Button>
+                        <Button
+                          className="flex-1 justify-center text-sm"
+                          variant="secondary"
+                          svg={TemplateSVG}
+                          color="#22d3ee"
+                          onClick={() => setIsTemplateDrawerOpen(true)}
+                        >
+                          Templates
+                        </Button>
+                      </div>
+                      <h4 className="text-center text-base">Type:</h4>
+                      <div className="flex gap-2 justify-between flex-col">
+                        <RadioButton
+                          label="Participant"
+                          className="w-full"
+                          value={selectedOverlay.type === "participant"}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                type: "participant",
+                              })
+                            )
+                          }
+                        />
+                        <RadioButton
+                          label="Stick to Bottom"
+                          className="w-full"
+                          value={selectedOverlay.type === "stick-to-bottom"}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                type: "stick-to-bottom",
+                              })
+                            )
+                          }
+                        />
+                        <RadioButton
+                          label="QR Code"
+                          className="w-full"
+                          value={selectedOverlay.type === "qr-code"}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                type: "qr-code",
+                              })
+                            )
+                          }
+                        />
+                        <RadioButton
+                          label="Image"
+                          className="w-full"
+                          value={selectedOverlay.type === "image"}
+                          onChange={(val) =>
+                            dispatch(
+                              updateOverlay({
+                                ...selectedOverlay,
+                                type: "image",
+                              })
+                            )
+                          }
+                        />
+                      </div>
+                    </section>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      <Drawer
-        isOpen={isStyleDrawerOpen}
-        onClose={() => setIsStyleDrawerOpen(false)}
-        size={isMobile ? "lg" : "xl"}
-        position={isMobile ? "bottom" : "right"}
-        title="Edit Overlay Style"
-        closeOnBackdropClick={false}
-        closeOnEscape
-      >
-        <StyleEditor
-          formatting={selectedOverlay.formatting || {}}
-          onChange={handleFormattingChange}
-        />
-      </Drawer>
-      <Drawer
-        isOpen={isTemplateDrawerOpen}
-        onClose={() => setIsTemplateDrawerOpen(false)}
-        size={isMobile ? "lg" : "xl"}
-        position={isMobile ? "bottom" : "right"}
-        title={`${typeToName[selectedOverlay.type as keyof typeof typeToName]} Templates`}
-        showBackdrop
-        closeOnBackdropClick
-        closeOnEscape
-      >
-        {selectedOverlay.type === "participant" && (
-          <OverlayPreview
-            overlay={selectedOverlay}
-            defaultStyles={defaultParticipantOverlayStyles}
-            onApply={() => {
-              dispatch(
-                updateOverlay({
-                  ...selectedOverlay,
-                  formatting: defaultParticipantOverlayStyles,
-                })
-              );
-              setIsTemplateDrawerOpen(false);
-            }}
-            isMobile={isMobile}
+        <Drawer
+          isOpen={isStyleDrawerOpen}
+          onClose={() => setIsStyleDrawerOpen(false)}
+          size={isMobile ? "lg" : "xl"}
+          position={isMobile ? "bottom" : "right"}
+          title="Edit Overlay Style"
+          closeOnBackdropClick={false}
+          closeOnEscape
+        >
+          <StyleEditor
+            formatting={selectedOverlay.formatting || {}}
+            onChange={handleFormattingChange}
           />
-        )}
-        {selectedOverlay.type === "stick-to-bottom" && (
-          <OverlayPreview
-            overlay={selectedOverlay}
-            defaultStyles={defaultStbOverlayStyles}
-            onApply={() => {
-              dispatch(
-                updateOverlay({
-                  ...selectedOverlay,
-                  formatting: defaultStbOverlayStyles,
-                })
-              );
-              setIsTemplateDrawerOpen(false);
-            }}
-            isMobile={isMobile}
-          />
-        )}
-        {selectedOverlay.type === "qr-code" && (
-          <OverlayPreview
-            overlay={selectedOverlay}
-            defaultStyles={defaultQrCodeOverlayStyles}
-            onApply={() => {
-              dispatch(
-                updateOverlay({
-                  ...selectedOverlay,
-                  formatting: defaultQrCodeOverlayStyles,
-                })
-              );
-              setIsTemplateDrawerOpen(false);
-            }}
-            isMobile={isMobile}
-          />
-        )}
-        {selectedOverlay.type === "image" && (
-          <OverlayPreview
-            overlay={selectedOverlay}
-            defaultStyles={defaultImageOverlayStyles}
-            onApply={() => {
-              dispatch(
-                updateOverlay({
-                  ...selectedOverlay,
-                  formatting: defaultImageOverlayStyles,
-                })
-              );
-              setIsTemplateDrawerOpen(false);
-            }}
-            isMobile={isMobile}
-          />
-        )}
-      </Drawer>
-    </DndContext>
+        </Drawer>
+        <Drawer
+          isOpen={isTemplateDrawerOpen}
+          onClose={() => setIsTemplateDrawerOpen(false)}
+          size={isMobile ? "lg" : "xl"}
+          position={isMobile ? "bottom" : "right"}
+          title={`${typeToName[selectedOverlay.type as keyof typeof typeToName]} Templates`}
+          showBackdrop
+          closeOnBackdropClick
+          closeOnEscape
+        >
+          {selectedOverlay.type === "participant" && (
+            <OverlayPreview
+              overlay={selectedOverlay}
+              defaultStyles={defaultParticipantOverlayStyles}
+              onApply={() => {
+                dispatch(
+                  updateOverlay({
+                    ...selectedOverlay,
+                    formatting: defaultParticipantOverlayStyles,
+                  })
+                );
+                setIsTemplateDrawerOpen(false);
+              }}
+              isMobile={isMobile}
+            />
+          )}
+          {selectedOverlay.type === "stick-to-bottom" && (
+            <OverlayPreview
+              overlay={selectedOverlay}
+              defaultStyles={defaultStbOverlayStyles}
+              onApply={() => {
+                dispatch(
+                  updateOverlay({
+                    ...selectedOverlay,
+                    formatting: defaultStbOverlayStyles,
+                  })
+                );
+                setIsTemplateDrawerOpen(false);
+              }}
+              isMobile={isMobile}
+            />
+          )}
+          {selectedOverlay.type === "qr-code" && (
+            <OverlayPreview
+              overlay={selectedOverlay}
+              defaultStyles={defaultQrCodeOverlayStyles}
+              onApply={() => {
+                dispatch(
+                  updateOverlay({
+                    ...selectedOverlay,
+                    formatting: defaultQrCodeOverlayStyles,
+                  })
+                );
+                setIsTemplateDrawerOpen(false);
+              }}
+              isMobile={isMobile}
+            />
+          )}
+          {selectedOverlay.type === "image" && (
+            <OverlayPreview
+              overlay={selectedOverlay}
+              defaultStyles={defaultImageOverlayStyles}
+              onApply={() => {
+                dispatch(
+                  updateOverlay({
+                    ...selectedOverlay,
+                    formatting: defaultImageOverlayStyles,
+                  })
+                );
+                setIsTemplateDrawerOpen(false);
+              }}
+              isMobile={isMobile}
+            />
+          )}
+        </Drawer>
+      </DndContext>
+    </ErrorBoundary>
   );
 };
 
