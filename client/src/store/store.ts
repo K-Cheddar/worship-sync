@@ -1080,7 +1080,7 @@ listenerMiddleware.startListening({
 });
 
 // Track when all slices are actually initialized and clear undo history
-let hasFinishedInitialization = false;
+export let hasFinishedInitialization = false;
 
 const safeRequestIdleCallback =
   window.requestIdleCallback ||
@@ -1090,6 +1090,10 @@ const safeRequestIdleCallback =
 
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    if (action.type === "RESET_INITIALIZATION") {
+      hasFinishedInitialization = false;
+    }
+
     // Check if any slice state changed
     if (currentState === previousState) return false;
 
@@ -1126,14 +1130,14 @@ listenerMiddleware.startListening({
   },
 });
 
-listenerMiddleware.startListening({
-  predicate: (action, currentState, previousState) => {
-    return currentState !== previousState;
-  },
-  effect: async (action, listenerApi) => {
-    console.log(action);
-  },
-});
+// listenerMiddleware.startListening({
+//   predicate: (action, currentState, previousState) => {
+//     return currentState !== previousState;
+//   },
+//   effect: async (action, listenerApi) => {
+//     console.log(action);
+//   },
+// });
 
 const combinedReducers = combineReducers({
   undoable: undoableReducers,

@@ -11,6 +11,7 @@ import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
 import { useLocation } from "react-router-dom";
+import { useDispatch } from "../hooks";
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
@@ -74,6 +75,7 @@ const ControllerInfoProvider = ({ children }: any) => {
   const [hasCheckedSession, setHasCheckedSession] = useState(false);
 
   const location = useLocation();
+  const dispatch = useDispatch();
 
   const { database, loginState, logout, setLoginState, login } =
     useContext(GlobalInfoContext) || {};
@@ -335,6 +337,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     setDb(undefined);
     setDbProgress(0);
     setIsDbSetup(false);
+    dispatch({ type: "RESET_INITIALIZATION" });
 
     if (db) {
       db.destroy()
