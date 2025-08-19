@@ -35,11 +35,18 @@ export const useGlobalBroadcast = (
     globalBroadcastRef.addEventListener("message", handleMessage);
 
     return () => {
-      globalBroadcastRef.removeEventListener("message", handleMessage);
+      if (globalBroadcastRef) {
+        globalBroadcastRef.removeEventListener("message", handleMessage);
+      }
       // Clean up timeout on unmount
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
     };
   }, [delay]);
+
+  // Return a function to check if the broadcast channel is ready
+  return {
+    isReady: !!globalBroadcastRef,
+  };
 };

@@ -8,11 +8,11 @@ import {
   DBItem,
   verseType,
   ItemList,
-  ItemListDetails,
   DBItemListDetails,
   TimerType,
   TimerStatus,
   BibleFontMode,
+  ItemListDetails,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatBible, formatFree, formatSong } from "./overflow";
@@ -495,7 +495,11 @@ export const createNewItemInDb = async ({
     // 	updateState({allItems: allItems.items});
     // 	db.put(allItems);
     // });
-    db.put(item);
+    db.put({
+      ...item,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
     return item;
   }
 };
@@ -558,7 +562,11 @@ export const createNewItemList = async ({
       name: response.name,
     };
   } catch (error) {
-    db.put(list);
+    db.put({
+      ...list,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
     return { _id: list._id, name: list.name };
   }
 };
@@ -594,7 +602,11 @@ export const createItemListFromExisting = async ({
       items: response.items,
       overlays: response.overlays,
     };
-    db.put(list);
+    db.put({
+      ...list,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
     return { _id: list._id, name: list.name };
   } catch (error) {
     console.error(error);

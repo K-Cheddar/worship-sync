@@ -31,8 +31,13 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
 import FreeForms from "../../containers/FreeForms/FreeForms";
-import { DBAllItems, DBItemListDetails, DBPreferences } from "../../types";
-import ErrorBoundary from "../../components/ErrorBoundary";
+import {
+  DBAllItems,
+  DBItemListDetails,
+  DBOverlay,
+  DBPreferences,
+  OverlayInfo,
+} from "../../types";
 import {
   initiateItemList,
   setItemListIsLoading,
@@ -49,6 +54,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { sortNamesInList } from "../../utils/sort";
 import {
   deleteUnusedBibleItems,
+  deleteUnusedOverlays,
   // formatAllSongs,
   // formatAllDocs,
   // formatAllItems,
@@ -137,6 +143,9 @@ const Controller = () => {
 
       // delete unneeded bible items
       deleteUnusedBibleItems({ db, allItems });
+
+      // delete unused overlays
+      deleteUnusedOverlays(db);
     };
     getAllItems();
   }, [dispatch, db]);
@@ -144,7 +153,7 @@ const Controller = () => {
   // Leaving this in case we need to reformat all songs in the db
   // useEffect(() => {
   //   if (!db || !cloud) return;
-  //   formatAllSongs(db, cloud);
+  //   // formatAllSongs(db, cloud);
   // }, [db, cloud]);
 
   useEffect(() => {
@@ -173,11 +182,23 @@ const Controller = () => {
           selectedList._id
         );
         const itemList = response?.items || [];
-        const overlays = response?.overlays || [];
+        const overlayIds = response?.overlays || [];
         if (cloud) {
           dispatch(initiateItemList(formatItemList(itemList, cloud)));
         }
-        dispatch(initiateOverlayList(overlays));
+
+        const formattedOverlays: OverlayInfo[] = [];
+
+        for (const overlayId of overlayIds) {
+          const overlayDetails: DBOverlay | undefined = await db?.get(
+            `overlay-${overlayId}`
+          );
+          if (overlayDetails && !overlayDetails.isHidden) {
+            formattedOverlays.push(overlayDetails);
+          }
+        }
+
+        dispatch(initiateOverlayList(formattedOverlays));
       } catch (e) {
         console.error(e);
       }
@@ -197,13 +218,24 @@ const Controller = () => {
             console.log("updating selected item list from remote", event);
             const update = _update as DBItemListDetails;
             const itemList = update.items;
-            const overlays = update.overlays;
+            const overlaysIds = update.overlays;
             if (cloud) {
               dispatch(
                 updateItemListFromRemote(formatItemList(itemList, cloud))
               );
             }
-            dispatch(updateOverlayListFromRemote(overlays));
+
+            const formattedOverlays: OverlayInfo[] = [];
+
+            for (const overlayId of overlaysIds) {
+              const overlayDetails: DBOverlay | undefined = await db?.get(
+                `overlay-${overlayId}`
+              );
+              if (overlayDetails && !overlayDetails.isHidden) {
+                formattedOverlays.push(overlayDetails);
+              }
+            }
+            dispatch(updateOverlayListFromRemote(formattedOverlays));
           }
           if (_update._id === "allItems") {
             console.log("updating all items from remote", event);
@@ -218,7 +250,7 @@ const Controller = () => {
         console.error(e);
       }
     },
-    [dispatch, cloud, selectedList]
+    [dispatch, cloud, selectedList, db]
   );
 
   useEffect(() => {
@@ -367,77 +399,19 @@ const Controller = () => {
               <Route
                 path="/"
                 element={
-                  <ErrorBoundary>
-                    <h2 className="text-2xl text-center mt-4 font-bold">
-                      No Item Selected
-                    </h2>
-                  </ErrorBoundary>
+                  <h2 className="text-2xl text-center mt-4 font-bold">
+                    No Item Selected
+                  </h2>
                 }
               />
-              <Route
-                path="/item/:itemId/:listId"
-                element={
-                  <ErrorBoundary>
-                    <Item />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="overlays"
-                element={
-                  <ErrorBoundary>
-                    <Overlays />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="bible"
-                element={
-                  <ErrorBoundary>
-                    <Bible />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="songs"
-                element={
-                  <ErrorBoundary>
-                    <Songs />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="free"
-                element={
-                  <ErrorBoundary>
-                    <FreeForms />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="timers"
-                element={
-                  <ErrorBoundary>
-                    <Timers />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="create"
-                element={
-                  <ErrorBoundary>
-                    <CreateItem />
-                  </ErrorBoundary>
-                }
-              />
-              <Route
-                path="preferences"
-                element={
-                  <ErrorBoundary>
-                    <Preferences />
-                  </ErrorBoundary>
-                }
-              />
+              <Route path="/item/:itemId/:listId" element={<Item />} />
+              <Route path="overlays" element={<Overlays />} />
+              <Route path="bible" element={<Bible />} />
+              <Route path="songs" element={<Songs />} />
+              <Route path="free" element={<FreeForms />} />
+              <Route path="timers" element={<Timers />} />
+              <Route path="create" element={<CreateItem />} />
+              <Route path="preferences" element={<Preferences />} />
             </Routes>
           </div>
 

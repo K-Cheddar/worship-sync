@@ -24,6 +24,7 @@ import Icon from "../../components/Icon/Icon";
 import Input from "../../components/Input/Input";
 import RadioButton from "../../components/RadioButton/RadioButton";
 import { RootState } from "../../store/store";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 const Preferences = () => {
   const dispatch = useDispatch();
@@ -135,7 +136,7 @@ const Preferences = () => {
   ];
 
   return (
-    <>
+    <ErrorBoundary>
       <ul className="flex flex-wrap gap-6 justify-center">
         {backgroundPreferences.map(
           ({ label, preference, background, brightness, setBrightness }) => (
@@ -337,7 +338,7 @@ const Preferences = () => {
           />
         </li>
       </ul>
-    </>
+    </ErrorBoundary>
   );
 };
 

@@ -18,6 +18,7 @@ import Presentation from "../../components/Presentation/Presentation";
 import Button from "../../components/Button/Button";
 import "./TransmitHandler.scss";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 // Keeping this as previous urls
 // https://res.cloudinary.com/portable-media/image/upload/v1729199662/eliathah/Welcome_To_Eliathah.jpg
@@ -88,77 +89,81 @@ const TransmitHandler = () => {
   const allQuickLinks = [...defaultQuickLinks, ...quickLinks];
 
   return (
-    <div
-      className="transmit-handler-container"
-      data-is-media-expanded={isMediaExpanded}
-      style={
-        {
-          "--transmit-handler-height": `${handlerHeight}px`,
-        } as CSSProperties
-      }
-    >
-      <section className="transmit-handler" ref={transmitHandlerRef}>
-        <div className="w-full flex justify-center items-center gap-4">
-          <Button
-            onClick={() => dispatch(clearAll())}
-            className="text-sm"
-            padding="py-1 px-2"
-          >
-            Clear All
-          </Button>
-          <hr className="border-r border-gray-400 h-full" />
-          <Toggle
-            label="Sending to all"
-            value={isTransmitting}
-            onChange={handleSetTransmitting}
-          />
-        </div>
-        <div className="transmit-handler-content">
-          <Presentation
-            timers={timers}
-            name="Projector"
-            prevInfo={prevProjectorInfo}
-            timerInfo={projectorTimer}
-            prevTimerInfo={prevProjectorTimer}
-            info={projectorInfo}
-            isTransmitting={isProjectorTransmitting}
-            toggleIsTransmitting={() => dispatch(toggleProjectorTransmitting())}
-            quickLinks={allQuickLinks.filter(
-              (link) => link.displayType === "projector"
-            )}
-            isMobile={isMobile}
-          />
-          <Presentation
-            timers={timers}
-            name="Monitor"
-            prevInfo={prevMonitorInfo}
-            timerInfo={monitorTimer}
-            prevTimerInfo={prevMonitorTimer}
-            info={monitorInfo}
-            isTransmitting={isMonitorTransmitting}
-            toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
-            quickLinks={allQuickLinks.filter(
-              (link) => link.displayType === "monitor"
-            )}
-            isMobile={isMobile}
-          />
-          <Presentation
-            timers={timers}
-            name="Stream"
-            prevInfo={prevStreamInfo}
-            timerInfo={streamTimer}
-            prevTimerInfo={prevStreamTimer}
-            info={streamInfo}
-            isTransmitting={isStreamTransmitting}
-            toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
-            quickLinks={allQuickLinks.filter(
-              (link) => link.displayType === "stream"
-            )}
-            isMobile={isMobile}
-          />
-        </div>
-      </section>
-    </div>
+    <ErrorBoundary>
+      <div
+        className="transmit-handler-container"
+        data-is-media-expanded={isMediaExpanded}
+        style={
+          {
+            "--transmit-handler-height": `${handlerHeight}px`,
+          } as CSSProperties
+        }
+      >
+        <section className="transmit-handler" ref={transmitHandlerRef}>
+          <div className="w-full flex justify-center items-center gap-4">
+            <Button
+              onClick={() => dispatch(clearAll())}
+              className="text-sm"
+              padding="py-1 px-2"
+            >
+              Clear All
+            </Button>
+            <hr className="border-r border-gray-400 h-full" />
+            <Toggle
+              label="Sending to all"
+              value={isTransmitting}
+              onChange={handleSetTransmitting}
+            />
+          </div>
+          <div className="transmit-handler-content">
+            <Presentation
+              timers={timers}
+              name="Projector"
+              prevInfo={prevProjectorInfo}
+              timerInfo={projectorTimer}
+              prevTimerInfo={prevProjectorTimer}
+              info={projectorInfo}
+              isTransmitting={isProjectorTransmitting}
+              toggleIsTransmitting={() =>
+                dispatch(toggleProjectorTransmitting())
+              }
+              quickLinks={allQuickLinks.filter(
+                (link) => link.displayType === "projector"
+              )}
+              isMobile={isMobile}
+            />
+            <Presentation
+              timers={timers}
+              name="Monitor"
+              prevInfo={prevMonitorInfo}
+              timerInfo={monitorTimer}
+              prevTimerInfo={prevMonitorTimer}
+              info={monitorInfo}
+              isTransmitting={isMonitorTransmitting}
+              toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
+              quickLinks={allQuickLinks.filter(
+                (link) => link.displayType === "monitor"
+              )}
+              isMobile={isMobile}
+            />
+            <Presentation
+              timers={timers}
+              name="Stream"
+              prevInfo={prevStreamInfo}
+              timerInfo={streamTimer}
+              prevTimerInfo={prevStreamTimer}
+              info={streamInfo}
+              isTransmitting={isStreamTransmitting}
+              toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
+              quickLinks={allQuickLinks.filter(
+                (link) => link.displayType === "stream"
+              )}
+              isMobile={isMobile}
+            />
+          </div>
+        </section>
+      </div>
+    </ErrorBoundary>
   );
 };
 

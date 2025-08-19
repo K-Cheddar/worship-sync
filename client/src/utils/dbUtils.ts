@@ -13,6 +13,7 @@ import {
   DBItem,
   DBItemListDetails,
   DBItemLists,
+  DBOverlay,
   ServiceItem,
   TimerInfo,
 } from "../types";
@@ -24,7 +25,7 @@ type propsType = {
   allItems: DBAllItems;
 };
 
-export const deleteUnusedBibleItems = async({ db, allItems }: propsType) => {
+export const deleteUnusedBibleItems = async ({ db, allItems }: propsType) => {
   const items = allItems.items;
 
   const bibleItems = items.filter((item) => item.type === "bible");
@@ -37,25 +38,29 @@ export const deleteUnusedBibleItems = async({ db, allItems }: propsType) => {
     const listDetails: DBItemListDetails = await db.get(itemList._id);
     const listItems = listDetails?.items || [];
     bibleItemsInLists.push(
-      ...listItems.filter((item) => item.type === "bible"),
+      ...listItems.filter((item) => item.type === "bible")
     );
   }
 
   const bibleItemsToBeDeleted = bibleItems.filter(
     (bibleItem) =>
       !bibleItemsInLists.some(
-        (bibleItemInList) => bibleItemInList._id === bibleItem._id,
-      ),
+        (bibleItemInList) => bibleItemInList._id === bibleItem._id
+      )
   );
 
   if (bibleItemsToBeDeleted.length === 0) return; // nothing to delete
 
   const updatedItems = items.filter(
-    (item) => !bibleItemsToBeDeleted.includes(item),
+    (item) => !bibleItemsToBeDeleted.includes(item)
   );
 
   // Remove bible items from all items and delete them individually
-  await db.put({ ...allItems, items: updatedItems });
+  await db.put({
+    ...allItems,
+    items: updatedItems,
+    updatedAt: new Date().toISOString(),
+  });
   for (const item of bibleItemsToBeDeleted) {
     try {
       const doc = await db.get(item._id);
@@ -66,7 +71,28 @@ export const deleteUnusedBibleItems = async({ db, allItems }: propsType) => {
   }
 };
 
-export const updateAllDocs = async(dispatch: Function) => {
+export const deleteUnusedOverlays = async (db: PouchDB.Database) => {
+  const allDocs: allDocsType = (await db.allDocs({
+    include_docs: true,
+  })) as allDocsType;
+  const allOverlays = allDocs.rows
+    .filter((row) => (row.doc as any)?._id?.startsWith("overlay-"))
+    .map((row) => row.doc as DBOverlay);
+
+  for (const overlay of allOverlays) {
+    const overlayDoc: DBOverlay | undefined = await db.get(overlay._id);
+    // was last updated more than 1 week ago
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const isOld =
+      overlayDoc.updatedAt && new Date(overlayDoc.updatedAt) < oneWeekAgo;
+
+    if (overlayDoc.isHidden && isOld) {
+      await db.remove(overlay);
+    }
+  }
+};
+
+export const updateAllDocs = async (dispatch: Function) => {
   if (!globalDb) return;
   try {
     const allDocs: allDocsType = (await globalDb.allDocs({
@@ -101,10 +127,10 @@ export const updateAllDocs = async(dispatch: Function) => {
   }
 };
 
-export const formatAllDocs = async(
+export const formatAllDocs = async (
   db: PouchDB.Database,
   cloud: Cloudinary,
-  isMobile: boolean,
+  isMobile: boolean
 ) => {
   if (!db) return;
   try {
@@ -117,7 +143,7 @@ export const formatAllDocs = async(
         (row.doc as any)?.type === "song" ||
         (row.doc as any)?.type === "free" ||
         (row.doc as any)?.type === "timer" ||
-        (row.doc as any)?.type === "bible",
+        (row.doc as any)?.type === "bible"
     );
 
     for (const item of allItems) {
@@ -125,7 +151,7 @@ export const formatAllDocs = async(
         const formattedItem = formatItemInfo(
           item.doc as DBItem,
           cloud,
-          isMobile,
+          isMobile
         );
         const updatedItem = {
           ...item.doc,
@@ -137,6 +163,7 @@ export const formatAllDocs = async(
           timerInfo: formattedItem.timerInfo,
           bibleInfo: formattedItem.bibleInfo,
           shouldSendTo: formattedItem.shouldSendTo,
+          updatedAt: new Date().toISOString(),
         };
         if (item.doc) {
           await db.put(updatedItem);
@@ -152,10 +179,10 @@ export const formatAllDocs = async(
   }
 };
 
-export const formatAllSongs = async(
+export const formatAllSongs = async (
   db: PouchDB.Database,
   cloud: Cloudinary,
-  isMobile: boolean,
+  isMobile: boolean
 ) => {
   if (!db) return;
   try {
@@ -179,6 +206,7 @@ export const formatAllSongs = async(
         slides: formattedSong.slides,
         timerInfo: formattedSong.timerInfo,
         bibleInfo: formattedSong.bibleInfo,
+        updatedAt: new Date().toISOString(),
       };
       if (retrievedSong) {
         await db.put(updatedItem);
@@ -190,9 +218,9 @@ export const formatAllSongs = async(
   }
 };
 
-export const formatAllItems = async(
+export const formatAllItems = async (
   db: PouchDB.Database,
-  cloud: Cloudinary,
+  cloud: Cloudinary
 ) => {
   if (!db) return;
   try {
@@ -207,7 +235,11 @@ export const formatAllItems = async(
         background: updatedBackground,
       };
     });
-    await db.put({ ...allItems, items: formattedItems });
+    await db.put({
+      ...allItems,
+      items: formattedItems,
+      updatedAt: new Date().toISOString(),
+    });
     console.log("formattedItems", formattedItems);
   } catch (error) {
     console.error("Failed to format all items", error);

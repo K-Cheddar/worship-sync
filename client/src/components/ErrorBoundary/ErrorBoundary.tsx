@@ -2,7 +2,6 @@ import React, { Component, ErrorInfo, ReactNode } from "react";
 import { ReactComponent as ErrorSVG } from "../../assets/icons/error.svg";
 import Button from "../Button/Button";
 import Icon from "../Icon/Icon";
-import { logErrorToServer } from "../../api/logError";
 
 interface Props {
   children: ReactNode;
@@ -27,17 +26,6 @@ class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("ErrorBoundary caught an error:", error, errorInfo);
-
-    // Log error to server
-    logErrorToServer({
-      error,
-      errorInfo,
-      componentStack: errorInfo.componentStack || undefined,
-      timestamp: Date.now(),
-    }).catch((logError) => {
-      // Silently fail if logging fails - we don't want to cause additional errors
-      console.error("Failed to log error to server:", logError);
-    });
   }
 
   handleComponentRefresh = () => {

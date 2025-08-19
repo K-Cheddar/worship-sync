@@ -10,7 +10,7 @@ import "./Controller.scss";
 const PreferencesPage = () => {
   const dispatch = useDispatch();
   const { isLoading, tab } = useSelector(
-    (state) => state.undoable.present.preferences,
+    (state) => state.undoable.present.preferences
   );
 
   if (isLoading)

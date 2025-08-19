@@ -26,6 +26,7 @@ import { createSections as createSectionsUtil } from "../../utils/itemUtil";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { RootState } from "../../store/store";
 import { ButtonGroup, ButtonGroupItem } from "../../components/Button";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 const LyricsEditor = () => {
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -38,15 +39,15 @@ const LyricsEditor = () => {
 
   const localFormattedLyrics = useMemo(
     () => localArrangements[localSelectedArrangement]?.formattedLyrics || [],
-    [localArrangements, localSelectedArrangement],
+    [localArrangements, localSelectedArrangement]
   );
   const songOrder = useMemo(
     () => localArrangements[localSelectedArrangement]?.songOrder || [],
-    [localArrangements, localSelectedArrangement],
+    [localArrangements, localSelectedArrangement]
   );
   const arrangementName = useMemo(
     () => localArrangements[localSelectedArrangement]?.name || "Master",
-    [localArrangements, localSelectedArrangement],
+    [localArrangements, localSelectedArrangement]
   );
 
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
@@ -113,7 +114,7 @@ const LyricsEditor = () => {
     const sections = sortList(localFormattedLyrics.map(({ name }) => name));
     return {
       availableSections: Array.from(
-        new Set([...sortList(sectionTypes), ...sections]),
+        new Set([...sortList(sectionTypes), ...sections])
       ).map((section) => ({ label: section, value: section })),
       currentSections: sections.map((section) => ({
         label: section,
@@ -124,7 +125,7 @@ const LyricsEditor = () => {
 
   const updateFormattedLyricsAndSongOrder = (
     _lyrics: FormattedLyricsType[],
-    songOrderParam?: SongOrder[],
+    songOrderParam?: SongOrder[]
   ) => {
     const { formattedLyrics: _formattedLyrics, songOrder: _songOrder } =
       updateFormattedSections({
@@ -169,14 +170,14 @@ const LyricsEditor = () => {
         arrangements: _arrangements,
         selectedArrangement: localSelectedArrangement,
       },
-      isMobile,
+      isMobile
     );
 
     dispatch(
       updateArrangements({
         arrangements: _item.arrangements,
         selectedArrangement: localSelectedArrangement,
-      }),
+      })
     );
   };
 
@@ -194,103 +195,111 @@ const LyricsEditor = () => {
   };
 
   return (
-    <div className="lyrics-editor">
-      <div className="flex bg-gray-900 px-2 h-fit items-center">
-        <Button
-          variant="tertiary"
-          className="max-lg:hidden"
-          svg={ZoomOutSVG}
-          onClick={() => dispatch(increaseFormattedLyrics())}
-        />
-        <Button
-          variant="tertiary"
-          className="max-lg:hidden"
-          svg={ZoomInSVG}
-          onClick={() => dispatch(decreaseFormattedLyrics())}
-        />
-        <p className="mx-auto font-semibold text-lg">{item.name}</p>
-        <Button variant="tertiary" svg={CloseSVG} onClick={() => onClose()} />
-      </div>
-      <ButtonGroup className="lg:hidden my-2 mx-4">
-        <ButtonGroupItem
-          isActive={showLeftSection}
-          onClick={() => setShowLeftSection(true)}
-        >
-          Show Arrangements
-        </ButtonGroupItem>
-        <ButtonGroupItem
-          isActive={!showLeftSection}
-          onClick={() => setShowLeftSection(false)}
-        >
-          Show Song Order
-        </ButtonGroupItem>
-      </ButtonGroup>
-
-      <div className="lyrics-editor-middle">
-        {showLeftSection && (
-          <div className="pl-4 pt-4 w-44 flex flex-col">
-            <TextArea
-              className="w-40 h-72 flex flex-col"
-              label="Paste Lyrics Here"
-              value={unformattedLyrics}
-              onChange={(val) => setUnformattedLyrics(val as string)}
-            />
-            <Button className="text-sm mt-1 mx-auto" onClick={createSections}>
-              Format Lyrics
-            </Button>
-            <h3 className="text-base mt-4 mb-2 font-semibold">Arrangements</h3>
-            <ul className="song-arrangement-list">
-              {localArrangements.map((arrangement, index) => (
-                <Arrangement
-                  key={arrangement.name}
-                  index={index}
-                  setSelectedArrangement={() =>
-                    setLocalSelectedArrangement(index)
-                  }
-                  arrangement={arrangement}
-                  setLocalArrangements={setLocalArrangements}
-                  localArrangements={localArrangements}
-                />
-              ))}
-            </ul>
-          </div>
-        )}
-        <section className={`flex-1 ${!showLeftSection ? "pl-4" : "pr-4"}`}>
-          <h2 className="text-2xl mb-2 text-center font-semibold">
-            {arrangementName}
-          </h2>
-          <LyricBoxes
-            formattedLyrics={localFormattedLyrics}
-            reformatLyrics={updateFormattedLyricsAndSongOrder}
-            setFormattedLyrics={updateFormattedLyrics}
-            availableSections={availableSections}
-            onFormattedLyricsDelete={onFormattedLyricsDelete}
-            isMobile={isMobile || false}
+    <ErrorBoundary>
+      <div className="lyrics-editor">
+        <div className="flex bg-gray-900 px-2 h-fit items-center">
+          <Button
+            variant="tertiary"
+            className="max-lg:hidden"
+            svg={ZoomOutSVG}
+            onClick={() => dispatch(increaseFormattedLyrics())}
           />
-        </section>
-        {(!showLeftSection || !isMobile) && (
-          <section className="mr-4 flex flex-col">
-            <SongSections
-              songOrder={songOrder}
-              setSongOrder={updateSongOrder}
-              currentSections={currentSections}
+          <Button
+            variant="tertiary"
+            className="max-lg:hidden"
+            svg={ZoomInSVG}
+            onClick={() => dispatch(decreaseFormattedLyrics())}
+          />
+          <p className="mx-auto font-semibold text-lg">{item.name}</p>
+          <Button variant="tertiary" svg={CloseSVG} onClick={() => onClose()} />
+        </div>
+        <ButtonGroup className="lg:hidden my-2 mx-4">
+          <ButtonGroupItem
+            isActive={showLeftSection}
+            onClick={() => setShowLeftSection(true)}
+          >
+            Show Arrangements
+          </ButtonGroupItem>
+          <ButtonGroupItem
+            isActive={!showLeftSection}
+            onClick={() => setShowLeftSection(false)}
+          >
+            Show Song Order
+          </ButtonGroupItem>
+        </ButtonGroup>
+
+        <div className="lyrics-editor-middle">
+          {showLeftSection && (
+            <div className="pl-4 pt-4 w-44 flex flex-col">
+              <TextArea
+                className="w-40 h-72 flex flex-col"
+                label="Paste Lyrics Here"
+                value={unformattedLyrics}
+                onChange={(val) => setUnformattedLyrics(val as string)}
+              />
+              <Button className="text-sm mt-1 mx-auto" onClick={createSections}>
+                Format Lyrics
+              </Button>
+              <h3 className="text-base mt-4 mb-2 font-semibold">
+                Arrangements
+              </h3>
+              <ul className="song-arrangement-list">
+                {localArrangements.map((arrangement, index) => (
+                  <Arrangement
+                    key={arrangement.name}
+                    index={index}
+                    setSelectedArrangement={() =>
+                      setLocalSelectedArrangement(index)
+                    }
+                    arrangement={arrangement}
+                    setLocalArrangements={setLocalArrangements}
+                    localArrangements={localArrangements}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
+          <section className={`flex-1 ${!showLeftSection ? "pl-4" : "pr-4"}`}>
+            <h2 className="text-2xl mb-2 text-center font-semibold">
+              {arrangementName}
+            </h2>
+            <LyricBoxes
+              formattedLyrics={localFormattedLyrics}
+              reformatLyrics={updateFormattedLyricsAndSongOrder}
+              setFormattedLyrics={updateFormattedLyrics}
+              availableSections={availableSections}
+              onFormattedLyricsDelete={onFormattedLyricsDelete}
+              isMobile={isMobile || false}
             />
           </section>
-        )}
+          {(!showLeftSection || !isMobile) && (
+            <section className="mr-4 flex flex-col">
+              <SongSections
+                songOrder={songOrder}
+                setSongOrder={updateSongOrder}
+                currentSections={currentSections}
+              />
+            </section>
+          )}
+        </div>
+        <div className="flex justify-end h-8 mr-4 my-4">
+          <Button
+            variant="secondary"
+            className="text-base"
+            onClick={() => onClose()}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="cta"
+            className="text-base ml-4"
+            onClick={() => save()}
+          >
+            Save Changes
+          </Button>
+        </div>
       </div>
-      <div className="flex justify-end h-8 mr-4 my-4">
-        <Button
-          variant="secondary"
-          className="text-base"
-          onClick={() => onClose()}
-        >
-          Cancel
-        </Button>
-        <Button variant="cta" className="text-base ml-4" onClick={() => save()}>
-          Save Changes
-        </Button>
-      </div>
-    </div>
+    </ErrorBoundary>
   );
 };
 

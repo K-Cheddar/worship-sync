@@ -5,7 +5,7 @@ import {
   createListenerMiddleware,
   Reducer,
 } from "@reduxjs/toolkit";
-import undoable, { excludeAction } from "redux-undo";
+import undoable, { ActionCreators } from "redux-undo";
 import {
   presentationSlice,
   updateBibleDisplayInfoFromRemote,
@@ -27,6 +27,7 @@ import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
+import { overlaySlice } from "./overlaySlice";
 import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
 import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
 import { ref, set, get } from "firebase/database";
@@ -38,6 +39,7 @@ import {
   DBItemListDetails,
   DBItemLists,
   DBMedia,
+  DBOverlay,
   DBPreferences,
   FormattedTextDisplayInfo,
   OverlayInfo,
@@ -48,13 +50,96 @@ import { allDocsSlice } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
 import { timersSlice, updateTimerFromRemote } from "./timersSlice";
 import { mergeTimers } from "../utils/timerUtils";
+import _ from "lodash";
+
+// Helper function to safely post messages to the broadcast channel
+const safePostMessage = (message: any) => {
+  if (globalBroadcastRef) {
+    globalBroadcastRef.postMessage(message);
+  }
+};
 
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
 
+let lastActionTime = 0;
+let currentGroupId = 0;
+
+const excludedActions: string[] = [
+  itemSlice.actions.setItemIsLoading.toString(),
+  itemSlice.actions.setActiveItem.toString(),
+  itemSlice.actions.setSelectedSlide.toString(),
+  itemSlice.actions.setIsEditMode.toString(),
+  itemSlice.actions.setHasPendingUpdate.toString(),
+  itemSlice.actions.setSelectedSlide.toString(),
+  itemSlice.actions.setSelectedBox.toString(),
+  overlaysSlice.actions.initiateOverlayList.toString(),
+  overlaysSlice.actions.updateOverlayListFromRemote.toString(),
+  overlaysSlice.actions.setHasPendingUpdate.toString(),
+  overlaysSlice.actions.updateInitialList.toString(),
+  creditsSlice.actions.initiateCreditsList.toString(),
+  creditsSlice.actions.initiateTransitionScene.toString(),
+  creditsSlice.actions.initiateCreditsScene.toString(),
+  creditsSlice.actions.initiatePublishedCreditsList.toString(),
+  creditsSlice.actions.updateCreditsListFromRemote.toString(),
+  creditsSlice.actions.updatePublishedCreditsListFromRemote.toString(),
+  creditsSlice.actions.updateInitialList.toString(),
+  creditsSlice.actions.setIsLoading.toString(),
+  creditsSlice.actions.selectCredit.toString(),
+  itemListSlice.actions.initiateItemList.toString(),
+  itemListSlice.actions.updateItemListFromRemote.toString(),
+  itemListSlice.actions.setItemListIsLoading.toString(),
+  itemListSlice.actions.setHasPendingUpdate.toString(),
+  itemListSlice.actions.setActiveItemInList.toString(),
+  itemListsSlice.actions.initiateItemLists.toString(),
+  itemListsSlice.actions.updateItemListsFromRemote.toString(),
+  itemListsSlice.actions.setInitialItemList.toString(),
+  mediaItemsSlice.actions.initiateMediaList.toString(),
+  mediaItemsSlice.actions.updateMediaListFromRemote.toString(),
+  preferencesSlice.actions.initiatePreferences.toString(),
+  preferencesSlice.actions.setIsLoading.toString(),
+  preferencesSlice.actions.setSelectedPreference.toString(),
+  preferencesSlice.actions.setShouldShowItemEditor.toString(),
+  preferencesSlice.actions.setShouldShowStreamFormat.toString(),
+  preferencesSlice.actions.setIsMediaExpanded.toString(),
+  preferencesSlice.actions.increaseSlides.toString(),
+  preferencesSlice.actions.decreaseSlides.toString(),
+  preferencesSlice.actions.setSlides.toString(),
+  preferencesSlice.actions.increaseSlidesMobile.toString(),
+  preferencesSlice.actions.decreaseSlidesMobile.toString(),
+  preferencesSlice.actions.setSlidesMobile.toString(),
+  preferencesSlice.actions.increaseFormattedLyrics.toString(),
+  preferencesSlice.actions.decreaseFormattedLyrics.toString(),
+  preferencesSlice.actions.setFormattedLyrics.toString(),
+  preferencesSlice.actions.increaseMediaItems.toString(),
+  preferencesSlice.actions.decreaseMediaItems.toString(),
+  preferencesSlice.actions.setMediaItems.toString(),
+  preferencesSlice.actions.updatePreferencesFromRemote.toString(),
+  preferencesSlice.actions.initiateQuickLinks.toString(),
+  overlaySlice.actions.setIsOverlayLoading.toString(),
+  overlaySlice.actions.setHasPendingUpdate.toString(),
+  overlaySlice.actions.selectOverlay.toString(),
+  timersSlice.actions.syncTimersFromRemote.toString(),
+  timersSlice.actions.setTimersFromDocs.toString(),
+  timersSlice.actions.setShouldUpdateTimers.toString(),
+  allDocsSlice.actions.updateAllFreeFormDocs.toString(),
+  allDocsSlice.actions.updateAllSongDocs.toString(),
+  allDocsSlice.actions.updateAllTimerDocs.toString(),
+  allItemsSlice.actions.initiateAllItemsList.toString(),
+];
+
+const excludedPrefixes = [
+  "debouncedUpdate",
+  "timers/",
+  "allDocs/",
+  "allItems/",
+  "presentation/",
+];
+
 const undoableReducers = undoable(
   combineReducers({
     item: itemSlice.reducer,
+    overlay: overlaySlice.reducer,
     overlays: overlaysSlice.reducer,
     credits: creditsSlice.reducer,
     itemList: itemListSlice.reducer,
@@ -63,57 +148,27 @@ const undoableReducers = undoable(
     preferences: preferencesSlice.reducer,
   }),
   {
-    filter: excludeAction([
-      itemSlice.actions.setItemIsLoading.toString(),
-      itemSlice.actions.setActiveItem.toString(),
-      itemSlice.actions.setSelectedSlide.toString(),
-      itemSlice.actions.setIsEditMode.toString(),
-      itemSlice.actions.setHasPendingUpdate.toString(),
-      itemSlice.actions.setSelectedSlide.toString(),
-      itemSlice.actions.setSelectedBox.toString(),
-      overlaysSlice.actions.selectOverlay.toString(),
-      overlaysSlice.actions.initiateOverlayList.toString(),
-      overlaysSlice.actions.updateOverlayListFromRemote.toString(),
-      overlaysSlice.actions.setHasPendingUpdate.toString(),
-      overlaysSlice.actions.updateInitialList.toString(),
-      creditsSlice.actions.initiateCreditsList.toString(),
-      creditsSlice.actions.initiateTransitionScene.toString(),
-      creditsSlice.actions.initiateCreditsScene.toString(),
-      creditsSlice.actions.initiatePublishedCreditsList.toString(),
-      creditsSlice.actions.updateCreditsListFromRemote.toString(),
-      creditsSlice.actions.updatePublishedCreditsListFromRemote.toString(),
-      creditsSlice.actions.updateInitialList.toString(),
-      creditsSlice.actions.setIsLoading.toString(),
-      creditsSlice.actions.selectCredit.toString(),
-      itemListSlice.actions.initiateItemList.toString(),
-      itemListSlice.actions.updateItemListFromRemote.toString(),
-      itemListSlice.actions.setItemListIsLoading.toString(),
-      itemListSlice.actions.setHasPendingUpdate.toString(),
-      itemListsSlice.actions.initiateItemLists.toString(),
-      itemListsSlice.actions.updateItemListsFromRemote.toString(),
-      itemListsSlice.actions.setInitialItemList.toString(),
-      mediaItemsSlice.actions.initiateMediaList.toString(),
-      mediaItemsSlice.actions.updateMediaListFromRemote.toString(),
-      preferencesSlice.actions.initiatePreferences.toString(),
-      preferencesSlice.actions.setIsLoading.toString(),
-      preferencesSlice.actions.setSelectedPreference.toString(),
-      preferencesSlice.actions.setShouldShowItemEditor.toString(),
-      preferencesSlice.actions.setShouldShowStreamFormat.toString(),
-      preferencesSlice.actions.setIsMediaExpanded.toString(),
-      preferencesSlice.actions.increaseSlides.toString(),
-      preferencesSlice.actions.decreaseSlides.toString(),
-      preferencesSlice.actions.setSlides.toString(),
-      preferencesSlice.actions.increaseSlidesMobile.toString(),
-      preferencesSlice.actions.decreaseSlidesMobile.toString(),
-      preferencesSlice.actions.setSlidesMobile.toString(),
-      preferencesSlice.actions.increaseFormattedLyrics.toString(),
-      preferencesSlice.actions.decreaseFormattedLyrics.toString(),
-      preferencesSlice.actions.setFormattedLyrics.toString(),
-      preferencesSlice.actions.increaseMediaItems.toString(),
-      preferencesSlice.actions.decreaseMediaItems.toString(),
-      preferencesSlice.actions.setMediaItems.toString(),
-      preferencesSlice.actions.updatePreferencesFromRemote.toString(),
-    ]),
+    groupBy: (action) => {
+      const now = Date.now();
+      const timeSinceLastUpdate = now - lastActionTime;
+
+      if (timeSinceLastUpdate < 500) {
+        return currentGroupId;
+      } else {
+        currentGroupId = now;
+        lastActionTime = now;
+        return currentGroupId;
+      }
+    },
+    filter: (action: Action) => {
+      const isExcluded =
+        excludedActions.includes(action.type) ||
+        excludedPrefixes.some((prefix) => action.type.startsWith(prefix)) ||
+        action.type === "SEED_UNDO_STATE" ||
+        !hasFinishedInitialization;
+
+      return !isExcluded;
+    },
     limit: 100,
   }
 );
@@ -162,11 +217,12 @@ listenerMiddleware.startListening({
       bibleInfo: item.bibleInfo,
       timerInfo: item.timerInfo,
       shouldSendTo: item.shouldSendTo,
+      updatedAt: new Date().toISOString(),
     };
     db.put(db_item);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_item,
@@ -212,10 +268,11 @@ listenerMiddleware.startListening({
     if (!db || !selectedList) return;
     const db_itemList: DBItemListDetails = await db.get(selectedList._id);
     db_itemList.items = [...list];
+    db_itemList.updatedAt = new Date().toISOString();
     db.put(db_itemList);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_itemList,
@@ -250,10 +307,11 @@ listenerMiddleware.startListening({
     const db_itemLists: DBItemLists = await db.get("ItemLists");
     db_itemLists.itemLists = [...currentLists];
     db_itemLists.selectedList = selectedList;
+    db_itemLists.updatedAt = new Date().toISOString();
     db.put(db_itemLists);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_itemLists,
@@ -281,21 +339,61 @@ listenerMiddleware.startListening({
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
+    console.log("allItems update", action);
+
     // update ItemList
     const { list } = (listenerApi.getState() as RootState).allItems;
 
     if (!db) return;
     const db_allItems: DBAllItems = await db.get("allItems");
     db_allItems.items = [...list];
+    db_allItems.updatedAt = new Date().toISOString();
     db.put(db_allItems);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_allItems,
         hostId: globalHostId,
       },
+    });
+  },
+});
+
+// handle updating overlay
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).undoable.present.overlay !==
+        (previousState as RootState).undoable.present.overlay &&
+      action.type !== "overlay/setHasPendingUpdate" &&
+      action.type !== "overlay/setIsOverlayLoading" &&
+      action.type !== "RESET" &&
+      !!(currentState as RootState).undoable.present.overlay.hasPendingUpdate
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    let state = listenerApi.getState() as RootState;
+    if (action.type === "overlay/selectOverlay") {
+      state = listenerApi.getOriginalState() as RootState;
+    } else {
+      listenerApi.cancelActiveListeners();
+      await listenerApi.delay(1500);
+    }
+
+    listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
+
+    // update overlay
+    const { selectedOverlay } = state.undoable.present.overlay;
+
+    if (!db || !selectedOverlay) return;
+    const db_overlay: DBOverlay = await db.get(`overlay-${selectedOverlay.id}`);
+    db.put({
+      ...db_overlay,
+      ...selectedOverlay,
+      updatedAt: new Date().toISOString(),
     });
   },
 });
@@ -308,7 +406,6 @@ listenerMiddleware.startListening({
         (previousState as RootState).undoable.present.overlays &&
       action.type !== "overlays/initiateOverlayList" &&
       action.type !== "overlays/updateOverlayListFromRemote" &&
-      action.type !== "overlays/selectOverlay" &&
       action.type !== "overlays/setHasPendingUpdate" &&
       action.type !== "overlays/updateInitialList" &&
       action.type !== "overlays/addToInitialList" &&
@@ -335,11 +432,12 @@ listenerMiddleware.startListening({
 
     if (!db || !selectedList) return;
     const db_itemList: DBItemListDetails = await db.get(selectedList._id);
-    db_itemList.overlays = [...list];
+    db_itemList.overlays = list.map((overlay) => overlay.id);
+    db_itemList.updatedAt = new Date().toISOString();
     db.put(db_itemList);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_itemList,
@@ -471,9 +569,10 @@ listenerMiddleware.startListening({
     if (!db) return;
     const db_credits: DBCredits = await db.get("credits");
     db_credits.list = list;
+    db_credits.updatedAt = new Date().toISOString();
     db.put(db_credits);
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_credits,
@@ -506,10 +605,11 @@ listenerMiddleware.startListening({
     if (!db) return;
     const db_backgrounds: DBMedia = await db.get("images");
     db_backgrounds.backgrounds = [...list];
+    db_backgrounds.updatedAt = new Date().toISOString();
     db.put(db_backgrounds);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_backgrounds,
@@ -563,9 +663,10 @@ listenerMiddleware.startListening({
       const db_preferences: DBPreferences = await db.get("preferences");
       db_preferences.preferences = preferences;
       db_preferences.quickLinks = quickLinks;
+      db_preferences.updatedAt = new Date().toISOString();
       db.put(db_preferences);
       // Local machine updates
-      globalBroadcastRef.postMessage({
+      safePostMessage({
         type: "update",
         data: {
           docs: db_preferences,
@@ -579,6 +680,8 @@ listenerMiddleware.startListening({
         preferences: preferences,
         quickLinks: quickLinks,
         _id: "preferences",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
       db.put(db_preferences);
     }
@@ -930,6 +1033,107 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(updateTimerFromRemote(action.payload as TimerInfo));
+  },
+});
+
+// Handle undo/redo operations to set hasPendingUpdate for affected slices
+listenerMiddleware.startListening({
+  predicate: (action) => {
+    return (
+      action.type === "@@redux-undo/UNDO" || action.type === "@@redux-undo/REDO"
+    );
+  },
+  effect: async (action, listenerApi) => {
+    const currentState = listenerApi.getState() as RootState;
+    const previousState = listenerApi.getOriginalState() as RootState;
+
+    // Only set hasPendingUpdate to true for slices that actually changed during undo/redo
+    if (
+      !_.isEqual(
+        currentState.undoable.present.item,
+        previousState.undoable.present.item
+      )
+    ) {
+      listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(true));
+    }
+
+    if (
+      !_.isEqual(
+        currentState.undoable.present.overlay,
+        previousState.undoable.present.overlay
+      )
+    ) {
+      listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(true));
+    }
+
+    if (
+      !_.isEqual(
+        currentState.undoable.present.overlays,
+        previousState.undoable.present.overlays
+      )
+    ) {
+      listenerApi.dispatch(overlaysSlice.actions.setHasPendingUpdate(true));
+    }
+
+    if (
+      !_.isEqual(
+        currentState.undoable.present.itemList,
+        previousState.undoable.present.itemList
+      )
+    ) {
+      listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(true));
+    }
+  },
+});
+
+// Track when all slices are actually initialized and clear undo history
+export let hasFinishedInitialization = false;
+
+const safeRequestIdleCallback =
+  window.requestIdleCallback ||
+  function (cb) {
+    return setTimeout(cb, 1);
+  };
+
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    if (action.type === "RESET_INITIALIZATION") {
+      hasFinishedInitialization = false;
+    }
+
+    // Check if any slice state changed
+    if (currentState === previousState) return false;
+
+    // Only proceed if we haven't cleared history yet
+    if (hasFinishedInitialization) return false;
+
+    const state = currentState as RootState;
+
+    // Check if all required slices have isInitialized = true
+    const allSlicesInitialized =
+      state.allItems.isInitialized &&
+      state.undoable.present.preferences.isInitialized &&
+      state.undoable.present.itemList.isInitialized &&
+      state.undoable.present.overlays.isInitialized &&
+      state.undoable.present.itemLists.isInitialized &&
+      state.undoable.present.media.isInitialized;
+
+    return allSlicesInitialized;
+  },
+
+  effect: async (_, listenerApi) => {
+    // Wait for browser to be idle to ensure all state updates are processed
+
+    if (!hasFinishedInitialization) {
+      hasFinishedInitialization = true;
+      safeRequestIdleCallback(
+        () => {
+          console.log("✅ All slices initialized - clearing undo history");
+          listenerApi.dispatch(ActionCreators.clearHistory());
+        },
+        { timeout: 10000 }
+      );
+    }
   },
 });
 

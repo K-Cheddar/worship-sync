@@ -96,6 +96,8 @@ export type QuickLinkType = {
 
 export type DBItem = ItemProperties & {
   _rev?: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";
@@ -316,6 +318,14 @@ export type OverlayInfo = {
   time?: number;
   id: string;
   formatting?: OverlayFormatting;
+  isHidden?: boolean;
+};
+
+export type DBOverlay = OverlayInfo & {
+  _id: string;
+  _rev: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type CreditsInfo = {
@@ -396,13 +406,15 @@ export type DBItemList = {
   name: string;
   _id: string;
   _rev: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type ItemListDetails = {
   _id: string;
   name: string;
   items: ServiceItem[];
-  overlays: OverlayInfo[];
+  overlays: string[];
 };
 
 export type ItemLists = {
@@ -416,14 +428,14 @@ export type DBItemLists = {
   selectedList: ItemList;
   _id: string;
   _rev: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
-export type DBItemListDetails = {
-  _id: string;
+export type DBItemListDetails = ItemListDetails & {
   _rev: string;
-  name: string;
-  items: ServiceItem[];
-  overlays: OverlayInfo[];
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type DBPreferences = {
@@ -431,18 +443,24 @@ export type DBPreferences = {
   _rev: string;
   preferences: PreferencesType;
   quickLinks: QuickLinkType[];
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type DBCredits = {
   _id: string;
   _rev: string;
   list: CreditsInfo[];
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type DBAllItems = {
   _id: string;
   _rev: string;
   items: ServiceItem[];
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type MediaType = {
@@ -468,31 +486,15 @@ export type DBMedia = {
   _id: string;
   _rev: string;
   backgrounds: MediaType[];
-};
-
-export type DBUserInfo = {
-  username: string;
-  password: string;
-  database: string;
-  upload_preset: string;
-};
-
-export type DBLogin = {
-  _id: string;
-  _rev: string;
-  logins: DBUserInfo[];
-};
-
-export type DBBible = {
-  books: bookType[];
-  lastUpdated: string;
-  _id: string;
-  _rev: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type DBBibleChapter = BibleChapter & {
   _id: string;
   _rev: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type allDocsType = {
@@ -507,7 +509,12 @@ export type allDocsType = {
       | DBItemListDetails
       | DBAllItems
       | DBItem
-      | DBMedia;
+      | DBMedia
+      | DBOverlay
+      | DBPreferences
+      | DBCredits
+      | DBBibleChapter
+      | DBItemList;
   }[];
 };
 

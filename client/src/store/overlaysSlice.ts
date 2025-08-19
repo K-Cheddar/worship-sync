@@ -1,62 +1,42 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { OverlayFormatting, OverlayInfo } from "../types";
+import { OverlayInfo } from "../types";
 import generateRandomId from "../utils/generateRandomId";
-import {
-  defaultImageOverlayStyles,
-  defaultParticipantOverlayStyles,
-  defaultQrCodeOverlayStyles,
-  defaultStbOverlayStyles,
-} from "../components/DisplayWindow/defaultOverlayStyles";
-
-const getDefaultFormatting = (type?: string): OverlayFormatting => {
-  switch (type) {
-    case "participant":
-      return defaultParticipantOverlayStyles;
-    case "stick-to-bottom":
-      return defaultStbOverlayStyles;
-    case "qr-code":
-      return defaultQrCodeOverlayStyles;
-    case "image":
-      return defaultImageOverlayStyles;
-  }
-
-  return defaultParticipantOverlayStyles;
-};
+import { getDefaultFormatting } from "../utils/overlayUtils";
 
 type OverlaysState = {
   list: OverlayInfo[];
   hasPendingUpdate: boolean;
   initialList: string[];
-  selectedId: string;
+  isInitialized: boolean;
 };
 
 const initialState: OverlaysState = {
-  selectedId: "",
   hasPendingUpdate: false,
   list: [],
   initialList: [],
+  isInitialized: false,
 };
 
 export const overlaysSlice = createSlice({
   name: "overlays",
   initialState,
   reducers: {
-    selectOverlay: (state, action: PayloadAction<string>) => {
-      state.selectedId = action.payload;
-    },
-    addOverlay: (state, action: PayloadAction<OverlayInfo>) => {
+    addOverlayToList: (
+      state,
+      action: PayloadAction<{
+        newOverlay: OverlayInfo;
+        selectedOverlayId: string;
+      }>
+    ) => {
       // get index of selected overlay
       const existingIndex = state.list.findIndex(
-        (overlay) => overlay.id === state.selectedId
+        (overlay) => overlay.id === action.payload.selectedOverlayId
       );
-      const newItem = {
-        formatting: getDefaultFormatting(action.payload.type),
-        ...action.payload,
-      };
+
       if (existingIndex !== -1) {
-        state.list.splice(existingIndex + 1, 0, newItem);
+        state.list.splice(existingIndex + 1, 0, action.payload.newOverlay);
       } else {
-        state.list.push(newItem);
+        state.list.push(action.payload.newOverlay);
       }
       state.hasPendingUpdate = true;
     },
@@ -66,7 +46,6 @@ export const overlaysSlice = createSlice({
     },
     initiateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
       // reset state when loading an item list
-      state.selectedId = "";
 
       if (action.payload.length === 0) {
         state.list = [];
@@ -77,12 +56,13 @@ export const overlaysSlice = createSlice({
           ...overlay,
           id: overlay.id || generateRandomId(),
           formatting: {
-            ...getDefaultFormatting(overlay.type),
+            ...getDefaultFormatting(overlay.type || "participant"),
             ...overlay.formatting,
           },
         };
       });
       state.initialList = state.list.map((overlay) => overlay.id);
+      state.isInitialized = true;
     },
     updateOverlayListFromRemote: (
       state,
@@ -97,23 +77,22 @@ export const overlaysSlice = createSlice({
         id: overlay.id || generateRandomId(),
       }));
     },
-    deleteOverlay: (state, action: PayloadAction<string>) => {
+    deleteOverlayFromList: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter(
         (overlay) => overlay.id !== action.payload
       );
-      if (state.selectedId === action.payload) {
-        state.selectedId = "";
-      }
       state.hasPendingUpdate = true;
     },
-    updateOverlay: (state, action: PayloadAction<Partial<OverlayInfo>>) => {
+    updateOverlayInList: (
+      state,
+      action: PayloadAction<Partial<OverlayInfo>>
+    ) => {
       state.list = state.list.map((overlay) => {
         if (overlay.id === action.payload.id) {
           return { ...overlay, ...action.payload };
         }
         return overlay;
       });
-      state.hasPendingUpdate = true;
     },
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
@@ -128,14 +107,13 @@ export const overlaysSlice = createSlice({
 });
 
 export const {
-  selectOverlay,
-  addOverlay,
+  addOverlayToList,
   updateOverlayList: updateList,
-  deleteOverlay,
-  updateOverlay,
+  deleteOverlayFromList,
+  updateOverlayInList,
   initiateOverlayList,
   updateOverlayListFromRemote,
-  setHasPendingUpdate,
+  setHasPendingUpdate: setHasPendingListUpdate,
   updateInitialList,
   addToInitialList,
 } = overlaysSlice.actions;

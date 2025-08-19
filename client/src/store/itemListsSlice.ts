@@ -4,11 +4,13 @@ import { ItemList } from "../types";
 type ItemListState = {
   currentLists: ItemList[];
   selectedList: ItemList | undefined;
+  isInitialized: boolean;
 };
 
 const initialState: ItemListState = {
   currentLists: [],
   selectedList: undefined,
+  isInitialized: false,
 };
 
 export const itemListsSlice = createSlice({
@@ -22,6 +24,7 @@ export const itemListsSlice = createSlice({
     initiateItemLists: (state, action: PayloadAction<ItemList[]>) => {
       state.currentLists = action.payload;
       state.selectedList = action.payload[0];
+      state.isInitialized = true;
     },
     updateItemListsFromRemote: (state, action: PayloadAction<ItemList[]>) => {
       state.currentLists = action.payload;
