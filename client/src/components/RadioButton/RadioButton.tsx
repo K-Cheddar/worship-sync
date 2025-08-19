@@ -10,6 +10,7 @@ type RadioButtonProps = {
   className?: string;
   textSize?: string;
   labelClassName?: string;
+  disabled?: boolean;
 };
 
 const RadioButton = ({
@@ -19,6 +20,7 @@ const RadioButton = ({
   className = "",
   textSize = "text-sm",
   labelClassName = "",
+  disabled = false,
 }: RadioButtonProps) => {
   return (
     <div
@@ -30,7 +32,11 @@ const RadioButton = ({
           type="radio"
           checked={value}
           onChange={(e) => onChange(e.target.checked)}
-          className={"w-full h-full absolute opacity-0 cursor-pointer left-0 top-0"}
+          className={cn(
+            "w-full h-full absolute opacity-0 cursor-pointer left-0 top-0",
+            disabled && "cursor-not-allowed"
+          )}
+          disabled={disabled}
         />
         <Icon
           svg={value ? CheckedSVG : UncheckedSVG}

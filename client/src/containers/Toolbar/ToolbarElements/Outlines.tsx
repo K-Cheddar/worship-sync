@@ -140,7 +140,7 @@ const Services = ({ className }: { className: string }) => {
           }
         >
           <div className="flex flex-col gap-2">
-            <div className="services-container">
+            <div className="flex gap-4 flex-1">
               <section className="flex-1 h-full p-1 flex flex-col">
                 <h3 className="text-lg font-semibold mb-2 text-center">
                   {heading}

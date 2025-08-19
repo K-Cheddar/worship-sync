@@ -107,7 +107,6 @@ const Controller = () => {
 
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
-  const [toolbarHeight, setToolbarHeight] = useState(0);
 
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
@@ -316,16 +315,6 @@ const Controller = () => {
     [setIsMobile, setIsPhone]
   );
 
-  const toolbarRef = useCallback((node: HTMLDivElement) => {
-    if (node) {
-      const resizeObserver = new ResizeObserver((entries) => {
-        setToolbarHeight(entries[0].borderBoxSize[0].blockSize);
-      });
-
-      resizeObserver.observe(node);
-    }
-  }, []);
-
   const handleElementClick = (element: any) => {
     if (!leftPanelRef.current?.contains(element.target) && isLeftPanelOpen) {
       setIsLeftPanelOpen(false);
@@ -358,18 +347,14 @@ const Controller = () => {
         className="bg-gray-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none"
         style={
           {
-            "--toolbar-height": `${toolbarHeight}px`,
             "--scrollbar-width": scrollbarWidth,
           } as CSSProperties
         }
       >
-        <Toolbar
-          ref={toolbarRef}
-          className="flex border-b-2 border-gray-500 text-sm min-h-fit"
-        />
+        <Toolbar className="flex border-b-2 border-gray-500 text-sm min-h-fit" />
         <div
           id="controller-main"
-          className="controller-main"
+          className="flex flex-1 relative min-h-0"
           ref={controllerRef}
         >
           <LyricsEditor />
@@ -379,7 +364,7 @@ const Controller = () => {
             onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
           />
           <div
-            className={`flex flex-col border-r-2 border-gray-500 bg-gray-700 h-full lg:w-[15%] max-lg:fixed max-lg:left-0 max-lg:h-[calc(100vh-var(--toolbar-height))] transition-all ${
+            className={`flex flex-col border-r-2 border-gray-500 bg-gray-700 h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${
               isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
             }`}
             ref={leftPanelRef}
@@ -394,7 +379,7 @@ const Controller = () => {
             <EditorButtons />
             <ServiceItems />
           </div>
-          <div className="flex flex-col flex-1 relative w-[55%]">
+          <div className="flex flex-col flex-1 relative w-[55%] h-full">
             <Routes>
               <Route
                 path="/"
@@ -421,7 +406,7 @@ const Controller = () => {
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
           />
           <div
-            className={`flex flex-col lg:w-[30%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:fixed max-lg:h-[calc(100vh-var(--toolbar-height))] ${
+            className={`flex flex-col h-full lg:w-[30%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:absolute ${
               isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
             }`}
             ref={rightPanelRef}

@@ -1,12 +1,4 @@
-import {
-  CSSProperties,
-  useRef,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useRef, useContext, useEffect, useMemo, useState } from "react";
 import Select from "../../components/Select/Select";
 import "./Bible.scss";
 import BibleSection from "./BibleSection";
@@ -91,7 +83,6 @@ const Bible = () => {
     currentStartVerse.current = startVerse;
   }, [verses, endVerse, startVerse]);
 
-  const [versionSelectorHeight, setVersionSelectorHeight] = useState(0);
   const [justAdded, setJustAdded] = useState(false);
   const [isLoadingChapter, setIsLoadingChapter] = useState(false);
   const [fetchedChapters, setFetchedChapters] = useState<Set<string>>(
@@ -303,16 +294,6 @@ const Bible = () => {
     );
   };
 
-  const versionSelectorRef = useCallback((node: HTMLDivElement) => {
-    if (node) {
-      const resizeObserver = new ResizeObserver((entries) => {
-        setVersionSelectorHeight(entries[0].borderBoxSize[0].blockSize);
-      });
-
-      resizeObserver.observe(node);
-    }
-  }, []);
-
   useEffect(() => {
     if (books[book]?.chapters) {
       dispatch(setChapters(books[book].chapters));
@@ -321,7 +302,7 @@ const Bible = () => {
 
   const versesDisplaySection = books && chapters && verses && (
     <div
-      className="bible-verses-display-section"
+      className="flex-1 flex flex-col gap-4 items-center mt-2 pb-2 relative min-h-0"
       data-has-title={!!createItemName}
     >
       {createItemName && (
@@ -377,18 +358,8 @@ const Bible = () => {
           )}
         </div>
       )}
-      <div
-        className="text-base px-2 py-4 h-full flex flex-col gap-2"
-        style={
-          {
-            "--bible-version-selector-height": `${versionSelectorHeight}px`,
-          } as CSSProperties
-        }
-      >
-        <div
-          ref={versionSelectorRef}
-          className="flex gap-4 items-end flex-wrap"
-        >
+      <div className="text-base px-2 pt-2 h-full flex flex-col gap-2">
+        <div className="flex gap-4 items-end flex-wrap">
           <Select
             value={version}
             onChange={(val) => dispatch(setVersion(val))}
@@ -421,7 +392,7 @@ const Bible = () => {
         {isMobile && showVersesDisplaySection && versesDisplaySection}
         {((isMobile && !showVersesDisplaySection) || !isMobile) &&
           !!books.length && (
-            <div className="bible-section-container">
+            <div className="flex flex-1 w-full gap-4 max-lg:justify-center min-h-0">
               <BibleSection
                 initialList={books as bookType[]}
                 setValue={(val) => dispatch(setBook(val))}

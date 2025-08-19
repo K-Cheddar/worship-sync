@@ -1128,7 +1128,7 @@ listenerMiddleware.startListening({
       hasFinishedInitialization = true;
       safeRequestIdleCallback(
         () => {
-          console.log("✅ All slices initialized - clearing undo history");
+          console.log("✅ All slices initialized - Starting undo history");
           listenerApi.dispatch(ActionCreators.clearHistory());
         },
         { timeout: 10000 }
