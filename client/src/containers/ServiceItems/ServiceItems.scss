@@ -1,5 +1,5 @@
 .service-items-list {
-  scrollbar-width: var(--scrollbar-width);;
+  scrollbar-width: var(--scrollbar-width);
 
-  @apply overflow-y-auto overflow-x-hidden flex-1 pb-4;
+  @apply overflow-y-auto overflow-x-hidden flex-1 pb-2 min-h-0;
 }
