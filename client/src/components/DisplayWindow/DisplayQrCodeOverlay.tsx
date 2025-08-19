@@ -139,10 +139,10 @@ const DisplayQRCodeOverlay = forwardRef<
       ...prevQrCodeOverlayInfo.formatting,
     };
 
-    const needsPadding = qrCodeOverlayInfo.url && qrCodeOverlayInfo.description;
+    const needsPadding = qrCodeOverlayInfo.url || qrCodeOverlayInfo.description;
 
     const prevNeedsPadding =
-      prevQrCodeOverlayInfo.url && prevQrCodeOverlayInfo.description;
+      prevQrCodeOverlayInfo.url || prevQrCodeOverlayInfo.description;
 
     return (
       <>
