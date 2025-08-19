@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import DeleteModal from "../../components/Modal/DeleteModal";
@@ -22,6 +22,7 @@ import {
   initiateMediaList,
   updateMediaList,
   updateMediaListFromRemote,
+  addItemToMediaList,
 } from "../../store/mediaSlice";
 import { retrieveImages } from "../../utils/itemUtil";
 import CloudinaryUploadWidget, {
@@ -42,11 +43,13 @@ import {
 } from "../../store/preferencesSlice";
 import { useLocation } from "react-router-dom";
 import cn from "classnames";
-import { updateOverlay } from "../../store/overlaysSlice";
+import { updateOverlayInList } from "../../store/overlaysSlice";
 import { RootState } from "../../store/store";
 import { fill } from "@cloudinary/url-gen/actions/resize";
 import Toggle from "../../components/Toggle/Toggle";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import { updateOverlay } from "../../store/overlaySlice";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -86,13 +89,10 @@ const Media = () => {
   const { isLoading } = useSelector(
     (state: RootState) => state.undoable.present.item
   );
-  const { selectedId, list: overlaysList } = useSelector(
-    (state: RootState) => state.undoable.present.overlays
+  const { selectedOverlay } = useSelector(
+    (state: RootState) => state.undoable.present.overlay
   );
-  const selectedOverlay = useMemo(
-    () => overlaysList.find((overlay) => overlay.id === selectedId),
-    [overlaysList, selectedId]
-  );
+
   const {
     isMediaExpanded,
     mediaItemsPerRow,
@@ -293,12 +293,11 @@ const Media = () => {
       hasAudio: is_audio,
     };
 
-    const updatedList = [...list, newMedia];
-    dispatch(updateMediaList(updatedList));
+    dispatch(addItemToMediaList(newMedia));
   };
 
   return (
-    <>
+    <ErrorBoundary>
       <div
         className={`mx-2 px-2 bg-gray-900 rounded-t-md flex items-center text-sm relative z-10 transition-all ${
           isMediaExpanded ? "mt-2" : "mt-4"
@@ -402,7 +401,14 @@ const Media = () => {
               dispatch(
                 updateOverlay({
                   imageUrl: selectedMedia.background,
-                  id: selectedId,
+                  id: selectedOverlay?.id,
+                })
+              );
+              // Update state
+              dispatch(
+                updateOverlayInList({
+                  imageUrl: selectedMedia.background,
+                  id: selectedOverlay?.id,
                 })
               );
             }
@@ -621,7 +627,7 @@ const Media = () => {
         title="Delete Media"
         imageUrl={mediaToDelete?.thumbnail}
       />
-    </>
+    </ErrorBoundary>
   );
 };
 

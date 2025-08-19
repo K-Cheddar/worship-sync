@@ -1,3 +1,5 @@
+import "./instrument.js";
+import { setupExpressErrorHandler } from "@sentry/node";
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -5,12 +7,11 @@ import bodyParser from "body-parser";
 import fsPromise from "fs/promises";
 import fs from "fs";
 import axios from "axios";
-import qs from "qs";
-import * as XLSX from "xlsx";
 import dotenv from "dotenv";
 import packageJson from "./package.json" assert { type: "json" };
 import { v2 as cloudinary } from "cloudinary";
 import https from "https";
+import { fetchExcelFile } from "./getScheduleFunctions.js";
 
 dotenv.config();
 // Validate required environment variables
@@ -29,9 +30,6 @@ if (missingEnvVars.length > 0) {
 const app = express();
 const dirname = import.meta.dirname;
 
-const tenantId = process.env.AZURE_TENANT_ID;
-const clientId = process.env.AZURE_CLIENT_ID;
-const clientSecret = process.env.AZURE_CLIENT_SECRET;
 const isDevelopment = process.env.NODE_ENV === "development";
 
 const port = process.env.PORT || 5000;
@@ -47,7 +45,6 @@ cloudinary.config({
 });
 
 if (isDevelopment) {
-  console.log("isDevelopment");
   const options = {
     key: fs.readFileSync("./local.worshipsync.net-key.pem"),
     cert: fs.readFileSync("./local.worshipsync.net.pem"),
@@ -59,9 +56,8 @@ if (isDevelopment) {
 } else {
   app.listen(port, () => console.log(`Listening on port ${port}`));
 }
-
-app.use(bodyParser.json({ limit: "10mb", extended: true }));
-app.use(express.json());
+app.use(bodyParser.json({ limit: "10mb" }));
+app.use(bodyParser.urlencoded({ limit: "10mb", extended: true }));
 
 app.use(
   cors({
@@ -89,8 +85,9 @@ app.get("/api/bible", async (req, res) => {
   try {
     const response = await fetch(url);
     data = await response.text();
-  } catch (error) {}
-  // console.log(data);
+  } catch (error) {
+    console.error("Error fetching Bible data:", error);
+  }
 
   res.send(data);
 });
@@ -134,117 +131,6 @@ app.use("/db", async (req, res) => {
     res.status(err?.response?.status || 500).send(err);
   }
 });
-
-async function getAccessToken() {
-  const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
-
-  const tokenData = qs.stringify({
-    client_id: clientId,
-    scope: "https://graph.microsoft.com/.default",
-    client_secret: clientSecret,
-    grant_type: "client_credentials",
-  });
-
-  try {
-    const response = await axios.post(tokenUrl, tokenData, {
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
-    });
-
-    return response.data.access_token;
-  } catch (error) {
-    console.error(
-      "Error getting access token:",
-      error.response?.data || error.message
-    );
-    throw error;
-  }
-}
-
-async function fetchExcelFile(filePath, sheetIndex = 0) {
-  try {
-    const token = await getAccessToken();
-
-    const userRes = await axios.get(
-      "https://graph.microsoft.com/v1.0/users/kevin.cheddar@eliathahsda.org",
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      }
-    );
-    const userId = userRes.data.id;
-
-    const driveRes = await axios.get(
-      `https://graph.microsoft.com/v1.0/users/${userId}/drive`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      }
-    );
-    const driveId = driveRes.data.id;
-
-    const fileMeta = await axios.get(
-      `https://graph.microsoft.com/v1.0/drives/${driveId}/root:${filePath}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      }
-    );
-    const itemId = fileMeta.data.id;
-
-    const fileContent = await axios.get(
-      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-        responseType: "arraybuffer",
-      }
-    );
-
-    try {
-      const workbook = XLSX.read(fileContent.data, {
-        type: "buffer",
-        cellDates: true, // This will parse dates properly
-        cellNF: false, // Don't parse number formats
-        cellText: false, // Don't parse text formats
-      });
-
-      const sheet = workbook.Sheets[workbook.SheetNames[sheetIndex]];
-
-      if (!sheet) {
-        throw new Error("No sheets found in the Excel file");
-      }
-
-      const json = XLSX.utils.sheet_to_json(sheet, {
-        raw: false, // Convert numbers to strings
-        defval: null, // Default value for empty cells
-        header: 1, // Use first row as headers
-      });
-
-      return json;
-    } catch (error) {
-      return {
-        error: "Error processing Excel file",
-        details: error.message,
-      };
-    }
-  } catch (error) {
-    return {
-      error: "Error fetching Excel file",
-      details: error.response?.data || error.message,
-    };
-  }
-}
 
 app.get("/getSchedule", async (req, res) => {
   const scheduleFilePath = `/${req.query.fileName}`;
@@ -391,38 +277,7 @@ app.get("/api/getDbSession", async (req, res) => {
   }
 });
 
-// Error logging endpoint
-app.post("/api/logError", async (req, res) => {
-  try {
-    const { error, errorInfo, componentStack, userAgent, url, timestamp } =
-      req.body;
-
-    // Log error to console for development/debugging
-    console.error("Client Error Logged:", {
-      error: error?.message || error,
-      stack: error?.stack,
-      errorInfo,
-      componentStack: componentStack || "No component stack available",
-      userAgent,
-      url,
-      timestamp: new Date(timestamp).toISOString(),
-    });
-
-    // In production, you could also log to a file or database
-    // For now, we'll just acknowledge receipt
-    res.json({
-      success: true,
-      message: "Error logged successfully",
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("Error logging failed:", error);
-    res.status(500).json({
-      success: false,
-      errorMessage: "Failed to log error",
-    });
-  }
-});
+setupExpressErrorHandler(app);
 
 // Serve any static files
 app.use(express.static(path.join(dirname, "/client/build")));

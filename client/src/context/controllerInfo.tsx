@@ -11,6 +11,7 @@ import PouchDB from "pouchdb";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
 import { useLocation } from "react-router-dom";
+import { useDispatch } from "../hooks";
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
@@ -38,9 +39,14 @@ export const ControllerInfoContext =
 
 export let globalDb: PouchDB.Database | undefined = undefined;
 export let globalBibleDb: PouchDB.Database | undefined = undefined;
-export let globalBroadcastRef: BroadcastChannel = new BroadcastChannel(
-  "local-app-updates"
-);
+export let globalBroadcastRef: BroadcastChannel | undefined = undefined;
+
+export const updateGlobalBroadcast = (database: string) => {
+  if (globalBroadcastRef) {
+    globalBroadcastRef.close();
+  }
+  globalBroadcastRef = new BroadcastChannel(`worship-sync-${database}-updates`);
+};
 
 export type CouchResponse = {
   success: boolean;
@@ -74,9 +80,17 @@ const ControllerInfoProvider = ({ children }: any) => {
   const [hasCheckedSession, setHasCheckedSession] = useState(false);
 
   const location = useLocation();
+  const dispatch = useDispatch();
 
   const { database, loginState, logout, setLoginState, login } =
     useContext(GlobalInfoContext) || {};
+
+  // Update broadcast channel when database changes
+  useEffect(() => {
+    if (database) {
+      updateGlobalBroadcast(database);
+    }
+  }, [database]);
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>();
@@ -214,6 +228,9 @@ const ControllerInfoProvider = ({ children }: any) => {
           setDb(localDb);
           setIsDbSetup(true);
           globalDb = localDb;
+          if (database) {
+            updateGlobalBroadcast(database);
+          }
           console.log("Replication completed");
           if (loginState === "success") {
             syncDb(localDb, remoteDb);
@@ -335,6 +352,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     setDb(undefined);
     setDbProgress(0);
     setIsDbSetup(false);
+    dispatch({ type: "RESET_INITIALIZATION" });
 
     if (db) {
       db.destroy()

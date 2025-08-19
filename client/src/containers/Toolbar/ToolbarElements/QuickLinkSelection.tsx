@@ -7,7 +7,6 @@ import {
   setSelectedQuickLink,
   setSelectedQuickLinkPresentation,
 } from "../../../store/preferencesSlice";
-import { useMemo } from "react";
 
 interface QuickLinkSelectionProps {
   isMobile?: boolean;
@@ -21,12 +20,8 @@ const QuickLinkSelection = ({ isMobile }: QuickLinkSelectionProps) => {
   const { type, selectedSlide, slides, name, timerInfo } = useSelector(
     (state) => state.undoable.present.item
   );
-  const { selectedId, list: overlaysList } = useSelector(
-    (state) => state.undoable.present.overlays
-  );
-  const selectedOverlay = useMemo(
-    () => overlaysList.find((overlay) => overlay.id === selectedId),
-    [overlaysList, selectedId]
+  const { selectedOverlay } = useSelector(
+    (state) => state.undoable.present.overlay
   );
 
   if (!selectedQuickLink) return null;

@@ -7,7 +7,13 @@ import { ReactComponent as SyncSVG } from "../../assets/icons/sync-alt.svg";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { useDispatch, useSelector } from "../../hooks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { DBCredits, DBItemListDetails, ItemLists } from "../../types";
+import {
+  DBCredits,
+  DBItemListDetails,
+  DBOverlay,
+  ItemLists,
+  OverlayInfo,
+} from "../../types";
 import {
   initiateCreditsList,
   initiateCreditsScene,
@@ -43,6 +49,9 @@ const CreditsEditor = () => {
   const { list: overlays } = useSelector(
     (state) => state.undoable.present.overlays
   );
+
+  const shownOverlays = overlays.filter((overlay) => !overlay.isHidden);
+
   const { db, dbProgress, setIsMobile, updater } =
     useContext(ControllerInfoContext) || {};
   const { user, firebaseDb } = useContext(GlobalInfoContext) || {};
@@ -63,18 +72,29 @@ const CreditsEditor = () => {
         const response: DBItemListDetails | undefined = await db?.get(
           selectedList._id
         );
-        const overlays = response?.overlays || [];
+        const overlaysIds = response?.overlays || [];
 
-        dispatch(initiateOverlayList(overlays));
+        const formattedOverlays: OverlayInfo[] = [];
+
+        for (const overlayId of overlaysIds) {
+          const overlayDetails: DBOverlay | undefined = await db?.get(
+            `overlay-${overlayId}`
+          );
+          if (overlayDetails) {
+            formattedOverlays.push(overlayDetails);
+          }
+        }
+
+        dispatch(initiateOverlayList(formattedOverlays));
       } catch (e) {
         console.error(e);
       }
       dispatch(setItemListIsLoading(false));
     };
-    if (overlays.length === 0) {
+    if (shownOverlays.length === 0) {
       getItemList();
     }
-  }, [overlays.length, dispatch, db]);
+  }, [shownOverlays.length, dispatch, db]);
 
   useEffect(() => {
     const getCredits = async () => {
@@ -87,7 +107,13 @@ const CreditsEditor = () => {
       } catch (error: any) {
         console.error(error);
         dispatch(initiateCreditsList([]));
-        if (error.name === "not_found") db.put({ _id: "credits", list: [] });
+        if (error.name === "not_found")
+          db.put({
+            _id: "credits",
+            list: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
         dispatch(setIsLoading(false));
       }
     };
@@ -203,7 +229,7 @@ const CreditsEditor = () => {
     setIsGenerating(true);
     try {
       const eventNameMapping: { [key: string]: string } = {
-        "sabbath school": overlays
+        "sabbath school": shownOverlays
           .filter((overlay) =>
             overlay.event?.toLowerCase().includes("sabbath school")
           )
@@ -211,36 +237,36 @@ const CreditsEditor = () => {
           .join("\n")
           .trim(),
         welcome:
-          overlays.find((overlay) =>
+          shownOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("welcome")
           )?.name || "",
         "call to praise":
-          overlays.find((overlay) =>
+          shownOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("call to praise")
           )?.name || "",
         invocation:
-          overlays.find((overlay) =>
+          shownOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("invocation")
           )?.name || "",
         reading:
-          overlays.find((overlay) =>
+          shownOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("reading")
           )?.name || "",
         intercessor:
-          overlays.find((overlay) =>
+          shownOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("intercessor")
           )?.name || "",
         offertory:
-          overlays.find((overlay) =>
+          shownOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("offertory")
           )?.name || "",
-        special: overlays
+        special: shownOverlays
           .filter((overlay) => overlay.event?.toLowerCase().includes("special"))
           .map((overlay) => overlay.name)
           .join("\n")
           .trim(),
         sermon:
-          overlays.find((overlay) =>
+          shownOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("sermon")
           )?.name || "",
       };
@@ -307,7 +333,7 @@ const CreditsEditor = () => {
     } finally {
       setIsGenerating(false);
     }
-  }, [overlays, list, dispatch, scheduleName]);
+  }, [shownOverlays, list, dispatch, scheduleName]);
 
   const controls = (
     <>
@@ -335,7 +361,7 @@ const CreditsEditor = () => {
       <Button
         className="text-sm"
         data-testid="generate-credits-button"
-        disabled={overlays.length === 0 || isGenerating}
+        disabled={shownOverlays.length === 0 || isGenerating}
         onClick={() => {
           generateFromOverlays();
         }}

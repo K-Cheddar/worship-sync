@@ -8,6 +8,7 @@ type ItemListState = {
   selectedItemListId: string; // each item has a unique listId even if their ids are the same
   hasPendingUpdate: boolean;
   initialItems: string[];
+  isInitialized: boolean;
 };
 
 const initialState: ItemListState = {
@@ -16,6 +17,7 @@ const initialState: ItemListState = {
   selectedItemListId: "",
   hasPendingUpdate: false,
   initialItems: [],
+  isInitialized: false,
 };
 
 export const itemListSlice = createSlice({
@@ -35,6 +37,7 @@ export const itemListSlice = createSlice({
         listId: item.listId || generateRandomId(),
       }));
       state.initialItems = state.list.map((item) => item.listId);
+      state.isInitialized = true;
     },
     updateItemListFromRemote: (state, action: PayloadAction<ServiceItem[]>) => {
       state.list = action.payload.map((item) => ({
@@ -57,7 +60,7 @@ export const itemListSlice = createSlice({
     addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
       const newItem = { ...action.payload, listId: generateRandomId() };
       const selectedIndex = state.list.findIndex(
-        (e) => e.listId === state.selectedItemListId,
+        (e) => e.listId === state.selectedItemListId
       );
       if (selectedIndex !== -1) {
         state.list.splice(selectedIndex + 1, 0, newItem);

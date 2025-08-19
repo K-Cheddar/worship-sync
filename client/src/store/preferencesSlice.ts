@@ -47,6 +47,7 @@ type PreferencesState = {
   tab: PreferencesTabType;
   bibleFontMode: BibleFontMode;
   scrollbarWidth: ScrollbarWidth;
+  isInitialized: boolean;
 };
 
 const initialState: PreferencesState = {
@@ -107,6 +108,7 @@ const initialState: PreferencesState = {
   tab: "defaults",
   bibleFontMode: "separate",
   scrollbarWidth: "thin",
+  isInitialized: false,
 };
 
 export const preferencesSlice = createSlice({
@@ -304,6 +306,7 @@ export const preferencesSlice = createSlice({
         action.payload.defaultIsMediaExpanded || initialState.isMediaExpanded;
       state.bibleFontMode =
         action.payload.defaultBibleFontMode || initialState.bibleFontMode;
+      state.isInitialized = true;
     },
 
     updatePreferencesFromRemote: (

@@ -43,7 +43,14 @@ const FilteredItem = ({
   };
 
   const addItem = (item: ServiceItem) => {
-    addItemToList(item);
+    const itemToAdd = {
+      name: item.name,
+      type: item.type,
+      _id: item._id,
+      listId: item.listId,
+      background: item.background,
+    };
+    addItemToList(itemToAdd);
     setJustAdded(true);
 
     setTimeout(() => setJustAdded(false), 2000);

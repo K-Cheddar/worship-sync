@@ -41,6 +41,7 @@ import { setShouldShowItemEditor } from "../../store/preferencesSlice";
 import Icon from "../../components/Icon/Icon";
 import { createBox } from "../../utils/slideCreation";
 import { RootState } from "../../store/store";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 const SlideEditor = () => {
   const dispatch = useDispatch();
@@ -58,7 +59,7 @@ const SlideEditor = () => {
   } = item;
 
   const { shouldShowItemEditor } = useSelector(
-    (state: RootState) => state.undoable.present.preferences,
+    (state: RootState) => state.undoable.present.preferences
   );
 
   const [isEditingName, setIsEditingName] = useState(false);
@@ -81,11 +82,11 @@ const SlideEditor = () => {
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const [editorHeight, setEditorHeight] = useState(
-    isMobile ? "calc(47.25vw + 60px)" : "23.625vw",
+    isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
   );
 
   const [emptySlideHeight, setEmptySlideHeight] = useState(
-    isMobile ? "calc(47.25vw + 60px)" : "23.625vw",
+    isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
   );
 
   const [cursorPositions, setCursorPositions] = useState<
@@ -125,7 +126,7 @@ const SlideEditor = () => {
   useEffect(() => {
     Object.entries(cursorPositions).forEach(([index, position]) => {
       const textBoxElement = document.getElementById(
-        `display-editor-box-${index}`,
+        `display-editor-box-${index}`
       ) as HTMLTextAreaElement;
       if (textBoxElement && typeof position === "number") {
         textBoxElement.selectionEnd = position;
@@ -162,14 +163,14 @@ const SlideEditor = () => {
     const newBoxes = boxes.map((b, i) =>
       i === index
         ? {
-          ...b,
-          x: box.x,
-          y: box.y,
-          width: box.width,
-          height: box.height,
-          words: type === "bible" ? box.words : value,
-        }
-        : b,
+            ...b,
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height,
+            words: type === "bible" ? box.words : value,
+          }
+        : b
     );
 
     if (type === "timer") {
@@ -200,7 +201,7 @@ const SlideEditor = () => {
         {
           ...updatedItem,
         },
-        isMobile,
+        isMobile
       );
       dispatch(updateSlides({ slides: _item.slides }));
     }
@@ -220,7 +221,7 @@ const SlideEditor = () => {
           item.arrangements[item.selectedArrangement].formattedLyrics;
         const slides = item.arrangements[item.selectedArrangement].slides;
         const _index = formattedLyrics.findIndex((e) =>
-          slides[selectedSlide].name.startsWith(e.name),
+          slides[selectedSlide].name.startsWith(e.name)
         );
 
         const start =
@@ -278,7 +279,7 @@ const SlideEditor = () => {
               } else {
                 return arrangement;
               }
-            },
+            }
           );
 
           const _item = formatSong(
@@ -287,7 +288,7 @@ const SlideEditor = () => {
               arrangements: updatedArrangements,
               selectedArrangement,
             },
-            isMobile,
+            isMobile
           );
 
           dispatch(updateArrangements({ arrangements: _item.arrangements }));
@@ -319,201 +320,203 @@ const SlideEditor = () => {
 
       return false;
     },
-    [type, selectedSlide],
+    [type, selectedSlide]
   );
 
   const isEmpty = _boxes.length === 0;
 
   return (
-    <div>
-      <section className="flex justify-end w-full pr-2 bg-gray-900 h-8 mb-1 gap-1 overflow-hidden">
-        <span
-          className={`slide-editor-song-name-container ${borderColorMap.get(
-            type,
-          )}`}
-        >
-          {isEditingName && (
+    <ErrorBoundary>
+      <div>
+        <section className="flex justify-end w-full pr-2 bg-gray-900 h-8 mb-1 gap-1 overflow-hidden">
+          <span
+            className={`slide-editor-song-name-container ${borderColorMap.get(
+              type
+            )}`}
+          >
+            {isEditingName && (
+              <Button
+                variant="tertiary"
+                svg={CloseSVG}
+                onClick={() => setIsEditingName(false)}
+              />
+            )}
             <Button
               variant="tertiary"
-              svg={CloseSVG}
-              onClick={() => setIsEditingName(false)}
+              disabled={isLoading}
+              svg={isEditingName ? CheckSVG : EditSVG}
+              onClick={
+                isEditingName ? () => saveName() : () => setIsEditingName(true)
+              }
             />
+            {!isEditingName && (
+              <span className="slide-editor-song-name">
+                <h2>{isLoading ? "" : name}</h2>
+                {arrangement && (
+                  <p className="text-sm">
+                    {isLoading ? "" : `(${arrangement?.name})`}
+                  </p>
+                )}
+              </span>
+            )}
+            {isEditingName && (
+              <Input
+                hideLabel
+                className="slide-editor-song-name"
+                value={localName}
+                onChange={(val) => setLocalName(val as string)}
+                data-ignore-undo="true"
+              />
+            )}
+          </span>
+          {type === "song" && (
+            <Button
+              className="text-sm"
+              disabled={isLoading}
+              onClick={() => dispatch(setIsEditMode(true))}
+              svg={EditTextSVG}
+            >
+              {isMobile ? "" : "Edit Lyrics"}
+            </Button>
           )}
           <Button
             variant="tertiary"
-            disabled={isLoading}
-            svg={isEditingName ? CheckSVG : EditSVG}
-            onClick={
-              isEditingName ? () => saveName() : () => setIsEditingName(true)
+            padding="p-1"
+            svg={shouldShowItemEditor ? CollapseSVG : ExpandSVG}
+            onClick={() =>
+              dispatch(setShouldShowItemEditor(!shouldShowItemEditor))
             }
-          />
-          {!isEditingName && (
-            <span className="slide-editor-song-name">
-              <h2>{isLoading ? "" : name}</h2>
-              {arrangement && (
-                <p className="text-sm">
-                  {isLoading ? "" : `(${arrangement?.name})`}
-                </p>
-              )}
-            </span>
-          )}
-          {isEditingName && (
-            <Input
-              hideLabel
-              className="slide-editor-song-name"
-              value={localName}
-              onChange={(val) => setLocalName(val as string)}
-              data-ignore-undo="true"
-            />
-          )}
-        </span>
-        {type === "song" && (
-          <Button
-            className="text-sm"
-            disabled={isLoading}
-            onClick={() => dispatch(setIsEditMode(true))}
-            svg={EditTextSVG}
-          >
-            {isMobile ? "" : "Edit Lyrics"}
-          </Button>
-        )}
-        <Button
-          variant="tertiary"
-          padding="p-1"
-          svg={shouldShowItemEditor ? CollapseSVG : ExpandSVG}
-          onClick={() =>
-            dispatch(setShouldShowItemEditor(!shouldShowItemEditor))
+            className="text-xs"
+          ></Button>
+        </section>
+        <div
+          className="slide-editor-container"
+          data-show={shouldShowItemEditor}
+          style={
+            {
+              "--slide-editor-height": isMobile
+                ? "fit-content"
+                : `${isEmpty ? emptySlideHeight : editorHeight}`,
+            } as CSSProperties
           }
-          className="text-xs"
-        ></Button>
-      </section>
-      <div
-        className="slide-editor-container"
-        data-show={shouldShowItemEditor}
-        style={
-          {
-            "--slide-editor-height": isMobile
-              ? "fit-content"
-              : `${isEmpty ? emptySlideHeight : editorHeight}`,
-          } as CSSProperties
-        }
-      >
-        <section
-          className={cn(
-            "ml-1 lg:w-[12vw] max-lg:w-[100%]",
-            isEmpty && "hidden",
-          )}
-          ref={slideInfoRef}
         >
-          <p className="text-center font-semibold border-b-2 border-black text-sm flex items-center gap-1 justify-center pb-1">
-            <Icon svg={BoxSVG} color="#93c5fd" />
-            Slide Boxes
-          </p>
-          {boxes.map((box, index) => {
-            return (
-              <span
-                key={box.id}
-                className={`flex gap-1 bg-gray-600 border-gray-300 ${
-                  index !== boxes.length - 1 && "border-b"
-                } ${selectedBox === index && "bg-gray-800"}`}
-              >
-                <Button
-                  truncate
-                  className="flex-1 text-xs hover:bg-gray-500"
-                  variant="none"
-                  onClick={() => dispatch(setSelectedBox(index))}
+          <section
+            className={cn(
+              "ml-1 lg:w-[12vw] max-lg:w-[100%]",
+              isEmpty && "hidden"
+            )}
+            ref={slideInfoRef}
+          >
+            <p className="text-center font-semibold border-b-2 border-black text-sm flex items-center gap-1 justify-center pb-1">
+              <Icon svg={BoxSVG} color="#93c5fd" />
+              Slide Boxes
+            </p>
+            {boxes.map((box, index) => {
+              return (
+                <span
+                  key={box.id}
+                  className={`flex gap-1 bg-gray-600 border-gray-300 ${
+                    index !== boxes.length - 1 && "border-b"
+                  } ${selectedBox === index && "bg-gray-800"}`}
                 >
-                  <p>
-                    {box.label ||
-                      box.words?.trim() ||
-                      box.background?.replace(
-                        /https:\/\/res\.cloudinary\.com\/.+\/.+\/upload\/v.+\/.+\//g,
-                        "",
-                      )}
-                  </p>
-                </Button>
-                <Button
-                  svg={isBoxLocked[index] ? LockSVG : UnlockSVG}
-                  color={isBoxLocked[index] ? "gray" : "green"}
-                  variant="tertiary"
-                  onClick={() => {
-                    setIsBoxLocked((prev) => {
-                      const newLocked = [...prev];
-                      newLocked[index] = !newLocked[index];
-                      return newLocked;
-                    });
-                  }}
-                />
-                {canDeleteBox(index) && (
                   <Button
-                    svg={DeleteSVG}
+                    truncate
+                    className="flex-1 text-xs hover:bg-gray-500"
+                    variant="none"
+                    onClick={() => dispatch(setSelectedBox(index))}
+                  >
+                    <p>
+                      {box.label ||
+                        box.words?.trim() ||
+                        box.background?.replace(
+                          /https:\/\/res\.cloudinary\.com\/.+\/.+\/upload\/v.+\/.+\//g,
+                          ""
+                        )}
+                    </p>
+                  </Button>
+                  <Button
+                    svg={isBoxLocked[index] ? LockSVG : UnlockSVG}
+                    color={isBoxLocked[index] ? "gray" : "green"}
                     variant="tertiary"
-                    color="red"
                     onClick={() => {
-                      dispatch(
-                        updateBoxes({
-                          boxes: boxes.filter((b, i) => i !== index),
-                        }),
-                      );
-                      if (boxes[index - 1]) {
-                        dispatch(setSelectedBox(index - 1));
-                      } else {
-                        dispatch(setSelectedBox(boxes.length - 1));
-                      }
+                      setIsBoxLocked((prev) => {
+                        const newLocked = [...prev];
+                        newLocked[index] = !newLocked[index];
+                        return newLocked;
+                      });
                     }}
                   />
-                )}
-              </span>
-            );
-          })}
-          <Button
-            className="text-xs w-full justify-center"
-            svg={AddSVG}
-            onClick={() => {
-              dispatch(
-                updateBoxes({
-                  boxes: [
-                    ...boxes,
-                    createBox({
-                      width: 75,
-                      height: 75,
-                      x: 12.5,
-                      y: 12.5,
-                    }),
-                  ],
-                }),
+                  {canDeleteBox(index) && (
+                    <Button
+                      svg={DeleteSVG}
+                      variant="tertiary"
+                      color="red"
+                      onClick={() => {
+                        dispatch(
+                          updateBoxes({
+                            boxes: boxes.filter((b, i) => i !== index),
+                          })
+                        );
+                        if (boxes[index - 1]) {
+                          dispatch(setSelectedBox(index - 1));
+                        } else {
+                          dispatch(setSelectedBox(boxes.length - 1));
+                        }
+                      }}
+                    />
+                  )}
+                </span>
               );
-              dispatch(setSelectedBox(boxes.length));
-            }}
-          >
-            Add Box
-          </Button>
-        </section>
-        {!isEmpty ? (
-          <DisplayWindow
-            showBorder
-            boxes={boxes}
-            selectBox={(val) => dispatch(setSelectedBox(val))}
-            ref={editorRef}
-            onChange={(onChangeInfo) => {
-              onChange(onChangeInfo);
-            }}
-            width={isMobile ? 80 : 42}
-            displayType="editor"
-            selectedBox={selectedBox}
-            isBoxLocked={isBoxLocked}
-          />
-        ) : (
-          <p
-            id="slide-editor-empty"
-            ref={emptySlideRef}
-            className="slide-editor-empty"
-          >
-            No slide selected
-          </p>
-        )}
+            })}
+            <Button
+              className="text-xs w-full justify-center"
+              svg={AddSVG}
+              onClick={() => {
+                dispatch(
+                  updateBoxes({
+                    boxes: [
+                      ...boxes,
+                      createBox({
+                        width: 75,
+                        height: 75,
+                        x: 12.5,
+                        y: 12.5,
+                      }),
+                    ],
+                  })
+                );
+                dispatch(setSelectedBox(boxes.length));
+              }}
+            >
+              Add Box
+            </Button>
+          </section>
+          {!isEmpty ? (
+            <DisplayWindow
+              showBorder
+              boxes={boxes}
+              selectBox={(val) => dispatch(setSelectedBox(val))}
+              ref={editorRef}
+              onChange={(onChangeInfo) => {
+                onChange(onChangeInfo);
+              }}
+              width={isMobile ? 80 : 42}
+              displayType="editor"
+              selectedBox={selectedBox}
+              isBoxLocked={isBoxLocked}
+            />
+          ) : (
+            <p
+              id="slide-editor-empty"
+              ref={emptySlideRef}
+              className="slide-editor-empty"
+            >
+              No slide selected
+            </p>
+          )}
+        </div>
       </div>
-    </div>
+    </ErrorBoundary>
   );
 };
 

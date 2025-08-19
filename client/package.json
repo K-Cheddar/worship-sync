@@ -10,6 +10,8 @@
     "@floating-ui/react": "^0.26.25",
     "@gsap/react": "^2.1.1",
     "@reduxjs/toolkit": "^2.3.0",
+    "@sentry/cli": "^2.52.0",
+    "@sentry/react": "^10.5.0",
     "@syncfusion/ej2-react-richtexteditor": "^27.1.52",
     "@testing-library/jest-dom": "^5.17.0",
     "@testing-library/react": "^13.4.0",
@@ -55,7 +57,7 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "CI=false react-scripts build",
+    "build": "CI=false react-scripts build && npm run sentry:sourcemaps",
     "build:lint": "npm run lint && CI=false react-scripts build",
     "build:strict": "npm run lint:check && react-scripts build",
     "test": "react-scripts test",
@@ -63,7 +65,8 @@
     "lint": "eslint src --ext .ts,.tsx,.js,.jsx",
     "lint:fix": "eslint src --ext .ts,.tsx,.js,.jsx --fix",
     "lint:check": "eslint src --ext .ts,.tsx,.js,.jsx --max-warnings 0",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "sentry:sourcemaps": "sentry-cli sourcemaps inject --org worshipsync --project javascript-react ./build && sentry-cli sourcemaps upload --org worshipsync --project javascript-react ./build"
   },
   "eslintConfig": {
     "extends": [

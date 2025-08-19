@@ -7,6 +7,7 @@ type AllItems = {
   songSearchValue: string;
   freeFormSearchValue: string;
   timerSearchValue: string;
+  isInitialized: boolean;
 };
 
 const initialState: AllItems = {
@@ -15,6 +16,7 @@ const initialState: AllItems = {
   songSearchValue: "",
   freeFormSearchValue: "",
   timerSearchValue: "",
+  isInitialized: false,
 };
 
 export const allItemsSlice = createSlice({
@@ -27,10 +29,11 @@ export const allItemsSlice = createSlice({
     initiateAllItemsList: (state, action: PayloadAction<ServiceItem[]>) => {
       state.list = action.payload;
       state.isAllItemsLoading = false;
+      state.isInitialized = true;
     },
     updateAllItemsListFromRemote: (
       state,
-      action: PayloadAction<ServiceItem[]>,
+      action: PayloadAction<ServiceItem[]>
     ) => {
       state.list = action.payload;
     },
