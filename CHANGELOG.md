@@ -1,3 +1,17 @@
+## [1.13.3](https://github.com/K-Cheddar/worship-sync/compare/v1.13.2...v1.13.3) (2025-08-19)
+
+
+### Bug Fixes
+
+* Improve syncing between instances on the same machine ([71b56c2](https://github.com/K-Cheddar/worship-sync/commit/71b56c259f02c95b11e3ffc868f89a3dae84ca6f))
+* Improving error handling ([2cba260](https://github.com/K-Cheddar/worship-sync/commit/2cba26082dcd69d3669a1e4830cbd16f0069d871))
+* **Undo:** Improve undo/redo consistency ([31fe855](https://github.com/K-Cheddar/worship-sync/commit/31fe855964b9f31eb69fd574e62ffebda399bb53))
+
+
+### Performance Improvements
+
+* **Overlays:** Overlays are now separate items ([c512e33](https://github.com/K-Cheddar/worship-sync/commit/c512e3380726c344f67dc0285a43800fe1d9ac65))
+
 ## [1.13.2](https://github.com/K-Cheddar/worship-sync/compare/v1.13.1...v1.13.2) (2025-08-16)
 
 
