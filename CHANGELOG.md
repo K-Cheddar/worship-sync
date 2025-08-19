@@ -1,3 +1,10 @@
+## [1.13.4](https://github.com/K-Cheddar/worship-sync/compare/v1.13.3...v1.13.4) (2025-08-19)
+
+
+### Bug Fixes
+
+* Improve responsiveness ([41901a8](https://github.com/K-Cheddar/worship-sync/commit/41901a8686c66586ff651641e4352cf9fca764be))
+
 ## [1.13.3](https://github.com/K-Cheddar/worship-sync/compare/v1.13.2...v1.13.3) (2025-08-19)
 
 
