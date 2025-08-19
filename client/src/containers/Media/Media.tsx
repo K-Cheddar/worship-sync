@@ -22,6 +22,7 @@ import {
   initiateMediaList,
   updateMediaList,
   updateMediaListFromRemote,
+  addItemToMediaList,
 } from "../../store/mediaSlice";
 import { retrieveImages } from "../../utils/itemUtil";
 import CloudinaryUploadWidget, {
@@ -292,8 +293,7 @@ const Media = () => {
       hasAudio: is_audio,
     };
 
-    const updatedList = [...list, newMedia];
-    dispatch(updateMediaList(updatedList));
+    dispatch(addItemToMediaList(newMedia));
   };
 
   return (

@@ -5,7 +5,7 @@ import {
   createListenerMiddleware,
   Reducer,
 } from "@reduxjs/toolkit";
-import undoable, { excludeAction } from "redux-undo";
+import undoable, { ActionCreators } from "redux-undo";
 import {
   presentationSlice,
   updateBibleDisplayInfoFromRemote,
@@ -50,9 +50,84 @@ import { allDocsSlice } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
 import { timersSlice, updateTimerFromRemote } from "./timersSlice";
 import { mergeTimers } from "../utils/timerUtils";
+import _ from "lodash";
 
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
+
+let lastActionTime = 0;
+let currentGroupId = 0;
+
+const excludedActions: string[] = [
+  itemSlice.actions.setItemIsLoading.toString(),
+  itemSlice.actions.setActiveItem.toString(),
+  itemSlice.actions.setSelectedSlide.toString(),
+  itemSlice.actions.setIsEditMode.toString(),
+  itemSlice.actions.setHasPendingUpdate.toString(),
+  itemSlice.actions.setSelectedSlide.toString(),
+  itemSlice.actions.setSelectedBox.toString(),
+  overlaysSlice.actions.initiateOverlayList.toString(),
+  overlaysSlice.actions.updateOverlayListFromRemote.toString(),
+  overlaysSlice.actions.setHasPendingUpdate.toString(),
+  overlaysSlice.actions.updateInitialList.toString(),
+  creditsSlice.actions.initiateCreditsList.toString(),
+  creditsSlice.actions.initiateTransitionScene.toString(),
+  creditsSlice.actions.initiateCreditsScene.toString(),
+  creditsSlice.actions.initiatePublishedCreditsList.toString(),
+  creditsSlice.actions.updateCreditsListFromRemote.toString(),
+  creditsSlice.actions.updatePublishedCreditsListFromRemote.toString(),
+  creditsSlice.actions.updateInitialList.toString(),
+  creditsSlice.actions.setIsLoading.toString(),
+  creditsSlice.actions.selectCredit.toString(),
+  itemListSlice.actions.initiateItemList.toString(),
+  itemListSlice.actions.updateItemListFromRemote.toString(),
+  itemListSlice.actions.setItemListIsLoading.toString(),
+  itemListSlice.actions.setHasPendingUpdate.toString(),
+  itemListSlice.actions.setActiveItemInList.toString(),
+  itemListsSlice.actions.initiateItemLists.toString(),
+  itemListsSlice.actions.updateItemListsFromRemote.toString(),
+  itemListsSlice.actions.setInitialItemList.toString(),
+  mediaItemsSlice.actions.initiateMediaList.toString(),
+  mediaItemsSlice.actions.updateMediaListFromRemote.toString(),
+  preferencesSlice.actions.initiatePreferences.toString(),
+  preferencesSlice.actions.setIsLoading.toString(),
+  preferencesSlice.actions.setSelectedPreference.toString(),
+  preferencesSlice.actions.setShouldShowItemEditor.toString(),
+  preferencesSlice.actions.setShouldShowStreamFormat.toString(),
+  preferencesSlice.actions.setIsMediaExpanded.toString(),
+  preferencesSlice.actions.increaseSlides.toString(),
+  preferencesSlice.actions.decreaseSlides.toString(),
+  preferencesSlice.actions.setSlides.toString(),
+  preferencesSlice.actions.increaseSlidesMobile.toString(),
+  preferencesSlice.actions.decreaseSlidesMobile.toString(),
+  preferencesSlice.actions.setSlidesMobile.toString(),
+  preferencesSlice.actions.increaseFormattedLyrics.toString(),
+  preferencesSlice.actions.decreaseFormattedLyrics.toString(),
+  preferencesSlice.actions.setFormattedLyrics.toString(),
+  preferencesSlice.actions.increaseMediaItems.toString(),
+  preferencesSlice.actions.decreaseMediaItems.toString(),
+  preferencesSlice.actions.setMediaItems.toString(),
+  preferencesSlice.actions.updatePreferencesFromRemote.toString(),
+  preferencesSlice.actions.initiateQuickLinks.toString(),
+  overlaySlice.actions.setIsOverlayLoading.toString(),
+  overlaySlice.actions.setHasPendingUpdate.toString(),
+  overlaySlice.actions.selectOverlay.toString(),
+  timersSlice.actions.syncTimersFromRemote.toString(),
+  timersSlice.actions.setTimersFromDocs.toString(),
+  timersSlice.actions.setShouldUpdateTimers.toString(),
+  allDocsSlice.actions.updateAllFreeFormDocs.toString(),
+  allDocsSlice.actions.updateAllSongDocs.toString(),
+  allDocsSlice.actions.updateAllTimerDocs.toString(),
+  allItemsSlice.actions.initiateAllItemsList.toString(),
+];
+
+const excludedPrefixes = [
+  "debouncedUpdate",
+  "timers/",
+  "allDocs/",
+  "allItems/",
+  "presentation/",
+];
 
 const undoableReducers = undoable(
   combineReducers({
@@ -66,59 +141,27 @@ const undoableReducers = undoable(
     preferences: preferencesSlice.reducer,
   }),
   {
-    filter: excludeAction([
-      itemSlice.actions.setItemIsLoading.toString(),
-      itemSlice.actions.setActiveItem.toString(),
-      itemSlice.actions.setSelectedSlide.toString(),
-      itemSlice.actions.setIsEditMode.toString(),
-      itemSlice.actions.setHasPendingUpdate.toString(),
-      itemSlice.actions.setSelectedSlide.toString(),
-      itemSlice.actions.setSelectedBox.toString(),
-      overlaysSlice.actions.initiateOverlayList.toString(),
-      overlaysSlice.actions.updateOverlayListFromRemote.toString(),
-      overlaysSlice.actions.setHasPendingUpdate.toString(),
-      overlaysSlice.actions.updateInitialList.toString(),
-      creditsSlice.actions.initiateCreditsList.toString(),
-      creditsSlice.actions.initiateTransitionScene.toString(),
-      creditsSlice.actions.initiateCreditsScene.toString(),
-      creditsSlice.actions.initiatePublishedCreditsList.toString(),
-      creditsSlice.actions.updateCreditsListFromRemote.toString(),
-      creditsSlice.actions.updatePublishedCreditsListFromRemote.toString(),
-      creditsSlice.actions.updateInitialList.toString(),
-      creditsSlice.actions.setIsLoading.toString(),
-      creditsSlice.actions.selectCredit.toString(),
-      itemListSlice.actions.initiateItemList.toString(),
-      itemListSlice.actions.updateItemListFromRemote.toString(),
-      itemListSlice.actions.setItemListIsLoading.toString(),
-      itemListSlice.actions.setHasPendingUpdate.toString(),
-      itemListsSlice.actions.initiateItemLists.toString(),
-      itemListsSlice.actions.updateItemListsFromRemote.toString(),
-      itemListsSlice.actions.setInitialItemList.toString(),
-      mediaItemsSlice.actions.initiateMediaList.toString(),
-      mediaItemsSlice.actions.updateMediaListFromRemote.toString(),
-      preferencesSlice.actions.initiatePreferences.toString(),
-      preferencesSlice.actions.setIsLoading.toString(),
-      preferencesSlice.actions.setSelectedPreference.toString(),
-      preferencesSlice.actions.setShouldShowItemEditor.toString(),
-      preferencesSlice.actions.setShouldShowStreamFormat.toString(),
-      preferencesSlice.actions.setIsMediaExpanded.toString(),
-      preferencesSlice.actions.increaseSlides.toString(),
-      preferencesSlice.actions.decreaseSlides.toString(),
-      preferencesSlice.actions.setSlides.toString(),
-      preferencesSlice.actions.increaseSlidesMobile.toString(),
-      preferencesSlice.actions.decreaseSlidesMobile.toString(),
-      preferencesSlice.actions.setSlidesMobile.toString(),
-      preferencesSlice.actions.increaseFormattedLyrics.toString(),
-      preferencesSlice.actions.decreaseFormattedLyrics.toString(),
-      preferencesSlice.actions.setFormattedLyrics.toString(),
-      preferencesSlice.actions.increaseMediaItems.toString(),
-      preferencesSlice.actions.decreaseMediaItems.toString(),
-      preferencesSlice.actions.setMediaItems.toString(),
-      preferencesSlice.actions.updatePreferencesFromRemote.toString(),
-      overlaySlice.actions.setIsOverlayLoading.toString(),
-      overlaySlice.actions.setHasPendingUpdate.toString(),
-      overlaySlice.actions.selectOverlay.toString(),
-    ]),
+    groupBy: (action) => {
+      const now = Date.now();
+      const timeSinceLastUpdate = now - lastActionTime;
+
+      if (timeSinceLastUpdate < 500) {
+        return currentGroupId;
+      } else {
+        currentGroupId = now;
+        lastActionTime = now;
+        return currentGroupId;
+      }
+    },
+    filter: (action: Action) => {
+      const isExcluded =
+        excludedActions.includes(action.type) ||
+        excludedPrefixes.some((prefix) => action.type.startsWith(prefix)) ||
+        action.type === "SEED_UNDO_STATE" ||
+        !hasFinishedInitialization;
+
+      return !isExcluded;
+    },
     limit: 100,
   }
 );
@@ -289,6 +332,8 @@ listenerMiddleware.startListening({
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
+    console.log("allItems update", action);
+
     // update ItemList
     const { list } = (listenerApi.getState() as RootState).allItems;
 
@@ -317,7 +362,8 @@ listenerMiddleware.startListening({
         (previousState as RootState).undoable.present.overlay &&
       action.type !== "overlay/setHasPendingUpdate" &&
       action.type !== "overlay/setIsOverlayLoading" &&
-      action.type !== "RESET"
+      action.type !== "RESET" &&
+      !!(currentState as RootState).undoable.present.overlay.hasPendingUpdate
     );
   },
 
@@ -329,6 +375,8 @@ listenerMiddleware.startListening({
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
     }
+
+    listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
 
     // update overlay
     const { selectedOverlay } = state.undoable.present.overlay;
@@ -981,14 +1029,111 @@ listenerMiddleware.startListening({
   },
 });
 
-// listenerMiddleware.startListening({
-//   predicate: (action, currentState, previousState) => {
-//     return currentState !== previousState;
-//   },
-//   effect: async (action, listenerApi) => {
-//     console.log(action);
-//   },
-// });
+// Handle undo/redo operations to set hasPendingUpdate for affected slices
+listenerMiddleware.startListening({
+  predicate: (action) => {
+    return (
+      action.type === "@@redux-undo/UNDO" || action.type === "@@redux-undo/REDO"
+    );
+  },
+  effect: async (action, listenerApi) => {
+    const currentState = listenerApi.getState() as RootState;
+    const previousState = listenerApi.getOriginalState() as RootState;
+
+    // Only set hasPendingUpdate to true for slices that actually changed during undo/redo
+    if (
+      !_.isEqual(
+        currentState.undoable.present.item,
+        previousState.undoable.present.item
+      )
+    ) {
+      listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(true));
+    }
+
+    if (
+      !_.isEqual(
+        currentState.undoable.present.overlay,
+        previousState.undoable.present.overlay
+      )
+    ) {
+      listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(true));
+    }
+
+    if (
+      !_.isEqual(
+        currentState.undoable.present.overlays,
+        previousState.undoable.present.overlays
+      )
+    ) {
+      listenerApi.dispatch(overlaysSlice.actions.setHasPendingUpdate(true));
+    }
+
+    if (
+      !_.isEqual(
+        currentState.undoable.present.itemList,
+        previousState.undoable.present.itemList
+      )
+    ) {
+      listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(true));
+    }
+  },
+});
+
+// Track when all slices are actually initialized and clear undo history
+let hasFinishedInitialization = false;
+
+const safeRequestIdleCallback =
+  window.requestIdleCallback ||
+  function (cb) {
+    return setTimeout(cb, 1);
+  };
+
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    // Check if any slice state changed
+    if (currentState === previousState) return false;
+
+    // Only proceed if we haven't cleared history yet
+    if (hasFinishedInitialization) return false;
+
+    const state = currentState as RootState;
+
+    // Check if all required slices have isInitialized = true
+    const allSlicesInitialized =
+      state.allItems.isInitialized &&
+      state.undoable.present.preferences.isInitialized &&
+      state.undoable.present.itemList.isInitialized &&
+      state.undoable.present.overlays.isInitialized &&
+      state.undoable.present.itemLists.isInitialized &&
+      state.undoable.present.media.isInitialized;
+
+    return allSlicesInitialized;
+  },
+
+  effect: async (_, listenerApi) => {
+    // Wait for browser to be idle to ensure all state updates are processed
+
+    if (!hasFinishedInitialization) {
+      hasFinishedInitialization = true;
+      safeRequestIdleCallback(
+        () => {
+          console.log("✅ All slices initialized - clearing undo history");
+          listenerApi.dispatch(ActionCreators.clearHistory());
+        },
+        { timeout: 10000 }
+      );
+    }
+  },
+});
+
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return currentState !== previousState;
+  },
+  effect: async (action, listenerApi) => {
+    console.log(action);
+  },
+});
 
 const combinedReducers = combineReducers({
   undoable: undoableReducers,

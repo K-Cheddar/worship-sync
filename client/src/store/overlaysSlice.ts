@@ -7,12 +7,14 @@ type OverlaysState = {
   list: OverlayInfo[];
   hasPendingUpdate: boolean;
   initialList: string[];
+  isInitialized: boolean;
 };
 
 const initialState: OverlaysState = {
   hasPendingUpdate: false,
   list: [],
   initialList: [],
+  isInitialized: false,
 };
 
 export const overlaysSlice = createSlice({
@@ -60,6 +62,7 @@ export const overlaysSlice = createSlice({
         };
       });
       state.initialList = state.list.map((overlay) => overlay.id);
+      state.isInitialized = true;
     },
     updateOverlayListFromRemote: (
       state,

@@ -116,7 +116,7 @@ const CloudinaryUploadWidget = ({
           if (!error && result && result.event === "success") {
             onComplete(result.info);
           }
-        },
+        }
       );
 
       myWidget.open();

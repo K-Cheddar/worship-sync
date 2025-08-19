@@ -386,7 +386,9 @@ const Overlays = () => {
                 className="flex flex-col items-center gap-4 flex-1"
               >
                 {isOverlayLoading && (
-                  <h3 className="text-lg text-center">Loading overlay...</h3>
+                  <h3 className="text-lg text-center min-h-[250px]">
+                    Loading overlay...
+                  </h3>
                 )}
                 {selectedOverlay.id &&
                   !isOverlayLoading &&
