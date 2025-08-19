@@ -52,6 +52,13 @@ import { timersSlice, updateTimerFromRemote } from "./timersSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import _ from "lodash";
 
+// Helper function to safely post messages to the broadcast channel
+const safePostMessage = (message: any) => {
+  if (globalBroadcastRef) {
+    globalBroadcastRef.postMessage(message);
+  }
+};
+
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
 
@@ -215,7 +222,7 @@ listenerMiddleware.startListening({
     db.put(db_item);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_item,
@@ -265,7 +272,7 @@ listenerMiddleware.startListening({
     db.put(db_itemList);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_itemList,
@@ -304,7 +311,7 @@ listenerMiddleware.startListening({
     db.put(db_itemLists);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_itemLists,
@@ -344,7 +351,7 @@ listenerMiddleware.startListening({
     db.put(db_allItems);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_allItems,
@@ -430,7 +437,7 @@ listenerMiddleware.startListening({
     db.put(db_itemList);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_itemList,
@@ -565,7 +572,7 @@ listenerMiddleware.startListening({
     db_credits.updatedAt = new Date().toISOString();
     db.put(db_credits);
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_credits,
@@ -602,7 +609,7 @@ listenerMiddleware.startListening({
     db.put(db_backgrounds);
 
     // Local machine updates
-    globalBroadcastRef.postMessage({
+    safePostMessage({
       type: "update",
       data: {
         docs: db_backgrounds,
@@ -659,7 +666,7 @@ listenerMiddleware.startListening({
       db_preferences.updatedAt = new Date().toISOString();
       db.put(db_preferences);
       // Local machine updates
-      globalBroadcastRef.postMessage({
+      safePostMessage({
         type: "update",
         data: {
           docs: db_preferences,
