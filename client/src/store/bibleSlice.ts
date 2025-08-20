@@ -17,6 +17,7 @@ type BibleState = {
     startVerse: string;
     endVerse: string;
   };
+  search: string;
 };
 
 const initialState: BibleState = {
@@ -29,6 +30,7 @@ const initialState: BibleState = {
   startVerse: 0,
   endVerse: 0,
   searchValues: { book: "", chapter: "", startVerse: "", endVerse: "" },
+  search: "",
 };
 
 export const bibleSlice = createSlice({
@@ -59,12 +61,15 @@ export const bibleSlice = createSlice({
     setEndVerse: (state, action: PayloadAction<number>) => {
       state.endVerse = action.payload;
     },
+    setSearch: (state, action: PayloadAction<string>) => {
+      state.search = action.payload;
+    },
     setSearchValue: (
       state,
       action: PayloadAction<{
         type: "book" | "chapter" | "startVerse" | "endVerse";
         value: string;
-      }>,
+      }>
     ) => {
       const { type } = action.payload;
       state.searchValues[type] = action.payload.value;
@@ -101,6 +106,7 @@ export const {
   setStartVerse,
   setEndVerse,
   setSearchValue,
+  setSearch,
 } = bibleSlice.actions;
 
 export default bibleSlice.reducer;

@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import Button from "../../components/Button/Button";
-import Input from "../../components/Input/Input";
 import { bookType, chapterType, verseType } from "../../types";
 
 type BibleSectionProps = {
@@ -11,7 +9,6 @@ type BibleSectionProps = {
   type: "book" | string;
   min?: number;
   searchValue: string;
-  setSearchValue: (val: string) => void;
   label?: string;
 };
 
@@ -22,7 +19,6 @@ const BibleSection = ({
   type,
   min,
   searchValue,
-  setSearchValue,
   label,
 }: BibleSectionProps) => {
   const [filteredList, setFilteredList] = useState(initialList);
@@ -32,12 +28,12 @@ const BibleSection = ({
 
     if (type === "book") {
       updatedFilteredList = (initialList as bookType[]).filter(({ name }) =>
-        name.toLowerCase().includes(searchValue.toLowerCase()),
+        name.toLowerCase().includes(searchValue.toLowerCase())
       );
       setFilteredList(updatedFilteredList);
     } else if (type === "chapter") {
       updatedFilteredList = (initialList as chapterType[]).filter(({ name }) =>
-        name.includes(searchValue),
+        name.includes(searchValue)
       );
       setFilteredList(updatedFilteredList);
     } else if (type === "verse") {
@@ -47,13 +43,13 @@ const BibleSection = ({
             return name.includes(searchValue) && index >= min;
           }
           return name.includes(searchValue);
-        },
+        }
       );
       setFilteredList(updatedFilteredList);
     }
 
     const isValueInList = updatedFilteredList?.some(
-      ({ index }) => index === value,
+      ({ index }) => index === value
     );
 
     if (updatedFilteredList?.[0] && !isValueInList) {
@@ -67,16 +63,9 @@ const BibleSection = ({
         type === "book" ? "lg:w-1/5 max-lg:w-[40%]" : "w-14"
       }`}
     >
-      <Input
-        data-ignore-undo="true"
-        value={searchValue}
-        onChange={(val) => setSearchValue(val as string)}
-        label={label || type}
-        className="bible-section-input"
-        svg={searchValue ? CloseSVG : undefined}
-        svgAction={() => setSearchValue("")}
-        svgPadding="max-lg:p-1 lg:p-0"
-      />
+      <p className="text-sm font-semibold text-center capitalize bg-gray-800 p-1 rounded-md">
+        {label || type}
+      </p>
       <ul className="bible-section" tabIndex={-1}>
         {filteredList.map(({ name, index }) => {
           const isSelected = index === value;
