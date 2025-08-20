@@ -14,6 +14,7 @@ import {
   setVersion,
   setSearchValue,
   setChapters,
+  setSearch,
 } from "../../store/bibleSlice";
 import { bibleVersions } from "../../utils/bibleVersions";
 import { getVerses as getVersesApi } from "../../api/getVerses";
@@ -24,6 +25,7 @@ import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
 import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
 import {
   updateBibleDisplayInfo,
   updatePresentation,
@@ -37,6 +39,7 @@ import { RootState } from "../../store/store";
 import useDebouncedEffect from "../../hooks/useDebouncedEffect";
 import Spinner from "../../components/Spinner/Spinner";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import Input from "../../components/Input/Input";
 
 const Bible = () => {
   const dispatch = useDispatch();
@@ -52,6 +55,7 @@ const Bible = () => {
     startVerse,
     endVerse,
     searchValues,
+    search,
   } = useSelector((state: RootState) => state.bible);
 
   const {
@@ -300,6 +304,65 @@ const Bible = () => {
     }
   }, [book, books, dispatch]);
 
+  const handleSearch = (val: string) => {
+    dispatch(setSearch(val));
+    if (!val) {
+      dispatch(setSearchValue({ type: "book", value: "" }));
+      dispatch(setSearchValue({ type: "chapter", value: "" }));
+      dispatch(setSearchValue({ type: "startVerse", value: "" }));
+      dispatch(setSearchValue({ type: "endVerse", value: "" }));
+      return;
+    }
+
+    const normalized = val.trim().replace(/[–—]/g, "-");
+
+    // Matches:
+    // "Genesis"
+    // "John 3"
+    // "Gen 3:16"
+    // "Gen 3 16"
+    // "Gen 3:16-20"
+    // "Gen 3:16 20"
+    // "1 John 2 3-5"
+    const pattern = new RegExp(
+      [
+        "^\\s*",
+        "([1-3]?\\s*[A-Za-z]+(?:\\s+[A-Za-z]+)*)", // book (with optional leading number & multiple words)
+
+        // Optional chapter
+        "(?:\\s*(\\d+)",
+
+        // Optional verseStart: either ":" + spaces OR just spaces
+        "(?:(?::\\s*|\\s+)(\\d+)",
+
+        // Optional verseEnd: either "-" + spaces OR just spaces
+        "(?:(?:-\\s*|\\s+)(\\d+))?",
+        ")?",
+
+        ")?\\s*$",
+      ].join("")
+    );
+    const match = normalized.match(pattern);
+    if (!match) return;
+
+    const [, bookStr, chapterStr, verseStartStr, verseEndStr] = match;
+
+    dispatch(setSearchValue({ type: "book", value: bookStr || "" }));
+    dispatch(setSearchValue({ type: "chapter", value: chapterStr || "" }));
+    if (chapterStr) {
+      dispatch(setSearchValue({ type: "chapter", value: chapterStr }));
+      dispatch(setChapter(parseInt(chapterStr)));
+    }
+    if (verseStartStr) {
+      dispatch(setSearchValue({ type: "startVerse", value: verseStartStr }));
+      dispatch(setStartVerse(parseInt(verseStartStr)));
+    }
+    if (verseEndStr) {
+      dispatch(setSearchValue({ type: "endVerse", value: verseEndStr }));
+      dispatch(setEndVerse(parseInt(verseEndStr)));
+    }
+  };
+
   const versesDisplaySection = books && chapters && verses && (
     <div
       className="flex-1 flex flex-col gap-4 items-center mt-2 pb-2 relative min-h-0"
@@ -368,6 +431,16 @@ const Bible = () => {
             hideLabel
             options={versionOptions}
           />
+          <Input
+            svg={search ? CloseSVG : undefined}
+            svgAction={() => handleSearch("")}
+            value={search}
+            onChange={(val) => handleSearch(val as string)}
+            label="Search"
+            className="max-lg:w-full flex justify-center gap-2 items-center"
+            placeholder="Gen 3:15"
+            svgPadding="max-lg:p-1 lg:p-0"
+          />
           <ButtonGroup className="w-full lg:hidden my-4">
             <ButtonGroupItem
               onClick={() => setShowVersesDisplaySection(false)}
@@ -397,9 +470,6 @@ const Bible = () => {
                 initialList={books as bookType[]}
                 setValue={(val) => dispatch(setBook(val))}
                 searchValue={searchValues.book}
-                setSearchValue={(val) =>
-                  dispatch(setSearchValue({ type: "book", value: val }))
-                }
                 value={book}
                 type="book"
               />
@@ -407,9 +477,6 @@ const Bible = () => {
                 initialList={chapters as chapterType[]}
                 setValue={(val) => dispatch(setChapter(val))}
                 searchValue={searchValues.chapter}
-                setSearchValue={(val) =>
-                  dispatch(setSearchValue({ type: "chapter", value: val }))
-                }
                 value={chapter}
                 type="chapter"
               />
@@ -417,9 +484,6 @@ const Bible = () => {
                 initialList={verses as verseType[]}
                 setValue={(val) => dispatch(setStartVerse(val))}
                 searchValue={searchValues.startVerse}
-                setSearchValue={(val) =>
-                  dispatch(setSearchValue({ type: "startVerse", value: val }))
-                }
                 value={startVerse}
                 type="verse"
                 label="Start"
@@ -428,9 +492,6 @@ const Bible = () => {
                 initialList={verses as verseType[]}
                 setValue={(val) => dispatch(setEndVerse(val))}
                 searchValue={searchValues.endVerse}
-                setSearchValue={(val) =>
-                  dispatch(setSearchValue({ type: "endVerse", value: val }))
-                }
                 value={endVerse}
                 type="verse"
                 min={startVerse}
