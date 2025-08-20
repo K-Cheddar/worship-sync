@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/K-Cheddar/worship-sync/compare/v1.13.4...v1.14.0) (2025-08-20)
+
+
+### Features
+
+* **Bible:** Now uses a single search bar for book/chapter/verses ([bce31a2](https://github.com/K-Cheddar/worship-sync/commit/bce31a27efd83003c2c45eb25a5179338fab5985))
+
 ## [1.13.4](https://github.com/K-Cheddar/worship-sync/compare/v1.13.3...v1.13.4) (2025-08-19)
 
 
