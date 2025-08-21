@@ -1,3 +1,10 @@
+## [1.14.1](https://github.com/K-Cheddar/worship-sync/compare/v1.14.0...v1.14.1) (2025-08-21)
+
+
+### Bug Fixes
+
+* Fixed overlay deletion and improved undo functionality ([081a6c7](https://github.com/K-Cheddar/worship-sync/commit/081a6c7d2ef0b58cd8795f28325fd6208bc7936d))
+
 # [1.14.0](https://github.com/K-Cheddar/worship-sync/compare/v1.13.4...v1.14.0) (2025-08-20)
 
 
