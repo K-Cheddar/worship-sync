@@ -31,6 +31,7 @@ export const mediaItemsSlice = createSlice({
     addItemToMediaList: (state, action: PayloadAction<MediaType>) => {
       state.list.push(action.payload);
     },
+    forceUpdate: () => {},
   },
 });
 
@@ -40,6 +41,7 @@ export const {
   addItemToMediaList,
   initiateMediaList,
   updateMediaListFromRemote,
+  forceUpdate,
 } = mediaItemsSlice.actions;
 
 export default mediaItemsSlice.reducer;

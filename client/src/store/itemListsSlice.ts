@@ -44,6 +44,7 @@ export const itemListsSlice = createSlice({
         (item) => item._id === action.payload
       );
     },
+    forceUpdate: () => {},
   },
 });
 
@@ -54,6 +55,7 @@ export const {
   selectItemList,
   setInitialItemList,
   updateItemListsFromRemote,
+  forceUpdate,
 } = itemListsSlice.actions;
 
 export default itemListsSlice.reducer;

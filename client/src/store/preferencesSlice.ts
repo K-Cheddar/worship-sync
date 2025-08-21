@@ -394,6 +394,7 @@ export const preferencesSlice = createSlice({
     ) => {
       state.selectedPreference = action.payload;
     },
+    forceUpdate: () => {},
   },
 });
 
@@ -434,6 +435,7 @@ export const {
   setBibleFontMode,
   setScrollbarWidth,
   updatePreferencesFromRemote,
+  forceUpdate,
 } = preferencesSlice.actions;
 
 export default preferencesSlice.reducer;

@@ -71,11 +71,13 @@ const excludedActions: string[] = [
   itemSlice.actions.setSelectedSlide.toString(),
   itemSlice.actions.setIsEditMode.toString(),
   itemSlice.actions.setHasPendingUpdate.toString(),
+  itemSlice.actions.forceUpdate.toString(),
   itemSlice.actions.setSelectedSlide.toString(),
   itemSlice.actions.setSelectedBox.toString(),
   overlaysSlice.actions.initiateOverlayList.toString(),
   overlaysSlice.actions.updateOverlayListFromRemote.toString(),
   overlaysSlice.actions.setHasPendingUpdate.toString(),
+  overlaysSlice.actions.forceUpdate.toString(),
   overlaysSlice.actions.updateInitialList.toString(),
   creditsSlice.actions.initiateCreditsList.toString(),
   creditsSlice.actions.initiateTransitionScene.toString(),
@@ -86,16 +88,19 @@ const excludedActions: string[] = [
   creditsSlice.actions.updateInitialList.toString(),
   creditsSlice.actions.setIsLoading.toString(),
   creditsSlice.actions.selectCredit.toString(),
+  creditsSlice.actions.forceUpdate.toString(),
   itemListSlice.actions.initiateItemList.toString(),
   itemListSlice.actions.updateItemListFromRemote.toString(),
   itemListSlice.actions.setItemListIsLoading.toString(),
   itemListSlice.actions.setHasPendingUpdate.toString(),
+  itemListSlice.actions.forceUpdate.toString(),
   itemListSlice.actions.setActiveItemInList.toString(),
   itemListsSlice.actions.initiateItemLists.toString(),
   itemListsSlice.actions.updateItemListsFromRemote.toString(),
   itemListsSlice.actions.setInitialItemList.toString(),
   mediaItemsSlice.actions.initiateMediaList.toString(),
   mediaItemsSlice.actions.updateMediaListFromRemote.toString(),
+  mediaItemsSlice.actions.forceUpdate.toString(),
   preferencesSlice.actions.initiatePreferences.toString(),
   preferencesSlice.actions.setIsLoading.toString(),
   preferencesSlice.actions.setSelectedPreference.toString(),
@@ -116,8 +121,10 @@ const excludedActions: string[] = [
   preferencesSlice.actions.setMediaItems.toString(),
   preferencesSlice.actions.updatePreferencesFromRemote.toString(),
   preferencesSlice.actions.initiateQuickLinks.toString(),
+  preferencesSlice.actions.forceUpdate.toString(),
   overlaySlice.actions.setIsOverlayLoading.toString(),
   overlaySlice.actions.setHasPendingUpdate.toString(),
+  overlaySlice.actions.forceUpdate.toString(),
   overlaySlice.actions.selectOverlay.toString(),
   timersSlice.actions.syncTimersFromRemote.toString(),
   timersSlice.actions.setTimersFromDocs.toString(),
@@ -339,8 +346,6 @@ listenerMiddleware.startListening({
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
-    console.log("allItems update", action);
-
     // update ItemList
     const { list } = (listenerApi.getState() as RootState).allItems;
 
@@ -429,12 +434,29 @@ listenerMiddleware.startListening({
     // update ItemList
     const { list } = state.undoable.present.overlays;
     const { selectedList } = state.undoable.present.itemLists;
+    const { selectedOverlay } = state.undoable.present.overlay;
 
     if (!db || !selectedList) return;
     const db_itemList: DBItemListDetails = await db.get(selectedList._id);
+    const currentList = db_itemList.overlays;
+    const itemsToUpdate = list.filter(
+      (overlay) =>
+        overlay.id !== selectedOverlay?.id && !currentList.includes(overlay.id)
+    );
+
     db_itemList.overlays = list.map((overlay) => overlay.id);
     db_itemList.updatedAt = new Date().toISOString();
     db.put(db_itemList);
+
+    // If overlay was removed and undo brought it back, update the individual overlay's isHidden property
+    for (const overlay of itemsToUpdate) {
+      const db_overlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
+      db.put({
+        ...db_overlay,
+        isHidden: false,
+        updatedAt: new Date().toISOString(),
+      });
+    }
 
     // Local machine updates
     safePostMessage({
@@ -1028,7 +1050,6 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    console.log("Updating timer from remote", action.payload);
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
@@ -1036,7 +1057,7 @@ listenerMiddleware.startListening({
   },
 });
 
-// Handle undo/redo operations to set hasPendingUpdate for affected slices
+// Handle undo/redo operations to force update affected slices
 listenerMiddleware.startListening({
   predicate: (action) => {
     return (
@@ -1047,14 +1068,14 @@ listenerMiddleware.startListening({
     const currentState = listenerApi.getState() as RootState;
     const previousState = listenerApi.getOriginalState() as RootState;
 
-    // Only set hasPendingUpdate to true for slices that actually changed during undo/redo
+    // Only force update for slices that actually changed during undo/redo
     if (
       !_.isEqual(
         currentState.undoable.present.item,
         previousState.undoable.present.item
       )
     ) {
-      listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(true));
+      listenerApi.dispatch(itemSlice.actions.forceUpdate());
     }
 
     if (
@@ -1063,7 +1084,7 @@ listenerMiddleware.startListening({
         previousState.undoable.present.overlay
       )
     ) {
-      listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(true));
+      listenerApi.dispatch(overlaySlice.actions.forceUpdate());
     }
 
     if (
@@ -1072,7 +1093,7 @@ listenerMiddleware.startListening({
         previousState.undoable.present.overlays
       )
     ) {
-      listenerApi.dispatch(overlaysSlice.actions.setHasPendingUpdate(true));
+      listenerApi.dispatch(overlaysSlice.actions.forceUpdate());
     }
 
     if (
@@ -1081,7 +1102,43 @@ listenerMiddleware.startListening({
         previousState.undoable.present.itemList
       )
     ) {
-      listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(true));
+      listenerApi.dispatch(itemListSlice.actions.forceUpdate());
+    }
+
+    if (
+      !_.isEqual(
+        currentState.undoable.present.media,
+        previousState.undoable.present.media
+      )
+    ) {
+      listenerApi.dispatch(mediaItemsSlice.actions.forceUpdate());
+    }
+
+    if (
+      !_.isEqual(
+        currentState.undoable.present.itemLists,
+        previousState.undoable.present.itemLists
+      )
+    ) {
+      listenerApi.dispatch(itemListsSlice.actions.forceUpdate());
+    }
+
+    if (
+      !_.isEqual(
+        currentState.undoable.present.preferences,
+        previousState.undoable.present.preferences
+      )
+    ) {
+      listenerApi.dispatch(preferencesSlice.actions.forceUpdate());
+    }
+
+    if (
+      !_.isEqual(
+        currentState.undoable.present.credits,
+        previousState.undoable.present.credits
+      )
+    ) {
+      listenerApi.dispatch(creditsSlice.actions.forceUpdate());
     }
   },
 });
@@ -1128,7 +1185,7 @@ listenerMiddleware.startListening({
       hasFinishedInitialization = true;
       safeRequestIdleCallback(
         () => {
-          console.log("✅ All slices initialized - Starting undo history");
+          console.log("✅ Initialization complete - Starting undo history");
           listenerApi.dispatch(ActionCreators.clearHistory());
         },
         { timeout: 10000 }

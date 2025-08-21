@@ -109,6 +109,9 @@ export const itemSlice = createSlice({
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
     },
+    forceUpdate: (state) => {
+      state.hasPendingUpdate = true;
+    },
     setSelectedBox: (state, action: PayloadAction<number>) => {
       state.selectedBox = action.payload;
     },
@@ -411,6 +414,7 @@ export const {
   setHasPendingUpdate,
   setSelectedBox,
   setShouldSendTo,
+  forceUpdate,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

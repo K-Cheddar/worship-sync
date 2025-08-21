@@ -177,7 +177,7 @@ const Controller = () => {
       if (!selectedList || !db || !cloud) return;
       dispatch(setItemListIsLoading(true));
       try {
-        const response: DBItemListDetails | undefined = await db?.get(
+        const response: DBItemListDetails | undefined = await db.get(
           selectedList._id
         );
         const itemList = response?.items || [];
@@ -189,7 +189,7 @@ const Controller = () => {
         const formattedOverlays: OverlayInfo[] = [];
 
         for (const overlayId of overlayIds) {
-          const overlayDetails: DBOverlay | undefined = await db?.get(
+          const overlayDetails: DBOverlay | undefined = await db.get(
             `overlay-${overlayId}`
           );
           if (overlayDetails && !overlayDetails.isHidden) {
