@@ -97,6 +97,9 @@ export const overlaysSlice = createSlice({
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
     },
+    forceUpdate: (state) => {
+      state.hasPendingUpdate = true;
+    },
     updateInitialList: (state) => {
       state.initialList = state.list.map((overlay) => overlay.id);
     },
@@ -116,6 +119,7 @@ export const {
   setHasPendingUpdate: setHasPendingListUpdate,
   updateInitialList,
   addToInitialList,
+  forceUpdate,
 } = overlaysSlice.actions;
 
 export default overlaysSlice.reducer;

@@ -30,7 +30,7 @@ export const overlaySlice = createSlice({
         event: action.payload?.event || "",
         title: action.payload?.title || "",
         description: action.payload?.description || "",
-        isHidden: action.payload?.isHidden || false,
+        isHidden: false,
         formatting:
           action.payload?.formatting ||
           getDefaultFormatting(action.payload?.type || "participant"),
@@ -42,9 +42,15 @@ export const overlaySlice = createSlice({
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
     },
+    forceUpdate: (state) => {
+      state.hasPendingUpdate = true;
+    },
     deleteOverlay: (state, action: PayloadAction<string>) => {
-      if (state.selectedOverlay) {
-        state.selectedOverlay.isHidden = true;
+      if (state.selectedOverlay?.id === action.payload) {
+        state.selectedOverlay = {
+          ...state.selectedOverlay,
+          isHidden: true,
+        };
       }
       state.hasPendingUpdate = true;
     },
@@ -69,6 +75,7 @@ export const {
   updateOverlay,
   setIsOverlayLoading,
   setHasPendingUpdate,
+  forceUpdate,
 } = overlaySlice.actions;
 
 export default overlaySlice.reducer;

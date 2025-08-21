@@ -76,6 +76,9 @@ export const itemListSlice = createSlice({
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
     },
+    forceUpdate: (state) => {
+      state.hasPendingUpdate = true;
+    },
     addToInitialItems: (state, action: PayloadAction<string[]>) => {
       state.initialItems = [...state.initialItems, ...action.payload];
     },
@@ -93,6 +96,7 @@ export const {
   updateItemListFromRemote,
   setHasPendingUpdate,
   addToInitialItems,
+  forceUpdate,
 } = itemListSlice.actions;
 
 export default itemListSlice.reducer;

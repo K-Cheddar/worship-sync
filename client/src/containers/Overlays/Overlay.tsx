@@ -45,14 +45,12 @@ const Overlay = ({
 
   const isSelected = selectedId === overlay.id;
   const hasData =
-    overlay.name ||
-    overlay.title ||
-    overlay.event ||
-    overlay.heading ||
-    overlay.subHeading ||
-    overlay.url ||
-    overlay.description ||
-    overlay.imageUrl;
+    (overlay.type === "participant" &&
+      (overlay.name || overlay.title || overlay.event)) ||
+    (overlay.type === "stick-to-bottom" &&
+      (overlay.heading || overlay.subHeading)) ||
+    (overlay.type === "qr-code" && (overlay.description || overlay.url)) ||
+    (overlay.type === "image" && (overlay.imageUrl || overlay.name));
 
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({

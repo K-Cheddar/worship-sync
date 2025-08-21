@@ -222,9 +222,19 @@ const Overlays = () => {
     });
   };
 
-  const handleDeleteOverlay = (overlayId: string) => {
+  const handleDeleteOverlay = async (overlayId: string) => {
     dispatch(deleteOverlayFromList(overlayId));
-    dispatch(deleteOverlay(overlayId));
+    if (selectedOverlay.id === overlayId) {
+      dispatch(deleteOverlay(overlayId));
+    } else if (db) {
+      const overlayDoc: DBOverlay | undefined = await db.get(
+        `overlay-${overlayId}`
+      );
+      if (overlayDoc) {
+        overlayDoc.isHidden = true;
+        await db.put(overlayDoc);
+      }
+    }
   };
 
   const selectAndLoadOverlay = async (overlayId: string) => {
