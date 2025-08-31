@@ -566,6 +566,9 @@ const Media = () => {
           {filteredList.map((mediaItem) => {
             const { id, thumbnail, name } = mediaItem;
             const isSelected = id === selectedMedia.id;
+            const shownName = name.includes("/")
+              ? name.split("/").slice(1).join("/")
+              : name;
             return (
               <li key={id}>
                 <Button
@@ -601,7 +604,7 @@ const Media = () => {
                         className="text-xs text-gray-300 truncate"
                         title={name}
                       >
-                        {name.split("/").slice(1).join("/")}
+                        {shownName}
                       </p>
                     </div>
                   )}
