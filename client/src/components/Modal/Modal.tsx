@@ -52,7 +52,7 @@ const Modal = ({
         previousActiveElement.current.focus();
       }
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   const handleBackdropClick = (event: React.MouseEvent) => {
     if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
@@ -64,7 +64,7 @@ const Modal = ({
     if (isOpen && modalRef.current) {
       // Focus the modal when it opens
       const focusableElements = modalRef.current.querySelectorAll(
-        "button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])",
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
       );
       const firstFocusableElement = focusableElements[0] as HTMLElement;
       if (firstFocusableElement) {
