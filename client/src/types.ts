@@ -73,7 +73,7 @@ export type SlideType =
 
 export type OverflowMode = "fit" | "separate";
 
-export type ItemSlide = {
+export type ItemSlideType = {
   type: SlideType;
   name: string;
   id: string;
@@ -134,7 +134,7 @@ export type ItemProperties = {
   selectedArrangement: number;
   background?: string;
   arrangements: Arrangment[];
-  slides: ItemSlide[];
+  slides: ItemSlideType[];
   bibleInfo?: BibleInfo;
   timerInfo?: TimerInfo;
   shouldSendTo: ShouldSendTo;
@@ -163,7 +163,7 @@ export type Arrangment = {
   name: string;
   formattedLyrics: FormattedLyrics[];
   songOrder: SongOrder[];
-  slides: ItemSlide[];
+  slides: ItemSlideType[];
   id: string;
 };
 
@@ -183,7 +183,7 @@ export type SongOrder = {
 export type Presentation = {
   type: string;
   name: string;
-  slide: ItemSlide | null;
+  slide: ItemSlideType | null;
   time?: number;
   displayType?: DisplayType;
   participantOverlayInfo?: OverlayInfo;

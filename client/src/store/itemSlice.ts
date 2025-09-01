@@ -3,7 +3,7 @@ import {
   Arrangment,
   BibleInfo,
   Box,
-  ItemSlide,
+  ItemSlideType,
   ItemState,
   MediaType,
   ShouldSendTo,
@@ -91,7 +91,7 @@ export const itemSlice = createSlice({
       state.arrangements = [...action.payload];
       state.hasPendingUpdate = true;
     },
-    _updateSlides: (state, action: PayloadAction<ItemSlide[]>) => {
+    _updateSlides: (state, action: PayloadAction<ItemSlideType[]>) => {
       state.slides = [...action.payload];
       state.hasPendingUpdate = true;
     },
@@ -248,7 +248,7 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
 
     const arrangementSlides =
       item.arrangements[item.selectedArrangement]?.slides;
-    const mapSlides = (slides: ItemSlide[]) => {
+    const mapSlides = (slides: ItemSlideType[]) => {
       return slides.map((slide) => {
         return {
           ...slide,
@@ -370,7 +370,7 @@ export const updateSlideBackground = createAsyncThunk(
 
 export const addSlide = createAsyncThunk(
   "item/addSlide",
-  async (args: { slide: ItemSlide }, { dispatch, getState }) => {
+  async (args: { slide: ItemSlideType }, { dispatch, getState }) => {
     const item = getState().undoable.present.item;
     const newSlides = [...item.slides, args.slide];
     dispatch(updateSlides({ slides: newSlides }));
@@ -388,7 +388,7 @@ export const removeSlide = createAsyncThunk(
 
 export const updateSlides = createAsyncThunk(
   "item/updateSlides",
-  async (args: { slides: ItemSlide[] }, { dispatch }) => {
+  async (args: { slides: ItemSlideType[] }, { dispatch }) => {
     dispatch(_updateSlides(args.slides));
   }
 );

@@ -437,6 +437,12 @@ const Bible = () => {
             svgAction={() => handleSearch("")}
             value={search}
             onChange={(val) => handleSearch(val as string)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLElement).blur();
+              }
+            }}
             label="Search"
             className="max-lg:w-full flex justify-center gap-2 items-center"
             placeholder="Gen 3:15"
@@ -467,7 +473,7 @@ const Bible = () => {
         {!!books.length && (
           <div
             className={cn(
-              "flex flex-1 w-full gap-4 max-lg:justify-center min-h-0",
+              "flex flex-1 w-full gap-2 max-lg:justify-center min-h-0",
               isMobile && showVersesDisplaySection && "hidden"
             )}
           >

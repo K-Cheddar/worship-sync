@@ -2,7 +2,7 @@ import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import "./ItemSlides.scss";
 
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
-import { ItemSlide as ItemSlideType, TimerInfo } from "../../types";
+import { ItemSlideType as ItemSlideType, TimerInfo } from "../../types";
 import { sizeMap } from "./ItemSlides";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
@@ -67,10 +67,10 @@ const ItemSlide = ({
   const sectionStyle =
     isInDraggedSection && !isDragging
       ? {
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: 0.5,
-      }
+          transform: CSS.Transform.toString(transform),
+          transition,
+          opacity: 0.5,
+        }
       : undefined;
 
   return (
@@ -99,7 +99,7 @@ const ItemSlide = ({
         selectedSlide === index && !isTransmitting && "border-gray-300",
         selectedSlide === index && isTransmitting && "border-green-500",
         selectedSlide !== index && "border-transparent",
-        isInDraggedSection && "z-10",
+        isInDraggedSection && "z-10"
       )}
       onClick={() => selectSlide(index)}
       id={`item-slide-${index}`}
@@ -108,7 +108,7 @@ const ItemSlide = ({
         className={cn(
           "rounded-t-md truncate px-2 text-center flex",
           sizeMap.get(size)?.hSize,
-          itemSectionBgColorMap.get(slide.type),
+          itemSectionBgColorMap.get(slide.type)
         )}
         style={{ width: `${width}vw` }}
       >
@@ -147,18 +147,18 @@ const ItemSlide = ({
         formattedTextDisplayInfo={
           itemType === "free"
             ? {
-              text: slide.boxes[1]?.words?.trim() || "",
-              backgroundColor:
+                text: slide.boxes[1]?.words?.trim() || "",
+                backgroundColor:
                   slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
-              textColor:
+                textColor:
                   slide.formattedTextDisplayInfo?.textColor || "#ffffff",
-              fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
-              paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
-              paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
-              isBold: slide.formattedTextDisplayInfo?.isBold || false,
-              isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
-              align: slide.formattedTextDisplayInfo?.align || "left",
-            }
+                fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
+                paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
+                paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
+                isBold: slide.formattedTextDisplayInfo?.isBold || false,
+                isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
+                align: slide.formattedTextDisplayInfo?.align || "left",
+              }
             : undefined
         }
       />

@@ -1,11 +1,8 @@
 import Button from "../../components/Button/Button";
 import { ReactComponent as SendSVG } from "../../assets/icons/send.svg";
 import { verseType } from "../../types";
-import { useEffect, useState } from "react";
-import {
-  handleKeyDownTraverse,
-  keepElementInView,
-} from "../../utils/generalUtils";
+import { useCallback, useEffect, useState } from "react";
+import { keepElementInView } from "../../utils/generalUtils";
 
 type BibleVersesListProps = {
   isLoading: boolean;
@@ -32,7 +29,7 @@ const BibleVersesList = ({
 
   useEffect(() => {
     const verseElement = document.getElementById(
-      `bible-verse-${selectedVerse + startVerse}`,
+      `bible-verse-${selectedVerse + startVerse}`
     );
     const parentElement = document.getElementById("bible-verses-list");
     if (verseElement && parentElement) {
@@ -45,25 +42,56 @@ const BibleVersesList = ({
     }
   }, [selectedVerse, startVerse]);
 
-  const advanceVerse = () => {
-    const nextVerseIndex = Math.min(selectedVerse + 1, endVerse);
+  const advanceVerse = useCallback(() => {
+    const nextVerseIndex = Math.max(
+      Math.min(selectedVerse + 1, endVerse),
+      startVerse
+    );
     if (nextVerseIndex === selectedVerse) return;
-    setSelectedVerse(nextVerseIndex);
-    const nextVerse = verses[nextVerseIndex + startVerse];
+    const nextVerse = verses[nextVerseIndex];
     if (nextVerse) {
       sendVerse(nextVerse);
+      setSelectedVerse(nextVerse.index);
     }
-  };
+  }, [selectedVerse, endVerse, verses, startVerse, sendVerse]);
 
-  const previousVerse = () => {
-    const prevVerseIndex = Math.max(selectedVerse - 1, 0);
+  const previousVerse = useCallback(() => {
+    const prevVerseIndex = Math.min(
+      Math.max(selectedVerse - 1, startVerse),
+      endVerse
+    );
     if (prevVerseIndex === selectedVerse) return;
-    setSelectedVerse(prevVerseIndex);
-    const prevVerse = verses[prevVerseIndex + startVerse];
+    const prevVerse = verses[prevVerseIndex];
     if (prevVerse) {
       sendVerse(prevVerse);
+      setSelectedVerse(prevVerse.index);
     }
-  };
+  }, [selectedVerse, verses, endVerse, startVerse, sendVerse]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isTyping =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable;
+
+      if (isTyping || !canTransmit) return;
+      if (e.key === " ") {
+        e.preventDefault();
+        advanceVerse();
+      }
+      if (e.key === " " && e.shiftKey) {
+        e.preventDefault();
+        previousVerse();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [advanceVerse, previousVerse, canTransmit]);
+
   return (
     <>
       {isLoading && (
@@ -79,24 +107,17 @@ const BibleVersesList = ({
       <ul
         id="bible-verses-list"
         className={`bible-verses-list ${isLoading ? "opacity-30" : ""}`}
-        onKeyDown={(e) =>
-          handleKeyDownTraverse({
-            event: e,
-            advance: advanceVerse,
-            previous: previousVerse,
-          })
-        }
       >
         {verses
           .filter(({ index }) => index >= startVerse && index <= endVerse)
-          .map((verse, index) => {
-            const bg = index % 2 === 0 ? "bg-gray-600" : "bg-gray-800";
+          .map((verse) => {
+            const bg = verse.index % 2 === 0 ? "bg-gray-600" : "bg-gray-800";
             return verse.text?.trim() ? (
               <li
                 key={verse.index}
                 id={`bible-verse-${verse.index}`}
                 className={`${bg} flex gap-2 p-1 border ${
-                  selectedVerse === index
+                  selectedVerse === verse.index
                     ? "border-cyan-400"
                     : "border-transparent"
                 }`}
@@ -110,7 +131,8 @@ const BibleVersesList = ({
                   className="text-sm"
                   svg={SendSVG}
                   onClick={() => {
-                    setSelectedVerse(index);
+                    console.log(verse);
+                    setSelectedVerse(verse.index);
                     sendVerse(verse);
                   }}
                   disabled={!canTransmit}

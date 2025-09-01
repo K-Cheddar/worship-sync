@@ -41,14 +41,19 @@ import {
 import { useSensors } from "../../utils/dndUtils";
 
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { ControllerInfoContext } from "../../context/controllerInfo";
 import {
-  handleKeyDownTraverse,
-  keepElementInView,
-} from "../../utils/generalUtils";
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import generateRandomId from "../../utils/generateRandomId";
+import { useLocation } from "react-router-dom";
 
 export const sizeMap: Map<
   number,
@@ -143,6 +148,7 @@ const ItemSlides = () => {
     isLoading,
     _id,
     shouldSendTo,
+    isEditMode,
   } = useSelector((state: RootState) => state.undoable.present.item);
 
   const {
@@ -165,15 +171,19 @@ const ItemSlides = () => {
     const _slides = arrangement?.slides || __slides || [];
     return isLoading ? [] : _slides;
   }, [isLoading, __slides, arrangement?.slides]);
+
   const { slidesPerRow, slidesPerRowMobile, shouldShowStreamFormat } =
     useSelector((state: RootState) => state.undoable.present.preferences);
+
   const { isMobile } = useContext(ControllerInfoContext) || {};
+
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
   const size = type === "timer" ? Math.min(_size, 3) : _size;
 
   const debounceTime = useRef(0);
 
   const dispatch = useDispatch();
+  const location = useLocation();
 
   const [debouncedSlides, setDebouncedSlides] = useState(slides);
   const [draggedSection, setDraggedSection] = useState<string | null>(null);
@@ -187,6 +197,143 @@ const ItemSlides = () => {
 
     return () => clearTimeout(timeout);
   }, [slides]);
+
+  const getBibleInfo = useCallback(
+    (index: number) => {
+      const slide = slides[index];
+
+      if (!slide) return { title: "", text: "" };
+
+      const titleSlideText = slides[0].boxes[1]?.words?.trim();
+      const slideText = slide.boxes[1]?.words?.trim();
+
+      const title = (slideText ? titleSlideText : "") || "";
+      const text = index > 0 ? slideText || "" : "";
+      return { title, text };
+    },
+    [slides]
+  );
+
+  const selectSlide = useCallback(
+    (index: number) => {
+      dispatch(setSelectedSlide(index));
+      const slide = slides[index];
+
+      if (shouldSendTo.stream) {
+        if (type === "bible") {
+          const { title, text } = getBibleInfo(index);
+          dispatch(
+            updateBibleDisplayInfo({
+              title,
+              text,
+            })
+          );
+        } else {
+          dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
+        }
+
+        if (type === "free") {
+          dispatch(
+            updateFormattedTextDisplayInfo({
+              text: slide.boxes[1]?.words || "",
+              backgroundColor:
+                slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
+              textColor: slide.formattedTextDisplayInfo?.textColor || "#ffffff",
+              fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
+              paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
+              paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
+              isBold: slide.formattedTextDisplayInfo?.isBold || false,
+              isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
+              align: slide.formattedTextDisplayInfo?.align || "left",
+            })
+          );
+        } else {
+          dispatch(
+            updateFormattedTextDisplayInfo({
+              text: "",
+            })
+          );
+        }
+
+        if (type !== "free" && type !== "bible") {
+          dispatch(
+            updateStream({
+              slide,
+              type,
+              name,
+              timerId: timerInfo?.id,
+            })
+          );
+        }
+      }
+
+      if (shouldSendTo.projector) {
+        dispatch(
+          updateProjector({
+            slide,
+            type,
+            name,
+            timerId: timerInfo?.id,
+          })
+        );
+      }
+
+      if (shouldSendTo.monitor) {
+        dispatch(
+          updateMonitor({
+            slide,
+            type,
+            name,
+            timerId: timerInfo?.id,
+          })
+        );
+      }
+    },
+    [
+      dispatch,
+      shouldSendTo.stream,
+      shouldSendTo.projector,
+      shouldSendTo.monitor,
+      type,
+      name,
+      timerInfo?.id,
+      getBibleInfo,
+      slides,
+    ]
+  );
+
+  const advanceSlide = useCallback(() => {
+    const nextSlide = Math.min(selectedSlide + 1, slides.length - 1);
+    selectSlide(nextSlide);
+  }, [selectedSlide, slides, selectSlide]);
+
+  const previousSlide = useCallback(() => {
+    const nextSlide = Math.max(selectedSlide - 1, 0);
+    selectSlide(nextSlide);
+  }, [selectedSlide, selectSlide]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isTyping =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable;
+      if (!location.pathname.includes("item") || isEditMode || isTyping) return;
+      if (e.key === " ") {
+        e.preventDefault();
+        advanceSlide();
+      }
+      if (e.key === " " && e.shiftKey) {
+        e.preventDefault();
+        previousSlide();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [advanceSlide, previousSlide, isEditMode, location.pathname]);
 
   useEffect(() => {
     let timeout: NodeJS.Timeout | null = null;
@@ -233,94 +380,6 @@ const ItemSlides = () => {
       keepElementInView({ child: slideElement, parent: parentElement });
     }
   }, [selectedSlide, isMobile]);
-
-  const getBibleInfo = (index: number) => {
-    const slide = slides[index];
-
-    if (!slide) return { title: "", text: "" };
-
-    const titleSlideText = slides[0].boxes[1]?.words?.trim();
-    const slideText = slide.boxes[1]?.words?.trim();
-
-    const title = (slideText ? titleSlideText : "") || "";
-    const text = index > 0 ? slideText || "" : "";
-    return { title, text };
-  };
-
-  const selectSlide = (index: number) => {
-    dispatch(setSelectedSlide(index));
-    const slide = slides[index];
-
-    if (shouldSendTo.stream) {
-      if (type === "bible") {
-        const { title, text } = getBibleInfo(index);
-        dispatch(
-          updateBibleDisplayInfo({
-            title,
-            text,
-          })
-        );
-      } else {
-        dispatch(updateBibleDisplayInfo({ title: "", text: "" }));
-      }
-
-      if (type === "free") {
-        dispatch(
-          updateFormattedTextDisplayInfo({
-            text: slide.boxes[1]?.words || "",
-            backgroundColor:
-              slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
-            textColor: slide.formattedTextDisplayInfo?.textColor || "#ffffff",
-            fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
-            paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
-            paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
-            isBold: slide.formattedTextDisplayInfo?.isBold || false,
-            isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
-            align: slide.formattedTextDisplayInfo?.align || "left",
-          })
-        );
-      } else {
-        dispatch(
-          updateFormattedTextDisplayInfo({
-            text: "",
-          })
-        );
-      }
-
-      if (type !== "free" && type !== "bible") {
-        dispatch(
-          updateStream({
-            slide,
-            type,
-            name,
-            timerId: timerInfo?.id,
-          })
-        );
-      }
-    }
-
-    if (shouldSendTo.projector) {
-      dispatch(
-        updateProjector({
-          slide,
-          type,
-          name,
-          timerId: timerInfo?.id,
-        })
-      );
-    }
-
-    if (shouldSendTo.monitor) {
-      dispatch(
-        updateMonitor({
-          slide,
-          type,
-          name,
-          timerId: timerInfo?.id,
-        })
-      );
-    }
-  };
 
   const addSlide = () => {
     // Find the highest section number among existing slides
@@ -456,16 +515,6 @@ const ItemSlides = () => {
     dispatch(updateSlides({ slides: updatedSlides }));
   };
 
-  const advanceSlide = () => {
-    const nextSlide = Math.min(selectedSlide + 1, slides.length - 1);
-    selectSlide(nextSlide);
-  };
-
-  const previousSlide = () => {
-    const nextSlide = Math.max(selectedSlide - 1, 0);
-    selectSlide(nextSlide);
-  };
-
   // if (!arrangement && !hasSlides && type !== "free") return null;
 
   return (
@@ -532,13 +581,6 @@ const ItemSlides = () => {
             ref={setNodeRef}
             tabIndex={0}
             id="item-slides-container"
-            onKeyDown={(e) =>
-              handleKeyDownTraverse({
-                event: e,
-                advance: advanceSlide,
-                previous: previousSlide,
-              })
-            }
             className={`item-slides-container ${sizeMap.get(size)?.cols}`}
           >
             <SortableContext

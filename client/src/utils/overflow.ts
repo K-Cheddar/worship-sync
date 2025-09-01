@@ -1,6 +1,6 @@
 import {
   Arrangment,
-  ItemSlide,
+  ItemSlideType,
   ItemState,
   SlideType,
   verseType,
@@ -200,11 +200,11 @@ type FormatSectionType = {
   text: string;
   type: SlideType;
   name: string;
-  slides: ItemSlide[];
-  newSlides: ItemSlide[];
+  slides: ItemSlideType[];
+  newSlides: ItemSlideType[];
   fontSize: number;
   selectedBox: number;
-  selectedSlide: ItemSlide;
+  selectedSlide: ItemSlideType;
   isMobile?: boolean;
 };
 
@@ -218,7 +218,7 @@ export const formatSection = ({
   selectedBox,
   selectedSlide,
   isMobile,
-}: FormatSectionType): ItemSlide[] => {
+}: FormatSectionType): ItemSlideType[] => {
   const lines = text.split("\n");
   const formattedSlides = [];
   let currentBoxes = [];
@@ -314,7 +314,7 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
   const { selectedSlide, selectedBox } = item;
   const slides = item.slides;
   const slide = slides[selectedSlide];
-  const newSlides: ItemSlide[] = [];
+  const newSlides: ItemSlideType[] = [];
 
   const fontSize = slide.boxes[selectedBox].fontSize || 2.5;
   const fontColor = slide.boxes[selectedBox].fontColor || "rgb(255, 255, 255)";
@@ -359,7 +359,7 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
     currentSectionSlides[currentSectionSlides.length - 1];
   const background = lastSlideInSection?.boxes[0]?.background || undefined;
 
-  let _formattedSlides: ItemSlide[] = [];
+  let _formattedSlides: ItemSlideType[] = [];
   if (slide.overflow === "fit") {
     // Try to fit all words in one slide by adjusting font size
     let currentFontSize = fontSize;
@@ -763,7 +763,7 @@ const formatBibleVerses = ({
 }: formatBibleVersesType) => {
   const slides = item.slides || [];
   const referenceIndex = item.selectedSlide > 0 ? item.selectedSlide : 1;
-  const currentSlide: ItemSlide = slides[referenceIndex] || {};
+  const currentSlide: ItemSlideType = slides[referenceIndex] || {};
   const titleSlideText = slides[0]?.boxes[1]?.words?.trim() || "";
 
   const currentBoxes = [...currentSlide.boxes];
