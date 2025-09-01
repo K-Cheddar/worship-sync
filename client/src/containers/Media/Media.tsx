@@ -83,9 +83,7 @@ const Media = () => {
   const dispatch = useDispatch();
   const location = useLocation();
 
-  const { list } = useSelector(
-    (state: RootState) => state.undoable.present.media
-  );
+  const { list } = useSelector((state: RootState) => state.media);
   const { isLoading } = useSelector(
     (state: RootState) => state.undoable.present.item
   );

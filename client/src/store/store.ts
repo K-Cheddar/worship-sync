@@ -67,7 +67,6 @@ let currentGroupId = 0;
 
 const excludedActions: string[] = [
   itemSlice.actions.setItemIsLoading.toString(),
-  itemSlice.actions.setActiveItem.toString(),
   itemSlice.actions.setSelectedSlide.toString(),
   itemSlice.actions.setIsEditMode.toString(),
   itemSlice.actions.setHasPendingUpdate.toString(),
@@ -98,9 +97,6 @@ const excludedActions: string[] = [
   itemListsSlice.actions.initiateItemLists.toString(),
   itemListsSlice.actions.updateItemListsFromRemote.toString(),
   itemListsSlice.actions.setInitialItemList.toString(),
-  mediaItemsSlice.actions.initiateMediaList.toString(),
-  mediaItemsSlice.actions.updateMediaListFromRemote.toString(),
-  mediaItemsSlice.actions.forceUpdate.toString(),
   preferencesSlice.actions.initiatePreferences.toString(),
   preferencesSlice.actions.setIsLoading.toString(),
   preferencesSlice.actions.setSelectedPreference.toString(),
@@ -151,7 +147,6 @@ const undoableReducers = undoable(
     credits: creditsSlice.reducer,
     itemList: itemListSlice.reducer,
     itemLists: itemListsSlice.reducer,
-    media: mediaItemsSlice.reducer,
     preferences: preferencesSlice.reducer,
   }),
   {
@@ -608,8 +603,8 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     return (
-      (currentState as RootState).undoable.present.media !==
-        (previousState as RootState).undoable.present.media &&
+      (currentState as RootState).media !==
+        (previousState as RootState).media &&
       action.type !== "media/initiateMediaList" &&
       action.type !== "media/updateMediaListFromRemote" &&
       action.type !== "RESET"
@@ -621,8 +616,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     // update ItemList
-    const { list } = (listenerApi.getState() as RootState).undoable.present
-      .media;
+    const { list } = (listenerApi.getState() as RootState).media;
 
     if (!db) return;
     const db_backgrounds: DBMedia = await db.get("images");
@@ -1107,15 +1101,6 @@ listenerMiddleware.startListening({
 
     if (
       !_.isEqual(
-        currentState.undoable.present.media,
-        previousState.undoable.present.media
-      )
-    ) {
-      listenerApi.dispatch(mediaItemsSlice.actions.forceUpdate());
-    }
-
-    if (
-      !_.isEqual(
         currentState.undoable.present.itemLists,
         previousState.undoable.present.itemLists
       )
@@ -1172,8 +1157,7 @@ listenerMiddleware.startListening({
       state.undoable.present.preferences.isInitialized &&
       state.undoable.present.itemList.isInitialized &&
       state.undoable.present.overlays.isInitialized &&
-      state.undoable.present.itemLists.isInitialized &&
-      state.undoable.present.media.isInitialized;
+      state.undoable.present.itemLists.isInitialized;
 
     return allSlicesInitialized;
   },
@@ -1211,6 +1195,7 @@ const combinedReducers = combineReducers({
   createItem: createItemSlice.reducer,
   allDocs: allDocsSlice.reducer,
   timers: timersSlice.reducer,
+  media: mediaItemsSlice.reducer,
 });
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {
