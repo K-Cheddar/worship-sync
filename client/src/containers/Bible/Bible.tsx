@@ -40,6 +40,7 @@ import useDebouncedEffect from "../../hooks/useDebouncedEffect";
 import Spinner from "../../components/Spinner/Spinner";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import Input from "../../components/Input/Input";
+import cn from "classnames";
 
 const Bible = () => {
   const dispatch = useDispatch();
@@ -463,43 +464,47 @@ const Bible = () => {
         )}
 
         {isMobile && showVersesDisplaySection && versesDisplaySection}
-        {((isMobile && !showVersesDisplaySection) || !isMobile) &&
-          !!books.length && (
-            <div className="flex flex-1 w-full gap-4 max-lg:justify-center min-h-0">
-              <BibleSection
-                initialList={books as bookType[]}
-                setValue={(val) => dispatch(setBook(val))}
-                searchValue={searchValues.book}
-                value={book}
-                type="book"
-              />
-              <BibleSection
-                initialList={chapters as chapterType[]}
-                setValue={(val) => dispatch(setChapter(val))}
-                searchValue={searchValues.chapter}
-                value={chapter}
-                type="chapter"
-              />
-              <BibleSection
-                initialList={verses as verseType[]}
-                setValue={(val) => dispatch(setStartVerse(val))}
-                searchValue={searchValues.startVerse}
-                value={startVerse}
-                type="verse"
-                label="Start"
-              />
-              <BibleSection
-                initialList={verses as verseType[]}
-                setValue={(val) => dispatch(setEndVerse(val))}
-                searchValue={searchValues.endVerse}
-                value={endVerse}
-                type="verse"
-                min={startVerse}
-                label="End"
-              />
-              {!isMobile && versesDisplaySection}
-            </div>
-          )}
+        {!!books.length && (
+          <div
+            className={cn(
+              "flex flex-1 w-full gap-4 max-lg:justify-center min-h-0",
+              isMobile && showVersesDisplaySection && "hidden"
+            )}
+          >
+            <BibleSection
+              initialList={books as bookType[]}
+              setValue={(val) => dispatch(setBook(val))}
+              searchValue={searchValues.book}
+              value={book}
+              type="book"
+            />
+            <BibleSection
+              initialList={chapters as chapterType[]}
+              setValue={(val) => dispatch(setChapter(val))}
+              searchValue={searchValues.chapter}
+              value={chapter}
+              type="chapter"
+            />
+            <BibleSection
+              initialList={verses as verseType[]}
+              setValue={(val) => dispatch(setStartVerse(val))}
+              searchValue={searchValues.startVerse}
+              value={startVerse}
+              type="verse"
+              label="Start"
+            />
+            <BibleSection
+              initialList={verses as verseType[]}
+              setValue={(val) => dispatch(setEndVerse(val))}
+              searchValue={searchValues.endVerse}
+              value={endVerse}
+              type="verse"
+              min={startVerse}
+              label="End"
+            />
+            {!isMobile && versesDisplaySection}
+          </div>
+        )}
       </div>
     </ErrorBoundary>
   );
