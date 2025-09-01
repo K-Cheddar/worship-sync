@@ -1,12 +1,10 @@
 import { forwardRef, useRef } from "react";
 import { OverlayInfo } from "../../types";
-// @ts-ignore
-import { QRCode } from "react-qr-code";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { defaultQrCodeOverlayStyles } from "./defaultOverlayStyles";
+import SharedOverlay from "./SharedOverlay";
 import "./DisplayWindow.scss";
-import { getFontSize } from "./utils";
 
 type DisplayQRCodeOverlayProps = {
   width: number;
@@ -139,142 +137,32 @@ const DisplayQRCodeOverlay = forwardRef<
       ...prevQrCodeOverlayInfo.formatting,
     };
 
-    const needsPadding = qrCodeOverlayInfo.url || qrCodeOverlayInfo.description;
-
-    const prevNeedsPadding =
-      prevQrCodeOverlayInfo.url || prevQrCodeOverlayInfo.description;
+    const needsPadding = !!(
+      qrCodeOverlayInfo.url || qrCodeOverlayInfo.description
+    );
+    const prevNeedsPadding = !!(
+      prevQrCodeOverlayInfo.url || prevQrCodeOverlayInfo.description
+    );
 
     return (
       <>
-        <div
+        <SharedOverlay
           ref={qrCodeOverlayRef}
-          className="overlay-qr-code-info-container"
-          style={{
-            backgroundColor: currentStyles.backgroundColor,
-            color: currentStyles.fontColor,
-            borderColor: currentStyles.borderColor,
-            borderStyle: currentStyles.borderType,
-            borderRadius: currentStyles.borderRadius,
-            paddingTop: needsPadding ? `${currentStyles.paddingTop}%` : 0,
-            paddingBottom: needsPadding ? `${currentStyles.paddingBottom}%` : 0,
-            paddingLeft: needsPadding ? `${currentStyles.paddingLeft}%` : 0,
-            paddingRight: needsPadding ? `${currentStyles.paddingRight}%` : 0,
-            maxWidth: `${currentStyles.maxWidth}%`,
-            height:
-              typeof currentStyles.height === "number"
-                ? `${currentStyles.height}%`
-                : currentStyles.height,
-            bottom: `${currentStyles.bottom}%`,
-            left: currentStyles.left ? `${currentStyles.left}%` : 0,
-            right: currentStyles.right ? `${currentStyles.right}%` : 0,
-            display: currentStyles.display,
-            flexDirection: currentStyles.flexDirection,
-            justifyContent: currentStyles.justifyContent,
-            alignItems: currentStyles.alignItems,
-            gap: `${currentStyles.gap}%`,
-          }}
-        >
-          {qrCodeOverlayInfo.url && (
-            <div
-              className="overlay-qr-code-info-url"
-              style={{
-                width:
-                  typeof currentStyles.child1Width === "number"
-                    ? `${currentStyles.child1Width}%`
-                    : currentStyles.child1Width,
-                height:
-                  typeof currentStyles.child1Height === "number"
-                    ? `${currentStyles.child1Height}%`
-                    : currentStyles.child1Height,
-              }}
-            >
-              <QRCode
-                style={{ width: "100%", height: "auto" }}
-                value={qrCodeOverlayInfo.url}
-              />
-            </div>
-          )}
-          {qrCodeOverlayInfo.description && (
-            <p
-              className="overlay-qr-code-info-description"
-              style={{
-                fontSize: `${getFontSize({ width, fontSize: currentStyles.fontSize })}`,
-                color: currentStyles.fontColor,
-                fontWeight: currentStyles.fontWeight || "600",
-                fontStyle: currentStyles.fontStyle,
-                textAlign: currentStyles.textAlign,
-                whiteSpace: "pre-line",
-              }}
-            >
-              {qrCodeOverlayInfo.description}
-            </p>
-          )}
-        </div>
-        <div
+          width={width}
+          styles={currentStyles}
+          overlayInfo={qrCodeOverlayInfo}
+          needsPadding={needsPadding}
+          overlayType="qr-code"
+        />
+        <SharedOverlay
           ref={prevQrCodeOverlayRef}
-          className="overlay-qr-code-info-container"
-          style={{
-            backgroundColor: prevStyles.backgroundColor,
-            color: prevStyles.fontColor,
-            borderColor: prevStyles.borderColor,
-            borderStyle: prevStyles.borderType,
-            borderRadius: prevStyles.borderRadius,
-            paddingTop: prevNeedsPadding ? `${prevStyles.paddingTop}%` : 0,
-            paddingBottom: prevNeedsPadding
-              ? `${prevStyles.paddingBottom}%`
-              : 0,
-            paddingLeft: prevNeedsPadding ? `${prevStyles.paddingLeft}%` : 0,
-            paddingRight: prevNeedsPadding ? `${prevStyles.paddingRight}%` : 0,
-            maxWidth: `${prevStyles.maxWidth}%`,
-            height:
-              typeof prevStyles.height === "number"
-                ? `${prevStyles.height}%`
-                : prevStyles.height,
-            bottom: `${prevStyles.bottom}%`,
-            left: prevStyles.left ? `${prevStyles.left}%` : 0,
-            right: prevStyles.right ? `${prevStyles.right}%` : 0,
-            display: prevStyles.display,
-            flexDirection: prevStyles.flexDirection,
-            justifyContent: prevStyles.justifyContent,
-            alignItems: prevStyles.alignItems,
-            gap: `${prevStyles.gap}%`,
-          }}
-        >
-          {prevQrCodeOverlayInfo.url && (
-            <div
-              className="overlay-qr-code-info-url"
-              style={{
-                width:
-                  typeof prevStyles.child1Width === "number"
-                    ? `${prevStyles.child1Width}%`
-                    : prevStyles.child1Width,
-                height:
-                  typeof prevStyles.child1Height === "number"
-                    ? `${prevStyles.child1Height}%`
-                    : prevStyles.child1Height,
-              }}
-            >
-              <QRCode
-                style={{ width: "100%", height: "auto" }}
-                value={prevQrCodeOverlayInfo.url}
-              />
-            </div>
-          )}
-          {prevQrCodeOverlayInfo.description && (
-            <p
-              className="overlay-qr-code-info-description"
-              style={{
-                fontSize: `${getFontSize({ width, fontSize: prevStyles.fontSize })}`,
-                color: prevStyles.fontColor,
-                fontWeight: prevStyles.fontWeight,
-                fontStyle: prevStyles.fontStyle,
-                textAlign: prevStyles.textAlign,
-              }}
-            >
-              {prevQrCodeOverlayInfo.description}
-            </p>
-          )}
-        </div>
+          width={width}
+          styles={prevStyles}
+          overlayInfo={prevQrCodeOverlayInfo}
+          needsPadding={prevNeedsPadding}
+          isPrev={true}
+          overlayType="qr-code"
+        />
       </>
     );
   }

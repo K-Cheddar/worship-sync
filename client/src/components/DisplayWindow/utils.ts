@@ -17,3 +17,7 @@ export const getBorderWidth = ({
 }) => {
   return `${(borderWidth || 0) * (width / 400)}vw`;
 };
+
+export const getMargin = (margin: number | "auto" | "unset" | undefined) => {
+  return typeof margin === "number" ? `${margin}%` : margin;
+};

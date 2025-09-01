@@ -45,6 +45,7 @@ import {
 } from "../../store/overlaySlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import OverlayEditor from "./OverlayEditor";
+import { getDefaultFormatting } from "../../utils/overlayUtils";
 
 const typeToName = {
   participant: "Participant",
@@ -244,7 +245,15 @@ const Overlays = () => {
         `overlay-${overlayId}`
       );
       if (loadedOverlay) {
-        dispatch(selectOverlay(loadedOverlay));
+        dispatch(
+          selectOverlay({
+            ...loadedOverlay,
+            formatting: {
+              ...getDefaultFormatting(loadedOverlay.type || "participant"),
+              ...loadedOverlay.formatting,
+            },
+          })
+        );
       }
     } catch (error) {
       dispatch(selectOverlay(undefined));
@@ -357,7 +366,7 @@ const Overlays = () => {
         <Drawer
           isOpen={isStyleDrawerOpen}
           onClose={() => setIsStyleDrawerOpen(false)}
-          size={isMobile ? "lg" : "xl"}
+          size={isMobile ? "lg" : "md"}
           position={isMobile ? "bottom" : "right"}
           title="Edit Overlay Style"
           closeOnBackdropClick={false}

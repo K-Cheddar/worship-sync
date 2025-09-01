@@ -1,239 +1,710 @@
-import React from "react";
-import { OverlayFormatting } from "../../types";
+import React, { useState } from "react";
+import { OverlayFormatting, OverlayChild } from "../../types";
 import Section from "./Section";
 import InputField from "./InputField";
 import SelectField from "./SelectField";
-import WidthHeightField from "./WidthHeightField";
+import MeasurementField, { MeasurementType } from "./MeasurementField";
 import ColorField from "../ColorField/ColorField";
+import Toggle from "../Toggle/Toggle";
 
 interface StyleEditorProps {
   formatting: OverlayFormatting;
   onChange: (formatting: OverlayFormatting) => void;
 }
 
-type HeightWidthType = "fit-content" | "percent" | "auto" | "unset" | "number";
+type FieldConfig<T extends OverlayFormatting | OverlayChild> = {
+  label: string;
+  key: keyof T;
+  type: "input" | "select" | "measurement" | "color";
+  inputType?: "number" | "text";
+  placeholder?: string;
+  options?: { label: string; value: string }[];
+  min?: number;
+  max?: number;
+  step?: number;
+  endAdornment?: React.ReactNode;
+  defaultColor?: string;
+  onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void;
+};
 
 const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
+  const [showHiddenSections, setShowHiddenSections] = useState(false);
+
   const updateFormatting = (updates: Partial<OverlayFormatting>) => {
     onChange({ ...formatting, ...updates });
   };
 
+  const updateChild = (index: number, updates: Partial<OverlayChild>) => {
+    const children = [...(formatting.children || [])];
+    children[index] = { ...children[index], ...updates };
+    onChange({ ...formatting, children });
+  };
+
   // Helper function to check if a section should be shown
-  const shouldShowSection = (fields: string[]) => {
-    return fields.some(
-      (field) => formatting[field as keyof OverlayFormatting] !== undefined
-    );
+  const shouldShowSection = (fields: (keyof OverlayFormatting)[]) => {
+    if (showHiddenSections) return true;
+    return fields.some((field) => formatting[field] !== undefined);
   };
 
   // Helper function to check if a field should be shown
-  const shouldShowField = (field: string) => {
-    return formatting[field as keyof OverlayFormatting] !== undefined;
+  const shouldShowField = (
+    data: OverlayFormatting,
+    field: keyof OverlayFormatting
+  ) => {
+    if (showHiddenSections) return true;
+    const value = data[field];
+    return value !== undefined && value !== null && value !== "";
   };
 
-  const spacingFields = [
-    { label: "Padding Top", key: "paddingTop", placeholder: "0" },
-    { label: "Padding Bottom", key: "paddingBottom", placeholder: "0" },
-    { label: "Padding Left", key: "paddingLeft", placeholder: "0" },
-    { label: "Padding Right", key: "paddingRight", placeholder: "0" },
-  ];
+  // Helper function to check if a child section should be shown
+  const shouldShowChildSection = (
+    child: OverlayChild,
+    fields: (keyof OverlayChild)[]
+  ) => {
+    if (showHiddenSections) return true;
+    return fields.some((field) => child[field] !== undefined);
+  };
 
-  const borderWidthFields = [
-    { label: "Top Width", key: "borderTopWidth" },
-    { label: "Bottom Width", key: "borderBottomWidth" },
-    { label: "Left Width", key: "borderLeftWidth" },
-    { label: "Right Width", key: "borderRightWidth" },
-  ];
+  // Helper function to check if a child field should be shown
+  const shouldShowChildField = (
+    child: OverlayChild,
+    field: keyof OverlayChild
+  ) => {
+    if (showHiddenSections) return true;
+    const value = child[field];
+    return value !== undefined && value !== null && value !== "";
+  };
 
-  const positionFields = [
-    { label: "Top", key: "top", placeholder: "0" },
-    { label: "Bottom", key: "bottom", placeholder: "0" },
-    { label: "Left", key: "left", placeholder: "0" },
-    { label: "Right", key: "right", placeholder: "0" },
-  ];
+  // Generic field renderer that works for both main formatting and child elements
+  const renderField = <T extends OverlayFormatting | OverlayChild>(
+    config: FieldConfig<T>,
+    data: T,
+    onUpdate: (updates: Partial<T>) => void,
+    index?: number
+  ) => {
+    const shouldShow =
+      index !== undefined
+        ? shouldShowChildField(
+            data as OverlayChild,
+            config.key as keyof OverlayChild
+          )
+        : shouldShowField(
+            data as OverlayFormatting,
+            config.key as keyof OverlayFormatting
+          );
 
-  const childFontFields = [
-    {
-      label: "Font Size",
-      labelKey: "child1Text",
-      key: "child1FontSize",
-      placeholder: "16",
-    },
-    {
-      label: "Font Size",
-      labelKey: "child2Text",
-      key: "child2FontSize",
-      placeholder: "14",
-    },
-    {
-      label: "Font Size",
-      labelKey: "child3Text",
-      key: "child3FontSize",
-      placeholder: "12",
-    },
-    {
-      label: "Font Size",
-      labelKey: "child4Text",
-      key: "child4FontSize",
-      placeholder: "10",
-    },
-  ];
+    if (!shouldShow) return null;
 
-  const childFontColorFields = [
-    {
-      label: "Font Color",
-      labelKey: "child1Text",
-      key: "child1FontColor",
-    },
-    {
-      label: "Font Color",
-      labelKey: "child2Text",
-      key: "child2FontColor",
-    },
-    {
-      label: "Font Color",
-      labelKey: "child3Text",
-      key: "child3FontColor",
-    },
-    {
-      label: "Font Color",
-      labelKey: "child4Text",
-      key: "child4FontColor",
-    },
-  ];
+    const commonProps = {
+      label: config.label,
+      formatting,
+      placeholder: config.placeholder,
+    };
 
-  const childFontWeightFields = [
-    {
-      label: "Weight",
-      labelKey: "child1Text",
-      key: "child1FontWeight",
-      placeholder: "400",
-    },
-    {
-      label: "Weight",
-      labelKey: "child2Text",
-      key: "child2FontWeight",
-      placeholder: "400",
-    },
-    {
-      label: "Weight",
-      labelKey: "child3Text",
-      key: "child3FontWeight",
-      placeholder: "400",
-    },
-    {
-      label: "Weight",
-      labelKey: "child4Text",
-      key: "child4FontWeight",
-      placeholder: "400",
-    },
-  ];
+    const key = config.key;
+    const value = data[key];
 
-  const childFontStyleFields = [
-    {
-      label: "Style",
-      labelKey: "child1Text",
-      key: "child1FontStyle",
-    },
-    {
-      label: "Style",
-      labelKey: "child2Text",
-      key: "child2FontStyle",
-    },
-    {
-      label: "Style",
-      labelKey: "child3Text",
-      key: "child3FontStyle",
-    },
-    {
-      label: "Style",
-      labelKey: "child4Text",
-      key: "child4FontStyle",
-    },
-  ];
+    switch (config.type) {
+      case "input":
+        const inputType = config.inputType || "number";
+        return (
+          <InputField
+            {...commonProps}
+            type={inputType}
+            value={
+              inputType === "number"
+                ? typeof value === "number"
+                  ? value
+                  : ""
+                : String(value || "")
+            }
+            onChange={(value) => {
+              const updates = {
+                [key]: inputType === "number" ? Number(value) : value,
+              } as Partial<T>;
+              onUpdate(updates);
+            }}
+            min={config.min}
+            max={config.max}
+            step={config.step}
+            endAdornment={config.endAdornment}
+            onBlur={config.onBlur}
+          />
+        );
+      case "select":
+        return (
+          <SelectField
+            {...commonProps}
+            value={String(value || config.options?.[0]?.value || "")}
+            onChange={(value) => onUpdate({ [key]: value } as Partial<T>)}
+            options={config.options || []}
+          />
+        );
+      case "measurement":
+        return (
+          <MeasurementField
+            {...commonProps}
+            value={(value as MeasurementType) || "fit-content"}
+            onChange={(value) => onUpdate({ [key]: value } as Partial<T>)}
+          />
+        );
+      case "color":
+        return (
+          <ColorField
+            {...commonProps}
+            value={String(value || config.defaultColor || "#ffffff")}
+            onChange={(value) => onUpdate({ [key]: value } as Partial<T>)}
+            defaultColor={config.defaultColor || "#ffffff"}
+          />
+        );
+      default:
+        return null;
+    }
+  };
 
-  const childTextAlignFields = [
-    {
-      label: "Align",
-      labelKey: "child1Text",
-      key: "child1TextAlign",
-    },
-    {
-      label: "Align",
-      labelKey: "child2Text",
-      key: "child2TextAlign",
-    },
-    {
-      label: "Align",
-      labelKey: "child3Text",
-      key: "child3TextAlign",
-    },
-    {
-      label: "Align",
-      labelKey: "child4Text",
-      key: "child4TextAlign",
-    },
-  ];
+  // Generic utility functions that work for both main and child fields
+  const createInputField = <T extends OverlayFormatting | OverlayChild>(
+    key: string,
+    label: string,
+    placeholder: string,
+    options?: {
+      step?: number;
+      endAdornment?: React.ReactNode;
+      min?: number;
+      max?: number;
+    }
+  ): FieldConfig<T> => ({
+    label,
+    key: key as keyof T,
+    type: "input" as const,
+    placeholder,
+    ...options,
+  });
 
-  const childWidthFields = [
-    {
-      label: "Width",
-      labelKey: "child1Text",
-      key: "child1Width",
-      placeholder: "0",
-    },
-    {
-      label: "Width",
-      labelKey: "child2Text",
-      key: "child2Width",
-      placeholder: "0",
-    },
-    {
-      label: "Width",
-      labelKey: "child3Text",
-      key: "child3Width",
-      placeholder: "0",
-    },
-    {
-      label: "Width",
-      labelKey: "child4Text",
-      key: "child4Width",
-      placeholder: "0",
-    },
-  ];
+  const createSelectField = <T extends OverlayFormatting | OverlayChild>(
+    key: string,
+    label: string,
+    options: { label: string; value: string }[]
+  ): FieldConfig<T> => ({
+    label,
+    key: key as keyof T,
+    type: "select" as const,
+    options,
+  });
 
-  const childHeightFields = [
-    {
-      label: "Height",
-      labelKey: "child1Text",
-      key: "child1Height",
-      placeholder: "0",
-    },
-    {
-      label: "Height",
-      labelKey: "child2Text",
-      key: "child2Height",
-      placeholder: "0",
-    },
-    {
-      label: "Height",
-      labelKey: "child3Text",
-      key: "child3Height",
-      placeholder: "0",
-    },
-    {
-      label: "Height",
-      labelKey: "child4Text",
-      key: "child4Height",
-      placeholder: "0",
-    },
-  ];
+  const createColorField = <T extends OverlayFormatting | OverlayChild>(
+    key: string,
+    label: string,
+    defaultColor: string
+  ): FieldConfig<T> => ({
+    label,
+    key: key as keyof T,
+    type: "color" as const,
+    defaultColor,
+  });
+
+  const createMeasurementField = <T extends OverlayFormatting | OverlayChild>(
+    key: string,
+    label: string
+  ): FieldConfig<T> => ({
+    label,
+    key: key as keyof T,
+    type: "measurement" as const,
+  });
+
+  // Field configurations using generic utility functions
+  const fieldConfigs: Record<string, FieldConfig<OverlayFormatting>[]> = {
+    layout: [
+      createMeasurementField<OverlayFormatting>("width", "Width"),
+      createMeasurementField<OverlayFormatting>("height", "Height"),
+      createInputField<OverlayFormatting>("maxWidth", "Max Width", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayFormatting>("maxHeight", "Max Height", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayFormatting>("minWidth", "Min Width", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayFormatting>("minHeight", "Min Height", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayFormatting>("top", "Top", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayFormatting>("bottom", "Bottom", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayFormatting>("left", "Left", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayFormatting>("right", "Right", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+    ],
+    typography: [
+      createInputField<OverlayFormatting>("fontSize", "Font Size", "15"),
+      {
+        label: "Font Weight",
+        key: "fontWeight",
+        type: "input",
+        placeholder: "400",
+        min: 100,
+        max: 900,
+        step: 100,
+        onBlur: (e) => {
+          const value = Number(e.target.value);
+          if (!isNaN(value)) {
+            const rounded = Math.round(value / 100) * 100;
+            const clamped = Math.max(100, Math.min(900, rounded));
+            if (clamped !== value) {
+              updateFormatting({ fontWeight: clamped });
+            }
+          }
+        },
+      },
+      createSelectField<OverlayFormatting>("textAlign", "Text Align", [
+        { label: "Left", value: "left" },
+        { label: "Center", value: "center" },
+        { label: "Right", value: "right" },
+      ]),
+      createSelectField<OverlayFormatting>("fontStyle", "Font Style", [
+        { label: "Normal", value: "normal" },
+        { label: "Italic", value: "italic" },
+      ]),
+      createColorField<OverlayFormatting>("fontColor", "Font Color", "#ffffff"),
+    ],
+    spacing: [
+      createInputField<OverlayFormatting>("paddingTop", "Padding Top", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayFormatting>(
+        "paddingBottom",
+        "Padding Bottom",
+        "0",
+        {
+          step: 0.5,
+          endAdornment: <div className="text-gray-500 text-sm">%</div>,
+        }
+      ),
+      createInputField<OverlayFormatting>("paddingLeft", "Padding Left", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayFormatting>(
+        "paddingRight",
+        "Padding Right",
+        "0",
+        {
+          step: 0.5,
+          endAdornment: <div className="text-gray-500 text-sm">%</div>,
+        }
+      ),
+      createMeasurementField<OverlayFormatting>("marginTop", "Margin Top"),
+      createMeasurementField<OverlayFormatting>(
+        "marginBottom",
+        "Margin Bottom"
+      ),
+      createMeasurementField<OverlayFormatting>("marginLeft", "Margin Left"),
+      createMeasurementField<OverlayFormatting>("marginRight", "Margin Right"),
+      createInputField<OverlayFormatting>("gap", "Gap", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+    ],
+    colors: [
+      createColorField<OverlayFormatting>(
+        "backgroundColor",
+        "Background Color",
+        "#000000"
+      ),
+      createColorField<OverlayFormatting>(
+        "borderColor",
+        "Border Color",
+        "#ffffff"
+      ),
+      createColorField<OverlayFormatting>(
+        "borderLeftColor",
+        "Border Left Color",
+        "#ffffff"
+      ),
+      createColorField<OverlayFormatting>(
+        "borderRightColor",
+        "Border Right Color",
+        "#ffffff"
+      ),
+      createColorField<OverlayFormatting>(
+        "borderTopColor",
+        "Border Top Color",
+        "#ffffff"
+      ),
+      createColorField<OverlayFormatting>(
+        "borderBottomColor",
+        "Border Bottom Color",
+        "#ffffff"
+      ),
+    ],
+    border: [
+      createSelectField<OverlayFormatting>("borderType", "Type", [
+        { label: "Solid", value: "solid" },
+        { label: "Dashed", value: "dashed" },
+        { label: "Dotted", value: "dotted" },
+      ]),
+      {
+        label: "Radius",
+        key: "borderRadius",
+        type: "input",
+        inputType: "text",
+        placeholder: "0",
+      },
+      {
+        label: "Top Left Radius",
+        key: "borderRadiusTopLeft",
+        type: "input",
+        inputType: "text",
+        placeholder: "0% 0%",
+      },
+      {
+        label: "Top Right Radius",
+        key: "borderRadiusTopRight",
+        type: "input",
+        inputType: "text",
+        placeholder: "3% 10%",
+      },
+      {
+        label: "Bot Left Radius",
+        key: "borderRadiusBottomLeft",
+        type: "input",
+        inputType: "text",
+        placeholder: "0% 0%",
+      },
+      {
+        label: "Bot Right Radius",
+        key: "borderRadiusBottomRight",
+        type: "input",
+        inputType: "text",
+        placeholder: "3% 10%",
+      },
+      createInputField<OverlayFormatting>("borderTopWidth", "Top Width", "0", {
+        min: 0,
+      }),
+      createInputField<OverlayFormatting>(
+        "borderBottomWidth",
+        "Bottom Width",
+        "0",
+        { min: 0 }
+      ),
+      createInputField<OverlayFormatting>(
+        "borderLeftWidth",
+        "Left Width",
+        "0",
+        { min: 0 }
+      ),
+      createInputField<OverlayFormatting>(
+        "borderRightWidth",
+        "Right Width",
+        "0",
+        { min: 0 }
+      ),
+    ],
+    flexbox: [
+      createSelectField<OverlayFormatting>("display", "Display", [
+        { label: "Block", value: "block" },
+        { label: "Flex", value: "flex" },
+      ]),
+      createSelectField<OverlayFormatting>("flexDirection", "Flex Direction", [
+        { label: "Row", value: "row" },
+        { label: "Column", value: "column" },
+      ]),
+      createSelectField<OverlayFormatting>(
+        "justifyContent",
+        "Justify Content",
+        [
+          { label: "Start", value: "flex-start" },
+          { label: "End", value: "flex-end" },
+          { label: "Center", value: "center" },
+          { label: "Space Between", value: "space-between" },
+          { label: "Space Around", value: "space-around" },
+        ]
+      ),
+      createSelectField<OverlayFormatting>("alignItems", "Align Items", [
+        { label: "Start", value: "flex-start" },
+        { label: "End", value: "flex-end" },
+        { label: "Center", value: "center" },
+        { label: "Baseline", value: "baseline" },
+        { label: "Stretch", value: "stretch" },
+      ]),
+    ],
+  };
+
+  // Child field configurations using the same generic utility functions
+  const childFieldConfigs: Record<string, FieldConfig<OverlayChild>[]> = {
+    basic: [
+      createInputField<OverlayChild>("fontSize", "Font Size", "15"),
+      createColorField<OverlayChild>("fontColor", "Font Color", "#ffffff"),
+      {
+        label: "Font Weight",
+        key: "fontWeight",
+        type: "input",
+        placeholder: "400",
+        min: 100,
+        max: 900,
+        step: 100,
+        onBlur: (e) => {
+          const value = Number(e.target.value);
+          if (!isNaN(value)) {
+            const rounded = Math.round(value / 100) * 100;
+            const clamped = Math.max(100, Math.min(900, rounded));
+            if (clamped !== value) {
+              // This will be handled by the parent component
+            }
+          }
+        },
+      },
+      createSelectField<OverlayChild>("fontStyle", "Font Style", [
+        { label: "Normal", value: "normal" },
+        { label: "Italic", value: "italic" },
+      ]),
+      createSelectField<OverlayChild>("textAlign", "Text Align", [
+        { label: "Left", value: "left" },
+        { label: "Center", value: "center" },
+        { label: "Right", value: "right" },
+      ]),
+      createMeasurementField<OverlayChild>("width", "Width"),
+      createMeasurementField<OverlayChild>("height", "Height"),
+    ],
+    dimensions: [
+      createInputField<OverlayChild>("maxWidth", "Max Width", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayChild>("maxHeight", "Max Height", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayChild>("minWidth", "Min Width", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayChild>("minHeight", "Min Height", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+    ],
+    colors: [
+      createColorField<OverlayChild>(
+        "backgroundColor",
+        "Background Color",
+        "#000000"
+      ),
+      createColorField<OverlayChild>("borderColor", "Border Color", "#ffffff"),
+      createColorField<OverlayChild>(
+        "borderLeftColor",
+        "Border Left Color",
+        "#ffffff"
+      ),
+      createColorField<OverlayChild>(
+        "borderRightColor",
+        "Border Right Color",
+        "#ffffff"
+      ),
+      createColorField<OverlayChild>(
+        "borderTopColor",
+        "Border Top Color",
+        "#ffffff"
+      ),
+      createColorField<OverlayChild>(
+        "borderBottomColor",
+        "Border Bottom Color",
+        "#ffffff"
+      ),
+    ],
+    borders: [
+      createSelectField<OverlayChild>("borderType", "Border Type", [
+        { label: "Solid", value: "solid" },
+        { label: "Dashed", value: "dashed" },
+        { label: "Dotted", value: "dotted" },
+      ]),
+      {
+        label: "Border Radius",
+        key: "borderRadius",
+        type: "input",
+        inputType: "text",
+        placeholder: "0",
+      },
+      {
+        label: "Top Left Radius",
+        key: "borderRadiusTopLeft",
+        type: "input",
+        inputType: "text",
+        placeholder: "0% 0%",
+      },
+      {
+        label: "Top Right Radius",
+        key: "borderRadiusTopRight",
+        type: "input",
+        inputType: "text",
+        placeholder: "3% 10%",
+      },
+      {
+        label: "Bottom Left Radius",
+        key: "borderRadiusBottomLeft",
+        type: "input",
+        inputType: "text",
+        placeholder: "0% 0%",
+      },
+      {
+        label: "Bottom Right Radius",
+        key: "borderRadiusBottomRight",
+        type: "input",
+        inputType: "text",
+        placeholder: "3% 10%",
+      },
+      createInputField<OverlayChild>("borderTopWidth", "Top Width", "0", {
+        min: 0,
+      }),
+      createInputField<OverlayChild>("borderBottomWidth", "Bottom Width", "0", {
+        min: 0,
+      }),
+      createInputField<OverlayChild>("borderLeftWidth", "Left Width", "0", {
+        min: 0,
+      }),
+      createInputField<OverlayChild>("borderRightWidth", "Right Width", "0", {
+        min: 0,
+      }),
+    ],
+    spacing: [
+      createInputField<OverlayChild>("paddingTop", "Padding Top", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayChild>("paddingBottom", "Padding Bottom", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayChild>("paddingLeft", "Padding Left", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayChild>("paddingRight", "Padding Right", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createMeasurementField<OverlayChild>("marginTop", "Margin Top"),
+      createMeasurementField<OverlayChild>("marginBottom", "Margin Bottom"),
+      createMeasurementField<OverlayChild>("marginLeft", "Margin Left"),
+      createMeasurementField<OverlayChild>("marginRight", "Margin Right"),
+    ],
+    position: [
+      createInputField<OverlayChild>("top", "Top", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayChild>("bottom", "Bottom", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayChild>("left", "Left", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+      createInputField<OverlayChild>("right", "Right", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+    ],
+    layout: [
+      createSelectField<OverlayChild>("display", "Display", [
+        { label: "Block", value: "block" },
+        { label: "Flex", value: "flex" },
+      ]),
+      createSelectField<OverlayChild>("flexDirection", "Flex Direction", [
+        { label: "Row", value: "row" },
+        { label: "Column", value: "column" },
+      ]),
+      createSelectField<OverlayChild>("justifyContent", "Justify Content", [
+        { label: "Start", value: "flex-start" },
+        { label: "End", value: "flex-end" },
+        { label: "Center", value: "center" },
+        { label: "Space Between", value: "space-between" },
+        { label: "Space Around", value: "space-around" },
+      ]),
+      createSelectField<OverlayChild>("alignItems", "Align Items", [
+        { label: "Start", value: "flex-start" },
+        { label: "End", value: "flex-end" },
+        { label: "Center", value: "center" },
+        { label: "Baseline", value: "baseline" },
+        { label: "Stretch", value: "stretch" },
+      ]),
+      createSelectField<OverlayChild>("flexWrap", "Flex Wrap", [
+        { label: "No Wrap", value: "nowrap" },
+        { label: "Wrap", value: "wrap" },
+        { label: "Wrap Reverse", value: "wrap-reverse" },
+      ]),
+      createInputField<OverlayChild>("gap", "Gap", "0", {
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }),
+    ],
+  };
+
+  // Render a section with fields
+  const renderSection = (
+    title: string,
+    fields: FieldConfig<OverlayFormatting>[],
+    shouldShow: boolean
+  ) => (
+    <Section title={title} shouldShow={shouldShow}>
+      {fields.map((field) => renderField(field, formatting, updateFormatting))}
+    </Section>
+  );
+
+  // Render a child section with fields
+  const renderChildSection = (
+    title: string,
+    fields: FieldConfig<OverlayChild>[],
+    child: OverlayChild,
+    index: number,
+    shouldShow: boolean
+  ) => {
+    if (!shouldShow) return null;
+
+    return (
+      <div className="w-full border-t pt-2">
+        <h5 className="text-sm font-medium text-gray-600 mb-2">{title}</h5>
+        <div className="flex flex-wrap gap-4">
+          {fields.map((field) =>
+            renderField(field, child, (updates) => updateChild(index, updates))
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const children = formatting.children || [];
 
   return (
     <div className="space-y-6 h-full overflow-y-auto">
+      <Toggle
+        label="Show All Styles"
+        value={showHiddenSections}
+        onChange={setShowHiddenSections}
+      />
+
       {/* Layout & Position Section */}
-      <Section
-        title="Layout & Position"
-        shouldShow={shouldShowSection([
+      {renderSection(
+        "Layout & Position",
+        fieldConfigs.layout,
+        shouldShowSection([
           "width",
           "height",
           "maxWidth",
@@ -244,692 +715,58 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
           "bottom",
           "left",
           "right",
-          "child1Width",
-          "child2Width",
-          "child3Width",
-          "child4Width",
-          "child1Height",
-          "child2Height",
-          "child3Height",
-          "child4Height",
-        ])}
-      >
-        {shouldShowField("width") && (
-          <WidthHeightField
-            label="Width"
-            value={
-              (formatting.width as HeightWidthType) ||
-              ("fit-content" as HeightWidthType)
-            }
-            onChange={(value) => updateFormatting({ width: value })}
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("height") && (
-          <WidthHeightField
-            label="Height"
-            value={
-              (formatting.height as HeightWidthType) ||
-              ("fit-content" as HeightWidthType)
-            }
-            onChange={(value) => updateFormatting({ height: value })}
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("maxWidth") && (
-          <InputField
-            label="Max Width"
-            type="number"
-            value={formatting.maxWidth || ""}
-            onChange={(value) => updateFormatting({ maxWidth: Number(value) })}
-            placeholder="0"
-            formatting={formatting}
-            endAdornment={<div className="text-gray-500 text-sm">%</div>}
-            step={0.5}
-          />
-        )}
-        {shouldShowField("maxHeight") && (
-          <InputField
-            label="Max Height"
-            type="number"
-            value={formatting.maxHeight || ""}
-            onChange={(value) => updateFormatting({ maxHeight: Number(value) })}
-            placeholder="0"
-            formatting={formatting}
-            endAdornment={<div className="text-gray-500 text-sm">%</div>}
-            step={0.5}
-          />
-        )}
-        {shouldShowField("minWidth") && (
-          <InputField
-            label="Min Width"
-            type="number"
-            value={formatting.minWidth || ""}
-            onChange={(value) => updateFormatting({ minWidth: Number(value) })}
-            placeholder="0"
-            formatting={formatting}
-            endAdornment={<div className="text-gray-500 text-sm">%</div>}
-            step={0.5}
-          />
-        )}
-        {shouldShowField("minHeight") && (
-          <InputField
-            label="Min Height"
-            type="number"
-            value={formatting.minHeight || ""}
-            onChange={(value) => updateFormatting({ minHeight: Number(value) })}
-            placeholder="0"
-            formatting={formatting}
-            endAdornment={<div className="text-gray-500 text-sm">%</div>}
-            step={0.5}
-          />
-        )}
-        {positionFields
-          .slice(0, 2)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <InputField
-                key={field.key}
-                label={field.label}
-                type="number"
-                value={formatting[field.key as keyof OverlayFormatting] || ""}
-                onChange={(value) =>
-                  updateFormatting({ [field.key]: Number(value) })
-                }
-                placeholder={field.placeholder}
-                formatting={formatting}
-                endAdornment={<div className="text-gray-500 text-sm">%</div>}
-                step={0.5}
-              />
-            ) : null
-          )}
-        {positionFields
-          .slice(2, 4)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <InputField
-                key={field.key}
-                label={field.label}
-                type="number"
-                value={formatting[field.key as keyof OverlayFormatting] || ""}
-                onChange={(value) =>
-                  updateFormatting({ [field.key]: Number(value) })
-                }
-                placeholder={field.placeholder}
-                formatting={formatting}
-                endAdornment={<div className="text-gray-500 text-sm">%</div>}
-                step={0.5}
-              />
-            ) : null
-          )}
-        {childWidthFields
-          .slice(0, 2)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <WidthHeightField
-                key={field.key}
-                label={field.label}
-                labelKey={field.labelKey}
-                value={
-                  (formatting[
-                    field.key as keyof OverlayFormatting
-                  ] as HeightWidthType) || ("fit-content" as HeightWidthType)
-                }
-                onChange={(value) => updateFormatting({ [field.key]: value })}
-                formatting={formatting}
-              />
-            ) : null
-          )}
-        {childWidthFields
-          .slice(2, 4)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <WidthHeightField
-                key={field.key}
-                label={field.label}
-                labelKey={field.labelKey}
-                value={
-                  (formatting[
-                    field.key as keyof OverlayFormatting
-                  ] as HeightWidthType) || ("fit-content" as HeightWidthType)
-                }
-                onChange={(value) => updateFormatting({ [field.key]: value })}
-                formatting={formatting}
-              />
-            ) : null
-          )}
-        {childHeightFields
-          .slice(0, 2)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <WidthHeightField
-                key={field.key}
-                label={field.label}
-                labelKey={field.labelKey}
-                value={
-                  (formatting[
-                    field.key as keyof OverlayFormatting
-                  ] as HeightWidthType) || ("fit-content" as HeightWidthType)
-                }
-                onChange={(value) => updateFormatting({ [field.key]: value })}
-                formatting={formatting}
-              />
-            ) : null
-          )}
-        {childHeightFields
-          .slice(2, 4)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <WidthHeightField
-                key={field.key}
-                label={field.label}
-                labelKey={field.labelKey}
-                value={
-                  (formatting[
-                    field.key as keyof OverlayFormatting
-                  ] as HeightWidthType) || ("fit-content" as HeightWidthType)
-                }
-                onChange={(value) => updateFormatting({ [field.key]: value })}
-                formatting={formatting}
-              />
-            ) : null
-          )}
-      </Section>
+        ])
+      )}
 
       {/* Typography Section */}
-      <Section
-        title="Typography"
-        shouldShow={shouldShowSection([
+      {renderSection(
+        "Typography",
+        fieldConfigs.typography,
+        shouldShowSection([
           "fontSize",
           "fontWeight",
           "fontStyle",
           "textAlign",
           "fontColor",
-          "child1FontSize",
-          "child2FontSize",
-          "child3FontSize",
-          "child4FontSize",
-          "child1FontColor",
-          "child2FontColor",
-          "child3FontColor",
-          "child4FontColor",
-          "child1FontWeight",
-          "child2FontWeight",
-          "child3FontWeight",
-          "child4FontWeight",
-          "child1FontStyle",
-          "child2FontStyle",
-          "child3FontStyle",
-          "child4FontStyle",
-          "child1TextAlign",
-          "child2TextAlign",
-          "child3TextAlign",
-          "child4TextAlign",
-        ])}
-      >
-        {shouldShowField("fontSize") && (
-          <InputField
-            label="Font Size"
-            type="number"
-            value={(formatting.fontSize || 1.5) * 10}
-            onChange={(value) =>
-              updateFormatting({ fontSize: Number(value) / 10 })
-            }
-            placeholder="15"
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("fontWeight") && (
-          <InputField
-            label="Font Weight"
-            type="number"
-            value={formatting.fontWeight || ""}
-            onChange={(value) =>
-              updateFormatting({ fontWeight: Number(value) })
-            }
-            onBlur={(e) => {
-              const value = Number(e.target.value);
-              if (!isNaN(value)) {
-                // Round to nearest multiple of 100 between 100 and 900
-                const rounded = Math.round(value / 100) * 100;
-                const clamped = Math.max(100, Math.min(900, rounded));
-                if (clamped !== value) {
-                  updateFormatting({ fontWeight: clamped });
-                }
-              }
-            }}
-            placeholder="400"
-            min={100}
-            max={900}
-            step={100}
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("textAlign") && (
-          <SelectField
-            label="Text Align"
-            value={formatting.textAlign || "left"}
-            onChange={(value) =>
-              updateFormatting({
-                textAlign: value as "left" | "right" | "center",
-              })
-            }
-            options={[
-              { label: "Left", value: "left" },
-              { label: "Center", value: "center" },
-              { label: "Right", value: "right" },
-            ]}
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("fontStyle") && (
-          <SelectField
-            label="Font Style"
-            value={formatting.fontStyle || "normal"}
-            onChange={(value) =>
-              updateFormatting({ fontStyle: value as "normal" | "italic" })
-            }
-            options={[
-              { label: "Normal", value: "normal" },
-              { label: "Italic", value: "italic" },
-            ]}
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("fontColor") && (
-          <ColorField
-            label="Font Color"
-            value={formatting.fontColor || "#ffffff"}
-            onChange={(value) =>
-              updateFormatting({ fontColor: value as string })
-            }
-            defaultColor="#ffffff"
-            formatting={formatting}
-          />
-        )}
-        {childFontFields
-          .slice(0, 2)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <InputField
-                key={field.key}
-                label={field.label}
-                labelKey={field.labelKey}
-                type="number"
-                value={
-                  ((formatting[
-                    field.key as keyof OverlayFormatting
-                  ] as number) || 1.5) * 10
-                }
-                onChange={(value) =>
-                  updateFormatting({ [field.key]: Number(value) / 10 })
-                }
-                placeholder={field.placeholder}
-                formatting={formatting}
-              />
-            ) : null
-          )}
-        {childFontFields
-          .slice(2, 4)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <InputField
-                key={field.key}
-                label={field.label}
-                labelKey={field.labelKey}
-                type="number"
-                value={
-                  ((formatting[
-                    field.key as keyof OverlayFormatting
-                  ] as number) || 1.5) * 10
-                }
-                onChange={(value) =>
-                  updateFormatting({ [field.key]: Number(value) / 10 })
-                }
-                placeholder={field.placeholder}
-                formatting={formatting}
-              />
-            ) : null
-          )}
-
-        {/* Child Font Colors */}
-        {childFontColorFields
-          .slice(0, 2)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <ColorField
-                key={field.key}
-                label={field.label}
-                labelKey={field.labelKey}
-                value={String(
-                  formatting[field.key as keyof OverlayFormatting] || "#ffffff"
-                )}
-                onChange={(value) => updateFormatting({ [field.key]: value })}
-                defaultColor="#ffffff"
-                formatting={formatting}
-              />
-            ) : null
-          )}
-        {childFontColorFields
-          .slice(2, 4)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <ColorField
-                key={field.key}
-                label={field.label}
-                labelKey={field.labelKey}
-                value={String(
-                  formatting[field.key as keyof OverlayFormatting] || "#ffffff"
-                )}
-                onChange={(value) => updateFormatting({ [field.key]: value })}
-                defaultColor="#ffffff"
-                formatting={formatting}
-              />
-            ) : null
-          )}
-
-        {/* Child Font Weights */}
-        {childFontWeightFields.slice(0, 2).map((field) =>
-          shouldShowField(field.key) ? (
-            <InputField
-              key={field.key}
-              label={field.label}
-              labelKey={field.labelKey}
-              type="number"
-              value={formatting[field.key as keyof OverlayFormatting] || ""}
-              onChange={(value) =>
-                updateFormatting({ [field.key]: Number(value) })
-              }
-              onBlur={(e) => {
-                const value = Number(e.target.value);
-                if (!isNaN(value)) {
-                  const rounded = Math.round(value / 100) * 100;
-                  const clamped = Math.max(100, Math.min(900, rounded));
-                  if (clamped !== value) {
-                    updateFormatting({ [field.key]: clamped });
-                  }
-                }
-              }}
-              placeholder={field.placeholder}
-              min={100}
-              max={900}
-              step={100}
-              formatting={formatting}
-            />
-          ) : null
-        )}
-        {childFontWeightFields.slice(2, 4).map((field) =>
-          shouldShowField(field.key) ? (
-            <InputField
-              key={field.key}
-              label={field.label}
-              labelKey={field.labelKey}
-              type="number"
-              value={formatting[field.key as keyof OverlayFormatting] || ""}
-              onChange={(value) =>
-                updateFormatting({ [field.key]: Number(value) })
-              }
-              onBlur={(e) => {
-                const value = Number(e.target.value);
-                if (!isNaN(value)) {
-                  const rounded = Math.round(value / 100) * 100;
-                  const clamped = Math.max(100, Math.min(900, rounded));
-                  if (clamped !== value) {
-                    updateFormatting({ [field.key]: clamped });
-                  }
-                }
-              }}
-              placeholder={field.placeholder}
-              min={100}
-              max={900}
-              step={100}
-              formatting={formatting}
-            />
-          ) : null
-        )}
-
-        {/* Child Font Styles */}
-        {childFontStyleFields.slice(0, 2).map((field) =>
-          shouldShowField(field.key) ? (
-            <SelectField
-              key={field.key}
-              label={field.label}
-              labelKey={field.labelKey}
-              value={
-                (formatting[field.key as keyof OverlayFormatting] as string) ||
-                "normal"
-              }
-              onChange={(value) =>
-                updateFormatting({ [field.key]: value as "normal" | "italic" })
-              }
-              options={[
-                { label: "Normal", value: "normal" },
-                { label: "Italic", value: "italic" },
-              ]}
-              formatting={formatting}
-            />
-          ) : null
-        )}
-        {childFontStyleFields.slice(2, 4).map((field) =>
-          shouldShowField(field.key) ? (
-            <SelectField
-              key={field.key}
-              label={field.label}
-              labelKey={field.labelKey}
-              value={
-                (formatting[field.key as keyof OverlayFormatting] as string) ||
-                "normal"
-              }
-              onChange={(value) =>
-                updateFormatting({ [field.key]: value as "normal" | "italic" })
-              }
-              options={[
-                { label: "Normal", value: "normal" },
-                { label: "Italic", value: "italic" },
-              ]}
-              formatting={formatting}
-            />
-          ) : null
-        )}
-
-        {/* Child Text Aligns */}
-        {childTextAlignFields.slice(0, 2).map((field) =>
-          shouldShowField(field.key) ? (
-            <SelectField
-              key={field.key}
-              label={field.label}
-              labelKey={field.labelKey}
-              value={
-                (formatting[field.key as keyof OverlayFormatting] as string) ||
-                "left"
-              }
-              onChange={(value) =>
-                updateFormatting({
-                  [field.key]: value as "left" | "right" | "center",
-                })
-              }
-              options={[
-                { label: "Left", value: "left" },
-                { label: "Center", value: "center" },
-                { label: "Right", value: "right" },
-              ]}
-              formatting={formatting}
-            />
-          ) : null
-        )}
-        {childTextAlignFields.slice(2, 4).map((field) =>
-          shouldShowField(field.key) ? (
-            <SelectField
-              key={field.key}
-              label={field.label}
-              labelKey={field.labelKey}
-              value={
-                (formatting[field.key as keyof OverlayFormatting] as string) ||
-                "left"
-              }
-              onChange={(value) =>
-                updateFormatting({
-                  [field.key]: value as "left" | "right" | "center",
-                })
-              }
-              options={[
-                { label: "Left", value: "left" },
-                { label: "Center", value: "center" },
-                { label: "Right", value: "right" },
-              ]}
-              formatting={formatting}
-            />
-          ) : null
-        )}
-      </Section>
+        ])
+      )}
 
       {/* Spacing Section */}
-      <Section
-        title="Spacing"
-        shouldShow={shouldShowSection([
+      {renderSection(
+        "Spacing",
+        fieldConfigs.spacing,
+        shouldShowSection([
           "paddingTop",
           "paddingBottom",
           "paddingLeft",
           "paddingRight",
           "gap",
-        ])}
-      >
-        {spacingFields
-          .slice(0, 2)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <InputField
-                key={field.key}
-                label={field.label}
-                type="number"
-                value={formatting[field.key as keyof OverlayFormatting] || ""}
-                onChange={(value) =>
-                  updateFormatting({ [field.key]: Number(value) })
-                }
-                placeholder={field.placeholder}
-                formatting={formatting}
-                step={0.5}
-                endAdornment={<div className="text-gray-500 text-sm">%</div>}
-              />
-            ) : null
-          )}
-        {spacingFields
-          .slice(2, 4)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <InputField
-                key={field.key}
-                label={field.label}
-                type="number"
-                value={formatting[field.key as keyof OverlayFormatting] || ""}
-                onChange={(value) =>
-                  updateFormatting({ [field.key]: Number(value) })
-                }
-                placeholder={field.placeholder}
-                formatting={formatting}
-                step={0.5}
-                endAdornment={<div className="text-gray-500 text-sm">%</div>}
-              />
-            ) : null
-          )}
-        {shouldShowField("gap") && (
-          <InputField
-            label="Gap"
-            value={formatting.gap || 0}
-            type="number"
-            onChange={(value) => updateFormatting({ gap: Number(value) })}
-            placeholder="0"
-            formatting={formatting}
-            step={0.5}
-            endAdornment={<div className="text-gray-500 text-sm">%</div>}
-          />
-        )}
-      </Section>
+          "marginTop",
+          "marginBottom",
+          "marginLeft",
+          "marginRight",
+        ])
+      )}
 
       {/* Colors Section */}
-      <Section
-        title="Colors"
-        shouldShow={shouldShowSection([
+      {renderSection(
+        "Colors",
+        fieldConfigs.colors,
+        shouldShowSection([
           "backgroundColor",
           "borderColor",
           "borderLeftColor",
           "borderRightColor",
           "borderTopColor",
           "borderBottomColor",
-        ])}
-      >
-        {shouldShowField("backgroundColor") && (
-          <ColorField
-            label="Background Color"
-            value={formatting.backgroundColor || "#000000"}
-            onChange={(value) =>
-              updateFormatting({ backgroundColor: value as string })
-            }
-            defaultColor="#000000"
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("borderColor") && (
-          <ColorField
-            label="Border Color"
-            value={formatting.borderColor || "#ffffff"}
-            onChange={(value) =>
-              updateFormatting({ borderColor: value as string })
-            }
-            defaultColor="#ffffff"
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("borderLeftColor") && (
-          <ColorField
-            label="Border Left Color"
-            value={formatting.borderLeftColor || "#ffffff"}
-            onChange={(value) =>
-              updateFormatting({ borderLeftColor: value as string })
-            }
-            defaultColor="#ffffff"
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("borderRightColor") && (
-          <ColorField
-            label="Border Right Color"
-            value={formatting.borderRightColor || "#ffffff"}
-            onChange={(value) =>
-              updateFormatting({ borderRightColor: value as string })
-            }
-            defaultColor="#ffffff"
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("borderTopColor") && (
-          <ColorField
-            label="Border Top Color"
-            value={formatting.borderTopColor || "#ffffff"}
-            onChange={(value) =>
-              updateFormatting({ borderTopColor: value as string })
-            }
-            defaultColor="#ffffff"
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("borderBottomColor") && (
-          <ColorField
-            label="Border Bottom Color"
-            value={formatting.borderBottomColor || "#ffffff"}
-            onChange={(value) =>
-              updateFormatting({ borderBottomColor: value as string })
-            }
-            defaultColor="#ffffff"
-            formatting={formatting}
-          />
-        )}
-      </Section>
+        ])
+      )}
 
       {/* Border Section */}
-      <Section
-        title="Border"
-        shouldShow={shouldShowSection([
+      {renderSection(
+        "Border",
+        fieldConfigs.border,
+        shouldShowSection([
           "borderType",
           "borderRadius",
           "borderRadiusTopLeft",
@@ -940,205 +777,143 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
           "borderBottomWidth",
           "borderLeftWidth",
           "borderRightWidth",
-        ])}
-      >
-        {shouldShowField("borderType") && (
-          <SelectField
-            label="Type"
-            value={formatting.borderType || "solid"}
-            onChange={(value) =>
-              updateFormatting({
-                borderType: value as "solid" | "dashed" | "dotted",
-              })
-            }
-            options={[
-              { label: "Solid", value: "solid" },
-              { label: "Dashed", value: "dashed" },
-              { label: "Dotted", value: "dotted" },
-            ]}
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("borderRadius") && (
-          <InputField
-            label="Radius"
-            value={formatting.borderRadius || ""}
-            onChange={(value) =>
-              updateFormatting({ borderRadius: value as string })
-            }
-            placeholder="0"
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("borderRadiusTopLeft") && (
-          <InputField
-            label="Top Left Radius"
-            value={formatting.borderRadiusTopLeft || ""}
-            onChange={(value) =>
-              updateFormatting({ borderRadiusTopLeft: value as string })
-            }
-            placeholder="0% 0%"
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("borderRadiusTopRight") && (
-          <InputField
-            label="Top Right Radius"
-            value={formatting.borderRadiusTopRight || ""}
-            onChange={(value) =>
-              updateFormatting({ borderRadiusTopRight: value as string })
-            }
-            placeholder="3% 10%"
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("borderRadiusBottomLeft") && (
-          <InputField
-            label="Bot Left Radius"
-            value={formatting.borderRadiusBottomLeft || ""}
-            onChange={(value) =>
-              updateFormatting({ borderRadiusBottomLeft: value as string })
-            }
-            placeholder="0% 0%"
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("borderRadiusBottomRight") && (
-          <InputField
-            label="Bot Right Radius"
-            value={formatting.borderRadiusBottomRight || ""}
-            onChange={(value) =>
-              updateFormatting({ borderRadiusBottomRight: value as string })
-            }
-            placeholder="3% 10%"
-            formatting={formatting}
-          />
-        )}
-        {borderWidthFields
-          .slice(0, 2)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <InputField
-                key={field.key}
-                label={field.label}
-                type="number"
-                value={formatting[field.key as keyof OverlayFormatting] || ""}
-                onChange={(value) =>
-                  updateFormatting({ [field.key]: Number(value) })
-                }
-                placeholder="0"
-                min={0}
-                formatting={formatting}
-              />
-            ) : null
-          )}
-        {borderWidthFields
-          .slice(2, 4)
-          .map((field) =>
-            shouldShowField(field.key) ? (
-              <InputField
-                key={field.key}
-                label={field.label}
-                type="number"
-                value={formatting[field.key as keyof OverlayFormatting] || ""}
-                onChange={(value) =>
-                  updateFormatting({ [field.key]: Number(value) })
-                }
-                placeholder="0"
-                min={0}
-                formatting={formatting}
-              />
-            ) : null
-          )}
-      </Section>
+        ])
+      )}
 
       {/* Flexbox Section */}
-      <Section
-        title="Flexbox"
-        shouldShow={shouldShowSection([
+      {renderSection(
+        "Flexbox",
+        fieldConfigs.flexbox,
+        shouldShowSection([
           "display",
           "flexDirection",
           "justifyContent",
           "alignItems",
-        ])}
-      >
-        {shouldShowField("display") && (
-          <SelectField
-            label="Display"
-            value={formatting.display || "block"}
-            onChange={(value) =>
-              updateFormatting({ display: value as "flex" | "block" })
-            }
-            options={[
-              { label: "Block", value: "block" },
-              { label: "Flex", value: "flex" },
-            ]}
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("flexDirection") && (
-          <SelectField
-            label="Flex Direction"
-            value={formatting.flexDirection || "row"}
-            onChange={(value) =>
-              updateFormatting({ flexDirection: value as "row" | "column" })
-            }
-            options={[
-              { label: "Row", value: "row" },
-              { label: "Column", value: "column" },
-            ]}
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("justifyContent") && (
-          <SelectField
-            label="Justify Content"
-            value={formatting.justifyContent || "flex-start"}
-            onChange={(value) =>
-              updateFormatting({
-                justifyContent: value as
-                  | "flex-start"
-                  | "flex-end"
-                  | "center"
-                  | "space-between"
-                  | "space-around",
-              })
-            }
-            options={[
-              { label: "Start", value: "flex-start" },
-              { label: "End", value: "flex-end" },
-              { label: "Center", value: "center" },
-              { label: "Space Between", value: "space-between" },
-              { label: "Space Around", value: "space-around" },
-            ]}
-            formatting={formatting}
-          />
-        )}
-        {shouldShowField("alignItems") && (
-          <SelectField
-            label="Align Items"
-            value={formatting.alignItems || "stretch"}
-            onChange={(value) =>
-              updateFormatting({
-                alignItems: value as
-                  | "flex-start"
-                  | "flex-end"
-                  | "center"
-                  | "baseline"
-                  | "stretch",
-              })
-            }
-            options={[
-              { label: "Start", value: "flex-start" },
-              { label: "End", value: "flex-end" },
-              { label: "Center", value: "center" },
-              { label: "Baseline", value: "baseline" },
-              { label: "Stretch", value: "stretch" },
-            ]}
-            formatting={formatting}
-          />
-        )}
-      </Section>
+        ])
+      )}
+
+      {/* Inner Elements Section */}
+      {children.length > 0 && (
+        <Section title="Inner Elements" shouldShow={true}>
+          <div className="space-y-4">
+            {children.map((child, index) => (
+              <div
+                key={index}
+                className="border rounded-lg p-4 flex flex-wrap gap-4"
+              >
+                <h4 className="font-medium w-full">
+                  {child.label || `Element ${index + 1}`}
+                </h4>
+
+                {/* Basic fields */}
+                {childFieldConfigs.basic.map((field) =>
+                  renderField(field, child, (updates) =>
+                    updateChild(index, updates)
+                  )
+                )}
+
+                {/* Dimensions */}
+                {renderChildSection(
+                  "Dimensions",
+                  childFieldConfigs.dimensions,
+                  child,
+                  index,
+                  shouldShowChildSection(child, [
+                    "maxWidth",
+                    "maxHeight",
+                    "minWidth",
+                    "minHeight",
+                  ])
+                )}
+
+                {/* Colors & Background */}
+                {renderChildSection(
+                  "Colors & Background",
+                  childFieldConfigs.colors,
+                  child,
+                  index,
+                  shouldShowChildSection(child, [
+                    "backgroundColor",
+                    "borderColor",
+                    "borderLeftColor",
+                    "borderRightColor",
+                    "borderTopColor",
+                    "borderBottomColor",
+                  ])
+                )}
+
+                {/* Borders */}
+                {renderChildSection(
+                  "Borders",
+                  childFieldConfigs.borders,
+                  child,
+                  index,
+                  shouldShowChildSection(child, [
+                    "borderType",
+                    "borderRadius",
+                    "borderRadiusTopLeft",
+                    "borderRadiusTopRight",
+                    "borderRadiusBottomLeft",
+                    "borderRadiusBottomRight",
+                    "borderTopWidth",
+                    "borderBottomWidth",
+                    "borderLeftWidth",
+                    "borderRightWidth",
+                  ])
+                )}
+
+                {/* Spacing */}
+                {renderChildSection(
+                  "Spacing",
+                  childFieldConfigs.spacing,
+                  child,
+                  index,
+                  shouldShowChildSection(child, [
+                    "paddingTop",
+                    "paddingBottom",
+                    "paddingLeft",
+                    "paddingRight",
+                    "marginTop",
+                    "marginBottom",
+                    "marginLeft",
+                    "marginRight",
+                  ])
+                )}
+
+                {/* Position */}
+                {renderChildSection(
+                  "Position",
+                  childFieldConfigs.position,
+                  child,
+                  index,
+                  shouldShowChildSection(child, [
+                    "top",
+                    "bottom",
+                    "left",
+                    "right",
+                  ])
+                )}
+
+                {/* Layout */}
+                {renderChildSection(
+                  "Layout",
+                  childFieldConfigs.layout,
+                  child,
+                  index,
+                  shouldShowChildSection(child, [
+                    "display",
+                    "flexDirection",
+                    "justifyContent",
+                    "alignItems",
+                    "flexWrap",
+                    "gap",
+                  ])
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
     </div>
   );
 };

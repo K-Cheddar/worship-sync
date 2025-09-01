@@ -3,36 +3,49 @@ import { OverlayFormatting } from "../../types";
 import Input from "../Input/Input";
 import Select from "../Select/Select";
 
-type HeightWidthType = "fit-content" | "percent" | "auto" | "unset" | "number";
+export type MeasurementType =
+  | "fit-content"
+  | "percent"
+  | "auto"
+  | "unset"
+  | "number";
 
-interface WidthHeightFieldProps {
+interface MeasurementFieldProps {
   label: string;
   labelKey?: string;
-  value: HeightWidthType;
-  onChange: (value: HeightWidthType) => void;
+  value: MeasurementType;
+  onChange: (value: MeasurementType) => void;
   formatting?: OverlayFormatting;
+  property?: "dimension" | "spacing";
 }
 
-const WidthHeightField: React.FC<WidthHeightFieldProps> = ({
+const MeasurementField: React.FC<MeasurementFieldProps> = ({
   label,
   labelKey,
   value,
   onChange,
   formatting,
+  property = "dimension",
 }) => {
-  const [type, setType] = React.useState<HeightWidthType>(value);
+  const [type, setType] = React.useState<MeasurementType>(() => {
+    if (typeof value === "number") {
+      return "percent";
+    } else {
+      return value;
+    }
+  });
 
-  const handleTypeChange = (newType: HeightWidthType) => {
+  const handleTypeChange = (newType: MeasurementType) => {
     setType(newType);
     onChange(newType);
   };
 
   const handleValueChange = (newValue: string | number) => {
-    onChange(newValue as HeightWidthType);
+    onChange(newValue as MeasurementType);
   };
 
   return (
-    <div>
+    <div className="w-full">
       <label className="block text-sm font-medium text-white mb-1">
         {labelKey && formatting
           ? `${formatting[labelKey as keyof OverlayFormatting] as string} ${label}`
@@ -43,21 +56,24 @@ const WidthHeightField: React.FC<WidthHeightFieldProps> = ({
         <Select
           hideLabel
           value={type}
-          onChange={(value) => handleTypeChange(value as HeightWidthType)}
+          onChange={(value) => handleTypeChange(value as MeasurementType)}
           options={[
-            { label: "Fit Content", value: "fit-content" },
             { label: "Percent", value: "percent" },
             { label: "Auto", value: "auto" },
             { label: "Unset", value: "unset" },
+            ...(property === "dimension"
+              ? [{ label: "Fit Content", value: "fit-content" }]
+              : []),
           ]}
           className="w-28"
+          selectClassName="w-full"
         />
         {type === "percent" && (
           <Input
             hideLabel
             type="number"
             value={typeof value === "number" ? value : 0}
-            onChange={(value) => handleValueChange(value as HeightWidthType)}
+            onChange={(value) => handleValueChange(value as MeasurementType)}
             placeholder="0"
             endAdornment={<div className="text-gray-500 text-sm">%</div>}
             min={0}
@@ -71,4 +87,4 @@ const WidthHeightField: React.FC<WidthHeightFieldProps> = ({
   );
 };
 
-export default WidthHeightField;
+export default MeasurementField;
