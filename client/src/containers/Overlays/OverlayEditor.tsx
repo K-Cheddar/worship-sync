@@ -465,7 +465,7 @@ const OverlayEditor = ({
       >
         <div className="flex flex-col lg:flex-row h-full">
           <div className="w-full lg:w-[70vw] flex flex-col">
-            <div className="flex-1 flex items-center justify-center p-4">
+            <div className="flex items-center justify-center bg-gray-600 h-fit">
               <DisplayWindow
                 showBorder
                 displayType="stream"
