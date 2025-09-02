@@ -24,6 +24,7 @@ type UpdateBoxPropertiesType = {
   shouldApplyToAll?: boolean;
   shouldFormatItem?: boolean;
   shouldUpdateBgOnly?: boolean;
+  shouldSkipTitleSlide?: boolean;
   isMobile: boolean;
 };
 export const updateBoxProperties = ({
@@ -32,6 +33,7 @@ export const updateBoxProperties = ({
   shouldApplyToAll = false,
   shouldFormatItem = false,
   shouldUpdateBgOnly = false,
+  shouldSkipTitleSlide = true,
   isMobile,
 }: UpdateBoxPropertiesType): ItemState => {
   let { selectedSlide, selectedBox } = item;
@@ -44,7 +46,8 @@ export const updateBoxProperties = ({
   slides = slides.map((slide, slideIndex) => {
     if (item.type === "song") {
       // If the first slide isn't selected, don't apply changes
-      if (slideIndex === 0 && selectedSlide !== 0) return slide;
+      if (slideIndex === 0 && selectedSlide !== 0 && shouldSkipTitleSlide)
+        return slide;
     }
 
     if (slideIndex !== selectedSlide && !shouldApplyToAll) return slide;
@@ -75,7 +78,7 @@ export const updateBoxProperties = ({
       {
         ..._item,
       },
-      isMobile,
+      isMobile
     );
   }
 
