@@ -272,6 +272,12 @@ export type OverlayChild = Omit<OverlayFormatting, "children"> & {
   label?: string;
 };
 
+export type OverlayType =
+  | "participant"
+  | "stick-to-bottom"
+  | "qr-code"
+  | "image";
+
 export type OverlayInfo = {
   // participant
   name?: string;
@@ -287,7 +293,7 @@ export type OverlayInfo = {
   imageUrl?: string;
   // shared
   duration?: number;
-  type?: "participant" | "stick-to-bottom" | "qr-code" | "image";
+  type?: OverlayType;
   time?: number;
   id: string;
   formatting?: OverlayFormatting;

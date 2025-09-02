@@ -161,7 +161,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
           styles={currentStyles}
           overlayInfo={stbOverlayInfo}
           needsPadding={needsPadding}
-          overlayType="stb"
+          overlayType="stick-to-bottom"
         />
         <SharedOverlay
           ref={prevStbOverlayRef}
@@ -170,7 +170,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
           overlayInfo={prevStbOverlayInfo}
           needsPadding={prevNeedsPadding}
           isPrev={true}
-          overlayType="stb"
+          overlayType="stick-to-bottom"
         />
       </>
     );

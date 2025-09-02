@@ -1,13 +1,16 @@
-import React, { forwardRef } from "react";
-import { OverlayInfo, OverlayChild, OverlayFormatting } from "../../types";
+import React, { CSSProperties, forwardRef } from "react";
+import {
+  OverlayInfo,
+  OverlayChild,
+  OverlayFormatting,
+  OverlayType,
+} from "../../types";
 // @ts-ignore
 import { QRCode } from "react-qr-code";
 import { getFontSize, getBorderWidth, getMargin } from "./utils";
 import { checkMediaType, getImageFromVideoUrl } from "../../utils/generalUtils";
 import HLSPlayer from "./HLSVideoPlayer";
 import "./DisplayWindow.scss";
-
-export type OverlayType = "participant" | "qr-code" | "stb" | "image";
 
 interface SharedOverlayProps {
   width: number;
@@ -28,7 +31,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
       child: OverlayChild,
       defaultTextAlign: "left" | "right" | "center" = "left",
       useGlobalStyles: boolean = false
-    ) => {
+    ): CSSProperties => {
       const source = useGlobalStyles ? styles : child;
       return {
         // Font properties
@@ -63,33 +66,35 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
 
         // Background and border properties
         backgroundColor: source.backgroundColor,
-        borderColor: source.borderColor,
         borderStyle: source.borderType || "solid",
         borderLeftWidth: getBorderWidth({
           width,
           borderWidth: source.borderLeftWidth,
         }),
-        borderLeftColor: source.borderLeftColor,
+        borderLeftColor: source.borderLeftColor || source.borderColor,
         borderRightWidth: getBorderWidth({
           width,
           borderWidth: source.borderRightWidth,
         }),
-        borderRightColor: source.borderRightColor,
+        borderRightColor: source.borderRightColor || source.borderColor,
         borderTopWidth: getBorderWidth({
           width,
           borderWidth: source.borderTopWidth,
         }),
-        borderTopColor: source.borderTopColor,
+        borderTopColor: source.borderTopColor || source.borderColor,
         borderBottomWidth: getBorderWidth({
           width,
           borderWidth: source.borderBottomWidth,
         }),
-        borderBottomColor: source.borderBottomColor,
+        borderBottomColor: source.borderBottomColor || source.borderColor,
         borderRadius: source.borderRadius,
-        borderTopLeftRadius: source.borderRadiusTopLeft,
-        borderTopRightRadius: source.borderRadiusTopRight,
-        borderBottomLeftRadius: source.borderRadiusBottomLeft,
-        borderBottomRightRadius: source.borderRadiusBottomRight,
+        borderTopLeftRadius: source.borderRadiusTopLeft || source.borderRadius,
+        borderTopRightRadius:
+          source.borderRadiusTopRight || source.borderRadius,
+        borderBottomLeftRadius:
+          source.borderRadiusBottomLeft || source.borderRadius,
+        borderBottomRightRadius:
+          source.borderRadiusBottomRight || source.borderRadius,
 
         // Spacing properties
         paddingTop: source.paddingTop ? `${source.paddingTop}%` : undefined,
@@ -152,7 +157,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
           { key: "title", className: "title" },
           { key: "event", className: "event" },
         ],
-        stb: [
+        "stick-to-bottom": [
           { key: "heading", className: "heading" },
           { key: "subHeading", className: "subHeading" },
         ],
@@ -160,7 +165,8 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
 
       const currentMapping =
         dataMapping[overlayType as keyof typeof dataMapping] || [];
-      const defaultTextAlign = overlayType === "stb" ? "center" : "left";
+      const defaultTextAlign =
+        overlayType === "stick-to-bottom" ? "center" : "left";
 
       return children.map((child: OverlayChild, index: number) => {
         const dataKey = currentMapping[index]?.key;
@@ -216,7 +222,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
             <p
               key={index}
               className="overlay-qr-code-info-description"
-              style={getSharedStyles(child, "left", true)}
+              style={getSharedStyles(child, "left")}
             >
               {overlayInfo.description}
             </p>
@@ -260,7 +266,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
       switch (overlayType) {
         case "participant":
           return "overlay-participant-info-container";
-        case "stb":
+        case "stick-to-bottom":
           return "overlay-stb-info-container";
         case "qr-code":
           return "overlay-qr-code-info-container";

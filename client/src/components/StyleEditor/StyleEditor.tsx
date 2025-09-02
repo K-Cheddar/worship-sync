@@ -6,10 +6,13 @@ import SelectField from "./SelectField";
 import MeasurementField, { MeasurementType } from "./MeasurementField";
 import ColorField from "../ColorField/ColorField";
 import Toggle from "../Toggle/Toggle";
+import "./StyleEditor.scss";
+import cn from "classnames";
 
 interface StyleEditorProps {
   formatting: OverlayFormatting;
   onChange: (formatting: OverlayFormatting) => void;
+  className?: string;
 }
 
 type FieldConfig<T extends OverlayFormatting | OverlayChild> = {
@@ -27,7 +30,11 @@ type FieldConfig<T extends OverlayFormatting | OverlayChild> = {
   onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void;
 };
 
-const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
+const StyleEditor: React.FC<StyleEditorProps> = ({
+  formatting,
+  onChange,
+  className,
+}) => {
   const [showHiddenSections, setShowHiddenSections] = useState(false);
 
   const updateFormatting = (updates: Partial<OverlayFormatting>) => {
@@ -53,7 +60,7 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
   ) => {
     if (showHiddenSections) return true;
     const value = data[field];
-    return value !== undefined && value !== null && value !== "";
+    return value !== undefined && value !== null;
   };
 
   // Helper function to check if a child section should be shown
@@ -72,7 +79,7 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
   ) => {
     if (showHiddenSections) return true;
     const value = child[field];
-    return value !== undefined && value !== null && value !== "";
+    return value !== undefined && value !== null;
   };
 
   // Generic field renderer that works for both main formatting and child elements
@@ -146,6 +153,11 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
             {...commonProps}
             value={(value as MeasurementType) || "fit-content"}
             onChange={(value) => onUpdate({ [key]: value } as Partial<T>)}
+            property={
+              config.label.toLowerCase().includes("margin")
+                ? "spacing"
+                : "dimension"
+            }
           />
         );
       case "color":
@@ -212,448 +224,402 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
     type: "measurement" as const,
   });
 
-  // Field configurations using generic utility functions
-  const fieldConfigs: Record<string, FieldConfig<OverlayFormatting>[]> = {
-    layout: [
-      createMeasurementField<OverlayFormatting>("width", "Width"),
-      createMeasurementField<OverlayFormatting>("height", "Height"),
-      createInputField<OverlayFormatting>("maxWidth", "Max Width", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayFormatting>("maxHeight", "Max Height", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayFormatting>("minWidth", "Min Width", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayFormatting>("minHeight", "Min Height", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayFormatting>("top", "Top", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayFormatting>("bottom", "Bottom", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayFormatting>("left", "Left", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayFormatting>("right", "Right", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-    ],
-    typography: [
-      createInputField<OverlayFormatting>("fontSize", "Font Size", "15"),
+  // Common field configurations that can be reused
+  const commonFields = {
+    // Layout fields
+    width: createMeasurementField<OverlayFormatting>("width", "Width"),
+    height: createMeasurementField<OverlayFormatting>("height", "Height"),
+    maxWidth: createInputField<OverlayFormatting>(
+      "maxWidth",
+      "Max Width",
+      "0",
       {
-        label: "Font Weight",
-        key: "fontWeight",
-        type: "input",
-        placeholder: "400",
-        min: 100,
-        max: 900,
-        step: 100,
-        onBlur: (e) => {
-          const value = Number(e.target.value);
-          if (!isNaN(value)) {
-            const rounded = Math.round(value / 100) * 100;
-            const clamped = Math.max(100, Math.min(900, rounded));
-            if (clamped !== value) {
-              updateFormatting({ fontWeight: clamped });
-            }
-          }
-        },
-      },
-      createSelectField<OverlayFormatting>("textAlign", "Text Align", [
-        { label: "Left", value: "left" },
-        { label: "Center", value: "center" },
-        { label: "Right", value: "right" },
-      ]),
-      createSelectField<OverlayFormatting>("fontStyle", "Font Style", [
-        { label: "Normal", value: "normal" },
-        { label: "Italic", value: "italic" },
-      ]),
-      createColorField<OverlayFormatting>("fontColor", "Font Color", "#ffffff"),
-    ],
-    spacing: [
-      createInputField<OverlayFormatting>("paddingTop", "Padding Top", "0", {
         step: 0.5,
         endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayFormatting>(
-        "paddingBottom",
-        "Padding Bottom",
-        "0",
-        {
-          step: 0.5,
-          endAdornment: <div className="text-gray-500 text-sm">%</div>,
-        }
-      ),
-      createInputField<OverlayFormatting>("paddingLeft", "Padding Left", "0", {
+      }
+    ),
+    maxHeight: createInputField<OverlayFormatting>(
+      "maxHeight",
+      "Max Height",
+      "0",
+      {
         step: 0.5,
         endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayFormatting>(
-        "paddingRight",
-        "Padding Right",
-        "0",
-        {
-          step: 0.5,
-          endAdornment: <div className="text-gray-500 text-sm">%</div>,
-        }
-      ),
-      createMeasurementField<OverlayFormatting>("marginTop", "Margin Top"),
-      createMeasurementField<OverlayFormatting>(
-        "marginBottom",
-        "Margin Bottom"
-      ),
-      createMeasurementField<OverlayFormatting>("marginLeft", "Margin Left"),
-      createMeasurementField<OverlayFormatting>("marginRight", "Margin Right"),
-      createInputField<OverlayFormatting>("gap", "Gap", "0", {
+      }
+    ),
+    minWidth: createInputField<OverlayFormatting>(
+      "minWidth",
+      "Min Width",
+      "0",
+      {
         step: 0.5,
         endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-    ],
-    colors: [
-      createColorField<OverlayFormatting>(
-        "backgroundColor",
-        "Background Color",
-        "#000000"
-      ),
-      createColorField<OverlayFormatting>(
-        "borderColor",
-        "Border Color",
-        "#ffffff"
-      ),
-      createColorField<OverlayFormatting>(
-        "borderLeftColor",
-        "Border Left Color",
-        "#ffffff"
-      ),
-      createColorField<OverlayFormatting>(
-        "borderRightColor",
-        "Border Right Color",
-        "#ffffff"
-      ),
-      createColorField<OverlayFormatting>(
-        "borderTopColor",
-        "Border Top Color",
-        "#ffffff"
-      ),
-      createColorField<OverlayFormatting>(
-        "borderBottomColor",
-        "Border Bottom Color",
-        "#ffffff"
-      ),
-    ],
-    border: [
-      createSelectField<OverlayFormatting>("borderType", "Type", [
-        { label: "Solid", value: "solid" },
-        { label: "Dashed", value: "dashed" },
-        { label: "Dotted", value: "dotted" },
-      ]),
+      }
+    ),
+    minHeight: createInputField<OverlayFormatting>(
+      "minHeight",
+      "Min Height",
+      "0",
       {
-        label: "Radius",
-        key: "borderRadius",
-        type: "input",
-        inputType: "text",
-        placeholder: "0",
-      },
-      {
-        label: "Top Left Radius",
-        key: "borderRadiusTopLeft",
-        type: "input",
-        inputType: "text",
-        placeholder: "0% 0%",
-      },
-      {
-        label: "Top Right Radius",
-        key: "borderRadiusTopRight",
-        type: "input",
-        inputType: "text",
-        placeholder: "3% 10%",
-      },
-      {
-        label: "Bot Left Radius",
-        key: "borderRadiusBottomLeft",
-        type: "input",
-        inputType: "text",
-        placeholder: "0% 0%",
-      },
-      {
-        label: "Bot Right Radius",
-        key: "borderRadiusBottomRight",
-        type: "input",
-        inputType: "text",
-        placeholder: "3% 10%",
-      },
-      createInputField<OverlayFormatting>("borderTopWidth", "Top Width", "0", {
-        min: 0,
-      }),
-      createInputField<OverlayFormatting>(
-        "borderBottomWidth",
-        "Bottom Width",
-        "0",
-        { min: 0 }
-      ),
-      createInputField<OverlayFormatting>(
-        "borderLeftWidth",
-        "Left Width",
-        "0",
-        { min: 0 }
-      ),
-      createInputField<OverlayFormatting>(
-        "borderRightWidth",
-        "Right Width",
-        "0",
-        { min: 0 }
-      ),
-    ],
-    flexbox: [
-      createSelectField<OverlayFormatting>("display", "Display", [
-        { label: "Block", value: "block" },
-        { label: "Flex", value: "flex" },
-      ]),
-      createSelectField<OverlayFormatting>("flexDirection", "Flex Direction", [
-        { label: "Row", value: "row" },
-        { label: "Column", value: "column" },
-      ]),
-      createSelectField<OverlayFormatting>(
-        "justifyContent",
-        "Justify Content",
-        [
-          { label: "Start", value: "flex-start" },
-          { label: "End", value: "flex-end" },
-          { label: "Center", value: "center" },
-          { label: "Space Between", value: "space-between" },
-          { label: "Space Around", value: "space-around" },
-        ]
-      ),
-      createSelectField<OverlayFormatting>("alignItems", "Align Items", [
-        { label: "Start", value: "flex-start" },
-        { label: "End", value: "flex-end" },
-        { label: "Center", value: "center" },
-        { label: "Baseline", value: "baseline" },
-        { label: "Stretch", value: "stretch" },
-      ]),
-    ],
-  };
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }
+    ),
+    top: createInputField<OverlayFormatting>("top", "Top", "0", {
+      step: 0.5,
+      endAdornment: <div className="text-gray-500 text-sm">%</div>,
+    }),
+    bottom: createInputField<OverlayFormatting>("bottom", "Bottom", "0", {
+      step: 0.5,
+      endAdornment: <div className="text-gray-500 text-sm">%</div>,
+    }),
+    left: createInputField<OverlayFormatting>("left", "Left", "0", {
+      step: 0.5,
+      endAdornment: <div className="text-gray-500 text-sm">%</div>,
+    }),
+    right: createInputField<OverlayFormatting>("right", "Right", "0", {
+      step: 0.5,
+      endAdornment: <div className="text-gray-500 text-sm">%</div>,
+    }),
 
-  // Child field configurations using the same generic utility functions
-  const childFieldConfigs: Record<string, FieldConfig<OverlayChild>[]> = {
-    basic: [
-      createInputField<OverlayChild>("fontSize", "Font Size", "15"),
-      createColorField<OverlayChild>("fontColor", "Font Color", "#ffffff"),
+    // Typography fields
+    fontSize: createInputField<OverlayFormatting>(
+      "fontSize",
+      "Font Size",
+      "15"
+    ),
+    fontColor: createColorField<OverlayFormatting>(
+      "fontColor",
+      "Font Color",
+      "#ffffff"
+    ),
+    textAlign: createSelectField<OverlayFormatting>("textAlign", "Text Align", [
+      { label: "Left", value: "left" },
+      { label: "Center", value: "center" },
+      { label: "Right", value: "right" },
+    ]),
+    fontStyle: createSelectField<OverlayFormatting>("fontStyle", "Font Style", [
+      { label: "Normal", value: "normal" },
+      { label: "Italic", value: "italic" },
+    ]),
+
+    // Spacing fields
+    paddingTop: createInputField<OverlayFormatting>(
+      "paddingTop",
+      "Padding Top",
+      "0",
       {
-        label: "Font Weight",
-        key: "fontWeight",
-        type: "input",
-        placeholder: "400",
-        min: 100,
-        max: 900,
-        step: 100,
-        onBlur: (e) => {
-          const value = Number(e.target.value);
-          if (!isNaN(value)) {
-            const rounded = Math.round(value / 100) * 100;
-            const clamped = Math.max(100, Math.min(900, rounded));
-            if (clamped !== value) {
-              // This will be handled by the parent component
-            }
-          }
-        },
-      },
-      createSelectField<OverlayChild>("fontStyle", "Font Style", [
-        { label: "Normal", value: "normal" },
-        { label: "Italic", value: "italic" },
-      ]),
-      createSelectField<OverlayChild>("textAlign", "Text Align", [
-        { label: "Left", value: "left" },
-        { label: "Center", value: "center" },
-        { label: "Right", value: "right" },
-      ]),
-      createMeasurementField<OverlayChild>("width", "Width"),
-      createMeasurementField<OverlayChild>("height", "Height"),
-    ],
-    dimensions: [
-      createInputField<OverlayChild>("maxWidth", "Max Width", "0", {
         step: 0.5,
         endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayChild>("maxHeight", "Max Height", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayChild>("minWidth", "Min Width", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayChild>("minHeight", "Min Height", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-    ],
-    colors: [
-      createColorField<OverlayChild>(
-        "backgroundColor",
-        "Background Color",
-        "#000000"
-      ),
-      createColorField<OverlayChild>("borderColor", "Border Color", "#ffffff"),
-      createColorField<OverlayChild>(
-        "borderLeftColor",
-        "Border Left Color",
-        "#ffffff"
-      ),
-      createColorField<OverlayChild>(
-        "borderRightColor",
-        "Border Right Color",
-        "#ffffff"
-      ),
-      createColorField<OverlayChild>(
-        "borderTopColor",
-        "Border Top Color",
-        "#ffffff"
-      ),
-      createColorField<OverlayChild>(
-        "borderBottomColor",
-        "Border Bottom Color",
-        "#ffffff"
-      ),
-    ],
-    borders: [
-      createSelectField<OverlayChild>("borderType", "Border Type", [
-        { label: "Solid", value: "solid" },
-        { label: "Dashed", value: "dashed" },
-        { label: "Dotted", value: "dotted" },
-      ]),
+      }
+    ),
+    paddingBottom: createInputField<OverlayFormatting>(
+      "paddingBottom",
+      "Padding Bottom",
+      "0",
       {
-        label: "Border Radius",
-        key: "borderRadius",
-        type: "input",
-        inputType: "text",
-        placeholder: "0",
-      },
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }
+    ),
+    paddingLeft: createInputField<OverlayFormatting>(
+      "paddingLeft",
+      "Padding Left",
+      "0",
       {
-        label: "Top Left Radius",
-        key: "borderRadiusTopLeft",
-        type: "input",
-        inputType: "text",
-        placeholder: "0% 0%",
-      },
+        step: 0.5,
+        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      }
+    ),
+    paddingRight: createInputField<OverlayFormatting>(
+      "paddingRight",
+      "Padding Right",
+      "0",
       {
-        label: "Top Right Radius",
-        key: "borderRadiusTopRight",
-        type: "input",
-        inputType: "text",
-        placeholder: "3% 10%",
-      },
-      {
-        label: "Bottom Left Radius",
-        key: "borderRadiusBottomLeft",
-        type: "input",
-        inputType: "text",
-        placeholder: "0% 0%",
-      },
-      {
-        label: "Bottom Right Radius",
-        key: "borderRadiusBottomRight",
-        type: "input",
-        inputType: "text",
-        placeholder: "3% 10%",
-      },
-      createInputField<OverlayChild>("borderTopWidth", "Top Width", "0", {
-        min: 0,
-      }),
-      createInputField<OverlayChild>("borderBottomWidth", "Bottom Width", "0", {
-        min: 0,
-      }),
-      createInputField<OverlayChild>("borderLeftWidth", "Left Width", "0", {
-        min: 0,
-      }),
-      createInputField<OverlayChild>("borderRightWidth", "Right Width", "0", {
-        min: 0,
-      }),
-    ],
-    spacing: [
-      createInputField<OverlayChild>("paddingTop", "Padding Top", "0", {
         step: 0.5,
         endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayChild>("paddingBottom", "Padding Bottom", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayChild>("paddingLeft", "Padding Left", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayChild>("paddingRight", "Padding Right", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createMeasurementField<OverlayChild>("marginTop", "Margin Top"),
-      createMeasurementField<OverlayChild>("marginBottom", "Margin Bottom"),
-      createMeasurementField<OverlayChild>("marginLeft", "Margin Left"),
-      createMeasurementField<OverlayChild>("marginRight", "Margin Right"),
-    ],
-    position: [
-      createInputField<OverlayChild>("top", "Top", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayChild>("bottom", "Bottom", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayChild>("left", "Left", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-      createInputField<OverlayChild>("right", "Right", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
-      }),
-    ],
-    layout: [
-      createSelectField<OverlayChild>("display", "Display", [
-        { label: "Block", value: "block" },
-        { label: "Flex", value: "flex" },
-      ]),
-      createSelectField<OverlayChild>("flexDirection", "Flex Direction", [
+      }
+    ),
+    marginTop: createMeasurementField<OverlayFormatting>(
+      "marginTop",
+      "Margin Top"
+    ),
+    marginBottom: createMeasurementField<OverlayFormatting>(
+      "marginBottom",
+      "Margin Bottom"
+    ),
+    marginLeft: createMeasurementField<OverlayFormatting>(
+      "marginLeft",
+      "Margin Left"
+    ),
+    marginRight: createMeasurementField<OverlayFormatting>(
+      "marginRight",
+      "Margin Right"
+    ),
+    gap: createInputField<OverlayFormatting>("gap", "Gap", "0", {
+      step: 0.5,
+      endAdornment: <div className="text-gray-500 text-sm">%</div>,
+    }),
+
+    // Color fields
+    backgroundColor: createColorField<OverlayFormatting>(
+      "backgroundColor",
+      "Background Color",
+      "#000000"
+    ),
+    borderColor: createColorField<OverlayFormatting>(
+      "borderColor",
+      "Border Color",
+      "#ffffff"
+    ),
+    borderLeftColor: createColorField<OverlayFormatting>(
+      "borderLeftColor",
+      "Border Left Color",
+      "#ffffff"
+    ),
+    borderRightColor: createColorField<OverlayFormatting>(
+      "borderRightColor",
+      "Border Right Color",
+      "#ffffff"
+    ),
+    borderTopColor: createColorField<OverlayFormatting>(
+      "borderTopColor",
+      "Border Top Color",
+      "#ffffff"
+    ),
+    borderBottomColor: createColorField<OverlayFormatting>(
+      "borderBottomColor",
+      "Border Bottom Color",
+      "#ffffff"
+    ),
+
+    // Border fields
+    borderType: createSelectField<OverlayFormatting>("borderType", "Type", [
+      { label: "Solid", value: "solid" },
+      { label: "Dashed", value: "dashed" },
+      { label: "Dotted", value: "dotted" },
+    ]),
+    borderRadius: {
+      label: "Radius",
+      key: "borderRadius" as keyof OverlayFormatting,
+      type: "input" as const,
+      inputType: "text" as const,
+      placeholder: "0",
+    },
+    borderRadiusTopLeft: {
+      label: "Top Left Radius",
+      key: "borderRadiusTopLeft" as keyof OverlayFormatting,
+      type: "input" as const,
+      inputType: "text" as const,
+      placeholder: "0% 0%",
+    },
+    borderRadiusTopRight: {
+      label: "Top Right Radius",
+      key: "borderRadiusTopRight" as keyof OverlayFormatting,
+      type: "input" as const,
+      inputType: "text" as const,
+      placeholder: "3% 10%",
+    },
+    borderRadiusBottomLeft: {
+      label: "Bot Left Radius",
+      key: "borderRadiusBottomLeft" as keyof OverlayFormatting,
+      type: "input" as const,
+      inputType: "text" as const,
+      placeholder: "0% 0%",
+    },
+    borderRadiusBottomRight: {
+      label: "Bot Right Radius",
+      key: "borderRadiusBottomRight" as keyof OverlayFormatting,
+      type: "input" as const,
+      inputType: "text" as const,
+      placeholder: "3% 10%",
+    },
+    borderTopWidth: createInputField<OverlayFormatting>(
+      "borderTopWidth",
+      "Top Width",
+      "0",
+      { min: 0 }
+    ),
+    borderBottomWidth: createInputField<OverlayFormatting>(
+      "borderBottomWidth",
+      "Bottom Width",
+      "0",
+      { min: 0 }
+    ),
+    borderLeftWidth: createInputField<OverlayFormatting>(
+      "borderLeftWidth",
+      "Left Width",
+      "0",
+      { min: 0 }
+    ),
+    borderRightWidth: createInputField<OverlayFormatting>(
+      "borderRightWidth",
+      "Right Width",
+      "0",
+      { min: 0 }
+    ),
+
+    // Flexbox fields
+    display: createSelectField<OverlayFormatting>("display", "Display", [
+      { label: "Block", value: "block" },
+      { label: "Flex", value: "flex" },
+    ]),
+    flexDirection: createSelectField<OverlayFormatting>(
+      "flexDirection",
+      "Flex Direction",
+      [
         { label: "Row", value: "row" },
         { label: "Column", value: "column" },
-      ]),
-      createSelectField<OverlayChild>("justifyContent", "Justify Content", [
+      ]
+    ),
+    justifyContent: createSelectField<OverlayFormatting>(
+      "justifyContent",
+      "Justify Content",
+      [
         { label: "Start", value: "flex-start" },
         { label: "End", value: "flex-end" },
         { label: "Center", value: "center" },
         { label: "Space Between", value: "space-between" },
         { label: "Space Around", value: "space-around" },
-      ]),
-      createSelectField<OverlayChild>("alignItems", "Align Items", [
+      ]
+    ),
+    alignItems: createSelectField<OverlayFormatting>(
+      "alignItems",
+      "Align Items",
+      [
         { label: "Start", value: "flex-start" },
         { label: "End", value: "flex-end" },
         { label: "Center", value: "center" },
         { label: "Baseline", value: "baseline" },
         { label: "Stretch", value: "stretch" },
-      ]),
-      createSelectField<OverlayChild>("flexWrap", "Flex Wrap", [
-        { label: "No Wrap", value: "nowrap" },
-        { label: "Wrap", value: "wrap" },
-        { label: "Wrap Reverse", value: "wrap-reverse" },
-      ]),
-      createInputField<OverlayChild>("gap", "Gap", "0", {
-        step: 0.5,
-        endAdornment: <div className="text-gray-500 text-sm">%</div>,
+      ]
+    ),
+    flexWrap: createSelectField<OverlayFormatting>("flexWrap", "Flex Wrap", [
+      { label: "No Wrap", value: "nowrap" },
+      { label: "Wrap", value: "wrap" },
+      { label: "Wrap Reverse", value: "wrap-reverse" },
+    ]),
+  };
+
+  // Font weight field with custom onBlur handler
+  const createFontWeightField = <T extends OverlayFormatting | OverlayChild>(
+    onBlurHandler?: (e: React.FocusEvent<HTMLInputElement>) => void
+  ): FieldConfig<T> => ({
+    label: "Font Weight",
+    key: "fontWeight" as keyof T,
+    type: "input" as const,
+    placeholder: "400",
+    min: 100,
+    max: 900,
+    step: 100,
+    onBlur: onBlurHandler,
+  });
+
+  // Unified field configurations that work for both OverlayFormatting and OverlayChild
+  // Since OverlayChild is just OverlayFormatting without 'children' + optional 'label',
+  // we can use the same field configurations for both
+  const unifiedFieldConfigs: Record<string, FieldConfig<OverlayFormatting>[]> =
+    {
+      basic: [
+        commonFields.fontSize,
+        commonFields.fontColor,
+        createFontWeightField<OverlayFormatting>(),
+        commonFields.fontStyle,
+        commonFields.textAlign,
+        commonFields.width,
+        commonFields.height,
+      ],
+      dimensions: [
+        commonFields.maxWidth,
+        commonFields.maxHeight,
+        commonFields.minWidth,
+        commonFields.minHeight,
+      ],
+      colors: [
+        commonFields.backgroundColor,
+        commonFields.borderColor,
+        commonFields.borderLeftColor,
+        commonFields.borderRightColor,
+        commonFields.borderTopColor,
+        commonFields.borderBottomColor,
+      ],
+      borders: [
+        commonFields.borderType,
+        commonFields.borderRadius,
+        commonFields.borderRadiusTopLeft,
+        commonFields.borderRadiusTopRight,
+        commonFields.borderRadiusBottomLeft,
+        commonFields.borderRadiusBottomRight,
+        commonFields.borderTopWidth,
+        commonFields.borderBottomWidth,
+        commonFields.borderLeftWidth,
+        commonFields.borderRightWidth,
+      ],
+      spacing: [
+        commonFields.paddingTop,
+        commonFields.paddingBottom,
+        commonFields.paddingLeft,
+        commonFields.paddingRight,
+        commonFields.marginTop,
+        commonFields.marginBottom,
+        commonFields.marginLeft,
+        commonFields.marginRight,
+      ],
+      position: [
+        commonFields.top,
+        commonFields.bottom,
+        commonFields.left,
+        commonFields.right,
+      ],
+      layout: [
+        commonFields.display,
+        commonFields.flexDirection,
+        commonFields.justifyContent,
+        commonFields.alignItems,
+        commonFields.flexWrap,
+        commonFields.gap,
+      ],
+    };
+
+  // Field configurations using unified configurations
+  const fieldConfigs: Record<string, FieldConfig<OverlayFormatting>[]> = {
+    layout: [
+      ...unifiedFieldConfigs.basic.filter(
+        (field) => field.key === "width" || field.key === "height"
+      ),
+      ...unifiedFieldConfigs.dimensions,
+      ...unifiedFieldConfigs.position,
+    ],
+    typography: [
+      ...unifiedFieldConfigs.basic.filter(
+        (field) =>
+          field.key === "fontSize" ||
+          field.key === "fontColor" ||
+          field.key === "fontStyle" ||
+          field.key === "textAlign"
+      ),
+      createFontWeightField<OverlayFormatting>((e) => {
+        const value = Number(e.target.value);
+        if (!isNaN(value)) {
+          const rounded = Math.round(value / 100) * 100;
+          const clamped = Math.max(100, Math.min(900, rounded));
+          if (clamped !== value) {
+            updateFormatting({ fontWeight: clamped });
+          }
+        }
       }),
+    ],
+    spacing: [...unifiedFieldConfigs.spacing, commonFields.gap],
+    colors: unifiedFieldConfigs.colors,
+    border: unifiedFieldConfigs.borders,
+    flexbox: [
+      ...unifiedFieldConfigs.layout.filter(
+        (field) =>
+          field.key === "display" ||
+          field.key === "flexDirection" ||
+          field.key === "justifyContent" ||
+          field.key === "alignItems"
+      ),
     ],
   };
 
@@ -664,7 +630,11 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
     shouldShow: boolean
   ) => (
     <Section title={title} shouldShow={shouldShow}>
-      {fields.map((field) => renderField(field, formatting, updateFormatting))}
+      {fields.map((field) => (
+        <React.Fragment key={field.key as string}>
+          {renderField(field, formatting, updateFormatting)}
+        </React.Fragment>
+      ))}
     </Section>
   );
 
@@ -680,11 +650,15 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
 
     return (
       <div className="w-full border-t pt-2">
-        <h5 className="text-sm font-medium text-gray-600 mb-2">{title}</h5>
+        <h5 className="text-sm font-medium mb-2">{title}</h5>
         <div className="flex flex-wrap gap-4">
-          {fields.map((field) =>
-            renderField(field, child, (updates) => updateChild(index, updates))
-          )}
+          {fields.map((field) => (
+            <React.Fragment key={field.key as string}>
+              {renderField(field, child, (updates) =>
+                updateChild(index, updates)
+              )}
+            </React.Fragment>
+          ))}
         </div>
       </div>
     );
@@ -693,14 +667,13 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
   const children = formatting.children || [];
 
   return (
-    <div className="space-y-6 h-full overflow-y-auto">
+    <div className={cn("style-editor", className)}>
       <Toggle
         label="Show All Styles"
         value={showHiddenSections}
         onChange={setShowHiddenSections}
       />
 
-      {/* Layout & Position Section */}
       {renderSection(
         "Layout & Position",
         fieldConfigs.layout,
@@ -718,7 +691,6 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
         ])
       )}
 
-      {/* Typography Section */}
       {renderSection(
         "Typography",
         fieldConfigs.typography,
@@ -731,7 +703,6 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
         ])
       )}
 
-      {/* Spacing Section */}
       {renderSection(
         "Spacing",
         fieldConfigs.spacing,
@@ -748,7 +719,6 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
         ])
       )}
 
-      {/* Colors Section */}
       {renderSection(
         "Colors",
         fieldConfigs.colors,
@@ -762,7 +732,6 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
         ])
       )}
 
-      {/* Border Section */}
       {renderSection(
         "Border",
         fieldConfigs.border,
@@ -780,7 +749,6 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
         ])
       )}
 
-      {/* Flexbox Section */}
       {renderSection(
         "Flexbox",
         fieldConfigs.flexbox,
@@ -792,7 +760,6 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
         ])
       )}
 
-      {/* Inner Elements Section */}
       {children.length > 0 && (
         <Section title="Inner Elements" shouldShow={true}>
           <div className="space-y-4">
@@ -805,17 +772,17 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
                   {child.label || `Element ${index + 1}`}
                 </h4>
 
-                {/* Basic fields */}
-                {childFieldConfigs.basic.map((field) =>
-                  renderField(field, child, (updates) =>
-                    updateChild(index, updates)
-                  )
-                )}
+                {unifiedFieldConfigs.basic.map((field) => (
+                  <React.Fragment key={field.key as string}>
+                    {renderField(field, child, (updates) =>
+                      updateChild(index, updates)
+                    )}
+                  </React.Fragment>
+                ))}
 
-                {/* Dimensions */}
                 {renderChildSection(
                   "Dimensions",
-                  childFieldConfigs.dimensions,
+                  unifiedFieldConfigs.dimensions,
                   child,
                   index,
                   shouldShowChildSection(child, [
@@ -826,10 +793,9 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
                   ])
                 )}
 
-                {/* Colors & Background */}
                 {renderChildSection(
                   "Colors & Background",
-                  childFieldConfigs.colors,
+                  unifiedFieldConfigs.colors,
                   child,
                   index,
                   shouldShowChildSection(child, [
@@ -842,10 +808,9 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
                   ])
                 )}
 
-                {/* Borders */}
                 {renderChildSection(
                   "Borders",
-                  childFieldConfigs.borders,
+                  unifiedFieldConfigs.borders,
                   child,
                   index,
                   shouldShowChildSection(child, [
@@ -862,10 +827,9 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
                   ])
                 )}
 
-                {/* Spacing */}
                 {renderChildSection(
                   "Spacing",
-                  childFieldConfigs.spacing,
+                  unifiedFieldConfigs.spacing,
                   child,
                   index,
                   shouldShowChildSection(child, [
@@ -880,10 +844,9 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
                   ])
                 )}
 
-                {/* Position */}
                 {renderChildSection(
                   "Position",
-                  childFieldConfigs.position,
+                  unifiedFieldConfigs.position,
                   child,
                   index,
                   shouldShowChildSection(child, [
@@ -894,10 +857,9 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ formatting, onChange }) => {
                   ])
                 )}
 
-                {/* Layout */}
                 {renderChildSection(
                   "Layout",
-                  childFieldConfigs.layout,
+                  unifiedFieldConfigs.layout,
                   child,
                   index,
                   shouldShowChildSection(child, [

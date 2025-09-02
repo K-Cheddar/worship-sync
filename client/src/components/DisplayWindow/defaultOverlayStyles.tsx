@@ -28,7 +28,7 @@ export const defaultParticipantOverlayStyles: OverlayFormatting = {
   children: [
     {
       label: "Name",
-      fontSize: 1.8,
+      fontSize: 18,
       fontColor: "#ffffff",
       fontWeight: 400,
       fontStyle: "normal",
@@ -37,7 +37,7 @@ export const defaultParticipantOverlayStyles: OverlayFormatting = {
     },
     {
       label: "Title",
-      fontSize: 1.4,
+      fontSize: 14,
       fontColor: "#ffffff",
       fontWeight: 400,
       fontStyle: "italic",
@@ -46,7 +46,7 @@ export const defaultParticipantOverlayStyles: OverlayFormatting = {
     },
     {
       label: "Event",
-      fontSize: 1.2,
+      fontSize: 12,
       fontColor: "#ffffff",
       fontWeight: 400,
       fontStyle: "normal",
@@ -81,7 +81,7 @@ export const defaultStbOverlayStyles: OverlayFormatting = {
   children: [
     {
       label: "Heading",
-      fontSize: 1.5,
+      fontSize: 15,
       fontColor: "#ffffff",
       fontWeight: 600,
       fontStyle: "normal",
@@ -89,7 +89,7 @@ export const defaultStbOverlayStyles: OverlayFormatting = {
     },
     {
       label: "Subheading",
-      fontSize: 1.5,
+      fontSize: 15,
       fontColor: "#ffffff",
       fontWeight: 400,
       fontStyle: "normal",
@@ -123,7 +123,6 @@ export const defaultQrCodeOverlayStyles: OverlayFormatting = {
   bottom: 5,
   left: 0,
   right: 0,
-  fontSize: 1.4,
   children: [
     {
       label: "QR Code",
@@ -132,7 +131,7 @@ export const defaultQrCodeOverlayStyles: OverlayFormatting = {
     },
     {
       label: "Description",
-      fontSize: 1.4,
+      fontSize: 14,
       fontColor: "#ffffff",
       fontWeight: 400,
       fontStyle: "normal",

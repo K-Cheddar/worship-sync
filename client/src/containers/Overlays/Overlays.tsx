@@ -358,6 +358,7 @@ const Overlays = () => {
                 setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
                 isMobile={isMobile}
                 handleOverlayUpdate={handleOverlayUpdate}
+                handleFormattingChange={handleFormattingChange}
               />
             </div>
           )}
@@ -371,16 +372,19 @@ const Overlays = () => {
           title="Edit Overlay Style"
           closeOnBackdropClick={false}
           closeOnEscape
+          contentPadding="p-0"
+          contentClassName="flex-1 min-h-0"
         >
           <StyleEditor
             formatting={selectedOverlay.formatting || {}}
             onChange={handleFormattingChange}
+            className="p-4 flex-1 overflow-y-auto"
           />
         </Drawer>
         <Drawer
           isOpen={isTemplateDrawerOpen}
           onClose={() => setIsTemplateDrawerOpen(false)}
-          size={isMobile ? "lg" : "xl"}
+          size={isMobile ? "lg" : "md"}
           position={isMobile ? "bottom" : "right"}
           title={`${typeToName[selectedOverlay.type as keyof typeof typeToName]} Templates`}
           showBackdrop
