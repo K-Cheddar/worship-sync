@@ -45,6 +45,7 @@ import {
 } from "../../store/overlaySlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import OverlayEditor from "./OverlayEditor";
+import { getDefaultFormatting } from "../../utils/overlayUtils";
 
 const typeToName = {
   participant: "Participant",
@@ -244,7 +245,15 @@ const Overlays = () => {
         `overlay-${overlayId}`
       );
       if (loadedOverlay) {
-        dispatch(selectOverlay(loadedOverlay));
+        dispatch(
+          selectOverlay({
+            ...loadedOverlay,
+            formatting: {
+              ...getDefaultFormatting(loadedOverlay.type || "participant"),
+              ...loadedOverlay.formatting,
+            },
+          })
+        );
       }
     } catch (error) {
       dispatch(selectOverlay(undefined));
@@ -349,6 +358,7 @@ const Overlays = () => {
                 setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
                 isMobile={isMobile}
                 handleOverlayUpdate={handleOverlayUpdate}
+                handleFormattingChange={handleFormattingChange}
               />
             </div>
           )}
@@ -357,21 +367,24 @@ const Overlays = () => {
         <Drawer
           isOpen={isStyleDrawerOpen}
           onClose={() => setIsStyleDrawerOpen(false)}
-          size={isMobile ? "lg" : "xl"}
+          size={isMobile ? "lg" : "md"}
           position={isMobile ? "bottom" : "right"}
           title="Edit Overlay Style"
           closeOnBackdropClick={false}
           closeOnEscape
+          contentPadding="p-0"
+          contentClassName="flex-1 min-h-0"
         >
           <StyleEditor
             formatting={selectedOverlay.formatting || {}}
             onChange={handleFormattingChange}
+            className="p-4 flex-1 overflow-y-auto"
           />
         </Drawer>
         <Drawer
           isOpen={isTemplateDrawerOpen}
           onClose={() => setIsTemplateDrawerOpen(false)}
-          size={isMobile ? "lg" : "xl"}
+          size={isMobile ? "lg" : "md"}
           position={isMobile ? "bottom" : "right"}
           title={`${typeToName[selectedOverlay.type as keyof typeof typeToName]} Templates`}
           showBackdrop

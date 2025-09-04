@@ -1,6 +1,6 @@
 import {
   Arrangment,
-  ItemSlide,
+  ItemSlideType,
   ItemState,
   SlideType,
   verseType,
@@ -200,11 +200,11 @@ type FormatSectionType = {
   text: string;
   type: SlideType;
   name: string;
-  slides: ItemSlide[];
-  newSlides: ItemSlide[];
+  slides: ItemSlideType[];
+  newSlides: ItemSlideType[];
   fontSize: number;
   selectedBox: number;
-  selectedSlide: ItemSlide;
+  selectedSlide: ItemSlideType;
   isMobile?: boolean;
 };
 
@@ -218,7 +218,7 @@ export const formatSection = ({
   selectedBox,
   selectedSlide,
   isMobile,
-}: FormatSectionType): ItemSlide[] => {
+}: FormatSectionType): ItemSlideType[] => {
   const lines = text.split("\n");
   const formattedSlides = [];
   let currentBoxes = [];
@@ -282,6 +282,7 @@ export const formatSection = ({
     const box = Object.assign({}, currentBox);
     if (boxWords === "") boxWords = " ";
     box.words = boxWords;
+    box.excludeFromOverflow = false;
 
     i += counter - 1;
     formattedSlides.push(
@@ -302,7 +303,7 @@ export const formatSection = ({
         isBold: selectedSlide.boxes[selectedBox].isBold,
         isItalic: selectedSlide.boxes[selectedBox].isItalic,
         formattedTextDisplayInfo: selectedSlide.formattedTextDisplayInfo,
-      }),
+      })
     );
   }
 
@@ -313,7 +314,7 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
   const { selectedSlide, selectedBox } = item;
   const slides = item.slides;
   const slide = slides[selectedSlide];
-  const newSlides: ItemSlide[] = [];
+  const newSlides: ItemSlideType[] = [];
 
   const fontSize = slide.boxes[selectedBox].fontSize || 2.5;
   const fontColor = slide.boxes[selectedBox].fontColor || "rgb(255, 255, 255)";
@@ -329,7 +330,7 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
     : 1;
 
   const currentSectionSlides = slides.filter((slide) =>
-    slide.name.includes(`Section ${currentSectionNum}`),
+    slide.name.includes(`Section ${currentSectionNum}`)
   );
 
   // Get words from selected box of all slides of section
@@ -358,7 +359,7 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
     currentSectionSlides[currentSectionSlides.length - 1];
   const background = lastSlideInSection?.boxes[0]?.background || undefined;
 
-  let _formattedSlides: ItemSlide[] = [];
+  let _formattedSlides: ItemSlideType[] = [];
   if (slide.overflow === "fit") {
     // Try to fit all words in one slide by adjusting font size
     let currentFontSize = fontSize;
@@ -482,10 +483,10 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
 
   // Remove all slides from current section and save location
   const firstSlideLocation = slides.findIndex((slide) =>
-    slide.name.includes(`Section ${currentSectionNum}`),
+    slide.name.includes(`Section ${currentSectionNum}`)
   );
   const updatedSlides = slides.filter(
-    (slide) => !slide.name.includes(`Section ${currentSectionNum}`),
+    (slide) => !slide.name.includes(`Section ${currentSectionNum}`)
   );
 
   // Replace all slides of section with updated slides
@@ -537,7 +538,7 @@ export const formatLyrics = (item: ItemState, isMobile: boolean) => {
         selectedSlide: slide,
         selectedBox: 1,
         isMobile,
-      }),
+      })
     );
   }
 
@@ -550,11 +551,11 @@ export const formatSong = (_item: ItemState, isMobile: boolean) => {
     ..._item,
     arrangements: _item.arrangements
       ? _item.arrangements.map((el, i): Arrangment => {
-        if (i === _item.selectedArrangement) {
-          return { ...el, slides: formatLyrics(_item, isMobile) };
-        }
-        return el;
-      })
+          if (i === _item.selectedArrangement) {
+            return { ...el, slides: formatLyrics(_item, isMobile) };
+          }
+          return el;
+        })
       : [],
   };
 
@@ -640,31 +641,31 @@ export const formatBible = ({
   const slides = item.slides.length
     ? item.slides
     : [
-      createNewSlide({
-        type: "Title",
-        itemType: "bible",
-        fontSize: 3.5,
-        words: ["", item.name],
-        background,
-        brightness,
-      }),
+        createNewSlide({
+          type: "Title",
+          itemType: "bible",
+          fontSize: 3.5,
+          words: ["", item.name],
+          background,
+          brightness,
+        }),
 
-      createNewSlide({
-        itemType: "bible",
-        type: "Verse",
-        fontSize: 2.5,
-        background,
-        brightness,
-        boxes: [
-          createBox({}),
-          createBox({
-            height: 92,
-          }),
-          createBox({ height: 8 }),
-        ],
-        words: ["", "", ""],
-      }),
-    ];
+        createNewSlide({
+          itemType: "bible",
+          type: "Verse",
+          fontSize: 2.5,
+          background,
+          brightness,
+          boxes: [
+            createBox({}),
+            createBox({
+              height: 92,
+            }),
+            createBox({ height: 8 }),
+          ],
+          words: ["", "", ""],
+        }),
+      ];
   const boxes = slides[0]?.boxes || [];
 
   const newSlides = [
@@ -701,7 +702,7 @@ export const formatBible = ({
         version: _version,
         isNew,
         isMobile,
-      }),
+      })
     );
   else
     newSlides.push(
@@ -714,7 +715,7 @@ export const formatBible = ({
         version: _version,
         isNew,
         isMobile,
-      }),
+      })
     );
 
   _item.slides = [...newSlides];
@@ -762,7 +763,7 @@ const formatBibleVerses = ({
 }: formatBibleVersesType) => {
   const slides = item.slides || [];
   const referenceIndex = item.selectedSlide > 0 ? item.selectedSlide : 1;
-  const currentSlide: ItemSlide = slides[referenceIndex] || {};
+  const currentSlide: ItemSlideType = slides[referenceIndex] || {};
   const titleSlideText = slides[0]?.boxes[1]?.words?.trim() || "";
 
   const currentBoxes = [...currentSlide.boxes];
@@ -877,7 +878,7 @@ const formatBibleVerses = ({
                       version,
                     }),
                 ],
-              }),
+              })
             );
             verseSplitCounts[verse.name]++;
           }
@@ -928,7 +929,7 @@ const formatBibleVerses = ({
                   version,
                 }),
             ],
-          }),
+          })
         );
         verseSplitCounts[verse.name]++;
       }
@@ -996,21 +997,21 @@ const formatBibleVerses = ({
           name: "Verse " + verse.name,
           boxes: isNew
             ? [
-              currentBoxes[0],
-              { ...currentBoxes[1], fontSize: currentFontSize },
-            ]
+                currentBoxes[0],
+                { ...currentBoxes[1], fontSize: currentFontSize },
+              ]
             : [
-              currentBoxes[0],
-              { ...currentBoxes[1], fontSize: currentFontSize },
-              currentBoxes[2],
-            ],
+                currentBoxes[0],
+                { ...currentBoxes[1], fontSize: currentFontSize },
+                currentBoxes[2],
+              ],
           words: [
             "",
             versePrefix + slide,
             titleSlideText ||
               getBibleName({ book, chapter, verse: verse.name, version }),
           ],
-        }),
+        })
       );
     }
   }
@@ -1147,14 +1148,14 @@ const formatBibleVerses = ({
                 formatVerseRange(currentVerses),
               boxes: isNew
                 ? [
-                  currentBoxes[0],
-                  { ...currentBoxes[1], fontSize: currentFontSize },
-                ]
+                    currentBoxes[0],
+                    { ...currentBoxes[1], fontSize: currentFontSize },
+                  ]
                 : [
-                  currentBoxes[0],
-                  { ...currentBoxes[1], fontSize: currentFontSize },
-                  currentBoxes[2],
-                ],
+                    currentBoxes[0],
+                    { ...currentBoxes[1], fontSize: currentFontSize },
+                    currentBoxes[2],
+                  ],
               words: [
                 "",
                 currentSlide,
@@ -1166,7 +1167,7 @@ const formatBibleVerses = ({
                     version,
                   }),
               ],
-            }),
+            })
           );
         }
 
@@ -1219,7 +1220,7 @@ const formatBibleVerses = ({
                 // Remove the existing verse number from the text
                 const cleanText = tempSlide.replace(
                   /^\u200B\d+\.\u200B\s*/,
-                  "",
+                  ""
                 );
 
                 formattedVerses.push(
@@ -1232,14 +1233,14 @@ const formatBibleVerses = ({
                       getLetterFromIndex(verseSplitCounts[verse.name], true),
                     boxes: isNew
                       ? [
-                        currentBoxes[0],
-                        { ...currentBoxes[1], fontSize: currentFontSize },
-                      ]
+                          currentBoxes[0],
+                          { ...currentBoxes[1], fontSize: currentFontSize },
+                        ]
                       : [
-                        currentBoxes[0],
-                        { ...currentBoxes[1], fontSize: currentFontSize },
-                        currentBoxes[2],
-                      ],
+                          currentBoxes[0],
+                          { ...currentBoxes[1], fontSize: currentFontSize },
+                          currentBoxes[2],
+                        ],
                     words: [
                       "",
                       versePrefix + cleanText,
@@ -1253,7 +1254,7 @@ const formatBibleVerses = ({
                           version,
                         }),
                     ],
-                  }),
+                  })
                 );
                 verseSplitCounts[verse.name]++; // Increment split count for this verse
                 tempSlide = "";
@@ -1296,14 +1297,14 @@ const formatBibleVerses = ({
                   getLetterFromIndex(verseSplitCounts[verse.name], true),
                 boxes: isNew
                   ? [
-                    currentBoxes[0],
-                    { ...currentBoxes[1], fontSize: currentFontSize },
-                  ]
+                      currentBoxes[0],
+                      { ...currentBoxes[1], fontSize: currentFontSize },
+                    ]
                   : [
-                    currentBoxes[0],
-                    { ...currentBoxes[1], fontSize: currentFontSize },
-                    currentBoxes[2],
-                  ],
+                      currentBoxes[0],
+                      { ...currentBoxes[1], fontSize: currentFontSize },
+                      currentBoxes[2],
+                    ],
                 words: [
                   "",
                   versePrefix + cleanText,
@@ -1317,7 +1318,7 @@ const formatBibleVerses = ({
                       version,
                     }),
                 ],
-              }),
+              })
             );
             verseSplitCounts[verse.name]++; // Increment split count for this verse
           }
@@ -1341,14 +1342,14 @@ const formatBibleVerses = ({
             formatVerseRange(currentVerses),
           boxes: isNew
             ? [
-              currentBoxes[0],
-              { ...currentBoxes[1], fontSize: currentFontSize },
-            ]
+                currentBoxes[0],
+                { ...currentBoxes[1], fontSize: currentFontSize },
+              ]
             : [
-              currentBoxes[0],
-              { ...currentBoxes[1], fontSize: currentFontSize },
-              currentBoxes[2],
-            ],
+                currentBoxes[0],
+                { ...currentBoxes[1], fontSize: currentFontSize },
+                currentBoxes[2],
+              ],
           words: [
             "",
             currentSlide,
@@ -1360,7 +1361,7 @@ const formatBibleVerses = ({
                 version,
               }),
           ],
-        }),
+        })
       );
     }
   }
@@ -1370,7 +1371,7 @@ const formatBibleVerses = ({
       type: "Blank",
       boxes: currentBoxes,
       words: ["", " "],
-    }),
+    })
   );
 
   return formattedVerses;

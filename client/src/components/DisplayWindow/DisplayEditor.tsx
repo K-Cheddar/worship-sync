@@ -43,6 +43,7 @@ const DisplayEditor = ({
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
   const [showOverflow, setShowOverflow] = useState(false);
   const [isTextAreaFocused, setIsTextAreaFocused] = useState(false);
+  const lastKeyPressedRef = useRef<string | null>(null);
   const isVideoBg = box.mediaInfo?.type === "video";
   const background = isVideoBg
     ? box.mediaInfo?.placeholderImage
@@ -71,7 +72,7 @@ const DisplayEditor = ({
   useEffect(() => {
     if (textAreaRef.current) {
       setIsOverflowing(
-        textAreaRef.current?.scrollHeight > textAreaRef.current?.clientHeight,
+        textAreaRef.current?.scrollHeight > textAreaRef.current?.clientHeight
       );
     }
   }, [box, textAreaRef]);
@@ -133,7 +134,7 @@ const DisplayEditor = ({
     dir: ResizeDirection,
     ref: HTMLElement,
     d: ResizableDelta,
-    position: Position,
+    position: Position
   ) => {
     const _width = ref.style.width;
     const _height = ref.style.height;
@@ -179,7 +180,7 @@ const DisplayEditor = ({
         }
       }
     },
-    [updateBoxSize, updateBoxXY],
+    [updateBoxSize, updateBoxXY]
   );
 
   const bFontSize = box.fontSize;
@@ -214,7 +215,7 @@ const DisplayEditor = ({
       className={cn(
         (!isBoxLocked || isSelected) &&
           "outline outline-1 outline-gray-300 -outline-offset-2",
-        isSelected && !box.background && "z-10",
+        isSelected && !box.background && "z-10"
       )}
       position={{ x, y }}
       disableDragging={isBoxLocked}
@@ -245,7 +246,7 @@ const DisplayEditor = ({
         <img
           className={cn(
             "display-box-background",
-            box.shouldKeepAspectRatio && "object-contain",
+            box.shouldKeepAspectRatio && "object-contain"
           )}
           style={{
             filter: `brightness(${box.brightness}%)`,
@@ -259,7 +260,7 @@ const DisplayEditor = ({
           <textarea
             className={cn(
               "display-editor",
-              showOverflow ? "overflow-y-visible" : "overflow-y-clip",
+              showOverflow ? "overflow-y-visible" : "overflow-y-clip"
             )}
             id={`display-editor-box-${index}`}
             ref={textAreaRef}
@@ -291,7 +292,11 @@ const DisplayEditor = ({
                 value: e.target.value,
                 box,
                 cursorPosition: e.target.selectionStart,
+                lastKeyPressed: lastKeyPressedRef.current,
               });
+            }}
+            onKeyDown={(e) => {
+              lastKeyPressedRef.current = e.key;
             }}
           />
           {isOverflowing && isTextAreaFocused && (

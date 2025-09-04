@@ -255,10 +255,17 @@ app.get("/api/getDbSession", async (req, res) => {
     const cookies = response.headers["set-cookie"];
 
     if (cookies?.length) {
+      // Clear the old one
+      res.append(
+        "Set-Cookie",
+        `AuthSession=; Path=/; Domain=.worshipsync.net; Max-Age=0; Secure; HttpOnly; SameSite=None`
+      );
+
+      // Set the new one exactly as CouchDB gave it, just adjusting attributes
       cookies.forEach((cookie) => {
         const updatedCookie = cookie.replace(
           /; HttpOnly/,
-          "; HttpOnly; SameSite=None; Secure; Domain=.worshipsync.net;"
+          "; HttpOnly; SameSite=None; Secure; Domain=.worshipsync.net; Path=/"
         );
         res.append("Set-Cookie", updatedCookie);
       });

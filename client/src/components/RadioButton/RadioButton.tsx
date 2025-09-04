@@ -46,7 +46,7 @@ const RadioButton = ({
           checked={value}
           onChange={(e) => onChange(e.target.checked)}
           className={cn(
-            "w-full h-full absolute opacity-0 left-0 top-0",
+            "w-full h-full absolute opacity-0 left-0 top-0 z-[1]",
             !disabled && "cursor-pointer"
           )}
           disabled={disabled}

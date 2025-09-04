@@ -1,7 +1,7 @@
 import { ReactComponent as CircleSVG } from "../../assets/icons/radio-button-checked.svg";
 import "./Toggle.scss";
 import Icon from "../Icon/Icon";
-import { useContext } from "react";
+import { useContext, useId } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 
 type ToggleProps = {
@@ -9,17 +9,28 @@ type ToggleProps = {
   value: boolean;
   onChange: (value: boolean) => void;
   className?: string;
+  id?: string;
 };
 
-const Toggle = ({ label, value, onChange, className }: ToggleProps) => {
+const Toggle = ({
+  label,
+  value,
+  onChange,
+  className,
+  id: idProp,
+}: ToggleProps) => {
   const { isMobile } = useContext(ControllerInfoContext) || {};
+  const generatedId = useId();
+  const id = idProp || generatedId;
   return (
     <div
       className={`flex gap-1 relative items-center h-4 ${
         className ? className : ""
       }`}
     >
-      <label className="text-sm font-semibold">{label}:</label>
+      <label className="text-sm font-semibold" htmlFor={id}>
+        {label}:
+      </label>
       <div className={`${value ? "on" : "off"} toggle-input-container`}>
         <Icon
           svg={CircleSVG}
@@ -32,6 +43,7 @@ const Toggle = ({ label, value, onChange, className }: ToggleProps) => {
         type="checkbox"
         checked={value}
         onChange={(e) => onChange(e.target.checked)}
+        id={id}
       />
     </div>
   );

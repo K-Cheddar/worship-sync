@@ -3,9 +3,8 @@ import { OverlayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { defaultImageOverlayStyles } from "./defaultOverlayStyles";
+import SharedOverlay from "./SharedOverlay";
 import "./DisplayWindow.scss";
-import { checkMediaType, getImageFromVideoUrl } from "../../utils/generalUtils";
-import HLSPlayer from "./HLSVideoPlayer";
 
 type DisplayImageOverlayProps = {
   width: number;
@@ -32,10 +31,6 @@ const DisplayImageOverlay = forwardRef<
     const overlayTimeline = useRef<GSAPTimeline | null>();
     const prevOverlayTimeline = useRef<GSAPTimeline | null>();
     const currentOpacity = useRef(1);
-
-    const isVideo = checkMediaType(imageOverlayInfo.imageUrl) === "video";
-    const isPrevVideo =
-      checkMediaType(prevImageOverlayInfo.imageUrl) === "video";
 
     useGSAP(
       () => {
@@ -127,75 +122,28 @@ const DisplayImageOverlay = forwardRef<
       ...prevImageOverlayInfo.formatting,
     };
 
+    const needsPadding = !!imageOverlayInfo.imageUrl;
+    const prevNeedsPadding = !!prevImageOverlayInfo.imageUrl;
+
     return (
       <>
-        <div
+        <SharedOverlay
           ref={imageOverlayRef}
-          className="overlay-image-container"
-          style={{
-            maxHeight: `${currentStyles.maxHeight}%`,
-            maxWidth: `${currentStyles.maxWidth}%`,
-            bottom: `${currentStyles.bottom}%`,
-            left: currentStyles.left ? `${currentStyles.left}%` : 0,
-            right: currentStyles.right ? `${currentStyles.right}%` : 0,
-            width:
-              typeof currentStyles.width === "number"
-                ? `${currentStyles.width}%`
-                : currentStyles.width,
-            height:
-              typeof currentStyles.height === "number"
-                ? `${currentStyles.height}%`
-                : currentStyles.height,
-          }}
-        >
-          {imageOverlayInfo.imageUrl &&
-            (isVideo ? (
-              <HLSPlayer
-                src={imageOverlayInfo.imageUrl || ""}
-                className="max-w-full max-h-full w-full h-full object-contain"
-              />
-            ) : (
-              <img
-                className="max-w-full max-h-full object-contain"
-                src={imageOverlayInfo.imageUrl}
-                alt={imageOverlayInfo.name}
-              />
-            ))}
-        </div>
-        <div
+          width={width}
+          styles={currentStyles}
+          overlayInfo={imageOverlayInfo}
+          needsPadding={needsPadding}
+          overlayType="image"
+        />
+        <SharedOverlay
           ref={prevImageOverlayRef}
-          className="overlay-image-container"
-          style={{
-            maxHeight: `${prevStyles.maxHeight}%`,
-            maxWidth: `${prevStyles.maxWidth}%`,
-            bottom: `${prevStyles.bottom}%`,
-            left: prevStyles.left ? `${prevStyles.left}%` : 0,
-            right: prevStyles.right ? `${prevStyles.right}%` : 0,
-            width:
-              typeof prevStyles.width === "number"
-                ? `${prevStyles.width}%`
-                : prevStyles.width,
-            height:
-              typeof prevStyles.height === "number"
-                ? `${prevStyles.height}%`
-                : prevStyles.height,
-          }}
-        >
-          {prevImageOverlayInfo.imageUrl &&
-            (isPrevVideo ? (
-              <img
-                className="max-w-full max-h-full w-full h-full object-contain"
-                src={getImageFromVideoUrl(prevImageOverlayInfo.imageUrl)}
-                alt={prevImageOverlayInfo.name}
-              />
-            ) : (
-              <img
-                className="max-w-full max-h-full w-full h-full object-contain"
-                src={prevImageOverlayInfo.imageUrl}
-                alt={prevImageOverlayInfo.name}
-              />
-            ))}
-        </div>
+          width={width}
+          styles={prevStyles}
+          overlayInfo={prevImageOverlayInfo}
+          needsPadding={prevNeedsPadding}
+          isPrev={true}
+          overlayType="image"
+        />
       </>
     );
   }

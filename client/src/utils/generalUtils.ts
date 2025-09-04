@@ -179,19 +179,11 @@ export const handleKeyDownTraverse = async ({
   advance,
   previous,
 }: handleKeyDownTraverseType) => {
-  if (
-    event.key === " " ||
-    event.key === "ArrowRight" ||
-    event.key === "ArrowDown"
-  ) {
+  if (event.key === "ArrowRight" || event.key === "ArrowDown") {
     event.preventDefault();
     await advance();
   }
-  if (
-    (event.key === " " && event.shiftKey) ||
-    event.key === "ArrowLeft" ||
-    event.key === "ArrowUp"
-  ) {
+  if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
     event.preventDefault();
     await previous();
   }

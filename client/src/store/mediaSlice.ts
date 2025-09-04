@@ -3,12 +3,10 @@ import { MediaType } from "../types";
 
 type MediaState = {
   list: MediaType[];
-  isInitialized: boolean;
 };
 
 const initialState: MediaState = {
   list: [],
-  isInitialized: false,
 };
 
 export const mediaItemsSlice = createSlice({
@@ -20,7 +18,6 @@ export const mediaItemsSlice = createSlice({
     },
     initiateMediaList: (state, action: PayloadAction<MediaType[]>) => {
       state.list = action.payload;
-      state.isInitialized = true;
     },
     updateMediaListFromRemote: (state, action: PayloadAction<MediaType[]>) => {
       state.list = action.payload;
@@ -31,7 +28,6 @@ export const mediaItemsSlice = createSlice({
     addItemToMediaList: (state, action: PayloadAction<MediaType>) => {
       state.list.push(action.payload);
     },
-    forceUpdate: () => {},
   },
 });
 
@@ -41,7 +37,6 @@ export const {
   addItemToMediaList,
   initiateMediaList,
   updateMediaListFromRemote,
-  forceUpdate,
 } = mediaItemsSlice.actions;
 
 export default mediaItemsSlice.reducer;

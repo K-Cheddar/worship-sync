@@ -1,6 +1,7 @@
 import { Option } from "../../types";
 import "./Select.scss";
 import cn from "classnames";
+import { useId } from "react";
 
 export type SelectProps = {
   options: Option[];
@@ -14,6 +15,7 @@ export type SelectProps = {
   selectClassName?: string;
   textColor?: string;
   disabled?: boolean;
+  id?: string;
 };
 
 const Select = ({
@@ -28,8 +30,11 @@ const Select = ({
   selectClassName,
   textColor = "text-black",
   disabled = false,
+  id: idProp,
   ...rest
 }: SelectProps) => {
+  const generatedId = useId();
+  const id = idProp || generatedId;
   return (
     <div className={className}>
       {label && (
@@ -40,6 +45,7 @@ const Select = ({
             labelClassName,
             labelFontSize
           )}
+          htmlFor={id}
         >
           {label}:
         </label>
@@ -50,6 +56,7 @@ const Select = ({
         onChange={(e) => onChange(e.target.value)}
         {...rest}
         disabled={disabled}
+        id={id}
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>

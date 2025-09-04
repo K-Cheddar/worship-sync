@@ -18,13 +18,14 @@ export interface DrawerProps {
   closeOnBackdropClick?: boolean;
   closeOnEscape?: boolean;
   className?: string;
+  contentClassName?: string;
 }
 
 const sizeClasses = {
-  sm: "w-64",
-  md: "w-80",
-  lg: "w-96",
-  xl: "w-[28rem]",
+  sm: "w-[20%]",
+  md: "w-[30%]",
+  lg: "w-[40%]",
+  xl: "w-[50%]",
   full: "w-full",
 };
 
@@ -67,6 +68,7 @@ const Drawer: React.FC<DrawerProps> = ({
   closeOnBackdropClick = true,
   closeOnEscape = true,
   className,
+  contentClassName = "overflow-auto flex-1 min-h-0",
 }) => {
   const drawerRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
@@ -195,12 +197,7 @@ const Drawer: React.FC<DrawerProps> = ({
           </div>
         )}
 
-        <div
-          className={cn(
-            "drawer-content overflow-auto flex-1 min-h-0",
-            contentPadding
-          )}
-        >
+        <div className={cn("drawer-content", contentPadding, contentClassName)}>
           {children}
         </div>
       </div>
@@ -242,12 +239,7 @@ const Drawer: React.FC<DrawerProps> = ({
         </div>
       )}
 
-      <div
-        className={cn(
-          "drawer-content overflow-auto flex-1 min-h-0",
-          contentPadding
-        )}
-      >
+      <div className={cn("drawer-content", contentPadding, contentClassName)}>
         {children}
       </div>
     </div>

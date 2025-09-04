@@ -1,7 +1,7 @@
 import "./ServiceItems.scss";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateItemList } from "../../store/itemListSlice";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import { useRef } from "react";
 
@@ -19,6 +19,7 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 const ServiceItems = () => {
   const dispatch = useDispatch();
   const location = useLocation();
+  const navigate = useNavigate();
   const {
     list: serviceItems,
     isLoading,
@@ -106,6 +107,41 @@ const ServiceItems = () => {
             ref={setNodeRef}
             className={"service-items-list"}
             id="service-items-list"
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                const currentIndex = serviceItems.findIndex(
+                  (item) => item.listId === selectedItemListId
+                );
+                const nextIndex = Math.min(
+                  currentIndex + 1,
+                  serviceItems.length - 1
+                );
+                const nextItem = serviceItems[nextIndex];
+                if (nextItem) {
+                  navigate(
+                    `item/${window.btoa(encodeURI(nextItem._id))}/${window.btoa(
+                      encodeURI(nextItem.listId)
+                    )}`
+                  );
+                }
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                const currentIndex = serviceItems.findIndex(
+                  (item) => item.listId === selectedItemListId
+                );
+                const prevIndex = Math.max(currentIndex - 1, 0);
+                const prevItem = serviceItems[prevIndex];
+                if (prevItem) {
+                  navigate(
+                    `item/${window.btoa(encodeURI(prevItem._id))}/${window.btoa(
+                      encodeURI(prevItem.listId)
+                    )}`
+                  );
+                }
+              }
+            }}
           >
             <SortableContext
               items={serviceItems.map((item) => item.listId)}
