@@ -1,28 +1,5 @@
 .drawer-content {
-  // Remove fixed height - let flexbox handle it
-  // height: calc(100% - 80px); // This was causing issues
-
-  // Custom scrollbar styling
-  &::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  &::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  &::-webkit-scrollbar-thumb {
-    background: rgba(156, 163, 175, 0.5);
-    border-radius: 3px;
-
-    &:hover {
-      background: rgba(156, 163, 175, 0.8);
-    }
-  }
-
-  // Firefox scrollbar
   scrollbar-width: var(--scrollbar-width);
-  scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
 }
 
 // Remove responsive height adjustments since we're using flexbox

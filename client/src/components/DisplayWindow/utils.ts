@@ -1,11 +1,11 @@
 export const getFontSize = ({
   width,
-  fontSize = 1.5,
+  fontSize = 15,
 }: {
   width: number;
   fontSize?: number;
 }) => {
-  return `${(fontSize || 1.5) * (width / 50)}vw`;
+  return `${((fontSize || 15) / 10) * (width / 50)}vw`;
 };
 
 export const getBorderWidth = ({
@@ -16,4 +16,8 @@ export const getBorderWidth = ({
   borderWidth?: number;
 }) => {
   return `${(borderWidth || 0) * (width / 400)}vw`;
+};
+
+export const getMargin = (margin: number | "auto" | "unset" | undefined) => {
+  return typeof margin === "number" ? `${margin}%` : margin;
 };

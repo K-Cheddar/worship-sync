@@ -16,7 +16,13 @@ import MarkdownRenderer from "./MarkdownRenderer/MarkdownRenderer";
 
 const isControllerRoute = () => {
   const hash = window.location.hash.replace("#", "");
-  const controllerRoutes = ["/", "/controller", "/login", "/credits-editor"];
+  const controllerRoutes = [
+    "",
+    "/",
+    "/controller",
+    "/login",
+    "/credits-editor",
+  ];
   return controllerRoutes.some(
     (route) => hash === route || hash.startsWith("/controller/")
   );
@@ -50,24 +56,26 @@ const VersionCheck: React.FC = () => {
 
   const handleUpdate = useCallback(() => {
     setIsUpdating(true);
+    const getLatestVersion = () => {
+      setTimeout(() => {
+        window.location.replace(
+          window.location.href.split("#")[0] +
+            "?cacheBust=" +
+            Date.now() +
+            window.location.hash
+        );
+      }, 1000);
+    };
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.getRegistrations().then((registrations) => {
         registrations.forEach((registration) => {
           registration.unregister();
         });
         // Wait a bit for unregister, then reload
-        setTimeout(() => {
-          window.location.replace(
-            window.location.href.split("?")[0] + "?cacheBust=" + Date.now()
-          );
-        }, 1000);
+        getLatestVersion();
       });
     } else {
-      setTimeout(() => {
-        window.location.replace(
-          window.location.href.split("?")[0] + "?cacheBust=" + Date.now()
-        );
-      }, 1000);
+      getLatestVersion();
     }
   }, [setIsUpdating]);
 

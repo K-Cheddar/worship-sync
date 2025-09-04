@@ -19,11 +19,23 @@ import ProjectorFull from "./pages/ProjectorFull";
 import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
 import TimerManager from "./components/TimerManager/TimerManager";
 import VersionCheck from "./components/VersionCheck";
+import { useEffect } from "react";
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
 
 const App: React.FC = () => {
+  useEffect(() => {
+    const url = new URL(window.location.href);
+
+    if (url.searchParams.has("cacheBust")) {
+      // Remove the param
+      url.searchParams.delete("cacheBust");
+
+      // Replace the current history entry without reloading
+      window.history.replaceState({}, document.title, url.toString());
+    }
+  }, []);
   return (
     <Provider store={store}>
       <Router>

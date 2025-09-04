@@ -1,5 +1,4 @@
 import {
-  KeyboardSensor,
   MouseSensor,
   TouchSensor,
   useSensor,
@@ -19,7 +18,5 @@ export const useSensors = () => {
     },
   });
 
-  const keyboardSensor = useSensor(KeyboardSensor);
-
-  return useDndSensors(mouseSensor, touchSensor, keyboardSensor);
+  return useDndSensors(mouseSensor, touchSensor);
 };

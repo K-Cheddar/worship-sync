@@ -73,7 +73,7 @@ export type SlideType =
 
 export type OverflowMode = "fit" | "separate";
 
-export type ItemSlide = {
+export type ItemSlideType = {
   type: SlideType;
   name: string;
   id: string;
@@ -134,7 +134,7 @@ export type ItemProperties = {
   selectedArrangement: number;
   background?: string;
   arrangements: Arrangment[];
-  slides: ItemSlide[];
+  slides: ItemSlideType[];
   bibleInfo?: BibleInfo;
   timerInfo?: TimerInfo;
   shouldSendTo: ShouldSendTo;
@@ -163,7 +163,7 @@ export type Arrangment = {
   name: string;
   formattedLyrics: FormattedLyrics[];
   songOrder: SongOrder[];
-  slides: ItemSlide[];
+  slides: ItemSlideType[];
   id: string;
 };
 
@@ -183,7 +183,7 @@ export type SongOrder = {
 export type Presentation = {
   type: string;
   name: string;
-  slide: ItemSlide | null;
+  slide: ItemSlideType | null;
   time?: number;
   displayType?: DisplayType;
   participantOverlayInfo?: OverlayInfo;
@@ -235,57 +235,25 @@ export type OverlayFormatting = {
   paddingBottom?: number;
   paddingLeft?: number;
   paddingRight?: number;
-  marginTop?: number;
-  marginBottom?: number;
-  marginLeft?: number;
-  marginRight?: number;
+  marginTop?: number | "auto" | "unset";
+  marginBottom?: number | "auto" | "unset";
+  marginLeft?: number | "auto" | "unset";
+  marginRight?: number | "auto" | "unset";
   top?: number;
   bottom?: number;
   left?: number;
   right?: number;
   fontSize?: number;
-  child1FontSize?: number;
-  child2FontSize?: number;
-  child3FontSize?: number;
-  child4FontSize?: number;
-  child1Text?: string;
-  child2Text?: string;
-  child3Text?: string;
-  child4Text?: string;
   fontColor?: string;
   fontWeight?: number;
   fontStyle?: "normal" | "italic";
-  child1FontColor?: string;
-  child2FontColor?: string;
-  child1FontWeight?: number;
-  child2FontWeight?: number;
-  child1FontStyle?: "normal" | "italic";
-  child2FontStyle?: "normal" | "italic";
-  child3FontColor?: string;
-  child3FontWeight?: number;
-  child3FontStyle?: "normal" | "italic";
-  child4FontColor?: string;
-  child4FontWeight?: number;
-  child4FontStyle?: "normal" | "italic";
-  child1TextAlign?: "left" | "right" | "center";
-  child2TextAlign?: "left" | "right" | "center";
-  child3TextAlign?: "left" | "right" | "center";
-  child4TextAlign?: "left" | "right" | "center";
-  child1Width?: number | string;
-  child2Width?: number | string;
-  child3Width?: number | string;
-  child4Width?: number | string;
-  child1Height?: number | string;
-  child2Height?: number | string;
-  child3Height?: number | string;
-  child4Height?: number | string;
+  textAlign?: "left" | "right" | "center";
   maxWidth?: number | string;
   maxHeight?: number | string;
   minWidth?: number | string;
   minHeight?: number | string;
   width?: number | string;
   height?: number | string;
-  textAlign?: "left" | "right" | "center";
   gap?: number;
   display?: "flex" | "block";
   flexDirection?: "row" | "column";
@@ -297,7 +265,18 @@ export type OverlayFormatting = {
     | "space-around";
   alignItems?: "flex-start" | "flex-end" | "center" | "baseline" | "stretch";
   flexWrap?: "nowrap" | "wrap" | "wrap-reverse";
+  children?: OverlayChild[];
 };
+
+export type OverlayChild = Omit<OverlayFormatting, "children"> & {
+  label?: string;
+};
+
+export type OverlayType =
+  | "participant"
+  | "stick-to-bottom"
+  | "qr-code"
+  | "image";
 
 export type OverlayInfo = {
   // participant
@@ -314,7 +293,7 @@ export type OverlayInfo = {
   imageUrl?: string;
   // shared
   duration?: number;
-  type?: "participant" | "stick-to-bottom" | "qr-code" | "image";
+  type?: OverlayType;
   time?: number;
   id: string;
   formatting?: OverlayFormatting;

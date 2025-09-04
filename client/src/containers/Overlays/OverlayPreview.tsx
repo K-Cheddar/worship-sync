@@ -75,7 +75,7 @@ const OverlayPreview = ({
 
   return (
     <div className="flex flex-col gap-2 w-fit">
-      <div className="bg-gray-600 w-fit">
+      <div className="bg-gray-600 w-fit relative">
         <DisplayWindow
           showBorder
           displayType="stream"

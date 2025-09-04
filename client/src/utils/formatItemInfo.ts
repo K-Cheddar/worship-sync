@@ -6,7 +6,7 @@ import { formatSong } from "./overflow";
 export const formatItemInfo = (
   item: DBItem,
   cloud: Cloudinary,
-  isMobile: boolean,
+  isMobile: boolean
 ) => {
   const _item: ItemState = {
     name: item.name,
@@ -52,7 +52,7 @@ export const formatItemInfo = (
               return {
                 ...box,
                 id: generateRandomId(),
-                excludeFromOverflow: index === 0 ? true : false, // TODO - check if there is a better way to do this
+                excludeFromOverflow: index === 1 ? false : true, // TODO - check if there is a better way to do this
                 background: index === 1 ? "" : boxBackground,
                 brightness: index !== 0 ? 100 : box.brightness,
                 width: box.width || 100,

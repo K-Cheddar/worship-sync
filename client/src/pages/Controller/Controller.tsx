@@ -117,6 +117,13 @@ const Controller = () => {
   const { user } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
+    return () => {
+      dispatch({ type: "RESET" });
+      dispatch({ type: "RESET_INITIALIZATION" });
+    };
+  }, [dispatch]);
+
+  useEffect(() => {
     if (
       location.pathname === "/controller" ||
       location.pathname === "/controller/"

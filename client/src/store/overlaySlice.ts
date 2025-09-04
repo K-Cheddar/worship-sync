@@ -29,6 +29,7 @@ export const overlaySlice = createSlice({
         subHeading: action.payload?.subHeading || "",
         event: action.payload?.event || "",
         title: action.payload?.title || "",
+        url: action.payload?.url || "",
         description: action.payload?.description || "",
         isHidden: false,
         formatting:

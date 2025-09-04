@@ -1,17 +1,18 @@
 .toggle-input-container {
-
   @apply w-8 h-4 border rounded-2xl border-gray-300 flex items-center relative;
 
   @media screen and (max-width: 1023px) {
     @apply w-10 h-5;
   }
 
-  :focus-within, &:focus-visible, &:focus {
+  :focus-within,
+  &:focus-visible,
+  &:focus {
     @apply outline-1 outline-gray-200;
   }
 
   &:hover {
-    @apply border-gray-100
+    @apply border-gray-100;
   }
 
   &.on {
@@ -24,7 +25,6 @@
 }
 
 .toggle-circle {
-
   @apply transition-all absolute pointer-events-none;
 
   .on & {

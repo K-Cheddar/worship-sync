@@ -150,12 +150,23 @@ const SlideEditor = () => {
     value,
     box,
     cursorPosition,
+    lastKeyPressed,
   }: {
     index: number;
     value: string;
     box: Box;
     cursorPosition?: number;
+    lastKeyPressed?: string | null;
   }) => {
+    let shouldDeleteCurrentSlide = false;
+
+    if (
+      (lastKeyPressed === "Backspace" || lastKeyPressed === "Delete") &&
+      !value
+    ) {
+      shouldDeleteCurrentSlide = true;
+    }
+
     if (typeof cursorPosition === "number") {
       setCursorPositions((prev) => ({ ...prev, [index]: cursorPosition }));
     }
@@ -177,14 +188,20 @@ const SlideEditor = () => {
       dispatch(updateBoxes({ boxes: newBoxes }));
     }
 
+    const updatedSlides = item.slides.map((slide, index) => {
+      if (index === selectedSlide) {
+        return { ...slide, boxes: newBoxes };
+      }
+      return slide;
+    });
+
+    if (shouldDeleteCurrentSlide) {
+      updatedSlides.splice(selectedSlide, 1);
+    }
+
     const updatedItem = {
       ...item,
-      slides: item.slides.map((slide, index) => {
-        if (index === selectedSlide) {
-          return { ...slide, boxes: newBoxes };
-        }
-        return slide;
-      }),
+      slides: updatedSlides,
     };
 
     if (type === "bible") {
@@ -197,13 +214,17 @@ const SlideEditor = () => {
     }
 
     if (type === "free") {
-      const _item = formatFree(
-        {
-          ...updatedItem,
-        },
-        isMobile
-      );
-      dispatch(updateSlides({ slides: _item.slides }));
+      if (shouldDeleteCurrentSlide) {
+        dispatch(updateSlides({ slides: updatedSlides }));
+      } else {
+        const _item = formatFree(
+          {
+            ...updatedItem,
+          },
+          isMobile
+        );
+        dispatch(updateSlides({ slides: _item.slides }));
+      }
     }
 
     if (type === "song") {
@@ -248,6 +269,9 @@ const SlideEditor = () => {
             newWords += slides[i].boxes[index].words;
           }
         }
+        if (shouldDeleteCurrentSlide) {
+          newWords = newWords.trim();
+        }
 
         if (newWords !== "") {
           const updatedArrangements = item.arrangements.map(
@@ -265,16 +289,7 @@ const SlideEditor = () => {
                       return lyric;
                     }
                   }),
-                  slides: slides.map((slide, i) => {
-                    if (i === selectedSlide) {
-                      return {
-                        ...slide,
-                        boxes: newBoxes,
-                      };
-                    } else {
-                      return slide;
-                    }
-                  }),
+                  slides: updatedSlides,
                 };
               } else {
                 return arrangement;
