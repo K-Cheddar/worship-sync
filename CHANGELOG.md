@@ -1,3 +1,25 @@
+# [1.15.0](https://github.com/K-Cheddar/worship-sync/compare/v1.14.1...v1.15.0) (2025-09-04)
+
+
+### Bug Fixes
+
+* Allow empty slide deletion with backspace/delete ([8fcab2b](https://github.com/K-Cheddar/worship-sync/commit/8fcab2b4863f7ad89012864aee326a3467c51c54))
+* **Bible:** Search now works correctly when viewing selected verses ([2fdfbe8](https://github.com/K-Cheddar/worship-sync/commit/2fdfbe8ee1af13c7e221afa208e8bf6e978717e6))
+* Correct slide size on mobile ([44ed4cc](https://github.com/K-Cheddar/worship-sync/commit/44ed4cc6f0087492e564100b01f63d92db52c254))
+* Corrected radio button clickable area ([8619496](https://github.com/K-Cheddar/worship-sync/commit/8619496fbdc65e7f66fe8d37e6f1cbb537233847))
+* Improve keyboard navigation ([25b6728](https://github.com/K-Cheddar/worship-sync/commit/25b6728516d1cf18233b9a8d058de65ea7f3193e))
+* Improve logic for getting latest version ([3da6f2e](https://github.com/K-Cheddar/worship-sync/commit/3da6f2eade1a508d91d2ef6df1f816c150cb7e80))
+* Inputs no longer lose focus after opening delete confirmation ([5b53343](https://github.com/K-Cheddar/worship-sync/commit/5b53343af2fa6c466f88da1136ab060225e8593b))
+* **Media:** Fixed names not showing for some items ([3314b0b](https://github.com/K-Cheddar/worship-sync/commit/3314b0b66152eee29580ff574412d924d78cdac3))
+* Removed media changes from undo history ([4945b95](https://github.com/K-Cheddar/worship-sync/commit/4945b9544a34af127f73631aafb9562738e22c25))
+* Title slide now changes brightness with other slides ([bef0d3f](https://github.com/K-Cheddar/worship-sync/commit/bef0d3fe711d37e889ca0f02ff7d5564de45cd17))
+
+
+### Features
+
+* Adding overlay preview in expanded window ([5eba6ed](https://github.com/K-Cheddar/worship-sync/commit/5eba6eda67c1086f5434dff144a3b2d4bbe2b7ce))
+* Improve overlay style editing ([510b8cb](https://github.com/K-Cheddar/worship-sync/commit/510b8cb3916c423f287d00e1e95ef0faf93d46f9))
+
 ## [1.14.1](https://github.com/K-Cheddar/worship-sync/compare/v1.14.0...v1.14.1) (2025-08-21)
 
 
