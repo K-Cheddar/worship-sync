@@ -22,7 +22,7 @@
 }
 
 .display-box-background {
-  @apply h-full w-full absolute transition-opacity duration-300 ease-in-out;
+  @apply h-full w-full absolute;
 }
 
 .display-box-text {
