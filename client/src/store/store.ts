@@ -40,6 +40,7 @@ import {
   DBItemLists,
   DBMedia,
   DBOverlay,
+  DBOverlayTemplates,
   DBPreferences,
   FormattedTextDisplayInfo,
   OverlayInfo,
@@ -49,6 +50,7 @@ import {
 import { allDocsSlice } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
 import { timersSlice, updateTimerFromRemote } from "./timersSlice";
+import { overlayTemplatesSlice } from "./overlayTemplatesSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import _ from "lodash";
 
@@ -129,6 +131,11 @@ const excludedActions: string[] = [
   allDocsSlice.actions.updateAllSongDocs.toString(),
   allDocsSlice.actions.updateAllTimerDocs.toString(),
   allItemsSlice.actions.initiateAllItemsList.toString(),
+  overlayTemplatesSlice.actions.initiateTemplates.toString(),
+  overlayTemplatesSlice.actions.updateTemplatesFromRemote.toString(),
+  overlayTemplatesSlice.actions.setIsLoading.toString(),
+  overlayTemplatesSlice.actions.setHasPendingUpdate.toString(),
+  overlayTemplatesSlice.actions.forceUpdate.toString(),
 ];
 
 const excludedPrefixes = [
@@ -148,6 +155,7 @@ const undoableReducers = undoable(
     itemList: itemListSlice.reducer,
     itemLists: itemListsSlice.reducer,
     preferences: preferencesSlice.reducer,
+    overlayTemplates: overlayTemplatesSlice.reducer,
   }),
   {
     groupBy: (action) => {
@@ -704,6 +712,64 @@ listenerMiddleware.startListening({
   },
 });
 
+// handle updating overlay templates
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).undoable.present.overlayTemplates !==
+        (previousState as RootState).undoable.present.overlayTemplates &&
+      action.type !== "overlayTemplates/initiateTemplates" &&
+      action.type !== "overlayTemplates/updateTemplatesFromRemote" &&
+      action.type !== "overlayTemplates/setIsLoading" &&
+      action.type !== "overlayTemplates/setHasPendingUpdate" &&
+      action.type !== "overlayTemplates/forceUpdate" &&
+      !!(currentState as RootState).undoable.present.overlayTemplates
+        ?.hasPendingUpdate &&
+      action.type !== "RESET"
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(1500);
+
+    listenerApi.dispatch(
+      overlayTemplatesSlice.actions.setHasPendingUpdate(false)
+    );
+
+    // update overlay templates
+    const { templatesByType } = (listenerApi.getState() as RootState).undoable
+      .present.overlayTemplates;
+
+    if (!db) return;
+    try {
+      const db_templates: DBOverlayTemplates =
+        await db.get("overlay-templates");
+      db_templates.templatesByType = templatesByType;
+      db_templates.updatedAt = new Date().toISOString();
+      db.put(db_templates);
+      // Local machine updates
+      safePostMessage({
+        type: "update",
+        data: {
+          docs: db_templates,
+          hostId: globalHostId,
+        },
+      });
+    } catch (error) {
+      // if the templates are not found, create a new one
+      console.error(error);
+      const db_templates = {
+        _id: "overlay-templates",
+        templatesByType: templatesByType,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      db.put(db_templates);
+    }
+  },
+});
+
 // handle updating presentation
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
@@ -1125,6 +1191,15 @@ listenerMiddleware.startListening({
     ) {
       listenerApi.dispatch(creditsSlice.actions.forceUpdate());
     }
+
+    if (
+      !_.isEqual(
+        currentState.undoable.present.overlayTemplates,
+        previousState.undoable.present.overlayTemplates
+      )
+    ) {
+      listenerApi.dispatch(overlayTemplatesSlice.actions.forceUpdate());
+    }
   },
 });
 
@@ -1157,7 +1232,8 @@ listenerMiddleware.startListening({
       state.undoable.present.preferences.isInitialized &&
       state.undoable.present.itemList.isInitialized &&
       state.undoable.present.overlays.isInitialized &&
-      state.undoable.present.itemLists.isInitialized;
+      state.undoable.present.itemLists.isInitialized &&
+      (state.undoable.present.overlayTemplates as any).isInitialized;
 
     return allSlicesInitialized;
   },
@@ -1196,6 +1272,7 @@ const combinedReducers = combineReducers({
   allDocs: allDocsSlice.reducer,
   timers: timersSlice.reducer,
   media: mediaItemsSlice.reducer,
+  overlayTemplates: overlayTemplatesSlice.reducer,
 });
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {

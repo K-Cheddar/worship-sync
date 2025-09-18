@@ -29,13 +29,7 @@ import { RootState } from "../../store/store";
 import Drawer from "../../components/Drawer";
 import StyleEditor from "../../components/StyleEditor";
 import { DBOverlay, OverlayFormatting, OverlayInfo } from "../../types";
-import {
-  defaultImageOverlayStyles,
-  defaultParticipantOverlayStyles,
-  defaultQrCodeOverlayStyles,
-  defaultStbOverlayStyles,
-} from "../../components/DisplayWindow/defaultOverlayStyles";
-import OverlayPreview from "./OverlayPreview";
+import OverlayTemplatesDrawer from "./OverlayTemplatesDrawer";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import {
   deleteOverlay,
@@ -43,16 +37,11 @@ import {
   setIsOverlayLoading,
   updateOverlay,
 } from "../../store/overlaySlice";
+import { updateTemplatesFromRemote } from "../../store/overlayTemplatesSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import OverlayEditor from "./OverlayEditor";
 import { getDefaultFormatting } from "../../utils/overlayUtils";
-
-const typeToName = {
-  participant: "Participant",
-  "stick-to-bottom": "Stick to Bottom",
-  "qr-code": "QR Code",
-  image: "Image",
-};
+import { DBOverlayTemplates } from "../../types";
 
 const Overlays = () => {
   const { list, initialList } = useSelector(
@@ -154,6 +143,26 @@ const Overlays = () => {
   }, [updater, updateOverlayFromExternal]);
 
   useGlobalBroadcast(updateOverlayFromExternal);
+
+  const updateTemplatesFromExternal = useCallback(
+    async (event: CustomEventInit) => {
+      try {
+        const updates = event.detail;
+        for (const _update of updates) {
+          if (_update._id === "overlay-templates") {
+            console.log("updating overlay templates from remote", event);
+            const update = _update as DBOverlayTemplates;
+            dispatch(updateTemplatesFromRemote(update.templatesByType));
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [dispatch]
+  );
+
+  useGlobalBroadcast(updateTemplatesFromExternal);
 
   const { setNodeRef } = useDroppable({
     id: "overlays-list",
@@ -381,73 +390,13 @@ const Overlays = () => {
             className="p-4 flex-1 overflow-y-auto"
           />
         </Drawer>
-        <Drawer
+        <OverlayTemplatesDrawer
           isOpen={isTemplateDrawerOpen}
           onClose={() => setIsTemplateDrawerOpen(false)}
-          size={isMobile ? "lg" : "md"}
-          position={isMobile ? "bottom" : "right"}
-          title={`${typeToName[selectedOverlay.type as keyof typeof typeToName]} Templates`}
-          showBackdrop
-          closeOnBackdropClick
-          closeOnEscape
-        >
-          {selectedOverlay.type === "participant" && (
-            <OverlayPreview
-              overlay={selectedOverlay}
-              defaultStyles={defaultParticipantOverlayStyles}
-              onApply={() => {
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  formatting: defaultParticipantOverlayStyles,
-                });
-                setIsTemplateDrawerOpen(false);
-              }}
-              isMobile={isMobile}
-            />
-          )}
-          {selectedOverlay.type === "stick-to-bottom" && (
-            <OverlayPreview
-              overlay={selectedOverlay}
-              defaultStyles={defaultStbOverlayStyles}
-              onApply={() => {
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  formatting: defaultStbOverlayStyles,
-                });
-                setIsTemplateDrawerOpen(false);
-              }}
-              isMobile={isMobile}
-            />
-          )}
-          {selectedOverlay.type === "qr-code" && (
-            <OverlayPreview
-              overlay={selectedOverlay}
-              defaultStyles={defaultQrCodeOverlayStyles}
-              onApply={() => {
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  formatting: defaultQrCodeOverlayStyles,
-                });
-                setIsTemplateDrawerOpen(false);
-              }}
-              isMobile={isMobile}
-            />
-          )}
-          {selectedOverlay.type === "image" && (
-            <OverlayPreview
-              overlay={selectedOverlay}
-              defaultStyles={defaultImageOverlayStyles}
-              onApply={() => {
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  formatting: defaultImageOverlayStyles,
-                });
-                setIsTemplateDrawerOpen(false);
-              }}
-              isMobile={isMobile}
-            />
-          )}
-        </Drawer>
+          isMobile={isMobile}
+          selectedOverlay={selectedOverlay}
+          onApplyFormatting={(overlay) => handleOverlayUpdate(overlay)}
+        />
       </DndContext>
     </ErrorBoundary>
   );
