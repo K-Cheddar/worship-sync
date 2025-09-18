@@ -79,6 +79,7 @@ const DisplayBox = ({
       boxTimeline.current = gsap.timeline();
 
       if (isPrev) {
+        boxTimeline.current.addLabel("fadeOut");
         if (!skipBackgroundAnimation && shouldShowBackground) {
           boxTimeline.current.set(".display-box-background", {
             opacity: 1,
@@ -91,17 +92,19 @@ const DisplayBox = ({
             opacity: 0,
             duration: textDuration,
             ease: "power1.inOut",
-          }
+          },
+          "fadeOut"
         );
 
         if (shouldShowBackground) {
           boxTimeline.current.to(
             ".display-box-background",
             { opacity: 0, duration: backgroundDuration, ease: "power1.inOut" },
-            `-=${textDuration}`
+            "fadeOut"
           );
         }
       } else {
+        boxTimeline.current.addLabel("fadeIn");
         if (!skipBackgroundAnimation && shouldShowBackground) {
           boxTimeline.current.set(".display-box-background", { opacity: 0 });
         }
@@ -112,7 +115,8 @@ const DisplayBox = ({
             opacity: 1,
             duration: textDuration,
             ease: "power1.inOut",
-          }
+          },
+          "fadeIn"
         );
 
         if (shouldShowBackground) {
@@ -123,7 +127,7 @@ const DisplayBox = ({
               duration: backgroundDuration,
               ease: "power1.inOut",
             },
-            `-=${textDuration}`
+            "fadeIn"
           );
         }
       }
