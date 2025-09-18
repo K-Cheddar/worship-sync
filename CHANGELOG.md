@@ -1,3 +1,17 @@
+# [1.16.0](https://github.com/K-Cheddar/worship-sync/compare/v1.15.0...v1.16.0) (2025-09-18)
+
+
+### Bug Fixes
+
+* Improve slide transitions ([7ade6d2](https://github.com/K-Cheddar/worship-sync/commit/7ade6d2733620ddd83d5b6b4be35c4bbbcde8cb3))
+* Keep "Create a new item" visible when searching ([0a06c8f](https://github.com/K-Cheddar/worship-sync/commit/0a06c8fbb25180395c44fefba0c1545e4c9d9359))
+
+
+### Features
+
+* Added a link to open the projector from the menu ([190bddb](https://github.com/K-Cheddar/worship-sync/commit/190bddb305263ee90a2074d3322b44e27fc562d2))
+* Overlay Templates can now be updated ([3a4f2ab](https://github.com/K-Cheddar/worship-sync/commit/3a4f2ab914ca37a6d667e76817f9564b9e3cecce))
+
 # [1.15.0](https://github.com/K-Cheddar/worship-sync/compare/v1.14.1...v1.15.0) (2025-09-04)
 
 
