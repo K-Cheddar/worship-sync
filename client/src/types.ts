@@ -469,6 +469,25 @@ export type DBMedia = {
   updatedAt?: string;
 };
 
+// Overlay Templates
+export type SavedTemplate = {
+  id: string;
+  name: string;
+  formatting: OverlayFormatting;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TemplatesByType = Record<OverlayType, SavedTemplate[]>;
+
+export type DBOverlayTemplates = {
+  _id: string;
+  _rev: string;
+  templatesByType: TemplatesByType;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type DBBibleChapter = BibleChapter & {
   _id: string;
   _rev: string;

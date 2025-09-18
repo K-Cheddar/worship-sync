@@ -36,6 +36,8 @@ import {
   DBItemListDetails,
   DBOverlay,
   DBPreferences,
+  DBOverlayTemplates,
+  TemplatesByType,
   OverlayInfo,
 } from "../../types";
 import {
@@ -68,6 +70,7 @@ import {
   setIsLoading,
   updatePreferencesFromRemote,
 } from "../../store/preferencesSlice";
+import { initiateTemplates } from "../../store/overlayTemplatesSlice";
 import { setIsEditMode } from "../../store/itemSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 
@@ -177,6 +180,21 @@ const Controller = () => {
       }
     };
     getPreferences();
+  }, [dispatch, db]);
+
+  useEffect(() => {
+    if (!db) return;
+    const getTemplates = async () => {
+      try {
+        const templates: DBOverlayTemplates | undefined =
+          await db.get("overlay-templates");
+        const templatesByType: TemplatesByType = templates?.templatesByType;
+        dispatch(initiateTemplates(templatesByType));
+      } catch (e) {
+        dispatch(initiateTemplates(undefined));
+      }
+    };
+    getTemplates();
   }, [dispatch, db]);
 
   useEffect(() => {

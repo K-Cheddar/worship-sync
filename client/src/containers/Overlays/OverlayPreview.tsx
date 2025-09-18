@@ -8,6 +8,7 @@ interface OverlayPreviewProps {
   defaultStyles: any;
   onApply: () => void;
   isMobile: boolean;
+  secondaryAction?: React.ReactNode;
 }
 
 const OverlayPreview = ({
@@ -15,6 +16,7 @@ const OverlayPreview = ({
   defaultStyles,
   onApply,
   isMobile,
+  secondaryAction,
 }: OverlayPreviewProps) => {
   const getOverlayInfo = () => {
     const baseInfo = {
@@ -83,14 +85,17 @@ const OverlayPreview = ({
           {...{ [overlayInfoKey]: overlayInfo }}
         />
       </div>
-      <Button
-        svg={SaveSVG}
-        color="#22d3ee"
-        className="justify-center"
-        onClick={onApply}
-      >
-        Apply
-      </Button>
+      <div className="flex gap-2">
+        {secondaryAction}
+        <Button
+          svg={SaveSVG}
+          color="#22d3ee"
+          className="justify-center flex-1 text-sm"
+          onClick={onApply}
+        >
+          Apply
+        </Button>
+      </div>
     </div>
   );
 };

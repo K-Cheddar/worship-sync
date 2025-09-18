@@ -18,10 +18,20 @@ const ToolbarMenu = ({
   const menuItems: MenuItemType[] = [
     {
       text: "Open Stage Monitor",
-      onClick: async() => {
+      onClick: async () => {
         try {
           // TODO place on existing monitor
           window.open("#/monitor", "_monitor", "width=500,height=360");
+        } catch (err) {
+          console.error(err);
+        }
+      },
+    },
+    {
+      text: "Open Projector",
+      onClick: async () => {
+        try {
+          window.open("#/projector", "_projector", "width=500,height=360");
         } catch (err) {
           console.error(err);
         }
@@ -37,19 +47,19 @@ const ToolbarMenu = ({
     },
     ...(isPhone && !isEditMode
       ? [
-        {
-          element: (
-            <UndoButton color="black" className="w-full justify-center" />
-          ),
-          padding: "p-0",
-        },
-        {
-          element: (
-            <RedoButton color="black" className="w-full justify-center" />
-          ),
-          padding: "p-0",
-        },
-      ]
+          {
+            element: (
+              <UndoButton color="black" className="w-full justify-center" />
+            ),
+            padding: "p-0",
+          },
+          {
+            element: (
+              <RedoButton color="black" className="w-full justify-center" />
+            ),
+            padding: "p-0",
+          },
+        ]
       : []),
     // {
     //   text: isLoggedIn ? "Logout" : "Login",

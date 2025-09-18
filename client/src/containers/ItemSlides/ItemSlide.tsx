@@ -2,7 +2,7 @@ import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import "./ItemSlides.scss";
 
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
-import { ItemSlideType as ItemSlideType, TimerInfo } from "../../types";
+import { ItemSlideType, TimerInfo } from "../../types";
 import { sizeMap } from "./ItemSlides";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
