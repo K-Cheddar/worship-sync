@@ -12,6 +12,7 @@ import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
 import { useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
+import { backoff } from "../utils/generalUtils";
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
@@ -94,7 +95,13 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>();
+  const syncRetryRef = useRef(0);
+  const replicateRetryRef = useRef(0);
+  const replicateRef = useRef<any>();
   const bibleSyncRef = useRef<any>();
+  const bibleSyncRetryRef = useRef(0);
+  const bibleReplicateRetryRef = useRef(0);
+  const bibleReplicateRef = useRef<any>();
 
   const getCouchSession = useCallback(async () => {
     const response = await fetch(
@@ -110,10 +117,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const syncDb = useCallback(
     async (localDb: PouchDB.Database, remoteDb: PouchDB.Database) => {
-      let retry = 0;
-      if (syncRef.current) {
-        syncRef.current.cancel();
-      }
+      syncRef.current?.cancel();
 
       syncRef.current = localDb
         .sync(remoteDb, { retry: true, live: true })
@@ -133,11 +137,13 @@ const ControllerInfoProvider = ({ children }: any) => {
             setHasCouchSession(false);
             const success = await getCouchSession();
             if (!success) {
-              retry++;
-              if (retry > 3) {
+              syncRetryRef.current++;
+              if (syncRetryRef.current > 3) {
                 return;
               }
-              return;
+              await backoff(syncRetryRef.current);
+            } else {
+              syncRetryRef.current = 0;
             }
             syncDb(localDb, remoteDb);
           }
@@ -148,10 +154,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const bibleSyncDb = useCallback(
     async (localDb: PouchDB.Database, remoteDb: PouchDB.Database) => {
-      let retry = 0;
-      if (bibleSyncRef.current) {
-        bibleSyncRef.current.cancel();
-      }
+      bibleSyncRef.current?.cancel();
 
       bibleSyncRef.current = localDb
         .changes({ since: "now", live: true })
@@ -166,11 +169,13 @@ const ControllerInfoProvider = ({ children }: any) => {
             setHasCouchSession(false);
             const success = await getCouchSession();
             if (!success) {
-              retry++;
-              if (retry > 3) {
+              bibleSyncRetryRef.current++;
+              if (bibleSyncRetryRef.current > 3) {
                 return;
               }
-              return;
+              await backoff(bibleSyncRetryRef.current);
+            } else {
+              bibleSyncRetryRef.current = 0;
             }
             bibleSyncDb(localDb, remoteDb);
           }
@@ -203,11 +208,10 @@ const ControllerInfoProvider = ({ children }: any) => {
         },
       });
 
-      if (syncRef.current) {
-        syncRef.current.cancel();
-      }
+      syncRef.current?.cancel();
+      replicateRef.current?.cancel();
 
-      remoteDb.replicate
+      replicateRef.current = remoteDb.replicate
         .to(localDb, { retry: true, batch_size: 150, batches_limit: 15 })
         .on("change", (info) => {
           const pending: number = (info as any).pending; // this property exists when printing info
@@ -218,9 +222,24 @@ const ControllerInfoProvider = ({ children }: any) => {
             setDbProgress(100);
           }
         })
-        .on("error", (error: any) => {
+        .on("error", async (error: any) => {
           if (error.status === 401 || error.status === 403) {
-            window.location.reload();
+            setHasCouchSession(false);
+            replicateRef.current?.cancel();
+
+            const success = await getCouchSession();
+            console.log("error", error);
+            if (!success) {
+              replicateRetryRef.current++;
+              if (replicateRetryRef.current > 3) {
+                window.location.reload();
+                return;
+              }
+              await backoff(replicateRetryRef.current);
+            } else {
+              replicateRetryRef.current = 0;
+            }
+            setupDb();
           }
         })
         .on("complete", () => {
@@ -254,6 +273,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     isDbSetup,
     hasCouchSession,
     syncDb,
+    getCouchSession,
   ]);
 
   useEffect(() => {
@@ -268,11 +288,10 @@ const ControllerInfoProvider = ({ children }: any) => {
         },
       });
 
-      if (bibleSyncRef.current) {
-        bibleSyncRef.current.cancel();
-      }
+      bibleSyncRef.current?.cancel();
+      bibleReplicateRef.current?.cancel();
 
-      remoteDb.replicate
+      bibleReplicateRef.current = remoteDb.replicate
         .to(localDb, { retry: true, batch_size: 1000, batches_limit: 25 })
         .on("change", (info) => {
           const pending: number = (info as any).pending; // this property exists when printing info
@@ -283,9 +302,24 @@ const ControllerInfoProvider = ({ children }: any) => {
             setBibleDbProgress(100);
           }
         })
-        .on("error", (error: any) => {
+        .on("error", async (error: any) => {
           if (error.status === 401 || error.status === 403) {
-            window.location.reload();
+            console.log("error", error);
+            bibleReplicateRef.current?.cancel();
+
+            const success = await getCouchSession();
+            if (!success) {
+              bibleReplicateRetryRef.current++;
+              if (bibleReplicateRetryRef.current > 3) {
+                window.location.reload();
+                return;
+              }
+              await backoff(bibleReplicateRetryRef.current);
+              setupBibleDb();
+            } else {
+              bibleReplicateRetryRef.current = 0;
+              setupBibleDb();
+            }
           }
         })
         .on("complete", () => {
@@ -317,6 +351,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     isDbSetup,
     hasCouchSession,
     bibleSyncDb,
+    getCouchSession,
   ]);
 
   const _logout = async () => {
@@ -366,6 +401,19 @@ const ControllerInfoProvider = ({ children }: any) => {
       login?.({ username, password });
     }
   };
+
+  useEffect(() => {
+    return () => {
+      if (syncTimeout) {
+        clearTimeout(syncTimeout);
+        syncTimeout = null;
+      }
+      syncRef.current?.cancel();
+      bibleSyncRef.current?.cancel();
+      replicateRef.current?.cancel();
+      bibleReplicateRef.current?.cancel();
+    };
+  }, []);
 
   return (
     <ControllerInfoContext.Provider

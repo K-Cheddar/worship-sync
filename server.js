@@ -238,7 +238,26 @@ app.get("/api/getDbSession", async (req, res) => {
   try {
     const couchURL = `https://${process.env.COUCHDB_HOST}/_session`;
 
-    const response = await axios({
+    // 1️⃣ Check if we already have a valid session
+    const currentCookie = req.headers.cookie;
+    if (currentCookie?.includes("AuthSession")) {
+      try {
+        const checkResp = await axios.get(couchURL, {
+          headers: { Cookie: currentCookie },
+        });
+        if (checkResp.data?.userCtx?.name === process.env.COUCHDB_USER) {
+          return res.json({
+            success: true,
+            message: "Existing session still valid",
+          });
+        }
+      } catch {
+        // Invalid session — continue to request a new session
+      }
+    }
+
+    // 2️⃣ Request a new session
+    const loginResp = await axios({
       method: "POST",
       url: couchURL,
       headers: {
@@ -252,16 +271,18 @@ app.get("/api/getDbSession", async (req, res) => {
       data: `name=${process.env.COUCHDB_USER}&password=${process.env.COUCHDB_PASSWORD}`,
     });
 
-    const cookies = response.headers["set-cookie"];
+    const cookies = loginResp.headers["set-cookie"];
 
     if (cookies?.length) {
-      // Clear the old one
-      res.append(
-        "Set-Cookie",
-        `AuthSession=; Path=/; Domain=.worshipsync.net; Max-Age=0; Secure; HttpOnly; SameSite=None`
-      );
+      // Clear old cookies for both domain variants
+      ["worshipsync.net", ".worshipsync.net"].forEach((domain) => {
+        res.append(
+          "Set-Cookie",
+          `AuthSession=; Path=/; Domain=${domain}; Max-Age=0; Secure; HttpOnly; SameSite=None`
+        );
+      });
 
-      // Set the new one exactly as CouchDB gave it, just adjusting attributes
+      // Set the new one exactly as CouchDB gave it, adjusting attributes
       cookies.forEach((cookie) => {
         const updatedCookie = cookie.replace(
           /; HttpOnly/,
@@ -273,7 +294,7 @@ app.get("/api/getDbSession", async (req, res) => {
 
     res.json({
       success: true,
-      message: "Session established",
+      message: "New session established",
     });
   } catch (error) {
     console.error("Error getting CouchDB session:", error);
