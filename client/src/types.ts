@@ -398,13 +398,13 @@ export type ItemListDetails = {
 
 export type ItemLists = {
   itemLists: ItemList[];
-  selectedList: ItemList;
+  activeList: ItemList;
   _id: string;
 };
 
 export type DBItemLists = {
   itemLists: ItemList[];
-  selectedList: ItemList;
+  activeList: ItemList;
   _id: string;
   _rev: string;
   createdAt?: string;

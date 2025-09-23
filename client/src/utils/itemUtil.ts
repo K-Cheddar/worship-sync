@@ -574,40 +574,40 @@ export const createNewItemList = async ({
 type CreateItemListFromExisting = {
   db: PouchDB.Database | undefined;
   currentLists: ItemList[];
-  selectedList: ItemList;
+  list: ItemList;
 };
 
 export const createItemListFromExisting = async ({
   db,
   currentLists,
-  selectedList,
+  list,
 }: CreateItemListFromExisting): Promise<ItemList | null> => {
   if (!db) return null;
 
   try {
-    const response: DBItemListDetails = await db.get(selectedList._id);
+    const response: DBItemListDetails = await db.get(list._id);
     const name = makeUnique({
-      value: selectedList.name,
+      value: list.name,
       property: "name",
       list: currentLists,
     });
     const _id = makeUnique({
-      value: selectedList._id,
+      value: list._id,
       property: "_id",
       list: currentLists,
     });
-    const list: ItemListDetails = {
+    const updatedList: ItemListDetails = {
       _id,
       name,
       items: response.items,
       overlays: response.overlays,
     };
     db.put({
-      ...list,
+      ...updatedList,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-    return { _id: list._id, name: list.name };
+    return { _id: updatedList._id, name: updatedList.name };
   } catch (error) {
     console.error(error);
     return null;
