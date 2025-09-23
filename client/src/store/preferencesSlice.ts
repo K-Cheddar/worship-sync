@@ -52,13 +52,26 @@ type PreferencesState = {
 
 const initialState: PreferencesState = {
   preferences: {
-    defaultSongBackground:
-      "https://res.cloudinary.com/portable-media/image/upload/v1/eliathah/WorshipBackground_ycr280?_a=DATAg1AAZAA0",
-    defaultTimerBackground: "",
-    defaultBibleBackground:
-      "https://res.cloudinary.com/portable-media/image/upload/v1/backgrounds/bible-background_mlek3e?_a=DATAg1AAZAA0",
-    defaultFreeFormBackground:
-      "https://res.cloudinary.com/portable-media/image/upload/v1/backgrounds/simple-background-2048x1152_zj96ie?_a=DATAg1AAZAA0",
+    defaultSongBackground: {
+      background:
+        "https://res.cloudinary.com/portable-media/image/upload/v1/eliathah/WorshipBackground_ycr280?_a=DATAg1AAZAA0",
+      mediaInfo: undefined,
+    },
+    defaultTimerBackground: {
+      background:
+        "https://res.cloudinary.com/portable-media/image/upload/v1/eliathah/WorshipBackground_ycr280?_a=DATAg1AAZAA0",
+      mediaInfo: undefined,
+    },
+    defaultBibleBackground: {
+      background:
+        "https://res.cloudinary.com/portable-media/image/upload/v1/backgrounds/bible-background_mlek3e?_a=DATAg1AAZAA0",
+      mediaInfo: undefined,
+    },
+    defaultFreeFormBackground: {
+      background:
+        "https://res.cloudinary.com/portable-media/image/upload/v1/backgrounds/simple-background-2048x1152_zj96ie?_a=DATAg1AAZAA0",
+      mediaInfo: undefined,
+    },
     defaultSongBackgroundBrightness: 50,
     defaultTimerBackgroundBrightness: 75,
     defaultBibleBackgroundBrightness: 60,
@@ -242,18 +255,38 @@ export const preferencesSlice = createSlice({
 
     initiatePreferences: (state, action: PayloadAction<PreferencesType>) => {
       state.preferences = {
-        defaultSongBackground:
-          action.payload.defaultSongBackground ||
-          initialState.preferences.defaultSongBackground,
-        defaultTimerBackground:
-          action.payload.defaultTimerBackground ||
-          initialState.preferences.defaultTimerBackground,
-        defaultBibleBackground:
-          action.payload.defaultBibleBackground ||
-          initialState.preferences.defaultBibleBackground,
-        defaultFreeFormBackground:
-          action.payload.defaultFreeFormBackground ||
-          initialState.preferences.defaultFreeFormBackground,
+        defaultSongBackground: {
+          background:
+            action.payload.defaultSongBackground?.background ||
+            initialState.preferences.defaultSongBackground.background,
+          mediaInfo:
+            action.payload.defaultSongBackground?.mediaInfo ||
+            initialState.preferences.defaultSongBackground.mediaInfo,
+        },
+        defaultTimerBackground: {
+          background:
+            action.payload.defaultTimerBackground?.background ||
+            initialState.preferences.defaultTimerBackground.background,
+          mediaInfo:
+            action.payload.defaultTimerBackground?.mediaInfo ||
+            initialState.preferences.defaultTimerBackground.mediaInfo,
+        },
+        defaultBibleBackground: {
+          background:
+            action.payload.defaultBibleBackground?.background ||
+            initialState.preferences.defaultBibleBackground.background,
+          mediaInfo:
+            action.payload.defaultBibleBackground?.mediaInfo ||
+            initialState.preferences.defaultBibleBackground.mediaInfo,
+        },
+        defaultFreeFormBackground: {
+          background:
+            action.payload.defaultFreeFormBackground?.background ||
+            initialState.preferences.defaultFreeFormBackground.background,
+          mediaInfo:
+            action.payload.defaultFreeFormBackground?.mediaInfo ||
+            initialState.preferences.defaultFreeFormBackground.mediaInfo,
+        },
         defaultSongBackgroundBrightness:
           action.payload.defaultSongBackgroundBrightness ||
           initialState.preferences.defaultSongBackgroundBrightness,

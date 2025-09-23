@@ -143,7 +143,8 @@ const CreateItem = () => {
         songOrder,
         list,
         db,
-        background: defaultSongBackground,
+        background: defaultSongBackground.background,
+        mediaInfo: defaultSongBackground.mediaInfo,
         brightness: defaultSongBackgroundBrightness,
         isMobile,
       });
@@ -156,7 +157,8 @@ const CreateItem = () => {
         name: itemName,
         list,
         db,
-        background: defaultFreeFormBackground,
+        background: defaultFreeFormBackground.background,
+        mediaInfo: defaultFreeFormBackground.mediaInfo,
         brightness: defaultFreeFormBackgroundBrightness,
         text,
         isMobile,
@@ -185,7 +187,8 @@ const CreateItem = () => {
         duration,
         countdownTime: time,
         timerType,
-        background: defaultTimerBackground,
+        background: defaultTimerBackground.background,
+        mediaInfo: defaultTimerBackground.mediaInfo,
         brightness: defaultTimerBackgroundBrightness,
       });
 

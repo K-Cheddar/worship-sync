@@ -356,11 +356,16 @@ export type bibleType = {
   books: bookType[];
 };
 
+export type PreferenceBackground = {
+  background: string;
+  mediaInfo?: MediaType;
+};
+
 export type PreferencesType = {
-  defaultSongBackground: string;
-  defaultTimerBackground: string;
-  defaultBibleBackground: string;
-  defaultFreeFormBackground: string;
+  defaultSongBackground: PreferenceBackground;
+  defaultTimerBackground: PreferenceBackground;
+  defaultBibleBackground: PreferenceBackground;
+  defaultFreeFormBackground: PreferenceBackground;
   defaultSongBackgroundBrightness: number;
   defaultTimerBackgroundBrightness: number;
   defaultBibleBackgroundBrightness: number;

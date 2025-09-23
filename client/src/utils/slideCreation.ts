@@ -108,6 +108,7 @@ type CreateNewSlideType = {
   isBold?: boolean;
   isItalic?: boolean;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
+  mediaInfo?: MediaType;
 };
 
 export const createNewSlide = ({
@@ -127,6 +128,7 @@ export const createNewSlide = ({
   isBold,
   isItalic,
   formattedTextDisplayInfo,
+  mediaInfo,
 }: CreateNewSlideType) => {
   const defaultBox = createBox({});
 
@@ -158,6 +160,7 @@ export const createNewSlide = ({
         topMargin: 3,
         sideMargin: 4,
         align: "left",
+        mediaInfo,
       });
     });
     boxes.push(
@@ -174,6 +177,7 @@ export const createNewSlide = ({
         excludeFromOverflow: true,
         isBold: isBold ?? false,
         isItalic: isItalic ?? false,
+        mediaInfo,
       })
     );
   } else if (newBoxes.length) {
@@ -194,6 +198,7 @@ export const createNewSlide = ({
         words: words ? words[0] : " ",
         isBold: isBold ?? false,
         isItalic: isItalic ?? false,
+        mediaInfo,
       })
     );
     boxes.push(
@@ -207,6 +212,7 @@ export const createNewSlide = ({
         topMargin: 1,
         sideMargin: 2.5,
         words: words ? words[1] : " ",
+        mediaInfo,
       })
     );
   } else if (!boxes.length) {
@@ -246,6 +252,7 @@ export const createNewSlide = ({
   if (fontSize) obj.boxes[1].fontSize = fontSize;
   if (background) obj.boxes[0].background = background;
   if (brightness) obj.boxes[0].brightness = brightness;
+  if (mediaInfo) obj.boxes[0].mediaInfo = mediaInfo;
 
   return obj;
 };

@@ -233,7 +233,8 @@ const Bible = () => {
       verses: versesToUse,
       db,
       list,
-      background: defaultBibleBackground,
+      background: defaultBibleBackground.background,
+      mediaInfo: defaultBibleBackground.mediaInfo,
       brightness: defaultBibleBackgroundBrightness,
       isMobile,
     });
@@ -275,7 +276,8 @@ const Bible = () => {
       chapter: chapters[chapter].name,
       version,
       verses: [verseToUse],
-      background: defaultBibleBackground,
+      background: defaultBibleBackground.background,
+      mediaInfo: defaultBibleBackground.mediaInfo,
       brightness: defaultBibleBackgroundBrightness,
       isMobile,
     });

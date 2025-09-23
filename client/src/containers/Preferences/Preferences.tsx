@@ -25,9 +25,13 @@ import Input from "../../components/Input/Input";
 import RadioButton from "../../components/RadioButton/RadioButton";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
+import { useContext } from "react";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 
 const Preferences = () => {
   const dispatch = useDispatch();
+  const { isMobile } = useContext(ControllerInfoContext) || {};
 
   const {
     preferences: {
@@ -153,7 +157,7 @@ const Preferences = () => {
                   variant="none"
                   padding="p-0"
                   className={cn(
-                    "w-48 self-center border-4 flex gap-2 items-center justify-center aspect-video",
+                    "w-fit lg:min-w-[14vw] max-lg:min-w-[35vw] aspect-video self-center border-4 flex gap-2 items-center justify-center",
                     selectedPreference === preference
                       ? "border-cyan-400"
                       : "border-gray-500 hover:border-gray-300"
@@ -167,14 +171,20 @@ const Preferences = () => {
                   }}
                 >
                   {background ? (
-                    <img
-                      className="max-w-full max-h-full"
-                      alt="Default Song Background"
-                      src={background}
-                      loading="lazy"
-                      style={{
-                        filter: `brightness(${brightness}%)`,
-                      }}
+                    <DisplayWindow
+                      width={isMobile ? 35 : 14}
+                      displayType="projector"
+                      shouldPlayVideo
+                      boxes={[
+                        {
+                          background: background.background,
+                          id: `${preference}-display-window`,
+                          width: 100,
+                          height: 100,
+                          brightness,
+                          mediaInfo: background.mediaInfo,
+                        },
+                      ]}
                     />
                   ) : (
                     <p>None</p>
