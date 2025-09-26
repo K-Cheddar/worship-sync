@@ -9,7 +9,7 @@ import TextArea from "../../components/TextArea/TextArea";
 import Drawer from "../../components/Drawer";
 import StyleEditor from "../../components/StyleEditor";
 import cn from "classnames";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import Select from "../../components/Select/Select";
 import { OverlayType } from "../../types";
 
@@ -38,6 +38,23 @@ const OverlayEditor = ({
   const [isExpandedDrawerOpen, setIsExpandedDrawerOpen] = useState(false);
   const isDisabled =
     isOverlayLoading || !selectedOverlay.id || selectedOverlay.isHidden;
+
+  const [desktopWindowWidth, setDesktopWindowWidth] = useState(50);
+  const desktopWindowRef = useCallback((node: HTMLDivElement) => {
+    if (node) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        const height = entries[0].borderBoxSize[0].blockSize;
+        const targetWidth = (height * 16) / 9;
+        const maxWidth = window.innerWidth * 0.7;
+        const windowWidth = window.innerWidth;
+        const widthPercent = Math.round(
+          (Math.min(targetWidth, maxWidth) / windowWidth) * 100
+        );
+        setDesktopWindowWidth(widthPercent);
+      });
+      resizeObserver.observe(node);
+    }
+  }, []);
 
   const commonInputProps = {
     className: "text-sm flex gap-2 items-center w-full",
@@ -465,11 +482,14 @@ const OverlayEditor = ({
       >
         <div className="flex flex-col lg:flex-row h-full">
           <div className="w-full lg:w-[70vw] flex flex-col">
-            <div className="flex items-center justify-center bg-gray-600 h-fit">
+            <div
+              ref={desktopWindowRef}
+              className="flex items-center justify-center bg-gray-600 lg:h-2/3"
+            >
               <DisplayWindow
                 showBorder
                 displayType="stream"
-                width={isMobile ? 95 : 70}
+                width={isMobile ? 95 : desktopWindowWidth}
                 participantOverlayInfo={
                   selectedOverlay.type === "participant"
                     ? {

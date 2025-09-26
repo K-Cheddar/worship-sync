@@ -356,11 +356,16 @@ export type bibleType = {
   books: bookType[];
 };
 
+export type PreferenceBackground = {
+  background: string;
+  mediaInfo?: MediaType;
+};
+
 export type PreferencesType = {
-  defaultSongBackground: string;
-  defaultTimerBackground: string;
-  defaultBibleBackground: string;
-  defaultFreeFormBackground: string;
+  defaultSongBackground: PreferenceBackground;
+  defaultTimerBackground: PreferenceBackground;
+  defaultBibleBackground: PreferenceBackground;
+  defaultFreeFormBackground: PreferenceBackground;
   defaultSongBackgroundBrightness: number;
   defaultTimerBackgroundBrightness: number;
   defaultBibleBackgroundBrightness: number;
@@ -398,13 +403,13 @@ export type ItemListDetails = {
 
 export type ItemLists = {
   itemLists: ItemList[];
-  selectedList: ItemList;
+  activeList: ItemList;
   _id: string;
 };
 
 export type DBItemLists = {
   itemLists: ItemList[];
-  selectedList: ItemList;
+  activeList: ItemList;
   _id: string;
   _rev: string;
   createdAt?: string;

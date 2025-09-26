@@ -9,6 +9,7 @@ import DeleteModal from "../../../components/Modal/DeleteModal";
 import { useState } from "react";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
+import cn from "classnames";
 
 type ServiceProps = {
   list: ItemList;
@@ -16,7 +17,9 @@ type ServiceProps = {
   updateList: (list: ItemList) => void;
   copyList: (list: ItemList) => void;
   selectList: (_id: string) => void;
+  setActiveList: (_id: string) => void;
   isSelected: boolean;
+  isActive: boolean;
 };
 
 const Service = ({
@@ -25,7 +28,9 @@ const Service = ({
   updateList,
   selectList,
   copyList,
+  setActiveList,
   isSelected,
+  isActive,
 }: ServiceProps) => {
   const [name, setName] = useState<string>(list.name);
   const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -59,9 +64,11 @@ const Service = ({
         warningMessage="This action is permanent and cannot be undone."
       />
       <li
-        className={`p-1.5 hover:bg-gray-800 rounded-md flex gap-1 items-center ${
-          isSelected ? "bg-gray-900" : ""
-        }`}
+        className={cn(
+          "p-1 hover:bg-gray-800 rounded-md flex gap-1 items-center border-2",
+          isSelected && "bg-gray-800",
+          isActive ? "border-cyan-500" : "border-transparent"
+        )}
         {...attributes}
         {...listeners}
         style={style}
@@ -105,6 +112,13 @@ const Service = ({
             onClick={() => copyList(list)}
           />
         )}
+        <Button
+          svg={CheckSVG}
+          variant="tertiary"
+          onClick={() => setActiveList(list._id)}
+          title="Set Active"
+          color={isActive ? "#06b6d4" : ""}
+        />
         <Button
           variant="tertiary"
           color={deleteList ? "red" : "gray"}

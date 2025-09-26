@@ -5,6 +5,7 @@ import {
   SlideType,
   verseType,
   BibleFontMode,
+  MediaType,
 } from "../types";
 import { getLetterFromIndex } from "./generalUtils";
 import { createBox, createNewSlide } from "./slideCreation";
@@ -622,6 +623,7 @@ type formatBibleType = {
   chapter?: string;
   version?: string;
   background?: string;
+  mediaInfo?: MediaType;
   brightness?: number;
   isNew?: boolean;
   isMobile: boolean;
@@ -634,6 +636,7 @@ export const formatBible = ({
   chapter,
   version,
   background,
+  mediaInfo,
   brightness,
   isNew,
   isMobile,
@@ -647,6 +650,7 @@ export const formatBible = ({
           fontSize: 3.5,
           words: ["", item.name],
           background,
+          mediaInfo,
           brightness,
         }),
 
@@ -655,6 +659,7 @@ export const formatBible = ({
           type: "Verse",
           fontSize: 2.5,
           background,
+          mediaInfo,
           brightness,
           boxes: [
             createBox({}),
@@ -675,6 +680,7 @@ export const formatBible = ({
       fontSize: boxes[1]?.fontSize || 3.5,
       words: ["", boxes[1]?.words || " "],
       background: boxes[0]?.background || background,
+      mediaInfo: boxes[0]?.mediaInfo || mediaInfo,
       brightness: boxes[0]?.brightness || brightness,
       isBold: boxes[1]?.isBold || false,
       isItalic: boxes[1]?.isItalic || false,

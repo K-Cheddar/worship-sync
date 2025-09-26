@@ -437,7 +437,10 @@ const Media = () => {
           onClick={() => {
             dispatch(
               setDefaultPreferences({
-                [selectedPreference]: selectedMedia.background,
+                [selectedPreference]: {
+                  background: selectedMedia.background,
+                  mediaInfo: selectedMedia,
+                },
               })
             );
           }}

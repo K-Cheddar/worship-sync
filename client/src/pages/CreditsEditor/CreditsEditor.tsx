@@ -68,9 +68,9 @@ const CreditsEditor = () => {
       try {
         const itemListsResponse: ItemLists | undefined =
           await db?.get("ItemLists");
-        const selectedList = itemListsResponse?.selectedList;
+        const activeList = itemListsResponse?.activeList;
         const response: DBItemListDetails | undefined = await db?.get(
-          selectedList._id
+          activeList._id
         );
         const overlaysIds = response?.overlays || [];
 
