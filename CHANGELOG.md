@@ -1,3 +1,18 @@
+# [1.17.0](https://github.com/K-Cheddar/worship-sync/compare/v1.16.0...v1.17.0) (2025-09-26)
+
+
+### Bug Fixes
+
+* Fixed overlay preview size ([9c6563b](https://github.com/K-Cheddar/worship-sync/commit/9c6563b40245ff4dec4514b9902311ada199928f))
+* Increase template preview size on mobile ([e04493d](https://github.com/K-Cheddar/worship-sync/commit/e04493d45b046456d921f080230bc16bcf0fa097))
+* update authentication handling ([e773e99](https://github.com/K-Cheddar/worship-sync/commit/e773e9999a59fe53520afa687b2b34105dae7e9d))
+
+
+### Features
+
+* Outlines can now be set as active ([19fd24d](https://github.com/K-Cheddar/worship-sync/commit/19fd24d35e92b7490550efab20ab032972d72067))
+* Video default backgrounds now supported ([4ac421f](https://github.com/K-Cheddar/worship-sync/commit/4ac421fbfaef1f7235c2bc8a1d828e23ec76fb04))
+
 # [1.16.0](https://github.com/K-Cheddar/worship-sync/compare/v1.15.0...v1.16.0) (2025-09-18)
 
 
