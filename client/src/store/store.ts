@@ -99,6 +99,7 @@ const excludedActions: string[] = [
   itemListsSlice.actions.initiateItemLists.toString(),
   itemListsSlice.actions.updateItemListsFromRemote.toString(),
   itemListsSlice.actions.setInitialItemList.toString(),
+  itemListsSlice.actions.selectItemList.toString(),
   preferencesSlice.actions.initiatePreferences.toString(),
   preferencesSlice.actions.setIsLoading.toString(),
   preferencesSlice.actions.setSelectedPreference.toString(),
@@ -301,6 +302,7 @@ listenerMiddleware.startListening({
       action.type !== "itemLists/setInitialItemList" &&
       action.type !== "itemLists/initiateItemLists" &&
       action.type !== "itemLists/updateItemListsFromRemote" &&
+      action.type !== "itemLists/selectItemList" &&
       action.type !== "RESET"
     );
   },
@@ -310,13 +312,13 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     // update ItemList
-    const { currentLists, selectedList } = (listenerApi.getState() as RootState)
+    const { currentLists, activeList } = (listenerApi.getState() as RootState)
       .undoable.present.itemLists;
 
-    if (!db || !selectedList) return;
+    if (!db || !activeList) return;
     const db_itemLists: DBItemLists = await db.get("ItemLists");
     db_itemLists.itemLists = [...currentLists];
-    db_itemLists.selectedList = selectedList;
+    db_itemLists.activeList = activeList;
     db_itemLists.updatedAt = new Date().toISOString();
     db.put(db_itemLists);
 
@@ -436,11 +438,11 @@ listenerMiddleware.startListening({
 
     // update ItemList
     const { list } = state.undoable.present.overlays;
-    const { selectedList } = state.undoable.present.itemLists;
+    const { activeList } = state.undoable.present.itemLists;
     const { selectedOverlay } = state.undoable.present.overlay;
 
-    if (!db || !selectedList) return;
-    const db_itemList: DBItemListDetails = await db.get(selectedList._id);
+    if (!db || !activeList) return;
+    const db_itemList: DBItemListDetails = await db.get(activeList._id);
     const currentList = db_itemList.overlays;
     const itemsToUpdate = list.filter(
       (overlay) =>

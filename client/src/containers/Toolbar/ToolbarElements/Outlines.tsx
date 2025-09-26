@@ -10,6 +10,7 @@ import {
   setInitialItemList,
   updateItemLists,
   updateItemListsFromRemote,
+  setActiveItemList,
 } from "../../../store/itemListsSlice";
 import PopOver from "../../../components/PopOver/PopOver";
 import Button from "../../../components/Button/Button";
@@ -30,7 +31,10 @@ import {
 import { useGlobalBroadcast } from "../../../hooks/useGlobalBroadcast";
 
 const Services = ({ className }: { className: string }) => {
-  const { currentLists, selectedList } = useSelector(
+  const { currentLists, activeList } = useSelector(
+    (state) => state.undoable.present.itemLists
+  );
+  const { selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
 
@@ -71,10 +75,10 @@ const Services = ({ className }: { className: string }) => {
       try {
         const response: ItemLists | undefined = await db?.get("ItemLists");
         const _itemLists = response?.itemLists || [];
-        const _selectedList = response?.selectedList;
+        const _activeList = response?.activeList;
         dispatch(initiateItemLists(_itemLists));
-        if (_selectedList) {
-          dispatch(setInitialItemList(_selectedList._id));
+        if (_activeList) {
+          dispatch(setInitialItemList(_activeList._id));
         }
       } catch (e) {
         console.error(e);
@@ -155,14 +159,18 @@ const Services = ({ className }: { className: string }) => {
                         key={list._id}
                         list={list}
                         isSelected={list._id === selectedList?._id}
-                        selectList={(listId) =>
+                        selectList={(listId: string) =>
                           dispatch(selectItemList(listId))
                         }
+                        setActiveList={(listId: string) =>
+                          dispatch(setActiveItemList(listId))
+                        }
+                        isActive={list._id === activeList?._id}
                         copyList={async (list) => {
                           const newList = await createItemListFromExisting({
                             db,
                             currentLists,
-                            selectedList: list,
+                            list,
                           });
                           if (newList) {
                             dispatch(
@@ -182,6 +190,11 @@ const Services = ({ className }: { className: string }) => {
                                   if (selectedList?._id === id) {
                                     dispatch(
                                       selectItemList(currentLists[0]._id)
+                                    );
+                                  }
+                                  if (activeList?._id === id) {
+                                    dispatch(
+                                      setActiveItemList(currentLists[0]._id)
                                     );
                                   }
                                 }

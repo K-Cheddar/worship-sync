@@ -81,7 +81,7 @@ const OverlayPreview = ({
         <DisplayWindow
           showBorder
           displayType="stream"
-          width={isMobile ? 50 : 25}
+          width={isMobile ? 85 : 25}
           {...{ [overlayInfoKey]: overlayInfo }}
         />
       </div>

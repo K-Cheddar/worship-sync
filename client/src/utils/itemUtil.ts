@@ -69,6 +69,7 @@ type CreateNewSongType = {
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
   background: string;
+  mediaInfo?: MediaType;
   brightness: number;
   isMobile: boolean;
 };
@@ -80,6 +81,7 @@ export const createNewSong = async ({
   list,
   db,
   background,
+  mediaInfo,
   brightness,
   isMobile,
 }: CreateNewSongType): Promise<ItemState> => {
@@ -95,6 +97,7 @@ export const createNewSong = async ({
           fontSize: 4.5,
           words: ["", name],
           background,
+          mediaInfo,
           brightness,
         }),
         createNewSlide({
@@ -102,6 +105,7 @@ export const createNewSong = async ({
           fontSize: 2.5,
           words: [""],
           background,
+          mediaInfo,
           brightness,
         }),
       ],
@@ -175,6 +179,7 @@ type CreateNewBibleType = {
   db: PouchDB.Database | undefined;
   list: ServiceItem[];
   background: string;
+  mediaInfo?: MediaType;
   brightness: number;
   fontMode: BibleFontMode;
   isMobile: boolean;
@@ -189,6 +194,7 @@ export const createNewBible = async ({
   db,
   list,
   background,
+  mediaInfo,
   brightness,
   fontMode,
   isMobile,
@@ -220,6 +226,7 @@ export const createNewBible = async ({
     version,
     verses,
     background,
+    mediaInfo,
     brightness,
     isNew: true,
     isMobile,
@@ -312,6 +319,7 @@ type CreateNewFreeFormType = {
   background: string;
   brightness: number;
   isMobile: boolean;
+  mediaInfo?: MediaType;
 };
 
 export const createNewFreeForm = async ({
@@ -320,6 +328,7 @@ export const createNewFreeForm = async ({
   list,
   db,
   background,
+  mediaInfo,
   brightness,
   isMobile,
 }: CreateNewFreeFormType): Promise<ItemState> => {
@@ -338,6 +347,7 @@ export const createNewFreeForm = async ({
         fontSize: 4.5,
         words: ["", text || name],
         background,
+        mediaInfo,
         brightness,
         overflow: "fit",
       }),
@@ -366,6 +376,7 @@ type CreateNewTimerType = {
   countdownTime: string;
   timerType: TimerType;
   background: string;
+  mediaInfo?: MediaType;
   brightness: number;
 };
 
@@ -378,6 +389,7 @@ export const createNewTimer = async ({
   countdownTime,
   timerType,
   background,
+  mediaInfo,
   brightness,
 }: CreateNewTimerType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
@@ -401,6 +413,7 @@ export const createNewTimer = async ({
         fontSize: 4.5,
         words: ["", "{{timer}}"],
         background,
+        mediaInfo,
         brightness,
       }),
     ],
@@ -574,40 +587,40 @@ export const createNewItemList = async ({
 type CreateItemListFromExisting = {
   db: PouchDB.Database | undefined;
   currentLists: ItemList[];
-  selectedList: ItemList;
+  list: ItemList;
 };
 
 export const createItemListFromExisting = async ({
   db,
   currentLists,
-  selectedList,
+  list,
 }: CreateItemListFromExisting): Promise<ItemList | null> => {
   if (!db) return null;
 
   try {
-    const response: DBItemListDetails = await db.get(selectedList._id);
+    const response: DBItemListDetails = await db.get(list._id);
     const name = makeUnique({
-      value: selectedList.name,
+      value: list.name,
       property: "name",
       list: currentLists,
     });
     const _id = makeUnique({
-      value: selectedList._id,
+      value: list._id,
       property: "_id",
       list: currentLists,
     });
-    const list: ItemListDetails = {
+    const updatedList: ItemListDetails = {
       _id,
       name,
       items: response.items,
       overlays: response.overlays,
     };
     db.put({
-      ...list,
+      ...updatedList,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-    return { _id: list._id, name: list.name };
+    return { _id: updatedList._id, name: updatedList.name };
   } catch (error) {
     console.error(error);
     return null;

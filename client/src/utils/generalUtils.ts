@@ -267,3 +267,12 @@ export const getLetterFromIndex = (
 
 export const delay = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+export const backoff = async (
+  attempt: number,
+  base: number = 500,
+  cap: number = 8000
+) => {
+  const ms = Math.min(cap, base * 2 ** attempt);
+  await delay(ms);
+};
