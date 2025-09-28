@@ -1,0 +1,52 @@
+name: Release Electron App
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-and-publish-windows:
+    runs-on: windows-latest
+    env:
+      ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Cache root node_modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Cache client node_modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            client/node_modules
+          key: ${{ runner.os }}-client-node-${{ hashFiles('client/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-client-node-
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install client deps
+        run: npm ci
+        working-directory: client
+
+      - name: Build client
+        run: npm run build:client
+
+      - name: Package and publish Electron app
+        run: npm run electron:dist

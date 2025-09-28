@@ -14,17 +14,21 @@ import https from "https";
 import { fetchExcelFile } from "./getScheduleFunctions.js";
 
 dotenv.config();
-// Validate required environment variables
+// Validate required environment variables unless running as desktop (Electron)
+const isElectron = !!(process.env.WS_DESKTOP || process.versions?.electron);
 const requiredEnvVars = [
   "AZURE_TENANT_ID",
   "AZURE_CLIENT_ID",
   "AZURE_CLIENT_SECRET",
 ];
-const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
-
-if (missingEnvVars.length > 0) {
-  console.error("Missing required environment variables:", missingEnvVars);
-  process.exit(1);
+if (!isElectron) {
+  const missingEnvVars = requiredEnvVars.filter(
+    (envVar) => !process.env[envVar]
+  );
+  if (missingEnvVars.length > 0) {
+    console.error("Missing required environment variables:", missingEnvVars);
+    process.exit(1);
+  }
 }
 
 const app = express();
@@ -61,7 +65,7 @@ app.use(bodyParser.urlencoded({ limit: "10mb", extended: true }));
 
 app.use(
   cors({
-    origin: frontEndHost,
+    origin: isElectron ? true : frontEndHost,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Origin", "X-Requested-With", "Content-Type", "Accept"],
     credentials: true,

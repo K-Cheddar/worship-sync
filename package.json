@@ -1,5 +1,5 @@
 {
-  "name": "worship-sync-server",
+  "name": "worship-sync",
   "private": true,
   "version": "1.12.0",
   "scripts": {
@@ -8,6 +8,13 @@
     "client": "cd client && npm start ",
     "server": "npx nodemon server.js",
     "dev": "concurrently --kill-others-on-fail \"npm run server\" \"npm run client\"",
+    "dev:electron": "concurrently --kill-others-on-fail \"npm run server\" \"npm run electron\"",
+    "build:client": "npm --prefix client run build",
+    "electron": "cross-env NODE_ENV=production WS_DESKTOP=1 electron .",
+    "preelectron": "npm run build:client",
+    "electron:dev": "cross-env NODE_ENV=production WS_DESKTOP=1 electron .",
+    "electron:pack": "npm run build:client && electron-builder --dir",
+    "electron:dist": "npm run build:client && electron-builder",
     "prepare": "husky",
     "release": "semantic-release && node scripts/updateClientVersion.js"
   },
@@ -35,7 +42,9 @@
     "react-qr-code": "^2.0.15",
     "react-scripts": "^2.1.8",
     "request": "^2.88.2",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "wait-on": "^7.2.0",
+    "electron-updater": "^6.3.9"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.8.1",
@@ -49,7 +58,41 @@
     "@types/obs-studio": "^2.17.2",
     "concurrently": "^4.1.2",
     "husky": "^9.1.7",
-    "semantic-release": "^24.2.5"
+    "semantic-release": "^24.2.5",
+    "electron": "^31.2.1",
+    "electron-builder": "^24.13.3",
+    "cross-env": "^7.0.3"
   },
-  "type": "module"
+  "type": "module",
+  "main": "electron/main.js",
+  "build": {
+    "appId": "net.worshipsync.app",
+    "productName": "WorshipSync",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "KPC",
+        "repo": "worship-sync"
+      }
+    ],
+    "files": [
+      "electron/**/*",
+      "client/build/**/*",
+      "server.js",
+      "bibles/**/*",
+      "getScheduleFunctions.js",
+      "CHANGELOG.md",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "electron/build"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "electron/build/logo512.png"
+    }
+  }
 }
