@@ -1,3 +1,10 @@
+## [1.17.1](https://github.com/K-Cheddar/worship-sync/compare/v1.17.0...v1.17.1) (2025-09-29)
+
+
+### Bug Fixes
+
+* update auth stability ([a0635c0](https://github.com/K-Cheddar/worship-sync/commit/a0635c099eb8f91efbf78b58abeba06142fb06a4))
+
 # [1.17.0](https://github.com/K-Cheddar/worship-sync/compare/v1.16.0...v1.17.0) (2025-09-26)
 
 
