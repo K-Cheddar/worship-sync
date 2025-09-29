@@ -177,7 +177,6 @@ const ControllerInfoProvider = ({ children }: any) => {
             } else {
               bibleSyncRetryRef.current = 0;
             }
-            bibleSyncDb(localDb, remoteDb);
           }
         });
     },
@@ -239,7 +238,6 @@ const ControllerInfoProvider = ({ children }: any) => {
             } else {
               replicateRetryRef.current = 0;
             }
-            setupDb();
           }
         })
         .on("complete", () => {

@@ -20,6 +20,7 @@ import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
 import TimerManager from "./components/TimerManager/TimerManager";
 import VersionCheck from "./components/VersionCheck";
 import { useEffect } from "react";
+import { delay } from "./utils/generalUtils";
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
@@ -27,6 +28,7 @@ gsap.ticker.lagSmoothing(0);
 const App: React.FC = () => {
   useEffect(() => {
     const url = new URL(window.location.href);
+    delay(1000);
 
     if (url.searchParams.has("cacheBust")) {
       // Remove the param
