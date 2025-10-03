@@ -69,7 +69,7 @@ export const sizeMap: Map<
     7,
     {
       width: 7,
-      mobileWidth: 9,
+      mobileWidth: 10,
       cols: "grid-cols-7",
       hSize: "text-xs",
       borderWidth: "clamp(0.2rem, 0.2vw, 0.4rem)",
@@ -79,7 +79,7 @@ export const sizeMap: Map<
     6,
     {
       width: 8.25,
-      mobileWidth: 11,
+      mobileWidth: 12,
       cols: "grid-cols-6",
       hSize: "text-xs",
       borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
@@ -99,7 +99,7 @@ export const sizeMap: Map<
     4,
     {
       width: 12.75,
-      mobileWidth: 17,
+      mobileWidth: 18,
       cols: "grid-cols-4",
       hSize: "text-sm",
       borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
@@ -109,7 +109,7 @@ export const sizeMap: Map<
     3,
     {
       width: 17,
-      mobileWidth: 23,
+      mobileWidth: 24,
       cols: "grid-cols-3",
       hSize: "text-base",
       borderWidth: "clamp(0.35rem, 0.35vw, 0.7rem)",
@@ -119,7 +119,7 @@ export const sizeMap: Map<
     2,
     {
       width: 26,
-      mobileWidth: 35,
+      mobileWidth: 36,
       cols: "grid-cols-2",
       hSize: "text-base",
       borderWidth: "clamp(0.45rem, 0.45vw, 0.9rem)",
@@ -129,7 +129,7 @@ export const sizeMap: Map<
     1,
     {
       width: 52.25,
-      mobileWidth: 70,
+      mobileWidth: 75,
       cols: "grid-cols-1",
       hSize: "text-base",
       borderWidth: "clamp(0.5rem, 0.5vw, 1rem)",

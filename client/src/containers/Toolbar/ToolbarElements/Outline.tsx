@@ -15,7 +15,7 @@ type ServiceProps = {
   list: ItemList;
   deleteList?: (_id: string) => void;
   updateList: (list: ItemList) => void;
-  copyList: (list: ItemList) => void;
+  copyList: (list: ItemList) => Promise<void>;
   selectList: (_id: string) => void;
   setActiveList: (_id: string) => void;
   isSelected: boolean;
@@ -33,6 +33,7 @@ const Service = ({
   isActive,
 }: ServiceProps) => {
   const [name, setName] = useState<string>(list.name);
+  const [isCopying, setIsCopying] = useState(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
   const nameClasses =
@@ -109,7 +110,12 @@ const Service = ({
           <Button
             svg={CopySVG}
             variant="tertiary"
-            onClick={() => copyList(list)}
+            onClick={async () => {
+              setIsCopying(true);
+              await copyList(list);
+              setIsCopying(false);
+            }}
+            isLoading={isCopying}
           />
         )}
         <Button
