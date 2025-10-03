@@ -58,8 +58,7 @@ const initialState: PreferencesState = {
       mediaInfo: undefined,
     },
     defaultTimerBackground: {
-      background:
-        "https://res.cloudinary.com/portable-media/image/upload/v1/eliathah/WorshipBackground_ycr280?_a=DATAg1AAZAA0",
+      background: "",
       mediaInfo: undefined,
     },
     defaultBibleBackground: {
