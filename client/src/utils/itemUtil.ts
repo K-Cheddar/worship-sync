@@ -13,6 +13,7 @@ import {
   TimerStatus,
   BibleFontMode,
   ItemListDetails,
+  DBOverlay,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatBible, formatFree, formatSong } from "./overflow";
@@ -118,7 +119,8 @@ export const createNewSong = async ({
     name: _name,
     type: "song",
     _id: _name,
-    background,
+    background:
+      mediaInfo?.type === "video" ? mediaInfo?.placeholderImage : background,
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,
@@ -216,6 +218,8 @@ export const createNewBible = async ({
       monitor: true,
       stream: true,
     },
+    background:
+      mediaInfo?.type === "video" ? mediaInfo?.placeholderImage : background,
   };
 
   const item = formatBible({
@@ -340,6 +344,8 @@ export const createNewFreeForm = async ({
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,
+    background:
+      mediaInfo?.type === "video" ? mediaInfo?.placeholderImage : background,
     slides: [
       createNewSlide({
         type: "Section",
@@ -407,6 +413,8 @@ export const createNewTimer = async ({
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,
+    background:
+      mediaInfo?.type === "video" ? mediaInfo?.placeholderImage : background,
     slides: [
       createNewSlide({
         type: "Section",
@@ -609,18 +617,36 @@ export const createItemListFromExisting = async ({
       property: "_id",
       list: currentLists,
     });
-    const updatedList: ItemListDetails = {
+    const newOverlays: string[] = [];
+    for (const overlayId of response.overlays) {
+      const { _id, _rev, ...overlayDetails }: DBOverlay | undefined =
+        await db.get(`overlay-${overlayId}`);
+
+      const newId = generateRandomId();
+      const copiedOverlay = {
+        ...overlayDetails,
+        id: newId,
+        _id: `overlay-${newId}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await db.put(copiedOverlay);
+
+      newOverlays.push(newId);
+    }
+    const newList: ItemListDetails = {
       _id,
       name,
       items: response.items,
-      overlays: response.overlays,
+      overlays: newOverlays,
     };
     db.put({
-      ...updatedList,
+      ...newList,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-    return { _id: updatedList._id, name: updatedList.name };
+    return { _id: newList._id, name: newList.name };
   } catch (error) {
     console.error(error);
     return null;

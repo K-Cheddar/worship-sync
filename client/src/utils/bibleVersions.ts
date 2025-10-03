@@ -11,6 +11,7 @@ export const bibleVersions = [
   { value: "csb", label: "Christian Study Bible" },
   { value: "erv", label: "Easy to Read Version" },
   { value: "gw", label: "God's Word" },
+  { value: "gnt", label: "Good News Translation" },
   { value: "nasb", label: "New American Standard Bible" },
   { value: "ncv", label: "New Century Version" },
 ].sort((a, b) => a.label.localeCompare(b.label));
