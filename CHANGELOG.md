@@ -1,3 +1,18 @@
+# [1.18.0](https://github.com/K-Cheddar/worship-sync/compare/v1.17.1...v1.18.0) (2025-10-03)
+
+
+### Bug Fixes
+
+* Copying an outline now creates separate overlays ([4ebdc8d](https://github.com/K-Cheddar/worship-sync/commit/4ebdc8d940700d836eb551c01d585ede672f0eaf))
+* Default video backgrounds show correctly in list ([9f9c7e2](https://github.com/K-Cheddar/worship-sync/commit/9f9c7e28d1207387a816675cdbe339e90031f031))
+* Free form item overflow improved on mobile ([c8fba59](https://github.com/K-Cheddar/worship-sync/commit/c8fba599583e0c8353a6f5851128c5ca8213456c))
+
+
+### Features
+
+* Add timer reset control ([abc4f46](https://github.com/K-Cheddar/worship-sync/commit/abc4f467165c757fd291f211914c73a98898828a))
+* Added Good News Translation ([fd0af4a](https://github.com/K-Cheddar/worship-sync/commit/fd0af4a67173a0312785ef3a6b5042f2e26e7213))
+
 ## [1.17.1](https://github.com/K-Cheddar/worship-sync/compare/v1.17.0...v1.17.1) (2025-09-29)
 
 
