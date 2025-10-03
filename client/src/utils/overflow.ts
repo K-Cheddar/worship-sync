@@ -404,6 +404,7 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
         fontSize: minFontSize,
         selectedSlide: slide,
         selectedBox,
+        isMobile,
       });
     } else {
       // Create a single slide with the adjusted font size
@@ -443,6 +444,7 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
       fontSize,
       selectedSlide: slide,
       selectedBox,
+      isMobile,
     });
   }
 
