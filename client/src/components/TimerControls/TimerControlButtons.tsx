@@ -3,6 +3,7 @@ import Button from "../Button/Button";
 import { ReactComponent as PlaySVG } from "../../assets/icons/play.svg";
 import { ReactComponent as PauseSVG } from "../../assets/icons/pause.svg";
 import { ReactComponent as StopSVG } from "../../assets/icons/stop.svg";
+import { ReactComponent as ResetSVG } from "../../assets/icons/reset.svg";
 import { TimerStatus } from "../../types";
 
 interface TimerControlButtonsProps {
@@ -29,7 +30,6 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
         disabled={status === "running"}
         title="Play"
         color="#48bb78"
-        className="timer-control-btn play"
       />
       <Button
         variant="tertiary"
@@ -38,7 +38,6 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
         disabled={status !== "running"}
         title="Pause"
         color="#ecc94b"
-        className="timer-control-btn pause"
       />
       <Button
         variant="tertiary"
@@ -47,7 +46,13 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
         disabled={status === "stopped"}
         title="Stop"
         color="#f56565"
-        className="timer-control-btn stop"
+      />
+      <Button
+        variant="tertiary"
+        title="Reset"
+        svg={ResetSVG}
+        onClick={onStop}
+        color="#f59e0b"
       />
     </div>
   );
