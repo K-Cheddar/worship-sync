@@ -438,11 +438,11 @@ listenerMiddleware.startListening({
 
     // update ItemList
     const { list } = state.undoable.present.overlays;
-    const { activeList } = state.undoable.present.itemLists;
+    const { selectedList } = state.undoable.present.itemLists;
     const { selectedOverlay } = state.undoable.present.overlay;
 
-    if (!db || !activeList) return;
-    const db_itemList: DBItemListDetails = await db.get(activeList._id);
+    if (!db || !selectedList) return;
+    const db_itemList: DBItemListDetails = await db.get(selectedList._id);
     const currentList = db_itemList.overlays;
     const itemsToUpdate = list.filter(
       (overlay) =>
