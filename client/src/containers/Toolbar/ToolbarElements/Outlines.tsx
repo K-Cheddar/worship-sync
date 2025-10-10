@@ -29,6 +29,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { useGlobalBroadcast } from "../../../hooks/useGlobalBroadcast";
+import { ActionCreators } from "redux-undo";
 
 const Services = ({ className }: { className: string }) => {
   const { currentLists, activeList } = useSelector(
@@ -198,6 +199,7 @@ const Services = ({ className }: { className: string }) => {
                                     );
                                   }
                                 }
+                                dispatch(ActionCreators.clearHistory());
                               }
                         }
                         updateList={(list) => {

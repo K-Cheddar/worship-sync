@@ -50,6 +50,7 @@ import Toggle from "../../components/Toggle/Toggle";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { updateOverlay } from "../../store/overlaySlice";
+import { ActionCreators } from "redux-undo";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -226,6 +227,7 @@ const Media = () => {
       const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
       dispatch(updateMediaList(updatedList));
       setSelectedMedia(emptyMedia);
+      dispatch(ActionCreators.clearHistory());
     } catch (error) {
       console.error("Error deleting background:", error);
       // Still remove from local list even if Cloudinary deletion fails
