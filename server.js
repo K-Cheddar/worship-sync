@@ -92,6 +92,21 @@ app.get("/api/bible", async (req, res) => {
   res.send(data);
 });
 
+app.get("/api/getEventDetails", async (req, res) => {
+  const url = req.query.url;
+
+  let data = "";
+
+  try {
+    const response = await fetch(url);
+    data = await response.text();
+  } catch (error) {
+    console.error("Error fetching event details:", error);
+  }
+
+  res.send(data);
+});
+
 app.get("/bible", async (req, res) => {
   let version = req.query.version;
 

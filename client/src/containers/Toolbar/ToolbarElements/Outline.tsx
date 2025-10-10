@@ -1,7 +1,7 @@
 import Button from "../../../components/Button/Button";
 import { ReactComponent as DeleteSVG } from "../../../assets/icons/delete.svg";
 import { ReactComponent as EditSVG } from "../../../assets/icons/edit.svg";
-import { ReactComponent as CheckSVG } from "../../../assets/icons/check.svg";
+import { ReactComponent as CheckSVG } from "../../../assets/icons/check-circle.svg";
 import { ReactComponent as CopySVG } from "../../../assets/icons/copy.svg";
 import { ItemList } from "../../../types";
 import Input from "../../../components/Input/Input";
@@ -62,7 +62,6 @@ const Service = ({
         itemName={list.name}
         title="Delete Outline"
         message="Are you sure you want to delete the outline"
-        warningMessage="This action is permanent and cannot be undone."
       />
       <li
         className={cn(
