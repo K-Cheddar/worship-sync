@@ -1,3 +1,10 @@
+## [1.18.1](https://github.com/K-Cheddar/worship-sync/compare/v1.18.0...v1.18.1) (2025-10-10)
+
+
+### Bug Fixes
+
+* **Overlays:** Update selected list instead of active list ([95d1534](https://github.com/K-Cheddar/worship-sync/commit/95d15340ffbb9e4845f203a51c8b9b0a705fb2e1))
+
 # [1.18.0](https://github.com/K-Cheddar/worship-sync/compare/v1.17.1...v1.18.0) (2025-10-03)
 
 
