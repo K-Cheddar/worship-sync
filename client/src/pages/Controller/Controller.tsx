@@ -73,6 +73,8 @@ import {
 import { initiateTemplates } from "../../store/overlayTemplatesSlice";
 import { setIsEditMode } from "../../store/itemSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
+import cn from "classnames";
+import { RootState } from "../../store/store";
 
 // Here for future to implement resizable
 
@@ -99,7 +101,9 @@ enable={{ ...resizableDirections }}
 const Controller = () => {
   const dispatch = useDispatch();
   const location = useLocation();
-
+  const { isEditMode } = useSelector(
+    (state: RootState) => state.undoable.present.item
+  );
   const { selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
@@ -384,7 +388,7 @@ const Controller = () => {
         >
           <LyricsEditor />
           <Button
-            className="lg:hidden mr-2 h-1/4 z-10"
+            className={cn("lg:hidden mr-2 h-1/4 z-10", isEditMode && "hidden")}
             svg={isLeftPanelOpen ? CollapseSVG : ExpandSVG}
             onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
           />
@@ -426,7 +430,10 @@ const Controller = () => {
           </div>
 
           <Button
-            className="lg:hidden text-sm ml-2 justify-center h-1/4 z-10"
+            className={cn(
+              "lg:hidden text-sm ml-2 justify-center h-1/4 z-10",
+              isEditMode && "hidden"
+            )}
             svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
           />
