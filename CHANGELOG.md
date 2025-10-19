@@ -1,3 +1,17 @@
+# [1.19.0](https://github.com/K-Cheddar/worship-sync/compare/v1.18.1...v1.19.0) (2025-10-19)
+
+
+### Bug Fixes
+
+* Adding cancel confirmation in edit lyrics ([9c50892](https://github.com/K-Cheddar/worship-sync/commit/9c50892ba2be6f58bab0fa47fd98b1731d00bcda))
+* Improve bible search ([6bc4776](https://github.com/K-Cheddar/worship-sync/commit/6bc4776da1a634834215e8ea2874754a63b16d87))
+* Lyrics editor takes up full screen on mobile ([a0de8d2](https://github.com/K-Cheddar/worship-sync/commit/a0de8d2a385180837dabc833f6d39074eef9d01d))
+
+
+### Features
+
+* Add limited access for music ([db89dd8](https://github.com/K-Cheddar/worship-sync/commit/db89dd821dcf5b2b92c761a6a485bb7c19cfd6bc))
+
 ## [1.18.1](https://github.com/K-Cheddar/worship-sync/compare/v1.18.0...v1.18.1) (2025-10-10)
 
 
