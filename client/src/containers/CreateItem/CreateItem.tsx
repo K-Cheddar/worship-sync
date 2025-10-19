@@ -26,7 +26,7 @@ import { ItemState, ItemType, ServiceItem } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
-import { GlobalInfoContext } from "../../context/globalInfo";
+import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
@@ -34,6 +34,7 @@ type ItemTypesType = {
   type: ItemType;
   selected: boolean;
   label: string;
+  access?: AccessType[];
 };
 
 const types: ItemTypesType[] = [
@@ -41,21 +42,25 @@ const types: ItemTypesType[] = [
     type: "song",
     selected: true,
     label: "Song",
+    access: ["full", "music"],
   },
   {
     type: "bible",
     selected: false,
     label: "Bible",
+    access: ["full"],
   },
   {
     type: "free",
     selected: false,
     label: "Free Form",
+    access: ["full"],
   },
   {
     type: "timer",
     selected: false,
     label: "Timer",
+    access: ["full"],
   },
 ];
 
@@ -77,7 +82,7 @@ const CreateItem = () => {
       defaultFreeFormBackgroundBrightness,
     },
   } = useSelector((state: RootState) => state.undoable.present.preferences);
-  const { hostId } = useContext(GlobalInfoContext) || {};
+  const { hostId, access } = useContext(GlobalInfoContext) || {};
 
   const [searchParams] = useSearchParams();
   const initialType = decodeURI(
@@ -87,7 +92,9 @@ const CreateItem = () => {
   const [text, setText] = useState<string>(savedText);
   const [selectedType, setSelectedType] = useState<string>(initialType);
   const [itemTypes, setItemTypes] = useState<ItemTypesType[]>(
-    types.map((type) => ({ ...type, selected: type.type === initialType }))
+    types
+      .filter((type) => access && type.access?.includes(access))
+      .map((type) => ({ ...type, selected: type.type === initialType }))
   );
   const [itemName, setItemName] = useState<string>(initialName);
   const [duration, setDuration] = useState<number>(60);

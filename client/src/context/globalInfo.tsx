@@ -32,6 +32,7 @@ import { ActionCreators } from "redux-undo";
 
 type LoginStateType = "idle" | "loading" | "error" | "success" | "demo";
 
+export type AccessType = "full" | "music" | "view";
 type GlobalInfoContextType = {
   login: ({
     username,
@@ -49,6 +50,7 @@ type GlobalInfoContextType = {
   firebaseDb: Database | undefined;
   hostId: string;
   activeInstances: Instance[];
+  access: AccessType;
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
@@ -83,6 +85,7 @@ const GlobalInfoProvider = ({ children }: any) => {
   const [user, setUser] = useState("Demo");
   const [database, setDatabase] = useState("demo");
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
+  const [access, setAccess] = useState<AccessType>("full");
   const [hostId] = useState(() => {
     const id = generateRandomId();
     globalHostId = id;
@@ -202,6 +205,10 @@ const GlobalInfoProvider = ({ children }: any) => {
     const _uploadPreset = localStorage.getItem("upload_preset");
     if (_uploadPreset !== null && _uploadPreset !== "null") {
       setUploadPreset(_uploadPreset);
+    }
+    const _access = localStorage.getItem("access");
+    if (_access !== null && _access !== "null") {
+      setAccess(_access as AccessType);
     }
   }, []);
 
@@ -406,10 +413,12 @@ const GlobalInfoProvider = ({ children }: any) => {
         localStorage.setItem("user", user.username);
         localStorage.setItem("database", user.database);
         localStorage.setItem("upload_preset", user.upload_preset);
+        localStorage.setItem("access", user.access || "full");
         setUser(user.username);
         globalFireDbInfo.user = user.username;
         setDatabase(user.database);
         setUploadPreset(user.upload_preset);
+        setAccess(user.access || "full");
         navigate("/");
       } else {
         console.error("Login failed:", errorMessage);
@@ -426,6 +435,8 @@ const GlobalInfoProvider = ({ children }: any) => {
     localStorage.setItem("user", "Demo");
     localStorage.setItem("database", "demo");
     localStorage.setItem("upload_preset", "bpqu4ma5");
+    localStorage.setItem("access", "full");
+    setAccess("full");
     dispatch({ type: "RESET" });
     dispatch(ActionCreators.clearHistory());
     setUser("Demo");
@@ -451,6 +462,7 @@ const GlobalInfoProvider = ({ children }: any) => {
         firebaseDb,
         hostId,
         activeInstances,
+        access,
       }}
     >
       {children}

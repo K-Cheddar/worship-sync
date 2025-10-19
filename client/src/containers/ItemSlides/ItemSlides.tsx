@@ -54,6 +54,7 @@ import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import generateRandomId from "../../utils/generateRandomId";
 import { useLocation } from "react-router-dom";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 export const sizeMap: Map<
   number,
@@ -176,6 +177,9 @@ const ItemSlides = () => {
     useSelector((state: RootState) => state.undoable.present.preferences);
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
+  const { access } = useContext(GlobalInfoContext) || {};
+
+  const canEdit = access === "full" || (access === "music" && type === "song");
 
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
   const size = type === "timer" ? Math.min(_size, 3) : _size;
@@ -521,8 +525,8 @@ const ItemSlides = () => {
     <ErrorBoundary>
       <DndContext
         sensors={sensors}
-        onDragEnd={onDragEnd}
-        onDragStart={onDragStart}
+        onDragEnd={canEdit ? onDragEnd : undefined}
+        onDragStart={canEdit ? onDragStart : undefined}
       >
         <div className="flex w-full px-2 bg-gray-900 h-6 mb-2 gap-1">
           <Button
@@ -559,7 +563,7 @@ const ItemSlides = () => {
               }
             }}
           />
-          {type === "free" && (
+          {type === "free" && canEdit && (
             <>
               <Button
                 variant="tertiary"

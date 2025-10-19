@@ -7,10 +7,12 @@ import { useDispatch } from "../../hooks";
 import { setActiveItem, setItemIsLoading } from "../../store/itemSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setActiveItemInList } from "../../store/itemListSlice";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 const Item = () => {
   const { itemId, listId } = useParams();
   const { db, cloud } = useContext(ControllerInfoContext) || {};
+  const { access } = useContext(GlobalInfoContext) || {};
 
   const decodedItemId = useMemo(() => {
     try {
@@ -60,7 +62,7 @@ const Item = () => {
 
   return (
     <>
-      <SlideEditor />
+      <SlideEditor access={access} />
       <ItemSlides />
     </>
   );
