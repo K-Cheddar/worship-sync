@@ -336,7 +336,7 @@ const Bible = () => {
         "(?:\\s*(\\d+)",
 
         // Optional verseStart: either ":" + spaces OR just spaces
-        "(?:(?::\\s*|\\s+)(\\d+)",
+        "(?:(?:\\s*:\\s*|\\s+)(\\d+)",
 
         // Optional verseEnd: either "-" + spaces OR just spaces
         "(?:(?:-\\s*|\\s+)(\\d+))?",
