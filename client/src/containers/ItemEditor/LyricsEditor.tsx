@@ -4,7 +4,7 @@ import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
 import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
 
 import Button from "../../components/Button/Button";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState, useCallback } from "react";
 import { setIsEditMode, updateArrangements } from "../../store/itemSlice";
 
 import {
@@ -27,6 +27,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { RootState } from "../../store/store";
 import { ButtonGroup, ButtonGroupItem } from "../../components/Button";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import Modal from "../../components/Modal/Modal";
 
 const LyricsEditor = () => {
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -35,6 +36,9 @@ const LyricsEditor = () => {
   const [localArrangements, setLocalArrangements] = useState([...arrangements]);
   const [localSelectedArrangement, setLocalSelectedArrangement] =
     useState(selectedArrangement);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const dispatch = useDispatch();
 
   const localFormattedLyrics = useMemo(
@@ -74,6 +78,36 @@ const LyricsEditor = () => {
       setLocalSelectedArrangement(0);
     }
   }, [localArrangements, localSelectedArrangement]);
+
+  // Detect changes by comparing current state with original
+  useEffect(() => {
+    const hasChanges =
+      JSON.stringify(localArrangements) !== JSON.stringify(arrangements) ||
+      localSelectedArrangement !== selectedArrangement ||
+      unformattedLyrics.trim() !== "";
+    setHasUnsavedChanges(hasChanges);
+  }, [
+    localArrangements,
+    arrangements,
+    localSelectedArrangement,
+    selectedArrangement,
+    unformattedLyrics,
+  ]);
+
+  // Handle beforeunload event for page navigation/reload
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue =
+          "You have unsaved changes. Are you sure you want to leave?";
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   const updateSongOrder = (_songOrder: SongOrder[]) => {
     setLocalArrangements((_lArrangements) => {
@@ -146,14 +180,38 @@ const LyricsEditor = () => {
     setLocalArrangements(updatedLocalArrangements);
   };
 
+  // Handle confirmation modal actions
+  const handleConfirmAction = useCallback(() => {
+    if (pendingAction) {
+      pendingAction();
+      setPendingAction(null);
+    }
+    setShowConfirmModal(false);
+  }, [pendingAction]);
+
+  const handleCancelAction = useCallback(() => {
+    setPendingAction(null);
+    setShowConfirmModal(false);
+  }, []);
+
+  const handleCloseWithConfirmation = useCallback(() => {
+    if (hasUnsavedChanges) {
+      setPendingAction(() => () => {
+        setLocalArrangements(arrangements);
+        dispatch(setIsEditMode(false));
+      });
+      setShowConfirmModal(true);
+    } else {
+      setLocalArrangements(arrangements);
+      dispatch(setIsEditMode(false));
+    }
+  }, [hasUnsavedChanges, arrangements, dispatch]);
+
   if (!isEditMode) {
-    return <div className="w-0 h-0 absolute" />;
+    return null;
   }
 
-  const onClose = () => {
-    setLocalArrangements(arrangements);
-    dispatch(setIsEditMode(false));
-  };
+  const onClose = handleCloseWithConfirmation;
 
   const save = () => {
     dispatch(setIsEditMode(false));
@@ -179,6 +237,8 @@ const LyricsEditor = () => {
         selectedArrangement: localSelectedArrangement,
       })
     );
+
+    setHasUnsavedChanges(false);
   };
 
   const createSections = () => {
@@ -298,6 +358,37 @@ const LyricsEditor = () => {
             Save Changes
           </Button>
         </div>
+
+        {/* Confirmation Modal */}
+        <Modal
+          isOpen={showConfirmModal}
+          onClose={handleCancelAction}
+          title="Unsaved Changes"
+          size="sm"
+          contentPadding="pt-0 pb-4 px-4"
+          showCloseButton={false}
+        >
+          <p className="mb-6">
+            You have unsaved changes. Are you sure you want to leave without
+            saving?
+          </p>
+          <div className="flex justify-center gap-4">
+            <Button
+              variant="secondary"
+              onClick={handleCancelAction}
+              className="text-base"
+            >
+              Stay
+            </Button>
+            <Button
+              variant="cta"
+              onClick={handleConfirmAction}
+              className="text-base"
+            >
+              Leave Without Saving
+            </Button>
+          </div>
+        </Modal>
       </div>
     </ErrorBoundary>
   );
