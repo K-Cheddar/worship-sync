@@ -121,7 +121,7 @@ const Controller = () => {
   const { db, cloud, updater, setIsMobile, setIsPhone, dbProgress } =
     useContext(ControllerInfoContext) || {};
 
-  const { user } = useContext(GlobalInfoContext) || {};
+  const { user, access } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     return () => {
@@ -405,7 +405,7 @@ const Controller = () => {
             >
               Close Panel
             </Button>
-            <EditorButtons />
+            <EditorButtons access={access} />
             <ServiceItems />
           </div>
           <div className="flex flex-col flex-1 relative w-[55%] h-full">

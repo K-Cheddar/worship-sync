@@ -27,6 +27,7 @@ type DisplayEditorProps = {
   selectBox?: Function;
   isSelected?: boolean;
   isBoxLocked?: boolean;
+  disabled?: boolean;
 };
 
 const DisplayEditor = ({
@@ -38,6 +39,7 @@ const DisplayEditor = ({
   index,
   isSelected,
   isBoxLocked,
+  disabled = false,
 }: DisplayEditorProps) => {
   const [boxWidth, setBoxWidth] = useState(`${box.width}%`);
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
@@ -218,7 +220,7 @@ const DisplayEditor = ({
         isSelected && !box.background && "z-10"
       )}
       position={{ x, y }}
-      disableDragging={isBoxLocked}
+      disableDragging={isBoxLocked || disabled}
       onDragStop={handleDragStop}
       onResizeStop={handleResizeStop}
       minWidth={"7.5%"}
@@ -230,16 +232,16 @@ const DisplayEditor = ({
       bounds={"parent"}
       ref={rndRef}
       onClick={() => selectBox?.(index)}
-      enableUserSelectHack={!isBoxLocked}
+      enableUserSelectHack={!isBoxLocked && !disabled}
       enableResizing={{
-        top: !isBoxLocked,
-        topLeft: !isBoxLocked,
-        topRight: !isBoxLocked,
-        bottom: !isBoxLocked,
-        bottomLeft: !isBoxLocked,
-        bottomRight: !isBoxLocked,
-        left: !isBoxLocked,
-        right: !isBoxLocked,
+        top: !isBoxLocked && !disabled,
+        topLeft: !isBoxLocked && !disabled,
+        topRight: !isBoxLocked && !disabled,
+        bottom: !isBoxLocked && !disabled,
+        bottomLeft: !isBoxLocked && !disabled,
+        bottomRight: !isBoxLocked && !disabled,
+        left: !isBoxLocked && !disabled,
+        right: !isBoxLocked && !disabled,
       }}
     >
       {background && (
@@ -265,6 +267,7 @@ const DisplayEditor = ({
             id={`display-editor-box-${index}`}
             ref={textAreaRef}
             value={words}
+            disabled={disabled}
             style={{
               marginTop,
               marginBottom,

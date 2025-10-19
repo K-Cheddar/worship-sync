@@ -42,8 +42,9 @@ import Icon from "../../components/Icon/Icon";
 import { createBox } from "../../utils/slideCreation";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import { AccessType } from "../../context/globalInfo";
 
-const SlideEditor = () => {
+const SlideEditor = ({ access }: { access?: AccessType }) => {
   const dispatch = useDispatch();
 
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -57,6 +58,8 @@ const SlideEditor = () => {
     slides,
     isLoading,
   } = item;
+
+  const canEdit = access === "full" || (access === "music" && type === "song");
 
   const { shouldShowItemEditor } = useSelector(
     (state: RootState) => state.undoable.present.preferences
@@ -158,6 +161,11 @@ const SlideEditor = () => {
     cursorPosition?: number;
     lastKeyPressed?: string | null;
   }) => {
+    // Prevent editing if user doesn't have edit permissions
+    if (!canEdit) {
+      return;
+    }
+
     let shouldDeleteCurrentSlide = false;
 
     if (
@@ -358,7 +366,7 @@ const SlideEditor = () => {
             )}
             <Button
               variant="tertiary"
-              disabled={isLoading}
+              disabled={isLoading || !canEdit}
               svg={isEditingName ? CheckSVG : EditSVG}
               onClick={
                 isEditingName ? () => saveName() : () => setIsEditingName(true)
@@ -387,7 +395,7 @@ const SlideEditor = () => {
           {type === "song" && (
             <Button
               className="text-sm"
-              disabled={isLoading}
+              disabled={isLoading || !canEdit}
               onClick={() => dispatch(setIsEditMode(true))}
               svg={EditTextSVG}
             >
@@ -453,6 +461,7 @@ const SlideEditor = () => {
                     svg={isBoxLocked[index] ? LockSVG : UnlockSVG}
                     color={isBoxLocked[index] ? "gray" : "green"}
                     variant="tertiary"
+                    disabled={!canEdit}
                     onClick={() => {
                       setIsBoxLocked((prev) => {
                         const newLocked = [...prev];
@@ -461,7 +470,7 @@ const SlideEditor = () => {
                       });
                     }}
                   />
-                  {canDeleteBox(index) && (
+                  {canDeleteBox(index) && canEdit && (
                     <Button
                       svg={DeleteSVG}
                       variant="tertiary"
@@ -483,28 +492,30 @@ const SlideEditor = () => {
                 </span>
               );
             })}
-            <Button
-              className="text-xs w-full justify-center"
-              svg={AddSVG}
-              onClick={() => {
-                dispatch(
-                  updateBoxes({
-                    boxes: [
-                      ...boxes,
-                      createBox({
-                        width: 75,
-                        height: 75,
-                        x: 12.5,
-                        y: 12.5,
-                      }),
-                    ],
-                  })
-                );
-                dispatch(setSelectedBox(boxes.length));
-              }}
-            >
-              Add Box
-            </Button>
+            {canEdit && (
+              <Button
+                className="text-xs w-full justify-center"
+                svg={AddSVG}
+                onClick={() => {
+                  dispatch(
+                    updateBoxes({
+                      boxes: [
+                        ...boxes,
+                        createBox({
+                          width: 75,
+                          height: 75,
+                          x: 12.5,
+                          y: 12.5,
+                        }),
+                      ],
+                    })
+                  );
+                  dispatch(setSelectedBox(boxes.length));
+                }}
+              >
+                Add Box
+              </Button>
+            )}
           </section>
           {!isEmpty ? (
             <DisplayWindow
@@ -519,6 +530,7 @@ const SlideEditor = () => {
               displayType="editor"
               selectedBox={selectedBox}
               isBoxLocked={isBoxLocked}
+              disabled={!canEdit}
             />
           ) : (
             <p

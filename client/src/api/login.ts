@@ -1,3 +1,5 @@
+import { AccessType } from "../context/globalInfo";
+
 type LoginResponse = {
   success: boolean;
   errorMessage: string;
@@ -5,18 +7,25 @@ type LoginResponse = {
     username: string;
     database: string;
     upload_preset: string;
+    access?: AccessType;
   };
 };
 
-export const loginUser = async (username: string, password: string): Promise<LoginResponse> => {
+export const loginUser = async (
+  username: string,
+  password: string
+): Promise<LoginResponse> => {
   try {
-    const response = await fetch(`${process.env.REACT_APP_API_BASE_PATH}api/login`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ username, password }),
-    });
+    const response = await fetch(
+      `${process.env.REACT_APP_API_BASE_PATH}api/login`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username, password }),
+      }
+    );
 
     const data = await response.json();
 

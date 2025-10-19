@@ -214,6 +214,7 @@ app.post("/api/login", async (req, res) => {
         username: user.username,
         database: user.database,
         upload_preset: user.upload_preset,
+        access: user.access,
       },
     });
   } catch (error) {
