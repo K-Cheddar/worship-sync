@@ -3,10 +3,10 @@ import "./ItemSlides.scss";
 
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import { ItemSlideType, TimerInfo } from "../../types";
-import { sizeMap } from "./ItemSlides";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import cn from "classnames";
+import { SizeMap } from "./ItemSlides";
 
 type ItemSlideProps = {
   slide: ItemSlideType;
@@ -21,6 +21,7 @@ type ItemSlideProps = {
   isTransmitting: boolean;
   isStreamFormat: boolean;
   getBibleInfo: (index: number) => { title: string; text: string };
+  sizeMap?: SizeMap;
 };
 
 const ItemSlide = ({
@@ -36,9 +37,10 @@ const ItemSlide = ({
   draggedSection,
   isStreamFormat,
   getBibleInfo,
+  sizeMap,
 }: ItemSlideProps) => {
   const width =
-    (isMobile ? sizeMap.get(size)?.mobileWidth : sizeMap.get(size)?.width) ||
+    (isMobile ? sizeMap?.get(size)?.mobileWidth : sizeMap?.get(size)?.width) ||
     12;
 
   const {
@@ -78,7 +80,7 @@ const ItemSlide = ({
       ref={setNodeRef}
       style={(() => {
         const borderStyle = {
-          "--border-width": sizeMap.get(size)?.borderWidth,
+          "--border-width": sizeMap?.get(size)?.borderWidth,
         } as React.CSSProperties;
         if (!isFree) {
           return borderStyle;
@@ -107,7 +109,7 @@ const ItemSlide = ({
       <h4
         className={cn(
           "rounded-t-md truncate px-2 text-center flex",
-          sizeMap.get(size)?.hSize,
+          sizeMap?.get(size)?.hSize,
           itemSectionBgColorMap.get(slide.type)
         )}
         style={{ width: `${width}vw` }}

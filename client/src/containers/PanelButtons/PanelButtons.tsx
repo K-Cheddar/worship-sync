@@ -53,8 +53,6 @@ const buttons: ButtonType[] = [
 const EditorButtons = ({ access }: { access?: AccessType }) => {
   const location = useLocation();
 
-  console.log(access);
-
   return (
     <ErrorBoundary>
       <div className="flex flex-col h-fit">

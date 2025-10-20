@@ -23,6 +23,8 @@ export type SelectedPreferenceType =
   | "defaultFreeFormBackgroundBrightness"
   | "defaultSlidesPerRow"
   | "defaultSlidesPerRowMobile"
+  | "defaultSlidesPerRowMusic"
+  | "defaultSlidesPerRowMusicMobile"
   | "defaultFormattedLyricsPerRow"
   | "defaultMediaItemsPerRow"
   | "defaultShouldShowItemEditor"
@@ -77,6 +79,8 @@ const initialState: PreferencesState = {
     defaultFreeFormBackgroundBrightness: 100,
     defaultSlidesPerRow: 4,
     defaultSlidesPerRowMobile: 3,
+    defaultSlidesPerRowMusic: 5,
+    defaultSlidesPerRowMusicMobile: 3,
     defaultFormattedLyricsPerRow: 4,
     defaultMediaItemsPerRow: 4,
     defaultShouldShowItemEditor: true,
@@ -183,6 +187,21 @@ export const preferencesSlice = createSlice({
         7
       );
     },
+    setDefaultSlidesPerRowMusic: (state, action: PayloadAction<number>) => {
+      state.preferences.defaultSlidesPerRowMusic = Math.min(
+        Math.max(action.payload, 1),
+        7
+      );
+    },
+    setDefaultSlidesPerRowMusicMobile: (
+      state,
+      action: PayloadAction<number>
+    ) => {
+      state.preferences.defaultSlidesPerRowMusicMobile = Math.min(
+        Math.max(action.payload, 1),
+        7
+      );
+    },
     setDefaultFormattedLyricsPerRow: (state, action: PayloadAction<number>) => {
       state.preferences.defaultFormattedLyricsPerRow = Math.min(
         Math.max(action.payload, 1),
@@ -252,92 +271,99 @@ export const preferencesSlice = createSlice({
 
     // Initiate Preferences
 
-    initiatePreferences: (state, action: PayloadAction<PreferencesType>) => {
+    initiatePreferences: (
+      state,
+      action: PayloadAction<{ preferences: PreferencesType; isMusic: boolean }>
+    ) => {
+      const { preferences, isMusic } = action.payload;
       state.preferences = {
         defaultSongBackground: {
           background:
-            action.payload.defaultSongBackground?.background ||
+            preferences.defaultSongBackground?.background ||
             initialState.preferences.defaultSongBackground.background,
           mediaInfo:
-            action.payload.defaultSongBackground?.mediaInfo ||
+            preferences.defaultSongBackground?.mediaInfo ||
             initialState.preferences.defaultSongBackground.mediaInfo,
         },
         defaultTimerBackground: {
           background:
-            action.payload.defaultTimerBackground?.background ||
+            preferences.defaultTimerBackground?.background ||
             initialState.preferences.defaultTimerBackground.background,
           mediaInfo:
-            action.payload.defaultTimerBackground?.mediaInfo ||
+            preferences.defaultTimerBackground?.mediaInfo ||
             initialState.preferences.defaultTimerBackground.mediaInfo,
         },
         defaultBibleBackground: {
           background:
-            action.payload.defaultBibleBackground?.background ||
+            preferences.defaultBibleBackground?.background ||
             initialState.preferences.defaultBibleBackground.background,
           mediaInfo:
-            action.payload.defaultBibleBackground?.mediaInfo ||
+            preferences.defaultBibleBackground?.mediaInfo ||
             initialState.preferences.defaultBibleBackground.mediaInfo,
         },
         defaultFreeFormBackground: {
           background:
-            action.payload.defaultFreeFormBackground?.background ||
+            preferences.defaultFreeFormBackground?.background ||
             initialState.preferences.defaultFreeFormBackground.background,
           mediaInfo:
-            action.payload.defaultFreeFormBackground?.mediaInfo ||
+            preferences.defaultFreeFormBackground?.mediaInfo ||
             initialState.preferences.defaultFreeFormBackground.mediaInfo,
         },
         defaultSongBackgroundBrightness:
-          action.payload.defaultSongBackgroundBrightness ||
+          preferences.defaultSongBackgroundBrightness ||
           initialState.preferences.defaultSongBackgroundBrightness,
         defaultTimerBackgroundBrightness:
-          action.payload.defaultTimerBackgroundBrightness ||
+          preferences.defaultTimerBackgroundBrightness ||
           initialState.preferences.defaultTimerBackgroundBrightness,
         defaultBibleBackgroundBrightness:
-          action.payload.defaultBibleBackgroundBrightness ||
+          preferences.defaultBibleBackgroundBrightness ||
           initialState.preferences.defaultBibleBackgroundBrightness,
         defaultFreeFormBackgroundBrightness:
-          action.payload.defaultFreeFormBackgroundBrightness ||
+          preferences.defaultFreeFormBackgroundBrightness ||
           initialState.preferences.defaultFreeFormBackgroundBrightness,
         defaultSlidesPerRow:
-          action.payload.defaultSlidesPerRow ||
+          preferences.defaultSlidesPerRow ||
           initialState.preferences.defaultSlidesPerRow,
         defaultSlidesPerRowMobile:
-          action.payload.defaultSlidesPerRowMobile ||
+          preferences.defaultSlidesPerRowMobile ||
           initialState.preferences.defaultSlidesPerRowMobile,
+        defaultSlidesPerRowMusic:
+          preferences.defaultSlidesPerRowMusic ||
+          initialState.preferences.defaultSlidesPerRowMusic,
+        defaultSlidesPerRowMusicMobile:
+          preferences.defaultSlidesPerRowMusicMobile ||
+          initialState.preferences.defaultSlidesPerRowMusicMobile,
         defaultFormattedLyricsPerRow:
-          action.payload.defaultFormattedLyricsPerRow ||
+          preferences.defaultFormattedLyricsPerRow ||
           initialState.preferences.defaultFormattedLyricsPerRow,
         defaultMediaItemsPerRow:
-          action.payload.defaultMediaItemsPerRow ||
+          preferences.defaultMediaItemsPerRow ||
           initialState.preferences.defaultMediaItemsPerRow,
         defaultShouldShowItemEditor:
-          action.payload.defaultShouldShowItemEditor ||
+          preferences.defaultShouldShowItemEditor ||
           initialState.preferences.defaultShouldShowItemEditor,
         defaultIsMediaExpanded:
-          action.payload.defaultIsMediaExpanded ||
+          preferences.defaultIsMediaExpanded ||
           initialState.preferences.defaultIsMediaExpanded,
         defaultBibleFontMode:
-          action.payload.defaultBibleFontMode ||
+          preferences.defaultBibleFontMode ||
           initialState.preferences.defaultBibleFontMode,
       };
 
       state.slidesPerRow =
-        action.payload.defaultSlidesPerRow || initialState.slidesPerRow;
+        (isMusic
+          ? preferences.defaultSlidesPerRowMusic
+          : preferences.defaultSlidesPerRow) || initialState.slidesPerRow;
       state.slidesPerRowMobile =
-        action.payload.defaultSlidesPerRowMobile ||
+        (isMusic
+          ? preferences.defaultSlidesPerRowMusicMobile
+          : preferences.defaultSlidesPerRowMobile) ||
         initialState.slidesPerRowMobile;
-      state.formattedLyricsPerRow =
-        action.payload.defaultFormattedLyricsPerRow ||
-        initialState.formattedLyricsPerRow;
-      state.mediaItemsPerRow =
-        action.payload.defaultMediaItemsPerRow || initialState.mediaItemsPerRow;
-      state.shouldShowItemEditor =
-        action.payload.defaultShouldShowItemEditor ||
-        initialState.shouldShowItemEditor;
-      state.isMediaExpanded =
-        action.payload.defaultIsMediaExpanded || initialState.isMediaExpanded;
-      state.bibleFontMode =
-        action.payload.defaultBibleFontMode || initialState.bibleFontMode;
+      state.formattedLyricsPerRow = preferences.defaultFormattedLyricsPerRow;
+      state.mediaItemsPerRow = preferences.defaultMediaItemsPerRow;
+      state.shouldShowItemEditor = preferences.defaultShouldShowItemEditor;
+      state.isMediaExpanded = preferences.defaultIsMediaExpanded;
+      state.bibleFontMode = preferences.defaultBibleFontMode;
       state.isInitialized = true;
     },
 
@@ -438,6 +464,8 @@ export const {
   setDefaultFreeFormBackgroundBrightness,
   setDefaultSlidesPerRow,
   setDefaultSlidesPerRowMobile,
+  setDefaultSlidesPerRowMusic,
+  setDefaultSlidesPerRowMusicMobile,
   setDefaultFormattedLyricsPerRow,
   setDefaultMediaItemsPerRow,
   setQuickLinks,

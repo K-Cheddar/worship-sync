@@ -175,7 +175,12 @@ const Controller = () => {
       try {
         const preferences: DBPreferences | undefined =
           await db.get("preferences");
-        dispatch(initiatePreferences(preferences.preferences));
+        dispatch(
+          initiatePreferences({
+            preferences: preferences.preferences,
+            isMusic: access === "music",
+          })
+        );
         dispatch(initiateQuickLinks(preferences.quickLinks));
       } catch (e) {
         console.error(e);
@@ -184,7 +189,7 @@ const Controller = () => {
       }
     };
     getPreferences();
-  }, [dispatch, db]);
+  }, [dispatch, db, access]);
 
   useEffect(() => {
     if (!db) return;
@@ -429,30 +434,34 @@ const Controller = () => {
             </Routes>
           </div>
 
-          <Button
-            className={cn(
-              "lg:hidden text-sm ml-2 justify-center h-1/4 z-10",
-              isEditMode && "hidden"
-            )}
-            svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
-            onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-          />
-          <div
-            className={`flex flex-col h-full lg:w-[30%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:absolute ${
-              isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
-            }`}
-            ref={rightPanelRef}
-          >
-            <Button
-              className="lg:hidden text-sm mb-2 justify-center"
-              svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
-              onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-            >
-              Close Panel
-            </Button>
-            <TransmitHandler />
-            <Media />
-          </div>
+          {access === "full" && (
+            <>
+              <Button
+                className={cn(
+                  "lg:hidden text-sm ml-2 justify-center h-1/4 z-10",
+                  isEditMode && "hidden"
+                )}
+                svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
+                onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+              />
+              <div
+                className={`flex flex-col h-full lg:w-[30%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:absolute ${
+                  isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
+                }`}
+                ref={rightPanelRef}
+              >
+                <Button
+                  className="lg:hidden text-sm mb-2 justify-center"
+                  svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
+                  onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+                >
+                  Close Panel
+                </Button>
+                <TransmitHandler />
+                <Media />
+              </div>
+            </>
+          )}
         </div>
       </div>
     </>

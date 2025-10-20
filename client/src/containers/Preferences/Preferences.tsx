@@ -14,6 +14,8 @@ import {
   SelectedPreferenceType,
   setDefaultSlidesPerRowMobile,
   setDefaultSlidesPerRow,
+  setDefaultSlidesPerRowMusic,
+  setDefaultSlidesPerRowMusicMobile,
   setDefaultFormattedLyricsPerRow,
   setDefaultMediaItemsPerRow,
   setDefaultPreferences,
@@ -28,10 +30,12 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useContext } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
 
 const Preferences = () => {
   const dispatch = useDispatch();
   const { isMobile } = useContext(ControllerInfoContext) || {};
+  const { access: currentAccess } = useContext(GlobalInfoContext) || {};
 
   const {
     preferences: {
@@ -45,6 +49,8 @@ const Preferences = () => {
       defaultFreeFormBackgroundBrightness,
       defaultSlidesPerRow,
       defaultSlidesPerRowMobile,
+      defaultSlidesPerRowMusic,
+      defaultSlidesPerRowMusicMobile,
       defaultFormattedLyricsPerRow,
       defaultMediaItemsPerRow,
       defaultShouldShowItemEditor,
@@ -93,6 +99,7 @@ const Preferences = () => {
       setValue: setDefaultSlidesPerRow,
       max: 7,
       min: 1,
+      access: ["full"],
     },
     {
       label: "Slides Per Row Mobile",
@@ -100,6 +107,23 @@ const Preferences = () => {
       setValue: setDefaultSlidesPerRowMobile,
       max: 7,
       min: 1,
+      access: ["full"],
+    },
+    {
+      label: "Slides Per Row",
+      value: defaultSlidesPerRowMusic,
+      setValue: setDefaultSlidesPerRowMusic,
+      max: 7,
+      min: 1,
+      access: ["music"],
+    },
+    {
+      label: "Slides Per Row Mobile",
+      value: defaultSlidesPerRowMusicMobile,
+      setValue: setDefaultSlidesPerRowMusicMobile,
+      max: 7,
+      min: 1,
+      access: ["music"],
     },
     {
       label: "Formatted Lyrics Per Row",
@@ -107,6 +131,7 @@ const Preferences = () => {
       setValue: setDefaultFormattedLyricsPerRow,
       max: 4,
       min: 1,
+      access: ["full"],
     },
     {
       label: "Media Items Per Row",
@@ -114,6 +139,7 @@ const Preferences = () => {
       setValue: setDefaultMediaItemsPerRow,
       max: 7,
       min: 2,
+      access: ["full"],
     },
   ];
 
@@ -141,187 +167,198 @@ const Preferences = () => {
 
   return (
     <ErrorBoundary>
-      <ul className="flex flex-wrap gap-6 justify-center">
-        {backgroundPreferences.map(
-          ({ label, preference, background, brightness, setBrightness }) => (
-            <li
-              key={preference}
-              className={cn("flex flex-col gap-2 p-2 w-fit")}
-            >
-              <p className="font-semibold text-center border-b-2 border-gray-400 pb-2 text-lg">
-                {label}
-              </p>
-              <section className="flex gap-2 items-center flex-wrap">
-                <p className="font-semibold">Background:</p>
-                <Button
-                  variant="none"
-                  padding="p-0"
-                  className={cn(
-                    "w-fit lg:min-w-[14vw] max-lg:min-w-[35vw] aspect-video self-center border-4 flex gap-2 items-center justify-center",
-                    selectedPreference === preference
-                      ? "border-cyan-400"
-                      : "border-gray-500 hover:border-gray-300"
-                  )}
-                  onClick={() => {
-                    dispatch(
-                      setSelectedPreference(
-                        preference as SelectedPreferenceType
-                      )
-                    );
-                  }}
-                >
-                  {background ? (
-                    <DisplayWindow
-                      width={isMobile ? 35 : 14}
-                      displayType="projector"
-                      shouldPlayVideo
-                      boxes={[
-                        {
-                          background: background.background,
-                          id: `${preference}-display-window`,
-                          width: 100,
-                          height: 100,
-                          brightness,
-                          mediaInfo: background.mediaInfo,
-                        },
-                      ]}
-                    />
-                  ) : (
-                    <p>None</p>
-                  )}
-                </Button>
-                <Button
-                  variant="primary"
-                  svg={RemoveSVG}
-                  onClick={() => {
-                    dispatch(setDefaultPreferences({ [preference]: "" }));
-                  }}
-                ></Button>
-              </section>
-              <section className="flex gap-2 items-center">
-                <p className="font-semibold">Background Brightness:</p>
-                <Icon size="xl" svg={BrightnessSVG} color="#fbbf24" />
-                <Button
-                  svg={MinusSVG}
-                  variant="tertiary"
-                  onClick={() => dispatch(setBrightness(brightness - 10))}
-                />
-                <Input
-                  label="Brightness"
-                  type="number"
-                  value={brightness}
-                  onChange={(val) => dispatch(setBrightness(val as number))}
-                  className="w-8 2xl:w-12"
-                  inputTextSize="text-xs"
-                  hideLabel
-                  data-ignore-undo="true"
-                  max={100}
-                  min={1}
-                />
-                <Button
-                  svg={AddSVG}
-                  variant="tertiary"
-                  onClick={() => dispatch(setBrightness(brightness + 10))}
-                />
-              </section>
-            </li>
-          )
-        )}
-      </ul>
+      {currentAccess === "full" && (
+        <ul className="flex flex-wrap gap-6 justify-center">
+          {backgroundPreferences.map(
+            ({ label, preference, background, brightness, setBrightness }) => (
+              <li
+                key={preference}
+                className={cn("flex flex-col gap-2 p-2 w-fit")}
+              >
+                <p className="font-semibold text-center border-b-2 border-gray-400 pb-2 text-lg">
+                  {label}
+                </p>
+                <section className="flex gap-2 items-center flex-wrap">
+                  <p className="font-semibold">Background:</p>
+                  <Button
+                    variant="none"
+                    padding="p-0"
+                    className={cn(
+                      "w-fit lg:min-w-[14vw] max-lg:min-w-[35vw] aspect-video self-center border-4 flex gap-2 items-center justify-center",
+                      selectedPreference === preference
+                        ? "border-cyan-400"
+                        : "border-gray-500 hover:border-gray-300"
+                    )}
+                    onClick={() => {
+                      dispatch(
+                        setSelectedPreference(
+                          preference as SelectedPreferenceType
+                        )
+                      );
+                    }}
+                  >
+                    {background ? (
+                      <DisplayWindow
+                        width={isMobile ? 35 : 14}
+                        displayType="projector"
+                        shouldPlayVideo
+                        boxes={[
+                          {
+                            background: background.background,
+                            id: `${preference}-display-window`,
+                            width: 100,
+                            height: 100,
+                            brightness,
+                            mediaInfo: background.mediaInfo,
+                          },
+                        ]}
+                      />
+                    ) : (
+                      <p>None</p>
+                    )}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    svg={RemoveSVG}
+                    onClick={() => {
+                      dispatch(setDefaultPreferences({ [preference]: "" }));
+                    }}
+                  ></Button>
+                </section>
+                <section className="flex gap-2 items-center">
+                  <p className="font-semibold">Background Brightness:</p>
+                  <Icon size="xl" svg={BrightnessSVG} color="#fbbf24" />
+                  <Button
+                    svg={MinusSVG}
+                    variant="tertiary"
+                    onClick={() => dispatch(setBrightness(brightness - 10))}
+                  />
+                  <Input
+                    label="Brightness"
+                    type="number"
+                    value={brightness}
+                    onChange={(val) => dispatch(setBrightness(val as number))}
+                    className="w-8 2xl:w-12"
+                    inputTextSize="text-xs"
+                    hideLabel
+                    data-ignore-undo="true"
+                    max={100}
+                    min={1}
+                  />
+                  <Button
+                    svg={AddSVG}
+                    variant="tertiary"
+                    onClick={() => dispatch(setBrightness(brightness + 10))}
+                  />
+                </section>
+              </li>
+            )
+          )}
+        </ul>
+      )}
       <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
         Default Items Per Row
       </h2>
       <ul className="flex flex-col gap-6 items-center">
-        {perRowPreferences.map(({ label, value, setValue, max, min }) => (
-          <li
-            key={label}
-            className={cn("grid grid-cols-2 gap-2 items-center p-2")}
-          >
-            <p className="font-semibold">{label}:</p>
-            <section className="flex gap-2 items-center">
-              <Button
-                svg={MinusSVG}
-                variant="tertiary"
-                onClick={() => dispatch(setValue(value - 1))}
-              />
-              <Input
-                label={label}
-                type="number"
-                value={value}
-                onChange={(val) => dispatch(setValue(val as number))}
-                className="w-8 2xl:w-12"
-                inputTextSize="text-xs"
-                hideLabel
-                data-ignore-undo="true"
-                max={max}
-                min={min}
-              />
-              <Button
-                svg={AddSVG}
-                variant="tertiary"
-                onClick={() => dispatch(setValue(value + 1))}
-              />
-            </section>
-          </li>
-        ))}
-      </ul>
-      <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
-        Default Visibility
-      </h2>
-      <ul className="flex flex-col gap-6 items-center">
-        {visibilityPreferences.map(({ label, value, property }) => (
-          <li
-            key={label}
-            className={cn("grid grid-cols-2 gap-2 items-center p-2")}
-          >
-            <p className="font-semibold text-right">{label}:</p>
-            <section className="flex gap-2 items-center px-2">
-              <RadioButton
-                label="Shown"
-                value={value}
-                onChange={() =>
-                  dispatch(setDefaultPreferences({ [property]: true }))
-                }
-              />
-              <RadioButton
-                label="Hidden"
-                value={!value}
-                onChange={() =>
-                  dispatch(setDefaultPreferences({ [property]: false }))
-                }
-              />
-            </section>
-          </li>
-        ))}
-      </ul>
-      <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
-        Item Preferences
-      </h2>
-      <ul className="flex flex-col gap-6 items-center">
-        {itemPreferences.map(({ label, value, property, options }) => (
-          <li
-            key={label}
-            className={cn(
-              "grid grid-cols-2 gap-2 items-center p-2 justify-center"
-            )}
-          >
-            <p className="font-semibold text-right">{label}:</p>
-            <section className="flex gap-2 items-center px-2">
-              {options.map((option) => (
-                <RadioButton
-                  key={option}
-                  label={option}
-                  labelClassName="capitalize"
-                  value={value === option}
-                  onChange={() =>
-                    dispatch(setDefaultPreferences({ [property]: option }))
-                  }
+        {perRowPreferences
+          .filter(
+            ({ access }) =>
+              access && access.includes(currentAccess as AccessType)
+          )
+          .map(({ label, value, setValue, max, min }) => (
+            <li
+              key={label}
+              className={cn("grid grid-cols-2 gap-2 items-center p-2")}
+            >
+              <p className="font-semibold">{label}:</p>
+              <section className="flex gap-2 items-center">
+                <Button
+                  svg={MinusSVG}
+                  variant="tertiary"
+                  onClick={() => dispatch(setValue(value - 1))}
                 />
-              ))}
-            </section>
-          </li>
-        ))}
+                <Input
+                  label={label}
+                  type="number"
+                  value={value}
+                  onChange={(val) => dispatch(setValue(val as number))}
+                  className="w-8 2xl:w-12"
+                  inputTextSize="text-xs"
+                  hideLabel
+                  data-ignore-undo="true"
+                  max={max}
+                  min={min}
+                />
+                <Button
+                  svg={AddSVG}
+                  variant="tertiary"
+                  onClick={() => dispatch(setValue(value + 1))}
+                />
+              </section>
+            </li>
+          ))}
       </ul>
+      {currentAccess === "full" && (
+        <>
+          <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
+            Default Visibility
+          </h2>
+          <ul className="flex flex-col gap-6 items-center">
+            {visibilityPreferences.map(({ label, value, property }) => (
+              <li
+                key={label}
+                className={cn("grid grid-cols-2 gap-2 items-center p-2")}
+              >
+                <p className="font-semibold text-right">{label}:</p>
+                <section className="flex gap-2 items-center px-2">
+                  <RadioButton
+                    label="Shown"
+                    value={value}
+                    onChange={() =>
+                      dispatch(setDefaultPreferences({ [property]: true }))
+                    }
+                  />
+                  <RadioButton
+                    label="Hidden"
+                    value={!value}
+                    onChange={() =>
+                      dispatch(setDefaultPreferences({ [property]: false }))
+                    }
+                  />
+                </section>
+              </li>
+            ))}
+          </ul>
+          <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
+            Item Preferences
+          </h2>
+          <ul className="flex flex-col gap-6 items-center">
+            {itemPreferences.map(({ label, value, property, options }) => (
+              <li
+                key={label}
+                className={cn(
+                  "grid grid-cols-2 gap-2 items-center p-2 justify-center"
+                )}
+              >
+                <p className="font-semibold text-right">{label}:</p>
+                <section className="flex gap-2 items-center px-2">
+                  {options.map((option) => (
+                    <RadioButton
+                      key={option}
+                      label={option}
+                      labelClassName="capitalize"
+                      value={value === option}
+                      onChange={() =>
+                        dispatch(setDefaultPreferences({ [property]: option }))
+                      }
+                    />
+                  ))}
+                </section>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
         Scrollbar Width
       </h2>
