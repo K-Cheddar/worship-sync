@@ -30,6 +30,7 @@ import {
 } from "@dnd-kit/sortable";
 import { useGlobalBroadcast } from "../../../hooks/useGlobalBroadcast";
 import { ActionCreators } from "redux-undo";
+import { GlobalInfoContext } from "../../../context/globalInfo";
 
 const Services = ({ className }: { className: string }) => {
   const { currentLists, activeList } = useSelector(
@@ -44,7 +45,7 @@ const Services = ({ className }: { className: string }) => {
   const dispatch = useDispatch();
 
   const { db, updater } = useContext(ControllerInfoContext) || {};
-
+  const { access } = useContext(GlobalInfoContext) || {};
   const [justAdded, setJustAdded] = useState(false);
 
   const { setNodeRef } = useDroppable({
@@ -129,7 +130,10 @@ const Services = ({ className }: { className: string }) => {
   };
 
   return (
-    <DndContext onDragEnd={onDragEnd} sensors={sensors}>
+    <DndContext
+      onDragEnd={access === "full" ? onDragEnd : undefined}
+      sensors={sensors}
+    >
       <div className={`flex gap-2 items-center ${className || ""}`}>
         <PopOver
           TriggeringButton={
@@ -159,6 +163,7 @@ const Services = ({ className }: { className: string }) => {
                       <Outline
                         key={list._id}
                         list={list}
+                        canEdit={access === "full"}
                         isSelected={list._id === selectedList?._id}
                         selectList={(listId: string) =>
                           dispatch(selectItemList(listId))
@@ -211,25 +216,27 @@ const Services = ({ className }: { className: string }) => {
                 </ul>
               </section>
             </div>
-            <Button
-              svg={justAdded ? CheckSVG : AddSVG}
-              color={justAdded ? "#84cc16" : "#22d3ee"}
-              className="w-full justify-center text-base"
-              disabled={justAdded}
-              onClick={async () => {
-                const newList = await createNewItemList({
-                  db,
-                  name: "New Outline",
-                  currentLists,
-                });
-                setJustAdded(true);
+            {access === "full" && (
+              <Button
+                svg={justAdded ? CheckSVG : AddSVG}
+                color={justAdded ? "#84cc16" : "#22d3ee"}
+                className="w-full justify-center text-base"
+                disabled={justAdded}
+                onClick={async () => {
+                  const newList = await createNewItemList({
+                    db,
+                    name: "New Outline",
+                    currentLists,
+                  });
+                  setJustAdded(true);
 
-                dispatch(updateItemLists([...currentLists, newList]));
-                setTimeout(() => setJustAdded(false), 2000);
-              }}
-            >
-              {justAdded ? "Added!" : "Add New Service"}
-            </Button>
+                  dispatch(updateItemLists([...currentLists, newList]));
+                  setTimeout(() => setJustAdded(false), 2000);
+                }}
+              >
+                {justAdded ? "Added!" : "Add New Service"}
+              </Button>
+            )}
           </div>
         </PopOver>
       </div>
