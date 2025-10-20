@@ -1,3 +1,10 @@
+## [1.19.1](https://github.com/K-Cheddar/worship-sync/compare/v1.19.0...v1.19.1) (2025-10-20)
+
+
+### Bug Fixes
+
+* Improve music only access ([3abf950](https://github.com/K-Cheddar/worship-sync/commit/3abf950b5ae970390c73a08027203f741688338e))
+
 # [1.19.0](https://github.com/K-Cheddar/worship-sync/compare/v1.18.1...v1.19.0) (2025-10-19)
 
 
