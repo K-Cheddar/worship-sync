@@ -20,6 +20,7 @@ import "./ToolbarElements/Toolbar.scss";
 import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
 import { setShouldShowStreamFormat } from "../../store/preferencesSlice";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import { GlobalInfoContext } from "../../context/globalInfo";
 
 type sections =
   | "settings"
@@ -35,6 +36,8 @@ const Toolbar = ({ className }: { className: string }) => {
   );
   const [section, setSection] = useState<sections>("settings");
   const { isMobile, isPhone } = useContext(ControllerInfoContext) || {};
+  const { access } = useContext(GlobalInfoContext) || {};
+
   const dispatch = useDispatch();
   const onItemPage = useMemo(
     () => location.pathname.includes("controller/item"),
@@ -84,33 +87,37 @@ const Toolbar = ({ className }: { className: string }) => {
             >
               Slide Tools
             </ToolbarButton>
-            <ToolbarButton
-              svg={EditSquareSVG}
-              onClick={() => setSection("stream-format")}
-              disabled={!onItemPage}
-              hidden={!onItemPage}
-              isActive={section === "stream-format"}
-            >
-              Stream Format
-            </ToolbarButton>
-            <ToolbarButton
-              svg={TimerSVG}
-              onClick={() => setSection("timer-manager")}
-              disabled={!onItemPage || type !== "timer"}
-              hidden={!onItemPage}
-              isActive={section === "timer-manager"}
-            >
-              Timer Manager
-            </ToolbarButton>
-            <ToolbarButton
-              svg={EditSquareSVG}
-              onClick={() => setSection("item-tools")}
-              disabled={!onItemPage}
-              hidden={!onItemPage}
-              isActive={section === "item-tools"}
-            >
-              Item Tools
-            </ToolbarButton>
+            {access === "full" && (
+              <>
+                <ToolbarButton
+                  svg={EditSquareSVG}
+                  onClick={() => setSection("stream-format")}
+                  disabled={!onItemPage}
+                  hidden={!onItemPage}
+                  isActive={section === "stream-format"}
+                >
+                  Stream Format
+                </ToolbarButton>
+                <ToolbarButton
+                  svg={TimerSVG}
+                  onClick={() => setSection("timer-manager")}
+                  disabled={!onItemPage || type !== "timer"}
+                  hidden={!onItemPage}
+                  isActive={section === "timer-manager"}
+                >
+                  Timer Manager
+                </ToolbarButton>
+                <ToolbarButton
+                  svg={EditSquareSVG}
+                  onClick={() => setSection("item-tools")}
+                  disabled={!onItemPage}
+                  hidden={!onItemPage}
+                  isActive={section === "item-tools"}
+                >
+                  Item Tools
+                </ToolbarButton>
+              </>
+            )}
           </div>
           <hr className="border-gray-500 w-full border-t-2 sticky left-0" />
           <div
@@ -121,7 +128,11 @@ const Toolbar = ({ className }: { className: string }) => {
           >
             <Outlines className={cn(section !== "settings" && "hidden")} />
             <Button
-              className={cn(section !== "settings" && "hidden")}
+              className={cn(
+                section !== "settings" && "hidden",
+                location.pathname.includes("preferences") &&
+                  "outline outline-2 outline-white"
+              )}
               variant="tertiary"
               svg={SettingsSVG}
               component="link"

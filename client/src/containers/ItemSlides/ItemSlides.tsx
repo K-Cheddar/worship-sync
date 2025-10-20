@@ -56,87 +56,16 @@ import generateRandomId from "../../utils/generateRandomId";
 import { useLocation } from "react-router-dom";
 import { GlobalInfoContext } from "../../context/globalInfo";
 
-export const sizeMap: Map<
+export type SizeMap = Map<
   number,
   {
     width: number;
-    cols: string;
-    hSize: string;
     mobileWidth: number;
     borderWidth: string;
+    hSize: string;
+    cols: string;
   }
-> = new Map([
-  [
-    7,
-    {
-      width: 7,
-      mobileWidth: 10,
-      cols: "grid-cols-7",
-      hSize: "text-xs",
-      borderWidth: "clamp(0.2rem, 0.2vw, 0.4rem)",
-    },
-  ],
-  [
-    6,
-    {
-      width: 8.25,
-      mobileWidth: 12,
-      cols: "grid-cols-6",
-      hSize: "text-xs",
-      borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
-    },
-  ],
-  [
-    5,
-    {
-      width: 10,
-      mobileWidth: 14,
-      cols: "grid-cols-5",
-      hSize: "text-xs",
-      borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
-    },
-  ],
-  [
-    4,
-    {
-      width: 12.75,
-      mobileWidth: 18,
-      cols: "grid-cols-4",
-      hSize: "text-sm",
-      borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
-    },
-  ],
-  [
-    3,
-    {
-      width: 17,
-      mobileWidth: 24,
-      cols: "grid-cols-3",
-      hSize: "text-base",
-      borderWidth: "clamp(0.35rem, 0.35vw, 0.7rem)",
-    },
-  ],
-  [
-    2,
-    {
-      width: 26,
-      mobileWidth: 36,
-      cols: "grid-cols-2",
-      hSize: "text-base",
-      borderWidth: "clamp(0.45rem, 0.45vw, 0.9rem)",
-    },
-  ],
-  [
-    1,
-    {
-      width: 52.25,
-      mobileWidth: 75,
-      cols: "grid-cols-1",
-      hSize: "text-base",
-      borderWidth: "clamp(0.5rem, 0.5vw, 1rem)",
-    },
-  ],
-]);
+>;
 
 const ItemSlides = () => {
   const {
@@ -180,9 +109,87 @@ const ItemSlides = () => {
   const { access } = useContext(GlobalInfoContext) || {};
 
   const canEdit = access === "full" || (access === "music" && type === "song");
+  const isMusic = useMemo(() => access === "music", [access]);
 
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
   const size = type === "timer" ? Math.min(_size, 3) : _size;
+
+  const sizeMap: SizeMap = useMemo(
+    () =>
+      new Map([
+        [
+          7,
+          {
+            width: isMusic ? 11 : 7,
+            mobileWidth: isMusic ? 11 : 10,
+            cols: "grid-cols-7",
+            hSize: "text-xs",
+            borderWidth: "clamp(0.2rem, 0.2vw, 0.4rem)",
+          },
+        ],
+        [
+          6,
+          {
+            width: isMusic ? 13 : 8.25,
+            mobileWidth: isMusic ? 13 : 12,
+            cols: "grid-cols-6",
+            hSize: isMusic ? "text-sm" : "text-xs",
+            borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+          },
+        ],
+        [
+          5,
+          {
+            width: isMusic ? 15.5 : 10,
+            mobileWidth: isMusic ? 16 : 14,
+            cols: "grid-cols-5",
+            hSize: isMusic ? "text-sm" : "text-xs",
+            borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+          },
+        ],
+        [
+          4,
+          {
+            width: isMusic ? 20 : 12.75,
+            mobileWidth: isMusic ? 20 : 18,
+            cols: "grid-cols-4",
+            hSize: "text-sm",
+            borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+          },
+        ],
+        [
+          3,
+          {
+            width: isMusic ? 26 : 17,
+            mobileWidth: isMusic ? 26 : 24,
+            cols: "grid-cols-3",
+            hSize: "text-base",
+            borderWidth: "clamp(0.35rem, 0.35vw, 0.7rem)",
+          },
+        ],
+        [
+          2,
+          {
+            width: isMusic ? 39 : 26,
+            mobileWidth: isMusic ? 38 : 36,
+            cols: "grid-cols-2",
+            hSize: "text-base",
+            borderWidth: "clamp(0.45rem, 0.45vw, 0.9rem)",
+          },
+        ],
+        [
+          1,
+          {
+            width: isMusic ? 78 : 52.25,
+            mobileWidth: isMusic ? 84 : 55,
+            cols: "grid-cols-1",
+            hSize: "text-base",
+            borderWidth: "clamp(0.5rem, 0.5vw, 1rem)",
+          },
+        ],
+      ]),
+    [isMusic]
+  );
 
   const debounceTime = useRef(0);
 
@@ -606,6 +613,7 @@ const ItemSlides = () => {
                   draggedSection={draggedSection}
                   isStreamFormat={shouldShowStreamFormat}
                   getBibleInfo={getBibleInfo}
+                  sizeMap={sizeMap}
                 />
               ))}
             </SortableContext>

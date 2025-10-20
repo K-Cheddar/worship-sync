@@ -20,6 +20,7 @@ type ServiceProps = {
   setActiveList: (_id: string) => void;
   isSelected: boolean;
   isActive: boolean;
+  canEdit: boolean;
 };
 
 const Service = ({
@@ -31,6 +32,7 @@ const Service = ({
   setActiveList,
   isSelected,
   isActive,
+  canEdit,
 }: ServiceProps) => {
   const [name, setName] = useState<string>(list.name);
   const [isCopying, setIsCopying] = useState(false);
@@ -93,44 +95,48 @@ const Service = ({
             onChange={(val) => setName(val as string)}
           />
         )}
-        <Button
-          svg={isEditing ? CheckSVG : EditSVG}
-          variant="tertiary"
-          onClick={() => {
-            if (isEditing) {
-              setIsEditing(false);
-              updateList({ ...list, name });
-            } else {
-              setIsEditing(true);
-            }
-          }}
-        />
-        {copyList && (
-          <Button
-            svg={CopySVG}
-            variant="tertiary"
-            onClick={async () => {
-              setIsCopying(true);
-              await copyList(list);
-              setIsCopying(false);
-            }}
-            isLoading={isCopying}
-          />
+        {canEdit && (
+          <>
+            <Button
+              svg={isEditing ? CheckSVG : EditSVG}
+              variant="tertiary"
+              onClick={() => {
+                if (isEditing) {
+                  setIsEditing(false);
+                  updateList({ ...list, name });
+                } else {
+                  setIsEditing(true);
+                }
+              }}
+            />
+            {copyList && (
+              <Button
+                svg={CopySVG}
+                variant="tertiary"
+                onClick={async () => {
+                  setIsCopying(true);
+                  await copyList(list);
+                  setIsCopying(false);
+                }}
+                isLoading={isCopying}
+              />
+            )}
+            <Button
+              svg={CheckSVG}
+              variant="tertiary"
+              onClick={() => setActiveList(list._id)}
+              title="Set Active"
+              color={isActive ? "#06b6d4" : ""}
+            />
+            <Button
+              variant="tertiary"
+              color={deleteList ? "red" : "gray"}
+              disabled={!deleteList}
+              svg={DeleteSVG}
+              onClick={() => setShowDeleteModal(true)}
+            />
+          </>
         )}
-        <Button
-          svg={CheckSVG}
-          variant="tertiary"
-          onClick={() => setActiveList(list._id)}
-          title="Set Active"
-          color={isActive ? "#06b6d4" : ""}
-        />
-        <Button
-          variant="tertiary"
-          color={deleteList ? "red" : "gray"}
-          disabled={!deleteList}
-          svg={DeleteSVG}
-          onClick={() => setShowDeleteModal(true)}
-        />
       </li>
     </>
   );

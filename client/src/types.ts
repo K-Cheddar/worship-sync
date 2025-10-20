@@ -372,6 +372,8 @@ export type PreferencesType = {
   defaultFreeFormBackgroundBrightness: number;
   defaultSlidesPerRow: number;
   defaultSlidesPerRowMobile: number;
+  defaultSlidesPerRowMusic: number;
+  defaultSlidesPerRowMusicMobile: number;
   defaultFormattedLyricsPerRow: number;
   defaultMediaItemsPerRow: number;
   defaultShouldShowItemEditor: boolean;

@@ -1,3 +1,4 @@
 import { useDispatch, useSelector } from "./reduxHooks";
+import { useWindowWidth } from "./useWindowWidth";
 
-export { useDispatch, useSelector };
+export { useDispatch, useSelector, useWindowWidth };
