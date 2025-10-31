@@ -1,3 +1,16 @@
+# [1.20.0](https://github.com/K-Cheddar/worship-sync/compare/v1.19.1...v1.20.0) (2025-10-31)
+
+
+### Bug Fixes
+
+* Update authentication logic ([0cb5dac](https://github.com/K-Cheddar/worship-sync/commit/0cb5dac7665f2318966ec0856c9dd99f20c513ae))
+
+
+### Features
+
+* Add producer to credits ([57dc10a](https://github.com/K-Cheddar/worship-sync/commit/57dc10a8024428b426ce51096152528921b49c3c))
+* Adding service timers and controller ([020d457](https://github.com/K-Cheddar/worship-sync/commit/020d45709255585f4a0c831c26069d13d71c1df9))
+
 ## [1.19.1](https://github.com/K-Cheddar/worship-sync/compare/v1.19.0...v1.19.1) (2025-10-20)
 
 
