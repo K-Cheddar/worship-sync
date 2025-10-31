@@ -198,7 +198,7 @@ const ServiceTimes = () => {
   useGlobalBroadcast(updateServicesFromExternal);
 
   return (
-    <main className="bg-gray-700 h-screen text-white p-4 flex flex-col gap-4 overflow-hidden">
+    <main className="bg-gray-700 flex-1 min-h-0 text-white p-4 flex flex-col gap-4">
       {isLoading && (
         <div className="flex justify-center items-center h-full w-full absolute top-0 left-0 bg-gray-700/50 z-10">
           <Spinner />
@@ -206,10 +206,21 @@ const ServiceTimes = () => {
       )}
       <h1 className="text-2xl font-bold">Service Times</h1>
 
-      <Button className="w-fit" onClick={startCreate}>
-        Add Service Timer
-      </Button>
-
+      <section className="flex gap-2">
+        <Button className="w-fit" onClick={startCreate}>
+          Add Service Timer
+        </Button>
+        {isFormOpen && (
+          <Button
+            className="w-fit md:hidden"
+            variant="secondary"
+            svg={showPreview ? NotVisibleSVG : VisibleSVG}
+            onClick={() => setShowPreview(!showPreview)}
+          >
+            {showPreview ? "Hide Preview" : "Show Preview"}
+          </Button>
+        )}
+      </section>
       {isFormOpen && (
         <div className="flex gap-6 items-start max-md:flex-col">
           <ServiceTimesForm
@@ -245,14 +256,6 @@ const ServiceTimes = () => {
             onCancel={onCancel}
           />
           <div>
-            <Button
-              className="w-fit md:hidden"
-              variant="secondary"
-              svg={showPreview ? NotVisibleSVG : VisibleSVG}
-              onClick={() => setShowPreview(!showPreview)}
-            >
-              {showPreview ? "Hide Preview" : "Show Preview"}
-            </Button>
             {showPreview && (
               <StreamPreview
                 name={name}
@@ -268,11 +271,13 @@ const ServiceTimes = () => {
         </div>
       )}
 
-      <ServiceTimesList
-        services={services}
-        onEdit={startEdit}
-        onDelete={(id) => dispatch(removeService(id))}
-      />
+      {(!isPhone || !showPreview) && (
+        <ServiceTimesList
+          services={services}
+          onEdit={startEdit}
+          onDelete={(id) => dispatch(removeService(id))}
+        />
+      )}
     </main>
   );
 };
