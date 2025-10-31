@@ -214,6 +214,41 @@ export type BibleDisplayInfo = {
   time?: number;
 };
 
+// Timer scheduling for management UI
+export type RecurrenceType = "one_time" | "weekly" | "monthly";
+export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6; // Sunday=0
+export type MonthWeekOrdinal = 1 | 2 | 3 | 4 | 5; // 5 = last if exists
+export type ServiceTimePosition =
+  | "top-right"
+  | "top-left"
+  | "bottom-right"
+  | "bottom-left"
+  | "center";
+
+export type ServiceTime = {
+  id: string;
+  name: string;
+  timerType: "countdown";
+  color?: string;
+  background?: string;
+  reccurence: RecurrenceType;
+  // time stored as HH:mm (24h)
+  time?: string;
+  // one-time date ISO string
+  dateTimeISO?: string;
+  // weekly
+  dayOfWeek?: Weekday;
+  // monthly nth weekday
+  ordinal?: MonthWeekOrdinal;
+  weekday?: Weekday;
+  position?: ServiceTimePosition;
+  nameFontSize?: number;
+  timeFontSize?: number;
+  shouldShowName?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type OverlayFormatting = {
   backgroundColor?: string;
   borderColor?: string;
@@ -502,6 +537,14 @@ export type DBBibleChapter = BibleChapter & {
   updatedAt?: string;
 };
 
+export type DBServices = {
+  _id: string;
+  _rev: string;
+  list: ServiceTime[];
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type allDocsType = {
   offset: number;
   total_rows: number;
@@ -519,7 +562,8 @@ export type allDocsType = {
       | DBPreferences
       | DBCredits
       | DBBibleChapter
-      | DBItemList;
+      | DBItemList
+      | DBServices;
   }[];
 };
 

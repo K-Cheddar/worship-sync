@@ -39,9 +39,9 @@ const getClosestUpcomingSchedule = (data: any) => {
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     const dateStr = row[0];
-    const timeStr = row[12];
+    const timeStr = row[13];
 
-    const durationStr = row[13];
+    const durationStr = row[14];
     const durationInMinutes = durationStr ? parseInt(durationStr) : 0;
 
     // Skip if dateStr is not a valid date in MM/DD/YY or MM/DD/YYYY format
@@ -182,6 +182,7 @@ export const transformSchedule = async (
     "Text Master": "Text Master",
     "Audio Engineers": ["Front of House Audio", "Stream Audio"],
     "Worship Coordinators": ["Coordinator 1", "Coordinator 2"],
+    Producer: "Producer",
   };
 
   // Create a reverse mapping for easier lookup

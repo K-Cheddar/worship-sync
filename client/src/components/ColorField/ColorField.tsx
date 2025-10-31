@@ -3,8 +3,10 @@ import { OverlayFormatting } from "../../types";
 import PopOver from "../PopOver/PopOver";
 import Button from "../Button/Button";
 import { HexAlphaColorPicker, HexColorInput } from "react-colorful";
+import cn from "classnames";
 
 interface ColorFieldProps {
+  className?: string;
   label: string;
   labelKey?: string;
   value: string;
@@ -38,6 +40,7 @@ const getContrastingTextColor = (hex: string) => {
 };
 
 const ColorField: React.FC<ColorFieldProps> = ({
+  className,
   label,
   labelKey,
   value,
@@ -47,7 +50,7 @@ const ColorField: React.FC<ColorFieldProps> = ({
 }) => {
   const val = value || defaultColor;
   return (
-    <div className="flex flex-col gap-2 items-center">
+    <div className={cn("flex flex-col gap-2 items-center", className)}>
       <label className="block text-sm font-medium text-white whitespace-nowrap">
         {labelKey && formatting
           ? `${formatting[labelKey as keyof OverlayFormatting] as string} ${label}`
@@ -75,6 +78,7 @@ const ColorField: React.FC<ColorFieldProps> = ({
           prefixed
           onChange={onChange}
           className="text-black w-full mt-2"
+          alpha
         />
       </PopOver>
     </div>
