@@ -19,6 +19,8 @@ import ProjectorFull from "./pages/ProjectorFull";
 import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
 import TimerManager from "./components/TimerManager/TimerManager";
 import VersionCheck from "./components/VersionCheck";
+import StreamInfo from "./pages/StreamInfo";
+import InfoController from "./pages/InfoController";
 import { useEffect } from "react";
 import { delay } from "./utils/generalUtils";
 
@@ -51,11 +53,13 @@ const App: React.FC = () => {
                 <Route path="/controller/*" element={<Controller />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/credits-editor" element={<CreditsEditor />} />
+                <Route path="/info-controller" element={<InfoController />} />
               </Route>
               <Route path="/projector" element={<Projector />} />
               <Route path="/projector-full" element={<ProjectorFull />} />
               <Route path="/monitor" element={<Monitor />} />
               <Route path="/stream" element={<Stream />} />
+              <Route path="/stream-info" element={<StreamInfo />} />
               <Route path="/credits" element={<Credits />} />
             </Routes>
           </VersionProvider>

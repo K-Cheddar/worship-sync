@@ -76,7 +76,7 @@ const Input = ({
       <label
         htmlFor={inputId}
         className={cn(
-          `${labelFontSize} font-semibold`,
+          `${labelFontSize} font-semibold p-1`,
           hideLabel && "sr-only",
           labelClassName
         )}
