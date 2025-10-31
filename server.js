@@ -254,25 +254,6 @@ app.get("/api/getDbSession", async (req, res) => {
   try {
     const couchURL = `https://${process.env.COUCHDB_HOST}/_session`;
 
-    // 1️⃣ Check if we already have a valid session
-    const currentCookie = req.headers.cookie;
-    if (currentCookie?.includes("AuthSession")) {
-      try {
-        const checkResp = await axios.get(couchURL, {
-          headers: { Cookie: currentCookie },
-        });
-        if (checkResp.data?.userCtx?.name === process.env.COUCHDB_USER) {
-          return res.json({
-            success: true,
-            message: "Existing session still valid",
-          });
-        }
-      } catch {
-        // Invalid session — continue to request a new session
-      }
-    }
-
-    // 2️⃣ Request a new session
     const loginResp = await axios({
       method: "POST",
       url: couchURL,
@@ -289,15 +270,35 @@ app.get("/api/getDbSession", async (req, res) => {
 
     const cookies = loginResp.headers["set-cookie"];
 
-    if (cookies?.length) {
-      // Clear old cookies for both domain variants
-      ["worshipsync.net", ".worshipsync.net"].forEach((domain) => {
-        res.append(
-          "Set-Cookie",
-          `AuthSession=; Path=/; Domain=${domain}; Max-Age=0; Secure; HttpOnly; SameSite=None`
-        );
+    // delete cookies from .worshipsync.net
+    const reqCookieHeader = req.headers.cookie || "";
+    if (reqCookieHeader) {
+      const cookieNames = Array.from(
+        new Set(
+          reqCookieHeader
+            .split(";")
+            .map((c) => c.split("=")[0].trim())
+            .filter(Boolean)
+        )
+      );
+      const domainsToClear = [
+        "worshipsync.net",
+        ".worshipsync.net",
+        "www.worshipsync.net",
+      ];
+      cookieNames.forEach((name) => {
+        domainsToClear.forEach((domain) => {
+          res.append(
+            "Set-Cookie",
+            `${name}=; Path=/; Domain=${domain}; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Secure; HttpOnly; SameSite=None`
+          );
+        });
       });
+    }
 
+    console.log(cookies);
+
+    if (cookies?.length) {
       // Set the new one exactly as CouchDB gave it, adjusting attributes
       cookies.forEach((cookie) => {
         const updatedCookie = cookie.replace(
