@@ -42,6 +42,7 @@ import {
   DBOverlay,
   DBOverlayTemplates,
   DBPreferences,
+  DBServices,
   FormattedTextDisplayInfo,
   OverlayInfo,
   Presentation,
@@ -51,6 +52,7 @@ import { allDocsSlice } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
 import { timersSlice, updateTimerFromRemote } from "./timersSlice";
 import { overlayTemplatesSlice } from "./overlayTemplatesSlice";
+import serviceTimesSlice from "./serviceTimesSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import _ from "lodash";
 
@@ -157,6 +159,7 @@ const undoableReducers = undoable(
     itemLists: itemListsSlice.reducer,
     preferences: preferencesSlice.reducer,
     overlayTemplates: overlayTemplatesSlice.reducer,
+    serviceTimes: serviceTimesSlice,
   }),
   {
     groupBy: (action) => {
@@ -768,6 +771,64 @@ listenerMiddleware.startListening({
         updatedAt: new Date().toISOString(),
       };
       db.put(db_templates);
+    }
+  },
+});
+
+// handle updating service times
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return (
+      (currentState as RootState).undoable.present.serviceTimes !==
+        (previousState as RootState).undoable.present.serviceTimes &&
+      action.type !== "serviceTimes/initiateServices" &&
+      action.type !== "serviceTimes/updateServicesFromRemote" &&
+      action.type !== "RESET"
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(1500);
+
+    // update service times
+    const { list } = (listenerApi.getState() as RootState).undoable.present
+      .serviceTimes;
+
+    if (db) {
+      try {
+        const db_services: DBServices = await db.get("services");
+        db_services.list = list;
+        db_services.updatedAt = new Date().toISOString();
+        db.put(db_services);
+        // Local machine updates
+        safePostMessage({
+          type: "update",
+          data: {
+            docs: db_services,
+            hostId: globalHostId,
+          },
+        });
+      } catch (error) {
+        // if the services are not found, create a new one
+        console.error(error);
+        const db_services = {
+          _id: "services",
+          list,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        db.put(db_services);
+      }
+    }
+    if (globalFireDbInfo.db && globalFireDbInfo.user) {
+      set(
+        ref(
+          globalFireDbInfo.db,
+          "users/" + globalFireDbInfo.user + "/v2/services"
+        ),
+        cleanObject(list)
+      );
     }
   },
 });

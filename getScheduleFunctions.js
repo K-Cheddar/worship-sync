@@ -1,6 +1,9 @@
 import axios from "axios";
 import qs from "qs";
 import * as XLSX from "xlsx";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const tenantId = process.env.AZURE_TENANT_ID;
 const clientId = process.env.AZURE_CLIENT_ID;

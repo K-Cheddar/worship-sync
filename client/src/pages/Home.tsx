@@ -57,6 +57,7 @@ const Welcome = () => {
           <section className="flex gap-4">
             <HomeButton to="/controller">Main Controller</HomeButton>
             <HomeButton to="/credits-editor">Credits Editor</HomeButton>
+            <HomeButton to="/info-controller">Info Controller</HomeButton>
           </section>
         </div>
         <div className="text-center bg-gray-700 rounded-md">
@@ -72,6 +73,7 @@ const Welcome = () => {
           <h3 className="text-lg border-b-4 border-black">OBS Displays</h3>
           <section className="flex gap-4">
             <HomeButton to="/stream">Stream</HomeButton>
+            <HomeButton to="/stream-info">Stream Info</HomeButton>
             <HomeButton to="/projector-full">Projector</HomeButton>
             <HomeButton to="/credits">Credits</HomeButton>
           </section>

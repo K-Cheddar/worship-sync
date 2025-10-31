@@ -188,6 +188,12 @@ export const timersSlice = createSlice({
       });
       state.shouldUpdateTimers = true;
     },
+    deleteTimer: (state, action: PayloadAction<string>) => {
+      state.timers = state.timers.filter(
+        (timer) => timer.id !== action.payload
+      );
+      state.shouldUpdateTimers = true;
+    },
   },
 });
 
@@ -201,6 +207,7 @@ export const {
   tickTimers,
   setShouldUpdateTimers,
   updateTimerColor,
+  deleteTimer,
 } = timersSlice.actions;
 
 export default timersSlice.reducer;
