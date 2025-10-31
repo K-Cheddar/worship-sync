@@ -1,3 +1,10 @@
+## [1.20.1](https://github.com/K-Cheddar/worship-sync/compare/v1.20.0...v1.20.1) (2025-10-31)
+
+
+### Bug Fixes
+
+* **Service Timers:** Improved mobile experience ([a018e8e](https://github.com/K-Cheddar/worship-sync/commit/a018e8e7cf7c294229555036ccfabef17daf7fbc))
+
 # [1.20.0](https://github.com/K-Cheddar/worship-sync/compare/v1.19.1...v1.20.0) (2025-10-31)
 
 
