@@ -34,7 +34,7 @@ const InfoController = () => {
   );
 
   return (
-    <main ref={infoControllerRef}>
+    <main ref={infoControllerRef} className="flex flex-col h-screen">
       <div className="bg-gray-800 w-full px-4 py-1 flex gap-2 items-center">
         <Button
           variant="tertiary"

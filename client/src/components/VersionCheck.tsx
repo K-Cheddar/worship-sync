@@ -64,6 +64,7 @@ const VersionCheck: React.FC = () => {
             Date.now() +
             window.location.hash
         );
+        window.location.reload();
       }, 1000);
     };
     if ("serviceWorker" in navigator) {

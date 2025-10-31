@@ -1,3 +1,4 @@
+import { useState } from "react";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
 import Button from "../../components/Button/Button";
@@ -10,6 +11,7 @@ import {
 } from "../../types";
 import Toggle from "../../components/Toggle/Toggle";
 import { ordinals, weekdays } from "./utils";
+import { ButtonGroup, ButtonGroupItem } from "../../components/Button";
 
 type Props = {
   editingId: string | null;
@@ -76,12 +78,38 @@ const ServiceTimesForm = ({
   onSave,
   onCancel,
 }: Props) => {
+  const [activeTab, setActiveTab] = useState<"info" | "style">("info");
+
   return (
     <article className="bg-gray-800 rounded p-4 w-fit">
       <h2 className="text-xl font-semibold">
         {editingId ? "Edit Service Timer" : "Create Service Timer"}
       </h2>
-      <section className="grid grid-cols-2 gap-4">
+
+      {/* Tabs - only visible on mobile */}
+      <ButtonGroup className="md:hidden w-full">
+        <ButtonGroupItem
+          variant={activeTab === "info" ? "secondary" : "tertiary"}
+          onClick={() => setActiveTab("info")}
+          className="justify-center rounded-r-none flex-1 text-sm"
+        >
+          Info
+        </ButtonGroupItem>
+        <ButtonGroupItem
+          variant={activeTab === "style" ? "secondary" : "tertiary"}
+          onClick={() => setActiveTab("style")}
+          className="justify-center rounded-l-none flex-1 text-sm"
+        >
+          Style
+        </ButtonGroupItem>
+      </ButtonGroup>
+
+      {/* Info Tab Content */}
+      <section
+        className={`grid grid-cols-2 gap-4 ${
+          activeTab !== "info" ? "hidden md:grid" : ""
+        }`}
+      >
         <Input
           className="flex flex-col gap-1 w-full"
           label="Name"
@@ -169,7 +197,12 @@ const ServiceTimesForm = ({
         )}
       </section>
 
-      <section className="grid grid-cols-2 gap-4 mt-4">
+      {/* Style Tab Content */}
+      <section
+        className={`grid grid-cols-2 gap-4 mt-4 ${
+          activeTab !== "style" ? "hidden md:grid" : ""
+        }`}
+      >
         <ColorField
           className="w-full"
           label="Color"
@@ -219,16 +252,17 @@ const ServiceTimesForm = ({
             onChange={setShouldShowName}
           />
         </div>
-
+      </section>
+      <section className="flex gap-2 mt-4 w-full">
         <Button
-          className="justify-center"
+          className="justify-center flex-1"
           variant="secondary"
           onClick={onCancel}
         >
           Cancel
         </Button>
         <Button
-          className="justify-center"
+          className="justify-center flex-1"
           variant="cta"
           onClick={onSave}
           disabled={!canSave}
