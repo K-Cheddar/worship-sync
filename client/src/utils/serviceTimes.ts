@@ -113,3 +113,26 @@ export function getClosestUpcomingService(
   }
   return best;
 }
+
+/**
+ * Gets the effective target time for a service, considering overrideDateTimeISO if set.
+ * This is the time that should be used for the timer display.
+ * @param service The service to get the target time for
+ * @param now Optional current time (defaults to new Date())
+ * @returns The target date, or null if none exists
+ */
+export function getEffectiveTargetTime(
+  service: ServiceTime,
+  now = new Date()
+): Date | null {
+  // If there's an override, use it (if it's in the future)
+  if (service.overrideDateTimeISO) {
+    const overrideTime = new Date(service.overrideDateTimeISO);
+    if (overrideTime > now) {
+      return overrideTime;
+    }
+  }
+
+  // Otherwise, use the calculated next occurrence
+  return getNextOccurrenceForService(service, now);
+}

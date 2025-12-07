@@ -236,6 +236,8 @@ export type ServiceTime = {
   time?: string;
   // one-time date ISO string
   dateTimeISO?: string;
+  // override date ISO string (takes precedence over dateTimeISO, cleared when time passes)
+  overrideDateTimeISO?: string;
   // weekly
   dayOfWeek?: Weekday;
   // monthly nth weekday

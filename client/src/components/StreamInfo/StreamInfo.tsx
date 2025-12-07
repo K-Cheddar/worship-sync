@@ -40,11 +40,6 @@ const StreamInfo = ({ upcomingService }: Props) => {
   const timeFontSize = (upcomingService?.timeFontSize ?? 35) / 10;
   const shouldShowName = upcomingService?.shouldShowName ?? true;
 
-  console.log({
-    color: upcomingService?.color,
-    background: upcomingService?.background,
-  });
-
   return (
     <div className="fixed inset-0 pointer-events-none background-transparent">
       <div

@@ -10,10 +10,14 @@ import StreamInfoComponent from "../components/StreamInfo/StreamInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ServiceTime, TimerInfo } from "../types";
 import { onValue, ref } from "firebase/database";
-import { getClosestUpcomingService } from "../utils/serviceTimes";
+import {
+  getClosestUpcomingService,
+  getEffectiveTargetTime,
+} from "../utils/serviceTimes";
 import { useDispatch, useSelector } from "../hooks";
 import { RootState } from "../store/store";
 import { addTimer, deleteTimer } from "../store/timersSlice";
+import { updateService } from "../store/serviceTimesSlice";
 
 const StreamInfo = () => {
   const { user, firebaseDb, hostId } = useContext(GlobalInfoContext) || {};
@@ -48,11 +52,13 @@ const StreamInfo = () => {
     updateUpcomingService();
   }, [updateUpcomingService]);
 
-  const targetIso = useMemo(
-    () =>
-      upcomingService?.nextAt ? upcomingService.nextAt.toISOString() : null,
-    [upcomingService]
-  );
+  const targetIso = useMemo(() => {
+    if (!upcomingService) return null;
+
+    // Get the effective target time (considers override if set)
+    const effectiveTime = getEffectiveTargetTime(upcomingService.service);
+    return effectiveTime ? effectiveTime.toISOString() : null;
+  }, [upcomingService]);
 
   useEffect(() => {
     const service = upcomingService?.service;
@@ -132,6 +138,36 @@ const StreamInfo = () => {
       }
     };
   }, [targetIso, updateUpcomingService]);
+
+  // Clear overrideDateTimeISO when the time passes
+  useEffect(() => {
+    const checkAndClearOverrides = () => {
+      const now = new Date();
+      services.forEach((service) => {
+        if (service.overrideDateTimeISO) {
+          const overrideTime = new Date(service.overrideDateTimeISO);
+          if (overrideTime <= now) {
+            // Time has passed, clear the override
+            // Update Redux which will sync to Firebase, updating local state
+            dispatch(
+              updateService({
+                id: service.id,
+                changes: { overrideDateTimeISO: undefined },
+              })
+            );
+          }
+        }
+      });
+    };
+
+    // Check immediately
+    checkAndClearOverrides();
+
+    // Check every minute to catch any expired overrides
+    const interval = setInterval(checkAndClearOverrides, 60000);
+
+    return () => clearInterval(interval);
+  }, [dispatch, services]);
 
   return <StreamInfoComponent upcomingService={upcomingService?.service} />;
 };
