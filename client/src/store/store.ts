@@ -128,7 +128,6 @@ const excludedActions: string[] = [
   overlaySlice.actions.forceUpdate.toString(),
   overlaySlice.actions.selectOverlay.toString(),
   timersSlice.actions.syncTimersFromRemote.toString(),
-  timersSlice.actions.setTimersFromDocs.toString(),
   timersSlice.actions.setShouldUpdateTimers.toString(),
   allDocsSlice.actions.updateAllFreeFormDocs.toString(),
   allDocsSlice.actions.updateAllSongDocs.toString(),

@@ -97,7 +97,9 @@ const CreateItem = () => {
       .map((type) => ({ ...type, selected: type.type === initialType }))
   );
   const [itemName, setItemName] = useState<string>(initialName);
-  const [duration, setDuration] = useState<number>(60);
+  const [hours, setHours] = useState<number>(0);
+  const [minutes, setMinutes] = useState<number>(1);
+  const [seconds, setSeconds] = useState<number>(0);
   const [time, setTime] = useState<string>("00:00");
   const [timerType, setTimerType] = useState<"countdown" | "timer">("timer");
   const [justAdded, setJustAdded] = useState(false);
@@ -186,6 +188,7 @@ const CreateItem = () => {
     }
 
     if (selectedType === "timer") {
+      const duration = hours * 3600 + minutes * 60 + seconds;
       const newItem = await createNewTimer({
         name: itemName,
         list,
@@ -318,16 +321,9 @@ const CreateItem = () => {
                 <Input
                   label="Hours"
                   type="number"
-                  hideSpinButtons
                   min={0}
-                  value={Math.floor(duration / 3600)}
-                  onChange={(val) =>
-                    setDuration(
-                      Number(val) * 3600 +
-                        Math.floor((duration % 3600) / 60) * 60 +
-                        (duration % 60)
-                    )
-                  }
+                  value={hours}
+                  onChange={(val) => setHours(Number(val) || 0)}
                   data-ignore-undo="true"
                 />
                 <Input
@@ -335,15 +331,8 @@ const CreateItem = () => {
                   type="number"
                   min={0}
                   max={59}
-                  hideSpinButtons
-                  value={Math.floor((duration % 3600) / 60)}
-                  onChange={(val) =>
-                    setDuration(
-                      Math.floor(duration / 3600) * 3600 +
-                        Number(val) * 60 +
-                        (duration % 60)
-                    )
-                  }
+                  value={minutes}
+                  onChange={(val) => setMinutes(Number(val) || 0)}
                   data-ignore-undo="true"
                 />
                 <Input
@@ -351,15 +340,8 @@ const CreateItem = () => {
                   type="number"
                   min={0}
                   max={59}
-                  hideSpinButtons
-                  value={duration % 60}
-                  onChange={(val) =>
-                    setDuration(
-                      Math.floor(duration / 3600) * 3600 +
-                        Math.floor((duration % 3600) / 60) * 60 +
-                        Number(val)
-                    )
-                  }
+                  value={seconds}
+                  onChange={(val) => setSeconds(Number(val) || 0)}
                   data-ignore-undo="true"
                 />
               </div>

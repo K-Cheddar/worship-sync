@@ -75,6 +75,7 @@ import { setIsEditMode } from "../../store/itemSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import cn from "classnames";
 import { RootState } from "../../store/store";
+import { useSyncRemoteTimers } from "../../hooks";
 
 // Here for future to implement resizable
 
@@ -121,14 +122,16 @@ const Controller = () => {
   const { db, cloud, updater, setIsMobile, setIsPhone, dbProgress } =
     useContext(ControllerInfoContext) || {};
 
-  const { user, access } = useContext(GlobalInfoContext) || {};
+  const { user, access, firebaseDb, hostId, refreshPresentationListeners } =
+    useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     return () => {
       dispatch({ type: "RESET" });
       dispatch({ type: "RESET_INITIALIZATION" });
+      refreshPresentationListeners?.();
     };
-  }, [dispatch]);
+  }, [dispatch, refreshPresentationListeners]);
 
   useEffect(() => {
     if (
@@ -325,6 +328,8 @@ const Controller = () => {
   }, [updater, updatePreferencesFromExternal]);
 
   useGlobalBroadcast(updatePreferencesFromExternal);
+
+  useSyncRemoteTimers(firebaseDb, user, hostId);
 
   const controllerRef = useCallback(
     (node: HTMLDivElement) => {
