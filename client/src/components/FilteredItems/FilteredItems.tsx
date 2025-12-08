@@ -23,6 +23,9 @@ import {
   updateWordMatches,
 } from "../../utils/generalUtils";
 import Spinner from "../Spinner/Spinner";
+import { ref, get, set } from "firebase/database";
+import { globalFireDbInfo } from "../../context/globalInfo";
+import { deleteTimer } from "../../store/timersSlice";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -203,6 +206,50 @@ const FilteredItems = ({
     dispatch(removeItemFromAllItemsList(item._id));
     dispatch(removeItemFromListById(item._id));
     dispatch(ActionCreators.clearHistory());
+
+    // If deleting a timer, also delete from Firebase and localStorage
+    if (item.type === "timer") {
+      const timerId = item._id;
+
+      // Delete from Redux store
+      dispatch(deleteTimer(timerId));
+
+      // Delete from localStorage
+      try {
+        const storedTimers = JSON.parse(
+          localStorage.getItem("timerInfo") || "[]"
+        );
+        const filteredTimers = storedTimers.filter(
+          (timer: any) => timer.id !== timerId
+        );
+        localStorage.setItem("timerInfo", JSON.stringify(filteredTimers));
+      } catch (error) {
+        console.error("Error updating localStorage:", error);
+      }
+
+      // Delete from Firebase
+      if (globalFireDbInfo.db && globalFireDbInfo.user) {
+        try {
+          const timersRef = ref(
+            globalFireDbInfo.db,
+            "users/" + globalFireDbInfo.user + "/v2/timers"
+          );
+
+          const snapshot = await get(timersRef);
+          const currentTimers = snapshot.val() || [];
+
+          // Filter out the deleted timer
+          const updatedTimers = currentTimers.filter(
+            (timer: any) => timer.id !== timerId
+          );
+
+          await set(timersRef, updatedTimers);
+        } catch (error) {
+          console.error("Error deleting timer from Firebase:", error);
+        }
+      }
+    }
+
     if (db) {
       try {
         const doc = await db.get(item._id);
