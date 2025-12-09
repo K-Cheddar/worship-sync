@@ -18,6 +18,7 @@ import {
   increaseSlidesMobile,
   decreaseSlidesMobile,
   setSlidesMobile,
+  setMonitorTimerId,
 } from "../../store/preferencesSlice";
 import { useSelector } from "../../hooks";
 import { useDispatch } from "../../hooks";
@@ -287,6 +288,10 @@ const ItemSlides = () => {
             timerId: timerInfo?.id,
           })
         );
+      }
+
+      if (type === "timer") {
+        dispatch(setMonitorTimerId(timerInfo?.id || null));
       }
 
       if (shouldSendTo.monitor) {

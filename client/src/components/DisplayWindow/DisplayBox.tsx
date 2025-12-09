@@ -1,4 +1,4 @@
-import { Box, DisplayType, TimerInfo } from "../../types";
+import { Box, TimerInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useMemo, useRef } from "react";
@@ -10,7 +10,6 @@ type DisplayBoxProps = {
   prevBox?: Box;
   box: Box;
   width: number;
-  displayType?: DisplayType;
   showBackground: boolean;
   fontAdjustment: number;
   index: number;
@@ -26,7 +25,6 @@ const DisplayBox = ({
   prevBox,
   box,
   width,
-  displayType,
   showBackground,
   fontAdjustment,
   index,
@@ -135,9 +133,9 @@ const DisplayBox = ({
     { scope: boxRef, dependencies: [box, time, shouldImageBeHidden] }
   );
 
-  const bFontSize = box.fontSize;
   const bWords = box.words || "";
   const words = bWords;
+  const bFontSize = box.fontSize;
   const fontSizeValue = bFontSize ? bFontSize / fontAdjustment : 1;
   const tSS = fontSizeValue / (width > 20 ? 32 : 10); // text shadow size
   const fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size

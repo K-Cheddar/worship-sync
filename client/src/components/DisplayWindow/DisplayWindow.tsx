@@ -18,6 +18,9 @@ import DisplayStreamText from "./DisplayStreamText";
 import DisplayImageOverlay from "./DisplayImageOverlay";
 import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
 import HLSPlayer from "./HLSVideoPlayer";
+import DisplayClock from "./DisplayClock";
+import DisplayTimer from "./DisplayTimer";
+import { useSelector } from "../../hooks";
 
 type DisplayWindowProps = {
   prevBoxes?: Box[];
@@ -123,6 +126,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     );
     const [isWindowVideoLoaded, setIsWindowVideoLoaded] = useState(false);
 
+    const {
+      monitorSettings: { showClock, showTimer },
+    } = useSelector((state) => state.undoable.present.preferences);
+
     // Keep the video element mounted and update src only when the URL changes
     useEffect(() => {
       if (desiredVideoUrl && desiredVideoUrl !== activeVideoUrl) {
@@ -191,7 +198,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 key={box.id}
                 box={box}
                 width={width}
-                displayType={displayType}
                 showBackground={showBackground}
                 fontAdjustment={fontAdjustment}
                 index={index}
@@ -212,7 +218,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 key={box.id}
                 box={box}
                 width={width}
-                displayType={displayType}
                 showBackground={showBackground}
                 fontAdjustment={fontAdjustment}
                 index={index}
@@ -240,6 +245,26 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             );
           return null;
         })}
+
+        {isDisplay && displayType === "monitor" && (
+          <>
+            {showClock && (
+              <DisplayClock
+                width={width}
+                fontAdjustment={fontAdjustment}
+                time={time}
+              />
+            )}
+            {showTimer && (
+              <DisplayTimer
+                width={width}
+                fontAdjustment={fontAdjustment}
+                time={time}
+                currentTimerInfo={timerInfo}
+              />
+            )}
+          </>
+        )}
 
         {isStream && (
           <>

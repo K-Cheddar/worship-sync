@@ -418,6 +418,14 @@ export type PreferencesType = {
   defaultBibleFontMode: BibleFontMode;
 };
 
+export type MonitorSettingsType = {
+  showClock: boolean;
+  showTimer: boolean;
+  clockFontSize: number;
+  timerFontSize: number;
+  timerId: string | null;
+};
+
 export type ScrollbarWidth = "thin" | "auto" | "none";
 
 export type ItemList = {
@@ -466,6 +474,7 @@ export type DBPreferences = {
   _rev: string;
   preferences: PreferencesType;
   quickLinks: QuickLinkType[];
+  monitorSettings: MonitorSettingsType;
   createdAt?: string;
   updatedAt?: string;
 };

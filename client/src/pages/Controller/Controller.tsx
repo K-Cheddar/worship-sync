@@ -64,7 +64,10 @@ import {
 } from "../../utils/dbUtils";
 import Timers from "../../containers/Timers/Timers";
 import Preferences from "./Preferences";
+import QuickLinks from "./QuickLinks";
+import MonitorSettings from "./MonitorSettings";
 import {
+  initiateMonitorSettings,
   initiatePreferences,
   initiateQuickLinks,
   setIsLoading,
@@ -185,6 +188,7 @@ const Controller = () => {
           })
         );
         dispatch(initiateQuickLinks(preferences.quickLinks));
+        dispatch(initiateMonitorSettings(preferences.monitorSettings));
       } catch (e) {
         console.error(e);
       } finally {
@@ -436,6 +440,8 @@ const Controller = () => {
               <Route path="timers" element={<Timers />} />
               <Route path="create" element={<CreateItem />} />
               <Route path="preferences" element={<Preferences />} />
+              <Route path="quick-links" element={<QuickLinks />} />
+              <Route path="monitor-settings" element={<MonitorSettings />} />
             </Routes>
           </div>
 

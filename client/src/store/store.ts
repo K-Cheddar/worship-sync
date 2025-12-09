@@ -654,6 +654,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.preferences !==
         (previousState as RootState).undoable.present.preferences &&
       action.type !== "preferences/initiatePreferences" &&
+      action.type !== "preferences/initiateMonitorSettings" &&
       action.type !== "preferences/initiateQuickLinks" &&
       action.type !== "preferences/increaseSlides" &&
       action.type !== "preferences/increaseSlidesMobile" &&
@@ -682,15 +683,28 @@ listenerMiddleware.startListening({
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
-    // update ItemList
-    const { preferences, quickLinks } = (listenerApi.getState() as RootState)
-      .undoable.present.preferences;
+    const { preferences, monitorSettings, quickLinks } = (
+      listenerApi.getState() as RootState
+    ).undoable.present.preferences;
+
+    if (globalFireDbInfo.db && globalFireDbInfo.user) {
+      set(
+        ref(
+          globalFireDbInfo.db,
+          "users/" + globalFireDbInfo.user + "/v2/monitorSettings"
+        ),
+        cleanObject({
+          ...monitorSettings,
+        })
+      );
+    }
 
     if (!db) return;
     try {
       const db_preferences: DBPreferences = await db.get("preferences");
       db_preferences.preferences = preferences;
       db_preferences.quickLinks = quickLinks;
+      db_preferences.monitorSettings = monitorSettings;
       db_preferences.updatedAt = new Date().toISOString();
       db.put(db_preferences);
       // Local machine updates
@@ -707,6 +721,7 @@ listenerMiddleware.startListening({
       const db_preferences = {
         preferences: preferences,
         quickLinks: quickLinks,
+        monitorSettings: monitorSettings,
         _id: "preferences",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),

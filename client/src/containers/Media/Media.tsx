@@ -96,7 +96,6 @@ const Media = () => {
     isMediaExpanded,
     mediaItemsPerRow,
     selectedPreference,
-    tab,
     selectedQuickLink,
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
@@ -431,7 +430,8 @@ const Media = () => {
           disabled={selectedMedia.id === "" || !selectedPreference}
           className={cn(
             (!location.pathname.includes("preferences") ||
-              tab !== "defaults") &&
+              location.pathname.includes("quick-links") ||
+              location.pathname.includes("monitor-settings")) &&
               "hidden",
             visibleButtons["setBackground"] && "button-appear"
           )}
@@ -450,7 +450,9 @@ const Media = () => {
             if (el) {
               handleButtonVisibility(
                 "setBackground",
-                location.pathname.includes("preferences") && tab === "defaults",
+                location.pathname.includes("preferences") &&
+                  !location.pathname.includes("quick-links") &&
+                  !location.pathname.includes("monitor-settings"),
                 selectedMedia.id === "" || !selectedPreference
               );
             }
@@ -462,8 +464,7 @@ const Media = () => {
           variant="tertiary"
           disabled={!selectedQuickLink || selectedMedia.id === ""}
           className={cn(
-            (!location.pathname.includes("preferences") ||
-              tab !== "quickLinks" ||
+            (!location.pathname.includes("quick-links") ||
               selectedQuickLink?.linkType !== "media") &&
               "hidden",
             visibleButtons["setQuickLink"] && "button-appear"
@@ -475,8 +476,7 @@ const Media = () => {
           ref={(el) => {
             if (el) {
               const isVisible = Boolean(
-                location.pathname.includes("preferences") &&
-                  tab === "quickLinks" &&
+                location.pathname.includes("quick-links") &&
                   selectedQuickLink?.linkType === "media"
               );
               const isDisabled = Boolean(

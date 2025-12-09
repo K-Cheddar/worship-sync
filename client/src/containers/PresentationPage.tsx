@@ -8,6 +8,8 @@ type PresentationProps = {
   prevDisplayInfo: PresentationType;
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
+  showClock?: boolean;
+  showTimer?: boolean;
 };
 
 const Presentation = ({
