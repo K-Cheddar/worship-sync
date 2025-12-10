@@ -33,7 +33,7 @@ const Toast: React.FC<ToastProps> = ({
   id,
   message,
   children,
-  variant = "neutral",
+  variant = "info",
   position = "top-center",
   persist = false,
   duration = 7000,
@@ -125,7 +125,9 @@ const Toast: React.FC<ToastProps> = ({
           />
         )}
         <div className="flex-1 w-max">
-          {message && <p className="text-sm font-medium">{message}</p>}
+          {message && (
+            <p className="text-sm text-center font-medium">{message}</p>
+          )}
           {children && <div>{children}</div>}
         </div>
         <Button

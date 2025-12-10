@@ -7,6 +7,8 @@ import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import cn from "classnames";
 import { useMemo, useState } from "react";
 import QuickLinkButton from "./QuickLinkButton";
+import { useToast } from "../../context/toastContext";
+import QuickLinkSelection from "./QuickLinkSelection";
 
 const baseImgUrl =
   "https://res.cloudinary.com/portable-media/image/upload/v1/backgrounds";
@@ -37,11 +39,13 @@ const QuickLink = ({
   index,
   isMobile,
   isSelected,
-  setSelectedQuickLink,
+  setSelectedQuickLink: setSelectedQuickLinkProp,
   linkType: _linkType,
   timers,
   id,
 }: QuickLinkProps) => {
+  const { showToast } = useToast();
+
   const [linkType, setLinkType] = useState<LinkType>(() => {
     if (displayType === "projector") {
       return _linkType || "media";
@@ -68,12 +72,48 @@ const QuickLink = ({
     return baseLinkTypeOptions;
   }, [displayType]);
 
-  const timerInfo = useMemo(() => {
+  const timerInfoForDisplay = useMemo(() => {
     if (_linkType === "slide") {
       return timers.find((t) => t.id === presentationInfo?.timerId);
     }
     return undefined;
   }, [timers, presentationInfo, _linkType]);
+
+  const handleQuickLinkButtonClick = () => {
+    setSelectedQuickLinkProp();
+
+    if (linkType === "slide") {
+      showToast({
+        message: "Select a slide to link",
+        variant: "neutral",
+        persist: true,
+        children: (toastId) => (
+          <QuickLinkSelection
+            linkType="slide"
+            quickLinkId={id}
+            isMobile={isMobile}
+            toastId={toastId}
+            displayType={displayType}
+          />
+        ),
+      });
+    } else if (linkType === "overlay") {
+      showToast({
+        message: "Select an overlay to link",
+        variant: "neutral",
+        persist: true,
+        children: (toastId) => (
+          <QuickLinkSelection
+            linkType="overlay"
+            quickLinkId={id}
+            isMobile={isMobile}
+            toastId={toastId}
+            displayType={displayType}
+          />
+        ),
+      });
+    }
+  };
 
   return (
     <li
@@ -136,7 +176,7 @@ const QuickLink = ({
           helpText="Click to select media."
           selectedText="Now select media and click set."
           isSelected={isSelected}
-          onClick={setSelectedQuickLink}
+          onClick={setSelectedQuickLinkProp}
         />
       )}
 
@@ -147,7 +187,7 @@ const QuickLink = ({
           helpText="Click to select slide from item."
           selectedText="Now select a slide and click select."
           isSelected={isSelected}
-          onClick={setSelectedQuickLink}
+          onClick={handleQuickLinkButtonClick}
         />
       )}
 
@@ -158,7 +198,7 @@ const QuickLink = ({
           helpText="Click to select overlay."
           selectedText="Now select an overlay and click select."
           isSelected={isSelected}
-          onClick={setSelectedQuickLink}
+          onClick={handleQuickLinkButtonClick}
         />
       )}
 
@@ -174,7 +214,7 @@ const QuickLink = ({
           stbOverlayInfo={presentationInfo?.stbOverlayInfo}
           qrCodeOverlayInfo={presentationInfo?.qrCodeOverlayInfo}
           imageOverlayInfo={presentationInfo?.imageOverlayInfo}
-          timerInfo={timerInfo}
+          timerInfo={timerInfoForDisplay}
         />
       </section>
       {canDelete && (
