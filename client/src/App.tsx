@@ -14,6 +14,7 @@ import Login from "./pages/Login";
 import ControllerContextWrapper from "./ControllerContextWrapper";
 import GlobalInfoProvider from "./context/globalInfo";
 import { VersionProvider } from "./context/versionContext";
+import { ToastProvider } from "./context/toastContext";
 import Credits from "./pages/Credits";
 import ProjectorFull from "./pages/ProjectorFull";
 import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
@@ -45,23 +46,25 @@ const App: React.FC = () => {
       <Router>
         <GlobalInfoProvider>
           <VersionProvider>
-            <TimerManager />
-            <VersionCheck />
-            <Routes>
-              <Route element={<ControllerContextWrapper />}>
-                <Route path="/" element={<Home />} />
-                <Route path="/controller/*" element={<Controller />} />
-                <Route path="/login" element={<Login />} />
-                <Route path="/credits-editor" element={<CreditsEditor />} />
-                <Route path="/info-controller" element={<InfoController />} />
-              </Route>
-              <Route path="/projector" element={<Projector />} />
-              <Route path="/projector-full" element={<ProjectorFull />} />
-              <Route path="/monitor" element={<Monitor />} />
-              <Route path="/stream" element={<Stream />} />
-              <Route path="/stream-info" element={<StreamInfo />} />
-              <Route path="/credits" element={<Credits />} />
-            </Routes>
+            <ToastProvider>
+              <TimerManager />
+              <VersionCheck />
+              <Routes>
+                <Route element={<ControllerContextWrapper />}>
+                  <Route path="/" element={<Home />} />
+                  <Route path="/controller/*" element={<Controller />} />
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/credits-editor" element={<CreditsEditor />} />
+                  <Route path="/info-controller" element={<InfoController />} />
+                </Route>
+                <Route path="/projector" element={<Projector />} />
+                <Route path="/projector-full" element={<ProjectorFull />} />
+                <Route path="/monitor" element={<Monitor />} />
+                <Route path="/stream" element={<Stream />} />
+                <Route path="/stream-info" element={<StreamInfo />} />
+                <Route path="/credits" element={<Credits />} />
+              </Routes>
+            </ToastProvider>
           </VersionProvider>
         </GlobalInfoProvider>
       </Router>

@@ -19,13 +19,14 @@ import {
 import generateRandomId from "../../utils/generateRandomId";
 import Button from "../../components/Button/Button";
 import ServiceTimesForm from "./ServiceTimesForm";
-import StreamPreview from "../../components/StreamInfo/StreamPreview";
+import StreamPreview from "./StreamPreview";
 import ServiceTimesList from "./ServiceTimesList";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import Spinner from "../../components/Spinner/Spinner";
 import { ReactComponent as VisibleSVG } from "../../assets/icons/visible.svg";
 import { ReactComponent as NotVisibleSVG } from "../../assets/icons/not-visible.svg";
+import { getClosestUpcomingService } from "../../utils/serviceTimes";
 
 const ServiceTimes = () => {
   const dispatch = useDispatch();
@@ -51,11 +52,15 @@ const ServiceTimes = () => {
   const [showPreview, setShowPreview] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState(true);
 
-  const { db, updater, isPhone } = useContext(ControllerInfoContext) || {};
+  const { db, updater, isMobile } = useContext(ControllerInfoContext) || {};
+
+  const upcomingService = useMemo(() => {
+    return getClosestUpcomingService(services);
+  }, [services]);
 
   useEffect(() => {
-    setShowPreview(!isPhone);
-  }, [isPhone]);
+    setShowPreview(!isMobile);
+  }, [isMobile]);
 
   const canSave = useMemo(() => {
     if (!name) return false;
@@ -84,7 +89,7 @@ const ServiceTimes = () => {
   const onSave = () => {
     if (!canSave) return;
 
-    const base = {
+    const base: Partial<ServiceTime> = {
       name,
       color,
       background,
@@ -95,11 +100,12 @@ const ServiceTimes = () => {
       ordinal: recurrence === "monthly" ? ordinal : undefined,
       weekday: recurrence === "monthly" ? weekday : undefined,
       position,
-      nameSize,
-      timeSize,
+      nameFontSize: nameSize,
+      timeFontSize: timeSize,
       shouldShowName,
+      overrideDateTimeISO: undefined,
       updatedAt: new Date().toISOString(),
-    } as const;
+    };
 
     if (editingId) {
       dispatch(updateService({ id: editingId, changes: { ...base } }));
@@ -222,7 +228,7 @@ const ServiceTimes = () => {
         )}
       </section>
       {isFormOpen && (
-        <div className="flex gap-6 items-start max-md:flex-col">
+        <div className="flex gap-6 items-start max-md:flex-col max-h-[50vh]">
           <ServiceTimesForm
             editingId={editingId}
             name={name}
@@ -255,27 +261,26 @@ const ServiceTimes = () => {
             onSave={onSave}
             onCancel={onCancel}
           />
-          <div>
-            {showPreview && (
-              <StreamPreview
-                name={name}
-                color={color}
-                background={background}
-                nameSize={nameSize}
-                timeSize={timeSize}
-                shouldShowName={shouldShowName}
-                position={position}
-              />
-            )}
-          </div>
+          {showPreview && (
+            <StreamPreview
+              name={name}
+              color={color}
+              background={background}
+              nameSize={nameSize}
+              timeSize={timeSize}
+              shouldShowName={shouldShowName}
+              position={position}
+            />
+          )}
         </div>
       )}
 
-      {(!isPhone || !showPreview) && (
+      {(!isMobile || !showPreview) && (
         <ServiceTimesList
           services={services}
           onEdit={startEdit}
           onDelete={(id) => dispatch(removeService(id))}
+          upcomingService={upcomingService}
         />
       )}
     </main>

@@ -64,7 +64,10 @@ import {
 } from "../../utils/dbUtils";
 import Timers from "../../containers/Timers/Timers";
 import Preferences from "./Preferences";
+import QuickLinks from "./QuickLinks";
+import MonitorSettings from "./MonitorSettings";
 import {
+  initiateMonitorSettings,
   initiatePreferences,
   initiateQuickLinks,
   setIsLoading,
@@ -75,6 +78,7 @@ import { setIsEditMode } from "../../store/itemSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import cn from "classnames";
 import { RootState } from "../../store/store";
+import { useSyncRemoteTimers } from "../../hooks";
 
 // Here for future to implement resizable
 
@@ -121,14 +125,16 @@ const Controller = () => {
   const { db, cloud, updater, setIsMobile, setIsPhone, dbProgress } =
     useContext(ControllerInfoContext) || {};
 
-  const { user, access } = useContext(GlobalInfoContext) || {};
+  const { user, access, firebaseDb, hostId, refreshPresentationListeners } =
+    useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     return () => {
       dispatch({ type: "RESET" });
       dispatch({ type: "RESET_INITIALIZATION" });
+      refreshPresentationListeners?.();
     };
-  }, [dispatch]);
+  }, [dispatch, refreshPresentationListeners]);
 
   useEffect(() => {
     if (
@@ -182,6 +188,7 @@ const Controller = () => {
           })
         );
         dispatch(initiateQuickLinks(preferences.quickLinks));
+        dispatch(initiateMonitorSettings(preferences.monitorSettings));
       } catch (e) {
         console.error(e);
       } finally {
@@ -326,6 +333,8 @@ const Controller = () => {
 
   useGlobalBroadcast(updatePreferencesFromExternal);
 
+  useSyncRemoteTimers(firebaseDb, user, hostId);
+
   const controllerRef = useCallback(
     (node: HTMLDivElement) => {
       if (node) {
@@ -431,6 +440,8 @@ const Controller = () => {
               <Route path="timers" element={<Timers />} />
               <Route path="create" element={<CreateItem />} />
               <Route path="preferences" element={<Preferences />} />
+              <Route path="quick-links" element={<QuickLinks />} />
+              <Route path="monitor-settings" element={<MonitorSettings />} />
             </Routes>
           </div>
 

@@ -4,13 +4,11 @@ import { calculateRemainingTime, calculateEndTime } from "../utils/timerUtils";
 
 interface TimersState {
   timers: TimerInfo[];
-  timersFromDocs: TimerInfo[];
   shouldUpdateTimers: boolean;
 }
 
 const initialState: TimersState = {
   timers: [],
-  timersFromDocs: [],
   shouldUpdateTimers: false,
 };
 
@@ -20,14 +18,6 @@ export const timersSlice = createSlice({
   reducers: {
     setShouldUpdateTimers: (state, action: PayloadAction<boolean>) => {
       state.shouldUpdateTimers = action.payload;
-    },
-    setTimersFromDocs: (
-      state,
-      action: PayloadAction<(TimerInfo | undefined)[]>
-    ) => {
-      state.timersFromDocs = action.payload.filter(
-        (timer) => timer !== undefined
-      ) as TimerInfo[];
     },
     syncTimers: (state, action: PayloadAction<(TimerInfo | undefined)[]>) => {
       // Create a map of existing timers for quick lookup
@@ -198,7 +188,6 @@ export const timersSlice = createSlice({
 });
 
 export const {
-  setTimersFromDocs,
   syncTimers,
   syncTimersFromRemote,
   addTimer,

@@ -49,13 +49,13 @@ const UserSection = () => {
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 text-white">
       <Icon
         svg={isDemo ? SyncDisabled : SyncCloud}
         size="md"
         color={isDemo ? "oklch(0.75 0.183 55.934)" : "#22d3ee"}
       />
-      <span className="text-sm font-semibold text-white ">{user}</span>
+      <span className="text-sm font-semibold">{user}</span>
       {!isMobile && (
         <>
           <Icon

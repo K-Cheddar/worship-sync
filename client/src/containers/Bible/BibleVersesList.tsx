@@ -131,7 +131,6 @@ const BibleVersesList = ({
                   className="text-sm"
                   svg={SendSVG}
                   onClick={() => {
-                    console.log(verse);
                     setSelectedVerse(verse.index);
                     sendVerse(verse);
                   }}

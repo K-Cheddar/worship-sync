@@ -109,9 +109,6 @@ const QuickLinks = () => {
 
   return (
     <ErrorBoundary>
-      <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
-        Quick Links
-      </h2>
       <ul className="flex flex-col gap-6 items-center max-lg:gap-12">
         {[
           ...projectorQuickLinks,

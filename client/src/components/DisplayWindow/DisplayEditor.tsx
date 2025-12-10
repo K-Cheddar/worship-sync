@@ -7,6 +7,7 @@ import { Position, ResizableDelta, Rnd } from "react-rnd";
 import cn from "classnames";
 import { ResizeDirection } from "re-resizable";
 import Button from "../Button/Button";
+import { useToast } from "../../context/toastContext";
 
 type DraggableData = {
   node: HTMLElement;
@@ -52,6 +53,8 @@ const DisplayEditor = ({
     : box.background;
   let textAreaFocusTimeout: NodeJS.Timeout | null = null;
 
+  const { showToast } = useToast();
+
   const [isOverflowing, setIsOverflowing] = useState(() => {
     const textArea = document.getElementById(`display-editor-${index}`);
     return textArea ? textArea.scrollHeight > textArea.clientHeight : false;
@@ -70,6 +73,57 @@ const DisplayEditor = ({
   });
 
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const lastToastTimeRef = useRef<number>(0);
+  const TOAST_DEBOUNCE_MS = 2000; // Don't show toast again within 2 seconds
+
+  const checkTimerAtCursor = useCallback(() => {
+    const textArea = textAreaRef.current;
+    if (!textArea || !textArea.value.includes("{{timer}}")) {
+      return false;
+    }
+
+    const start = textArea.selectionStart;
+    const end = textArea.selectionEnd;
+    const text = textArea.value;
+    const timerPattern = /\{\{timer\}\}/g;
+    let match;
+
+    while ((match = timerPattern.exec(text)) !== null) {
+      const timerStart = match.index;
+      const timerEnd = timerStart + match[0].length;
+      // Check if cursor/selection overlaps with timer
+      if (
+        (start >= timerStart && start <= timerEnd) ||
+        (end >= timerStart && end <= timerEnd) ||
+        (start <= timerStart && end >= timerEnd)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }, []);
+
+  const handleTimerInteraction = useCallback(() => {
+    const now = Date.now();
+    // Debounce to prevent spam
+    if (now - lastToastTimeRef.current < TOAST_DEBOUNCE_MS) {
+      return;
+    }
+    lastToastTimeRef.current = now;
+
+    if (textAreaRef.current) {
+      textAreaRef.current.blur();
+    }
+    showToast("To edit the timer use the Timer Manager above", "info");
+  }, [showToast]);
+
+  const checkAndHandleTimer = useCallback(() => {
+    requestAnimationFrame(() => {
+      if (checkTimerAtCursor()) {
+        handleTimerInteraction();
+      }
+    });
+  }, [checkTimerAtCursor, handleTimerInteraction]);
 
   useEffect(() => {
     if (textAreaRef.current) {
@@ -298,8 +352,26 @@ const DisplayEditor = ({
                 lastKeyPressed: lastKeyPressedRef.current,
               });
             }}
-            onKeyDown={(e) => {
+            onKeyUp={(e) => {
               lastKeyPressedRef.current = e.key;
+              // Check after cursor movement keys
+              if (
+                [
+                  "ArrowLeft",
+                  "ArrowRight",
+                  "ArrowUp",
+                  "ArrowDown",
+                  "Home",
+                  "End",
+                ].includes(e.key)
+              ) {
+                checkAndHandleTimer();
+              }
+            }}
+            onSelect={checkAndHandleTimer}
+            onMouseUp={(e) => {
+              e.stopPropagation();
+              checkAndHandleTimer();
             }}
           />
           {isOverflowing && isTextAreaFocused && (

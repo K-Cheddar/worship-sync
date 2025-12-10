@@ -1,20 +1,55 @@
-import { useSelector } from "../hooks";
+import { useSelector, useDispatch } from "../hooks";
 import Presentation from "../containers/PresentationPage";
-import { useEffect } from "react";
+import { useContext, useEffect } from "react";
+import { GlobalInfoContext } from "../context/globalInfo";
+import { onValue, ref } from "firebase/database";
+import {
+  setMonitorClockFontSize,
+  setMonitorShowTimer,
+  setMonitorShowClock,
+  setMonitorTimerId,
+} from "../store/preferencesSlice";
+import { setMonitorTimerFontSize } from "../store/preferencesSlice";
 
 const Monitor = () => {
   const { monitorInfo, prevMonitorInfo } = useSelector(
-    (state) => state.presentation,
+    (state) => state.presentation
   );
+
+  const dispatch = useDispatch();
+
+  const { firebaseDb, user } = useContext(GlobalInfoContext) || {};
+
+  useEffect(() => {
+    const getMonitorSettingsFromFirebase = async () => {
+      if (!firebaseDb) return;
+      const monitorSettingsRef = ref(
+        firebaseDb,
+        "users/" + user + "/v2/monitorSettings"
+      );
+      onValue(monitorSettingsRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          // Support both old (defaultMonitor*) and new (monitorSettings) formats
+          dispatch(setMonitorShowClock(data.showClock));
+          dispatch(setMonitorShowTimer(data.showTimer));
+          dispatch(setMonitorClockFontSize(data.clockFontSize));
+          dispatch(setMonitorTimerFontSize(data.timerFontSize));
+          dispatch(setMonitorTimerId(data.timerId || null));
+        }
+      });
+    };
+    getMonitorSettingsFromFirebase();
+  }, [firebaseDb, user, dispatch]);
 
   const timers = useSelector((state) => state.timers.timers);
   const monitorTimer = timers.find((timer) => timer.id === monitorInfo.timerId);
   const prevMonitorTimer = timers.find(
-    (timer) => timer.id === prevMonitorInfo.timerId,
+    (timer) => timer.id === prevMonitorInfo.timerId
   );
 
   useEffect(() => {
-    const keepScreenOn = async() => {
+    const keepScreenOn = async () => {
       try {
         await navigator.wakeLock.request("screen");
       } catch (err) {

@@ -40,9 +40,9 @@ const StreamPreview = ({
   }, [position]);
 
   return (
-    <div className="flex flex-col gap-2 w-[50vw] max-md:w-[calc(100vw-2rem)] aspect-video">
+    <div className="flex flex-col gap-2 flex-1 max-h-full max-md:w-[calc(100vw-2rem)]">
       <div className="text-sm text-gray-300">Preview</div>
-      <div className="w-full h-full border border-gray-600 bg-gray-300 rounded relative overflow-hidden">
+      <div className="border border-gray-600 bg-gray-300 rounded relative overflow-hidden aspect-video">
         <div
           className={`absolute ${positionClasses} transform px-[1%] py-[0.5%] rounded-[5%_/_10%] font-semibold select-none flex flex-col items-center justify-center text-center`}
           style={{ color, backgroundColor: background, maxWidth: "90%" }}

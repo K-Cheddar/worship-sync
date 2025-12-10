@@ -111,7 +111,8 @@ const ServiceTimesForm = ({
         }`}
       >
         <Input
-          className="flex flex-col gap-1 w-full"
+          className="gap-1 w-full"
+          labelClassName="mb-2"
           label="Name"
           value={name}
           onChange={(v) => setName(String(v))}
@@ -165,7 +166,7 @@ const ServiceTimesForm = ({
         {recurrence === "monthly" && (
           <>
             <Select
-              className="w-full flex"
+              className="w-full"
               selectClassName="w-full mt-1"
               label="Ordinal"
               value={String(ordinal)}
@@ -176,7 +177,7 @@ const ServiceTimesForm = ({
               }))}
             />
             <Select
-              className="w-full flex"
+              className="w-full"
               selectClassName="w-full mt-1"
               label="Weekday"
               value={String(weekday)}
