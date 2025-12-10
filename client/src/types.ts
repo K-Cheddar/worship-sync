@@ -236,6 +236,8 @@ export type ServiceTime = {
   time?: string;
   // one-time date ISO string
   dateTimeISO?: string;
+  // override date ISO string (takes precedence over dateTimeISO, cleared when time passes)
+  overrideDateTimeISO?: string;
   // weekly
   dayOfWeek?: Weekday;
   // monthly nth weekday
@@ -416,6 +418,14 @@ export type PreferencesType = {
   defaultBibleFontMode: BibleFontMode;
 };
 
+export type MonitorSettingsType = {
+  showClock: boolean;
+  showTimer: boolean;
+  clockFontSize: number;
+  timerFontSize: number;
+  timerId: string | null;
+};
+
 export type ScrollbarWidth = "thin" | "auto" | "none";
 
 export type ItemList = {
@@ -464,6 +474,7 @@ export type DBPreferences = {
   _rev: string;
   preferences: PreferencesType;
   quickLinks: QuickLinkType[];
+  monitorSettings: MonitorSettingsType;
   createdAt?: string;
   updatedAt?: string;
 };

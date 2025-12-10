@@ -20,7 +20,7 @@ const InfoController = () => {
           } else {
             setIsPhone?.(false);
           }
-          if (width < 1024) {
+          if (width < 768) {
             setIsMobile?.(true);
           } else {
             setIsMobile?.(false);

@@ -2,6 +2,8 @@ import { useLocation } from "react-router-dom";
 import { ReactComponent as SettingsSVG } from "../../assets/icons/settings.svg";
 import { ReactComponent as EditSquareSVG } from "../../assets/icons/edit-square.svg";
 import { ReactComponent as TimerSVG } from "../../assets/icons/timer.svg";
+import { ReactComponent as ListSVG } from "../../assets/icons/list.svg";
+import { ReactComponent as MonitorSVG } from "../../assets/icons/desktop_1.svg";
 import Menu from "./ToolbarElements/Menu";
 import Outlines from "./ToolbarElements/Outlines";
 import SlideEditTools from "./ToolbarElements/SlideEditTools";
@@ -131,6 +133,7 @@ const Toolbar = ({ className }: { className: string }) => {
               className={cn(
                 section !== "settings" && "hidden",
                 location.pathname.includes("preferences") &&
+                  !location.pathname.includes("quick-links") &&
                   "outline outline-2 outline-white"
               )}
               variant="tertiary"
@@ -139,6 +142,32 @@ const Toolbar = ({ className }: { className: string }) => {
               to="/controller/preferences"
             >
               Preferences
+            </Button>
+            <Button
+              className={cn(
+                section !== "settings" && "hidden",
+                location.pathname.includes("quick-links") &&
+                  "outline outline-2 outline-white"
+              )}
+              variant="tertiary"
+              svg={ListSVG}
+              component="link"
+              to="/controller/quick-links"
+            >
+              Quick Links
+            </Button>
+            <Button
+              className={cn(
+                section !== "settings" && "hidden",
+                location.pathname.includes("monitor-settings") &&
+                  "outline outline-2 outline-white"
+              )}
+              variant="tertiary"
+              svg={MonitorSVG}
+              component="link"
+              to="/controller/monitor-settings"
+            >
+              Monitor Settings
             </Button>
             <QuickLinkSelection isMobile={isMobile} />
             <SlideEditTools

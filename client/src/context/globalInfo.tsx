@@ -51,6 +51,7 @@ type GlobalInfoContextType = {
   hostId: string;
   activeInstances: Instance[];
   access: AccessType;
+  refreshPresentationListeners: () => void;
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
@@ -121,6 +122,8 @@ const GlobalInfoProvider = ({ children }: any) => {
     stream_formattedTextDisplayInfo: undefined,
     timerInfo: undefined,
   });
+
+  const storageListenerCleanupRef = useRef<(() => void) | undefined>(undefined);
 
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -255,8 +258,8 @@ const GlobalInfoProvider = ({ children }: any) => {
     };
   }, [firebaseDb, loginState, isOnController, user, database, hostId]);
 
-  // get updates from firebase - realtime changes from others
-  useEffect(() => {
+  // Function to set up Firebase listeners
+  const setupFirebaseListeners = useCallback(() => {
     if (!firebaseDb) return;
 
     if (onValueRef.current) {
@@ -281,17 +284,39 @@ const GlobalInfoProvider = ({ children }: any) => {
     }
   }, [firebaseDb, user, updateFromRemote]);
 
-  useEffect(() => {
-    window.addEventListener("storage", ({ key, newValue }) => {
+  // Function to set up storage listener
+  const setupStorageListener = useCallback(() => {
+    // Clean up previous listener if it exists
+    if (storageListenerCleanupRef.current) {
+      storageListenerCleanupRef.current();
+    }
+
+    const handleStorage = ({ key, newValue }: StorageEvent) => {
       const onValueKeys = Object.keys(onValueRef.current);
       if (newValue && onValueKeys.some((e) => e === key)) {
         const value = JSON.parse(newValue);
         updateFromRemote({ [key as keyof typeof onValueRef.current]: value });
       }
-    });
-    // Disabling this because we only want this event listener to register once
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    };
+
+    window.addEventListener("storage", handleStorage);
+    const cleanup = () => {
+      window.removeEventListener("storage", handleStorage);
+    };
+    storageListenerCleanupRef.current = cleanup;
+    return cleanup;
+  }, [updateFromRemote]);
+
+  // Function to refresh both listeners (exposed in context)
+  const refreshPresentationListeners = useCallback(() => {
+    setupFirebaseListeners();
+    setupStorageListener();
+  }, [setupFirebaseListeners, setupStorageListener]);
+
+  // get updates from firebase - realtime changes from others
+  useEffect(() => {
+    refreshPresentationListeners();
+  }, [refreshPresentationListeners]);
 
   // Track active instances
   useEffect(() => {
@@ -463,6 +488,7 @@ const GlobalInfoProvider = ({ children }: any) => {
         hostId,
         activeInstances,
         access,
+        refreshPresentationListeners,
       }}
     >
       {children}

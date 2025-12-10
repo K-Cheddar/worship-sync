@@ -406,6 +406,30 @@ export const createNewTimer = async ({
       ? new Date(Date.now() + duration * 1000).toISOString()
       : undefined;
 
+  // Default timer color (white)
+  const defaultTimerColor = "#ffffff";
+
+  // Create first slide with timer
+  const timerSlide = createNewSlide({
+    type: "Section",
+    fontSize: 4.5,
+    words: ["", "{{timer}}"],
+    background,
+    mediaInfo,
+    brightness,
+  });
+
+  // Create second slide with "Please wrap up now" where "now" is in timer color
+  // Use Zero Width Non-Joiner (\u200C) to mark "now" for special styling
+  const wrapUpSlide = createNewSlide({
+    type: "Section",
+    fontSize: 4.5,
+    words: ["", "Please wrap up \u200Cnow\u200C"],
+    background,
+    mediaInfo,
+    brightness,
+  });
+
   const newItem: ItemState = {
     name: _name,
     type: "timer",
@@ -415,16 +439,7 @@ export const createNewTimer = async ({
     selectedBox: 1,
     background:
       mediaInfo?.type === "video" ? mediaInfo?.placeholderImage : background,
-    slides: [
-      createNewSlide({
-        type: "Section",
-        fontSize: 4.5,
-        words: ["", "{{timer}}"],
-        background,
-        mediaInfo,
-        brightness,
-      }),
-    ],
+    slides: [timerSlide, wrapUpSlide],
     arrangements: [],
     timerInfo: {
       hostId: hostId,
@@ -439,6 +454,7 @@ export const createNewTimer = async ({
       startedAt: undefined,
       endTime,
       showMinutesOnly: false,
+      color: defaultTimerColor,
     },
     shouldSendTo: {
       projector: false,

@@ -18,6 +18,7 @@ import {
   increaseSlidesMobile,
   decreaseSlidesMobile,
   setSlidesMobile,
+  setMonitorTimerId,
 } from "../../store/preferencesSlice";
 import { useSelector } from "../../hooks";
 import { useDispatch } from "../../hooks";
@@ -289,6 +290,10 @@ const ItemSlides = () => {
         );
       }
 
+      if (type === "timer") {
+        dispatch(setMonitorTimerId(timerInfo?.id || null));
+      }
+
       if (shouldSendTo.monitor) {
         dispatch(
           updateMonitor({
@@ -322,6 +327,20 @@ const ItemSlides = () => {
     const nextSlide = Math.max(selectedSlide - 1, 0);
     selectSlide(nextSlide);
   }, [selectedSlide, selectSlide]);
+
+  // Automatically switch to slide 1 (wrap up slide) when timer reaches 0
+  useEffect(() => {
+    if (
+      type === "timer" &&
+      timerInfo &&
+      timerInfo.remainingTime === 0 &&
+      timerInfo.status === "stopped" &&
+      slides.length > 1 &&
+      selectedSlide === 0
+    ) {
+      selectSlide(1);
+    }
+  }, [type, timerInfo, slides.length, selectedSlide, selectSlide]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

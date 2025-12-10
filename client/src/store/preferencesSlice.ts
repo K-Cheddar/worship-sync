@@ -2,6 +2,7 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import {
   BibleFontMode,
   PreferencesType,
+  MonitorSettingsType,
   ScrollbarWidth,
   Presentation,
   QuickLinkType,
@@ -36,6 +37,7 @@ type PreferencesState = {
   isLoading: boolean;
   selectedPreference: SelectedPreferenceType;
   preferences: PreferencesType;
+  monitorSettings: MonitorSettingsType;
   slidesPerRow: number;
   slidesPerRowMobile: number;
   formattedLyricsPerRow: number;
@@ -86,6 +88,13 @@ const initialState: PreferencesState = {
     defaultShouldShowItemEditor: true,
     defaultIsMediaExpanded: false,
     defaultBibleFontMode: "separate",
+  },
+  monitorSettings: {
+    showClock: true,
+    showTimer: true,
+    clockFontSize: 15,
+    timerFontSize: 4,
+    timerId: null,
   },
   slidesPerRow: 4,
   slidesPerRowMobile: 3,
@@ -276,6 +285,9 @@ export const preferencesSlice = createSlice({
       action: PayloadAction<{ preferences: PreferencesType; isMusic: boolean }>
     ) => {
       const { preferences, isMusic } = action.payload;
+
+      console.log("initiatePreferences", preferences);
+
       state.preferences = {
         defaultSongBackground: {
           background:
@@ -452,6 +464,49 @@ export const preferencesSlice = createSlice({
     ) => {
       state.selectedPreference = action.payload;
     },
+
+    // Monitor Settings
+
+    initiateMonitorSettings: (
+      state,
+      action: PayloadAction<MonitorSettingsType>
+    ) => {
+      state.monitorSettings = {
+        showClock:
+          action.payload.showClock || initialState.monitorSettings.showClock,
+        showTimer:
+          action.payload.showTimer || initialState.monitorSettings.showTimer,
+        clockFontSize:
+          action.payload.clockFontSize ||
+          initialState.monitorSettings.clockFontSize,
+        timerFontSize:
+          action.payload.timerFontSize ||
+          initialState.monitorSettings.timerFontSize,
+        timerId: action.payload.timerId || initialState.monitorSettings.timerId,
+      };
+    },
+
+    setMonitorShowClock: (state, action: PayloadAction<boolean>) => {
+      state.monitorSettings.showClock = action.payload;
+    },
+    setMonitorShowTimer: (state, action: PayloadAction<boolean>) => {
+      state.monitorSettings.showTimer = action.payload;
+    },
+    setMonitorClockFontSize: (state, action: PayloadAction<number>) => {
+      state.monitorSettings.clockFontSize = Math.min(
+        Math.max(action.payload, 12),
+        30
+      );
+    },
+    setMonitorTimerFontSize: (state, action: PayloadAction<number>) => {
+      state.monitorSettings.timerFontSize = Math.min(
+        Math.max(action.payload, 12),
+        30
+      );
+    },
+    setMonitorTimerId: (state, action: PayloadAction<string | null>) => {
+      state.monitorSettings.timerId = action.payload;
+    },
     forceUpdate: () => {},
   },
 });
@@ -494,6 +549,12 @@ export const {
   setSelectedPreference,
   setBibleFontMode,
   setScrollbarWidth,
+  initiateMonitorSettings,
+  setMonitorShowClock,
+  setMonitorShowTimer,
+  setMonitorClockFontSize,
+  setMonitorTimerFontSize,
+  setMonitorTimerId,
   updatePreferencesFromRemote,
   forceUpdate,
 } = preferencesSlice.actions;

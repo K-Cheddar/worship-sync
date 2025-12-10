@@ -1,12 +1,10 @@
 import { Cloudinary } from "@cloudinary/url-gen";
 import { globalDb } from "../context/controllerInfo";
-import { globalHostId } from "../context/globalInfo";
 import {
   updateAllFreeFormDocs,
   updateAllSongDocs,
   updateAllTimerDocs,
 } from "../store/allDocsSlice";
-import { setTimersFromDocs } from "../store/timersSlice";
 import {
   allDocsType,
   DBAllItems,
@@ -15,7 +13,6 @@ import {
   DBItemLists,
   DBOverlay,
   ServiceItem,
-  TimerInfo,
 } from "../types";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong } from "./overflow";
@@ -109,15 +106,6 @@ export const updateAllDocs = async (dispatch: Function) => {
     const allTimers = allDocs.rows
       .filter((row) => (row.doc as any)?.type === "timer")
       .map((row) => row.doc as DBItem);
-
-    const timersFromDocs = allTimers.map((timer) => {
-      return {
-        ...timer.timerInfo,
-        hostId: globalHostId,
-      } as TimerInfo;
-    });
-
-    dispatch(setTimersFromDocs(timersFromDocs));
 
     dispatch(updateAllSongDocs(allSongs));
     dispatch(updateAllFreeFormDocs(allFreeFormDocs));
