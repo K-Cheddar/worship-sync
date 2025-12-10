@@ -10,7 +10,6 @@ import SlideEditTools from "./ToolbarElements/SlideEditTools";
 import ItemEditTools from "./ToolbarElements/ItemEditTools";
 import Undo from "./ToolbarElements/Undo";
 import UserSection from "./ToolbarElements/UserSection";
-import QuickLinkSelection from "./ToolbarElements/QuickLinkSelection";
 import ToolbarButton from "./ToolbarElements/ToolbarButton";
 import { useDispatch, useSelector } from "../../hooks";
 import { useContext, useEffect, useMemo, useState } from "react";
@@ -37,7 +36,7 @@ const Toolbar = ({ className }: { className: string }) => {
     (state) => state.undoable.present.item
   );
   const [section, setSection] = useState<sections>("settings");
-  const { isMobile, isPhone } = useContext(ControllerInfoContext) || {};
+  const { isPhone } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
 
   const dispatch = useDispatch();
@@ -169,7 +168,6 @@ const Toolbar = ({ className }: { className: string }) => {
             >
               Monitor Settings
             </Button>
-            <QuickLinkSelection isMobile={isMobile} />
             <SlideEditTools
               className={cn(section !== "slide-tools" && "hidden")}
             />
