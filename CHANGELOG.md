@@ -1,3 +1,19 @@
+# [1.21.0](https://github.com/K-Cheddar/worship-sync/compare/v1.20.1...v1.21.0) (2025-12-10)
+
+
+### Bug Fixes
+
+* Improve timer delete behavior ([043fb0c](https://github.com/K-Cheddar/worship-sync/commit/043fb0c0f2b659790dedeb31c884be60e9816abf))
+* Improved timer settings updates ([26377b4](https://github.com/K-Cheddar/worship-sync/commit/26377b422c8cf2d76733598a314c88fdc70a4c7f))
+
+
+### Features
+
+* Add ability to temporarily adjust service timers ([bb3db2a](https://github.com/K-Cheddar/worship-sync/commit/bb3db2a79f5af91bc556d921afae0d3646c24cc2))
+* Added Clock and Timer to monitor ([67c4aac](https://github.com/K-Cheddar/worship-sync/commit/67c4aac57173bbbe8e85c6e58d0d78c5d5895a43))
+* added notification when trying to edit the timer ([905a23f](https://github.com/K-Cheddar/worship-sync/commit/905a23f56f83ba93503d39cf662ab46dd1334786))
+* Timer goes to please wrap up on completion ([604b6cd](https://github.com/K-Cheddar/worship-sync/commit/604b6cd6e7d1d29612d6891670c4295207fa4b32))
+
 ## [1.20.1](https://github.com/K-Cheddar/worship-sync/compare/v1.20.0...v1.20.1) (2025-10-31)
 
 
