@@ -89,8 +89,8 @@ const DisplayEditor = ({
     let match;
 
     while ((match = timerPattern.exec(text)) !== null) {
-      const timerStart = match.index;
-      const timerEnd = timerStart + match[0].length;
+      const timerStart = match.index + 1; // Allow cursor on outside of left bracket
+      const timerEnd = timerStart + match[0].length - 2; // Allow cursor on outside of right bracket
       // Check if cursor/selection overlaps with timer
       if (
         (start >= timerStart && start <= timerEnd) ||

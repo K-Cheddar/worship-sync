@@ -13,6 +13,7 @@ import { useState } from "react";
 import Select from "../../components/Select/Select";
 import { OverlayType } from "../../types";
 import { useWindowWidth } from "../../hooks";
+import { useToast } from "../../context/toastContext";
 
 type OverlayEditorProps = {
   selectedOverlay: OverlayInfo;
@@ -41,6 +42,7 @@ const OverlayEditor = ({
     isOverlayLoading || !selectedOverlay.id || selectedOverlay.isHidden;
 
   const { windowWidth: desktopWidth, windowRef: desktopRef } = useWindowWidth();
+  const { showToast } = useToast();
 
   const commonInputProps = {
     className: "text-sm flex gap-2 items-center w-full",
@@ -372,7 +374,7 @@ const OverlayEditor = ({
             />
           </>
         )}
-        {selectedOverlay.type === "image" && ( // TODO - Select from image library
+        {selectedOverlay.type === "image" && (
           <>
             <Input
               {...commonInputProps}
@@ -395,6 +397,7 @@ const OverlayEditor = ({
                   imageUrl: val as string,
                 })
               }
+              onClick={() => showToast("Select from the available media.")}
             />
           </>
         )}

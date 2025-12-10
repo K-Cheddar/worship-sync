@@ -5,7 +5,7 @@ import "./ToastContainer.scss";
 export type ToastData = {
   id: string;
   message?: string;
-  children?: React.ReactNode;
+  children?: React.ReactNode | ((toastId: string) => React.ReactNode);
   variant?: ToastVariant;
   position?: ToastPosition;
   persist?: boolean;
@@ -24,7 +24,7 @@ const ToastContainer: React.FC<ToastContainerProps> = ({
   // Group toasts by position
   const toastsByPosition = toasts.reduce(
     (acc, toast) => {
-      const position = toast.position || "top-right";
+      const position = toast.position || "top-center";
       if (!acc[position]) {
         acc[position] = [];
       }
@@ -38,13 +38,21 @@ const ToastContainer: React.FC<ToastContainerProps> = ({
     <div className="toast-container">
       {Object.entries(toastsByPosition).map(([position, positionToasts]) => (
         <div key={position} className={`toast-group toast-group-${position}`}>
-          {positionToasts.map((toast) => (
-            <Toast
-              key={toast.id}
-              {...toast}
-              onClose={() => onRemove(toast.id)}
-            />
-          ))}
+          {positionToasts.map((toast) => {
+            const children =
+              typeof toast.children === "function"
+                ? toast.children(toast.id)
+                : toast.children;
+
+            return (
+              <Toast
+                key={toast.id}
+                {...toast}
+                children={children}
+                onClose={() => onRemove(toast.id)}
+              />
+            );
+          })}
         </div>
       ))}
     </div>

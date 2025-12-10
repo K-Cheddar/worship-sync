@@ -7,7 +7,8 @@ type ToastContextType = {
     messageOrData: string | Omit<ToastData, "id">,
     variant?: ToastVariant,
     position?: ToastPosition
-  ) => void;
+  ) => string;
+  removeToast: (id: string) => void;
 };
 
 export const ToastContext = createContext<ToastContextType | null>(null);
@@ -36,32 +37,32 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
       position?: ToastPosition
     ) => {
       const id = `toast-${Date.now()}-${Math.random()}`;
-
       let toastData: ToastData;
 
       if (typeof messageOrData === "string") {
         toastData = {
           id,
           message: messageOrData,
-          variant: variant || "neutral",
-          position: position || "top-center",
+          variant,
+          position,
         };
       } else {
         toastData = {
           id,
           ...messageOrData,
-          variant: messageOrData.variant || variant || "neutral",
-          position: messageOrData.position || position || "top-center",
+          variant: messageOrData.variant,
+          position: messageOrData.position,
         };
       }
 
       setToasts((prev) => [...prev, toastData]);
+      return toastData.id;
     },
     []
   );
 
   return (
-    <ToastContext.Provider value={{ showToast }}>
+    <ToastContext.Provider value={{ showToast, removeToast }}>
       {children}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </ToastContext.Provider>
