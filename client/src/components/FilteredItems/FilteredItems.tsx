@@ -314,23 +314,19 @@ const FilteredItems = ({
           {showWords ? "Hide" : "Show"} All{" "}
         </Button>
       </div>
-      {searchValue && (
-        <section className="text-sm flex gap-2 items-center mt-1 mb-2 justify-center">
-          <p>Can't find what you're looking for?</p>
-          <Button
-            variant="secondary"
-            className="relative"
-            svg={CreateSVG}
-            color="#84cc16"
-            component="link"
-            to={`/controller/create?type=${type}&name=${encodeURI(
-              searchValue
-            )}`}
-          >
-            Create a new {label}
-          </Button>
-        </section>
-      )}
+      <section className="text-sm flex gap-2 items-center mt-1 mb-2 justify-center">
+        <p>Can't find what you're looking for?</p>
+        <Button
+          variant="secondary"
+          className="relative"
+          svg={CreateSVG}
+          color="#84cc16"
+          component="link"
+          to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
+        >
+          Create a new {label}
+        </Button>
+      </section>
       <ul className="filtered-items-list">
         {isSearchLoading && (
           <li className="absolute top-0 left-0 w-full h-full flex items-center justify-center bg-gray-800/35">

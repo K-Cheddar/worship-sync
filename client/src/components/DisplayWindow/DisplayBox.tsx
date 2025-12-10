@@ -5,6 +5,7 @@ import { useMemo, useRef } from "react";
 import cn from "classnames";
 import TimerDisplay from "./TimerDisplay";
 import VerseDisplay from "./VerseDisplay";
+import NowDisplay from "./NowDisplay";
 
 type DisplayBoxProps = {
   prevBox?: Box;
@@ -168,6 +169,10 @@ const DisplayBox = ({
 
     if (words.includes("\u200B")) {
       return <VerseDisplay words={words} />;
+    }
+
+    if (words.includes("\u200C")) {
+      return <NowDisplay words={words} timerInfo={timerInfo} />;
     }
 
     return words;
