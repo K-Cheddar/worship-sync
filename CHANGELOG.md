@@ -1,3 +1,10 @@
+# [1.22.0](https://github.com/K-Cheddar/worship-sync/compare/v1.21.0...v1.22.0) (2025-12-10)
+
+
+### Features
+
+* Improve quick link selection ([0d79342](https://github.com/K-Cheddar/worship-sync/commit/0d79342f969b2e8d3a67a83d5511b1ccade8bbce))
+
 # [1.21.0](https://github.com/K-Cheddar/worship-sync/compare/v1.20.1...v1.21.0) (2025-12-10)
 
 
