@@ -2,21 +2,21 @@ import { useCallback, useContext, useEffect, useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import DeleteModal from "../../components/Modal/DeleteModal";
-import { ReactComponent as BgAll } from "../../assets/icons/background-all.svg";
-import { ReactComponent as BGOne } from "../../assets/icons/background-one.svg";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
-import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
-import { ReactComponent as CollapseSVG } from "../../assets/icons/collapse.svg";
-import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
-import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
-import { ReactComponent as ClearBackgroundSVG } from "../../assets/icons/hide-image.svg";
+import {
+  LayoutTemplate,
+  Trash2,
+  Maximize2,
+  Minimize2,
+  ZoomIn,
+  ZoomOut,
+  ImageOff,
+} from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   updateAllSlideBackgrounds,
   updateSlideBackground,
 } from "../../store/itemSlice";
-import "./Media.scss";
 import { DBMedia, MediaType } from "../../types";
 import {
   initiateMediaList,
@@ -310,7 +310,7 @@ const Media = () => {
             !location.pathname.includes("item") && "hidden",
             visibleButtons["clearBackground"] && "button-appear"
           )}
-          svg={ClearBackgroundSVG}
+          svg={ImageOff}
           onClick={() => {
             if (db) {
               dispatch(
@@ -331,7 +331,7 @@ const Media = () => {
             !location.pathname.includes("item") && "hidden",
             visibleButtons["setItem"] && "button-appear"
           )}
-          svg={BgAll}
+          svg={LayoutTemplate}
           onClick={() => {
             if (selectedMedia.background && db) {
               dispatch(
@@ -361,7 +361,7 @@ const Media = () => {
             !location.pathname.includes("item") && "hidden",
             visibleButtons["setSlide"] && "button-appear"
           )}
-          svg={BGOne}
+          svg={LayoutTemplate}
           onClick={() => {
             if (selectedMedia.background && db) {
               dispatch(
@@ -394,7 +394,7 @@ const Media = () => {
             ) && "hidden",
             visibleButtons["setImageOverlay"] && "button-appear"
           )}
-          svg={BGOne}
+          svg={LayoutTemplate}
           onClick={() => {
             if (selectedMedia.background && db) {
               dispatch(
@@ -435,7 +435,7 @@ const Media = () => {
               "hidden",
             visibleButtons["setBackground"] && "button-appear"
           )}
-          svg={BGOne}
+          svg={LayoutTemplate}
           onClick={() => {
             dispatch(
               setDefaultPreferences({
@@ -469,7 +469,7 @@ const Media = () => {
               "hidden",
             visibleButtons["setQuickLink"] && "button-appear"
           )}
-          svg={BGOne}
+          svg={LayoutTemplate}
           onClick={() => {
             dispatch(setSelectedQuickLinkImage(selectedMedia));
           }}
@@ -492,7 +492,7 @@ const Media = () => {
         </Button>
         <Button
           className="lg:ml-2 max-lg:mx-auto"
-          svg={isMediaExpanded ? CollapseSVG : ExpandSVG}
+          svg={isMediaExpanded ? Minimize2 : Maximize2}
           onClick={() => {
             dispatch(setIsMediaExpanded(!isMediaExpanded));
             if (isMediaExpanded) {
@@ -512,7 +512,7 @@ const Media = () => {
         <Button
           variant="tertiary"
           disabled={selectedMedia.id === ""}
-          svg={DeleteSVG}
+          svg={Trash2}
           onClick={() => showDeleteConfirmation()}
         />
       </div>
@@ -520,12 +520,12 @@ const Media = () => {
         <div className="flex gap-2 justify-center z-10 py-1 bg-gray-900 mx-2 h-6">
           <Button
             variant="tertiary"
-            svg={ZoomOutSVG}
+            svg={ZoomOut}
             onClick={() => dispatch(increaseMediaItems())}
           />
           <Button
             variant="tertiary"
-            svg={ZoomInSVG}
+            svg={ZoomIn}
             onClick={() => dispatch(decreaseMediaItems())}
           />
         </div>
@@ -562,9 +562,10 @@ const Media = () => {
       )}
       {!isMediaLoading && filteredList.length !== 0 && (
         <ul
-          className={`media-items ${
+          className={cn(
+            "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-2 z-10",
             isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : defaultItemsPerRow
-          }`}
+          )}
         >
           {filteredList.map((mediaItem) => {
             const { id, thumbnail, name } = mediaItem;

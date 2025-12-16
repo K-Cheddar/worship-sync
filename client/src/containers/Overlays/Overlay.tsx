@@ -1,9 +1,8 @@
 import Button from "../../components/Button/Button";
-import { ReactComponent as OverlaysSVG } from "../../assets/icons/overlays.svg";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
+import { Airplay } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useDispatch } from "../../hooks";
 import { addToInitialList } from "../../store/overlaysSlice";
-import "./Overlays.scss";
 import gsap from "gsap";
 import {
   updateImageOverlayInfo,
@@ -244,7 +243,7 @@ const Overlay = ({
         variant="tertiary"
         className="text-sm ml-auto h-full"
         padding="px-2 py-1"
-        svg={DeleteSVG}
+        svg={Trash2}
         onClick={deleteOverlayHandler}
       />
       {hasData && (
@@ -254,7 +253,7 @@ const Overlay = ({
           className="text-sm ml-auto h-full"
           padding="px-4 py-1"
           disabled={!isStreamTransmitting}
-          svg={OverlaysSVG}
+          svg={Airplay}
           onClick={() => {
             dispatch(
               updateStream({

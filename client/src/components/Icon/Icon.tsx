@@ -1,6 +1,5 @@
 import cn from "classnames";
 import { FunctionComponent, useMemo } from "react";
-import "./Icon.scss";
 
 type IconProps = {
   svg: FunctionComponent<React.SVGProps<SVGSVGElement>>;
@@ -30,7 +29,7 @@ const Icon = ({ svg: SVG, size = "md", className, color, alt }: IconProps) => {
 
   return (
     <span
-      className={cn("icon", className)}
+      className={cn("flex items-center justify-center", className)}
       style={
         { "--icon-color": color ? color : undefined } as React.CSSProperties
       }

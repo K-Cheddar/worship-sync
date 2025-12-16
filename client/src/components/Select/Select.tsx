@@ -1,5 +1,4 @@
 import { Option } from "../../types";
-import "./Select.scss";
 import cn from "classnames";
 import { useId } from "react";
 
@@ -51,7 +50,11 @@ const Select = ({
         </label>
       )}
       <select
-        className={cn("select", selectClassName, textColor)}
+        className={cn(
+          "rounded px-2 py-0.5 cursor-pointer",
+          selectClassName,
+          textColor
+        )}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         {...rest}

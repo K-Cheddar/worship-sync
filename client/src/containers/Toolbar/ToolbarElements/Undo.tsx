@@ -1,6 +1,5 @@
 import Button from "../../../components/Button/Button";
-import { ReactComponent as UndoSVG } from "../../../assets/icons/undo.svg";
-import { ReactComponent as RedoSVG } from "../../../assets/icons/redo.svg";
+import { Undo2, Redo2 } from "lucide-react";
 import { ActionCreators } from "redux-undo";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useEffect } from "react";
@@ -16,7 +15,7 @@ export const UndoButton = ({
   const { past } = useSelector((state) => state.undoable);
   return (
     <Button
-      svg={UndoSVG}
+      svg={Undo2}
       color={color}
       disabled={!past.length}
       variant="tertiary"
@@ -37,7 +36,7 @@ export const RedoButton = ({
   const { future } = useSelector((state) => state.undoable);
   return (
     <Button
-      svg={RedoSVG}
+      svg={Redo2}
       color={color}
       disabled={!future.length}
       variant="tertiary"

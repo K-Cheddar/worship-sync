@@ -1,17 +1,19 @@
 import Button from "../../../components/Button/Button";
-import { ReactComponent as AddSVG } from "../../../assets/icons/add.svg";
-import { ReactComponent as MinusSVG } from "../../../assets/icons/remove.svg";
-import { ReactComponent as ExpandSVG } from "../../../assets/icons/expand.svg";
-import { ReactComponent as TextFieldSVG } from "../../../assets/icons/text-field.svg";
-import { ReactComponent as BrightnessSVG } from "../../../assets/icons/brightness.svg";
-import { ReactComponent as ColorSVG } from "../../../assets/icons/text-color.svg";
-import { ReactComponent as TimerSVG } from "../../../assets/icons/timer.svg";
-import { ReactComponent as BibleSVG } from "../../../assets/icons/book.svg";
-import { ReactComponent as AlignLeftSVG } from "../../../assets/icons/align-left.svg";
-import { ReactComponent as AlignCenterSVG } from "../../../assets/icons/align-center.svg";
-import { ReactComponent as AlignRightSVG } from "../../../assets/icons/align-right.svg";
-import { ReactComponent as BoldSVG } from "../../../assets/icons/format-bold.svg";
-import { ReactComponent as ItalicSVG } from "../../../assets/icons/format-italic.svg";
+import {
+  Plus,
+  Minus,
+  Maximize2,
+  Type,
+  SunMedium,
+  TextQuote,
+  Timer,
+  BookOpen,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Bold,
+  Italic,
+} from "lucide-react";
 import Input from "../../../components/Input/Input";
 import { useEffect, useState, useCallback, useRef, useContext } from "react";
 import { useDispatch, useSelector } from "../../../hooks";
@@ -243,9 +245,9 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const controls = (
     <>
       <div className="flex gap-1 items-center flex-wrap justify-center">
-        <Icon svg={TextFieldSVG} className="border-b border-black" />
+        <Icon svg={Type} className="border-b border-black" />
         <Button
-          svg={MinusSVG}
+          svg={Minus}
           variant="tertiary"
           onClick={() => _updateFontSize(fontSize - 1)}
         />
@@ -260,7 +262,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           data-ignore-undo="true"
         />
         <Button
-          svg={AddSVG}
+          svg={Plus}
           variant="tertiary"
           onClick={() => _updateFontSize(fontSize + 1)}
         />
@@ -270,7 +272,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
             <Button
               variant="tertiary"
               className="border-b-2"
-              svg={ColorSVG}
+              svg={TextQuote}
               style={{ borderColor: fontColor }}
             />
           }
@@ -286,29 +288,29 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
         <Button
           variant={isBold ? "secondary" : "tertiary"}
-          svg={BoldSVG}
+          svg={Bold}
           onClick={() => _updateIsBold()}
         />
         <Button
           variant={isItalic ? "secondary" : "tertiary"}
-          svg={ItalicSVG}
+          svg={Italic}
           onClick={() => _updateIsItalic()}
         />
 
         <div className="flex gap-1 items-center">
           <Button
             variant={alignment === "left" ? "secondary" : "tertiary"}
-            svg={AlignLeftSVG}
+            svg={AlignLeft}
             onClick={() => _updateAlignment("left")}
           />
           <Button
             variant={alignment === "center" ? "secondary" : "tertiary"}
-            svg={AlignCenterSVG}
+            svg={AlignCenter}
             onClick={() => _updateAlignment("center")}
           />
           <Button
             variant={alignment === "right" ? "secondary" : "tertiary"}
-            svg={AlignRightSVG}
+            svg={AlignRight}
             onClick={() => _updateAlignment("right")}
           />
         </div>
@@ -321,7 +323,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               <Button
                 variant="tertiary"
                 className="border-b-2"
-                svg={TimerSVG}
+                svg={Timer}
                 style={{ borderColor: timerColor }}
               />
             }
@@ -378,7 +380,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         )}
         {type === "bible" && (
           <>
-            <Icon color={iconColorMap.get("bible")} svg={BibleSVG} />
+            <Icon color={iconColorMap.get("bible")} svg={BookOpen} />
             <p className="text-sm font-semibold">Mode:</p>
             <RadioButton
               className="text-xs"
@@ -407,9 +409,9 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           "flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4"
         }
       >
-        <Icon size="xl" svg={BrightnessSVG} color="#fbbf24" />
+        <Icon size="xl" svg={SunMedium} color="#fbbf24" />
         <Button
-          svg={MinusSVG}
+          svg={Minus}
           variant="tertiary"
           onClick={() => _updateBrightness(brightness - 10)}
         />
@@ -426,7 +428,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           min={1}
         />
         <Button
-          svg={AddSVG}
+          svg={Plus}
           variant="tertiary"
           onClick={() => _updateBrightness(brightness + 10)}
         />
@@ -439,7 +441,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onChange={(val) => _updateKeepAspectRatio(val)}
         />
       )}
-      <Button svg={TextFieldSVG} iconSize="lg" className="invisible" />
+      <Button svg={Type} iconSize="lg" className="invisible" />
     </>
   );
 
@@ -450,7 +452,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>
       <PopOver
         TriggeringButton={
-          <Button className="lg:hidden" variant="tertiary" svg={ExpandSVG}>
+          <Button className="lg:hidden" variant="tertiary" svg={Maximize2}>
             Tools
           </Button>
         }

@@ -4,7 +4,6 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { defaultStbOverlayStyles } from "./defaultOverlayStyles";
 import SharedOverlay from "./SharedOverlay";
-import "./DisplayWindow.scss";
 
 type DisplayStbOverlayProps = {
   width: number;

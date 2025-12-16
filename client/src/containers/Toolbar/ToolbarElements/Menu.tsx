@@ -1,6 +1,6 @@
 import Menu from "../../../components/Menu/Menu";
 import Button from "../../../components/Button/Button";
-import { ReactComponent as MenuSVG } from "../../../assets/icons/menu.svg";
+import { Menu as MenuIcon } from "lucide-react";
 import { MenuItemType } from "../../../types";
 import { RedoButton, UndoButton } from "./Undo";
 import ChangelogModal from "../../../components/ChangelogModal/ChangelogModal";
@@ -77,7 +77,7 @@ const ToolbarMenu = ({
     <>
       <Menu
         menuItems={menuItems}
-        TriggeringButton={<Button variant="tertiary" svg={MenuSVG} />}
+        TriggeringButton={<Button variant="tertiary" svg={MenuIcon} />}
       />
       <ChangelogModal
         isOpen={isChangelogOpen}

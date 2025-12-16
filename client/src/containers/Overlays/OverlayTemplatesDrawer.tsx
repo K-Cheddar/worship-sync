@@ -18,12 +18,12 @@ import {
   updateTemplate,
 } from "../../store/overlayTemplatesSlice";
 import { OverlayType, SavedTemplate } from "../../types";
-import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
-import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
-import { ReactComponent as StyleSVG } from "../../assets/icons/style.svg";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { Pencil } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import { Check } from "lucide-react";
+import { X } from "lucide-react";
+import { Paintbrush } from "lucide-react";
+import { Plus } from "lucide-react";
 import generateRandomId from "../../utils/generateRandomId";
 
 type Props = {
@@ -133,7 +133,7 @@ const OverlayTemplatesDrawer = ({
       <Button
         variant="secondary"
         onClick={handleCreateTemplateWithDefaultName}
-        svg={AddSVG}
+        svg={Plus}
         color="#22d3ee"
         className="mb-2 text-sm"
       >
@@ -165,7 +165,7 @@ const OverlayTemplatesDrawer = ({
                         variant="tertiary"
                         onClick={handleSaveEdit}
                         disabled={!editingTemplateName.trim()}
-                        svg={CheckSVG}
+                        svg={Check}
                         title="Save changes"
                         color="#84cc16"
                       />
@@ -173,7 +173,7 @@ const OverlayTemplatesDrawer = ({
                         className="text-xs px-2 py-1"
                         variant="tertiary"
                         onClick={handleCancelEdit}
-                        svg={CloseSVG}
+                        svg={X}
                         title="Cancel editing"
                       />
                     </div>
@@ -191,7 +191,7 @@ const OverlayTemplatesDrawer = ({
                           className="text-xs px-1 py-1"
                           variant="tertiary"
                           onClick={() => handleStartEdit(template)}
-                          svg={EditSVG}
+                          svg={Pencil}
                           color="#eab308"
                           title="Edit template name"
                         />
@@ -201,7 +201,7 @@ const OverlayTemplatesDrawer = ({
                           className="text-xs px-2 py-1"
                           variant="tertiary"
                           onClick={() => handleDeleteTemplate(template.id)}
-                          svg={DeleteSVG}
+                          svg={Trash2}
                           color="#dc2626"
                           title="Delete template"
                         />
@@ -225,7 +225,7 @@ const OverlayTemplatesDrawer = ({
                       variant="secondary"
                       color="#22d3ee"
                       onClick={() => handleUpdateTemplateStyles(template)}
-                      svg={StyleSVG}
+                      svg={Paintbrush}
                       title="Update template with current styles"
                     >
                       Update

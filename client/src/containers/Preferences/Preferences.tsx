@@ -1,9 +1,6 @@
 import { useSelector } from "../../hooks";
 import Button from "../../components/Button/Button";
-import { ReactComponent as RemoveSVG } from "../../assets/icons/remove.svg";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
-import { ReactComponent as MinusSVG } from "../../assets/icons/remove.svg";
-import { ReactComponent as BrightnessSVG } from "../../assets/icons/brightness.svg";
+import { X, Plus, Minus, SunMedium } from "lucide-react";
 import { useDispatch } from "react-redux";
 import {
   setDefaultSongBackgroundBrightness,
@@ -219,7 +216,7 @@ const Preferences = () => {
                   </Button>
                   <Button
                     variant="primary"
-                    svg={RemoveSVG}
+                    svg={X}
                     onClick={() => {
                       dispatch(setDefaultPreferences({ [preference]: "" }));
                     }}
@@ -227,9 +224,9 @@ const Preferences = () => {
                 </section>
                 <section className="flex gap-2 items-center">
                   <p className="font-semibold">Background Brightness:</p>
-                  <Icon size="xl" svg={BrightnessSVG} color="#fbbf24" />
+                  <Icon size="xl" svg={SunMedium} color="#fbbf24" />
                   <Button
-                    svg={MinusSVG}
+                    svg={Minus}
                     variant="tertiary"
                     onClick={() => dispatch(setBrightness(brightness - 10))}
                   />
@@ -246,7 +243,7 @@ const Preferences = () => {
                     min={1}
                   />
                   <Button
-                    svg={AddSVG}
+                    svg={Plus}
                     variant="tertiary"
                     onClick={() => dispatch(setBrightness(brightness + 10))}
                   />
@@ -273,7 +270,7 @@ const Preferences = () => {
               <p className="font-semibold">{label}:</p>
               <section className="flex gap-2 items-center">
                 <Button
-                  svg={MinusSVG}
+                  svg={Minus}
                   variant="tertiary"
                   onClick={() => dispatch(setValue(value - 1))}
                 />
@@ -290,7 +287,7 @@ const Preferences = () => {
                   min={min}
                 />
                 <Button
-                  svg={AddSVG}
+                  svg={Plus}
                   variant="tertiary"
                   onClick={() => dispatch(setValue(value + 1))}
                 />

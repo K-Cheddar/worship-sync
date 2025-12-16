@@ -1,8 +1,6 @@
 import { useContext, useMemo, useState } from "react";
 import RadioButton from "../../components/RadioButton/RadioButton";
-import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
-import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
+import { FileQuestion, Plus, Check } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -244,7 +242,7 @@ const CreateItem = () => {
                 variant="tertiary"
                 className="inline"
                 onClick={addItem}
-                svg={justAdded ? CheckSVG : AddSVG}
+                svg={justAdded ? Check : Plus}
                 color={justAdded ? "#84cc16" : "#22d3ee"}
                 disabled={justAdded}
               >
@@ -255,7 +253,7 @@ const CreateItem = () => {
           {itemTypes.map((itemType) => (
             <li key={itemType.type} className="flex gap-2 item-center">
               <Icon
-                svg={svgMap.get(itemType.type) || UnknownSVG}
+                svg={svgMap.get(itemType.type) || FileQuestion}
                 color={iconColorMap.get(itemType.type)}
               />
               <RadioButton
@@ -354,7 +352,7 @@ const CreateItem = () => {
           variant="cta"
           className="text-base w-full justify-center mt-4"
           onClick={createItem}
-          svg={justCreated ? CheckSVG : AddSVG}
+          svg={justCreated ? Check : Plus}
           color={justCreated ? "#84cc16" : undefined}
         >
           {justCreated

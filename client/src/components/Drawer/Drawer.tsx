@@ -2,8 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import cn from "classnames";
 import Button from "../Button/Button";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
-import "./Drawer.scss";
+import { X } from "lucide-react";
 
 export interface DrawerProps {
   isOpen: boolean;
@@ -187,7 +186,7 @@ const Drawer: React.FC<DrawerProps> = ({
             {showCloseButton && (
               <Button
                 variant="tertiary"
-                svg={CloseSVG}
+                svg={X}
                 onClick={onClose}
                 iconSize="lg"
                 className="ml-auto"
@@ -197,7 +196,9 @@ const Drawer: React.FC<DrawerProps> = ({
           </div>
         )}
 
-        <div className={cn("drawer-content", contentPadding, contentClassName)}>
+        <div
+          className={cn("scrollbar-variable", contentPadding, contentClassName)}
+        >
           {children}
         </div>
       </div>
@@ -229,7 +230,7 @@ const Drawer: React.FC<DrawerProps> = ({
           {showCloseButton && (
             <Button
               variant="tertiary"
-              svg={CloseSVG}
+              svg={X}
               onClick={onClose}
               iconSize="lg"
               className="ml-auto"
@@ -239,7 +240,9 @@ const Drawer: React.FC<DrawerProps> = ({
         </div>
       )}
 
-      <div className={cn("drawer-content", contentPadding, contentClassName)}>
+      <div
+        className={cn("scrollbar-variable", contentPadding, contentClassName)}
+      >
         {children}
       </div>
     </div>

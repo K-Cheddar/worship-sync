@@ -4,17 +4,17 @@ import { useDispatch, useSelector } from "../../../hooks";
 import { updateSlides } from "../../../store/itemSlice";
 import { useMemo, useRef, useState } from "react";
 import RadioButton from "../../../components/RadioButton/RadioButton";
-import { ReactComponent as ColorSVG } from "../../../assets/icons/text-color.svg";
-import { ReactComponent as ExpandSVG } from "../../../assets/icons/expand.svg";
-import { ReactComponent as BGOne } from "../../../assets/icons/background-one.svg";
-import { ReactComponent as AddSVG } from "../../../assets/icons/add.svg";
-import { ReactComponent as MinusSVG } from "../../../assets/icons/remove.svg";
-import { ReactComponent as AlignLeftSVG } from "../../../assets/icons/align-left.svg";
-import { ReactComponent as AlignCenterSVG } from "../../../assets/icons/align-center.svg";
-import { ReactComponent as AlignRightSVG } from "../../../assets/icons/align-right.svg";
-import { ReactComponent as TextFieldSVG } from "../../../assets/icons/text-field.svg";
-import { ReactComponent as BoldSVG } from "../../../assets/icons/format-bold.svg";
-import { ReactComponent as ItalicSVG } from "../../../assets/icons/format-italic.svg";
+import { PaintBucket } from "lucide-react";
+import { ChevronsUpDown } from "lucide-react";
+import { Image } from "lucide-react";
+import { Plus } from "lucide-react";
+import { Minus } from "lucide-react";
+import { AlignLeft } from "lucide-react";
+import { AlignCenter } from "lucide-react";
+import { AlignRight } from "lucide-react";
+import { ALargeSmall } from "lucide-react";
+import { Bold } from "lucide-react";
+import { Italic } from "lucide-react";
 import PopOver from "../../../components/PopOver/PopOver";
 import { updateFormattedTextDisplayInfo } from "../../../utils/formatter";
 import {
@@ -63,7 +63,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
 
   const runUpdate = (
     field: fieldType,
-    updatedValue: string | number | boolean,
+    updatedValue: string | number | boolean
   ) => {
     const updatedItem = updateFormattedTextDisplayInfo({
       formattedTextDisplayInfo: {
@@ -127,26 +127,21 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
   if (type !== "free")
     return (
       <section className="flex flex-wrap max-lg:pb-4 invisible">
-        <Button
-          svg={TextFieldSVG}
-          iconSize="lg"
-          padding="py-1 px-0"
-          className="w-0"
-        />
+        <Button svg={Image} iconSize="lg" padding="py-1 px-0" className="w-0" />
       </section>
     );
 
   const controls = (
     <>
       <section className="flex gap-1 items-center">
-        <Icon svg={TextFieldSVG} className="border-b border-black" />
+        <Icon svg={Image} className="border-b border-black" />
         <Button
-          svg={MinusSVG}
+          svg={Minus}
           variant="tertiary"
           onClick={() =>
             handleChange(
               "fontSize",
-              (formattedTextState.fontSize - 1).toString(),
+              (formattedTextState.fontSize - 1).toString()
             )
           }
         />
@@ -161,12 +156,12 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           data-ignore-undo="true"
         />
         <Button
-          svg={AddSVG}
+          svg={Plus}
           variant="tertiary"
           onClick={() =>
             handleChange(
               "fontSize",
-              (formattedTextState.fontSize + 1).toString(),
+              (formattedTextState.fontSize + 1).toString()
             )
           }
         />
@@ -175,7 +170,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
             <Button
               variant="tertiary"
               className="border-b-2"
-              svg={ColorSVG}
+              svg={PaintBucket}
               style={{ borderColor: formattedTextState.textColor }}
             />
           }
@@ -193,18 +188,18 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
         </PopOver>
         <Button
           variant={formattedTextState.isBold ? "secondary" : "tertiary"}
-          svg={BoldSVG}
+          svg={Bold}
           onClick={() =>
             handleChange("isBold", formattedTextState.isBold ? "false" : "true")
           }
         />
         <Button
           variant={formattedTextState.isItalic ? "secondary" : "tertiary"}
-          svg={ItalicSVG}
+          svg={Italic}
           onClick={() =>
             handleChange(
               "isItalic",
-              formattedTextState.isItalic ? "false" : "true",
+              formattedTextState.isItalic ? "false" : "true"
             )
           }
         />
@@ -212,21 +207,21 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           variant={
             formattedTextState.align === "left" ? "secondary" : "tertiary"
           }
-          svg={AlignLeftSVG}
+          svg={AlignLeft}
           onClick={() => handleChange("align", "left")}
         />
         <Button
           variant={
             formattedTextState.align === "center" ? "secondary" : "tertiary"
           }
-          svg={AlignCenterSVG}
+          svg={AlignCenter}
           onClick={() => handleChange("align", "center")}
         />
         <Button
           variant={
             formattedTextState.align === "right" ? "secondary" : "tertiary"
           }
-          svg={AlignRightSVG}
+          svg={AlignRight}
           onClick={() => handleChange("align", "right")}
         />
       </section>
@@ -236,7 +231,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
             <Button
               variant="tertiary"
               className="border-b-2"
-              svg={BGOne}
+              svg={PaintBucket}
               style={{ borderColor: formattedTextState.backgroundColor }}
             />
           }
@@ -294,7 +289,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           onChange={() => setShouldApplyToAll(true)}
         />
         {/* Keep the height the same as other sections */}
-        <Button svg={TextFieldSVG} iconSize="lg" className="invisible" />
+        <Button svg={ALargeSmall} iconSize="lg" className="invisible" />
       </section>
     </>
   );
@@ -304,7 +299,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
       <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>
       <PopOver
         TriggeringButton={
-          <Button className="lg:hidden" variant="tertiary" svg={ExpandSVG}>
+          <Button className="lg:hidden" variant="tertiary" svg={ChevronsUpDown}>
             Tools
           </Button>
         }

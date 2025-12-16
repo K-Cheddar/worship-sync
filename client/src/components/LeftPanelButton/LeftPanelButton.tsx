@@ -1,9 +1,8 @@
 import Button from "../Button/Button";
-import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
+import { FileQuestion } from "lucide-react";
 import { forwardRef, FunctionComponent } from "react";
 import cn from "classnames";
 import { borderColorMap, iconColorMap, svgMap } from "../../utils/itemTypeMaps";
-import "./LeftPanelButton.scss";
 import { formatTime } from "../DisplayWindow/TimerDisplay";
 
 type LeftPanelButtonProps = {
@@ -59,10 +58,13 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
       >
         <Button
           variant={actions ? "none" : "tertiary"}
-          className={`left-panel-button ${borderColorMap.get(type)}`}
+          className={cn(
+            "relative w-full text-sm border-l-4",
+            borderColorMap.get(type)
+          )}
           iconSize="md"
           wrap
-          svg={image || isActive ? undefined : svgMap.get(type) || UnknownSVG}
+          svg={image || isActive ? undefined : svgMap.get(type) || FileQuestion}
           gap="gap-2"
           color={iconColorMap.get(type)}
           isSelected={isSelected}
@@ -87,7 +89,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
               key={action.id}
               onClick={() => action.action(id)}
               variant="tertiary"
-              className="left-panel-action-button"
+              className="hover:bg-gray-800 active:bg-gray-900"
             />
           ))}
       </li>

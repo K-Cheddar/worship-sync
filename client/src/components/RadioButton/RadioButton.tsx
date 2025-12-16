@@ -1,5 +1,5 @@
-import { ReactComponent as CheckedSVG } from "../../assets/icons/radio-button-checked.svg";
-import { ReactComponent as UncheckedSVG } from "../../assets/icons/radio-button-unchecked.svg";
+import { CircleCheck } from "lucide-react";
+import { Circle } from "lucide-react";
 import Icon from "../Icon/Icon";
 import cn from "classnames";
 import { useId } from "react";
@@ -53,7 +53,7 @@ const RadioButton = ({
           id={id}
         />
         <Icon
-          svg={value ? CheckedSVG : UncheckedSVG}
+          svg={value ? CircleCheck : Circle}
           color={value ? "#67e8f9" : "#e5e7eb"}
           className={cn("absolute right-0")}
         />

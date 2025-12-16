@@ -1,13 +1,11 @@
 // import { Resizable } from "re-resizable";
-import { ReactComponent as ExpandSVG } from "../../assets/icons/left-panel-open.svg";
-import { ReactComponent as CollapseSVG } from "../../assets/icons/left-panel-close.svg";
+import { ChevronsUpDownIcon, ChevronsDownUpIcon } from "lucide-react";
 import EditorButtons from "../../containers/PanelButtons/PanelButtons";
 import Media from "../../containers/Media/Media";
 import ServiceItems from "../../containers/ServiceItems/ServiceItems";
 import Toolbar from "../../containers/Toolbar/Toolbar";
 import TransmitHandler from "../../containers/TransmitHandler/TransmitHandler";
 
-import "./Controller.scss";
 import LyricsEditor from "../../containers/ItemEditor/LyricsEditor";
 
 import {
@@ -403,7 +401,7 @@ const Controller = () => {
           <LyricsEditor />
           <Button
             className={cn("lg:hidden mr-2 h-1/4 z-10", isEditMode && "hidden")}
-            svg={isLeftPanelOpen ? CollapseSVG : ExpandSVG}
+            svg={isLeftPanelOpen ? ChevronsDownUpIcon : ChevronsUpDownIcon}
             onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
           />
           <div
@@ -414,7 +412,7 @@ const Controller = () => {
           >
             <Button
               className="lg:hidden text-sm mb-2 justify-center"
-              svg={isLeftPanelOpen ? CollapseSVG : ExpandSVG}
+              svg={isLeftPanelOpen ? ChevronsDownUpIcon : ChevronsUpDownIcon}
               onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
             >
               Close Panel
@@ -452,7 +450,7 @@ const Controller = () => {
                   "lg:hidden text-sm ml-2 justify-center h-1/4 z-10",
                   isEditMode && "hidden"
                 )}
-                svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
+                svg={isRightPanelOpen ? ChevronsUpDownIcon : ChevronsDownUpIcon}
                 onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
               />
               <div
@@ -463,7 +461,9 @@ const Controller = () => {
               >
                 <Button
                   className="lg:hidden text-sm mb-2 justify-center"
-                  svg={isRightPanelOpen ? ExpandSVG : CollapseSVG}
+                  svg={
+                    isRightPanelOpen ? ChevronsUpDownIcon : ChevronsDownUpIcon
+                  }
                   onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
                 >
                   Close Panel

@@ -1,4 +1,3 @@
-import "./ServiceItems.scss";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateItemList } from "../../store/itemListSlice";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -105,7 +104,7 @@ const ServiceItems = () => {
         ) : (
           <ul
             ref={setNodeRef}
-            className={"service-items-list"}
+            className="scrollbar-variable overflow-y-auto overflow-x-hidden flex-1 pb-2 min-h-0"
             id="service-items-list"
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") {

@@ -1,6 +1,5 @@
 import { Box } from "../../types";
-import { ReactComponent as ArrowDownSVG } from "../../assets/icons/arrow-down-double.svg";
-import { ReactComponent as ArrowUpSVG } from "../../assets/icons/arrow-up-double.svg";
+import { ChevronsDown, ChevronsUp } from "lucide-react";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Position, ResizableDelta, Rnd } from "react-rnd";
@@ -315,7 +314,7 @@ const DisplayEditor = ({
         <>
           <textarea
             className={cn(
-              "display-editor",
+              "h-full w-full bg-transparent absolute resize-none [scrollbar-width:none]",
               showOverflow ? "overflow-y-visible" : "overflow-y-clip"
             )}
             id={`display-editor-box-${index}`}
@@ -384,7 +383,7 @@ const DisplayEditor = ({
                 setIsTextAreaFocused(true);
               }}
               onBlur={() => setIsTextAreaFocused(false)}
-              svg={showOverflow ? ArrowUpSVG : ArrowDownSVG}
+              svg={showOverflow ? ChevronsUp : ChevronsDown}
               onClick={() => setShowOverflow(!showOverflow)}
               className={"absolute bottom-0 left-1/2"}
             />

@@ -51,7 +51,7 @@ const SongSections = ({
 
   useEffect(() => {
     const itemElement = document.getElementById(
-      `song-section-${selectedIndex}`,
+      `song-section-${selectedIndex}`
     );
     const parentElement = document.getElementById("song-sections-list");
 
@@ -66,7 +66,11 @@ const SongSections = ({
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <h2 className="text-lg mb-2 text-center font-semibold">Song Order</h2>
-      <ul id="song-sections-list" className="song-sections" ref={setNodeRef}>
+      <ul
+        id="song-sections-list"
+        className="scrollbar-variable flex flex-col gap-2 overflow-y-auto overflow-x-hidden px-2 h-full"
+        ref={setNodeRef}
+      >
         <SortableContext items={songOrder.map(({ id }) => id)}>
           {songOrder.map(({ id, name }, index) => (
             <SongSection
@@ -87,7 +91,7 @@ const SongSections = ({
           Select Section:
         </h4>
         <Select
-          className="song-section-select"
+          className="[&_select]:w-full [&_select]:text-sm [&_select_option]:text-base [&_select_option]:bg-gray-800 [&_select_option]:text-white"
           options={currentSections}
           value={section}
           onChange={(value) => setSection(value)}

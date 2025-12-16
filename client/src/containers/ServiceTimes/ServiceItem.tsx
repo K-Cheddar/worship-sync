@@ -1,8 +1,7 @@
 import Button from "../../components/Button/Button";
 import { MonthWeekOrdinal, ServiceTime, Weekday } from "../../types";
 import { formatOneTime, formatMonthly, formatWeekly } from "./utils";
-import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
+import { SquarePen, Trash2 } from "lucide-react";
 
 type Props = {
   service?: ServiceTime;
@@ -38,13 +37,13 @@ const ServiceItem = ({ service, onEdit, onDelete }: Props) => {
       <div className="flex items-center gap-2">
         <Button
           variant="tertiary"
-          svg={EditSVG}
+          svg={SquarePen}
           onClick={() => onEdit(service.id)}
           title="Edit"
         />
         <Button
           variant="tertiary"
-          svg={DeleteSVG}
+          svg={Trash2}
           color="#dc2626"
           onClick={() => onDelete(service.id)}
           title="Delete"

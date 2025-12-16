@@ -1,19 +1,18 @@
 import Button from "../../components/Button/Button";
 import cn from "classnames";
-import { ReactComponent as LockSVG } from "../../assets/icons/lock.svg";
-import { ReactComponent as UnlockSVG } from "../../assets/icons/unlock.svg";
-import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
-import { ReactComponent as CollapseSVG } from "../../assets/icons/collapse.svg";
-import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
-import { ReactComponent as EditTextSVG } from "../../assets/icons/edit-text.svg";
-import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
-import { ReactComponent as BoxSVG } from "../../assets/icons/box.svg";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { Lock } from "lucide-react";
+import { Unlock } from "lucide-react";
+import { ChevronsUpDown } from "lucide-react";
+import { ChevronsDownUp } from "lucide-react";
+import { Pencil } from "lucide-react";
+import { PencilLine } from "lucide-react";
+import { Check } from "lucide-react";
+import { X } from "lucide-react";
+import { BoxIcon } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 
 import Input from "../../components/Input/Input";
-import "./ItemEditor.scss";
 import {
   CSSProperties,
   useCallback,
@@ -353,27 +352,28 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       <div>
         <section className="flex justify-end w-full pr-2 bg-gray-900 h-8 mb-1 gap-1 overflow-hidden">
           <span
-            className={`slide-editor-song-name-container ${borderColorMap.get(
-              type
-            )}`}
+            className={cn(
+              "flex mr-auto px-2 items-center gap-2 border-l-4 flex-1 max-w-[calc(100%-6rem)] max-lg:max-w-[calc(100%-4rem)]",
+              borderColorMap.get(type)
+            )}
           >
             {isEditingName && (
               <Button
                 variant="tertiary"
-                svg={CloseSVG}
+                svg={X}
                 onClick={() => setIsEditingName(false)}
               />
             )}
             <Button
               variant="tertiary"
               disabled={isLoading || !canEdit}
-              svg={isEditingName ? CheckSVG : EditSVG}
+              svg={isEditingName ? Check : Pencil}
               onClick={
                 isEditingName ? () => saveName() : () => setIsEditingName(true)
               }
             />
             {!isEditingName && (
-              <span className="slide-editor-song-name">
+              <span className="text-base font-semibold flex-1 truncate flex items-center gap-2 max-w-[calc(100%-2rem)]">
                 <h2>{isLoading ? "" : name}</h2>
                 {arrangement && (
                   <p className="text-sm">
@@ -385,7 +385,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             {isEditingName && (
               <Input
                 hideLabel
-                className="slide-editor-song-name"
+                className="text-base font-semibold flex-1 truncate flex items-center gap-2 max-w-[calc(100%-2rem)]"
                 value={localName}
                 onChange={(val) => setLocalName(val as string)}
                 data-ignore-undo="true"
@@ -397,7 +397,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               className="text-sm"
               disabled={isLoading || !canEdit}
               onClick={() => dispatch(setIsEditMode(true))}
-              svg={EditTextSVG}
+              svg={PencilLine}
             >
               {isMobile ? "" : "Edit Lyrics"}
             </Button>
@@ -405,7 +405,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           <Button
             variant="tertiary"
             padding="p-1"
-            svg={shouldShowItemEditor ? CollapseSVG : ExpandSVG}
+            svg={shouldShowItemEditor ? ChevronsUpDown : ChevronsDownUp}
             onClick={() =>
               dispatch(setShouldShowItemEditor(!shouldShowItemEditor))
             }
@@ -413,7 +413,11 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           ></Button>
         </section>
         <div
-          className="slide-editor-container"
+          className={cn(
+            "flex transition-all relative max-lg:flex-col gap-2 max-lg:items-center",
+            shouldShowItemEditor && "mb-2 z-[1]",
+            !shouldShowItemEditor && "h-0 -z-[1]"
+          )}
           data-show={shouldShowItemEditor}
           style={
             {
@@ -431,7 +435,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             ref={slideInfoRef}
           >
             <p className="text-center font-semibold border-b-2 border-black text-sm flex items-center gap-1 justify-center pb-1">
-              <Icon svg={BoxSVG} color="#93c5fd" />
+              <Icon svg={BoxIcon} color="#93c5fd" />
               Slide Boxes
             </p>
             {boxes.map((box, index) => {
@@ -458,7 +462,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                     </p>
                   </Button>
                   <Button
-                    svg={isBoxLocked[index] ? LockSVG : UnlockSVG}
+                    svg={isBoxLocked[index] ? Lock : Unlock}
                     color={isBoxLocked[index] ? "gray" : "green"}
                     variant="tertiary"
                     disabled={!canEdit}
@@ -472,7 +476,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                   />
                   {canDeleteBox(index) && canEdit && (
                     <Button
-                      svg={DeleteSVG}
+                      svg={Trash2}
                       variant="tertiary"
                       color="red"
                       onClick={() => {
@@ -495,7 +499,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             {canEdit && (
               <Button
                 className="text-xs w-full justify-center"
-                svg={AddSVG}
+                svg={Plus}
                 onClick={() => {
                   dispatch(
                     updateBoxes({
@@ -536,7 +540,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             <p
               id="slide-editor-empty"
               ref={emptySlideRef}
-              className="slide-editor-empty"
+              className="flex items-center justify-center text-gray-300 w-full h-[calc(42vw/(16/9))] max-lg:h-[calc(84vw/(16/9))]"
             >
               No slide selected
             </p>

@@ -1,10 +1,9 @@
 import Button from "../../components/Button/Button";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
-import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
-import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
+import { Plus } from "lucide-react";
+import { Save } from "lucide-react";
+import { Check } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { selectCredit, updateList } from "../../store/creditsSlice";
-import "./Credits.scss";
 import { useEffect, useState } from "react";
 import Credit from "./Credit";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
@@ -61,7 +60,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     const updatedCredits = [...list];
     const newIndex = updatedCredits.findIndex((credit) => credit.id === overId);
     const oldIndex = updatedCredits.findIndex(
-      (credit) => credit.id === activeId,
+      (credit) => credit.id === activeId
     );
     const element = list[oldIndex];
     updatedCredits.splice(oldIndex, 1);
@@ -72,11 +71,11 @@ const CreditsEditor = ({ className }: { className?: string }) => {
   // keep the selected credit in view
   useEffect(() => {
     const selectedCredit = list.find(
-      (credit) => credit.id === selectedCreditId,
+      (credit) => credit.id === selectedCreditId
     );
     if (selectedCredit) {
       const creditElement = document.getElementById(
-        `credit-editor-${selectedCreditId}`,
+        `credit-editor-${selectedCreditId}`
       );
       const creditsList = document.getElementById("credits-list");
       if (creditElement && creditsList) {
@@ -94,7 +93,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         data-testid="credits-editor-container"
         className={cn(
           "flex flex-col p-2 gap-2 max-md:w-full md:w-1/2 h-full",
-          className,
+          className
         )}
       >
         <h2 className="text-xl font-semibold text-center h-fit">
@@ -117,7 +116,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         {!isLoading && (
           <>
             <ul
-              className="credits-list-editor"
+              className="scrollbar-thin flex flex-col gap-2 w-full overflow-y-auto h-full max-h-[calc(100vh-clamp(12rem,14vw,16rem))] max-md:max-h-[calc(100dvh-13rem)]"
               id="credits-list"
               ref={setNodeRef}
             >
@@ -144,7 +143,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
             <section className="flex-1 flex flex-col gap-2">
               <Button
                 className="text-sm w-full justify-center mt-2"
-                svg={justAdded ? CheckSVG : AddSVG}
+                svg={justAdded ? Check : Plus}
                 color={justAdded ? "#84cc16" : "#22d3ee"}
                 disabled={justAdded}
                 onClick={() => {
@@ -159,7 +158,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
               </Button>
               <Button
                 className="text-sm w-full justify-center mt-2"
-                svg={justPublished ? CheckSVG : SaveSVG}
+                svg={justPublished ? Check : Save}
                 color={justPublished ? "#84cc16" : "#0284c7"}
                 variant="cta"
                 disabled={justPublished}

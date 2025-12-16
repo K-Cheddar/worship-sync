@@ -6,7 +6,7 @@ import * as serviceWorkerRegistration from "./serviceWorkerRegistration";
 import reportWebVitals from "./reportWebVitals";
 import * as Sentry from "@sentry/react";
 
-if (process.env.NODE_ENV === "production") {
+if (import.meta.env.PROD) {
   Sentry.init({
     dsn: "https://91c81677b775b6e269ae52b678fb0e53@o4509856644333568.ingest.us.sentry.io/4509860218863616",
     // Setting this option to true will send default PII data to Sentry.

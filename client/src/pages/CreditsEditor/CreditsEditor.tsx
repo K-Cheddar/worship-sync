@@ -1,10 +1,10 @@
 import { useCallback, useContext, useEffect, useState } from "react";
 import Credits from "../../containers/Credits/Credits";
 import { default as CreditsEditorContainer } from "../../containers/Credits/CreditsEditor";
-import { ReactComponent as BackArrowSVG } from "../../assets/icons/arrow-back.svg";
-import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
-import { ReactComponent as SyncSVG } from "../../assets/icons/sync-alt.svg";
-import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
+import { ArrowLeft } from "lucide-react";
+import { ChevronsUpDown } from "lucide-react";
+import { RefreshCcw } from "lucide-react";
+import { Check } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import {
@@ -33,7 +33,6 @@ import cn from "classnames";
 import { onValue, ref } from "firebase/database";
 import PopOver from "../../components/PopOver/PopOver";
 import Input from "../../components/Input/Input";
-import "./CreditsEditor.scss";
 import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
 import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
@@ -366,7 +365,7 @@ const CreditsEditor = () => {
           generateFromOverlays();
         }}
         color={justGenerated ? "#84cc16" : "#22d3ee"}
-        svg={justGenerated ? CheckSVG : SyncSVG}
+        svg={justGenerated ? Check : RefreshCcw}
       >
         {isGenerating
           ? "Generating Credits..."
@@ -391,7 +390,7 @@ const CreditsEditor = () => {
             component="link"
             to="/"
           >
-            <BackArrowSVG />
+            <ArrowLeft />
           </Button>
           <div className="border-l-2 border-gray-400 pl-4">
             <Undo />
@@ -401,7 +400,11 @@ const CreditsEditor = () => {
           </div>
           <PopOver
             TriggeringButton={
-              <Button className="lg:hidden" variant="tertiary" svg={ExpandSVG}>
+              <Button
+                className="lg:hidden"
+                variant="tertiary"
+                svg={ChevronsUpDown}
+              >
                 Tools
               </Button>
             }

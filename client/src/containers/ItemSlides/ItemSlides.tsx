@@ -1,11 +1,6 @@
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
-import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
+import { Plus, ZoomIn, ZoomOut, Trash2, Copy } from "lucide-react";
 import Button from "../../components/Button/Button";
-import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
-import { ReactComponent as CopySVG } from "../../assets/icons/copy.svg";
-import "./ItemSlides.scss";
 import {
   removeSlide,
   setSelectedSlide,
@@ -56,6 +51,7 @@ import { RootState } from "../../store/store";
 import generateRandomId from "../../utils/generateRandomId";
 import { useLocation } from "react-router-dom";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { cn } from "../../utils/cnHelper";
 
 export type SizeMap = Map<
   number,
@@ -557,7 +553,7 @@ const ItemSlides = () => {
         <div className="flex w-full px-2 bg-gray-900 h-6 mb-2 gap-1">
           <Button
             variant="tertiary"
-            svg={ZoomOutSVG}
+            svg={ZoomOut}
             onClick={() => {
               if (isMobile) {
                 dispatch(increaseSlidesMobile());
@@ -574,7 +570,7 @@ const ItemSlides = () => {
           />
           <Button
             variant="tertiary"
-            svg={ZoomInSVG}
+            svg={ZoomIn}
             onClick={() => {
               if (isMobile) {
                 dispatch(decreaseSlidesMobile());
@@ -594,13 +590,13 @@ const ItemSlides = () => {
               <Button
                 variant="tertiary"
                 className="ml-auto"
-                svg={AddSVG}
+                svg={Plus}
                 onClick={() => addSlide()}
               />
-              <Button variant="tertiary" svg={CopySVG} onClick={copySlide} />
+              <Button variant="tertiary" svg={Copy} onClick={copySlide} />
               <Button
                 variant="tertiary"
-                svg={DeleteSVG}
+                svg={Trash2}
                 onClick={() => dispatch(removeSlide({ index: selectedSlide }))}
               />
             </>
@@ -611,7 +607,10 @@ const ItemSlides = () => {
             ref={setNodeRef}
             tabIndex={0}
             id="item-slides-container"
-            className={`item-slides-container ${sizeMap.get(size)?.cols}`}
+            className={cn(
+              "scrollbar-variable max-h-full px-2 overflow-y-auto grid pb-2 focus-visible:outline-none",
+              sizeMap.get(size)?.cols
+            )}
           >
             <SortableContext
               items={slides.map((slide) => slide.id || "")}

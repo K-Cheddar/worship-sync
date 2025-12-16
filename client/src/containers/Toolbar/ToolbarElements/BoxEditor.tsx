@@ -1,7 +1,7 @@
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 
-import { ReactComponent as BoxEditSVG } from "../../../assets/icons/box-edit.svg";
+import { Pencil } from "lucide-react";
 
 import textFull from "../../../assets/images/textbox_full.png";
 import textMid from "../../../assets/images/textbox_mid.png";
@@ -38,7 +38,7 @@ const BoxEditor = ({
   }, [boxes, selectedBox]);
 
   const [shouldApplyToAll, setShouldApplyToAll] = useState(
-    item.type === "free" ? false : true,
+    item.type === "free" ? false : true
   );
 
   useEffect(() => {
@@ -68,7 +68,7 @@ const BoxEditor = ({
 
   const handleInputChange = (
     field: "x" | "y" | "width" | "height",
-    value: string,
+    value: string
   ) => {
     let numValue = parseFloat(value);
     if (field === "x" || field === "y") {
@@ -277,11 +277,7 @@ const BoxEditor = ({
     <section className="flex flex-wrap gap-2 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4 justify-center items-center">
       <PopOver
         TriggeringButton={
-          <Button
-            svg={BoxEditSVG}
-            className="max-lg:hidden"
-            variant="tertiary"
-          />
+          <Button svg={Pencil} className="max-lg:hidden" variant="tertiary" />
         }
       >
         {controls}

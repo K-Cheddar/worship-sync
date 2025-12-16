@@ -12,8 +12,7 @@ import {
 import RadioButton from "../../components/RadioButton/RadioButton";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
-import { ReactComponent as MinusSVG } from "../../assets/icons/remove.svg";
+import { Plus, Minus } from "lucide-react";
 import cn from "classnames";
 
 const MonitorSettings = () => {
@@ -100,7 +99,7 @@ const MonitorSettings = () => {
                   <p className="font-semibold">{label}:</p>
                   <section className="flex gap-2 items-center">
                     <Button
-                      svg={MinusSVG}
+                      svg={Minus}
                       variant="tertiary"
                       onClick={() => dispatch(setValue(value - 1))}
                     />
@@ -117,7 +116,7 @@ const MonitorSettings = () => {
                       min={min}
                     />
                     <Button
-                      svg={AddSVG}
+                      svg={Plus}
                       variant="tertiary"
                       onClick={() => dispatch(setValue(value + 1))}
                     />

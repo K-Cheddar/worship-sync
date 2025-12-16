@@ -1,8 +1,5 @@
 import { useEffect, useState } from "react";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
-import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
-import { ReactComponent as MatchWordSVG } from "../../assets/icons/match-word.svg";
+import { Plus, Check, Trash2, WholeWord } from "lucide-react";
 import Button from "../Button/Button";
 import { ServiceItem } from "../../types";
 import { filteredItemsListType } from "./FilteredItems";
@@ -76,7 +73,7 @@ const FilteredItem = ({
         {matchedWords && (
           <Button
             onClick={() => _updateShowWords()}
-            svg={MatchWordSVG}
+            svg={WholeWord}
             color="#fb923c"
             variant="tertiary"
           />
@@ -87,13 +84,13 @@ const FilteredItem = ({
           className="text-sm h-full leading-3 ml-auto min-h-6"
           padding="py-1 px-2"
           disabled={justAdded}
-          svg={justAdded ? CheckSVG : AddSVG}
+          svg={justAdded ? Check : Plus}
           onClick={() => addItem(item)}
         >
           {justAdded ? "Added!" : "Add to outline"}
         </Button>
         <Button
-          svg={DeleteSVG}
+          svg={Trash2}
           variant="tertiary"
           color="red"
           onClick={() => setItemToBeDeleted(item)}

@@ -1,7 +1,6 @@
 import QuickLinks from "../../containers/Preferences/QuickLinks";
 import { useSelector } from "../../hooks";
 import Spinner from "../../components/Spinner/Spinner";
-import "./Controller.scss";
 
 const QuickLinksPage = () => {
   const { isLoading } = useSelector(

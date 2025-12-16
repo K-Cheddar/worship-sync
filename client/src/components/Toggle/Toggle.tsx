@@ -1,5 +1,4 @@
-import { ReactComponent as CircleSVG } from "../../assets/icons/radio-button-checked.svg";
-import "./Toggle.scss";
+import { CircleCheck } from "lucide-react";
 import Icon from "../Icon/Icon";
 import { useContext, useId } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -31,10 +30,16 @@ const Toggle = ({
       <label className="text-sm font-semibold" htmlFor={id}>
         {label}:
       </label>
-      <div className={`${value ? "on" : "off"} toggle-input-container`}>
+      <div
+        className={`${
+          value ? "bg-green-500" : "bg-gray-500"
+        } w-8 h-4 md:w-10 md:h-5 border rounded-2xl border-gray-300 flex items-center relative focus-visible:outline focus-visible:outline-gray-200 hover:border-gray-100`}
+      >
         <Icon
-          svg={CircleSVG}
-          className={"toggle-circle"}
+          svg={CircleCheck}
+          className={
+            "transition-all absolute pointer-events-none right-[15px] md:right-[19px] rtl:left-[15px] rtl:md:left-[19px] rtl:right-auto rtl:md:right-auto"
+          }
           size={isMobile ? "lg" : "md"}
         />
       </div>

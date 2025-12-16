@@ -1,4 +1,4 @@
-import "./Spinner.scss";
+import { cn } from "../../utils/cnHelper";
 
 const Spinner = ({
   className,
@@ -11,7 +11,10 @@ const Spinner = ({
 }) => {
   return (
     <span
-      className={`spinner ${className || ""}`}
+      className={cn(
+        "inline-block box-border rounded-full border-solid border-white border-b-transparent animate-spin",
+        className
+      )}
       style={{
         width: width || "48px",
         height: width || "48px",

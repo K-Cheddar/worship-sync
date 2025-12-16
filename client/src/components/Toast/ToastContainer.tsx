@@ -1,6 +1,5 @@
 import React from "react";
 import Toast, { ToastPosition, ToastVariant } from "./Toast";
-import "./ToastContainer.scss";
 
 export type ToastData = {
   id: string;
@@ -35,7 +34,7 @@ const ToastContainer: React.FC<ToastContainerProps> = ({
   );
 
   return (
-    <div className="toast-container">
+    <div className="fixed inset-0 pointer-events-none z-[9999]">
       {Object.entries(toastsByPosition).map(([position, positionToasts]) => (
         <div key={position} className={`toast-group toast-group-${position}`}>
           {positionToasts.map((toast) => {

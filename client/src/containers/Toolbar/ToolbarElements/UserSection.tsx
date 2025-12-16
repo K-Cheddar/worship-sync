@@ -1,7 +1,5 @@
 import { useContext, useState, useEffect, useRef } from "react";
-import { ReactComponent as SyncDisabled } from "../../../assets/icons/sync-disabled.svg";
-import { ReactComponent as SyncCloud } from "../../../assets/icons/sync-cloud.svg";
-import { ReactComponent as Circle } from "../../../assets/icons/circle.svg";
+import { CloudOff, Cloud, CircleDot } from "lucide-react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import { useVersionContext } from "../../../context/versionContext";
@@ -51,7 +49,7 @@ const UserSection = () => {
   return (
     <div className="flex items-center gap-2 text-white">
       <Icon
-        svg={isDemo ? SyncDisabled : SyncCloud}
+        svg={isDemo ? CloudOff : Cloud}
         size="md"
         color={isDemo ? "oklch(0.75 0.183 55.934)" : "#22d3ee"}
       />
@@ -59,7 +57,7 @@ const UserSection = () => {
       {!isMobile && (
         <>
           <Icon
-            svg={Circle}
+            svg={CircleDot}
             size="xs"
             color="#22d3ee"
             className={isPulsing ? "animate-pulse" : ""}

@@ -2,7 +2,6 @@ import { useRef } from "react";
 import { FormattedTextDisplayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import "./DisplayWindow.scss";
 import VerseDisplay from "./VerseDisplay";
 
 type DisplayStreamFormattedTextProps = {

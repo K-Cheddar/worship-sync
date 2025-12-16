@@ -1,9 +1,6 @@
 import React from "react";
 import Button from "../Button/Button";
-import { ReactComponent as PlaySVG } from "../../assets/icons/play.svg";
-import { ReactComponent as PauseSVG } from "../../assets/icons/pause.svg";
-import { ReactComponent as StopSVG } from "../../assets/icons/stop.svg";
-import { ReactComponent as ResetSVG } from "../../assets/icons/reset.svg";
+import { Play, Pause, Square, RotateCw } from "lucide-react";
 import { TimerStatus } from "../../types";
 
 interface TimerControlButtonsProps {
@@ -25,7 +22,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
     <div className={`flex gap-2 items-center px-2 ${className}`}>
       <Button
         variant="tertiary"
-        svg={PlaySVG}
+        svg={Play}
         onClick={onPlay}
         disabled={status === "running"}
         title="Play"
@@ -33,7 +30,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
       />
       <Button
         variant="tertiary"
-        svg={PauseSVG}
+        svg={Pause}
         onClick={onPause}
         disabled={status !== "running"}
         title="Pause"
@@ -41,7 +38,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
       />
       <Button
         variant="tertiary"
-        svg={StopSVG}
+        svg={Square}
         onClick={onStop}
         disabled={status === "stopped"}
         title="Stop"
@@ -50,7 +47,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
       <Button
         variant="tertiary"
         title="Reset"
-        svg={ResetSVG}
+        svg={RotateCw}
         onClick={onStop}
         color="#f59e0b"
       />

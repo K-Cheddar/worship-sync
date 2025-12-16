@@ -19,7 +19,6 @@ import {
 
 import { MenuItemType } from "../../types";
 import MenuItem from "./MenuItem";
-import "./Menu.scss";
 import cn from "classnames";
 import { ButtonProps } from "../Button/Button";
 
@@ -67,7 +66,10 @@ const Menu = ({ menuItems, TriggeringButton, ...rest }: MenuProps) => {
       {isOpen && (
         <FloatingFocusManager context={context} modal>
           <ul
-            className={cn("menu")}
+            className={cn(
+              "bg-gray-700 z-20 w-fit rounded shadow-xl",
+              rest.className
+            )}
             style={floatingStyles}
             ref={refs.setFloating}
             {...getFloatingProps()}

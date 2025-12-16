@@ -1,5 +1,5 @@
 import Button from "../components/Button/Button";
-import { ReactComponent as BackArrowSVG } from "../assets/icons/arrow-back.svg";
+import { ArrowLeft } from "lucide-react";
 import Undo from "../containers/Toolbar/ToolbarElements/Undo";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import ServiceTimes from "../containers/ServiceTimes/ServiceTimes";
@@ -42,9 +42,8 @@ const InfoController = () => {
           padding="p-0"
           component="link"
           to="/"
-        >
-          <BackArrowSVG />
-        </Button>
+          svg={ArrowLeft}
+        />
         <div className="border-l-2 border-gray-400 pl-4">
           <Undo />
         </div>

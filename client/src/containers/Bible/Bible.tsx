@@ -1,6 +1,5 @@
 import { useRef, useContext, useEffect, useMemo, useState } from "react";
 import Select from "../../components/Select/Select";
-import "./Bible.scss";
 import BibleSection from "./BibleSection";
 import { bookType, chapterType, DBBibleChapter, verseType } from "../../types";
 import { Button, ButtonGroup, ButtonGroupItem } from "../../components/Button";
@@ -23,9 +22,7 @@ import { useSearchParams } from "react-router-dom";
 import { formatBible } from "../../utils/overflow";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
-import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
+import { Check, Plus, X } from "lucide-react";
 import {
   updateBibleDisplayInfo,
   updatePresentation,
@@ -398,7 +395,7 @@ const Bible = () => {
         isLoading={isLoadingChapter}
         disabled={isLoadingChapter}
         color={justAdded ? "#67e8f9" : undefined}
-        svg={justAdded ? CheckSVG : AddSVG}
+        svg={justAdded ? Check : Plus}
       >
         {justAdded ? "Added!" : "Add to outline"}
       </Button>
@@ -435,7 +432,7 @@ const Bible = () => {
             options={versionOptions}
           />
           <Input
-            svg={search ? CloseSVG : undefined}
+            svg={search ? X : undefined}
             svgAction={() => handleSearch("")}
             value={search}
             onChange={(val) => handleSearch(val as string)}

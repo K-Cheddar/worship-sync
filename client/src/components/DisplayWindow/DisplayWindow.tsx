@@ -7,7 +7,7 @@ import {
   OverlayInfo,
   TimerInfo,
 } from "../../types";
-import "./DisplayWindow.scss";
+import cn from "classnames";
 import DisplayBox from "./DisplayBox";
 import DisplayStreamBible from "./DisplayStreamBible";
 import DisplayParticipantOverlay from "./DisplayParticipantOverlay";
@@ -145,9 +145,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     return (
       <div
-        className={`display-window ${
-          showBorder ? "border border-gray-500" : ""
-        } ${displayType !== "stream" ? "bg-black" : ""}`}
+        className={cn(
+          "relative overflow-hidden overflow-anywhere text-white",
+          showBorder && "border border-gray-500",
+          displayType !== "stream" && "bg-black"
+        )}
         ref={containerRef}
         id={isEditor ? "display-editor" : undefined}
         style={{

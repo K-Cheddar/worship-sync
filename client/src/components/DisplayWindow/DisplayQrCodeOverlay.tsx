@@ -4,7 +4,6 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { defaultQrCodeOverlayStyles } from "./defaultOverlayStyles";
 import SharedOverlay from "./SharedOverlay";
-import "./DisplayWindow.scss";
 
 type DisplayQRCodeOverlayProps = {
   width: number;

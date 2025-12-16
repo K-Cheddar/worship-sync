@@ -1,7 +1,7 @@
 import { useSelector, useDispatch } from "../../hooks";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
-import { ReactComponent as ZoomInSVG } from "../../assets/icons/zoom-in.svg";
-import { ReactComponent as ZoomOutSVG } from "../../assets/icons/zoom-out.svg";
+import { X } from "lucide-react";
+import { ZoomIn } from "lucide-react";
+import { ZoomOut } from "lucide-react";
 
 import Button from "../../components/Button/Button";
 import { useContext, useEffect, useMemo, useState, useCallback } from "react";
@@ -13,7 +13,6 @@ import {
 } from "../../store/preferencesSlice";
 
 import TextArea from "../../components/TextArea/TextArea";
-import "./ItemEditor.scss";
 import LyricBoxes from "./LyricBoxes";
 import SongSections from "./SongSections";
 import { FormattedLyrics as FormattedLyricsType, SongOrder } from "../../types";
@@ -256,22 +255,22 @@ const LyricsEditor = () => {
 
   return (
     <ErrorBoundary>
-      <div className="lyrics-editor">
+      <div className="absolute left-0 bg-gray-700 lg:z-10 lg:border-r-2 border-gray-500 flex flex-col gap-2 h-full w-[70%] max-lg:w-full max-lg:z-[2]">
         <div className="flex bg-gray-900 px-2 h-fit items-center">
           <Button
             variant="tertiary"
             className="max-lg:hidden"
-            svg={ZoomOutSVG}
+            svg={ZoomOut}
             onClick={() => dispatch(increaseFormattedLyrics())}
           />
           <Button
             variant="tertiary"
             className="max-lg:hidden"
-            svg={ZoomInSVG}
+            svg={ZoomIn}
             onClick={() => dispatch(decreaseFormattedLyrics())}
           />
           <p className="mx-auto font-semibold text-lg">{item.name}</p>
-          <Button variant="tertiary" svg={CloseSVG} onClick={() => onClose()} />
+          <Button variant="tertiary" svg={X} onClick={() => onClose()} />
         </div>
         <ButtonGroup className="lg:hidden my-2 mx-4">
           <ButtonGroupItem
@@ -288,7 +287,7 @@ const LyricsEditor = () => {
           </ButtonGroupItem>
         </ButtonGroup>
 
-        <div className="lyrics-editor-middle">
+        <div className="flex flex-1 gap-4 min-h-0">
           {showLeftSection && (
             <div className="pl-4 pt-4 w-44 flex flex-col">
               <TextArea
@@ -303,7 +302,7 @@ const LyricsEditor = () => {
               <h3 className="text-base mt-4 mb-2 font-semibold">
                 Arrangements
               </h3>
-              <ul className="song-arrangement-list">
+              <ul className="scrollbar-variable rounded-md flex-1 overflow-y-auto bg-gray-800">
                 {localArrangements.map((arrangement, index) => (
                   <Arrangement
                     key={arrangement.name}
