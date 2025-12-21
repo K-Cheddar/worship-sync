@@ -4,13 +4,13 @@ const getScheduleFromExcel = async (
 ) => {
   const response = await fetch(
     `${
-      process.env.REACT_APP_API_BASE_PATH
+      import.meta.env.VITE_API_BASE_PATH
     }getSchedule?fileName=${encodeURIComponent(fileName)}`
   );
 
   const membersResponse = await fetch(
     `${
-      process.env.REACT_APP_API_BASE_PATH
+      import.meta.env.VITE_API_BASE_PATH
     }getMembers?fileName=${encodeURIComponent(membersFileName)}`
   );
 
