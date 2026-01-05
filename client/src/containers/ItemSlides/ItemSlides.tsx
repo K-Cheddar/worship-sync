@@ -118,7 +118,7 @@ const ItemSlides = () => {
           7,
           {
             width: isMusic ? 11 : 7,
-            mobileWidth: isMusic ? 11 : 10,
+            mobileWidth: isMusic ? 12 : 11,
             cols: "grid-cols-7",
             hSize: "text-xs",
             borderWidth: "clamp(0.2rem, 0.2vw, 0.4rem)",
@@ -128,7 +128,7 @@ const ItemSlides = () => {
           6,
           {
             width: isMusic ? 13 : 8.25,
-            mobileWidth: isMusic ? 13 : 12,
+            mobileWidth: isMusic ? 14 : 13,
             cols: "grid-cols-6",
             hSize: isMusic ? "text-sm" : "text-xs",
             borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
@@ -138,7 +138,7 @@ const ItemSlides = () => {
           5,
           {
             width: isMusic ? 15.5 : 10,
-            mobileWidth: isMusic ? 16 : 14,
+            mobileWidth: isMusic ? 17 : 15,
             cols: "grid-cols-5",
             hSize: isMusic ? "text-sm" : "text-xs",
             borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
@@ -148,7 +148,7 @@ const ItemSlides = () => {
           4,
           {
             width: isMusic ? 20 : 12.75,
-            mobileWidth: isMusic ? 20 : 18,
+            mobileWidth: isMusic ? 21 : 19,
             cols: "grid-cols-4",
             hSize: "text-sm",
             borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
@@ -158,30 +158,30 @@ const ItemSlides = () => {
           3,
           {
             width: isMusic ? 26 : 17,
-            mobileWidth: isMusic ? 26 : 24,
+            mobileWidth: isMusic ? 28 : 26,
             cols: "grid-cols-3",
             hSize: "text-base",
-            borderWidth: "clamp(0.35rem, 0.35vw, 0.7rem)",
+            borderWidth: "clamp(0.3rem, 0.35vw, 0.7rem)",
           },
         ],
         [
           2,
           {
             width: isMusic ? 39 : 26,
-            mobileWidth: isMusic ? 38 : 36,
+            mobileWidth: isMusic ? 42 : 40,
             cols: "grid-cols-2",
             hSize: "text-base",
-            borderWidth: "clamp(0.45rem, 0.45vw, 0.9rem)",
+            borderWidth: "clamp(0.35rem, 0.45vw, 0.9rem)",
           },
         ],
         [
           1,
           {
             width: isMusic ? 78 : 52.25,
-            mobileWidth: isMusic ? 84 : 55,
+            mobileWidth: isMusic ? 84 : 80,
             cols: "grid-cols-1",
             hSize: "text-base",
-            borderWidth: "clamp(0.5rem, 0.5vw, 1rem)",
+            borderWidth: "clamp(0.4rem, 0.5vw, 1rem)",
           },
         ],
       ]),
@@ -550,7 +550,7 @@ const ItemSlides = () => {
         onDragEnd={canEdit ? onDragEnd : undefined}
         onDragStart={canEdit ? onDragStart : undefined}
       >
-        <div className="flex w-full px-2 bg-gray-900 h-6 mb-2 gap-1">
+        <div className="flex w-full px-2 bg-gray-900 mb-2 gap-1">
           <Button
             variant="tertiary"
             svg={ZoomOut}

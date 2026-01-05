@@ -292,7 +292,7 @@ const FilteredItems = ({
       {isLoading && (
         <h3 className="text-lg text-center">{heading} are loading...</h3>
       )}
-      <div className="flex gap-2 max-2xl:w-full 2xl:w-2/3 mb-4 px-6">
+      <div className="flex gap-2 max-2xl:w-full 2xl:w-2/3 mb-4">
         <Input
           value={searchValue}
           disabled={isLoading}
@@ -324,7 +324,7 @@ const FilteredItems = ({
           Create a new {label}
         </Button>
       </section>
-      <ul className="scrollbar-variable">
+      <ul className="scrollbar-variable max-2xl:w-full 2xl:w-2/3 overflow-y-auto mx-2 px-2">
         {isSearchLoading && (
           <li className="absolute top-0 left-0 w-full h-full flex items-center justify-center bg-gray-800/35">
             <Spinner />

@@ -94,7 +94,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
     };
 
     const commonClassName = cn(
-      `font-semibold rounded-md flex items-center max-w-full disabled:opacity-65 disabled:pointer-events-none ${gap}`,
+      `font-semibold rounded-md flex items-center max-w-full max-md:min-h-14 cursor-pointer disabled:opacity-65 disabled:pointer-events-none ${gap}`,
       _padding,
       !isSelected && variant && variantClasses[variant],
       wrap ? "whitespace-normal text-left break-words" : "whitespace-nowrap",
@@ -124,7 +124,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
         <Link
           className={commonClassName}
           ref={buttonRef as React.Ref<HTMLAnchorElement>}
-          to={rest.href || "#"}
+          to={rest.to || "#"}
           {...rest}
         >
           {commonContent}

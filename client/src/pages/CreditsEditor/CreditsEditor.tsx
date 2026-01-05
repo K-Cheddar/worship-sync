@@ -379,9 +379,9 @@ const CreditsEditor = () => {
   return (
     <div
       ref={editorRef}
-      className="w-full h-screen bg-gray-700 text-white flex flex-col gap-2 overflow-hidden"
+      className="w-full h-dvh bg-gray-700 text-white flex flex-col gap-2 overflow-hidden"
     >
-      <div>
+      <div className="min-h-0">
         <div className="bg-gray-800 w-full px-4 py-1 flex gap-2 items-center">
           <Button
             variant="tertiary"
@@ -452,7 +452,7 @@ const CreditsEditor = () => {
         </div>
       )}
 
-      <div className="flex gap-2 px-4 pb-4 h-full">
+      <div className="flex gap-2 px-4 pb-4 flex-1 min-h-0">
         <CreditsEditorContainer
           className={isPreviewOpen ? "max-md:hidden" : ""}
         />
@@ -460,11 +460,11 @@ const CreditsEditor = () => {
         <section
           data-testid="credits-preview-container"
           className={cn(
-            "flex-1 text-center",
+            "flex-1 text-center flex flex-col",
             !isPreviewOpen && "max-md:hidden"
           )}
         >
-          <h2 className="text-lg font-semibold">Preview</h2>
+          <h2 className="text-lg font-semibold min-h-0">Preview</h2>
           <Credits isPreview credits={list} />
         </section>
       </div>

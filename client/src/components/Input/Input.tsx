@@ -65,14 +65,7 @@ const Input = ({
   }
 
   return (
-    <div
-      className={cn(
-        "h-fit relative",
-        className,
-        hideSpinButtons &&
-          "[&::-webkit-inner-spin-button]:appearance-none [&::-webkit-inner-spin-button]:m-0 [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-outer-spin-button]:m-0 [&[type=number]]:[appearance:textfield] [&[type=number]]:[-moz-appearance:textfield]"
-      )}
-    >
+    <div className={cn("h-fit relative", className)}>
       <label
         htmlFor={inputId}
         className={cn(
@@ -90,7 +83,9 @@ const Input = ({
             svg ? "pr-6" : "pr-2",
             disabled && "opacity-50",
             inputTextSize,
-            inputWidth
+            inputWidth,
+            hideSpinButtons &&
+              "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]"
           )}
           type={type}
           value={value}

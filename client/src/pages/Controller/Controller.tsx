@@ -1,5 +1,5 @@
 // import { Resizable } from "re-resizable";
-import { ChevronsUpDownIcon, ChevronsDownUpIcon } from "lucide-react";
+import { ArrowRightFromLine, ArrowLeftFromLine } from "lucide-react";
 import EditorButtons from "../../containers/PanelButtons/PanelButtons";
 import Media from "../../containers/Media/Media";
 import ServiceItems from "../../containers/ServiceItems/ServiceItems";
@@ -395,13 +395,13 @@ const Controller = () => {
         <Toolbar className="flex border-b-2 border-gray-500 text-sm min-h-fit" />
         <div
           id="controller-main"
-          className="flex flex-1 relative min-h-0"
+          className="flex flex-1 relative min-h-0 bg-gray-700"
           ref={controllerRef}
         >
           <LyricsEditor />
           <Button
             className={cn("lg:hidden mr-2 h-1/4 z-10", isEditMode && "hidden")}
-            svg={isLeftPanelOpen ? ChevronsDownUpIcon : ChevronsUpDownIcon}
+            svg={isLeftPanelOpen ? ArrowLeftFromLine : ArrowRightFromLine}
             onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
           />
           <div
@@ -412,7 +412,7 @@ const Controller = () => {
           >
             <Button
               className="lg:hidden text-sm mb-2 justify-center"
-              svg={isLeftPanelOpen ? ChevronsDownUpIcon : ChevronsUpDownIcon}
+              svg={isLeftPanelOpen ? ArrowLeftFromLine : ArrowRightFromLine}
               onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
             >
               Close Panel
@@ -450,7 +450,7 @@ const Controller = () => {
                   "lg:hidden text-sm ml-2 justify-center h-1/4 z-10",
                   isEditMode && "hidden"
                 )}
-                svg={isRightPanelOpen ? ChevronsUpDownIcon : ChevronsDownUpIcon}
+                svg={isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine}
                 onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
               />
               <div
@@ -462,7 +462,7 @@ const Controller = () => {
                 <Button
                   className="lg:hidden text-sm mb-2 justify-center"
                   svg={
-                    isRightPanelOpen ? ChevronsUpDownIcon : ChevronsDownUpIcon
+                    isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine
                   }
                   onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
                 >

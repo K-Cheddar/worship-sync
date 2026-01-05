@@ -3,13 +3,13 @@ import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import DeleteModal from "../../components/Modal/DeleteModal";
 import {
-  LayoutTemplate,
   Trash2,
-  Maximize2,
-  Minimize2,
+  Settings2,
   ZoomIn,
   ZoomOut,
   ImageOff,
+  Image,
+  Images,
 } from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
@@ -331,7 +331,7 @@ const Media = () => {
             !location.pathname.includes("item") && "hidden",
             visibleButtons["setItem"] && "button-appear"
           )}
-          svg={LayoutTemplate}
+          svg={Images}
           onClick={() => {
             if (selectedMedia.background && db) {
               dispatch(
@@ -361,7 +361,7 @@ const Media = () => {
             !location.pathname.includes("item") && "hidden",
             visibleButtons["setSlide"] && "button-appear"
           )}
-          svg={LayoutTemplate}
+          svg={Image}
           onClick={() => {
             if (selectedMedia.background && db) {
               dispatch(
@@ -394,7 +394,7 @@ const Media = () => {
             ) && "hidden",
             visibleButtons["setImageOverlay"] && "button-appear"
           )}
-          svg={LayoutTemplate}
+          svg={Image}
           onClick={() => {
             if (selectedMedia.background && db) {
               dispatch(
@@ -403,7 +403,6 @@ const Media = () => {
                   id: selectedOverlay?.id,
                 })
               );
-              // Update state
               dispatch(
                 updateOverlayInList({
                   imageUrl: selectedMedia.background,
@@ -435,7 +434,7 @@ const Media = () => {
               "hidden",
             visibleButtons["setBackground"] && "button-appear"
           )}
-          svg={LayoutTemplate}
+          svg={Image}
           onClick={() => {
             dispatch(
               setDefaultPreferences({
@@ -469,7 +468,7 @@ const Media = () => {
               "hidden",
             visibleButtons["setQuickLink"] && "button-appear"
           )}
-          svg={LayoutTemplate}
+          svg={Image}
           onClick={() => {
             dispatch(setSelectedQuickLinkImage(selectedMedia));
           }}
@@ -491,8 +490,8 @@ const Media = () => {
           {isMobile ? "" : "Set Quick Link Background"}
         </Button>
         <Button
-          className="lg:ml-2 max-lg:mx-auto"
-          svg={isMediaExpanded ? Minimize2 : Maximize2}
+          className="ml-auto"
+          svg={Settings2}
           onClick={() => {
             dispatch(setIsMediaExpanded(!isMediaExpanded));
             if (isMediaExpanded) {
@@ -500,24 +499,9 @@ const Media = () => {
             }
           }}
         />
-        <CloudinaryUploadWidget
-          uwConfig={{
-            uploadPreset: "bpqu4ma5",
-            cloudName: "portable-media",
-          }}
-          onComplete={(info) => {
-            addNewBackground(info);
-          }}
-        />
-        <Button
-          variant="tertiary"
-          disabled={selectedMedia.id === ""}
-          svg={Trash2}
-          onClick={() => showDeleteConfirmation()}
-        />
       </div>
       {!isMediaLoading && isMediaExpanded && (
-        <div className="flex gap-2 justify-center z-10 py-1 bg-gray-900 mx-2 h-6">
+        <div className="flex gap-2 justify-center items-center z-10 py-1 px-4 bg-gray-900 mx-2">
           <Button
             variant="tertiary"
             svg={ZoomOut}
@@ -527,6 +511,21 @@ const Media = () => {
             variant="tertiary"
             svg={ZoomIn}
             onClick={() => dispatch(decreaseMediaItems())}
+          />
+          <CloudinaryUploadWidget
+            uwConfig={{
+              uploadPreset: "bpqu4ma5",
+              cloudName: "portable-media",
+            }}
+            onComplete={(info) => {
+              addNewBackground(info);
+            }}
+          />
+          <Button
+            variant="tertiary"
+            disabled={selectedMedia.id === ""}
+            svg={Trash2}
+            onClick={() => showDeleteConfirmation()}
           />
         </div>
       )}
@@ -563,7 +562,7 @@ const Media = () => {
       {!isMediaLoading && filteredList.length !== 0 && (
         <ul
           className={cn(
-            "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-2 z-10",
+            "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-2 z-10 rounded-b-md",
             isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : defaultItemsPerRow
           )}
         >

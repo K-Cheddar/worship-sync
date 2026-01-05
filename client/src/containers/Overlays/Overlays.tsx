@@ -60,10 +60,6 @@ const Overlays = () => {
     (state: RootState) => state.undoable.present.itemList
   );
 
-  const { selectedList } = useSelector(
-    (state: RootState) => state.undoable.present.itemLists
-  );
-
   const selectedOverlay = _selectedOverlay || {
     name: "",
     url: "",
@@ -442,8 +438,6 @@ const Overlays = () => {
 
   const justAddedText =
     selectedOverlay.name || selectedOverlay.url ? "Copied!" : "Added!";
-
-  console.log(list, selectedList);
 
   return (
     <ErrorBoundary>

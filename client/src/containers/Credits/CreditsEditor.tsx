@@ -92,7 +92,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
       <div
         data-testid="credits-editor-container"
         className={cn(
-          "flex flex-col p-2 gap-2 max-md:w-full md:w-1/2 h-full",
+          "flex flex-col p-2 gap-2 max-md:w-full md:w-1/2 flex-1 min-h-0",
           className
         )}
       >
@@ -116,7 +116,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         {!isLoading && (
           <>
             <ul
-              className="scrollbar-thin flex flex-col gap-2 w-full overflow-y-auto h-full max-h-[calc(100vh-clamp(12rem,14vw,16rem))] max-md:max-h-[calc(100dvh-13rem)]"
+              className="scrollbar-thin flex flex-col gap-2 w-full overflow-y-auto flex-1 min-h-0"
               id="credits-list"
               ref={setNodeRef}
             >
@@ -140,7 +140,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                 })}
               </SortableContext>
             </ul>
-            <section className="flex-1 flex flex-col gap-2">
+            <section className="flex flex-col gap-2 min-h-0">
               <Button
                 className="text-sm w-full justify-center mt-2"
                 svg={justAdded ? Check : Plus}

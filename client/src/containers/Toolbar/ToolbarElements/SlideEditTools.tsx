@@ -54,7 +54,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   );
   const [isBold, setIsBold] = useState(false);
   const [isItalic, setIsItalic] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { hostId } = useContext(GlobalInfoContext) || {};
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
 
@@ -256,7 +256,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           type="number"
           value={fontSize}
           onChange={(val) => _updateFontSize(val as number)}
-          className="w-8 2xl:w-10"
+          className="w-10 max-md:w-12"
           inputTextSize="text-xs"
           hideLabel
           data-ignore-undo="true"

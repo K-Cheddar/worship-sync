@@ -35,7 +35,7 @@ const Arrangement = ({
           "flex flex-col items-center rounded-md bg-gray-900 border border-transparent hover:border-gray-500 p-1"
         }
       >
-        <div className="flex justify-end w-full px-2 bg-black h-6 rounded-t-sm">
+        <div className="flex justify-end w-full px-2 bg-black rounded-t-sm">
           {isEditMode && (
             <Button svg={X} onClick={() => setIsEditMode(false)} />
           )}

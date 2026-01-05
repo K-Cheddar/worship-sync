@@ -98,6 +98,8 @@ const Credit = ({
     dispatch(updateCredit({ id, heading, text, hidden: !hidden }));
   };
 
+  // return <li className="h-[200px]">Lol Ok</li>;
+
   return (
     <li
       className={cn(
@@ -115,14 +117,14 @@ const Credit = ({
     >
       <Button
         variant="tertiary"
-        className="text-sm ml-auto h-full"
+        className="text-sm ml-auto"
         padding="px-2 py-1"
         svg={Grip}
         {...listeners}
         {...attributes}
         tabIndex={-1}
       />
-      <div className="flex flex-col flex-1 h-full leading-4 text-center px-2 py-1.5 gap-1">
+      <div className="flex flex-col flex-1 min-h-0 leading-4 text-center px-2 py-1.5 gap-1">
         <Input
           label="Heading"
           className="flex flex-col gap-1"
@@ -153,7 +155,7 @@ const Credit = ({
       </div>
       <Button
         variant="tertiary"
-        className="text-sm ml-auto h-full"
+        className="text-sm"
         padding="px-2 py-1"
         svg={hidden ? EyeOff : Eye}
         tabIndex={-1}
@@ -161,7 +163,7 @@ const Credit = ({
       />
       <Button
         variant="tertiary"
-        className="text-sm ml-auto h-full"
+        className="text-sm"
         padding="px-2 py-1"
         svg={Trash2}
         tabIndex={-1}

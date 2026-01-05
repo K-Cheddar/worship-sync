@@ -96,7 +96,7 @@ const Modal = ({
       aria-labelledby={title && "modal-title"}
       tabIndex={-1}
     >
-      <div className="absolute inset-0 bg-black bg-opacity-50 transition-opacity" />
+      <div className="absolute inset-0 bg-black/50 transition-opacity" />
 
       <div
         ref={modalRef}

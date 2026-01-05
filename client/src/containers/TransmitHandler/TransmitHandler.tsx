@@ -120,6 +120,7 @@ const TransmitHandler = () => {
               label="Sending to all"
               value={isTransmitting}
               onChange={handleSetTransmitting}
+              color="#22c55e"
             />
           </div>
           <div className="scrollbar-variable overflow-y-auto h-full">

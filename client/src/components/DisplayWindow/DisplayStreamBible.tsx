@@ -23,8 +23,8 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
   ) => {
     const bibleRef = useRef<HTMLDivElement | null>(null);
     const prevBibleRef = useRef<HTMLDivElement | null>(null);
-    const bibleTimeline = useRef<GSAPTimeline | null>();
-    const prevBibleTimeline = useRef<GSAPTimeline | null>();
+    const bibleTimeline = useRef<GSAPTimeline | null>(null);
+    const prevBibleTimeline = useRef<GSAPTimeline | null>(null);
 
     useGSAP(
       () => {
@@ -122,12 +122,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
       <>
         <div
           ref={bibleRef}
-          className="bible-info-container w-fit absolute flex flex-col"
-          style={{
-            width: "70%",
-            margin: "0 15%",
-            bottom: "10%",
-          }}
+          className="w-[70%] absolute flex flex-col mx-[15%] bottom-[5%]"
         >
           {bibleDisplayInfo?.title?.trim() && (
             <p
@@ -160,12 +155,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
 
         <div
           ref={prevBibleRef}
-          className="prev-bible-info-container w-fit absolute flex flex-col"
-          style={{
-            width: "70%",
-            margin: "0 15%",
-            bottom: "10%",
-          }}
+          className="w-[70%] absolute flex flex-col mx-[15%] bottom-[5%]"
         >
           {prevBibleDisplayInfo?.title?.trim() && (
             <p

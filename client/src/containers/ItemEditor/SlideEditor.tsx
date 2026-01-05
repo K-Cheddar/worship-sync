@@ -350,7 +350,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   return (
     <ErrorBoundary>
       <div>
-        <section className="flex justify-end w-full pr-2 bg-gray-900 h-8 mb-1 gap-1 overflow-hidden">
+        <section className="flex justify-end w-full pr-2 bg-gray-900 mb-1 gap-1 overflow-hidden">
           <span
             className={cn(
               "flex mr-auto px-2 items-center gap-2 border-l-4 flex-1 max-w-[calc(100%-6rem)] max-lg:max-w-[calc(100%-4rem)]",

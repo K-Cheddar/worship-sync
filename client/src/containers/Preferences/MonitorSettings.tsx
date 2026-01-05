@@ -108,7 +108,6 @@ const MonitorSettings = () => {
                       type="number"
                       value={value}
                       onChange={(val) => dispatch(setValue(val as number))}
-                      className="w-8 2xl:w-12"
                       inputTextSize="text-xs"
                       hideLabel
                       data-ignore-undo="true"

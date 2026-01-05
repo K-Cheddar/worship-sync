@@ -80,7 +80,6 @@ const ItemSlide = ({
       style={(() => {
         const borderStyle = {
           "--border-width": sizeMap?.get(size)?.borderWidth,
-          width: `calc(25% - clamp(0.25rem, 0.5vw, 0.5rem))`,
           borderWidth: "var(--border-width)",
         } as React.CSSProperties;
         if (!isFree) {

@@ -1,5 +1,11 @@
 import { useLocation } from "react-router-dom";
-import { Settings, SquarePen, Timer, List, Monitor } from "lucide-react";
+import {
+  Settings,
+  SquarePen,
+  Timer,
+  Monitor,
+  RectangleEllipsis,
+} from "lucide-react";
 import Menu from "./ToolbarElements/Menu";
 import Outlines from "./ToolbarElements/Outlines";
 import SlideEditTools from "./ToolbarElements/SlideEditTools";
@@ -71,7 +77,7 @@ const Toolbar = ({ className }: { className: string }) => {
             isEditMode && "invisible"
           )}
         >
-          <div className="flex gap-1 overflow-x-auto w-full">
+          <div className="flex gap-1 overflow-x-auto w-full scrollbar-variable">
             <ToolbarButton
               svg={Settings}
               onClick={() => setSection("settings")}
@@ -149,7 +155,7 @@ const Toolbar = ({ className }: { className: string }) => {
                   "outline-2 outline-white"
               )}
               variant="tertiary"
-              svg={List}
+              svg={RectangleEllipsis}
               component="link"
               to="/controller/quick-links"
             >

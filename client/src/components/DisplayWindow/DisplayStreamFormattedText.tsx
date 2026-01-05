@@ -36,8 +36,8 @@ const DisplayStreamFormattedText = ({
 }: DisplayStreamFormattedTextProps) => {
   const formattedTextRef = useRef<HTMLDivElement | null>(null);
   const prevFormattedTextRef = useRef<HTMLDivElement | null>(null);
-  const formattedTextTimeline = useRef<GSAPTimeline | null>();
-  const prevFormattedTextTimeline = useRef<GSAPTimeline | null>();
+  const formattedTextTimeline = useRef<GSAPTimeline | null>(null);
+  const prevFormattedTextTimeline = useRef<GSAPTimeline | null>(null);
 
   useGSAP(
     () => {
@@ -95,7 +95,7 @@ const DisplayStreamFormattedText = ({
     <>
       <div
         ref={formattedTextRef}
-        className="formatted-text-container"
+        className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%]"
         style={generateFormattedTextStyles(width, formattedTextDisplayInfo)}
       >
         {formattedTextDisplayInfo?.text && (
@@ -107,7 +107,7 @@ const DisplayStreamFormattedText = ({
 
       <div
         ref={prevFormattedTextRef}
-        className="prev-formatted-text-container"
+        className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%]"
         style={generateFormattedTextStyles(width, prevFormattedTextDisplayInfo)}
       >
         {prevFormattedTextDisplayInfo?.text && (

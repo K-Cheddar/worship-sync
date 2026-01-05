@@ -1,5 +1,5 @@
 import Button from "../../../components/Button/Button";
-import { Trash2, SquarePen, CheckCircle2, Copy } from "lucide-react";
+import { Trash2, SquarePen, ListCheck, Copy, Check } from "lucide-react";
 import { ItemList } from "../../../types";
 import Input from "../../../components/Input/Input";
 import DeleteModal from "../../../components/Modal/DeleteModal";
@@ -95,7 +95,7 @@ const Service = ({
         {canEdit && (
           <>
             <Button
-              svg={isEditing ? CheckCircle2 : SquarePen}
+              svg={isEditing ? Check : SquarePen}
               variant="tertiary"
               onClick={() => {
                 if (isEditing) {
@@ -119,11 +119,11 @@ const Service = ({
               />
             )}
             <Button
-              svg={CheckCircle2}
+              svg={ListCheck}
               variant="tertiary"
               onClick={() => setActiveList(list._id)}
               title="Set Active"
-              color={isActive ? "#06b6d4" : ""}
+              color={isActive ? "#06b6d4" : undefined}
             />
             <Button
               variant="tertiary"

@@ -1,7 +1,6 @@
-import { CircleCheck } from "lucide-react";
-import Icon from "../Icon/Icon";
-import { useContext, useId } from "react";
-import { ControllerInfoContext } from "../../context/controllerInfo";
+import { useId } from "react";
+import { Switch } from "../ui/Switch";
+import { cn } from "../../utils/cnHelper";
 
 type ToggleProps = {
   label: string;
@@ -9,6 +8,7 @@ type ToggleProps = {
   onChange: (value: boolean) => void;
   className?: string;
   id?: string;
+  color?: string;
 };
 
 const Toggle = ({
@@ -17,38 +17,25 @@ const Toggle = ({
   onChange,
   className,
   id: idProp,
+  color,
 }: ToggleProps) => {
-  const { isMobile } = useContext(ControllerInfoContext) || {};
   const generatedId = useId();
   const id = idProp || generatedId;
   return (
     <div
-      className={`flex gap-1 relative items-center h-4 ${
-        className ? className : ""
-      }`}
+      className={cn(
+        "flex gap-1 relative items-center h-4 cursor-pointer",
+        className
+      )}
     >
-      <label className="text-sm font-semibold" htmlFor={id}>
+      <label className="text-sm font-semibold cursor-pointer" htmlFor={id}>
         {label}:
       </label>
-      <div
-        className={`${
-          value ? "bg-green-500" : "bg-gray-500"
-        } w-8 h-4 md:w-10 md:h-5 border rounded-2xl border-gray-300 flex items-center relative focus-visible:outline focus-visible:outline-gray-200 hover:border-gray-100`}
-      >
-        <Icon
-          svg={CircleCheck}
-          className={
-            "transition-all absolute pointer-events-none right-[15px] md:right-[19px] rtl:left-[15px] rtl:md:left-[19px] rtl:right-auto rtl:md:right-auto"
-          }
-          size={isMobile ? "lg" : "md"}
-        />
-      </div>
-      <input
-        className="w-full h-full absolute opacity-0 cursor-pointer left-0 top-0"
-        type="checkbox"
+      <Switch
         checked={value}
-        onChange={(e) => onChange(e.target.checked)}
+        onCheckedChange={onChange}
         id={id}
+        color={color}
       />
     </div>
   );

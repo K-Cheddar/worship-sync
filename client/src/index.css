@@ -1,6 +1,5 @@
-@import "tailwindcss/preflight";
-@reference "tailwindcss/utilities";
-@tailwind utilities;
+@import "tailwindcss";
+@import "./styles/globals.css";
 
 @layer utilities {
   .scrollbar-variable {
@@ -11,6 +10,14 @@
   }
   .button-appear {
     animation: border-glow 1.5s 4;
+  }
+}
+
+@layer base {
+  input,
+  textarea,
+  select {
+    background-color: #ffffff;
   }
 }
 

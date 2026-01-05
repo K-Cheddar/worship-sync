@@ -50,16 +50,16 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         style={style}
         className={cn(
           "flex min-h-8",
-          actions && !isSelected && "hover:bg-gray-500 active:bg-gray-400",
+          !isSelected && "hover:bg-gray-500 active:bg-gray-400",
           isSelected && "bg-gray-900",
           className
         )}
         {...rest}
       >
         <Button
-          variant={actions ? "none" : "tertiary"}
+          variant="none"
           className={cn(
-            "relative w-full text-sm border-l-4",
+            "relative w-full text-sm border-l-3 rounded-tl-none rounded-bl-none",
             borderColorMap.get(type)
           )}
           iconSize="md"
@@ -70,7 +70,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           isSelected={isSelected}
           padding="py-1 px-2"
           component="link"
-          to={to}
+          to={`/controller/${to}`}
         >
           {image && !isActive && (
             <img src={image} className="w-14 max-w-[30%]" alt={title} />
