@@ -353,7 +353,7 @@ export const createNewFreeForm = async ({
       createNewSlide({
         type: "Section",
         name: "Section 1",
-        fontSize: 4.5,
+        fontSize: 2.5,
         words: ["", text || name],
         background,
         mediaInfo,

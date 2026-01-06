@@ -24,11 +24,7 @@ import { ItemState, ItemType, ServiceItem } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
-import {
-  AccessType,
-  globalHostId,
-  GlobalInfoContext,
-} from "../../context/globalInfo";
+import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
