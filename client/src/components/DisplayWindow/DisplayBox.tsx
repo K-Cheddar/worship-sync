@@ -37,7 +37,7 @@ const DisplayBox = ({
   isWindowVideoLoaded,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
-  const boxTimeline = useRef<GSAPTimeline>();
+  const boxTimeline = useRef<GSAPTimeline | null>(null);
   const isVideoBg = box.mediaInfo?.type === "video";
   const videoUrl = box.mediaInfo?.background;
   const shouldImageBeHidden = useMemo(

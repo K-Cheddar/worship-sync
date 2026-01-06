@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box } from "../../types";
-import { useSelector } from "../../hooks";
 import DisplayBox from "./DisplayBox";
 import { createMonitorDisplayBox } from "./utils";
 
@@ -8,12 +7,15 @@ type DisplayClockProps = {
   width: number;
   fontAdjustment: number;
   time?: number;
+  fontSize: number;
 };
 
-const DisplayClock = ({ width, fontAdjustment, time }: DisplayClockProps) => {
-  const {
-    monitorSettings: { clockFontSize: fontSize },
-  } = useSelector((state) => state.undoable.present.preferences);
+const DisplayClock = ({
+  width,
+  fontAdjustment,
+  time,
+  fontSize,
+}: DisplayClockProps) => {
   const [currentTime, setCurrentTime] = useState(new Date());
 
   // Update time every second
