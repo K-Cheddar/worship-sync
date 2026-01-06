@@ -219,6 +219,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           if (isDisplay)
             return (
               <div
+                key={box.id}
                 style={
                   hasReducedSpace
                     ? {
@@ -232,7 +233,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 }
               >
                 <DisplayBox
-                  key={box.id}
                   box={box}
                   width={width}
                   showBackground={showBackground}
@@ -253,6 +253,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           if (isDisplay)
             return (
               <div
+                key={box.id}
                 style={
                   hasReducedSpace
                     ? {
@@ -266,7 +267,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 }
               >
                 <DisplayBox
-                  key={box.id}
                   box={box}
                   width={width}
                   showBackground={showBackground}

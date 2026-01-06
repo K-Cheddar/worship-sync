@@ -24,7 +24,7 @@ const DisplayStreamText = ({
   timerInfo,
 }: DisplayStreamTextProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
-  const boxTimeline = useRef<GSAPTimeline>();
+  const boxTimeline = useRef<GSAPTimeline>(null);
 
   useGSAP(
     () => {
