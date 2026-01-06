@@ -61,8 +61,6 @@ const TimerControls = ({ className }: { className?: string }) => {
       showMinutesOnly: updates.showMinutesOnly ?? showMinutesOnly,
     };
 
-    console.log(updatedTimerInfo);
-
     dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
   };
 

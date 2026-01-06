@@ -52,6 +52,7 @@ import generateRandomId from "../../utils/generateRandomId";
 import { useLocation } from "react-router-dom";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { cn } from "../../utils/cnHelper";
+import { updateTimer } from "../../store/timersSlice";
 
 export type SizeMap = Map<
   number,
@@ -334,9 +335,15 @@ const ItemSlides = () => {
       slides.length > 1 &&
       selectedSlide === 0
     ) {
+      dispatch(
+        updateTimer({
+          id: timerInfo.id,
+          timerInfo: { ...timerInfo, status: "stopped" },
+        })
+      );
       selectSlide(1);
     }
-  }, [type, timerInfo, slides.length, selectedSlide, selectSlide]);
+  }, [type, timerInfo, slides.length, selectedSlide, selectSlide, dispatch]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
