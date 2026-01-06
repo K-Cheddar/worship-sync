@@ -155,6 +155,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         style={{
           width: `${width}vw`,
           height: `${width / aspectRatio}vw`,
+          fontFamily: "Verdana",
         }}
       >
         {isDisplay && showBackground && shouldPlayVideo && activeVideoUrl && (
