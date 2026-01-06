@@ -12,8 +12,6 @@ const TimerManager = () => {
   const { timers } = useSelector((state: RootState) => state.timers);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  console.log(timers, "timers");
-
   useSyncRemoteTimers(firebaseDb, user, hostId);
 
   useEffect(() => {

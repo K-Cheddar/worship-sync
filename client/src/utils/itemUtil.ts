@@ -12,6 +12,7 @@ import {
   TimerType,
   TimerStatus,
   BibleFontMode,
+  OverflowMode,
   ItemListDetails,
   DBOverlay,
 } from "../types";
@@ -324,6 +325,7 @@ type CreateNewFreeFormType = {
   brightness: number;
   isMobile: boolean;
   mediaInfo?: MediaType;
+  overflow?: OverflowMode;
 };
 
 export const createNewFreeForm = async ({
@@ -335,6 +337,7 @@ export const createNewFreeForm = async ({
   mediaInfo,
   brightness,
   isMobile,
+  overflow = "fit",
 }: CreateNewFreeFormType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
   const newItem: ItemState = {
@@ -355,7 +358,7 @@ export const createNewFreeForm = async ({
         background,
         mediaInfo,
         brightness,
-        overflow: "fit",
+        overflow,
       }),
     ],
     arrangements: [],

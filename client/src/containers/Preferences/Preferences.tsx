@@ -53,6 +53,7 @@ const Preferences = () => {
       defaultShouldShowItemEditor,
       defaultIsMediaExpanded,
       defaultBibleFontMode,
+      defaultFreeFormFontMode,
     },
     selectedPreference,
     scrollbarWidth,
@@ -155,10 +156,16 @@ const Preferences = () => {
 
   const itemPreferences = [
     {
-      label: "Bible Font Mode",
+      label: "Bible Overflow Mode",
       value: defaultBibleFontMode,
       property: "defaultBibleFontMode",
       options: ["fit", "separate", "multiple"],
+    },
+    {
+      label: "Free Form Overflow Mode",
+      value: defaultFreeFormFontMode,
+      property: "defaultFreeFormFontMode",
+      options: ["fit", "separate"],
     },
   ];
 

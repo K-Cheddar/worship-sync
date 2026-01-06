@@ -416,6 +416,7 @@ export type PreferencesType = {
   defaultShouldShowItemEditor: boolean;
   defaultIsMediaExpanded: boolean;
   defaultBibleFontMode: BibleFontMode;
+  defaultFreeFormFontMode: OverflowMode;
 };
 
 export type MonitorSettingsType = {

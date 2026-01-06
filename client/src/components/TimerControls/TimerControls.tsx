@@ -79,7 +79,6 @@ const TimerControls = ({ className }: { className?: string }) => {
 
   const handleDurationChange = (newDuration: number) => {
     setDuration(newDuration);
-    console.log(newDuration);
     updateTimerState({ duration: newDuration, status: "stopped" });
   };
 

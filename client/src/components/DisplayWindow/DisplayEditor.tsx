@@ -269,7 +269,7 @@ const DisplayEditor = ({
       size={{ width: boxWidth, height: boxHeight }}
       className={cn(
         (!isBoxLocked || isSelected) &&
-          "outline outline-1 outline-gray-300 -outline-offset-2",
+          "outline-1 outline-gray-300 -outline-offset-2",
         isSelected && !box.background && "z-10"
       )}
       position={{ x, y }}
@@ -385,7 +385,8 @@ const DisplayEditor = ({
               onBlur={() => setIsTextAreaFocused(false)}
               svg={showOverflow ? ChevronsUp : ChevronsDown}
               onClick={() => setShowOverflow(!showOverflow)}
-              className={"absolute bottom-0 left-1/2"}
+              className={"absolute bottom-0 left-1/2 border-b-cyan-400"}
+              color="#67e8f9"
             />
           )}
         </>

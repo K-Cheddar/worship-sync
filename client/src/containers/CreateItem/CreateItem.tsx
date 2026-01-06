@@ -82,6 +82,7 @@ const CreateItem = () => {
       defaultSongBackgroundBrightness,
       defaultTimerBackgroundBrightness,
       defaultFreeFormBackgroundBrightness,
+      defaultFreeFormFontMode,
     },
   } = useSelector((state: RootState) => state.undoable.present.preferences);
   const { hostId, access } = useContext(GlobalInfoContext) || {};
@@ -173,6 +174,7 @@ const CreateItem = () => {
         brightness: defaultFreeFormBackgroundBrightness,
         text,
         isMobile,
+        overflow: defaultFreeFormFontMode,
       });
 
       dispatchNewItem(newItem);
@@ -190,8 +192,6 @@ const CreateItem = () => {
     }
 
     if (selectedType === "timer") {
-      console.log(hostId, "hostId");
-      console.log(globalHostId, "globalHostId");
       const duration = hours * 3600 + minutes * 60 + seconds;
       const newItem = await createNewTimer({
         name: itemName,
