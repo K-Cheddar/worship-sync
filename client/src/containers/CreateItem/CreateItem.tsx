@@ -24,7 +24,11 @@ import { ItemState, ItemType, ServiceItem } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
-import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
+import {
+  AccessType,
+  globalHostId,
+  GlobalInfoContext,
+} from "../../context/globalInfo";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
@@ -186,6 +190,8 @@ const CreateItem = () => {
     }
 
     if (selectedType === "timer") {
+      console.log(hostId, "hostId");
+      console.log(globalHostId, "globalHostId");
       const duration = hours * 3600 + minutes * 60 + seconds;
       const newItem = await createNewTimer({
         name: itemName,
@@ -221,7 +227,7 @@ const CreateItem = () => {
 
   return (
     <ErrorBoundary>
-      <h2 className="text-2xl text-center font-semibold ">Create Item</h2>
+      <h2 className="text-2xl text-center font-semibold">Create Item</h2>
       <div className="my-2 mx-4 rounded-md p-4 bg-gray-800 w-1/2 max-lg:w-[95%]">
         <ul className="flex flex-col gap-2">
           <h3 className="text-lg font-semibold text-center">

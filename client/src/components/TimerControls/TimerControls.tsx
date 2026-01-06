@@ -61,6 +61,8 @@ const TimerControls = ({ className }: { className?: string }) => {
       showMinutesOnly: updates.showMinutesOnly ?? showMinutesOnly,
     };
 
+    console.log(updatedTimerInfo);
+
     dispatch(updateTimer({ id: _id, timerInfo: updatedTimerInfo }));
   };
 
@@ -79,6 +81,7 @@ const TimerControls = ({ className }: { className?: string }) => {
 
   const handleDurationChange = (newDuration: number) => {
     setDuration(newDuration);
+    console.log(newDuration);
     updateTimerState({ duration: newDuration, status: "stopped" });
   };
 
