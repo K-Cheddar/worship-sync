@@ -40,7 +40,7 @@ const RadioButton = ({
       <label className={cn("font-semibold", labelClassName)} htmlFor={id}>
         {label}:
       </label>
-      <div className="h-4 w-4 flex items-center">
+      <div className="h-4 w-4 flex items-center gap-1">
         <input
           type="radio"
           checked={value}

@@ -94,14 +94,14 @@ const ControllerInfoProvider = ({ children }: any) => {
   }, [database]);
 
   const updater = useRef(new EventTarget());
-  const syncRef = useRef<any>();
+  const syncRef = useRef<any>(null);
   const syncRetryRef = useRef(0);
   const replicateRetryRef = useRef(0);
-  const replicateRef = useRef<any>();
-  const bibleSyncRef = useRef<any>();
+  const replicateRef = useRef<any>(null);
+  const bibleSyncRef = useRef<any>(null);
   const bibleSyncRetryRef = useRef(0);
   const bibleReplicateRetryRef = useRef(0);
-  const bibleReplicateRef = useRef<any>();
+  const bibleReplicateRef = useRef<any>(null);
 
   const getCouchSession = useCallback(async () => {
     const response = await fetch(

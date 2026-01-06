@@ -27,8 +27,8 @@ const DisplayQRCodeOverlay = forwardRef<
   ) => {
     const qrCodeOverlayRef = useRef<HTMLDivElement | null>(null);
     const prevQrCodeOverlayRef = useRef<HTMLDivElement | null>(null);
-    const overlayTimeline = useRef<GSAPTimeline | null>();
-    const prevOverlayTimeline = useRef<GSAPTimeline | null>();
+    const overlayTimeline = useRef<GSAPTimeline | null>(null);
+    const prevOverlayTimeline = useRef<GSAPTimeline | null>(null);
     const opacity = useRef(0);
 
     useGSAP(

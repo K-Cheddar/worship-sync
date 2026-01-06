@@ -95,7 +95,7 @@ const initialState: PreferencesState = {
     showClock: true,
     showTimer: true,
     clockFontSize: 15,
-    timerFontSize: 4,
+    timerFontSize: 15,
     timerId: null,
   },
   slidesPerRow: 4,

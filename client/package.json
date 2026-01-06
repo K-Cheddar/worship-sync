@@ -65,8 +65,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "CI=false vite build && npm run sentry:sourcemaps",
-    "build:lint": "npm run lint && CI=false react-scripts build",
+    "build": "vite build && npm run sentry:sourcemaps",
+    "build:lint": "npm run lint && vite build",
     "build:strict": "npm run lint:check && vite build",
     "test": "vite test",
     "eject": "vite eject",
