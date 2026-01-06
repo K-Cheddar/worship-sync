@@ -95,24 +95,24 @@ const DisplayStreamFormattedText = ({
     <>
       <div
         ref={formattedTextRef}
-        className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%]"
+        className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%] whitespace-pre-line"
         style={generateFormattedTextStyles(width, formattedTextDisplayInfo)}
       >
         {formattedTextDisplayInfo?.text && (
           <p className="formatted-text-text">
-            {renderContent(formattedTextDisplayInfo.text)}
+            {renderContent(formattedTextDisplayInfo.text.trim())}
           </p>
         )}
       </div>
 
       <div
         ref={prevFormattedTextRef}
-        className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%]"
+        className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%] whitespace-pre-line"
         style={generateFormattedTextStyles(width, prevFormattedTextDisplayInfo)}
       >
         {prevFormattedTextDisplayInfo?.text && (
           <p className="prev-formatted-text-text">
-            {renderContent(prevFormattedTextDisplayInfo.text)}
+            {renderContent(prevFormattedTextDisplayInfo.text.trim())}
           </p>
         )}
       </div>
