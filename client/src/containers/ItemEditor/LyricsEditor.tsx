@@ -255,7 +255,7 @@ const LyricsEditor = () => {
 
   return (
     <ErrorBoundary>
-      <div className="absolute left-0 bg-gray-700 lg:z-10 lg:border-r-2 border-gray-500 flex flex-col gap-2 h-full w-[70%] max-lg:w-full max-lg:z-[2]">
+      <div className="absolute left-0 bg-gray-700 z-15 lg:border-r-2 border-gray-500 flex flex-col gap-2 h-full w-full max-lg:z-2 max-lg:pb-6 pb-2">
         <div className="flex bg-gray-900 px-2 h-fit items-center">
           <Button
             variant="tertiary"

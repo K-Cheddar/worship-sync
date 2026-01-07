@@ -86,16 +86,20 @@ const LyricBoxes = ({
         <li key={id} className="text-sm px-2">
           <div
             className={cn(
-              "flex font-semibold text-sm rounded-t-md",
-              itemSectionBgColorMap.get(type),
-              "[&_select]:bg-gray-900/45 [&_select_option]:bg-gray-900 [&_select_option]:w-full [&_select_option]:text-base"
+              "flex font-semibold text-sm rounded-t-md px-1 py-0.5",
+              itemSectionBgColorMap.get(type)
             )}
           >
             <Select
               onChange={(val) => changeSectionType(val, index)}
               value={name}
               options={availableSections}
+              backgroundColor="bg-black/40"
               textColor="text-white"
+              chevronColor="text-white"
+              contentBackgroundColor="bg-gray-800"
+              contentTextColor="text-white"
+              className="min-w-[50%] max-w-full"
             />
             <Button
               className="ml-auto"
@@ -131,10 +135,13 @@ const LyricBoxes = ({
           options={sectionTypes.map((type) => ({ value: type, label: type }))}
           className={cn(
             "flex font-semibold text-sm rounded-t-md",
-            itemSectionBgColorMap.get(newSectionType),
-            "[&_select]:bg-gray-900/45 [&_select_option]:bg-gray-900 [&_select_option]:w-full [&_select_option]:text-base"
+            itemSectionBgColorMap.get(newSectionType)
           )}
+          backgroundColor="bg-black/40"
           textColor="text-white"
+          chevronColor="text-white"
+          contentBackgroundColor="bg-gray-800"
+          contentTextColor="text-white"
         />
         <Button
           key="lyrics-box-add-section"

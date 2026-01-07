@@ -91,7 +91,7 @@ const SongSections = ({
           Select Section:
         </h4>
         <Select
-          className="[&_select]:w-full [&_select]:text-sm [&_select_option]:text-base [&_select_option]:bg-gray-800 [&_select_option]:text-white"
+          className="w-full text-sm"
           options={currentSections}
           value={section}
           onChange={(value) => setSection(value)}
