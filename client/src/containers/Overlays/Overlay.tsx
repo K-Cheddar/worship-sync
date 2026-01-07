@@ -1,9 +1,8 @@
 import Button from "../../components/Button/Button";
-import { ReactComponent as OverlaysSVG } from "../../assets/icons/overlays.svg";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
+import { Airplay } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useDispatch } from "../../hooks";
 import { addToInitialList } from "../../store/overlaysSlice";
-import "./Overlays.scss";
 import gsap from "gsap";
 import {
   updateImageOverlayInfo,
@@ -17,6 +16,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import { useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
+import { cn } from "../../utils/cnHelper";
 
 type OverlayProps = {
   overlay: OverlayInfo;
@@ -158,6 +158,8 @@ const Overlay = ({
     }, 500);
   };
 
+  const overlayBaseClass = "flex items-center h-full text-wrap text-center";
+
   return (
     <li
       className={`flex items-center rounded-lg w-full overflow-clip leading-3 ${
@@ -183,17 +185,17 @@ const Overlay = ({
         {overlay.type === "participant" && (
           <>
             {overlay.name && (
-              <span className="text-base flex items-center h-full">
+              <span className={cn(overlayBaseClass, "text-base")}>
                 {overlay.name}
               </span>
             )}
             {overlay.title && (
-              <span className="flex text-sm items-center h-full italic">
+              <span className={cn(overlayBaseClass, "text-sm italic")}>
                 {overlay.title}
               </span>
             )}
             {overlay.event && (
-              <span className="flex text-sm items-center h-full">
+              <span className={cn(overlayBaseClass, "text-sm")}>
                 {overlay.event}
               </span>
             )}
@@ -202,12 +204,12 @@ const Overlay = ({
         {overlay.type === "stick-to-bottom" && (
           <>
             {overlay.heading && (
-              <span className="flex text-sm items-center h-full">
+              <span className={cn(overlayBaseClass, "text-sm")}>
                 {overlay.heading}
               </span>
             )}
             {overlay.subHeading && (
-              <span className="flex text-sm items-center h-full">
+              <span className={cn(overlayBaseClass, "text-sm")}>
                 {overlay.subHeading}
               </span>
             )}
@@ -217,7 +219,7 @@ const Overlay = ({
         {overlay.type === "qr-code" && (
           <>
             {overlay.description && (
-              <span className="flex text-sm items-center h-full">
+              <span className={cn(overlayBaseClass, "text-sm")}>
                 {overlay.description.split("\n")[0]}
               </span>
             )}
@@ -227,7 +229,7 @@ const Overlay = ({
         {overlay.type === "image" && (
           <>
             {overlay.name && (
-              <span className="flex text-sm items-center h-full">
+              <span className={cn(overlayBaseClass, "text-sm")}>
                 {overlay.name}
               </span>
             )}
@@ -235,7 +237,7 @@ const Overlay = ({
         )}
 
         {!hasData && (
-          <span className="text-sm leading-7">
+          <span className={cn(overlayBaseClass, "text-sm")}>
             Click to add overlay details
           </span>
         )}
@@ -244,7 +246,7 @@ const Overlay = ({
         variant="tertiary"
         className="text-sm ml-auto h-full"
         padding="px-2 py-1"
-        svg={DeleteSVG}
+        svg={Trash2}
         onClick={deleteOverlayHandler}
       />
       {hasData && (
@@ -254,7 +256,7 @@ const Overlay = ({
           className="text-sm ml-auto h-full"
           padding="px-4 py-1"
           disabled={!isStreamTransmitting}
-          svg={OverlaysSVG}
+          svg={Airplay}
           onClick={() => {
             dispatch(
               updateStream({

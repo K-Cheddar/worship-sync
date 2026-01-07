@@ -3,7 +3,7 @@ import { useDispatch, useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
 import { updateService } from "../../store/serviceTimesSlice";
 import { getEffectiveTargetTime } from "../../utils/serviceTimes";
-import { ReactComponent as TimerSVG } from "../../assets/icons/timer.svg";
+import { Timer } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 
@@ -121,7 +121,7 @@ const TimeAdjuster = ({ serviceId }: Props) => {
           onClick={setExactTime}
           variant="tertiary"
           disabled={minutes === 0 && seconds === 0}
-          svg={TimerSVG}
+          svg={Timer}
           color="#22d3ee"
         >
           Set remaining time

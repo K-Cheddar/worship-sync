@@ -1,8 +1,7 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import Button from "../Button/Button";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
-import "./Modal.scss";
+import { X } from "lucide-react";
 import cn from "classnames";
 
 interface ModalProps {
@@ -97,7 +96,7 @@ const Modal = ({
       aria-labelledby={title && "modal-title"}
       tabIndex={-1}
     >
-      <div className="absolute inset-0 bg-black bg-opacity-50 transition-opacity" />
+      <div className="absolute inset-0 bg-black/50 transition-opacity" />
 
       <div
         ref={modalRef}
@@ -114,7 +113,7 @@ const Modal = ({
             {showCloseButton && (
               <Button
                 variant="tertiary"
-                svg={CloseSVG}
+                svg={X}
                 onClick={onClose}
                 iconSize="lg"
                 className="ml-auto"
@@ -124,7 +123,14 @@ const Modal = ({
           </div>
         )}
 
-        <div className={cn("modal-content", contentPadding)}>{children}</div>
+        <div
+          className={cn(
+            "overflow-y-auto max-h-[calc(90vh-120px)] scrollbar-variable",
+            contentPadding
+          )}
+        >
+          {children}
+        </div>
       </div>
     </div>
   );

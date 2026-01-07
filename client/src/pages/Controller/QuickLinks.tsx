@@ -1,7 +1,6 @@
 import QuickLinks from "../../containers/Preferences/QuickLinks";
 import { useSelector } from "../../hooks";
 import Spinner from "../../components/Spinner/Spinner";
-import "./Controller.scss";
 
 const QuickLinksPage = () => {
   const { isLoading } = useSelector(
@@ -17,7 +16,7 @@ const QuickLinksPage = () => {
     );
 
   return (
-    <div className="preferences-container">
+    <div className="scrollbar-variable px-4 py-2 overflow-y-auto">
       <h2 className="text-2xl font-semibold text-center mb-4">Quick Links</h2>
       <QuickLinks />
     </div>

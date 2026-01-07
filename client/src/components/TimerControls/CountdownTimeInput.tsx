@@ -1,5 +1,5 @@
 import React from "react";
-import Input from "../Input/Input";
+import TimePicker from "../TimePicker/TimePicker";
 
 interface CountdownTimeInputProps {
   countdownTime: string;
@@ -13,16 +13,11 @@ const CountdownTimeInput: React.FC<CountdownTimeInputProps> = ({
   className = "",
 }) => {
   return (
-    <div className={`flex gap-2 ${className}`}>
-      <Input
-        type="time"
-        label="Countdown To"
-        className="flex gap-1 items-center"
-        labelClassName="w-48"
-        value={countdownTime}
-        onChange={(val) => onTimeChange(val as string)}
-      />
-    </div>
+    <TimePicker
+      label="Countdown To"
+      value={countdownTime}
+      onChange={(val) => onTimeChange(val as string)}
+    />
   );
 };
 

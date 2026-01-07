@@ -1,8 +1,9 @@
 import Button from "../../components/Button/Button";
-import { ReactComponent as SendSVG } from "../../assets/icons/send.svg";
+import { Send } from "lucide-react";
 import { verseType } from "../../types";
 import { useCallback, useEffect, useState } from "react";
 import { keepElementInView } from "../../utils/generalUtils";
+import cn from "classnames";
 
 type BibleVersesListProps = {
   isLoading: boolean;
@@ -106,7 +107,10 @@ const BibleVersesList = ({
       )}
       <ul
         id="bible-verses-list"
-        className={`bible-verses-list ${isLoading ? "opacity-30" : ""}`}
+        className={cn(
+          "scrollbar-variable overflow-y-auto flex flex-col gap-1 py-2 rounded-md w-full",
+          isLoading && "opacity-30"
+        )}
       >
         {verses
           .filter(({ index }) => index >= startVerse && index <= endVerse)
@@ -129,7 +133,7 @@ const BibleVersesList = ({
                   padding="px-1 h-full"
                   variant="tertiary"
                   className="text-sm"
-                  svg={SendSVG}
+                  svg={Send}
                   onClick={() => {
                     setSelectedVerse(verse.index);
                     sendVerse(verse);

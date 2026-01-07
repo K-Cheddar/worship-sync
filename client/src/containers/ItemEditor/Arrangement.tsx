@@ -1,9 +1,9 @@
 import { Arrangment } from "../../types";
-import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
-import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
-import { ReactComponent as CopySVG } from "../../assets/icons/copy.svg";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
+import { Pencil } from "lucide-react";
+import { Check } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import { Copy } from "lucide-react";
+import { X } from "lucide-react";
 import { useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
@@ -31,19 +31,21 @@ const Arrangement = ({
     <>
       <li
         key={arrangement.name}
-        className={"flex flex-col items-center rounded-md bg-gray-900 border border-transparent hover:border-gray-500 p-1"}
+        className={
+          "flex flex-col items-center rounded-md bg-gray-900 border border-transparent hover:border-gray-500 p-1"
+        }
       >
-        <div className="flex justify-end w-full px-2 bg-black h-6 rounded-t-sm">
+        <div className="flex justify-end w-full px-2 bg-black rounded-t-sm">
           {isEditMode && (
-            <Button svg={CloseSVG} onClick={() => setIsEditMode(false)} />
+            <Button svg={X} onClick={() => setIsEditMode(false)} />
           )}
           <Button
-            svg={isEditMode ? CheckSVG : EditSVG}
+            svg={isEditMode ? Check : Pencil}
             onClick={() => {
               if (isEditMode) {
                 const copiedArrangements = [...localArrangements];
                 const index = copiedArrangements.findIndex(
-                  ({ name }) => name === arrangement.name,
+                  ({ name }) => name === arrangement.name
                 );
                 const updatedArrangement = { ...arrangement, name: value };
                 copiedArrangements[index] = updatedArrangement;
@@ -56,7 +58,7 @@ const Arrangement = ({
             variant="tertiary"
           />
           <Button
-            svg={CopySVG}
+            svg={Copy}
             variant="tertiary"
             onClick={() => {
               const copiedArrangements = [...localArrangements];
@@ -72,11 +74,11 @@ const Arrangement = ({
           />
           {index !== 0 && (
             <Button
-              svg={DeleteSVG}
+              svg={Trash2}
               variant="tertiary"
               onClick={() => {
                 const copiedArrangements = [...localArrangements].filter(
-                  (_, i) => i !== index,
+                  (_, i) => i !== index
                 );
                 setLocalArrangements(copiedArrangements);
               }}

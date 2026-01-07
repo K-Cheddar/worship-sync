@@ -10,6 +10,7 @@ type DisplayTimerProps = {
   fontAdjustment: number;
   time?: number;
   currentTimerInfo?: TimerInfo;
+  fontSize: number;
 };
 
 const DisplayTimer = ({
@@ -17,9 +18,10 @@ const DisplayTimer = ({
   fontAdjustment,
   time,
   currentTimerInfo,
+  fontSize,
 }: DisplayTimerProps) => {
   const {
-    monitorSettings: { timerFontSize: fontSize, timerId },
+    monitorSettings: { timerId },
   } = useSelector((state) => state.undoable.present.preferences);
 
   const timer = useSelector((state) =>

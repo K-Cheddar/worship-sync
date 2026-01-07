@@ -1,7 +1,6 @@
 import MonitorSettings from "../../containers/Preferences/MonitorSettings";
 import { useSelector } from "../../hooks";
 import Spinner from "../../components/Spinner/Spinner";
-import "./Controller.scss";
 
 const MonitorSettingsPage = () => {
   const { isLoading } = useSelector(

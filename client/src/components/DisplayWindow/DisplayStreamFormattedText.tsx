@@ -2,7 +2,6 @@ import { useRef } from "react";
 import { FormattedTextDisplayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import "./DisplayWindow.scss";
 import VerseDisplay from "./VerseDisplay";
 
 type DisplayStreamFormattedTextProps = {
@@ -37,8 +36,8 @@ const DisplayStreamFormattedText = ({
 }: DisplayStreamFormattedTextProps) => {
   const formattedTextRef = useRef<HTMLDivElement | null>(null);
   const prevFormattedTextRef = useRef<HTMLDivElement | null>(null);
-  const formattedTextTimeline = useRef<GSAPTimeline | null>();
-  const prevFormattedTextTimeline = useRef<GSAPTimeline | null>();
+  const formattedTextTimeline = useRef<GSAPTimeline | null>(null);
+  const prevFormattedTextTimeline = useRef<GSAPTimeline | null>(null);
 
   useGSAP(
     () => {
@@ -96,24 +95,24 @@ const DisplayStreamFormattedText = ({
     <>
       <div
         ref={formattedTextRef}
-        className="formatted-text-container"
+        className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%] whitespace-pre-line"
         style={generateFormattedTextStyles(width, formattedTextDisplayInfo)}
       >
         {formattedTextDisplayInfo?.text && (
           <p className="formatted-text-text">
-            {renderContent(formattedTextDisplayInfo.text)}
+            {renderContent(formattedTextDisplayInfo.text.trim())}
           </p>
         )}
       </div>
 
       <div
         ref={prevFormattedTextRef}
-        className="prev-formatted-text-container"
+        className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%] whitespace-pre-line"
         style={generateFormattedTextStyles(width, prevFormattedTextDisplayInfo)}
       >
         {prevFormattedTextDisplayInfo?.text && (
           <p className="prev-formatted-text-text">
-            {renderContent(prevFormattedTextDisplayInfo.text)}
+            {renderContent(prevFormattedTextDisplayInfo.text.trim())}
           </p>
         )}
       </div>

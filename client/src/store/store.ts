@@ -502,6 +502,7 @@ listenerMiddleware.startListening({
     if (!shouldUpdateTimers) return;
 
     const ownTimers = timers.filter((timer) => timer.hostId === globalHostId);
+
     if (ownTimers.length > 0) {
       localStorage.setItem("timerInfo", JSON.stringify(ownTimers));
 

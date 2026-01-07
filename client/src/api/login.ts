@@ -17,7 +17,7 @@ export const loginUser = async (
 ): Promise<LoginResponse> => {
   try {
     const response = await fetch(
-      `${process.env.REACT_APP_API_BASE_PATH}api/login`,
+      `${import.meta.env.VITE_API_BASE_PATH}api/login`,
       {
         method: "POST",
         headers: {

@@ -4,7 +4,6 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { defaultQrCodeOverlayStyles } from "./defaultOverlayStyles";
 import SharedOverlay from "./SharedOverlay";
-import "./DisplayWindow.scss";
 
 type DisplayQRCodeOverlayProps = {
   width: number;
@@ -28,8 +27,8 @@ const DisplayQRCodeOverlay = forwardRef<
   ) => {
     const qrCodeOverlayRef = useRef<HTMLDivElement | null>(null);
     const prevQrCodeOverlayRef = useRef<HTMLDivElement | null>(null);
-    const overlayTimeline = useRef<GSAPTimeline | null>();
-    const prevOverlayTimeline = useRef<GSAPTimeline | null>();
+    const overlayTimeline = useRef<GSAPTimeline | null>(null);
+    const prevOverlayTimeline = useRef<GSAPTimeline | null>(null);
     const opacity = useRef(0);
 
     useGSAP(

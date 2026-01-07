@@ -3,7 +3,7 @@ import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
 import { DisplayType, LinkType, QuickLinkType, TimerInfo } from "../../types";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
+import { Trash2 } from "lucide-react";
 import cn from "classnames";
 import { useMemo, useState } from "react";
 import QuickLinkButton from "./QuickLinkButton";
@@ -221,7 +221,7 @@ const QuickLink = ({
         <Button
           variant="tertiary"
           iconSize="lg"
-          svg={DeleteSVG}
+          svg={Trash2}
           color="red"
           onClick={removeQuickLink}
         />

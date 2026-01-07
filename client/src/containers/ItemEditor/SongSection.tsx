@@ -1,5 +1,5 @@
 import Button from "../../components/Button/Button";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
+import { Trash2 } from "lucide-react";
 import { itemSectionBorderColorMap } from "../../utils/slideColorMap";
 import { SongOrder } from "../../types";
 import { useSortable } from "@dnd-kit/sortable";
@@ -41,7 +41,7 @@ const SongSection = ({
         id={`song-section-${index}`}
         className={cn(
           "flex items-center px-2 max-lg:py-2 lg:py-1 bg-black rounded-lg hover:bg-gray-800 cursor-pointer border-b-4",
-          itemSectionBorderColorMap.get(name.split(" ")[0]),
+          itemSectionBorderColorMap.get(name.split(" ")[0])
         )}
         {...attributes}
         {...listeners}
@@ -54,7 +54,7 @@ const SongSection = ({
           className="ml-auto"
           variant="tertiary"
           color="#dc2626"
-          svg={DeleteSVG}
+          svg={Trash2}
           onClick={() => {
             const copiedSongOrder = [...songOrder];
             copiedSongOrder.splice(index, 1);

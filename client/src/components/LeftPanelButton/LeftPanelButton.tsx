@@ -1,9 +1,8 @@
 import Button from "../Button/Button";
-import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
+import { FileQuestion } from "lucide-react";
 import { forwardRef, FunctionComponent } from "react";
 import cn from "classnames";
 import { borderColorMap, iconColorMap, svgMap } from "../../utils/itemTypeMaps";
-import "./LeftPanelButton.scss";
 import { formatTime } from "../DisplayWindow/TimerDisplay";
 
 type LeftPanelButtonProps = {
@@ -51,24 +50,27 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         style={style}
         className={cn(
           "flex min-h-8",
-          actions && !isSelected && "hover:bg-gray-500 active:bg-gray-400",
+          !isSelected && "hover:bg-gray-500 active:bg-gray-400",
           isSelected && "bg-gray-900",
           className
         )}
         {...rest}
       >
         <Button
-          variant={actions ? "none" : "tertiary"}
-          className={`left-panel-button ${borderColorMap.get(type)}`}
+          variant="none"
+          className={cn(
+            "relative w-full text-sm border-l-3 rounded-tl-none rounded-bl-none",
+            borderColorMap.get(type)
+          )}
           iconSize="md"
           wrap
-          svg={image || isActive ? undefined : svgMap.get(type) || UnknownSVG}
+          svg={image || isActive ? undefined : svgMap.get(type) || FileQuestion}
           gap="gap-2"
           color={iconColorMap.get(type)}
           isSelected={isSelected}
           padding="py-1 px-2"
           component="link"
-          to={to}
+          to={`/controller/${to}`}
         >
           {image && !isActive && (
             <img src={image} className="w-14 max-w-[30%]" alt={title} />
@@ -87,7 +89,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
               key={action.id}
               onClick={() => action.action(id)}
               variant="tertiary"
-              className="left-panel-action-button"
+              className="hover:bg-gray-800 active:bg-gray-900"
             />
           ))}
       </li>

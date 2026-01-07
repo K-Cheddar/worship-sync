@@ -1,5 +1,5 @@
 import Button from "../../components/Button/Button";
-import { ReactComponent as SaveSVG } from "../../assets/icons/save.svg";
+import { Save } from "lucide-react";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import generateRandomId from "../../utils/generateRandomId";
 
@@ -88,7 +88,7 @@ const OverlayPreview = ({
       <div className="flex gap-2">
         {secondaryAction}
         <Button
-          svg={SaveSVG}
+          svg={Save}
           color="#22d3ee"
           className="justify-center flex-1 text-sm"
           onClick={onApply}

@@ -1,5 +1,5 @@
 import { createContext, useEffect, useState } from "react";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { Plus } from "lucide-react";
 
 import Button from "../../components/Button/Button";
 
@@ -128,7 +128,7 @@ const CloudinaryUploadWidget = ({
       <Button
         variant="tertiary"
         className="lg:ml-auto"
-        svg={AddSVG}
+        svg={Plus}
         onClick={initializeCloudinaryWidget}
       />
     </CloudinaryScriptContext.Provider>

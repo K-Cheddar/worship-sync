@@ -5,7 +5,7 @@ export interface EventData {
 
 export const getNamesFromUrl = async (url: string): Promise<EventData[]> => {
   const response = await fetch(
-    `${process.env.REACT_APP_API_BASE_PATH}api/getEventDetails?url=${url}`
+    `${import.meta.env.VITE_API_BASE_PATH}api/getEventDetails?url=${url}`
   );
   const textHtml = await response.text();
 

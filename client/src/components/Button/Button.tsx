@@ -6,10 +6,9 @@ import React, {
   useMemo,
   useRef,
 } from "react";
-import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
+import { FileQuestion } from "lucide-react";
 import Icon from "../Icon/Icon";
 import cn from "classnames";
-import "./Button.scss";
 import Spinner from "../Spinner/Spinner";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { Link } from "react-router-dom";
@@ -75,16 +74,30 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
     }, [isMobile, _iconSize]);
 
     const iconWProps = (
-      <Icon svg={svg || UnknownSVG} color={color} size={iconSize} />
+      <Icon svg={svg || FileQuestion} color={color} size={iconSize} />
     );
 
     const _padding = padding ? padding : children ? "py-1 px-2" : "p-1";
 
+    const variantClasses: Record<
+      NonNullable<ButtonProps["variant"]>,
+      string
+    > = {
+      cta: "bg-green-600 hover:bg-green-700 active:bg-green-800 border-2 border-green-600 hover:border-green-700 active:border-green-800 text-white",
+      primary:
+        "bg-black hover:bg-gray-900 active:bg-gray-800 border-2 border-black hover:border-gray-900 active:border-gray-800 text-white",
+      secondary:
+        "bg-white hover:bg-gray-200 active:bg-gray-300 border-2 border-white hover:border-gray-200 active:border-gray-300 text-black",
+      tertiary:
+        "bg-transparent hover:bg-gray-500 active:bg-gray-400 border-2 border-transparent hover:border-gray-500 active:border-gray-400 text-white",
+      none: "",
+    };
+
     const commonClassName = cn(
-      `font-semibold rounded-md flex items-center max-w-full disabled:opacity-65 disabled:pointer-events-none ${gap}`,
+      `font-semibold rounded-md flex items-center max-w-full max-md:min-h-14 cursor-pointer disabled:opacity-65 disabled:pointer-events-none ${gap}`,
       _padding,
-      !isSelected && variant,
-      wrap ? "whitespace-normal text-left button-wrap" : "whitespace-nowrap",
+      !isSelected && variant && variantClasses[variant],
+      wrap ? "whitespace-normal text-left break-words" : "whitespace-nowrap",
       truncate && "truncate",
       position,
       className
@@ -111,7 +124,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
         <Link
           className={commonClassName}
           ref={buttonRef as React.Ref<HTMLAnchorElement>}
-          to={rest.href || "#"}
+          to={rest.to || "#"}
           {...rest}
         >
           {commonContent}

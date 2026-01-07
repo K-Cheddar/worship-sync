@@ -6,7 +6,6 @@ import SelectField from "./SelectField";
 import MeasurementField, { MeasurementType } from "./MeasurementField";
 import ColorField from "../ColorField/ColorField";
 import Toggle from "../Toggle/Toggle";
-import "./StyleEditor.scss";
 import cn from "classnames";
 
 interface StyleEditorProps {
@@ -667,7 +666,7 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
   const children = formatting.children || [];
 
   return (
-    <div className={cn("style-editor", className)}>
+    <div className={cn("space-y-6 h-full scrollbar-variable", className)}>
       <Toggle
         label="Show All Styles"
         value={showHiddenSections}

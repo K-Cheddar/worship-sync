@@ -1,7 +1,13 @@
 import { Option } from "../../types";
-import "./Select.scss";
 import cn from "classnames";
 import { useId } from "react";
+import {
+  Select as RadixSelect,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/Select";
 
 export type SelectProps = {
   options: Option[];
@@ -14,6 +20,10 @@ export type SelectProps = {
   hideLabel?: boolean;
   selectClassName?: string;
   textColor?: string;
+  backgroundColor?: string;
+  chevronColor?: string;
+  contentBackgroundColor?: string;
+  contentTextColor?: string;
   disabled?: boolean;
   id?: string;
 };
@@ -29,6 +39,10 @@ const Select = ({
   labelFontSize = "text-sm",
   selectClassName,
   textColor = "text-black",
+  backgroundColor = "bg-white",
+  chevronColor,
+  contentBackgroundColor,
+  contentTextColor,
   disabled = false,
   id: idProp,
   ...rest
@@ -50,20 +64,30 @@ const Select = ({
           {label}:
         </label>
       )}
-      <select
-        className={cn("select", selectClassName, textColor)}
+      <RadixSelect
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        {...rest}
+        onValueChange={onChange}
         disabled={disabled}
-        id={id}
+        {...rest}
       >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger
+          id={id}
+          className={cn(backgroundColor, selectClassName, textColor)}
+          chevronColor={chevronColor}
+        >
+          <SelectValue placeholder="Select..." />
+        </SelectTrigger>
+        <SelectContent
+          contentBackgroundColor={contentBackgroundColor}
+          contentTextColor={contentTextColor}
+        >
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </RadixSelect>
     </div>
   );
 };

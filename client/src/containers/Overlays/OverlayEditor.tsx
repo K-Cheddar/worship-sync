@@ -2,9 +2,7 @@ import Button from "../../components/Button/Button";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import Input from "../../components/Input/Input";
 import { OverlayInfo } from "../../types";
-import { ReactComponent as EditSVG } from "../../assets/icons/edit.svg";
-import { ReactComponent as TemplateSVG } from "../../assets/icons/style.svg";
-import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
+import { SquarePen, Sparkles, Maximize2 } from "lucide-react";
 import TextArea from "../../components/TextArea/TextArea";
 import Drawer from "../../components/Drawer";
 import StyleEditor from "../../components/StyleEditor";
@@ -214,7 +212,7 @@ const OverlayEditor = ({
             Preview
           </h2>
           <Button
-            svg={ExpandSVG}
+            svg={Maximize2}
             variant="primary"
             onClick={() => setIsExpandedDrawerOpen(true)}
             iconSize="sm"
@@ -281,7 +279,7 @@ const OverlayEditor = ({
       </div>
       <section
         className={cn(
-          "overlays-editing-section",
+          "scrollbar-variable flex flex-col gap-2 bg-gray-800 p-4 rounded-md items-center overflow-y-auto w-full",
           (!selectedOverlay.id || selectedOverlay.isHidden) && "hidden"
         )}
       >
@@ -437,7 +435,7 @@ const OverlayEditor = ({
         <div className="flex gap-2 w-full">
           <Button
             className="flex-1 justify-center text-sm"
-            svg={EditSVG}
+            svg={SquarePen}
             color="#22d3ee"
             onClick={() => setIsStyleDrawerOpen(true)}
             disabled={isDisabled}
@@ -447,7 +445,7 @@ const OverlayEditor = ({
           <Button
             className="flex-1 justify-center text-sm"
             variant="secondary"
-            svg={TemplateSVG}
+            svg={Sparkles}
             color="#22d3ee"
             onClick={() => setIsTemplateDrawerOpen(true)}
             disabled={isDisabled}

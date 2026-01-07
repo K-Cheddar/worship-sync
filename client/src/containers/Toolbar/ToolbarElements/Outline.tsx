@@ -1,8 +1,5 @@
 import Button from "../../../components/Button/Button";
-import { ReactComponent as DeleteSVG } from "../../../assets/icons/delete.svg";
-import { ReactComponent as EditSVG } from "../../../assets/icons/edit.svg";
-import { ReactComponent as CheckSVG } from "../../../assets/icons/check-circle.svg";
-import { ReactComponent as CopySVG } from "../../../assets/icons/copy.svg";
+import { Trash2, SquarePen, ListCheck, Copy, Check } from "lucide-react";
 import { ItemList } from "../../../types";
 import Input from "../../../components/Input/Input";
 import DeleteModal from "../../../components/Modal/DeleteModal";
@@ -98,7 +95,7 @@ const Service = ({
         {canEdit && (
           <>
             <Button
-              svg={isEditing ? CheckSVG : EditSVG}
+              svg={isEditing ? Check : SquarePen}
               variant="tertiary"
               onClick={() => {
                 if (isEditing) {
@@ -111,7 +108,7 @@ const Service = ({
             />
             {copyList && (
               <Button
-                svg={CopySVG}
+                svg={Copy}
                 variant="tertiary"
                 onClick={async () => {
                   setIsCopying(true);
@@ -122,17 +119,17 @@ const Service = ({
               />
             )}
             <Button
-              svg={CheckSVG}
+              svg={ListCheck}
               variant="tertiary"
               onClick={() => setActiveList(list._id)}
               title="Set Active"
-              color={isActive ? "#06b6d4" : ""}
+              color={isActive ? "#06b6d4" : undefined}
             />
             <Button
               variant="tertiary"
               color={deleteList ? "red" : "gray"}
               disabled={!deleteList}
-              svg={DeleteSVG}
+              svg={Trash2}
               onClick={() => setShowDeleteModal(true)}
             />
           </>

@@ -1,5 +1,4 @@
-import { ReactComponent as DoneAllSVG } from "../../assets/icons/done-all.svg";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
+import { CheckCheck, X } from "lucide-react";
 import Button from "../../components/Button/Button";
 import { useDispatch, useSelector } from "../../hooks";
 import { DisplayType, OverlayInfo, Presentation } from "../../types";
@@ -223,7 +222,7 @@ const QuickLinkSelection = ({
             variant="cta"
             className="justify-center flex-1"
             disabled={!slides?.[selectedSlide]}
-            svg={DoneAllSVG}
+            svg={CheckCheck}
             onClick={handleSlideSelect}
           >
             {isMobile ? "Select" : "Select Slide"}
@@ -231,7 +230,7 @@ const QuickLinkSelection = ({
           <Button
             variant="secondary"
             className="justify-center flex-1"
-            svg={CloseSVG}
+            svg={X}
             onClick={handleCancel}
           >
             {isMobile ? "" : "Cancel"}
@@ -258,7 +257,7 @@ const QuickLinkSelection = ({
             variant="cta"
             className="justify-center"
             disabled={!selectedOverlay?.id}
-            svg={DoneAllSVG}
+            svg={CheckCheck}
             onClick={handleOverlaySelect}
           >
             {isMobile ? "Select" : "Select Overlay"}
@@ -266,7 +265,7 @@ const QuickLinkSelection = ({
           <Button
             variant="secondary"
             className="justify-center"
-            svg={CloseSVG}
+            svg={X}
             onClick={handleCancel}
           >
             {isMobile ? "" : "Cancel"}

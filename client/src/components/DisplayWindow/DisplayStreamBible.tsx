@@ -2,7 +2,6 @@ import { forwardRef, MutableRefObject, useRef } from "react";
 import { BibleDisplayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import "./DisplayWindow.scss";
 import VerseDisplay from "./VerseDisplay";
 
 type DisplayStreamBibleProps = {
@@ -24,8 +23,8 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
   ) => {
     const bibleRef = useRef<HTMLDivElement | null>(null);
     const prevBibleRef = useRef<HTMLDivElement | null>(null);
-    const bibleTimeline = useRef<GSAPTimeline | null>();
-    const prevBibleTimeline = useRef<GSAPTimeline | null>();
+    const bibleTimeline = useRef<GSAPTimeline | null>(null);
+    const prevBibleTimeline = useRef<GSAPTimeline | null>(null);
 
     useGSAP(
       () => {
@@ -121,10 +120,13 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
 
     return (
       <>
-        <div ref={bibleRef} className="bible-info-container">
+        <div
+          ref={bibleRef}
+          className="w-[70%] absolute flex flex-col mx-[15%] bottom-[5%]"
+        >
           {bibleDisplayInfo?.title?.trim() && (
             <p
-              className="bible-info-title"
+              className="bible-info-title bg-green-700 w-fit"
               style={{
                 borderTopLeftRadius: "5% 20%",
                 borderTopRightRadius: "5% 20%",
@@ -137,7 +139,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
           )}
           {bibleDisplayInfo?.text?.trim() && (
             <p
-              className="bible-info-text"
+              className="bible-info-text bg-gray-800/95"
               style={{
                 padding: "1.5% 2.5%",
                 borderTopRightRadius: "2.5% 20%",
@@ -151,10 +153,13 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
           )}
         </div>
 
-        <div ref={prevBibleRef} className="prev-bible-info-container">
+        <div
+          ref={prevBibleRef}
+          className="w-[70%] absolute flex flex-col mx-[15%] bottom-[5%]"
+        >
           {prevBibleDisplayInfo?.title?.trim() && (
             <p
-              className="prev-bible-info-title"
+              className="prev-bible-info-title bg-green-700 w-fit"
               style={{
                 borderTopLeftRadius: "5% 20%",
                 borderTopRightRadius: "5% 20%",
@@ -167,7 +172,7 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
           )}
           {prevBibleDisplayInfo?.text?.trim() && (
             <p
-              className="prev-bible-info-text"
+              className="prev-bible-info-text bg-gray-800/95"
               style={{
                 padding: "1.5% 2.5%",
                 borderTopRightRadius: "2.5% 20%",

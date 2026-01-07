@@ -10,7 +10,7 @@ import { QRCode } from "react-qr-code";
 import { getFontSize, getBorderWidth, getMargin } from "./utils";
 import { checkMediaType, getImageFromVideoUrl } from "../../utils/generalUtils";
 import HLSPlayer from "./HLSVideoPlayer";
-import "./DisplayWindow.scss";
+import cn from "classnames";
 
 interface SharedOverlayProps {
   width: number;
@@ -221,7 +221,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
           return (
             <p
               key={index}
-              className="overlay-qr-code-info-description"
+              className="overlay-qr-code-info-description whitespace-pre-line"
               style={getSharedStyles(child, "left")}
             >
               {overlayInfo.description}
@@ -265,22 +265,22 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
     const getContainerClass = () => {
       switch (overlayType) {
         case "participant":
-          return "overlay-participant-info-container";
+          return "absolute overflow-hidden";
         case "stick-to-bottom":
-          return "overlay-stb-info-container";
+          return "absolute whitespace-nowrap";
         case "qr-code":
-          return "overlay-qr-code-info-container";
+          return "absolute mx-auto overflow-hidden";
         case "image":
-          return "overlay-image-container";
+          return "absolute w-fit mx-auto left-0 right-0 overflow-hidden";
         default:
-          return "overlay-container";
+          return "absolute";
       }
     };
 
     return (
       <div
         ref={ref}
-        className={getContainerClass()}
+        className={cn(getContainerClass())}
         style={{
           position: "absolute",
           ...getSharedStyles(styles as OverlayChild, "left", true),

@@ -25,7 +25,7 @@ const Welcome = () => {
   const isLoggedIn = loginState === "success";
 
   return (
-    <main className="bg-gray-700 h-screen text-white">
+    <main className="bg-gray-700 h-dvh text-white overflow-y-auto">
       <div className="flex w-full justify-end p-2 gap-4 text-lg">
         <Button
           variant="tertiary"

@@ -24,8 +24,7 @@ import ServiceTimesList from "./ServiceTimesList";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import Spinner from "../../components/Spinner/Spinner";
-import { ReactComponent as VisibleSVG } from "../../assets/icons/visible.svg";
-import { ReactComponent as NotVisibleSVG } from "../../assets/icons/not-visible.svg";
+import { Eye, EyeOff } from "lucide-react";
 import { getClosestUpcomingService } from "../../utils/serviceTimes";
 
 const ServiceTimes = () => {
@@ -220,7 +219,7 @@ const ServiceTimes = () => {
           <Button
             className="w-fit md:hidden"
             variant="secondary"
-            svg={showPreview ? NotVisibleSVG : VisibleSVG}
+            svg={showPreview ? EyeOff : Eye}
             onClick={() => setShowPreview(!showPreview)}
           >
             {showPreview ? "Hide Preview" : "Show Preview"}

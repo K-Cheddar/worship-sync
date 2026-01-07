@@ -37,7 +37,7 @@ const DisplayBox = ({
   isWindowVideoLoaded,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
-  const boxTimeline = useRef<GSAPTimeline>();
+  const boxTimeline = useRef<GSAPTimeline | null>(null);
   const isVideoBg = box.mediaInfo?.type === "video";
   const videoUrl = box.mediaInfo?.background;
   const shouldImageBeHidden = useMemo(
@@ -201,7 +201,7 @@ const DisplayBox = ({
       {shouldShowBackground && (
         <img
           className={cn(
-            "display-box-background",
+            "display-box-background h-full w-full absolute",
             box.shouldKeepAspectRatio && "object-contain",
             shouldImageBeHidden ? "opacity-0" : "opacity-100"
           )}
@@ -209,7 +209,10 @@ const DisplayBox = ({
           alt={box.label}
         />
       )}
-      <p className="display-box-text h-full" style={textStyles}>
+      <p
+        className="display-box-text h-full w-full bg-transparent whitespace-pre-line absolute"
+        style={textStyles}
+      >
         {renderContent()}
       </p>
     </div>

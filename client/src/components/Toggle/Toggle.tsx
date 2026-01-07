@@ -1,8 +1,6 @@
-import { ReactComponent as CircleSVG } from "../../assets/icons/radio-button-checked.svg";
-import "./Toggle.scss";
-import Icon from "../Icon/Icon";
-import { useContext, useId } from "react";
-import { ControllerInfoContext } from "../../context/controllerInfo";
+import { useId } from "react";
+import { Switch } from "../ui/Switch";
+import { cn } from "../../utils/cnHelper";
 
 type ToggleProps = {
   label: string;
@@ -10,6 +8,7 @@ type ToggleProps = {
   onChange: (value: boolean) => void;
   className?: string;
   id?: string;
+  color?: string;
 };
 
 const Toggle = ({
@@ -18,32 +17,25 @@ const Toggle = ({
   onChange,
   className,
   id: idProp,
+  color,
 }: ToggleProps) => {
-  const { isMobile } = useContext(ControllerInfoContext) || {};
   const generatedId = useId();
   const id = idProp || generatedId;
   return (
     <div
-      className={`flex gap-1 relative items-center h-4 ${
-        className ? className : ""
-      }`}
+      className={cn(
+        "flex gap-1 relative items-center h-4 cursor-pointer",
+        className
+      )}
     >
-      <label className="text-sm font-semibold" htmlFor={id}>
+      <label className="text-sm font-semibold cursor-pointer" htmlFor={id}>
         {label}:
       </label>
-      <div className={`${value ? "on" : "off"} toggle-input-container`}>
-        <Icon
-          svg={CircleSVG}
-          className={"toggle-circle"}
-          size={isMobile ? "lg" : "md"}
-        />
-      </div>
-      <input
-        className="w-full h-full absolute opacity-0 cursor-pointer left-0 top-0"
-        type="checkbox"
+      <Switch
         checked={value}
-        onChange={(e) => onChange(e.target.checked)}
+        onCheckedChange={onChange}
         id={id}
+        color={color}
       />
     </div>
   );

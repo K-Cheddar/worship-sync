@@ -4,7 +4,6 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { defaultImageOverlayStyles } from "./defaultOverlayStyles";
 import SharedOverlay from "./SharedOverlay";
-import "./DisplayWindow.scss";
 
 type DisplayImageOverlayProps = {
   width: number;
@@ -28,8 +27,8 @@ const DisplayImageOverlay = forwardRef<
   ) => {
     const imageOverlayRef = useRef<HTMLDivElement | null>(null);
     const prevImageOverlayRef = useRef<HTMLDivElement | null>(null);
-    const overlayTimeline = useRef<GSAPTimeline | null>();
-    const prevOverlayTimeline = useRef<GSAPTimeline | null>();
+    const overlayTimeline = useRef<GSAPTimeline | null>(null);
+    const prevOverlayTimeline = useRef<GSAPTimeline | null>(null);
     const currentOpacity = useRef(1);
 
     useGSAP(

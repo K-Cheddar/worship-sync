@@ -1,6 +1,6 @@
 import { useSelector, useDispatch } from "../../hooks";
 import { DisplayType, LinkType, Option, QuickLinkType } from "../../types";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { Plus } from "lucide-react";
 import generateRandomId from "../../utils/generateRandomId";
 import Select from "../../components/Select/Select";
 import Button from "../../components/Button/Button";
@@ -150,7 +150,7 @@ const QuickLinks = () => {
           <Button
             variant="primary"
             padding="px-4 py-1"
-            svg={AddSVG}
+            svg={Plus}
             onClick={() => {
               let linkType: LinkType = "media";
               if (newQuickLinkDisplayType === "monitor") {

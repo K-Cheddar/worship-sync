@@ -57,8 +57,8 @@ export type CouchResponse = {
 const cloud = new Cloudinary({
   cloud: {
     cloudName: "portable-media",
-    apiKey: process.env.REACT_APP_CLOUDINARY_KEY,
-    apiSecret: process.env.REACT_APP_CLOUDINARY_SECRET,
+    apiKey: import.meta.env.VITE_CLOUDINARY_KEY,
+    apiSecret: import.meta.env.VITE_CLOUDINARY_SECRET,
   },
 });
 
@@ -94,18 +94,18 @@ const ControllerInfoProvider = ({ children }: any) => {
   }, [database]);
 
   const updater = useRef(new EventTarget());
-  const syncRef = useRef<any>();
+  const syncRef = useRef<any>(null);
   const syncRetryRef = useRef(0);
   const replicateRetryRef = useRef(0);
-  const replicateRef = useRef<any>();
-  const bibleSyncRef = useRef<any>();
+  const replicateRef = useRef<any>(null);
+  const bibleSyncRef = useRef<any>(null);
   const bibleSyncRetryRef = useRef(0);
   const bibleReplicateRetryRef = useRef(0);
-  const bibleReplicateRef = useRef<any>();
+  const bibleReplicateRef = useRef<any>(null);
 
   const getCouchSession = useCallback(async () => {
     const response = await fetch(
-      `${process.env.REACT_APP_API_BASE_PATH}api/getDbSession`,
+      `${import.meta.env.VITE_API_BASE_PATH}api/getDbSession`,
       {
         credentials: "include",
       }
@@ -199,7 +199,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     const setupDb = async () => {
       const dbName = `worship-sync-${database}`;
       const localDb = new PouchDB(dbName);
-      const remoteUrl = `${process.env.REACT_APP_COUCHDB_HOST}/${dbName}`;
+      const remoteUrl = `${import.meta.env.VITE_COUCHDB_HOST}/${dbName}`;
       const remoteDb = new PouchDB(remoteUrl, {
         fetch: (url, options: any) => {
           options.credentials = "include";
@@ -278,7 +278,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     const setupBibleDb = async () => {
       const dbName = "worship-sync-bibles";
       const localDb = new PouchDB(dbName);
-      const remoteUrl = `${process.env.REACT_APP_COUCHDB_HOST}/${dbName}`;
+      const remoteUrl = `${import.meta.env.VITE_COUCHDB_HOST}/${dbName}`;
       const remoteDb = new PouchDB(remoteUrl, {
         fetch: (url, options: any) => {
           options.credentials = "include";

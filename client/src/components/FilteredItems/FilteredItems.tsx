@@ -1,13 +1,10 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch } from "../../hooks";
-import { ReactComponent as CreateSVG } from "../../assets/icons/create.svg";
-import { ReactComponent as MatchWordSVG } from "../../assets/icons/match-word.svg";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
+import { FilePlus, WholeWord, X } from "lucide-react";
 
 import Button from "../Button/Button";
 import Input from "../Input/Input";
 import DeleteModal from "../Modal/DeleteModal";
-import "./FilteredItems.scss";
 import {
   addItemToItemList,
   removeItemFromListById,
@@ -295,7 +292,7 @@ const FilteredItems = ({
       {isLoading && (
         <h3 className="text-lg text-center">{heading} are loading...</h3>
       )}
-      <div className="flex gap-2 max-2xl:w-full 2xl:w-2/3 mb-4 px-6">
+      <div className="flex gap-2 max-2xl:w-full 2xl:w-2/3 mb-4">
         <Input
           value={searchValue}
           disabled={isLoading}
@@ -303,13 +300,13 @@ const FilteredItems = ({
           label="Search"
           className="text-base flex gap-2 items-center flex-1"
           data-ignore-undo="true"
-          svg={searchValue ? CloseSVG : undefined}
+          svg={searchValue ? X : undefined}
           svgAction={() => setSearchValue("")}
         />
         <Button
           disabled={!searchValue}
           onClick={() => updateShowWords(!showWords)}
-          svg={MatchWordSVG}
+          svg={WholeWord}
         >
           {showWords ? "Hide" : "Show"} All{" "}
         </Button>
@@ -319,7 +316,7 @@ const FilteredItems = ({
         <Button
           variant="secondary"
           className="relative"
-          svg={CreateSVG}
+          svg={FilePlus}
           color="#84cc16"
           component="link"
           to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
@@ -327,7 +324,7 @@ const FilteredItems = ({
           Create a new {label}
         </Button>
       </section>
-      <ul className="filtered-items-list">
+      <ul className="scrollbar-variable max-2xl:w-full 2xl:w-2/3 overflow-y-auto mx-2 px-2">
         {isSearchLoading && (
           <li className="absolute top-0 left-0 w-full h-full flex items-center justify-center bg-gray-800/35">
             <Spinner />

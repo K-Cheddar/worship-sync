@@ -31,6 +31,7 @@ export type SelectedPreferenceType =
   | "defaultShouldShowItemEditor"
   | "defaultIsMediaExpanded"
   | "defaultBibleFontMode"
+  | "defaultFreeFormFontMode"
   | "";
 
 type PreferencesState = {
@@ -88,12 +89,13 @@ const initialState: PreferencesState = {
     defaultShouldShowItemEditor: true,
     defaultIsMediaExpanded: false,
     defaultBibleFontMode: "separate",
+    defaultFreeFormFontMode: "separate",
   },
   monitorSettings: {
     showClock: true,
     showTimer: true,
     clockFontSize: 15,
-    timerFontSize: 4,
+    timerFontSize: 15,
     timerId: null,
   },
   slidesPerRow: 4,
@@ -286,8 +288,6 @@ export const preferencesSlice = createSlice({
     ) => {
       const { preferences, isMusic } = action.payload;
 
-      console.log("initiatePreferences", preferences);
-
       state.preferences = {
         defaultSongBackground: {
           background:
@@ -360,6 +360,9 @@ export const preferencesSlice = createSlice({
         defaultBibleFontMode:
           preferences.defaultBibleFontMode ||
           initialState.preferences.defaultBibleFontMode,
+        defaultFreeFormFontMode:
+          preferences.defaultFreeFormFontMode ||
+          initialState.preferences.defaultFreeFormFontMode,
       };
 
       state.slidesPerRow =

@@ -71,6 +71,7 @@ const Presentation = ({
           label="Sending"
           value={isTransmitting}
           onChange={toggleIsTransmitting}
+          color="#22c55e"
         />
         <section className="grid grid-cols-2 gap-2">
           {quickLinks.map((link) => (
