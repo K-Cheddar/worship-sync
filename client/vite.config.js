@@ -8,6 +8,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    base: "/",
     server: isDev
       ? {
           host: "local.worshipsync.net",
