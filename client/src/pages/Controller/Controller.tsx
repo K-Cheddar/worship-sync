@@ -385,14 +385,14 @@ const Controller = () => {
       )}
       <div
         onClick={(e) => handleElementClick(e)}
-        className="bg-gray-700 w-screen h-screen flex flex-col text-white overflow-hidden list-none"
+        className="bg-gray-700 w-dvw h-dvh flex flex-col text-white overflow-hidden list-none"
         style={
           {
             "--scrollbar-width": scrollbarWidth,
           } as CSSProperties
         }
       >
-        <Toolbar className="flex border-b-2 border-gray-500 text-sm min-h-fit" />
+        <Toolbar className="flex border-b-2 border-gray-500 text-sm min-h-fit bg-gray-700" />
         <div
           id="controller-main"
           className="flex flex-1 relative min-h-0 bg-gray-700"

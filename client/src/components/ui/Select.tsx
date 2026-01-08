@@ -20,12 +20,14 @@ const SelectGroup = ({
 
 const SelectValue = ({
   className,
+  placeholder = "Select",
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Value>) => {
   return (
     <SelectPrimitive.Value
       data-slot="select-value"
       className={cn("truncate", className)}
+      placeholder={placeholder}
       {...props}
     />
   );

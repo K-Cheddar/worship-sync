@@ -163,7 +163,7 @@ const Drawer: React.FC<DrawerProps> = ({
       <div
         ref={drawerRef}
         className={cn(
-          "relative bg-gray-800 shadow-2xl transition-transform duration-300 ease-in-out max-w-full max-h-screen flex flex-col",
+          "relative bg-gray-800 shadow-2xl transition-transform duration-300 ease-in-out max-w-full max-h-dvh flex flex-col",
           positionClasses[position],
           position === "top" || position === "bottom"
             ? heightSizeClasses[size]
@@ -207,7 +207,7 @@ const Drawer: React.FC<DrawerProps> = ({
     <div
       ref={drawerRef}
       className={cn(
-        "fixed z-50 bg-gray-800 shadow-2xl transition-transform duration-300 ease-in-out max-w-full max-h-screen flex flex-col",
+        "fixed z-50 bg-gray-800 shadow-2xl transition-transform duration-300 ease-in-out max-w-full max-h-dvh flex flex-col",
         positionClasses[position],
         position === "top" || position === "bottom"
           ? heightSizeClasses[size]

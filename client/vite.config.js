@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { resolve } from "path";
 import fs from "fs";
 
@@ -7,7 +8,17 @@ export default defineConfig(({ mode }) => {
   const isDev = mode === "development";
 
   return {
-    plugins: [react()],
+    build: {
+      sourcemap: true,
+    },
+    plugins: [
+      react(),
+      sentryVitePlugin({
+        authToken: process.env.SENTRY_AUTH_TOKEN,
+        org: "worshipsync",
+        project: "javascript-react",
+      }),
+    ],
     base: "/",
     server: isDev
       ? {

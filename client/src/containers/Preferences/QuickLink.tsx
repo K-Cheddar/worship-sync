@@ -125,7 +125,8 @@ const QuickLink = ({
     >
       <Select
         className="flex flex-col"
-        selectClassName="bg-gray-900 text-white"
+        selectClassName="bg-gray-900"
+        textColor="text-white"
         label="Display Type"
         disabled={!canDelete}
         options={[

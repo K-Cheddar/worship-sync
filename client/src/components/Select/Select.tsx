@@ -49,6 +49,11 @@ const Select = ({
 }: SelectProps) => {
   const generatedId = useId();
   const id = idProp || generatedId;
+
+  // Check if value exists in options, if not use undefined to show placeholder
+  const valueExists = options.some((option) => option.value === value);
+  const selectValue = valueExists ? value : undefined;
+
   return (
     <div className={className}>
       {label && (
@@ -65,7 +70,7 @@ const Select = ({
         </label>
       )}
       <RadixSelect
-        value={value}
+        value={selectValue}
         onValueChange={onChange}
         disabled={disabled}
         {...rest}

@@ -415,8 +415,8 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         <div
           className={cn(
             "flex transition-all relative max-lg:flex-col gap-2 max-lg:items-center",
-            shouldShowItemEditor && "mb-2 z-[1]",
-            !shouldShowItemEditor && "h-0 -z-[1]"
+            shouldShowItemEditor && "mb-2 z-1",
+            !shouldShowItemEditor && "h-0 -z-1"
           )}
           data-show={shouldShowItemEditor}
           style={
@@ -429,7 +429,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         >
           <section
             className={cn(
-              "ml-1 lg:w-[12vw] max-lg:w-[100%]",
+              "ml-1 lg:w-[12vw] max-lg:w-full",
               isEmpty && "hidden"
             )}
             ref={slideInfoRef}
