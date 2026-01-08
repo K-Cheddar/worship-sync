@@ -327,8 +327,8 @@ app.get("/api/getDbSession", async (req, res) => {
 setupExpressErrorHandler(app);
 
 // Serve any static files
-app.use(express.static(path.join(dirname, "/client/build")));
+app.use(express.static(path.join(dirname, "/client/dist")));
 // Handle React routing, return all requests to React app
 app.get("*", function (req, res) {
-  res.sendFile(path.join(dirname, "/client/build", "index.html"));
+  res.sendFile(path.join(dirname, "/client/dist", "index.html"));
 });
