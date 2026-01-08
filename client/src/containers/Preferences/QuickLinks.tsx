@@ -141,7 +141,8 @@ const QuickLinks = () => {
         <section className="flex items-center justify-center gap-4 my-8">
           <Select
             className="flex gap-2"
-            selectClassName="bg-gray-900 text-white"
+            selectClassName="bg-gray-900"
+            textColor="text-white"
             label="New Quick Link Display Type"
             options={newQuickLinkOptions}
             value={newQuickLinkDisplayType}

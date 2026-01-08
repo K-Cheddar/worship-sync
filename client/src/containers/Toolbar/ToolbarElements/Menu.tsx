@@ -86,6 +86,7 @@ const ToolbarMenu = ({
               onClick={handleReset}
               className="justify-center"
               disabled={zoomLevel === 100}
+              variant="secondary"
             ></Button>
           </div>
           <div className="flex items-center gap-2 w-full">
@@ -94,31 +95,38 @@ const ToolbarMenu = ({
               onClick={handleZoomOut}
               className="flex-1 justify-center"
               disabled={zoomLevel <= 50}
+              variant="secondary"
             ></Button>
             <Button
               svg={ZoomIn}
               onClick={handleZoomIn}
               className="flex-1 justify-center"
               disabled={zoomLevel >= 200}
+              variant="secondary"
             ></Button>
           </div>
         </div>
       ),
-      padding: "p-2",
+      preventClose: true,
     },
     ...(isPhone && !isEditMode
       ? [
           {
             element: (
-              <UndoButton color="black" className="w-full justify-center" />
+              <div className="flex gap-2 w-full">
+                <UndoButton
+                  variant="secondary"
+                  color="black"
+                  className="w-full justify-center"
+                />
+                <RedoButton
+                  variant="secondary"
+                  color="black"
+                  className="w-full justify-center"
+                />
+              </div>
             ),
-            padding: "p-0",
-          },
-          {
-            element: (
-              <RedoButton color="black" className="w-full justify-center" />
-            ),
-            padding: "p-0",
+            preventClose: true,
           },
         ]
       : []),

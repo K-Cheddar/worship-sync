@@ -9,6 +9,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@floating-ui/react": "^0.27.16",
     "@gsap/react": "^2.1.2",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-label": "^2.1.8",
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-select": "^2.2.6",
@@ -17,6 +18,7 @@
     "@reduxjs/toolkit": "^2.11.2",
     "@sentry/cli": "^3.0.1",
     "@sentry/react": "^10.32.1",
+    "@sentry/vite-plugin": "^4.6.1",
     "@syncfusion/ej2-react-richtexteditor": "^32.1.20",
     "@tailwindcss/postcss": "^4.1.18",
     "@testing-library/jest-dom": "^6.9.1",
@@ -68,7 +70,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build && npm run sentry:sourcemaps",
+    "build": "vite build",
     "build:lint": "npm run lint && vite build",
     "build:strict": "npm run lint:check && vite build",
     "test": "vite test",
@@ -76,8 +78,7 @@
     "lint": "eslint src --ext .ts,.tsx,.js,.jsx",
     "lint:fix": "eslint src --ext .ts,.tsx,.js,.jsx --fix",
     "lint:check": "eslint src --ext .ts,.tsx,.js,.jsx --max-warnings 0",
-    "type-check": "tsc --noEmit",
-    "sentry:sourcemaps": "sentry-cli sourcemaps inject --org worshipsync --project javascript-react ./dist && sentry-cli sourcemaps upload --org worshipsync --project javascript-react ./dist"
+    "type-check": "tsc --noEmit"
   },
   "eslintConfig": {
     "extends": [

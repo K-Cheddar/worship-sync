@@ -47,7 +47,7 @@ const Presentation = ({
       width={100}
     />
   ) : (
-    <div className="h-screen w-screen flex flex-col items-center justify-center bg-black gap-10">
+    <div className="h-dvh w-dvw flex flex-col items-center justify-center bg-black gap-10">
       <Button
         className="text-[min(3vw,30px)]"
         variant="secondary"

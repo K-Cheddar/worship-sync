@@ -7,9 +7,11 @@ import { useEffect } from "react";
 export const UndoButton = ({
   color,
   className,
+  variant,
 }: {
   color?: string;
   className?: string;
+  variant?: "primary" | "secondary" | "tertiary" | "none";
 }) => {
   const dispatch = useDispatch();
   const { past } = useSelector((state) => state.undoable);
@@ -18,7 +20,7 @@ export const UndoButton = ({
       svg={Undo2}
       color={color}
       disabled={!past.length}
-      variant="tertiary"
+      variant={variant || "tertiary"}
       onClick={() => dispatch(ActionCreators.undo())}
       className={className}
     />
@@ -28,9 +30,11 @@ export const UndoButton = ({
 export const RedoButton = ({
   color,
   className,
+  variant,
 }: {
   color?: string;
   className?: string;
+  variant?: "primary" | "secondary" | "tertiary" | "none";
 }) => {
   const dispatch = useDispatch();
   const { future } = useSelector((state) => state.undoable);
@@ -39,7 +43,7 @@ export const RedoButton = ({
       svg={Redo2}
       color={color}
       disabled={!future.length}
-      variant="tertiary"
+      variant={variant || "tertiary"}
       onClick={() => dispatch(ActionCreators.redo())}
       className={className}
     />

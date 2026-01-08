@@ -45,7 +45,7 @@ const Login = () => {
   };
 
   return (
-    <div className="h-screen w-screen bg-gray-700 flex items-center justify-center">
+    <div className="h-dvh w-dvw bg-gray-700 flex items-center justify-center">
       <form
         autoComplete="off"
         onSubmit={(e) => {

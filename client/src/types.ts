@@ -26,6 +26,7 @@ export type MenuItemType = {
   element?: React.ReactNode;
   className?: string;
   padding?: string;
+  preventClose?: boolean;
 };
 
 export type Box = {
