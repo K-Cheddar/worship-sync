@@ -77,7 +77,7 @@
     "lint:fix": "eslint src --ext .ts,.tsx,.js,.jsx --fix",
     "lint:check": "eslint src --ext .ts,.tsx,.js,.jsx --max-warnings 0",
     "type-check": "tsc --noEmit",
-    "sentry:sourcemaps": "sentry-cli sourcemaps inject --org worshipsync --project javascript-react ./build && sentry-cli sourcemaps upload --org worshipsync --project javascript-react ./build"
+    "sentry:sourcemaps": "sentry-cli sourcemaps inject --org worshipsync --project javascript-react ./dist && sentry-cli sourcemaps upload --org worshipsync --project javascript-react ./dist"
   },
   "eslintConfig": {
     "extends": [
