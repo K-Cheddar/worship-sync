@@ -5,14 +5,17 @@ import fs from "fs";
 
 export default defineConfig({
   plugins: [react()],
-  server: {
-    host: "local.worshipsync.net",
-    port: 3000,
-    https: {
-      key: fs.readFileSync("./local.worshipsync.net-key.pem"),
-      cert: fs.readFileSync("./local.worshipsync.net.pem"),
-    },
-  },
+  server:
+    import.meta.env.MODE === "development"
+      ? {
+          host: "local.worshipsync.net",
+          port: 3000,
+          https: {
+            key: fs.readFileSync("./local.worshipsync.net-key.pem"),
+            cert: fs.readFileSync("./local.worshipsync.net.pem"),
+          },
+        }
+      : undefined,
   resolve: {
     alias: {
       "@/": resolve(__dirname, "./src"),
