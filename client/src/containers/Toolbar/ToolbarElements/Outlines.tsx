@@ -1,7 +1,5 @@
 import { useCallback, useContext, useEffect, useState } from "react";
-import { ReactComponent as AddSVG } from "../../../assets/icons/add.svg";
-import { ReactComponent as CheckSVG } from "../../../assets/icons/check.svg";
-import { ReactComponent as ListSVG } from "../../../assets/icons/list.svg";
+import { Plus, Check, List } from "lucide-react";
 import { useDispatch, useSelector } from "../../../hooks";
 import {
   initiateItemLists,
@@ -15,7 +13,6 @@ import {
 import PopOver from "../../../components/PopOver/PopOver";
 import Button from "../../../components/Button/Button";
 import Outline from "./Outline";
-import "./Toolbar.scss";
 import { DBItemListDetails, ItemLists, ItemList } from "../../../types";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import {
@@ -138,10 +135,10 @@ const Services = ({ className }: { className: string }) => {
         <PopOver
           TriggeringButton={
             <Button
-              svg={ListSVG}
+              svg={List}
               iconSize="lg"
               variant="primary"
-              className="max-lg:max-w-40 lg:max-w-64"
+              className="max-w-64"
               truncate
             >
               {selectedList?.name}
@@ -154,7 +151,10 @@ const Services = ({ className }: { className: string }) => {
                 <h3 className="text-lg font-semibold mb-2 text-center">
                   {heading}
                 </h3>
-                <ul ref={setNodeRef} className="services-list">
+                <ul
+                  ref={setNodeRef}
+                  className="scrollbar-variable flex-1 overflow-y-auto max-h-64 overflow-x-hidden"
+                >
                   <SortableContext
                     items={currentLists.map((list) => list._id)}
                     strategy={verticalListSortingStrategy}
@@ -218,7 +218,7 @@ const Services = ({ className }: { className: string }) => {
             </div>
             {access === "full" && (
               <Button
-                svg={justAdded ? CheckSVG : AddSVG}
+                svg={justAdded ? Check : Plus}
                 color={justAdded ? "#84cc16" : "#22d3ee"}
                 className="w-full justify-center text-base"
                 disabled={justAdded}

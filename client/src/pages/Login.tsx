@@ -1,8 +1,8 @@
 import Input from "../components/Input/Input";
 import { useContext, useEffect, useState } from "react";
 import { GlobalInfoContext } from "../context/globalInfo";
-import { ReactComponent as VisibleSVG } from "../assets/icons/visible.svg";
-import { ReactComponent as NotVisibleSVG } from "../assets/icons/not-visible.svg";
+import { Eye } from "lucide-react";
+import { EyeOff } from "lucide-react";
 import Button from "../components/Button/Button";
 import { useNavigate } from "react-router-dom";
 import { ControllerInfoContext } from "../context/controllerInfo";
@@ -45,7 +45,7 @@ const Login = () => {
   };
 
   return (
-    <div className="h-screen w-screen bg-gray-700 flex items-center justify-center">
+    <div className="h-dvh w-dvw bg-gray-700 flex items-center justify-center">
       <form
         autoComplete="off"
         onSubmit={(e) => {
@@ -68,7 +68,7 @@ const Login = () => {
           type={showPassword ? "text" : "password"}
           value={password}
           onChange={(val) => setPassword(val as string)}
-          svg={showPassword ? NotVisibleSVG : VisibleSVG}
+          svg={showPassword ? EyeOff : Eye}
           svgAction={() => setShowPassword(!showPassword)}
           svgPadding="px-1 py-4"
           className="w-full"
@@ -89,9 +89,7 @@ const Login = () => {
           Home
         </Button>
         {errorMessage && (
-          <p className="text-red-500 mt-4 text-base">
-            {errorMessage}
-          </p>
+          <p className="text-red-500 mt-4 text-base">{errorMessage}</p>
         )}
       </form>
     </div>

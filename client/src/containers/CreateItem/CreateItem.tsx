@@ -1,8 +1,6 @@
 import { useContext, useMemo, useState } from "react";
 import RadioButton from "../../components/RadioButton/RadioButton";
-import { ReactComponent as UnknownSVG } from "../../assets/icons/unknown-document.svg";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
-import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
+import { FileQuestion, Plus, Check } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -80,6 +78,7 @@ const CreateItem = () => {
       defaultSongBackgroundBrightness,
       defaultTimerBackgroundBrightness,
       defaultFreeFormBackgroundBrightness,
+      defaultFreeFormFontMode,
     },
   } = useSelector((state: RootState) => state.undoable.present.preferences);
   const { hostId, access } = useContext(GlobalInfoContext) || {};
@@ -171,6 +170,7 @@ const CreateItem = () => {
         brightness: defaultFreeFormBackgroundBrightness,
         text,
         isMobile,
+        overflow: defaultFreeFormFontMode,
       });
 
       dispatchNewItem(newItem);
@@ -223,7 +223,7 @@ const CreateItem = () => {
 
   return (
     <ErrorBoundary>
-      <h2 className="text-2xl text-center font-semibold ">Create Item</h2>
+      <h2 className="text-2xl text-center font-semibold">Create Item</h2>
       <div className="my-2 mx-4 rounded-md p-4 bg-gray-800 w-1/2 max-lg:w-[95%]">
         <ul className="flex flex-col gap-2">
           <h3 className="text-lg font-semibold text-center">
@@ -244,7 +244,7 @@ const CreateItem = () => {
                 variant="tertiary"
                 className="inline"
                 onClick={addItem}
-                svg={justAdded ? CheckSVG : AddSVG}
+                svg={justAdded ? Check : Plus}
                 color={justAdded ? "#84cc16" : "#22d3ee"}
                 disabled={justAdded}
               >
@@ -255,7 +255,7 @@ const CreateItem = () => {
           {itemTypes.map((itemType) => (
             <li key={itemType.type} className="flex gap-2 item-center">
               <Icon
-                svg={svgMap.get(itemType.type) || UnknownSVG}
+                svg={svgMap.get(itemType.type) || FileQuestion}
                 color={iconColorMap.get(itemType.type)}
               />
               <RadioButton
@@ -354,7 +354,7 @@ const CreateItem = () => {
           variant="cta"
           className="text-base w-full justify-center mt-4"
           onClick={createItem}
-          svg={justCreated ? CheckSVG : AddSVG}
+          svg={justCreated ? Check : Plus}
           color={justCreated ? "#84cc16" : undefined}
         >
           {justCreated

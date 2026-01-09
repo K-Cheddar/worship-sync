@@ -16,9 +16,9 @@ import {
 } from "../../store/presentationSlice";
 import Presentation from "../../components/Presentation/Presentation";
 import Button from "../../components/Button/Button";
-import "./TransmitHandler.scss";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import cn from "classnames";
 
 // Keeping this as previous urls
 // https://res.cloudinary.com/portable-media/image/upload/v1729199662/eliathah/Welcome_To_Eliathah.jpg
@@ -91,7 +91,11 @@ const TransmitHandler = () => {
   return (
     <ErrorBoundary>
       <div
-        className="transmit-handler-container"
+        className={cn(
+          "transition-all relative",
+          isMediaExpanded && "h-0 z-0 opacity-0",
+          !isMediaExpanded && "opacity-100"
+        )}
         data-is-media-expanded={isMediaExpanded}
         style={
           {
@@ -99,7 +103,10 @@ const TransmitHandler = () => {
           } as CSSProperties
         }
       >
-        <section className="transmit-handler" ref={transmitHandlerRef}>
+        <section
+          className="flex flex-col mt-2 gap-4 w-fit bg-gray-800 rounded-lg mx-auto h-fit max-h-[75vh] p-4"
+          ref={transmitHandlerRef}
+        >
           <div className="w-full flex justify-center items-center gap-4">
             <Button
               onClick={() => dispatch(clearAll())}
@@ -108,14 +115,15 @@ const TransmitHandler = () => {
             >
               Clear All
             </Button>
-            <hr className="border-r border-gray-400 h-full" />
+            <hr className="border-r border-gray-400 max-md:h-12 h-6" />
             <Toggle
               label="Sending to all"
               value={isTransmitting}
               onChange={handleSetTransmitting}
+              color="#22c55e"
             />
           </div>
-          <div className="transmit-handler-content">
+          <div className="scrollbar-variable overflow-y-auto h-full">
             <Presentation
               timers={timers}
               name="Projector"

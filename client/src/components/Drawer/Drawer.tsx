@@ -2,8 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import cn from "classnames";
 import Button from "../Button/Button";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
-import "./Drawer.scss";
+import { X } from "lucide-react";
 
 export interface DrawerProps {
   isOpen: boolean;
@@ -164,7 +163,7 @@ const Drawer: React.FC<DrawerProps> = ({
       <div
         ref={drawerRef}
         className={cn(
-          "relative bg-gray-800 shadow-2xl transition-transform duration-300 ease-in-out max-w-full max-h-screen flex flex-col",
+          "relative bg-gray-800 shadow-2xl transition-transform duration-300 ease-in-out max-w-full max-h-dvh flex flex-col",
           positionClasses[position],
           position === "top" || position === "bottom"
             ? heightSizeClasses[size]
@@ -187,7 +186,7 @@ const Drawer: React.FC<DrawerProps> = ({
             {showCloseButton && (
               <Button
                 variant="tertiary"
-                svg={CloseSVG}
+                svg={X}
                 onClick={onClose}
                 iconSize="lg"
                 className="ml-auto"
@@ -197,7 +196,9 @@ const Drawer: React.FC<DrawerProps> = ({
           </div>
         )}
 
-        <div className={cn("drawer-content", contentPadding, contentClassName)}>
+        <div
+          className={cn("scrollbar-variable", contentPadding, contentClassName)}
+        >
           {children}
         </div>
       </div>
@@ -206,7 +207,7 @@ const Drawer: React.FC<DrawerProps> = ({
     <div
       ref={drawerRef}
       className={cn(
-        "fixed z-50 bg-gray-800 shadow-2xl transition-transform duration-300 ease-in-out max-w-full max-h-screen flex flex-col",
+        "fixed z-50 bg-gray-800 shadow-2xl transition-transform duration-300 ease-in-out max-w-full max-h-dvh flex flex-col",
         positionClasses[position],
         position === "top" || position === "bottom"
           ? heightSizeClasses[size]
@@ -229,7 +230,7 @@ const Drawer: React.FC<DrawerProps> = ({
           {showCloseButton && (
             <Button
               variant="tertiary"
-              svg={CloseSVG}
+              svg={X}
               onClick={onClose}
               iconSize="lg"
               className="ml-auto"
@@ -239,7 +240,9 @@ const Drawer: React.FC<DrawerProps> = ({
         </div>
       )}
 
-      <div className={cn("drawer-content", contentPadding, contentClassName)}>
+      <div
+        className={cn("scrollbar-variable", contentPadding, contentClassName)}
+      >
         {children}
       </div>
     </div>

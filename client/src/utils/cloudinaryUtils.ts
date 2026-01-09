@@ -1,20 +1,20 @@
 import { Cloudinary } from "@cloudinary/url-gen";
 
-export const deleteFromCloudinary = async(
+export const deleteFromCloudinary = async (
   cloud: Cloudinary,
   publicId: string,
-  resourceType?: "image" | "video",
+  resourceType?: "image" | "video"
 ): Promise<boolean> => {
   try {
     const response = await fetch(
-      `${process.env.REACT_APP_API_BASE_PATH}api/cloudinary/delete`,
+      `${import.meta.env.VITE_API_BASE_PATH}api/cloudinary/delete`,
       {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ publicId, resourceType }),
-      },
+      }
     );
 
     if (!response.ok) {

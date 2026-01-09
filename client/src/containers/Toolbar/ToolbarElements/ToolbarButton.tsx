@@ -3,7 +3,6 @@ import Button from "../../../components/Button/Button";
 import cn from "classnames";
 
 export type ToolbarButtonProps = {
-  variant?: "none";
   svg: React.FunctionComponent<React.SVGProps<SVGSVGElement>>;
   onClick: () => void;
   disabled?: boolean;
@@ -13,7 +12,6 @@ export type ToolbarButtonProps = {
 };
 
 const ToolbarButton: React.FC<ToolbarButtonProps> = ({
-  variant = "none",
   svg,
   onClick,
   disabled = false,
@@ -23,14 +21,14 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = ({
 }) => {
   return (
     <Button
-      variant={variant}
+      variant={isActive ? "none" : "tertiary"}
       svg={svg}
       onClick={onClick}
       disabled={disabled}
       className={cn(
         "text-xs rounded-none",
         isActive && "bg-gray-800",
-        hidden && "hidden",
+        hidden && "hidden"
       )}
     >
       {children}

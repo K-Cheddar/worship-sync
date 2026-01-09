@@ -1,24 +1,22 @@
-import { ReactComponent as SongSVG } from "../assets/icons/lyrics.svg";
-import { ReactComponent as AddSVG } from "../assets/icons/add.svg";
-import { ReactComponent as VideoSVG } from "../assets/icons/video.svg";
-import { ReactComponent as BibleSVG } from "../assets/icons/book.svg";
-import { ReactComponent as TimerSVG } from "../assets/icons/timer.svg";
-import { ReactComponent as ImageSVG } from "../assets/icons/image.svg";
-import { ReactComponent as AnnouncementSVG } from "../assets/icons/news.svg";
-import { ReactComponent as DocSVG } from "../assets/icons/doc.svg";
-import { ReactComponent as PeopleSVG } from "../assets/icons/people.svg";
-import { FunctionComponent } from "react";
-
-export const svgMap: Map<string, FunctionComponent> = new Map([
-  ["song", SongSVG],
-  ["video", VideoSVG],
-  ["image", ImageSVG],
-  ["bible", BibleSVG],
-  ["timer", TimerSVG],
-  ["announcement", AnnouncementSVG],
-  ["overlays", PeopleSVG],
-  ["create", AddSVG],
-  ["free", DocSVG],
+import { LucideIcon, Music } from "lucide-react";
+import { Plus } from "lucide-react";
+import { Video } from "lucide-react";
+import { Book } from "lucide-react";
+import { Timer } from "lucide-react";
+import { Image } from "lucide-react";
+import { Megaphone } from "lucide-react";
+import { Users } from "lucide-react";
+import { File } from "lucide-react";
+export const svgMap: Map<string, LucideIcon> = new Map<string, LucideIcon>([
+  ["song", Music],
+  ["video", Video],
+  ["image", Image],
+  ["bible", Book],
+  ["timer", Timer],
+  ["announcement", Megaphone],
+  ["overlays", Users],
+  ["create", Plus],
+  ["free", File],
 ]);
 
 export const borderColorMap: Map<string, string> = new Map([

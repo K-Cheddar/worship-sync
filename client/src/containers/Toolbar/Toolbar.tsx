@@ -1,9 +1,11 @@
 import { useLocation } from "react-router-dom";
-import { ReactComponent as SettingsSVG } from "../../assets/icons/settings.svg";
-import { ReactComponent as EditSquareSVG } from "../../assets/icons/edit-square.svg";
-import { ReactComponent as TimerSVG } from "../../assets/icons/timer.svg";
-import { ReactComponent as ListSVG } from "../../assets/icons/list.svg";
-import { ReactComponent as MonitorSVG } from "../../assets/icons/desktop_1.svg";
+import {
+  Settings,
+  SquarePen,
+  Timer,
+  Monitor,
+  RectangleEllipsis,
+} from "lucide-react";
 import Menu from "./ToolbarElements/Menu";
 import Outlines from "./ToolbarElements/Outlines";
 import SlideEditTools from "./ToolbarElements/SlideEditTools";
@@ -17,7 +19,6 @@ import Button from "../../components/Button/Button";
 import TimerControls from "../../components/TimerControls/TimerControls";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import cn from "classnames";
-import "./ToolbarElements/Toolbar.scss";
 import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
 import { setShouldShowStreamFormat } from "../../store/preferencesSlice";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
@@ -70,17 +71,22 @@ const Toolbar = ({ className }: { className: string }) => {
           <Menu isPhone={isPhone} isEditMode={isEditMode} />
           {!isEditMode && !isPhone && <Undo />}
         </div>
-        <div className={cn("toolbar-middle", isEditMode && "invisible")}>
-          <div className="flex gap-1 overflow-x-auto w-full">
+        <div
+          className={cn(
+            "scrollbar-variable flex-1 flex min-h-fit flex-col min-w-0",
+            isEditMode && "invisible"
+          )}
+        >
+          <div className="flex gap-1 overflow-x-auto w-full scrollbar-variable">
             <ToolbarButton
-              svg={SettingsSVG}
+              svg={Settings}
               onClick={() => setSection("settings")}
               isActive={section === "settings"}
             >
               Settings
             </ToolbarButton>
             <ToolbarButton
-              svg={EditSquareSVG}
+              svg={SquarePen}
               onClick={() => setSection("slide-tools")}
               disabled={!onItemPage}
               hidden={!onItemPage}
@@ -91,7 +97,7 @@ const Toolbar = ({ className }: { className: string }) => {
             {access === "full" && (
               <>
                 <ToolbarButton
-                  svg={EditSquareSVG}
+                  svg={SquarePen}
                   onClick={() => setSection("stream-format")}
                   disabled={!onItemPage}
                   hidden={!onItemPage}
@@ -100,7 +106,7 @@ const Toolbar = ({ className }: { className: string }) => {
                   Stream Format
                 </ToolbarButton>
                 <ToolbarButton
-                  svg={TimerSVG}
+                  svg={Timer}
                   onClick={() => setSection("timer-manager")}
                   disabled={!onItemPage || type !== "timer"}
                   hidden={!onItemPage}
@@ -109,7 +115,7 @@ const Toolbar = ({ className }: { className: string }) => {
                   Timer Manager
                 </ToolbarButton>
                 <ToolbarButton
-                  svg={EditSquareSVG}
+                  svg={SquarePen}
                   onClick={() => setSection("item-tools")}
                   disabled={!onItemPage}
                   hidden={!onItemPage}
@@ -133,10 +139,10 @@ const Toolbar = ({ className }: { className: string }) => {
                 section !== "settings" && "hidden",
                 location.pathname.includes("preferences") &&
                   !location.pathname.includes("quick-links") &&
-                  "outline outline-2 outline-white"
+                  "outline-2 outline-white"
               )}
               variant="tertiary"
-              svg={SettingsSVG}
+              svg={Settings}
               component="link"
               to="/controller/preferences"
             >
@@ -146,10 +152,10 @@ const Toolbar = ({ className }: { className: string }) => {
               className={cn(
                 section !== "settings" && "hidden",
                 location.pathname.includes("quick-links") &&
-                  "outline outline-2 outline-white"
+                  "outline-2 outline-white"
               )}
               variant="tertiary"
-              svg={ListSVG}
+              svg={RectangleEllipsis}
               component="link"
               to="/controller/quick-links"
             >
@@ -159,10 +165,10 @@ const Toolbar = ({ className }: { className: string }) => {
               className={cn(
                 section !== "settings" && "hidden",
                 location.pathname.includes("monitor-settings") &&
-                  "outline outline-2 outline-white"
+                  "outline-2 outline-white"
               )}
               variant="tertiary"
-              svg={MonitorSVG}
+              svg={Monitor}
               component="link"
               to="/controller/monitor-settings"
             >

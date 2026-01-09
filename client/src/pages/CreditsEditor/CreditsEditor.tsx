@@ -1,10 +1,10 @@
 import { useCallback, useContext, useEffect, useState } from "react";
 import Credits from "../../containers/Credits/Credits";
 import { default as CreditsEditorContainer } from "../../containers/Credits/CreditsEditor";
-import { ReactComponent as BackArrowSVG } from "../../assets/icons/arrow-back.svg";
-import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
-import { ReactComponent as SyncSVG } from "../../assets/icons/sync-alt.svg";
-import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
+import { ArrowLeft } from "lucide-react";
+import { ChevronsUpDown } from "lucide-react";
+import { RefreshCcw } from "lucide-react";
+import { Check } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import {
@@ -33,7 +33,6 @@ import cn from "classnames";
 import { onValue, ref } from "firebase/database";
 import PopOver from "../../components/PopOver/PopOver";
 import Input from "../../components/Input/Input";
-import "./CreditsEditor.scss";
 import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
 import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
@@ -366,7 +365,7 @@ const CreditsEditor = () => {
           generateFromOverlays();
         }}
         color={justGenerated ? "#84cc16" : "#22d3ee"}
-        svg={justGenerated ? CheckSVG : SyncSVG}
+        svg={justGenerated ? Check : RefreshCcw}
       >
         {isGenerating
           ? "Generating Credits..."
@@ -380,9 +379,9 @@ const CreditsEditor = () => {
   return (
     <div
       ref={editorRef}
-      className="w-full h-screen bg-gray-700 text-white flex flex-col gap-2 overflow-hidden"
+      className="w-full h-dvh bg-gray-700 text-white flex flex-col gap-2 overflow-hidden"
     >
-      <div>
+      <div className="min-h-0">
         <div className="bg-gray-800 w-full px-4 py-1 flex gap-2 items-center">
           <Button
             variant="tertiary"
@@ -391,7 +390,7 @@ const CreditsEditor = () => {
             component="link"
             to="/"
           >
-            <BackArrowSVG />
+            <ArrowLeft />
           </Button>
           <div className="border-l-2 border-gray-400 pl-4">
             <Undo />
@@ -401,7 +400,11 @@ const CreditsEditor = () => {
           </div>
           <PopOver
             TriggeringButton={
-              <Button className="lg:hidden" variant="tertiary" svg={ExpandSVG}>
+              <Button
+                className="lg:hidden"
+                variant="tertiary"
+                svg={ChevronsUpDown}
+              >
                 Tools
               </Button>
             }
@@ -449,7 +452,7 @@ const CreditsEditor = () => {
         </div>
       )}
 
-      <div className="flex gap-2 px-4 pb-4 h-full">
+      <div className="flex gap-2 px-4 pb-4 flex-1 min-h-0">
         <CreditsEditorContainer
           className={isPreviewOpen ? "max-md:hidden" : ""}
         />
@@ -457,11 +460,11 @@ const CreditsEditor = () => {
         <section
           data-testid="credits-preview-container"
           className={cn(
-            "flex-1 text-center",
+            "flex-1 text-center flex flex-col",
             !isPreviewOpen && "max-md:hidden"
           )}
         >
-          <h2 className="text-lg font-semibold">Preview</h2>
+          <h2 className="text-lg font-semibold min-h-0">Preview</h2>
           <Credits isPreview credits={list} />
         </section>
       </div>

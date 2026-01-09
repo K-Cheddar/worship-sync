@@ -120,7 +120,7 @@ const BibleSection = ({
         {label || type}
       </p>
       <ul
-        className="bible-section"
+        className="scrollbar-variable overflow-y-auto pr-2 pl-1 pb-2 overflow-x-visible flex-1 min-h-0"
         id={`bible-section-${label || type}`}
         tabIndex={-1}
       >

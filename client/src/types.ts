@@ -26,6 +26,7 @@ export type MenuItemType = {
   element?: React.ReactNode;
   className?: string;
   padding?: string;
+  preventClose?: boolean;
 };
 
 export type Box = {
@@ -416,6 +417,7 @@ export type PreferencesType = {
   defaultShouldShowItemEditor: boolean;
   defaultIsMediaExpanded: boolean;
   defaultBibleFontMode: BibleFontMode;
+  defaultFreeFormFontMode: OverflowMode;
 };
 
 export type MonitorSettingsType = {

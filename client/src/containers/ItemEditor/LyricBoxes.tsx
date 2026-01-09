@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
 import TextArea from "../../components/TextArea/TextArea";
@@ -9,6 +9,7 @@ import { sectionTypes, itemSectionBgColorMap } from "../../utils/slideColorMap";
 import { FormattedLyrics as FormattedLyricsType } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { RootState } from "../../store/store";
+import cn from "classnames";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -38,7 +39,7 @@ const LyricBoxes = ({
   isMobile,
 }: FormattedLyricsProps) => {
   const { formattedLyricsPerRow } = useSelector(
-    (state: RootState) => state.undoable.present.preferences,
+    (state: RootState) => state.undoable.present.preferences
   );
 
   const [newSectionType, setNewSectionType] = useState("Verse");
@@ -75,27 +76,35 @@ const LyricBoxes = ({
 
   return (
     <ul
-      className={`formatted-lyrics-list ${
-        isMobile ? "grid-cols-1" : sizeMap.get(formattedLyricsPerRow)
-      }`}
+      className={cn(
+        "scrollbar-variable grid gap-2 overflow-y-auto",
+        isMobile ? "grid-cols-1" : sizeMap.get(formattedLyricsPerRow),
+        "max-h-[calc(100%-clamp(2.5rem,2.5vw,3.5rem))]"
+      )}
     >
       {formattedLyrics.map(({ id, type, name, words }, index) => (
         <li key={id} className="text-sm px-2">
           <div
-            className={`formatted-lyrics-section ${itemSectionBgColorMap.get(
-              type,
-            )}`}
+            className={cn(
+              "flex font-semibold text-sm rounded-t-md px-1 py-0.5",
+              itemSectionBgColorMap.get(type)
+            )}
           >
             <Select
               onChange={(val) => changeSectionType(val, index)}
               value={name}
               options={availableSections}
+              backgroundColor="bg-black/40"
               textColor="text-white"
+              chevronColor="text-white"
+              contentBackgroundColor="bg-gray-800"
+              contentTextColor="text-white"
+              className="min-w-[50%] max-w-full"
             />
             <Button
               className="ml-auto"
               variant="tertiary"
-              svg={DeleteSVG}
+              svg={Trash2}
               onClick={() => {
                 onFormattedLyricsDelete(index);
               }}
@@ -124,16 +133,21 @@ const LyricBoxes = ({
           }}
           value={newSectionType}
           options={sectionTypes.map((type) => ({ value: type, label: type }))}
-          className={`formatted-lyrics-section ${itemSectionBgColorMap.get(
-            newSectionType,
-          )}`}
+          className={cn(
+            "flex font-semibold text-sm rounded-t-md",
+            itemSectionBgColorMap.get(newSectionType)
+          )}
+          backgroundColor="bg-black/40"
           textColor="text-white"
+          chevronColor="text-white"
+          contentBackgroundColor="bg-gray-800"
+          contentTextColor="text-white"
         />
         <Button
           key="lyrics-box-add-section"
           onClick={() => addSection()}
           variant="tertiary"
-          svg={AddSVG}
+          svg={Plus}
           iconSize={64}
           className="w-full flex-1 justify-center border border-gray-500 rounded-md"
         />

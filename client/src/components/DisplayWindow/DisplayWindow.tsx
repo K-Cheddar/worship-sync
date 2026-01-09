@@ -7,7 +7,7 @@ import {
   OverlayInfo,
   TimerInfo,
 } from "../../types";
-import "./DisplayWindow.scss";
+import cn from "classnames";
 import DisplayBox from "./DisplayBox";
 import DisplayStreamBible from "./DisplayStreamBible";
 import DisplayParticipantOverlay from "./DisplayParticipantOverlay";
@@ -110,6 +110,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isStream = displayType === "stream";
     const isEditor = displayType === "editor";
     const isDisplay = !isStream && !isEditor;
+    const isMonitor = displayType === "monitor";
 
     // Determine the active background video (if any) from boxes
     const { videoBox, desiredVideoUrl } = useMemo(() => {
@@ -127,8 +128,28 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const [isWindowVideoLoaded, setIsWindowVideoLoaded] = useState(false);
 
     const {
-      monitorSettings: { showClock, showTimer },
+      monitorSettings: { showClock, showTimer, clockFontSize, timerFontSize },
     } = useSelector((state) => state.undoable.present.preferences);
+
+    const hasReducedSpace = isMonitor && (showClock || showTimer);
+
+    // Calculate scale, height, and top based on the higher font size
+    // At max font size (25): scaleY = 0.9, height = 90%, top = -5%
+    // At min font size (15): scaleY = 0.95, height = 95%, top = -2.5%
+    const maxFontSize = 25;
+    const minFontSize = 15;
+    const higherFontSize = Math.max(
+      showClock ? clockFontSize : 0,
+      showTimer ? timerFontSize : 0
+    );
+    // Normalize font size to range [0, 1] where 0 = min (15) and 1 = max (25)
+    const normalizedRatio =
+      (higherFontSize - minFontSize) / (maxFontSize - minFontSize);
+
+    // Linear interpolation between min and max values
+    const scaleY = 0.95 - normalizedRatio * 0.05; // 0.95 at min, 0.9 at max
+    const heightPercent = 95 - normalizedRatio * 5; // 95% at min, 90% at max
+    const topPercent = -2.5 - normalizedRatio * 2.5; // -2.5% at min, -5% at max
 
     // Keep the video element mounted and update src only when the URL changes
     useEffect(() => {
@@ -145,14 +166,17 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     return (
       <div
-        className={`display-window ${
-          showBorder ? "border border-gray-500" : ""
-        } ${displayType !== "stream" ? "bg-black" : ""}`}
+        className={cn(
+          "relative overflow-hidden overflow-anywhere text-white",
+          showBorder && "border border-gray-500",
+          displayType !== "stream" && "bg-black"
+        )}
         ref={containerRef}
         id={isEditor ? "display-editor" : undefined}
         style={{
           width: `${width}vw`,
           height: `${width / aspectRatio}vw`,
+          fontFamily: "Verdana",
         }}
       >
         {isDisplay && showBackground && shouldPlayVideo && activeVideoUrl && (
@@ -194,41 +218,69 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
           if (isDisplay)
             return (
-              <DisplayBox
+              <div
                 key={box.id}
-                box={box}
-                width={width}
-                showBackground={showBackground}
-                fontAdjustment={fontAdjustment}
-                index={index}
-                shouldAnimate={shouldAnimate}
-                prevBox={prevBoxes[index]}
-                time={time}
-                timerInfo={timerInfo}
-                activeVideoUrl={activeVideoUrl}
-                isWindowVideoLoaded={isWindowVideoLoaded}
-              />
+                style={
+                  hasReducedSpace
+                    ? {
+                        scale: `0.95 ${scaleY}`,
+                        width: "100%",
+                        height: `${heightPercent}%`,
+                        position: "absolute",
+                        top: `${topPercent}%`,
+                      }
+                    : undefined
+                }
+              >
+                <DisplayBox
+                  box={box}
+                  width={width}
+                  showBackground={showBackground}
+                  fontAdjustment={fontAdjustment}
+                  index={index}
+                  shouldAnimate={shouldAnimate}
+                  prevBox={prevBoxes[index]}
+                  time={time}
+                  timerInfo={timerInfo}
+                  activeVideoUrl={activeVideoUrl}
+                  isWindowVideoLoaded={isWindowVideoLoaded}
+                />
+              </div>
             );
           return null;
         })}
         {prevBoxes.map((box, index) => {
           if (isDisplay)
             return (
-              <DisplayBox
+              <div
                 key={box.id}
-                box={box}
-                width={width}
-                showBackground={showBackground}
-                fontAdjustment={fontAdjustment}
-                index={index}
-                shouldAnimate={shouldAnimate}
-                prevBox={boxes[index]}
-                time={time}
-                timerInfo={prevTimerInfo}
-                activeVideoUrl={activeVideoUrl}
-                isWindowVideoLoaded={isWindowVideoLoaded}
-                isPrev
-              />
+                style={
+                  hasReducedSpace
+                    ? {
+                        scale: `0.95 ${scaleY}`,
+                        width: "100%",
+                        height: `${heightPercent}%`,
+                        position: "absolute",
+                        top: `${topPercent}%`,
+                      }
+                    : undefined
+                }
+              >
+                <DisplayBox
+                  box={box}
+                  width={width}
+                  showBackground={showBackground}
+                  fontAdjustment={fontAdjustment}
+                  index={index}
+                  shouldAnimate={shouldAnimate}
+                  prevBox={boxes[index]}
+                  time={time}
+                  timerInfo={prevTimerInfo}
+                  activeVideoUrl={activeVideoUrl}
+                  isWindowVideoLoaded={isWindowVideoLoaded}
+                  isPrev
+                />
+              </div>
             );
           if (isStream)
             return (
@@ -246,13 +298,14 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           return null;
         })}
 
-        {isDisplay && displayType === "monitor" && (
+        {isDisplay && isMonitor && (
           <>
             {showClock && (
               <DisplayClock
                 width={width}
                 fontAdjustment={fontAdjustment}
                 time={time}
+                fontSize={clockFontSize}
               />
             )}
             {showTimer && (
@@ -261,6 +314,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 fontAdjustment={fontAdjustment}
                 time={time}
                 currentTimerInfo={timerInfo}
+                fontSize={timerFontSize}
               />
             )}
           </>

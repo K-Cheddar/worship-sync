@@ -1,7 +1,13 @@
 import { Option } from "../../types";
-import "./Select.scss";
 import cn from "classnames";
 import { useId } from "react";
+import {
+  Select as RadixSelect,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/Select";
 
 export type SelectProps = {
   options: Option[];
@@ -14,6 +20,10 @@ export type SelectProps = {
   hideLabel?: boolean;
   selectClassName?: string;
   textColor?: string;
+  backgroundColor?: string;
+  chevronColor?: string;
+  contentBackgroundColor?: string;
+  contentTextColor?: string;
   disabled?: boolean;
   id?: string;
 };
@@ -29,12 +39,21 @@ const Select = ({
   labelFontSize = "text-sm",
   selectClassName,
   textColor = "text-black",
+  backgroundColor = "bg-white",
+  chevronColor,
+  contentBackgroundColor,
+  contentTextColor,
   disabled = false,
   id: idProp,
   ...rest
 }: SelectProps) => {
   const generatedId = useId();
   const id = idProp || generatedId;
+
+  // Check if value exists in options, if not use undefined to show placeholder
+  const valueExists = options.some((option) => option.value === value);
+  const selectValue = valueExists ? value : undefined;
+
   return (
     <div className={className}>
       {label && (
@@ -50,20 +69,30 @@ const Select = ({
           {label}:
         </label>
       )}
-      <select
-        className={cn("select", selectClassName, textColor)}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        {...rest}
+      <RadixSelect
+        value={selectValue}
+        onValueChange={onChange}
         disabled={disabled}
-        id={id}
+        {...rest}
       >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger
+          id={id}
+          className={cn(backgroundColor, selectClassName, textColor)}
+          chevronColor={chevronColor}
+        >
+          <SelectValue placeholder="Select..." />
+        </SelectTrigger>
+        <SelectContent
+          contentBackgroundColor={contentBackgroundColor}
+          contentTextColor={contentTextColor}
+        >
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </RadixSelect>
     </div>
   );
 };

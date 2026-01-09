@@ -1,5 +1,4 @@
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
-import "./ItemSlides.scss";
 
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import { ItemSlideType, TimerInfo } from "../../types";
@@ -81,6 +80,7 @@ const ItemSlide = ({
       style={(() => {
         const borderStyle = {
           "--border-width": sizeMap?.get(size)?.borderWidth,
+          borderWidth: "var(--border-width)",
         } as React.CSSProperties;
         if (!isFree) {
           return borderStyle;
@@ -89,7 +89,7 @@ const ItemSlide = ({
           return { ...style, ...borderStyle };
         }
         if (isInDraggedSection) {
-          return sectionStyle;
+          return { ...sectionStyle, ...borderStyle };
         }
         return borderStyle;
       })()}
@@ -97,7 +97,7 @@ const ItemSlide = ({
       {...(isFree && listeners)}
       key={slide.id}
       className={cn(
-        "item-slide",
+        "cursor-pointer w-fit rounded-lg",
         selectedSlide === index && !isTransmitting && "border-gray-300",
         selectedSlide === index && isTransmitting && "border-green-500",
         selectedSlide !== index && "border-transparent",

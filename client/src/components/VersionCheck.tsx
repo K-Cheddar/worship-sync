@@ -124,7 +124,7 @@ const VersionCheck: React.FC = () => {
   const checkVersion = useCallback(async () => {
     try {
       const response = await fetch(
-        `${process.env.REACT_APP_API_BASE_PATH}api/version`,
+        `${import.meta.env.VITE_API_BASE_PATH}api/version`,
         {
           cache: "no-cache",
         }

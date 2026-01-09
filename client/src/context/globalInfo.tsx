@@ -78,26 +78,27 @@ export const globalFireDbInfo: globalFireBaseInfoType = {
   user: "Demo",
 };
 
-export let globalHostId: string = "";
+export const globalHostId =
+  (window as unknown as { __globalHostId: string })?.__globalHostId ??
+  ((window as unknown as { __globalHostId: string }).__globalHostId =
+    generateRandomId());
 
-const GlobalInfoProvider = ({ children }: any) => {
+const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
   const [loginState, setLoginState] = useState<LoginStateType>("idle");
   const [user, setUser] = useState("Demo");
   const [database, setDatabase] = useState("demo");
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
   const [access, setAccess] = useState<AccessType>("full");
-  const [hostId] = useState(() => {
-    const id = generateRandomId();
-    globalHostId = id;
-    return id;
-  });
+
   const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const location = useLocation();
   const isOnController = useMemo(() => {
     return location.pathname.startsWith("/controller");
   }, [location.pathname]);
+
+  const hostId = useMemo(() => globalHostId, []);
 
   const onValueRef = useRef<{
     projectorInfo: Unsubscribe | undefined;
@@ -245,8 +246,8 @@ const GlobalInfoProvider = ({ children }: any) => {
           set(instanceRef.current, {
             lastActive: new Date().toISOString(),
             user: user,
-            database: database,
-            hostId: hostId,
+            database,
+            hostId,
             isOnController,
           });
         }

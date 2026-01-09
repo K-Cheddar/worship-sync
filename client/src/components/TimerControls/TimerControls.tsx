@@ -1,5 +1,5 @@
 import { useDispatch, useSelector } from "../../hooks";
-import { ReactComponent as ExpandSVG } from "../../assets/icons/expand.svg";
+import { Expand } from "lucide-react";
 import { TimerInfo } from "../../types";
 import { updateTimer } from "../../store/timersSlice";
 import { RootState } from "../../store/store";
@@ -148,7 +148,7 @@ const TimerControls = ({ className }: { className?: string }) => {
       <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>
       <PopOver
         TriggeringButton={
-          <Button className="lg:hidden" variant="tertiary" svg={ExpandSVG}>
+          <Button className="lg:hidden" variant="tertiary" svg={Expand}>
             Timer Controls
           </Button>
         }

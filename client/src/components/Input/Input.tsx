@@ -1,6 +1,5 @@
 import { FunctionComponent, HTMLProps, SVGProps, useId } from "react";
 import cn from "classnames";
-import "./Input.scss";
 import Button from "../Button/Button";
 
 export type InputProps = HTMLProps<HTMLInputElement> & {
@@ -66,13 +65,7 @@ const Input = ({
   }
 
   return (
-    <div
-      className={cn(
-        className,
-        "input-container",
-        hideSpinButtons && "hide-spin-buttons"
-      )}
-    >
+    <div className={cn("h-fit relative", className)}>
       <label
         htmlFor={inputId}
         className={cn(
@@ -90,7 +83,9 @@ const Input = ({
             svg ? "pr-6" : "pr-2",
             disabled && "opacity-50",
             inputTextSize,
-            inputWidth
+            inputWidth,
+            hideSpinButtons &&
+              "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]"
           )}
           type={type}
           value={value}

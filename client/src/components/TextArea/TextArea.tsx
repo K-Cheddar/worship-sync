@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, HTMLProps, useId } from "react";
 import cn from "classnames";
-import "./TextArea.scss";
 
 type TextAreaProps = HTMLProps<HTMLTextAreaElement> & {
   className?: string;
@@ -49,14 +48,14 @@ const TextArea = ({
   }, [resizeTextArea]);
 
   return (
-    <div ref={containerRef} className={cn("text-area-container", className)}>
+    <div ref={containerRef} className={cn("scrollbar-variable", className)}>
       <label
         htmlFor={id}
         ref={labelRef}
         className={cn(
           "text-sm font-semibold",
           hideLabel && "sr-only",
-          labelClassName,
+          labelClassName
         )}
       >
         {label}:

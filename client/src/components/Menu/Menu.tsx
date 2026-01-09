@@ -1,27 +1,14 @@
+import { ComponentPropsWithoutRef, ReactElement } from "react";
+import { Link } from "react-router-dom";
 import {
-  cloneElement,
-  ComponentPropsWithoutRef,
-  ReactElement,
-  useMemo,
-  useState,
-} from "react";
-import {
-  useFloating,
-  autoUpdate,
-  flip,
-  shift,
-  useDismiss,
-  useRole,
-  useClick,
-  useInteractions,
-  FloatingFocusManager,
-} from "@floating-ui/react";
-
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "../ui/DropdownMenu";
 import { MenuItemType } from "../../types";
-import MenuItem from "./MenuItem";
-import "./Menu.scss";
-import cn from "classnames";
 import { ButtonProps } from "../Button/Button";
+import cn from "classnames";
 
 interface MenuProps extends ComponentPropsWithoutRef<"ul"> {
   TriggeringButton: ReactElement<ButtonProps>;
@@ -29,61 +16,50 @@ interface MenuProps extends ComponentPropsWithoutRef<"ul"> {
 }
 
 const Menu = ({ menuItems, TriggeringButton, ...rest }: MenuProps) => {
-  const [isOpen, setIsOpen] = useState(false);
-
-  const { refs, floatingStyles, context } = useFloating({
-    open: isOpen,
-    onOpenChange: setIsOpen,
-    middleware: [flip({ fallbackAxisSideDirection: "end" }), shift()],
-    whileElementsMounted: autoUpdate,
-    placement: "bottom-end",
-  });
-
-  const click = useClick(context);
-  const dismiss = useDismiss(context);
-  const role = useRole(context);
-
-  const { getReferenceProps, getFloatingProps } = useInteractions([
-    click,
-    dismiss,
-    role,
-  ]);
-
-  const triggeringButton = cloneElement(TriggeringButton, {
-    ref: refs.setReference,
-    onClick: () => setIsOpen((val) => !val),
-    ...getReferenceProps(),
-  });
-
-  const menuItemsWIds = useMemo(() => {
-    return menuItems.map((item, index) => {
-      return { ...item, id: index };
-    });
-  }, [menuItems]);
-
   return (
-    <>
-      {triggeringButton}
-      {isOpen && (
-        <FloatingFocusManager context={context} modal>
-          <ul
-            className={cn("menu")}
-            style={floatingStyles}
-            ref={refs.setFloating}
-            {...getFloatingProps()}
-            {...rest}
-          >
-            {menuItemsWIds.map(({ text, id, element, ...rest }) => {
-              return (
-                <MenuItem key={id} {...rest}>
-                  {element || text}
-                </MenuItem>
-              );
-            })}
-          </ul>
-        </FloatingFocusManager>
-      )}
-    </>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{TriggeringButton}</DropdownMenuTrigger>
+      <DropdownMenuContent
+        className={cn("bg-gray-600 text-white", rest.className)}
+        align="end"
+      >
+        {menuItems.map(
+          (
+            {
+              text,
+              element,
+              onClick,
+              to,
+              className,
+              preventClose,
+              ...itemRest
+            },
+            index
+          ) => {
+            const content = element || text;
+
+            const handleSelect = preventClose
+              ? (e: Event) => {
+                  e.preventDefault();
+                }
+              : undefined;
+
+            return (
+              <DropdownMenuItem
+                key={index}
+                className={cn(" hover:bg-gray-500 max-md:text-base", className)}
+                onClick={!to ? onClick : undefined}
+                onSelect={handleSelect}
+                asChild={to ? true : undefined}
+                {...itemRest}
+              >
+                {to ? <Link to={to}>{content}</Link> : content}
+              </DropdownMenuItem>
+            );
+          }
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 };
 

@@ -1,7 +1,0 @@
-.filtered-items-list {
-  @apply overflow-y-auto px-2 flex flex-col gap-1 max-2xl:w-full 2xl:w-2/3 relative;
-
-  height: calc(100% - clamp(4rem, 4.5vw, 10.5rem));
-
-  scrollbar-width: var(--scrollbar-width);
-}

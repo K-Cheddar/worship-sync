@@ -1,12 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
-import { ReactComponent as ErrorSVG } from "../../assets/icons/error.svg";
-import { ReactComponent as CheckCircleSVG } from "../../assets/icons/check-circle.svg";
-import { ReactComponent as InfoSVG } from "../../assets/icons/info.svg";
+import { X, CircleAlert, CheckCircle2, Info } from "lucide-react";
 import cn from "classnames";
 import Button from "../Button/Button";
 import Icon from "../Icon/Icon";
-import "./Toast.scss";
 
 export type ToastPosition =
   | "top-left"
@@ -65,25 +61,25 @@ const Toast: React.FC<ToastProps> = ({
 
   const variantConfig = {
     info: {
-      icon: InfoSVG,
+      icon: Info,
       iconColor: "#3b82f6", // blue-500
       borderColor: "#3b82f6",
       textColor: "text-gray-900",
     },
     success: {
-      icon: CheckCircleSVG,
+      icon: CheckCircle2,
       iconColor: "#10b981", // green-500
       borderColor: "#10b981",
       textColor: "text-gray-900",
     },
     error: {
-      icon: ErrorSVG,
+      icon: CircleAlert,
       iconColor: "#ef4444", // red-500
       borderColor: "#ef4444",
       textColor: "text-gray-900",
     },
     neutral: {
-      icon: InfoSVG,
+      icon: Info,
       iconColor: "#6b7280", // gray-500
       borderColor: "#6b7280",
       textColor: "text-gray-900",
@@ -95,21 +91,22 @@ const Toast: React.FC<ToastProps> = ({
   const positionStyles = {
     "top-left": "top-4 left-4",
     "top-right": "top-4 right-4",
-    "top-center": "top-4",
+    "top-center": "top-4 left-1/2 -translate-x-1/2",
     "bottom-left": "bottom-4 left-4",
     "bottom-right": "bottom-4 right-4",
-    "bottom-center": "bottom-4",
+    "bottom-center": "bottom-4 left-1/2 -translate-x-1/2",
   };
 
   return (
     <div
       className={cn(
-        "toast",
-        "bg-white",
+        "fixed z-9999 min-w-[300px] max-w-[50vw] px-4 py-3 rounded-lg border-2 shadow-md pointer-events-auto bg-white",
         config.textColor,
         positionStyles[position],
-        isVisible && !isExiting && "toast-enter",
-        isExiting && "toast-exit"
+        isVisible && !isExiting && "opacity-100 translate-y-0",
+        !isVisible && !isExiting && "opacity-0 -translate-y-2",
+        isExiting && "opacity-0 -translate-y-2",
+        "transition duration-200 ease-in-out"
       )}
       style={{
         borderColor: config.borderColor,
@@ -121,7 +118,7 @@ const Toast: React.FC<ToastProps> = ({
             svg={config.icon}
             size="md"
             color={config.iconColor}
-            className="flex-shrink-0"
+            className="shrink-0"
           />
         )}
         <div className="flex-1 w-max">
@@ -132,7 +129,7 @@ const Toast: React.FC<ToastProps> = ({
         </div>
         <Button
           onClick={handleClose}
-          svg={CloseSVG}
+          svg={X}
           variant="none"
           padding="p-1"
           className="w-6"

@@ -1,19 +1,68 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "./styles/globals.css";
+
+@layer utilities {
+  .scrollbar-variable {
+    scrollbar-width: var(--scrollbar-width);
+  }
+  .overflow-anywhere {
+    overflow-wrap: anywhere;
+  }
+  .button-appear {
+    animation: border-glow 1.5s 4;
+  }
+}
+
+@layer base {
+  input,
+  textarea,
+  select {
+    background-color: #ffffff;
+  }
+}
+
+@keyframes border-glow {
+  0% {
+    border-color: rgba(255, 165, 0, 0);
+  }
+  10% {
+    border-color: rgba(255, 165, 0, 0.2);
+  }
+  25% {
+    border-color: rgba(255, 165, 0, 0.5);
+  }
+  40% {
+    border-color: rgba(255, 165, 0, 0.8);
+  }
+  50% {
+    border-color: rgba(255, 165, 0, 1);
+  }
+  60% {
+    border-color: rgba(255, 165, 0, 0.8);
+  }
+  75% {
+    border-color: rgba(255, 165, 0, 0.5);
+  }
+  90% {
+    border-color: rgba(255, 165, 0, 0.2);
+  }
+  100% {
+    border-color: rgba(255, 165, 0, 0);
+  }
+}
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu",
+    "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family:
+    source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
 }
 
 button {

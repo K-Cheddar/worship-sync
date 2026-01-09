@@ -8,10 +8,12 @@ import fsPromise from "fs/promises";
 import fs from "fs";
 import axios from "axios";
 import dotenv from "dotenv";
-import packageJson from "./package.json" assert { type: "json" };
+import { readFileSync } from "node:fs";
 import { v2 as cloudinary } from "cloudinary";
 import https from "https";
 import { fetchExcelFile } from "./getScheduleFunctions.js";
+
+const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
 dotenv.config();
 // Validate required environment variables
@@ -325,8 +327,8 @@ app.get("/api/getDbSession", async (req, res) => {
 setupExpressErrorHandler(app);
 
 // Serve any static files
-app.use(express.static(path.join(dirname, "/client/build")));
+app.use(express.static(path.join(dirname, "/client/dist")));
 // Handle React routing, return all requests to React app
 app.get("*", function (req, res) {
-  res.sendFile(path.join(dirname, "/client/build", "index.html"));
+  res.sendFile(path.join(dirname, "/client/dist", "index.html"));
 });

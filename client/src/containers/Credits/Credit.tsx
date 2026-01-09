@@ -1,11 +1,10 @@
 import Button from "../../components/Button/Button";
-import { ReactComponent as DeleteSVG } from "../../assets/icons/delete.svg";
-import { ReactComponent as DragHandleSVG } from "../../assets/icons/drag-handle.svg";
-import { ReactComponent as EyeSVG } from "../../assets/icons/visible.svg";
-import { ReactComponent as EyeOffSVG } from "../../assets/icons/not-visible.svg";
+import { Trash2 } from "lucide-react";
+import { Grip } from "lucide-react";
+import { Eye } from "lucide-react";
+import { EyeOff } from "lucide-react";
 import { useDispatch } from "../../hooks";
-import "./Credits.scss";
-import cn from "classnames";
+import { cn } from "../../utils/cnHelper";
 import gsap from "gsap";
 
 import { CreditsInfo } from "../../types";
@@ -64,7 +63,7 @@ const Credit = ({
             opacity: 0,
             duration: 0.5,
             ease: "power1.inOut",
-          },
+          }
         );
       }
       // else if (!initialList.includes(id)) {
@@ -84,7 +83,7 @@ const Credit = ({
       //   );
       // }
     },
-    { scope: creditRef, dependencies: [isDeleting] },
+    { scope: creditRef, dependencies: [isDeleting] }
   );
 
   const deleteOverlayHandler = () => {
@@ -99,12 +98,14 @@ const Credit = ({
     dispatch(updateCredit({ id, heading, text, hidden: !hidden }));
   };
 
+  // return <li className="h-[200px]">Lol Ok</li>;
+
   return (
     <li
       className={cn(
         "flex items-center rounded-lg w-full overflow-clip leading-3 bg-gray-800",
         hidden ? "opacity-50" : "",
-        selectedCreditId === id && "bg-gray-950",
+        selectedCreditId === id && "bg-gray-950"
       )}
       ref={(element) => {
         setNodeRef(element);
@@ -116,14 +117,14 @@ const Credit = ({
     >
       <Button
         variant="tertiary"
-        className="text-sm ml-auto h-full"
+        className="text-sm ml-auto"
         padding="px-2 py-1"
-        svg={DragHandleSVG}
+        svg={Grip}
         {...listeners}
         {...attributes}
         tabIndex={-1}
       />
-      <div className="flex flex-col flex-1 h-full leading-4 text-center px-2 py-1.5 gap-1">
+      <div className="flex flex-col flex-1 min-h-0 leading-4 text-center px-2 py-1.5 gap-1">
         <Input
           label="Heading"
           className="flex flex-col gap-1"
@@ -132,7 +133,7 @@ const Credit = ({
           value={heading}
           onChange={(val) => {
             dispatch(
-              updateCredit({ id, heading: val as string, text, hidden }),
+              updateCredit({ id, heading: val as string, text, hidden })
             );
           }}
           data-ignore-undo="true"
@@ -147,24 +148,24 @@ const Credit = ({
           data-ignore-undo="true"
           onChange={(val) => {
             dispatch(
-              updateCredit({ id, heading, text: val as string, hidden }),
+              updateCredit({ id, heading, text: val as string, hidden })
             );
           }}
         />
       </div>
       <Button
         variant="tertiary"
-        className="text-sm ml-auto h-full"
+        className="text-sm"
         padding="px-2 py-1"
-        svg={hidden ? EyeOffSVG : EyeSVG}
+        svg={hidden ? EyeOff : Eye}
         tabIndex={-1}
         onClick={toggleHidden}
       />
       <Button
         variant="tertiary"
-        className="text-sm ml-auto h-full"
+        className="text-sm"
         padding="px-2 py-1"
-        svg={DeleteSVG}
+        svg={Trash2}
         tabIndex={-1}
         onClick={deleteOverlayHandler}
       />

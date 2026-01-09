@@ -3,7 +3,6 @@ import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import cn from "classnames";
 import { useEffect, useMemo, useRef } from "react";
-import "./Credits.scss";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 const Credits = ({
@@ -48,6 +47,16 @@ const Credits = ({
   );
 
   useEffect(() => {
+    // Handle body overflow when credits are displayed
+    if (!isPreview) {
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = "";
+      };
+    }
+  }, [isPreview]);
+
+  useEffect(() => {
     const observer = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting) {
         runObsTransition?.();
@@ -68,8 +77,10 @@ const Credits = ({
       <ul
         ref={containerRef}
         className={cn(
-          !isPreview && "published-credits-list",
-          isPreview && "h-full max-h-full credits-list"
+          !isPreview &&
+            "bg-black/75 h-dvh [scrollbar-width:none] flex flex-col gap-[7.5vh] w-full text-white text-center overflow-y-auto pb-[10%]",
+          isPreview &&
+            "h-full max-h-full scrollbar-thin flex flex-col gap-[7.5vh] w-full text-white text-center overflow-y-auto pb-[10%]"
         )}
       >
         {adjustedCredits.map(({ heading, id, text }) => {

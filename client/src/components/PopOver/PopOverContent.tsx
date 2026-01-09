@@ -1,5 +1,5 @@
 import Button from "../Button/Button";
-import { ReactComponent as CloseSVG } from "../../assets/icons/close.svg";
+import { X } from "lucide-react";
 import cn from "classnames";
 
 type PopOverContentProps = {
@@ -33,7 +33,7 @@ const PopOverContent = ({
       className={cn(
         "bg-gray-700 rounded-lg shadow-2xl z-30 border-2 border-gray-600 max-w-[85vw] overflow-x-hidden",
         position,
-        className,
+        className
       )}
       style={floatingStyles}
       ref={refs?.setFloating}
@@ -42,7 +42,7 @@ const PopOverContent = ({
       <Button
         className={closeButtonClassName}
         variant="tertiary"
-        svg={CloseSVG}
+        svg={X}
         onClick={() => setIsOpen(false)}
       />
       <div className={childrenClassName}>{children}</div>

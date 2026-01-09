@@ -1,6 +1,6 @@
 import { useSelector, useDispatch } from "../../hooks";
 import { DisplayType, LinkType, Option, QuickLinkType } from "../../types";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
+import { Plus } from "lucide-react";
 import generateRandomId from "../../utils/generateRandomId";
 import Select from "../../components/Select/Select";
 import Button from "../../components/Button/Button";
@@ -141,7 +141,8 @@ const QuickLinks = () => {
         <section className="flex items-center justify-center gap-4 my-8">
           <Select
             className="flex gap-2"
-            selectClassName="bg-gray-900 text-white"
+            selectClassName="bg-gray-900"
+            textColor="text-white"
             label="New Quick Link Display Type"
             options={newQuickLinkOptions}
             value={newQuickLinkDisplayType}
@@ -150,7 +151,7 @@ const QuickLinks = () => {
           <Button
             variant="primary"
             padding="px-4 py-1"
-            svg={AddSVG}
+            svg={Plus}
             onClick={() => {
               let linkType: LinkType = "media";
               if (newQuickLinkDisplayType === "monitor") {

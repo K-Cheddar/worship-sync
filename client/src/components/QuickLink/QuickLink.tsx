@@ -14,7 +14,6 @@ import {
 } from "../../store/presentationSlice";
 import { QuickLinkType, TimerInfo } from "../../types";
 import Button from "../Button/Button";
-import "./QuickLink.scss";
 import DisplayWindow from "../DisplayWindow/DisplayWindow";
 import { useMemo } from "react";
 
@@ -82,7 +81,7 @@ const QuickLink = ({
   if (!presentationInfo && !action) return null;
 
   return (
-    <li className="quick-link">
+    <li className="flex flex-col hover:bg-gray-500 cursor-pointer rounded items-center p-0">
       <Button
         onClick={handleClick}
         variant="none"

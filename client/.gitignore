@@ -11,6 +11,9 @@
 # production
 /build
 
+# vite
+/dist
+
 # misc
 .DS_Store
 .env.local
@@ -24,3 +27,6 @@ yarn-error.log*
 
 # Sentry Config File
 .sentryclirc
+
+# Sentry Config File
+.env.sentry-build-plugin

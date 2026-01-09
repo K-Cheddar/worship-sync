@@ -1,8 +1,5 @@
 import Button from "../../components/Button/Button";
-import { ReactComponent as AddSVG } from "../../assets/icons/add.svg";
-import { ReactComponent as CheckSVG } from "../../assets/icons/check.svg";
-import { ReactComponent as DownloadSVG } from "../../assets/icons/download.svg";
-import { ReactComponent as SyncSVG } from "../../assets/icons/sync-alt.svg";
+import { Plus, Check, Download, RefreshCw } from "lucide-react";
 
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -13,7 +10,6 @@ import {
   updateOverlayInList,
   updateOverlayListFromRemote,
 } from "../../store/overlaysSlice";
-import "./Overlays.scss";
 import { useCallback, useContext, useEffect, useState } from "react";
 import Overlay from "./Overlay";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
@@ -62,10 +58,6 @@ const Overlays = () => {
   );
   const { isLoading } = useSelector(
     (state: RootState) => state.undoable.present.itemList
-  );
-
-  const { selectedList } = useSelector(
-    (state: RootState) => state.undoable.present.itemLists
   );
 
   const selectedOverlay = _selectedOverlay || {
@@ -447,8 +439,6 @@ const Overlays = () => {
   const justAddedText =
     selectedOverlay.name || selectedOverlay.url ? "Copied!" : "Added!";
 
-  console.log(list, selectedList);
-
   return (
     <ErrorBoundary>
       <DndContext onDragEnd={onDragEnd} sensors={sensors}>
@@ -464,7 +454,7 @@ const Overlays = () => {
                   padding="px-1"
                   variant="tertiary"
                   color="#06b6d4"
-                  svg={SyncSVG}
+                  svg={RefreshCw}
                 >
                   Get Names
                 </Button>
@@ -481,7 +471,7 @@ const Overlays = () => {
                   variant="primary"
                   onClick={() => getNames(url)}
                   isLoading={isGettingNames}
-                  svg={DownloadSVG}
+                  svg={Download}
                   color="#06b6d4"
                 />
               </div>
@@ -500,7 +490,7 @@ const Overlays = () => {
               <section className="flex-1 flex flex-col gap-2 min-h-0">
                 <ul
                   id="overlays-list"
-                  className="overlays-list"
+                  className="scrollbar-variable flex flex-col gap-2 w-full overflow-y-auto overflow-x-hidden flex-1 min-h-0 pr-2"
                   ref={setNodeRef}
                 >
                   <SortableContext
@@ -524,7 +514,7 @@ const Overlays = () => {
                 </ul>
                 <Button
                   className="text-sm w-full justify-center mt-2"
-                  svg={justAdded ? CheckSVG : AddSVG}
+                  svg={justAdded ? Check : Plus}
                   color={justAdded ? "#84cc16" : "#22d3ee"}
                   disabled={justAdded}
                   onClick={createNewOverlay}
