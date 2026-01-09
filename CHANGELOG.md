@@ -1,3 +1,23 @@
+# [1.23.0](https://github.com/K-Cheddar/worship-sync/compare/v1.22.0...v1.23.0) (2026-01-09)
+
+
+### Bug Fixes
+
+* Adjust monitor size when clock or timer is shown ([568d7eb](https://github.com/K-Cheddar/worship-sync/commit/568d7eb22603cc4ac48f18d641e7d75ca0b8fdee))
+* Formatted text retains newlines on stream ([1aaf14d](https://github.com/K-Cheddar/worship-sync/commit/1aaf14d79ca75b3fbbc5da09c28f1d2655ae77b9))
+* Improve UI Responsiveness ([9285bbd](https://github.com/K-Cheddar/worship-sync/commit/9285bbd0734f4b1faa75344c5e189eb16f7ec6a9))
+* Match font for overflow ([137c0d9](https://github.com/K-Cheddar/worship-sync/commit/137c0d9165692bdc5c6e18da9a38d80a207e8a66))
+
+
+### Features
+
+* Add full app zoom ([92ee772](https://github.com/K-Cheddar/worship-sync/commit/92ee772fc29ff85641b5e0e9acddb17f6bdc4a5d))
+* Added Free form overflow to preferences ([f9dd004](https://github.com/K-Cheddar/worship-sync/commit/f9dd004d5167156cb256c7d01e8236eb6228af48))
+* Added time picker for timers ([ddda800](https://github.com/K-Cheddar/worship-sync/commit/ddda8001a398bd06144c33cffe3acea48a729a7b))
+* Lyrics Editor is now full screen ([3f83214](https://github.com/K-Cheddar/worship-sync/commit/3f8321424b5fd2c2b996e94d6eef73dbef24999b))
+* Minor UI adjustments ([b94c7aa](https://github.com/K-Cheddar/worship-sync/commit/b94c7aa53f49a78cf95a52c4029b6b0c74f8b5e7))
+* Reset Timer after moving to wrap up slide ([c2ad118](https://github.com/K-Cheddar/worship-sync/commit/c2ad118c6a3d1695506f98ec922709ecb8aaf64e))
+
 # [1.22.0](https://github.com/K-Cheddar/worship-sync/compare/v1.21.0...v1.22.0) (2025-12-10)
 
 
