@@ -31,7 +31,7 @@ const RadioButton = ({
   return (
     <div
       className={cn(
-        "flex gap-2 items-center relative w-fit h-fit",
+        "flex gap-4 md:gap-2 items-center relative w-fit h-fit",
         textSize,
         className,
         disabled && "opacity-50"

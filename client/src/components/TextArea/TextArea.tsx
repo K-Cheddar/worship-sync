@@ -31,12 +31,21 @@ const TextArea = ({
   const resizeTextArea = useCallback(() => {
     if (containerRef.current && textAreaRef.current && labelRef.current) {
       if (autoResize) {
+        // Save current scroll positions to prevent unwanted scrolling
+        const scrollX = window.scrollX || window.pageXOffset;
+        const scrollY = window.scrollY || window.pageYOffset;
+
         containerRef.current.style.height = "auto";
         containerRef.current.style.height =
           textAreaRef.current.scrollHeight +
           labelRef.current.offsetHeight +
           4 +
           "px";
+
+        // Restore scroll position after resize
+        requestAnimationFrame(() => {
+          window.scrollTo(scrollX, scrollY);
+        });
       } else {
         containerRef.current.style.height = "";
       }
