@@ -28,6 +28,10 @@ if (import.meta.env.PROD) {
   });
 }
 
+// if (import.meta.env.DEV) {
+//   import("eruda").then(({ default: eruda }) => eruda.init());
+// }
+
 const root = ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement
 );

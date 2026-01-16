@@ -379,7 +379,7 @@ const CreditsEditor = () => {
   return (
     <div
       ref={editorRef}
-      className="w-full h-dvh bg-gray-700 text-white flex flex-col gap-2 overflow-hidden"
+      className="w-dvw h-dvh bg-gray-700 text-white flex flex-col gap-2 overflow-hidden"
     >
       <div className="min-h-0">
         <div className="bg-gray-800 w-full px-4 py-1 flex gap-2 items-center">
