@@ -420,7 +420,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           type="number"
           value={brightness}
           onChange={(val) => _updateBrightness(val as number)}
-          className="w-8 2xl:w-10"
+          className="w-14 md:w-10"
           inputTextSize="text-xs"
           hideLabel
           data-ignore-undo="true"

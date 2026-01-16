@@ -848,6 +848,32 @@ listenerMiddleware.startListening({
   },
 });
 
+// Ensure firebase has updated services on load
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    return action.type === "serviceTimes/initiateServices";
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(1500);
+
+    // update service times
+    const { list } = (listenerApi.getState() as RootState).undoable.present
+      .serviceTimes;
+
+    if (globalFireDbInfo.db && globalFireDbInfo.user) {
+      set(
+        ref(
+          globalFireDbInfo.db,
+          "users/" + globalFireDbInfo.user + "/v2/services"
+        ),
+        cleanObject(list)
+      );
+    }
+  },
+});
+
 // handle updating presentation
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {

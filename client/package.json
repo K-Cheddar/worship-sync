@@ -69,7 +69,7 @@
     "resolve-url-loader": "5.0.0"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "build:lint": "npm run lint && vite build",
     "build:strict": "npm run lint:check && vite build",
