@@ -9,10 +9,10 @@ export default defineConfig(({ mode }) => {
   const isElectronBuild = process.env.ELECTRON_BUILD === "true";
 
   return {
+    // For Electron, we need to use relative paths
+    base: isElectronBuild ? "./" : "/",
     build: {
       sourcemap: true,
-      // For Electron, we need to use relative paths
-      base: isElectronBuild ? "./" : "/",
     },
     plugins: [
       react(),
@@ -22,7 +22,6 @@ export default defineConfig(({ mode }) => {
         project: "javascript-react",
       }),
     ],
-    base: "/",
     server: isDev
       ? {
           host: "local.worshipsync.net",
