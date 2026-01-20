@@ -1,3 +1,16 @@
+# [1.24.0](https://github.com/K-Cheddar/worship-sync/compare/v1.23.1...v1.24.0) (2026-01-20)
+
+
+### Bug Fixes
+
+* Improve stream info logic ([cfdd7bd](https://github.com/K-Cheddar/worship-sync/commit/cfdd7bde6855598352c0466b31df69b3a835c942))
+* stream overlay fixes ([e2878ad](https://github.com/K-Cheddar/worship-sync/commit/e2878ad2d25975ef6ca8e9242b238bbbe2cb6db6))
+
+
+### Features
+
+* Section text now appears next to Preview ([6d27b1a](https://github.com/K-Cheddar/worship-sync/commit/6d27b1adadc60b67bba17608fc5d5358bbaa3ea4))
+
 ## [1.23.1](https://github.com/K-Cheddar/worship-sync/compare/v1.23.0...v1.23.1) (2026-01-16)
 
 
