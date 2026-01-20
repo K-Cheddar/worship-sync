@@ -10,19 +10,7 @@ export default defineConfig({
   files: [
     "dist/**/*",
     "dist-electron/**/*",
-    "package.json",
-    "!node_modules/**/*",
-    "!src/**/*",
-    "!electron/**/*",
-    "!*.config.js",
-    "!*.config.ts",
-  ],
-  extraResources: [
-    {
-      from: "dist",
-      to: "app/dist",
-      filter: ["**/*"],
-    },
+    "package.json"
   ],
   win: {
     target: [
