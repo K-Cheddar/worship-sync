@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Modal from "../Modal/Modal";
 import MarkdownRenderer from "../MarkdownRenderer/MarkdownRenderer";
+import { getApiBasePath } from "../../utils/environment";
 
 interface ChangelogModalProps {
   isOpen: boolean;
@@ -14,7 +15,7 @@ const ChangelogModal = ({ isOpen, onClose }: ChangelogModalProps) => {
   const fetchChangelog = useCallback(async () => {
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_API_BASE_PATH}api/changelog`
+        `${getApiBasePath()}api/changelog`
       );
       const text = await response.text();
       setChangelogContent(text);

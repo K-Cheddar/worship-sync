@@ -10,6 +10,8 @@
 // To learn more about the benefits of this model and instructions on how to
 // opt-in, read https://cra.link/PWA
 
+import { isElectron } from "./utils/environment";
+
 const frontEndHost = import.meta.env.DEV
   ? "local.worshipsync.net"
   : "localhost";
@@ -30,6 +32,11 @@ type Config = {
 };
 
 export function register(config?: Config) {
+  // Don't register service worker in Electron
+  if (isElectron()) {
+    return;
+  }
+  
   if ("serviceWorker" in navigator) {
     // The URL constructor is available in all browsers that support SW.
     const publicUrl = new URL(import.meta.env.PUBLIC_URL, window.location.href);

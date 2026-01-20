@@ -6,10 +6,13 @@ import fs from "fs";
 
 export default defineConfig(({ mode }) => {
   const isDev = mode === "development";
+  const isElectronBuild = process.env.ELECTRON_BUILD === "true";
 
   return {
     build: {
       sourcemap: true,
+      // For Electron, we need to use relative paths
+      base: isElectronBuild ? "./" : "/",
     },
     plugins: [
       react(),
