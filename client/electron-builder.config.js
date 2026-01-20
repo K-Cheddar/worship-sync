@@ -10,9 +10,12 @@ export default defineConfig({
   files: [
     "dist/**/*",
     "dist-electron/**/*",
-    "package.json"
+    "package.json",
+    "!node_modules"
   ],
   asar: true,
+  includeSubNodeModules: false,
+  buildDependenciesFromSource: false,
 
   win: {
     target: [{ target: "nsis", arch: ["x64", "ia32"] }],
