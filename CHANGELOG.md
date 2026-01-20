@@ -1,3 +1,262 @@
+# [1.25.0](https://github.com/K-Cheddar/worship-sync/compare/v1.24.0...v1.25.0) (2026-01-20)
+
+
+### Bug Fixes
+
+* Adding download button ([19a09c0](https://github.com/K-Cheddar/worship-sync/commit/19a09c0f1d7b58fa7a14faa6cc2aaa0010076c57))
+* Update download button ([fd0cdac](https://github.com/K-Cheddar/worship-sync/commit/fd0cdace600fd72e1fc8f985f6a5eded2b52b081))
+
+
+### Features
+
+* Adding electron ([dbcf465](https://github.com/K-Cheddar/worship-sync/commit/dbcf46539eeba83ce359bc8c871be63ffebe1e86))
+
+# [1.24.0](https://github.com/K-Cheddar/worship-sync/compare/v1.23.1...v1.24.0) (2026-01-20)
+
+
+### Bug Fixes
+
+* Improve stream info logic ([cfdd7bd](https://github.com/K-Cheddar/worship-sync/commit/cfdd7bde6855598352c0466b31df69b3a835c942))
+* stream overlay fixes ([e2878ad](https://github.com/K-Cheddar/worship-sync/commit/e2878ad2d25975ef6ca8e9242b238bbbe2cb6db6))
+
+
+### Features
+
+* Section text now appears next to Preview ([6d27b1a](https://github.com/K-Cheddar/worship-sync/commit/6d27b1adadc60b67bba17608fc5d5358bbaa3ea4))
+
+## [1.23.1](https://github.com/K-Cheddar/worship-sync/compare/v1.23.0...v1.23.1) (2026-01-16)
+
+
+### Bug Fixes
+
+* Minor UI fixes ([569feed](https://github.com/K-Cheddar/worship-sync/commit/569feedf715f1a3c541358d4c744cf9f584842c9))
+
+# [1.23.0](https://github.com/K-Cheddar/worship-sync/compare/v1.22.0...v1.23.0) (2026-01-09)
+
+
+### Bug Fixes
+
+* Adjust monitor size when clock or timer is shown ([568d7eb](https://github.com/K-Cheddar/worship-sync/commit/568d7eb22603cc4ac48f18d641e7d75ca0b8fdee))
+* Formatted text retains newlines on stream ([1aaf14d](https://github.com/K-Cheddar/worship-sync/commit/1aaf14d79ca75b3fbbc5da09c28f1d2655ae77b9))
+* Improve UI Responsiveness ([9285bbd](https://github.com/K-Cheddar/worship-sync/commit/9285bbd0734f4b1faa75344c5e189eb16f7ec6a9))
+* Match font for overflow ([137c0d9](https://github.com/K-Cheddar/worship-sync/commit/137c0d9165692bdc5c6e18da9a38d80a207e8a66))
+
+
+### Features
+
+* Add full app zoom ([92ee772](https://github.com/K-Cheddar/worship-sync/commit/92ee772fc29ff85641b5e0e9acddb17f6bdc4a5d))
+* Added Free form overflow to preferences ([f9dd004](https://github.com/K-Cheddar/worship-sync/commit/f9dd004d5167156cb256c7d01e8236eb6228af48))
+* Added time picker for timers ([ddda800](https://github.com/K-Cheddar/worship-sync/commit/ddda8001a398bd06144c33cffe3acea48a729a7b))
+* Lyrics Editor is now full screen ([3f83214](https://github.com/K-Cheddar/worship-sync/commit/3f8321424b5fd2c2b996e94d6eef73dbef24999b))
+* Minor UI adjustments ([b94c7aa](https://github.com/K-Cheddar/worship-sync/commit/b94c7aa53f49a78cf95a52c4029b6b0c74f8b5e7))
+* Reset Timer after moving to wrap up slide ([c2ad118](https://github.com/K-Cheddar/worship-sync/commit/c2ad118c6a3d1695506f98ec922709ecb8aaf64e))
+
+# [1.22.0](https://github.com/K-Cheddar/worship-sync/compare/v1.21.0...v1.22.0) (2025-12-10)
+
+
+### Features
+
+* Improve quick link selection ([0d79342](https://github.com/K-Cheddar/worship-sync/commit/0d79342f969b2e8d3a67a83d5511b1ccade8bbce))
+
+# [1.21.0](https://github.com/K-Cheddar/worship-sync/compare/v1.20.1...v1.21.0) (2025-12-10)
+
+
+### Bug Fixes
+
+* Improve timer delete behavior ([043fb0c](https://github.com/K-Cheddar/worship-sync/commit/043fb0c0f2b659790dedeb31c884be60e9816abf))
+* Improved timer settings updates ([26377b4](https://github.com/K-Cheddar/worship-sync/commit/26377b422c8cf2d76733598a314c88fdc70a4c7f))
+
+
+### Features
+
+* Add ability to temporarily adjust service timers ([bb3db2a](https://github.com/K-Cheddar/worship-sync/commit/bb3db2a79f5af91bc556d921afae0d3646c24cc2))
+* Added Clock and Timer to monitor ([67c4aac](https://github.com/K-Cheddar/worship-sync/commit/67c4aac57173bbbe8e85c6e58d0d78c5d5895a43))
+* added notification when trying to edit the timer ([905a23f](https://github.com/K-Cheddar/worship-sync/commit/905a23f56f83ba93503d39cf662ab46dd1334786))
+* Timer goes to please wrap up on completion ([604b6cd](https://github.com/K-Cheddar/worship-sync/commit/604b6cd6e7d1d29612d6891670c4295207fa4b32))
+
+## [1.20.1](https://github.com/K-Cheddar/worship-sync/compare/v1.20.0...v1.20.1) (2025-10-31)
+
+
+### Bug Fixes
+
+* **Service Timers:** Improved mobile experience ([a018e8e](https://github.com/K-Cheddar/worship-sync/commit/a018e8e7cf7c294229555036ccfabef17daf7fbc))
+
+# [1.20.0](https://github.com/K-Cheddar/worship-sync/compare/v1.19.1...v1.20.0) (2025-10-31)
+
+
+### Bug Fixes
+
+* Update authentication logic ([0cb5dac](https://github.com/K-Cheddar/worship-sync/commit/0cb5dac7665f2318966ec0856c9dd99f20c513ae))
+
+
+### Features
+
+* Add producer to credits ([57dc10a](https://github.com/K-Cheddar/worship-sync/commit/57dc10a8024428b426ce51096152528921b49c3c))
+* Adding service timers and controller ([020d457](https://github.com/K-Cheddar/worship-sync/commit/020d45709255585f4a0c831c26069d13d71c1df9))
+
+## [1.19.1](https://github.com/K-Cheddar/worship-sync/compare/v1.19.0...v1.19.1) (2025-10-20)
+
+
+### Bug Fixes
+
+* Improve music only access ([3abf950](https://github.com/K-Cheddar/worship-sync/commit/3abf950b5ae970390c73a08027203f741688338e))
+
+# [1.19.0](https://github.com/K-Cheddar/worship-sync/compare/v1.18.1...v1.19.0) (2025-10-19)
+
+
+### Bug Fixes
+
+* Adding cancel confirmation in edit lyrics ([9c50892](https://github.com/K-Cheddar/worship-sync/commit/9c50892ba2be6f58bab0fa47fd98b1731d00bcda))
+* Improve bible search ([6bc4776](https://github.com/K-Cheddar/worship-sync/commit/6bc4776da1a634834215e8ea2874754a63b16d87))
+* Lyrics editor takes up full screen on mobile ([a0de8d2](https://github.com/K-Cheddar/worship-sync/commit/a0de8d2a385180837dabc833f6d39074eef9d01d))
+
+
+### Features
+
+* Add limited access for music ([db89dd8](https://github.com/K-Cheddar/worship-sync/commit/db89dd821dcf5b2b92c761a6a485bb7c19cfd6bc))
+
+## [1.18.1](https://github.com/K-Cheddar/worship-sync/compare/v1.18.0...v1.18.1) (2025-10-10)
+
+
+### Bug Fixes
+
+* **Overlays:** Update selected list instead of active list ([95d1534](https://github.com/K-Cheddar/worship-sync/commit/95d15340ffbb9e4845f203a51c8b9b0a705fb2e1))
+
+# [1.18.0](https://github.com/K-Cheddar/worship-sync/compare/v1.17.1...v1.18.0) (2025-10-03)
+
+
+### Bug Fixes
+
+* Copying an outline now creates separate overlays ([4ebdc8d](https://github.com/K-Cheddar/worship-sync/commit/4ebdc8d940700d836eb551c01d585ede672f0eaf))
+* Default video backgrounds show correctly in list ([9f9c7e2](https://github.com/K-Cheddar/worship-sync/commit/9f9c7e28d1207387a816675cdbe339e90031f031))
+* Free form item overflow improved on mobile ([c8fba59](https://github.com/K-Cheddar/worship-sync/commit/c8fba599583e0c8353a6f5851128c5ca8213456c))
+
+
+### Features
+
+* Add timer reset control ([abc4f46](https://github.com/K-Cheddar/worship-sync/commit/abc4f467165c757fd291f211914c73a98898828a))
+* Added Good News Translation ([fd0af4a](https://github.com/K-Cheddar/worship-sync/commit/fd0af4a67173a0312785ef3a6b5042f2e26e7213))
+
+## [1.17.1](https://github.com/K-Cheddar/worship-sync/compare/v1.17.0...v1.17.1) (2025-09-29)
+
+
+### Bug Fixes
+
+* update auth stability ([a0635c0](https://github.com/K-Cheddar/worship-sync/commit/a0635c099eb8f91efbf78b58abeba06142fb06a4))
+
+# [1.17.0](https://github.com/K-Cheddar/worship-sync/compare/v1.16.0...v1.17.0) (2025-09-26)
+
+
+### Bug Fixes
+
+* Fixed overlay preview size ([9c6563b](https://github.com/K-Cheddar/worship-sync/commit/9c6563b40245ff4dec4514b9902311ada199928f))
+* Increase template preview size on mobile ([e04493d](https://github.com/K-Cheddar/worship-sync/commit/e04493d45b046456d921f080230bc16bcf0fa097))
+* update authentication handling ([e773e99](https://github.com/K-Cheddar/worship-sync/commit/e773e9999a59fe53520afa687b2b34105dae7e9d))
+
+
+### Features
+
+* Outlines can now be set as active ([19fd24d](https://github.com/K-Cheddar/worship-sync/commit/19fd24d35e92b7490550efab20ab032972d72067))
+* Video default backgrounds now supported ([4ac421f](https://github.com/K-Cheddar/worship-sync/commit/4ac421fbfaef1f7235c2bc8a1d828e23ec76fb04))
+
+# [1.16.0](https://github.com/K-Cheddar/worship-sync/compare/v1.15.0...v1.16.0) (2025-09-18)
+
+
+### Bug Fixes
+
+* Improve slide transitions ([7ade6d2](https://github.com/K-Cheddar/worship-sync/commit/7ade6d2733620ddd83d5b6b4be35c4bbbcde8cb3))
+* Keep "Create a new item" visible when searching ([0a06c8f](https://github.com/K-Cheddar/worship-sync/commit/0a06c8fbb25180395c44fefba0c1545e4c9d9359))
+
+
+### Features
+
+* Added a link to open the projector from the menu ([190bddb](https://github.com/K-Cheddar/worship-sync/commit/190bddb305263ee90a2074d3322b44e27fc562d2))
+* Overlay Templates can now be updated ([3a4f2ab](https://github.com/K-Cheddar/worship-sync/commit/3a4f2ab914ca37a6d667e76817f9564b9e3cecce))
+
+# [1.15.0](https://github.com/K-Cheddar/worship-sync/compare/v1.14.1...v1.15.0) (2025-09-04)
+
+
+### Bug Fixes
+
+* Allow empty slide deletion with backspace/delete ([8fcab2b](https://github.com/K-Cheddar/worship-sync/commit/8fcab2b4863f7ad89012864aee326a3467c51c54))
+* **Bible:** Search now works correctly when viewing selected verses ([2fdfbe8](https://github.com/K-Cheddar/worship-sync/commit/2fdfbe8ee1af13c7e221afa208e8bf6e978717e6))
+* Correct slide size on mobile ([44ed4cc](https://github.com/K-Cheddar/worship-sync/commit/44ed4cc6f0087492e564100b01f63d92db52c254))
+* Corrected radio button clickable area ([8619496](https://github.com/K-Cheddar/worship-sync/commit/8619496fbdc65e7f66fe8d37e6f1cbb537233847))
+* Improve keyboard navigation ([25b6728](https://github.com/K-Cheddar/worship-sync/commit/25b6728516d1cf18233b9a8d058de65ea7f3193e))
+* Improve logic for getting latest version ([3da6f2e](https://github.com/K-Cheddar/worship-sync/commit/3da6f2eade1a508d91d2ef6df1f816c150cb7e80))
+* Inputs no longer lose focus after opening delete confirmation ([5b53343](https://github.com/K-Cheddar/worship-sync/commit/5b53343af2fa6c466f88da1136ab060225e8593b))
+* **Media:** Fixed names not showing for some items ([3314b0b](https://github.com/K-Cheddar/worship-sync/commit/3314b0b66152eee29580ff574412d924d78cdac3))
+* Removed media changes from undo history ([4945b95](https://github.com/K-Cheddar/worship-sync/commit/4945b9544a34af127f73631aafb9562738e22c25))
+* Title slide now changes brightness with other slides ([bef0d3f](https://github.com/K-Cheddar/worship-sync/commit/bef0d3fe711d37e889ca0f02ff7d5564de45cd17))
+
+
+### Features
+
+* Adding overlay preview in expanded window ([5eba6ed](https://github.com/K-Cheddar/worship-sync/commit/5eba6eda67c1086f5434dff144a3b2d4bbe2b7ce))
+* Improve overlay style editing ([510b8cb](https://github.com/K-Cheddar/worship-sync/commit/510b8cb3916c423f287d00e1e95ef0faf93d46f9))
+
+## [1.14.1](https://github.com/K-Cheddar/worship-sync/compare/v1.14.0...v1.14.1) (2025-08-21)
+
+
+### Bug Fixes
+
+* Fixed overlay deletion and improved undo functionality ([081a6c7](https://github.com/K-Cheddar/worship-sync/commit/081a6c7d2ef0b58cd8795f28325fd6208bc7936d))
+
+# [1.14.0](https://github.com/K-Cheddar/worship-sync/compare/v1.13.4...v1.14.0) (2025-08-20)
+
+
+### Features
+
+* **Bible:** Now uses a single search bar for book/chapter/verses ([bce31a2](https://github.com/K-Cheddar/worship-sync/commit/bce31a27efd83003c2c45eb25a5179338fab5985))
+
+## [1.13.4](https://github.com/K-Cheddar/worship-sync/compare/v1.13.3...v1.13.4) (2025-08-19)
+
+
+### Bug Fixes
+
+* Improve responsiveness ([41901a8](https://github.com/K-Cheddar/worship-sync/commit/41901a8686c66586ff651641e4352cf9fca764be))
+
+## [1.13.3](https://github.com/K-Cheddar/worship-sync/compare/v1.13.2...v1.13.3) (2025-08-19)
+
+
+### Bug Fixes
+
+* Improve syncing between instances on the same machine ([71b56c2](https://github.com/K-Cheddar/worship-sync/commit/71b56c259f02c95b11e3ffc868f89a3dae84ca6f))
+* Improving error handling ([2cba260](https://github.com/K-Cheddar/worship-sync/commit/2cba26082dcd69d3669a1e4830cbd16f0069d871))
+* **Undo:** Improve undo/redo consistency ([31fe855](https://github.com/K-Cheddar/worship-sync/commit/31fe855964b9f31eb69fd574e62ffebda399bb53))
+
+
+### Performance Improvements
+
+* **Overlays:** Overlays are now separate items ([c512e33](https://github.com/K-Cheddar/worship-sync/commit/c512e3380726c344f67dc0285a43800fe1d9ac65))
+
+## [1.13.2](https://github.com/K-Cheddar/worship-sync/compare/v1.13.1...v1.13.2) (2025-08-16)
+
+
+### Bug Fixes
+
+* Fixed scrolling issues from error handling ([de97aa8](https://github.com/K-Cheddar/worship-sync/commit/de97aa82bb985783e12c10edab1d8644e63c03b6))
+
+## [1.13.1](https://github.com/K-Cheddar/worship-sync/compare/v1.13.0...v1.13.1) (2025-08-16)
+
+
+### Performance Improvements
+
+* Catch errors and allow component reloading ([3249929](https://github.com/K-Cheddar/worship-sync/commit/3249929741ce927417d1dbc00a7bba675cc1c679))
+
+# [1.13.0](https://github.com/K-Cheddar/worship-sync/compare/v1.12.0...v1.13.0) (2025-08-14)
+
+
+### Bug Fixes
+
+* **Overlays:** Improve cross fade transitions ([451ceb1](https://github.com/K-Cheddar/worship-sync/commit/451ceb1594e2eec8d465b4aba3b610db895a4d1f))
+
+
+### Features
+
+* Added templates to reset overlay styles to default ([fa98158](https://github.com/K-Cheddar/worship-sync/commit/fa981581d918668614519ab246045745b6ab3c40))
+* **Overlays:** Added ability to customize overlay styles ([1f511fc](https://github.com/K-Cheddar/worship-sync/commit/1f511fce85bd4a77f53a2af46d9c9bb27a5103bd))
+
 # [1.12.0](https://github.com/K-Cheddar/worship-sync/compare/v1.11.0...v1.12.0) (2025-08-11)
 
 
