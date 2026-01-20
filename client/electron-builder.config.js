@@ -4,7 +4,7 @@ export default defineConfig({
   appId: "com.worshipsync.app",
   productName: "WorshipSync",
   directories: {
-    output: "release",
+    output: "dist",
     buildResources: "buildResources",
   },
   files: [
@@ -20,7 +20,7 @@ export default defineConfig({
 
   win: {
     target: [{ target: "nsis", arch: ["x64", "ia32"] }],
-    icon: "icon.png",
+    icon: "buildResources/icon.png",
     publisherName: "WorshipSync",
   },
 
@@ -29,7 +29,7 @@ export default defineConfig({
       { target: "AppImage", arch: ["x64"] },
       { target: "deb", arch: ["x64"] },
     ],
-    icon: "icon.png",
+    icon: "buildResources/icon.png",
     category: "Office",
   },
 
@@ -45,6 +45,7 @@ export default defineConfig({
       provider: "github",
       owner: "K-Cheddar",
       repo: "worship-sync",
+      releaseType: "release", // Publish to existing release (not draft)
     },
   ],
 });
