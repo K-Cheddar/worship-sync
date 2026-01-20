@@ -22,6 +22,7 @@ type DisplayBoxProps = {
   isWindowVideoLoaded?: boolean;
   referenceWidth?: number; // Reference width for pixel calculations (1920px)
   referenceHeight?: number; // Reference height for pixel calculations (1080px)
+  scaleFactor?: number; // Scale factor for adjusting stroke based on display size
 };
 
 const DisplayBox = ({
@@ -38,6 +39,7 @@ const DisplayBox = ({
   isWindowVideoLoaded,
   referenceWidth = REFERENCE_WIDTH,
   referenceHeight = REFERENCE_HEIGHT,
+  scaleFactor = 1,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline | null>(null);
@@ -147,8 +149,12 @@ const DisplayBox = ({
   // Text shadow and outline sizes in pixels (will scale with transform)
   const REFERENCE_WIDTH_VW = (REFERENCE_WIDTH / window.innerWidth) * 100;
   const useReferenceWidth = width >= REFERENCE_WIDTH_VW * 0.5;
-  const tSS = fontSizeInPx / (useReferenceWidth ? 32 : 10); // text shadow size in px
-  const fOS = fontSizeInPx / (useReferenceWidth ? 32 : 114); // font outline size in px
+  const tSSBase = fontSizeInPx / (useReferenceWidth ? 32 : 10); // text shadow size in px
+  const fOSBase = fontSizeInPx / (useReferenceWidth ? 32 : 114); // font outline size in px
+  
+  // If scale is less than 0.25, cut the stroke in half and double the shadow
+  const tSS = scaleFactor < 0.25 ? tSSBase * 2 : tSSBase;
+  const fOS = scaleFactor < 0.25 ? fOSBase / 2 : fOSBase;
   
   // Convert all percentage values to pixels based on reference dimensions
   const boxWidthPx = (referenceWidth * box.width) / 100;

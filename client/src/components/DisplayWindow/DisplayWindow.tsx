@@ -305,6 +305,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     isWindowVideoLoaded={isWindowVideoLoaded}
                     referenceWidth={REFERENCE_WIDTH}
                     referenceHeight={REFERENCE_HEIGHT}
+                    scaleFactor={scaleFactor}
                   />
                 </div>
               );
@@ -341,6 +342,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                   isPrev
                   referenceWidth={REFERENCE_WIDTH}
                   referenceHeight={REFERENCE_HEIGHT}
+                  scaleFactor={scaleFactor}
                 />
               </div>
             );

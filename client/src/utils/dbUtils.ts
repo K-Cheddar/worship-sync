@@ -110,7 +110,6 @@ export const updateAllDocs = async (dispatch: Function) => {
     dispatch(updateAllSongDocs(allSongs));
     dispatch(updateAllFreeFormDocs(allFreeFormDocs));
     dispatch(updateAllTimerDocs(allTimers));
-    console.log(allDocs)
   } catch (error) {
     console.error("Failed to save all songs", error);
   }

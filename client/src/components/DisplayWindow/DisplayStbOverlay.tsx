@@ -101,10 +101,15 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
 
     useGSAP(
       () => {
+        // Handle both callback refs and object refs
+        const containerElement = typeof containerRef === 'function' 
+          ? null
+          : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
+        
         if (
           !prevStbOverlayRef.current ||
           !shouldAnimate ||
-          !(containerRef as React.MutableRefObject<HTMLDivElement>)?.current
+          (typeof containerRef !== 'function' && !containerElement)
         )
           return;
 
