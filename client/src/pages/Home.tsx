@@ -24,22 +24,38 @@ const HomeButton = ({
 
 const Welcome = () => {
   const { loginState } = useContext(GlobalInfoContext) || {};
-  const { logout } = useContext(ControllerInfoContext) || {};
+  const { logout, isMobile } = useContext(ControllerInfoContext) || {};
   const isLoggedIn = loginState === "success";
 
   return (
     <main className="bg-gray-700 h-dvh text-white overflow-y-auto">
-      <div className="flex w-full justify-end p-2 gap-4 text-lg">
-        <Button
-          variant="tertiary"
-          onClick={isLoggedIn && logout ? logout : undefined}
-          padding="px-4 py-1"
-          component={!isLoggedIn ? "link" : "button"}
-          to={!isLoggedIn ? "/login" : "/"}
-        >
-          {!isLoggedIn ? "Login" : "Logout"}
-        </Button>
-        <UserSection />
+      <div className="flex w-full justify-between items-center p-2 gap-4 text-lg">
+        <div className="flex items-center gap-2 px-2">
+          {!isElectron() && (
+            <Button
+              variant="tertiary"
+              className="text-sm md:text-base px-3 py-1.5 flex items-center gap-1 md:gap-2"
+              onClick={() => window.open(getLatestReleaseUrl(), "_blank")}
+              component="button"
+              svg={Download}
+            >
+              {isMobile ? <Download size={18} /> : "Download for Windows"}
+            </Button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-4">
+          <Button
+            variant="tertiary"
+            onClick={isLoggedIn && logout ? logout : undefined}
+            padding="px-4 py-1"
+            component={!isLoggedIn ? "link" : "button"}
+            to={!isLoggedIn ? "/login" : "/"}
+          >
+            {!isLoggedIn ? "Login" : "Logout"}
+          </Button>
+          <UserSection />
+        </div>
       </div>
 
       <img
@@ -54,21 +70,7 @@ const Welcome = () => {
         This software is in beta and works best with chromium based browsers
         like Edge and Chrome. Some features are built to work within OBS.
       </p>
-      
-      {!isElectron() && (
-        <div className="flex justify-center mt-4">
-          <Button
-            variant="primary"
-            className="text-xl px-6 py-3 flex items-center gap-2"
-            onClick={() => window.open(getLatestReleaseUrl(), "_blank")}
-            component="button"
-          >
-            <Download size={24} />
-            Download for Windows
-          </Button>
-        </div>
-      )}
-      
+
       <section className="flex flex-col mt-8 gap-4 bg-gray-800 w-full items-center p-8">
         <div className="text-center">
           <h3 className="text-lg border-b-4 border-black">Editors</h3>
