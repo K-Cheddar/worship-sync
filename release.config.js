@@ -19,12 +19,6 @@ export default {
       },
     ],
     [
-      "@semantic-release/exec",
-      {
-        prepareCmd: "node scripts/preservePackageFields.js",
-      },
-    ],
-    [
       "@semantic-release/git",
       {
         assets: ["package.json", "client/package.json", "CHANGELOG.md"],
