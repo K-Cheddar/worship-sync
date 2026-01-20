@@ -9,15 +9,18 @@ on:
       - master
 
 jobs:
-  build-and-deploy:
-    name: Build and Deploy
+  release:
+    name: Create Release
     runs-on: ubuntu-latest
+    outputs:
+      new_release_published: ${{ steps.check_release.outputs.published }}
+      new_release_version: ${{ steps.check_release.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GH_RELEASE_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_RELEASE_PAT }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -43,17 +46,17 @@ jobs:
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
       - name: Release
+        id: semantic
         run: npm run release
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 
-      - name: Trigger Electron Build
-        if: success()
+      - name: Check if release was created
+        id: check_release
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GH_RELEASE_PAT || secrets.GITHUB_TOKEN }}
           script: |
-            // Get the latest release tag
+            // Get the latest release
             const { data: releases } = await github.rest.repos.listReleases({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -62,19 +65,112 @@ jobs:
             
             if (releases.length > 0) {
               const latestRelease = releases[0];
-              console.log('Latest release:', latestRelease.tag_name);
+              const releaseTime = new Date(latestRelease.created_at);
+              const now = new Date();
+              const ageMinutes = (now - releaseTime) / 1000 / 60;
               
-              // Trigger the electron build workflow from master branch
-              // (the workflow file exists here, and it will build the tagged release)
-              await github.rest.actions.createWorkflowDispatch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'build-electron.yml',
-                ref: 'master'
-              });
-              
-              console.log('Triggered electron build workflow for release:', latestRelease.tag_name);
+              // If release was created in the last 5 minutes, it's from this run
+              if (ageMinutes < 5) {
+                console.log('New release detected:', latestRelease.tag_name);
+                core.setOutput('published', 'true');
+                core.setOutput('version', latestRelease.tag_name.replace('v', ''));
+              } else {
+                console.log('No new release (latest is', ageMinutes.toFixed(1), 'minutes old)');
+                core.setOutput('published', 'false');
+              }
+            } else {
+              console.log('No releases found');
+              core.setOutput('published', 'false');
             }
+
+  build-electron:
+    name: Build Electron App
+    needs: release
+    if: needs.release.outputs.new_release_published == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: win
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.new_release_version }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install server dependencies
+        run: npm ci
+
+      - name: Install client dependencies
+        run: cd client && npm ci
+
+      - name: Build Electron files
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: cd client && npm run build:electron:files
+
+      - name: Build web app
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          ELECTRON_BUILD: true
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: cd client && npm run build
+
+      - name: Build Electron app (Linux)
+        if: matrix.platform == 'linux'
+        run: cd client && npx electron-builder --linux --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=4096
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+      - name: Build Electron app (Windows)
+        if: matrix.platform == 'win'
+        run: cd client && npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=4096
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+  deploy-heroku:
+    name: Deploy to Heroku
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_RELEASE_PAT }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install server dependencies
+        run: npm ci
+
+      - name: Install client dependencies
+        run: cd client && npm ci
+
+      - name: Build client
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: cd client && npm run build
 
       - name: Deploy to Heroku
         env:
