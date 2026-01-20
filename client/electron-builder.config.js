@@ -3,25 +3,21 @@ import { defineConfig } from "electron-builder";
 export default defineConfig({
   appId: "com.worshipsync.app",
   productName: "WorshipSync",
+
   directories: {
     output: "dist",
     buildResources: "buildResources",
   },
+
   files: [
     "dist/**/*",
     "dist-electron/**/*",
-    "package.json",
-    "!node_modules"
+    "package.json"
   ],
+
   asar: true,
   npmRebuild: false,
-  includeSubNodeModules: false,
   buildDependenciesFromSource: false,
-  
-  // Publish to existing release (not draft)
-  releaseInfo: {
-    releaseNotes: "",
-  },
 
   win: {
     target: [{ target: "nsis", arch: ["x64", "ia32"] }],
@@ -49,6 +45,5 @@ export default defineConfig({
     provider: "github",
     owner: "K-Cheddar",
     repo: "worship-sync",
-    releaseType: "release",
   },
 });
