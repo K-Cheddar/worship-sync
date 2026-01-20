@@ -5,75 +5,46 @@ export default defineConfig({
   productName: "WorshipSync",
   directories: {
     output: "release",
-    buildResources: "build",
+    buildResources: "buildResources",
   },
   files: [
     "dist/**/*",
     "dist-electron/**/*",
     "package.json",
-    "!node_modules/**/*",
-    "!src/**/*",
-    "!electron/**/*",
-    "!*.config.js",
-    "!*.config.ts",
+    "!node_modules"
   ],
-  extraResources: [
-    {
-      from: "dist",
-      to: "app/dist",
-      filter: ["**/*"],
-    },
-  ],
+  asar: true,
+  npmRebuild: false,
+  includeSubNodeModules: false,
+  buildDependenciesFromSource: false,
+
   win: {
-    target: [
-      {
-        target: "nsis",
-        arch: ["x64", "ia32"],
-      },
-    ],
-    icon: "public/WorshipSyncIcon.png",
+    target: [{ target: "nsis", arch: ["x64", "ia32"] }],
+    icon: "icon.png",
     publisherName: "WorshipSync",
   },
-  mac: {
-    target: [
-      {
-        target: "dmg",
-        arch: ["x64", "arm64"],
-      },
-      {
-        target: "zip",
-        arch: ["x64", "arm64"],
-      },
-    ],
-    icon: "public/WorshipSyncIcon.png",
-    category: "public.app-category.productivity",
-    hardenedRuntime: true,
-    gatekeeperAssess: false,
-    entitlements: "build/entitlements.mac.plist",
-    entitlementsInherit: "build/entitlements.mac.plist",
-  },
+
   linux: {
     target: [
-      {
-        target: "AppImage",
-        arch: ["x64"],
-      },
-      {
-        target: "deb",
-        arch: ["x64"],
-      },
+      { target: "AppImage", arch: ["x64"] },
+      { target: "deb", arch: ["x64"] },
     ],
-    icon: "public/WorshipSyncIcon.png",
+    icon: "icon.png",
     category: "Office",
   },
+
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
   },
-  publish: {
-    provider: "github",
-    releaseType: "release",
-  },
+
+  publish: [
+    {
+      provider: "github",
+      owner: "K-Cheddar",
+      repo: "worship-sync",
+    },
+  ],
 });

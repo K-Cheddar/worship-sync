@@ -39,8 +39,29 @@ const createWindow = () => {
     mainWindow.webContents.openDevTools();
   } else {
     // In production, load from the built files
-    mainWindow.loadFile(join(__dirname, "../dist/index.html"));
+    const indexPath = app.isPackaged
+      ? join(process.resourcesPath, "app.asar", "dist", "index.html")
+      : join(__dirname, "../dist/index.html");
+    
+    console.log("Loading from:", indexPath);
+    mainWindow.loadFile(indexPath).catch((err) => {
+      console.error("Failed to load index.html:", err);
+      // Fallback: try loading from __dirname
+      mainWindow?.loadFile(join(__dirname, "../dist/index.html"));
+    });
+    
+    // Open DevTools to see errors
+    mainWindow.webContents.openDevTools();
   }
+
+  // Log any errors
+  mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
+    console.error("Failed to load:", errorCode, errorDescription);
+  });
+
+  mainWindow.webContents.on("console-message", (event, level, message) => {
+    console.log("Console:", message);
+  });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
