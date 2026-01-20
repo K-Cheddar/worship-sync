@@ -14,6 +14,7 @@ export default defineConfig({
     "!node_modules"
   ],
   asar: true,
+  npmRebuild: false,
   includeSubNodeModules: false,
   buildDependenciesFromSource: false,
 
