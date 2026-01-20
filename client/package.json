@@ -1,5 +1,6 @@
 {
   "name": "worship-sync",
+  "productName": "WorshipSync",
   "version": "1.25.0",
   "private": true,
   "dependencies": {
