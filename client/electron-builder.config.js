@@ -60,8 +60,11 @@ export default defineConfig({
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
   },
-  publish: {
-    provider: "github",
-    releaseType: "release",
-  },
+  publish: [
+    {
+      provider: "github",
+      owner: "K-Cheddar",
+      repo: "worship-sync",
+    },
+  ],
 });

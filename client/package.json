@@ -109,6 +109,10 @@
   "author": "",
   "license": "ISC",
   "description": "Worship Sync - Modern worship presentation software",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/K-Cheddar/worship-sync.git"
+  },
   "type": "module",
   "homepage": ".",
   "devDependencies": {
