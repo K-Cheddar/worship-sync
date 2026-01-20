@@ -1,3 +1,11 @@
+## [1.25.2](https://github.com/K-Cheddar/worship-sync/compare/v1.25.1...v1.25.2) (2026-01-20)
+
+
+### Bug Fixes
+
+* add productName and trigger electron builds from auto-release ([ec9a67b](https://github.com/K-Cheddar/worship-sync/commit/ec9a67bf5049d0490de85e5e51aa74e4077d52b7))
+* Updating electron build ([740bdf5](https://github.com/K-Cheddar/worship-sync/commit/740bdf535b6547267e1c70abe0c4703b771bf76f))
+
 ## [1.25.1](https://github.com/K-Cheddar/worship-sync/compare/v1.25.0...v1.25.1) (2026-01-20)
 
 
