@@ -7,7 +7,6 @@ import { createMonitorDisplayBox } from "./utils";
 
 type DisplayTimerProps = {
   width: number;
-  fontAdjustment: number;
   time?: number;
   currentTimerInfo?: TimerInfo;
   fontSize: number;
@@ -15,7 +14,6 @@ type DisplayTimerProps = {
 
 const DisplayTimer = ({
   width,
-  fontAdjustment,
   time,
   currentTimerInfo,
   fontSize,
@@ -74,7 +72,6 @@ const DisplayTimer = ({
       box={timerBox}
       width={width}
       showBackground={false}
-      fontAdjustment={fontAdjustment}
       index={0}
       shouldAnimate={false}
       time={time}

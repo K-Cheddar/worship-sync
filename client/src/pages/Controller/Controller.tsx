@@ -169,8 +169,8 @@ const Controller = () => {
 
   // Leaving this in case we need to reformat all songs in the db
   // useEffect(() => {
-  //   if (!db || !cloud) return;
-  //   // formatAllSongs(db, cloud);
+    // if (!db || !cloud) return;
+    // formatAllSongs(db, cloud);
   // }, [db, cloud]);
 
   useEffect(() => {
@@ -179,14 +179,16 @@ const Controller = () => {
       try {
         const preferences: DBPreferences | undefined =
           await db.get("preferences");
-        dispatch(
-          initiatePreferences({
-            preferences: preferences.preferences,
-            isMusic: access === "music",
-          })
-        );
-        dispatch(initiateQuickLinks(preferences.quickLinks));
-        dispatch(initiateMonitorSettings(preferences.monitorSettings));
+        if (preferences) {
+          dispatch(
+            initiatePreferences({
+              preferences: preferences.preferences,
+              isMusic: access === "music",
+            })
+          );
+          dispatch(initiateQuickLinks(preferences.quickLinks || []));
+          dispatch(initiateMonitorSettings(preferences.monitorSettings));
+        }
       } catch (e) {
         console.error(e);
       } finally {
@@ -420,7 +422,7 @@ const Controller = () => {
             <EditorButtons access={access} />
             <ServiceItems />
           </div>
-          <div className="flex flex-col flex-1 relative w-[55%] h-full">
+          <div className="flex flex-col flex-1 relative w-[60%] h-full">
             <Routes>
               <Route
                 path="/"
@@ -454,7 +456,7 @@ const Controller = () => {
                 onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
               />
               <div
-                className={`flex flex-col h-full lg:w-[30%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:absolute ${
+                className={`flex flex-col h-full lg:w-[25%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:absolute ${
                   isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
                 }`}
                 ref={rightPanelRef}

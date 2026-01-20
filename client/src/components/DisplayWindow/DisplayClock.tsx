@@ -5,14 +5,12 @@ import { createMonitorDisplayBox } from "./utils";
 
 type DisplayClockProps = {
   width: number;
-  fontAdjustment: number;
   time?: number;
   fontSize: number;
 };
 
 const DisplayClock = ({
   width,
-  fontAdjustment,
   time,
   fontSize,
 }: DisplayClockProps) => {
@@ -51,7 +49,6 @@ const DisplayClock = ({
       box={clockBox}
       width={width}
       showBackground={false}
-      fontAdjustment={fontAdjustment}
       index={0}
       shouldAnimate={false}
       time={time}

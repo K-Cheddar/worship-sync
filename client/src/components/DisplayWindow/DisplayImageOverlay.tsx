@@ -33,9 +33,14 @@ const DisplayImageOverlay = forwardRef<
 
     useGSAP(
       () => {
+        // Handle both callback refs and object refs
+        const containerElement = typeof containerRef === 'function' 
+          ? null
+          : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
+        
         if (
           !imageOverlayRef.current ||
-          !(containerRef as React.MutableRefObject<HTMLDivElement>)?.current ||
+          (typeof containerRef !== 'function' && !containerElement) ||
           !shouldAnimate
         )
           return;
@@ -85,10 +90,15 @@ const DisplayImageOverlay = forwardRef<
 
     useGSAP(
       () => {
+        // Handle both callback refs and object refs
+        const containerElement = typeof containerRef === 'function' 
+          ? null
+          : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
+        
         if (
           !prevImageOverlayRef.current ||
           !shouldAnimate ||
-          !(containerRef as React.MutableRefObject<HTMLDivElement>)?.current
+          (typeof containerRef !== 'function' && !containerElement)
         )
           return;
 

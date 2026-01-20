@@ -45,6 +45,7 @@ const Presentation = ({
       shouldAnimate
       shouldPlayVideo
       width={100}
+      showMonitorClockTimer
     />
   ) : (
     <div className="h-dvh w-dvw flex flex-col items-center justify-center bg-black gap-10">

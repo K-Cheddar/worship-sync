@@ -139,6 +139,7 @@ export type ItemProperties = {
   bibleInfo?: BibleInfo;
   timerInfo?: TimerInfo;
   shouldSendTo: ShouldSendTo;
+  formattedSections?: FormattedSection[]; // For free form items
 };
 
 export type BibleFontMode = "fit" | "separate" | "multiple";
@@ -171,6 +172,13 @@ export type Arrangment = {
 export type FormattedLyrics = {
   type: string;
   name: string;
+  words: string;
+  slideSpan: number;
+  id?: string;
+};
+
+export type FormattedSection = {
+  sectionNum: number;
   words: string;
   slideSpan: number;
   id?: string;

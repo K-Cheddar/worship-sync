@@ -810,6 +810,26 @@ listenerMiddleware.startListening({
     const { list } = (listenerApi.getState() as RootState).undoable.present
       .serviceTimes;
 
+    // Prevent syncing empty arrays to Firebase if we have no services
+    // This prevents clearing Firebase when Redux is empty but PouchDB has services
+    if (list.length === 0) {
+      // Still update PouchDB if it exists, but don't clear Firebase
+      if (db) {
+        try {
+          const db_services: DBServices = await db.get("services");
+          // Only update PouchDB if it already has services (don't create empty)
+          if (db_services?.list && db_services.list.length > 0) {
+            db_services.list = list;
+            db_services.updatedAt = new Date().toISOString();
+            db.put(db_services);
+          }
+        } catch (error) {
+          // Don't create empty services document
+        }
+      }
+      return;
+    }
+
     if (db) {
       try {
         const db_services: DBServices = await db.get("services");
@@ -826,7 +846,6 @@ listenerMiddleware.startListening({
         });
       } catch (error) {
         // if the services are not found, create a new one
-        console.error(error);
         const db_services = {
           _id: "services",
           list,
@@ -834,6 +853,16 @@ listenerMiddleware.startListening({
           updatedAt: new Date().toISOString(),
         };
         db.put(db_services);
+        // Only broadcast if list is not empty
+        if (list.length > 0) {
+          safePostMessage({
+            type: "update",
+            data: {
+              docs: db_services,
+              hostId: globalHostId,
+            },
+          });
+        }
       }
     }
     if (globalFireDbInfo.db && globalFireDbInfo.user) {
@@ -861,6 +890,12 @@ listenerMiddleware.startListening({
     // update service times
     const { list } = (listenerApi.getState() as RootState).undoable.present
       .serviceTimes;
+
+    // Prevent syncing empty arrays to Firebase on load
+    // Only sync if we actually have services
+    if (list.length === 0) {
+      return;
+    }
 
     if (globalFireDbInfo.db && globalFireDbInfo.user) {
       set(

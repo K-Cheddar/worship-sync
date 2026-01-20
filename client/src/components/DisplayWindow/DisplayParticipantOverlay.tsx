@@ -134,10 +134,15 @@ const DisplayParticipantOverlay = forwardRef<
 
     useGSAP(
       () => {
+        // Handle both callback refs and object refs
+        const containerElement = typeof containerRef === 'function' 
+          ? null // Callback refs don't have .current, but the ref is valid if function exists
+          : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
+        
         if (
           !prevParticipantOverlayRef.current ||
           !shouldAnimate ||
-          !(containerRef as React.MutableRefObject<HTMLDivElement>)?.current
+          (typeof containerRef !== 'function' && !containerElement)
         )
           return;
 

@@ -1,7 +1,7 @@
 import { Cloudinary } from "@cloudinary/url-gen";
 import { SongOrder, ItemState, DBItem } from "../types";
 import generateRandomId from "./generateRandomId";
-import { formatSong } from "./overflow";
+import { formatSong, getFormattedSections } from "./overflow";
 
 export const formatItemInfo = (
   item: DBItem,
@@ -106,6 +106,14 @@ export const formatItemInfo = (
 
   _item.arrangements = updatedArrangements || [];
   _item.slides = slides || [];
+
+  // Ensure free form items have formattedSections
+  if (item.type === "free" && (!item.formattedSections || item.formattedSections.length === 0)) {
+    _item.formattedSections = getFormattedSections(slides || [], 1);
+  } else if (item.type === "free" && item.formattedSections) {
+    _item.formattedSections = item.formattedSections;
+  }
+
   if (item.type === "song") {
     return formatSong(_item, isMobile);
   }

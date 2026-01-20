@@ -1,6 +1,4 @@
 import {
-  CSSProperties,
-  useCallback,
   useContext,
   useEffect,
   useState,
@@ -19,6 +17,7 @@ import Button from "../../components/Button/Button";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import cn from "classnames";
+import { MonitorUp, MonitorX } from "lucide-react";
 
 // Keeping this as previous urls
 // https://res.cloudinary.com/portable-media/image/upload/v1729199662/eliathah/Welcome_To_Eliathah.jpg
@@ -63,18 +62,6 @@ const TransmitHandler = () => {
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
 
-  const [handlerHeight, setHandlerHeight] = useState(0);
-
-  const transmitHandlerRef = useCallback((node: HTMLElement) => {
-    if (node) {
-      const resizeObserver = new ResizeObserver((entries) => {
-        setHandlerHeight(entries[0].borderBoxSize[0].blockSize);
-      });
-
-      resizeObserver.observe(node);
-    }
-  }, []);
-
   useEffect(() => {
     setIsTransmitting(
       isMonitorTransmitting && isProjectorTransmitting && isStreamTransmitting
@@ -92,38 +79,33 @@ const TransmitHandler = () => {
     <ErrorBoundary>
       <div
         className={cn(
-          "transition-all relative",
-          isMediaExpanded && "h-0 z-0 opacity-0",
-          !isMediaExpanded && "opacity-100"
+          "transition-all relative flex flex-col min-h-0",
+          isMediaExpanded ? "h-0 z-0 opacity-0 flex-none" : "flex-1 opacity-100"
         )}
         data-is-media-expanded={isMediaExpanded}
-        style={
-          {
-            "--transmit-handler-height": `${handlerHeight}px`,
-          } as CSSProperties
-        }
       >
         <section
-          className="flex flex-col mt-2 gap-4 w-fit bg-gray-800 rounded-lg mx-auto h-fit max-h-[75vh] p-4"
-          ref={transmitHandlerRef}
+          className="flex flex-col gap-2 w-full  rounded-lg mx-auto h-full p-2"
         >
           <div className="w-full flex justify-center items-center gap-4">
             <Button
               onClick={() => dispatch(clearAll())}
               className="text-sm"
               padding="py-1 px-2"
+              svg={MonitorX}
             >
               Clear All
             </Button>
             <hr className="border-r border-gray-400 max-md:h-12 h-6" />
             <Toggle
-              label="Sending to all"
+              label="Send to all"
+              icon={MonitorUp}
               value={isTransmitting}
               onChange={handleSetTransmitting}
               color="#22c55e"
             />
           </div>
-          <div className="scrollbar-variable overflow-y-auto h-full">
+          <div className="scrollbar-variable overflow-y-auto flex-1 min-h-0 flex flex-col gap-2">
             <Presentation
               timers={timers}
               name="Projector"
@@ -135,9 +117,9 @@ const TransmitHandler = () => {
               toggleIsTransmitting={() =>
                 dispatch(toggleProjectorTransmitting())
               }
-              quickLinks={allQuickLinks.filter(
-                (link) => link.displayType === "projector"
-              )}
+              quickLinks={allQuickLinks
+                .filter((link) => link.displayType === "projector")
+                }
               isMobile={isMobile}
             />
             <Presentation
@@ -149,10 +131,11 @@ const TransmitHandler = () => {
               info={monitorInfo}
               isTransmitting={isMonitorTransmitting}
               toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
-              quickLinks={allQuickLinks.filter(
-                (link) => link.displayType === "monitor"
-              )}
+              quickLinks={allQuickLinks
+                .filter((link) => link.displayType === "monitor")
+                }
               isMobile={isMobile}
+              showMonitorClockTimer
             />
             <Presentation
               timers={timers}
@@ -163,9 +146,9 @@ const TransmitHandler = () => {
               info={streamInfo}
               isTransmitting={isStreamTransmitting}
               toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
-              quickLinks={allQuickLinks.filter(
-                (link) => link.displayType === "stream"
-              )}
+              quickLinks={allQuickLinks
+                .filter((link) => link.displayType === "stream")
+                }
               isMobile={isMobile}
             />
           </div>

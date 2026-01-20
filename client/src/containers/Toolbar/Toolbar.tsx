@@ -5,6 +5,7 @@ import {
   Timer,
   Monitor,
   RectangleEllipsis,
+  Pencil,
 } from "lucide-react";
 import Menu from "./ToolbarElements/Menu";
 import Outlines from "./ToolbarElements/Outlines";
@@ -14,22 +15,33 @@ import Undo from "./ToolbarElements/Undo";
 import UserSection from "./ToolbarElements/UserSection";
 import ToolbarButton from "./ToolbarElements/ToolbarButton";
 import { useDispatch, useSelector } from "../../hooks";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState, useCallback } from "react";
 import Button from "../../components/Button/Button";
 import TimerControls from "../../components/TimerControls/TimerControls";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import cn from "classnames";
 import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
-import { setShouldShowStreamFormat } from "../../store/preferencesSlice";
+import {
+  setShouldShowStreamFormat,
+  setToolbarSection,
+} from "../../store/preferencesSlice";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import BoxEditor from "./ToolbarElements/BoxEditor";
+import {
+  updateArrangements,
+  updateBibleInfo,
+  updateSlides,
+} from "../../store/itemSlice";
+import { ItemState } from "../../types";
 
 type sections =
   | "settings"
   | "slide-tools"
   | "timer-manager"
   | "stream-format"
-  | "item-tools";
+  | "item-tools"
+  | "box-tools";
 
 const Toolbar = ({ className }: { className: string }) => {
   const location = useLocation();
@@ -37,10 +49,25 @@ const Toolbar = ({ className }: { className: string }) => {
     (state) => state.undoable.present.item
   );
   const [section, setSection] = useState<sections>("settings");
-  const { isPhone } = useContext(ControllerInfoContext) || {};
+  const { isPhone, isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
 
   const dispatch = useDispatch();
+
+  const updateItem = useCallback(
+    (updatedItem: ItemState) => {
+      dispatch(updateSlides({ slides: updatedItem.slides }));
+      if (updatedItem.arrangements.length > 0) {
+        dispatch(
+          updateArrangements({ arrangements: updatedItem.arrangements })
+        );
+      }
+      if (updatedItem.bibleInfo) {
+        dispatch(updateBibleInfo({ bibleInfo: updatedItem.bibleInfo }));
+      }
+    },
+    [dispatch]
+  );
   const onItemPage = useMemo(
     () => location.pathname.includes("controller/item"),
     [location.pathname]
@@ -57,6 +84,7 @@ const Toolbar = ({ className }: { className: string }) => {
   }, [onItemPage, type]);
 
   useEffect(() => {
+    dispatch(setToolbarSection(section));
     if (section === "stream-format") {
       dispatch(setShouldShowStreamFormat(true));
     } else {
@@ -93,6 +121,15 @@ const Toolbar = ({ className }: { className: string }) => {
               isActive={section === "slide-tools"}
             >
               Slide Tools
+            </ToolbarButton>
+            <ToolbarButton
+              svg={Pencil}
+              onClick={() => setSection("box-tools")}
+              disabled={!onItemPage}
+              hidden={!onItemPage}
+              isActive={section === "box-tools"}
+            >
+              Box Tools
             </ToolbarButton>
             {access === "full" && (
               <>
@@ -187,6 +224,11 @@ const Toolbar = ({ className }: { className: string }) => {
             />
             <ItemEditTools
               className={cn(section !== "item-tools" && "hidden")}
+            />
+            <BoxEditor
+              className={cn(section !== "box-tools" && "hidden")}
+              updateItem={updateItem}
+              isMobile={isMobile}
             />
           </div>
         </div>

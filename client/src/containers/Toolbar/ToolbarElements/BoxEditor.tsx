@@ -1,7 +1,7 @@
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 
-import { Pencil } from "lucide-react";
+import { Maximize2 } from "lucide-react";
 
 import textFull from "../../../assets/images/textbox_full.png";
 import textMid from "../../../assets/images/textbox_mid.png";
@@ -22,15 +22,17 @@ import { updateBoxProperties } from "../../../utils/formatter";
 const BoxEditor = ({
   updateItem,
   isMobile,
+  className,
 }: {
   updateItem: (item: ItemState) => void;
   isMobile: boolean;
+  className?: string;
 }) => {
   const item = useSelector((state) => state.undoable.present.item);
   const { selectedSlide, selectedBox, slides } = item;
 
   const boxes = useMemo(() => {
-    return slides[selectedSlide].boxes;
+    return slides[selectedSlide]?.boxes || [];
   }, [slides, selectedSlide]);
 
   const currentBox = useMemo(() => {
@@ -87,62 +89,58 @@ const BoxEditor = ({
   };
 
   const controls = (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-2 pb-2 justify-center">
-        <div className="flex flex-wrap gap-2">
-          <Input
-            type="number"
-            value={currentBox.x || 0}
-            onChange={(value) => handleInputChange("x", value.toString())}
-            label="X"
-            labelClassName="mr-2 mb-2"
-            min={0}
-            max={100}
-            inputWidth="w-16"
-            inputTextSize="text-xs"
-            hideSpinButtons={false}
-          />
-          <Input
-            type="number"
-            value={currentBox.y || 0}
-            onChange={(value) => handleInputChange("y", value.toString())}
-            label="Y"
-            labelClassName="mr-2 mb-2"
-            min={0}
-            max={100}
-            inputWidth="w-16"
-            inputTextSize="text-xs"
-            hideSpinButtons={false}
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Input
-            type="number"
-            value={currentBox.width}
-            onChange={(value) => handleInputChange("width", value.toString())}
-            label="Width"
-            labelClassName="mr-2 mb-2"
-            min={0}
-            max={100}
-            inputWidth="w-16"
-            inputTextSize="text-xs"
-            hideSpinButtons={false}
-          />
-          <Input
-            type="number"
-            value={currentBox.height}
-            onChange={(value) => handleInputChange("height", value.toString())}
-            label="Height"
-            labelClassName="mr-2 mb-2"
-            min={0}
-            max={100}
-            inputWidth="w-16"
-            inputTextSize="text-xs"
-            hideSpinButtons={false}
-          />
-        </div>
+    <>
+      <div className="flex flex-wrap gap-2 items-center max-lg:justify-center">
+        <Input
+          type="number"
+          value={currentBox.x || 0}
+          onChange={(value) => handleInputChange("x", value.toString())}
+          label="X"
+          labelClassName="mr-2 max-lg:mb-2"
+          min={0}
+          max={100}
+          inputWidth="w-16"
+          inputTextSize="text-xs"
+          hideSpinButtons={false}
+        />
+        <Input
+          type="number"
+          value={currentBox.y || 0}
+          onChange={(value) => handleInputChange("y", value.toString())}
+          label="Y"
+          labelClassName="mr-2 max-lg:mb-2"
+          min={0}
+          max={100}
+          inputWidth="w-16"
+          inputTextSize="text-xs"
+          hideSpinButtons={false}
+        />
+        <Input
+          type="number"
+          value={currentBox.width}
+          onChange={(value) => handleInputChange("width", value.toString())}
+          label="Width"
+          labelClassName="mr-2 max-lg:mb-2"
+          min={0}
+          max={100}
+          inputWidth="w-16"
+          inputTextSize="text-xs"
+          hideSpinButtons={false}
+        />
+        <Input
+          type="number"
+          value={currentBox.height}
+          onChange={(value) => handleInputChange("height", value.toString())}
+          label="Height"
+          labelClassName="mr-2 max-lg:mb-2"
+          min={0}
+          max={100}
+          inputWidth="w-16"
+          inputTextSize="text-xs"
+          hideSpinButtons={false}
+        />
       </div>
-      <div className="flex flex-wrap gap-2 justify-center">
+      <div className="flex flex-wrap gap-2 items-center justify-center max-lg:pt-2">
         <Button
           image={textFull}
           variant="tertiary"
@@ -255,35 +253,39 @@ const BoxEditor = ({
             })
           }
         />
-        <div className="flex gap-2 w-full justify-center pt-2">
-          <RadioButton
-            className="text-xs w-fit"
-            label="Apply to selected"
-            value={!shouldApplyToAll}
-            onChange={() => setShouldApplyToAll(false)}
-          />
-          <RadioButton
-            label="Apply to all"
-            className="text-xs w-fit"
-            value={shouldApplyToAll}
-            onChange={() => setShouldApplyToAll(true)}
-          />
-        </div>
       </div>
-    </div>
+      <div className="flex gap-2 items-center justify-center max-lg:pt-2">
+        <RadioButton
+          className="text-xs w-fit"
+          label="Apply to selected"
+          value={!shouldApplyToAll}
+          onChange={() => setShouldApplyToAll(false)}
+        />
+        <RadioButton
+          label="Apply to all"
+          className="text-xs w-fit"
+          value={shouldApplyToAll}
+          onChange={() => setShouldApplyToAll(true)}
+        />
+      </div>
+    </>
   );
 
   return (
-    <section className="flex flex-wrap gap-2 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4 justify-center items-center">
+    <div className={`flex gap-2 items-center ${className || ""}`}>
+      <div className="max-lg:hidden flex gap-2 items-center flex-wrap py-1">
+        {controls}
+      </div>
       <PopOver
         TriggeringButton={
-          <Button svg={Pencil} className="max-lg:hidden" variant="tertiary" />
+          <Button className="lg:hidden" variant="tertiary" svg={Maximize2}>
+            Tools
+          </Button>
         }
       >
-        {controls}
+        <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
       </PopOver>
-      <div className="lg:hidden">{controls}</div>
-    </section>
+    </div>
   );
 };
 
