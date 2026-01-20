@@ -1,3 +1,16 @@
+# [1.25.0](https://github.com/K-Cheddar/worship-sync/compare/v1.24.0...v1.25.0) (2026-01-20)
+
+
+### Bug Fixes
+
+* Adding download button ([19a09c0](https://github.com/K-Cheddar/worship-sync/commit/19a09c0f1d7b58fa7a14faa6cc2aaa0010076c57))
+* Update download button ([fd0cdac](https://github.com/K-Cheddar/worship-sync/commit/fd0cdace600fd72e1fc8f985f6a5eded2b52b081))
+
+
+### Features
+
+* Adding electron ([dbcf465](https://github.com/K-Cheddar/worship-sync/commit/dbcf46539eeba83ce359bc8c871be63ffebe1e86))
+
 # [1.24.0](https://github.com/K-Cheddar/worship-sync/compare/v1.23.1...v1.24.0) (2026-01-20)
 
 
