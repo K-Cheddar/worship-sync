@@ -1,3 +1,5 @@
+import { getApiBasePath } from "../utils/environment";
+
 type getBiblesType = {
   version: string;
 };
@@ -7,7 +9,7 @@ export const getBibles = async ({ version }: getBiblesType) => {
 
   try {
     const response = await fetch(
-      `${import.meta.env.VITE_API_BASE_PATH}bible/?version=${version}`
+      `${getApiBasePath()}bible/?version=${version}`
     );
     data = await response.json();
   } catch (error) {

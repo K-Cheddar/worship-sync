@@ -1,4 +1,5 @@
 import versionInfo from "../version.json";
+import { getApiBasePath } from "./environment";
 
 // localStorage keys
 export const VERSION_STORAGE_KEY = "worshipSync_currentVersion";
@@ -13,7 +14,7 @@ export const getChangelogForVersion = async (
 ): Promise<string | null> => {
   try {
     const response = await fetch(
-      `${import.meta.env.VITE_API_BASE_PATH}api/changelog`
+      `${getApiBasePath()}api/changelog`
     );
     if (!response.ok) {
       throw new Error("Failed to fetch changelog");

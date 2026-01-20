@@ -1,4 +1,5 @@
 import { Cloudinary } from "@cloudinary/url-gen";
+import { getApiBasePath } from "./environment";
 
 export const deleteFromCloudinary = async (
   cloud: Cloudinary,
@@ -7,7 +8,7 @@ export const deleteFromCloudinary = async (
 ): Promise<boolean> => {
   try {
     const response = await fetch(
-      `${import.meta.env.VITE_API_BASE_PATH}api/cloudinary/delete`,
+      `${getApiBasePath()}api/cloudinary/delete`,
       {
         method: "DELETE",
         headers: {

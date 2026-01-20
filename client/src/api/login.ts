@@ -1,4 +1,5 @@
 import { AccessType } from "../context/globalInfo";
+import { getApiBasePath } from "../utils/environment";
 
 type LoginResponse = {
   success: boolean;
@@ -17,7 +18,7 @@ export const loginUser = async (
 ): Promise<LoginResponse> => {
   try {
     const response = await fetch(
-      `${import.meta.env.VITE_API_BASE_PATH}api/login`,
+      `${getApiBasePath()}api/login`,
       {
         method: "POST",
         headers: {

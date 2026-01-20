@@ -1,17 +1,15 @@
+import { getApiBasePath } from "./environment";
+
 const getScheduleFromExcel = async (
   fileName: string,
   membersFileName: string
 ) => {
   const response = await fetch(
-    `${
-      import.meta.env.VITE_API_BASE_PATH
-    }getSchedule?fileName=${encodeURIComponent(fileName)}`
+    `${getApiBasePath()}getSchedule?fileName=${encodeURIComponent(fileName)}`
   );
 
   const membersResponse = await fetch(
-    `${
-      import.meta.env.VITE_API_BASE_PATH
-    }getMembers?fileName=${encodeURIComponent(membersFileName)}`
+    `${getApiBasePath()}getMembers?fileName=${encodeURIComponent(membersFileName)}`
   );
 
   const data = await response.json();

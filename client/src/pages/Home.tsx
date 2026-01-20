@@ -4,6 +4,9 @@ import { useContext } from "react";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ControllerInfoContext } from "../context/controllerInfo";
+import { getLatestReleaseUrl } from "../utils/githubRelease";
+import { Download } from "lucide-react";
+import { isElectron } from "../utils/environment";
 
 const HomeButton = ({
   to,
@@ -51,6 +54,21 @@ const Welcome = () => {
         This software is in beta and works best with chromium based browsers
         like Edge and Chrome. Some features are built to work within OBS.
       </p>
+      
+      {!isElectron() && (
+        <div className="flex justify-center mt-4">
+          <Button
+            variant="primary"
+            className="text-xl px-6 py-3 flex items-center gap-2"
+            onClick={() => window.open(getLatestReleaseUrl(), "_blank")}
+            component="button"
+          >
+            <Download size={24} />
+            Download for Windows
+          </Button>
+        </div>
+      )}
+      
       <section className="flex flex-col mt-8 gap-4 bg-gray-800 w-full items-center p-8">
         <div className="text-center">
           <h3 className="text-lg border-b-4 border-black">Editors</h3>

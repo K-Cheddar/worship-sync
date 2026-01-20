@@ -1,5 +1,6 @@
 import { verseType } from "../types";
 import { bookMap } from "./bookMap";
+import { getApiBasePath } from "../utils/environment";
 
 type getVersesType = {
   book: string;
@@ -14,7 +15,7 @@ export const getVerses = async ({ book, chapter, version }: getVersesType) => {
 
   try {
     const response = await fetch(
-      `${import.meta.env.VITE_API_BASE_PATH}api/bible/?book=${book}&chapter=${_chapter}&version=${version}`.replaceAll(
+      `${getApiBasePath()}api/bible/?book=${book}&chapter=${_chapter}&version=${version}`.replaceAll(
         " ",
         ""
       )
