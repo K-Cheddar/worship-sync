@@ -23,15 +23,6 @@ export default defineConfig({
     publisherName: "WorshipSync",
   },
 
-  mac: {
-    target: [
-      { target: "dmg", arch: ["x64", "arm64"] },
-      { target: "zip", arch: ["x64", "arm64"] }
-    ],
-    icon: "icon.png",
-    category: "public.app-category.productivity",
-  },
-
   linux: {
     target: [
       { target: "AppImage", arch: ["x64"] },
