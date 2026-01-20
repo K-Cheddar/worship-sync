@@ -39,18 +39,18 @@ const createWindow = () => {
     mainWindow.webContents.openDevTools();
   } else {
     // In production, load from the built files
-    const indexPath = app.isPackaged
-      ? join(process.resourcesPath, "app.asar", "dist", "index.html")
-      : join(__dirname, "../dist/index.html");
+    // When packed, __dirname points to app.asar, so we can use relative path
+    const indexPath = join(__dirname, "../dist/index.html");
     
     console.log("Loading from:", indexPath);
+    console.log("__dirname:", __dirname);
+    console.log("isPackaged:", app.isPackaged);
+    
     mainWindow.loadFile(indexPath).catch((err) => {
       console.error("Failed to load index.html:", err);
-      // Fallback: try loading from __dirname
-      mainWindow?.loadFile(join(__dirname, "../dist/index.html"));
     });
     
-    // Open DevTools to see errors
+    // Temporarily open DevTools to see errors (remove this later)
     mainWindow.webContents.openDevTools();
   }
 

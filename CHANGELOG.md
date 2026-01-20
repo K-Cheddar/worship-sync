@@ -1,3 +1,12 @@
+## [1.25.1](https://github.com/K-Cheddar/worship-sync/compare/v1.25.0...v1.25.1) (2026-01-20)
+
+
+### Bug Fixes
+
+* add electron icon and update build config ([58afd61](https://github.com/K-Cheddar/worship-sync/commit/58afd61e05bcc2d75388260bae44ac7e471f8503))
+* fix download path ([9742537](https://github.com/K-Cheddar/worship-sync/commit/974253795d3c1c9c94cbdc7689a2fb5c1cbbd1b5))
+* updating electron ([59b30e9](https://github.com/K-Cheddar/worship-sync/commit/59b30e9a0c6d957df1424c03081959b436c63b0c))
+
 # [1.25.0](https://github.com/K-Cheddar/worship-sync/compare/v1.24.0...v1.25.0) (2026-01-20)
 
 
