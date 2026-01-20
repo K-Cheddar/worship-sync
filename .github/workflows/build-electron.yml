@@ -50,7 +50,8 @@ jobs:
       - name: Build web app
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-        run: cd client && ELECTRON_BUILD=true npm run build
+          ELECTRON_BUILD: true
+        run: cd client && npm run build
 
       - name: Build Electron app (Linux)
         if: matrix.platform == 'linux'
