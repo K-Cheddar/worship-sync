@@ -17,6 +17,11 @@ export default defineConfig({
   npmRebuild: false,
   includeSubNodeModules: false,
   buildDependenciesFromSource: false,
+  
+  // Publish to existing release (not draft)
+  releaseInfo: {
+    releaseNotes: "",
+  },
 
   win: {
     target: [{ target: "nsis", arch: ["x64", "ia32"] }],
@@ -40,12 +45,10 @@ export default defineConfig({
     createStartMenuShortcut: true,
   },
 
-  publish: [
-    {
-      provider: "github",
-      owner: "K-Cheddar",
-      repo: "worship-sync",
-      releaseType: "release", // Publish to existing release (not draft)
-    },
-  ],
+  publish: {
+    provider: "github",
+    owner: "K-Cheddar",
+    repo: "worship-sync",
+    releaseType: "release",
+  },
 });
