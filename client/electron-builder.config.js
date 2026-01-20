@@ -5,9 +5,13 @@ export default defineConfig({
   productName: "WorshipSync",
   directories: {
     output: "release",
-    buildResources: "build",
+    buildResources: "buildResources",
   },
-  files: ["dist", "dist-electron", "package.json"],
+  files: [
+    "dist/**/*",
+    "dist-electron/**/*",
+    "package.json"
+  ],
   asar: true,
 
   win: {
