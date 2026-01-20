@@ -13,6 +13,7 @@ import { GlobalInfoContext } from "./globalInfo";
 import { useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import { backoff } from "../utils/generalUtils";
+import { getApiBasePath } from "../utils/environment";
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
@@ -105,7 +106,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const getCouchSession = useCallback(async () => {
     const response = await fetch(
-      `${import.meta.env.VITE_API_BASE_PATH}api/getDbSession`,
+      `${getApiBasePath()}api/getDbSession`,
       {
         credentials: "include",
       }

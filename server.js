@@ -63,7 +63,22 @@ app.use(bodyParser.urlencoded({ limit: "10mb", extended: true }));
 
 app.use(
   cors({
-    origin: frontEndHost,
+    origin: (origin, callback) => {
+      // Allow requests from web frontend, Electron, or no origin (like Electron)
+      const allowedOrigins = [
+        frontEndHost,
+        "https://local.worshipsync.net:3000",
+        "http://localhost:3000",
+        "file://", // Electron file:// protocol
+      ];
+      
+      // Allow requests with no origin (like Electron or mobile apps)
+      if (!origin || allowedOrigins.some(allowed => origin.includes(allowed.replace(/https?:\/\//, "")) || origin.startsWith("file://"))) {
+        callback(null, true);
+      } else {
+        callback(null, true); // Allow all for now, can be more restrictive if needed
+      }
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Origin", "X-Requested-With", "Content-Type", "Accept"],
     credentials: true,

@@ -26,3 +26,12 @@ yarn-error.log*
 /bibles
 .pem
 *.pem
+
+# Electron build outputs
+client/release/
+client/dist-electron/
+*.dmg
+*.exe
+*.AppImage
+*.deb
+*.rpm

@@ -10,6 +10,7 @@ import {
 } from "../utils/versionUtils";
 import { useVersionContext } from "../context/versionContext";
 import { GlobalInfoContext } from "../context/globalInfo";
+import { getApiBasePath } from "../utils/environment";
 import Button from "./Button/Button";
 import Modal from "./Modal/Modal";
 import MarkdownRenderer from "./MarkdownRenderer/MarkdownRenderer";
@@ -124,7 +125,7 @@ const VersionCheck: React.FC = () => {
   const checkVersion = useCallback(async () => {
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_API_BASE_PATH}api/version`,
+        `${getApiBasePath()}api/version`,
         {
           cache: "no-cache",
         }

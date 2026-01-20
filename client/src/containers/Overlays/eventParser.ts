@@ -1,3 +1,5 @@
+import { getApiBasePath } from "../../utils/environment";
+
 export interface EventData {
   element: string;
   leader: string;
@@ -5,7 +7,7 @@ export interface EventData {
 
 export const getNamesFromUrl = async (url: string): Promise<EventData[]> => {
   const response = await fetch(
-    `${import.meta.env.VITE_API_BASE_PATH}api/getEventDetails?url=${url}`
+    `${getApiBasePath()}api/getEventDetails?url=${url}`
   );
   const textHtml = await response.text();
 
