@@ -3,7 +3,7 @@
  */
 
 // Get repository info from environment or use defaults
-const GITHUB_REPO_OWNER = import.meta.env.VITE_GITHUB_REPO_OWNER || "your-username";
+const GITHUB_REPO_OWNER = import.meta.env.VITE_GITHUB_REPO_OWNER || "K-Cheddar";
 const GITHUB_REPO_NAME = import.meta.env.VITE_GITHUB_REPO_NAME || "worship-sync";
 
 /**
