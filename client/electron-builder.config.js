@@ -7,59 +7,40 @@ export default defineConfig({
     output: "release",
     buildResources: "build",
   },
-  files: [
-    "dist/**/*",
-    "dist-electron/**/*",
-    "package.json"
-  ],
+  files: ["dist", "dist-electron", "package.json"],
+  asar: true,
+
   win: {
-    target: [
-      {
-        target: "nsis",
-        arch: ["x64", "ia32"],
-      },
-    ],
-    icon: "build/icon.png",
+    target: [{ target: "nsis", arch: ["x64", "ia32"] }],
+    icon: "icon.png",
     publisherName: "WorshipSync",
   },
+
   mac: {
     target: [
-      {
-        target: "dmg",
-        arch: ["x64", "arm64"],
-      },
-      {
-        target: "zip",
-        arch: ["x64", "arm64"],
-      },
+      { target: "dmg", arch: ["x64", "arm64"] },
+      { target: "zip", arch: ["x64", "arm64"] }
     ],
-    icon: "build/icon.png",
+    icon: "icon.png",
     category: "public.app-category.productivity",
-    hardenedRuntime: true,
-    gatekeeperAssess: false,
-    entitlements: "build/entitlements.mac.plist",
-    entitlementsInherit: "build/entitlements.mac.plist",
   },
+
   linux: {
     target: [
-      {
-        target: "AppImage",
-        arch: ["x64"],
-      },
-      {
-        target: "deb",
-        arch: ["x64"],
-      },
+      { target: "AppImage", arch: ["x64"] },
+      { target: "deb", arch: ["x64"] },
     ],
-    icon: "build/icon.png",
+    icon: "icon.png",
     category: "Office",
   },
+
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
   },
+
   publish: [
     {
       provider: "github",
