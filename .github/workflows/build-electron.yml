@@ -1,12 +1,19 @@
 name: Build Electron App
 
+# This workflow provides a fallback/manual option for building Electron apps.
+# The main auto-release workflow now handles electron builds automatically.
+# Use this workflow for:
+# - Manual builds (Actions tab → Run workflow)
+# - Rebuilding a specific release without creating a new one
+# - Testing electron builds independently
+
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*.*.*"
   release:
     types: [published]
-  workflow_dispatch:
 
 permissions:
   contents: write
