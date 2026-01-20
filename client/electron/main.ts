@@ -28,7 +28,7 @@ const createWindow = () => {
       webSecurity: true,
     },
     autoHideMenuBar: true,
-    icon: join(__dirname, "../dist/favicon.ico"),
+    icon: join(__dirname, "../dist/WorshipSyncIcon.png"),
   });
 
   // Load the app

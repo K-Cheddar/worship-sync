@@ -31,7 +31,7 @@ export default defineConfig({
         arch: ["x64", "ia32"],
       },
     ],
-    icon: "build/icon.ico",
+    icon: "public/WorshipSyncIcon.png",
     publisherName: "WorshipSync",
   },
   mac: {
@@ -45,7 +45,7 @@ export default defineConfig({
         arch: ["x64", "arm64"],
       },
     ],
-    icon: "build/icon.icns",
+    icon: "public/WorshipSyncIcon.png",
     category: "public.app-category.productivity",
     hardenedRuntime: true,
     gatekeeperAssess: false,
@@ -63,7 +63,7 @@ export default defineConfig({
         arch: ["x64"],
       },
     ],
-    icon: "build/icon.png",
+    icon: "public/WorshipSyncIcon.png",
     category: "Office",
   },
   nsis: {
