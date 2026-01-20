@@ -18,7 +18,6 @@ export default {
         pkgRoot: "client",
       },
     ],
-
     [
       "@semantic-release/git",
       {
