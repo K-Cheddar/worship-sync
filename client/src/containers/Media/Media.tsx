@@ -10,6 +10,7 @@ import {
   ImageOff,
   Image,
   Images,
+  Eye,
 } from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
@@ -113,8 +114,6 @@ const Media = () => {
 
   const { db, cloud, isMobile, updater } =
     useContext(ControllerInfoContext) || {};
-
-  const defaultItemsPerRow = isMobile ? "grid-cols-3" : "grid-cols-5";
 
   const [visibleButtons, setVisibleButtons] = useState<{
     [key: string]: boolean;
@@ -298,207 +297,218 @@ const Media = () => {
   return (
     <ErrorBoundary>
       <div
-        className={`mx-2 px-2 bg-gray-900 rounded-t-md flex items-center text-sm relative z-10 transition-all ${
-          isMediaExpanded ? "mt-2" : "mt-4"
+        className={`mx-2 bg-gray-900 rounded-t-md flex items-center text-sm relative z-10 transition-all  mt-2 px-2 ${
+          isMediaExpanded ? " py-1" : "rounded-b-md py-0.5"
         }`}
       >
-        <Button
-          variant="tertiary"
-          disabled={isLoading}
-          className={cn(
-            "mr-2",
-            !location.pathname.includes("item") && "hidden",
-            visibleButtons["clearBackground"] && "button-appear"
-          )}
-          svg={ImageOff}
-          onClick={() => {
-            if (db) {
-              dispatch(
-                updateSlideBackground({
-                  background: "",
-                })
-              );
-            }
-          }}
-        >
-          {isMobile ? "" : "Remove"}
-        </Button>
-        <Button
-          variant="tertiary"
-          disabled={selectedMedia.id === "" || isLoading}
-          className={cn(
-            "mr-2",
-            !location.pathname.includes("item") && "hidden",
-            visibleButtons["setItem"] && "button-appear"
-          )}
-          svg={Images}
-          onClick={() => {
-            if (selectedMedia.background && db) {
-              dispatch(
-                updateAllSlideBackgrounds({
-                  background: selectedMedia.background,
-                  mediaInfo: selectedMedia,
-                })
-              );
-            }
-          }}
-          // ref={(el) => {
-          //   if (el) {
-          //     handleButtonVisibility(
-          //       "setItem",
-          //       location.pathname.includes("item"),
-          //       selectedMedia.id === "" || isLoading
-          //     );
-          //   }
-          // }}
-        >
-          {isMobile ? "" : "Set Item"}
-        </Button>
-        <Button
-          variant="tertiary"
-          disabled={selectedMedia.id === "" || isLoading}
-          className={cn(
-            !location.pathname.includes("item") && "hidden",
-            visibleButtons["setSlide"] && "button-appear"
-          )}
-          svg={Image}
-          onClick={() => {
-            if (selectedMedia.background && db) {
-              dispatch(
-                updateSlideBackground({
-                  background: selectedMedia.background,
-                  mediaInfo: selectedMedia,
-                })
-              );
-            }
-          }}
-          // ref={(el) => {
-          //   if (el) {
-          //     handleButtonVisibility(
-          //       "setSlide",
-          //       location.pathname.includes("item"),
-          //       selectedMedia.id === "" || isLoading
-          //     );
-          //   }
-          // }}
-        >
-          {isMobile ? "" : "Set Slide"}
-        </Button>
-        <Button
-          variant="tertiary"
-          disabled={selectedMedia.id === ""}
-          className={cn(
-            !(
-              location.pathname.includes("overlays") &&
-              selectedOverlay?.type === "image"
-            ) && "hidden",
-            visibleButtons["setImageOverlay"] && "button-appear"
-          )}
-          svg={Image}
-          onClick={() => {
-            if (selectedMedia.background && db) {
-              dispatch(
-                updateOverlay({
-                  imageUrl: selectedMedia.background,
-                  id: selectedOverlay?.id,
-                })
-              );
-              dispatch(
-                updateOverlayInList({
-                  imageUrl: selectedMedia.background,
-                  id: selectedOverlay?.id,
-                })
-              );
-            }
-          }}
-          ref={(el) => {
-            if (el) {
-              handleButtonVisibility(
-                "setImageOverlay",
-                location.pathname.includes("overlays") &&
-                  selectedOverlay?.type === "image",
-                selectedMedia.id === ""
-              );
-            }
-          }}
-        >
-          {isMobile ? "" : "Set Image Overlay"}
-        </Button>
-        <Button
-          variant="tertiary"
-          disabled={selectedMedia.id === "" || !selectedPreference}
-          className={cn(
-            (!location.pathname.includes("preferences") ||
-              location.pathname.includes("quick-links") ||
-              location.pathname.includes("monitor-settings")) &&
-              "hidden",
-            visibleButtons["setBackground"] && "button-appear"
-          )}
-          svg={Image}
-          onClick={() => {
-            dispatch(
-              setDefaultPreferences({
-                [selectedPreference]: {
-                  background: selectedMedia.background,
-                  mediaInfo: selectedMedia,
-                },
-              })
-            );
-          }}
-          ref={(el) => {
-            if (el) {
-              handleButtonVisibility(
-                "setBackground",
-                location.pathname.includes("preferences") &&
-                  !location.pathname.includes("quick-links") &&
-                  !location.pathname.includes("monitor-settings"),
-                selectedMedia.id === "" || !selectedPreference
-              );
-            }
-          }}
-        >
-          {isMobile ? "" : "Set Background"}
-        </Button>
-        <Button
-          variant="tertiary"
-          disabled={!selectedQuickLink || selectedMedia.id === ""}
-          className={cn(
-            (!location.pathname.includes("quick-links") ||
-              selectedQuickLink?.linkType !== "media") &&
-              "hidden",
-            visibleButtons["setQuickLink"] && "button-appear"
-          )}
-          svg={Image}
-          onClick={() => {
-            dispatch(setSelectedQuickLinkImage(selectedMedia));
-          }}
-          ref={(el) => {
-            if (el) {
-              const isVisible = Boolean(
-                location.pathname.includes("quick-links") &&
-                  selectedQuickLink?.linkType === "media"
-              );
-              const isDisabled = Boolean(
-                !selectedQuickLink ||
-                  selectedMedia.id === "" ||
-                  selectedQuickLink?.linkType !== "media"
-              );
-              handleButtonVisibility("setQuickLink", isVisible, isDisabled);
-            }
-          }}
-        >
-          {isMobile ? "" : "Set Quick Link Background"}
-        </Button>
-        <Button
-          className="ml-auto"
-          svg={Settings2}
-          onClick={() => {
-            dispatch(setIsMediaExpanded(!isMediaExpanded));
-            if (isMediaExpanded) {
-              setSearchTerm("");
-            }
-          }}
-        />
+        <h2 className="font-semibold flex-1">Media</h2>
+        {!isMediaExpanded ? (
+          <Button
+            className="ml-auto"
+            svg={Settings2}
+            onClick={() => {
+              dispatch(setIsMediaExpanded(!isMediaExpanded));
+            }}
+          />
+        ) : (
+          <>
+            <Button
+              variant="tertiary"
+              disabled={isLoading}
+              className={cn(
+                "mr-2",
+                !location.pathname.includes("item") && "hidden",
+                visibleButtons["clearBackground"] && "button-appear"
+              )}
+              svg={ImageOff}
+              onClick={() => {
+                if (db) {
+                  dispatch(
+                    updateSlideBackground({
+                      background: "",
+                    })
+                  );
+                }
+              }}
+            />
+            <Button
+              variant="tertiary"
+              disabled={selectedMedia.id === "" || isLoading}
+              className={cn(
+                "mr-2",
+                !location.pathname.includes("item") && "hidden",
+                visibleButtons["setItem"] && "button-appear"
+              )}
+              svg={Images}
+              onClick={() => {
+                if (selectedMedia.background && db) {
+                  dispatch(
+                    updateAllSlideBackgrounds({
+                      background: selectedMedia.background,
+                      mediaInfo: selectedMedia,
+                    })
+                  );
+                }
+              }}
+              // ref={(el) => {
+              //   if (el) {
+              //     handleButtonVisibility(
+              //       "setItem",
+              //       location.pathname.includes("item"),
+              //       selectedMedia.id === "" || isLoading
+              //     );
+              //   }
+              // }}
+            >
+              {isMobile ? "" : "Set All"}
+            </Button>
+            <Button
+              variant="tertiary"
+              disabled={selectedMedia.id === "" || isLoading}
+              className={cn(
+                !location.pathname.includes("item") && "hidden",
+                visibleButtons["setSlide"] && "button-appear"
+              )}
+              svg={Image}
+              onClick={() => {
+                if (selectedMedia.background && db) {
+                  dispatch(
+                    updateSlideBackground({
+                      background: selectedMedia.background,
+                      mediaInfo: selectedMedia,
+                    })
+                  );
+                }
+              }}
+              // ref={(el) => {
+              //   if (el) {
+              //     handleButtonVisibility(
+              //       "setSlide",
+              //       location.pathname.includes("item"),
+              //       selectedMedia.id === "" || isLoading
+              //     );
+              //   }
+              // }}
+            >
+              {isMobile ? "" : "Set One"}
+            </Button>
+            <Button
+              variant="tertiary"
+              disabled={selectedMedia.id === ""}
+              className={cn(
+                !(
+                  location.pathname.includes("overlays") &&
+                  selectedOverlay?.type === "image"
+                ) && "hidden",
+                visibleButtons["setImageOverlay"] && "button-appear"
+              )}
+              svg={Image}
+              onClick={() => {
+                if (selectedMedia.background && db) {
+                  dispatch(
+                    updateOverlay({
+                      imageUrl: selectedMedia.background,
+                      id: selectedOverlay?.id,
+                    })
+                  );
+                  dispatch(
+                    updateOverlayInList({
+                      imageUrl: selectedMedia.background,
+                      id: selectedOverlay?.id,
+                    })
+                  );
+                }
+              }}
+              ref={(el) => {
+                if (el) {
+                  handleButtonVisibility(
+                    "setImageOverlay",
+                    location.pathname.includes("overlays") &&
+                      selectedOverlay?.type === "image",
+                    selectedMedia.id === ""
+                  );
+                }
+              }}
+            >
+              {isMobile ? "" : "Set Image Overlay"}
+            </Button>
+            <Button
+              variant="tertiary"
+              disabled={selectedMedia.id === "" || !selectedPreference}
+              className={cn(
+                (!location.pathname.includes("preferences") ||
+                  location.pathname.includes("quick-links") ||
+                  location.pathname.includes("monitor-settings")) &&
+                  "hidden",
+                visibleButtons["setBackground"] && "button-appear"
+              )}
+              svg={Image}
+              onClick={() => {
+                dispatch(
+                  setDefaultPreferences({
+                    [selectedPreference]: {
+                      background: selectedMedia.background,
+                      mediaInfo: selectedMedia,
+                    },
+                  })
+                );
+              }}
+              ref={(el) => {
+                if (el) {
+                  handleButtonVisibility(
+                    "setBackground",
+                    location.pathname.includes("preferences") &&
+                      !location.pathname.includes("quick-links") &&
+                      !location.pathname.includes("monitor-settings"),
+                    selectedMedia.id === "" || !selectedPreference
+                  );
+                }
+              }}
+            >
+              {isMobile ? "" : "Set Background"}
+            </Button>
+            <Button
+              variant="tertiary"
+              disabled={!selectedQuickLink || selectedMedia.id === ""}
+              className={cn(
+                (!location.pathname.includes("quick-links") ||
+                  selectedQuickLink?.linkType !== "media") &&
+                  "hidden",
+                visibleButtons["setQuickLink"] && "button-appear"
+              )}
+              svg={Image}
+              onClick={() => {
+                dispatch(setSelectedQuickLinkImage(selectedMedia));
+              }}
+              ref={(el) => {
+                if (el) {
+                  const isVisible = Boolean(
+                    location.pathname.includes("quick-links") &&
+                      selectedQuickLink?.linkType === "media"
+                  );
+                  const isDisabled = Boolean(
+                    !selectedQuickLink ||
+                      selectedMedia.id === "" ||
+                      selectedQuickLink?.linkType !== "media"
+                  );
+                  handleButtonVisibility("setQuickLink", isVisible, isDisabled);
+                }
+              }}
+            >
+              {isMobile ? "" : "Set Quick Link Background"}
+            </Button>
+            <Button
+              className="ml-auto"
+              svg={Settings2}
+              onClick={() => {
+                dispatch(setIsMediaExpanded(!isMediaExpanded));
+                if (isMediaExpanded) {
+                  setSearchTerm("");
+                }
+              }}
+            />
+          </>
+        )}
       </div>
       {!isMediaLoading && isMediaExpanded && (
         <div className="flex gap-2 justify-center items-center z-10 py-1 px-4 bg-gray-900 mx-2">
@@ -548,22 +558,22 @@ const Media = () => {
           />
           <Toggle
             className="ml-2"
-            label="Show Name"
+            icon={Eye}
             value={showName}
             onChange={() => setShowName(!showName)}
           />
         </div>
       )}
-      {isMediaLoading && (
+      {isMediaLoading && isMediaExpanded && (
         <h3 className="text-center font-lg pt-4 bg-gray-800 mx-2 h-full">
           Loading media...
         </h3>
       )}
-      {!isMediaLoading && filteredList.length !== 0 && (
+      {!isMediaLoading && isMediaExpanded && filteredList.length !== 0 && (
         <ul
           className={cn(
             "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-2 z-10 rounded-b-md",
-            isMediaExpanded ? sizeMap.get(mediaItemsPerRow) : defaultItemsPerRow
+            sizeMap.get(mediaItemsPerRow)
           )}
         >
           {filteredList.map((mediaItem) => {
@@ -617,7 +627,7 @@ const Media = () => {
           })}
         </ul>
       )}
-      {!isMediaLoading && searchTerm && filteredList.length === 0 && (
+      {!isMediaLoading && isMediaExpanded && searchTerm && filteredList.length === 0 && (
         <div className="text-center py-8 bg-gray-800 mx-2 px-2">
           <p className="text-gray-400">
             No media found matching "{searchTerm}"

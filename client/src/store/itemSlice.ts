@@ -3,6 +3,7 @@ import {
   Arrangment,
   BibleInfo,
   Box,
+  FormattedSection,
   ItemSlideType,
   ItemState,
   MediaType,
@@ -59,6 +60,7 @@ export const itemSlice = createSlice({
       state.shouldSkipTitle = action.payload.shouldSkipTitle || false;
       state.arrangements = action.payload.arrangements || [];
       state.slides = action.payload.slides || [];
+      state.formattedSections = action.payload.formattedSections || state.formattedSections;
       state.bibleInfo = action.payload.bibleInfo || {
         book: "",
         chapter: "",
@@ -97,6 +99,10 @@ export const itemSlice = createSlice({
     },
     _updateBibleInfo: (state, action: PayloadAction<BibleInfo>) => {
       state.bibleInfo = action.payload;
+      state.hasPendingUpdate = true;
+    },
+    _updateFormattedSections: (state, action: PayloadAction<FormattedSection[]>) => {
+      state.formattedSections = [...action.payload];
       state.hasPendingUpdate = true;
     },
     setItemIsLoading: (state, action: PayloadAction<boolean>) => {
@@ -388,8 +394,14 @@ export const removeSlide = createAsyncThunk(
 
 export const updateSlides = createAsyncThunk(
   "item/updateSlides",
-  async (args: { slides: ItemSlideType[] }, { dispatch }) => {
+  async (
+    args: { slides: ItemSlideType[]; formattedSections?: FormattedSection[] },
+    { dispatch }
+  ) => {
     dispatch(_updateSlides(args.slides));
+    if (args.formattedSections) {
+      dispatch(_updateFormattedSections(args.formattedSections));
+    }
   }
 );
 
@@ -410,6 +422,7 @@ export const {
   setItemIsLoading,
   _updateSlides,
   _updateBibleInfo,
+  _updateFormattedSections,
   setBackground,
   setHasPendingUpdate,
   setSelectedBox,

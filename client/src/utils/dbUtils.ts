@@ -15,7 +15,7 @@ import {
   ServiceItem,
 } from "../types";
 import { formatItemInfo } from "./formatItemInfo";
-import { formatSong } from "./overflow";
+import { formatSong, getFormattedSections } from "./overflow";
 
 type propsType = {
   db: PouchDB.Database;
@@ -231,5 +231,69 @@ export const formatAllItems = async (
     console.log("formattedItems", formattedItems);
   } catch (error) {
     console.error("Failed to format all items", error);
+  }
+};
+
+/**
+ * Migration function to add formattedSections to all existing free form items.
+ * This should be run once to migrate existing data.
+ */
+export const migrateFreeFormItemsToFormattedSections = async (
+  db: PouchDB.Database
+) => {
+  if (!db) return;
+  try {
+    const allDocs: allDocsType = (await db.allDocs({
+      include_docs: true,
+    })) as allDocsType;
+
+    const allFreeFormItems = allDocs.rows
+      .filter((row) => (row.doc as any)?.type === "free")
+      .map((row) => row.doc as DBItem);
+
+    let migratedCount = 0;
+    let skippedCount = 0;
+
+    for (const item of allFreeFormItems) {
+      try {
+        // Skip if already has formattedSections
+        if (item.formattedSections && item.formattedSections.length > 0) {
+          skippedCount++;
+          continue;
+        }
+
+        // Get the item with all its data
+        const fullItem: DBItem = await db.get(item._id);
+
+        // Calculate formattedSections from existing slides
+        // For free form items, selectedBox is typically 1 (the text box)
+        const selectedBox = 1;
+        const formattedSections = getFormattedSections(
+          fullItem.slides || [],
+          selectedBox
+        );
+
+        // Update the item with formattedSections
+        const updatedItem: DBItem = {
+          ...fullItem,
+          formattedSections,
+          updatedAt: new Date().toISOString(),
+        };
+
+        await db.put(updatedItem);
+        migratedCount++;
+        console.log(`Migrated item: ${fullItem.name}`);
+      } catch (error) {
+        console.error(`Failed to migrate item ${item._id}:`, error);
+      }
+    }
+
+    console.log(
+      `Migration complete: ${migratedCount} items migrated, ${skippedCount} items skipped`
+    );
+    return { migratedCount, skippedCount };
+  } catch (error) {
+    console.error("Failed to migrate free form items", error);
+    throw error;
   }
 };

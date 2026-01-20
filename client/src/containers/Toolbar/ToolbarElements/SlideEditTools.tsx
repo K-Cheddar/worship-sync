@@ -32,7 +32,6 @@ import Toggle from "../../../components/Toggle/Toggle";
 import { BibleFontMode, ItemState } from "../../../types";
 import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
-import BoxEditor from "./BoxEditor";
 import { HexColorPicker, HexColorInput } from "react-colorful";
 import { updateTimerColor } from "../../../store/timersSlice";
 import RadioButton from "../../../components/RadioButton/RadioButton";
@@ -433,7 +432,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onClick={() => _updateBrightness(brightness + 10)}
         />
       </div>
-      <BoxEditor updateItem={updateItem} isMobile={isMobile} />
       {canChangeAspectRatio && (
         <Toggle
           label="Keep Aspect Ratio"

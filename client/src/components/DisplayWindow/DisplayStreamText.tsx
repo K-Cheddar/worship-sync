@@ -3,6 +3,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
 import TimerDisplay from "./TimerDisplay";
+import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "./constants";
 
 type DisplayStreamTextProps = {
   prevBox?: Box;
@@ -10,8 +11,9 @@ type DisplayStreamTextProps = {
   width: number;
   isPrev?: boolean;
   time?: number;
-  fontAdjustment: number;
   timerInfo?: TimerInfo;
+  referenceWidth?: number; // Reference width for pixel calculations (1920px)
+  referenceHeight?: number; // Reference height for pixel calculations (1080px)
 };
 
 const DisplayStreamText = ({
@@ -20,8 +22,9 @@ const DisplayStreamText = ({
   width,
   isPrev,
   time,
-  fontAdjustment,
   timerInfo,
+  referenceWidth = REFERENCE_WIDTH,
+  referenceHeight = REFERENCE_HEIGHT,
 }: DisplayStreamTextProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline>(null);
@@ -69,22 +72,35 @@ const DisplayStreamText = ({
   const bFontSize = 1.1;
   const bWords = box.words || "";
   const words = bWords.replace(/(\n)+/g, "\n").trim();
-  const fontSizeValue = bFontSize ? bFontSize / fontAdjustment : 1;
-  const tSS = fontSizeValue / (width > 20 ? 32 : 10); // text shadow size
-  const _fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size
+  
+  // Convert fontSize to pixels using the font size multiplier
+  const fontSizeInPx = bFontSize ? bFontSize * FONT_SIZE_MULTIPLIER : FONT_SIZE_MULTIPLIER;
+  
+  // Text shadow and outline sizes in pixels (will scale with transform)
+  const REFERENCE_WIDTH_VW = (REFERENCE_WIDTH / window.innerWidth) * 100;
+  const useReferenceWidth = width >= REFERENCE_WIDTH_VW * 0.5;
+  const tSS = fontSizeInPx / (useReferenceWidth ? 32 : 10); // text shadow size in px
+  const _fOS = fontSizeInPx / (useReferenceWidth ? 32 : 114); // font outline size in px
   const fOS = _fOS / 2;
-  const boxWidth = "70%";
-  // % margin is calculated based on the width so we get the percentage of top and bottom margin, then multiply by the width of the container
-  const boxHeight = "fit";
-  const marginLeft = "15%";
-  const marginRight = "15%";
+  
+  // Convert all percentage values to pixels based on reference dimensions
+  const boxWidthPx = (referenceWidth * 70) / 100; // 70% of reference width
+  const marginLeftPx = (referenceWidth * 15) / 100; // 15% of reference width
+  const marginRightPx = (referenceWidth * 15) / 100; // 15% of reference width
+  const marginBottomPx = (referenceHeight * 7.5) / 100; // 7.5% of reference height
+  const boxTopPx = (referenceHeight * 92.5) / 100; // 92.5% of reference height
+  
+  const boxWidth = `${boxWidthPx}px`;
+  const boxHeight = "fit-content";
+  const marginLeft = `${marginLeftPx}px`;
+  const marginRight = `${marginRightPx}px`;
   const marginTop = "auto";
-  const marginBottom = "7.5%";
-  const boxTop = "92.5%";
+  const marginBottom = `${marginBottomPx}px`;
+  const boxTop = `${boxTopPx}px`;
   const boxLeft = "unset";
   const textStyles = {
-    textShadow: `${tSS}vw ${tSS}vw ${tSS}vw #000, ${tSS}vw ${tSS}vw ${tSS}vw #000`,
-    WebkitTextStroke: `${fOS}vw #000`,
+    textShadow: `${tSS}px ${tSS}px ${tSS}px #000, ${tSS}px ${tSS}px ${tSS}px #000`,
+    WebkitTextStroke: `${fOS}px #000`,
     textAlign: box.align || "center",
     lineHeight: 1.25,
   };
@@ -105,7 +121,7 @@ const DisplayStreamText = ({
         width: boxWidth,
         height: boxHeight,
         pointerEvents: "none",
-        fontSize: `${fontSizeValue}vw`,
+        fontSize: `${fontSizeInPx}px`,
         marginTop,
         marginBottom,
         marginLeft,

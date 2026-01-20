@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import generateRandomId from "../../utils/generateRandomId";
 import Select from "../../components/Select/Select";
 import Button from "../../components/Button/Button";
-import { useMemo, useContext, useEffect } from "react";
+import { useMemo, useContext } from "react";
 import {
   setQuickLinks,
   setSelectedQuickLink,
@@ -14,7 +14,7 @@ import QuickLink from "./QuickLink";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
-const maxQuickLinks = 5;
+const maxQuickLinks = 4;
 
 const QuickLinks = () => {
   const dispatch = useDispatch();
@@ -104,8 +104,6 @@ const QuickLinks = () => {
 
     setNewQuickLinkDisplayType(newDisplayType);
   };
-
-  useEffect(() => {}, []);
 
   return (
     <ErrorBoundary>

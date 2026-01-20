@@ -33,9 +33,14 @@ const DisplayQRCodeOverlay = forwardRef<
 
     useGSAP(
       () => {
+        // Handle both callback refs and object refs
+        const containerElement = typeof containerRef === 'function' 
+          ? null
+          : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
+        
         if (
           !qrCodeOverlayRef.current ||
-          !(containerRef as React.MutableRefObject<HTMLDivElement>)?.current ||
+          (typeof containerRef !== 'function' && !containerElement) ||
           !shouldAnimate
         )
           return;
@@ -99,10 +104,15 @@ const DisplayQRCodeOverlay = forwardRef<
 
     useGSAP(
       () => {
+        // Handle both callback refs and object refs
+        const containerElement = typeof containerRef === 'function' 
+          ? null
+          : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
+        
         if (
           !prevQrCodeOverlayRef.current ||
           !shouldAnimate ||
-          !(containerRef as React.MutableRefObject<HTMLDivElement>)?.current
+          (typeof containerRef !== 'function' && !containerElement)
         )
           return;
 

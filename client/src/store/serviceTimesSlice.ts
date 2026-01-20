@@ -31,7 +31,14 @@ export const serviceTimesSlice = createSlice({
       state.list = action.payload;
     },
     updateServicesFromRemote: (state, action: PayloadAction<DBServices>) => {
-      state.list = action.payload.list;
+      // Prevent overwriting with empty array if we already have services
+      // Only update if the incoming list has services, or if our current list is empty
+      if (
+        action.payload.list &&
+        (action.payload.list.length > 0 || state.list.length === 0)
+      ) {
+        state.list = action.payload.list;
+      }
     },
   },
 });
