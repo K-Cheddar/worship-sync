@@ -207,8 +207,8 @@ const OverlayEditor = ({
         {showPreview ? "Hide" : "Show"} Preview
       </Button>
       <div className={cn("lg:block", !showPreview && "max-lg:hidden")}>
-        <div className="bg-gray-900 relative">
-          <h2 className="font-semibold text-base text-white text-center">
+        <div className="bg-gray-900 relative flex">
+          <h2 className="font-semibold text-base text-white text-center flex-1">
             Preview
           </h2>
           <Button
@@ -217,8 +217,6 @@ const OverlayEditor = ({
             onClick={() => setIsExpandedDrawerOpen(true)}
             iconSize="sm"
             title="Expand to full screen"
-            position="absolute"
-            className="top-0 right-1"
             color="#22d3ee"
           />
         </div>

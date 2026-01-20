@@ -179,16 +179,22 @@ const ServiceTimes = () => {
         const updates = event.detail;
         for (const _update of updates) {
           if (_update._id === "services") {
-            console.log("updating services from remote");
             const update = _update as DBServices;
-            dispatch(updateServicesFromRemote(update));
+            // Only process if we have services in the update, or if we currently have no services
+            // This prevents empty broadcasts from clearing our existing services
+            if (
+              (update.list && update.list.length > 0) ||
+              services.length === 0
+            ) {
+              dispatch(updateServicesFromRemote(update));
+            }
           }
         }
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch]
+    [dispatch, services]
   );
 
   useEffect(() => {
