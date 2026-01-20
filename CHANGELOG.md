@@ -1,3 +1,10 @@
+## [1.25.5](https://github.com/K-Cheddar/worship-sync/compare/v1.25.4...v1.25.5) (2026-01-20)
+
+
+### Bug Fixes
+
+* Fixing icon on electron ([bfdcf49](https://github.com/K-Cheddar/worship-sync/commit/bfdcf49abf2ab47b10c01abcf3787b9ebbfa252e))
+
 ## [1.25.4](https://github.com/K-Cheddar/worship-sync/compare/v1.25.3...v1.25.4) (2026-01-20)
 
 
