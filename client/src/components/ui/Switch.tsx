@@ -5,9 +5,10 @@ import { cn } from "../../utils/cnHelper";
 
 type SwitchProps = React.ComponentProps<typeof SwitchPrimitive.Root> & {
   color?: string;
+  icon?: React.ReactNode;
 };
 
-const Switch = ({ className, color = "#06b6d4", ...props }: SwitchProps) => {
+const Switch = ({ className, color = "#06b6d4", icon, ...props }: SwitchProps) => {
   return (
     <SwitchPrimitive.Root
       data-slot="switch"
@@ -22,9 +23,11 @@ const Switch = ({ className, color = "#06b6d4", ...props }: SwitchProps) => {
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
         className={cn(
-          "bg-background dark:data-[state=unchecked]:bg-foreground dark:data-[state=checked]:bg-primary-foreground pointer-events-none block size-4 max-md:size-6 rounded-full ring-0 transition-transform data-[state=checked]:translate-x-[calc(100%-2px)] data-[state=unchecked]:translate-x-0"
+          "bg-background dark:data-[state=unchecked]:bg-foreground dark:data-[state=checked]:bg-primary-foreground pointer-events-none block size-4 max-md:size-6 rounded-full ring-0 transition-transform data-[state=checked]:translate-x-[calc(100%-2px)] data-[state=unchecked]:translate-x-0 flex items-center justify-center"
         )}
-      />
+      >
+        {icon}
+      </SwitchPrimitive.Thumb>
     </SwitchPrimitive.Root>
   );
 };

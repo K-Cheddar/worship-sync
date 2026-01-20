@@ -81,20 +81,12 @@ const QuickLink = ({
   if (!presentationInfo && !action) return null;
 
   return (
-    <li className="flex flex-col hover:bg-gray-500 cursor-pointer rounded items-center p-0">
-      <Button
-        onClick={handleClick}
-        variant="none"
-        padding="p-0"
-        className="w-full h-full flex-col"
-      >
-        {!presentationInfo && (
-          <div className="w-[3vw] max-lg:w-[8vw] aspect-video bg-black" />
-        )}
+    <li className="flex flex-col hover:bg-gray-500 cursor-pointer rounded items-center p-0 border-2 border-gray-500 h-fit">
+      <Button onClick={handleClick} variant="none" padding="p-0" className="w-full h-fit flex-col">
         {presentationInfo && (
           <DisplayWindow
             boxes={presentationInfo.slide?.boxes || []}
-            width={isMobile ? 9 : 3}
+            className="w-full"
             displayType={displayType}
             participantOverlayInfo={presentationInfo.participantOverlayInfo}
             stbOverlayInfo={presentationInfo.stbOverlayInfo}
@@ -106,7 +98,7 @@ const QuickLink = ({
             timerInfo={timerInfo}
           />
         )}
-        <p className="text-center text-xs font-semibold whitespace-break-spaces w-full overflow-hidden text-ellipsis">
+        <p className="text-center text-[0.5rem] font-semibold whitespace-break-spaces w-full overflow-hidden text-ellipsis">
           {label}
         </p>
       </Button>

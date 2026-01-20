@@ -45,6 +45,7 @@ type PreferencesState = {
   mediaItemsPerRow: number;
   shouldShowItemEditor: boolean;
   shouldShowStreamFormat: boolean;
+  toolbarSection: string;
   isMediaExpanded: boolean;
   quickLinks: QuickLinkType[];
   defaultQuickLinks: QuickLinkType[];
@@ -105,30 +106,11 @@ const initialState: PreferencesState = {
   shouldShowItemEditor: true,
   isMediaExpanded: false,
   shouldShowStreamFormat: false,
+  toolbarSection: "settings",
   isLoading: true,
   selectedPreference: "",
   defaultQuickLinks: [
-    {
-      id: generateRandomId(),
-      label: "Clear",
-      canDelete: false,
-      displayType: "projector",
-      action: "clear",
-    },
-    {
-      id: generateRandomId(),
-      label: "Clear",
-      canDelete: false,
-      displayType: "monitor",
-      action: "clear",
-    },
-    {
-      id: generateRandomId(),
-      label: "Clear",
-      canDelete: false,
-      displayType: "stream",
-      action: "clear",
-    },
+
   ],
   quickLinks: [],
   selectedQuickLink: null,
@@ -390,7 +372,10 @@ export const preferencesSlice = createSlice({
         ...state.preferences,
         ...action.payload.preferences,
       };
-      state.quickLinks = action.payload.quickLinks;
+      // Only update quickLinks if it exists in the payload to prevent overwriting with empty array
+      if (action.payload.quickLinks !== undefined) {
+        state.quickLinks = action.payload.quickLinks;
+      }
     },
 
     // Temporary Preferences Below
@@ -448,6 +433,9 @@ export const preferencesSlice = createSlice({
     },
     setShouldShowStreamFormat: (state, action: PayloadAction<boolean>) => {
       state.shouldShowStreamFormat = action.payload;
+    },
+    setToolbarSection: (state, action: PayloadAction<string>) => {
+      state.toolbarSection = action.payload;
     },
     setIsMediaExpanded: (state, action: PayloadAction<boolean>) => {
       state.isMediaExpanded = action.payload;
@@ -544,6 +532,7 @@ export const {
   setFormattedLyrics,
   setShouldShowItemEditor,
   setShouldShowStreamFormat,
+  setToolbarSection,
   setIsMediaExpanded,
   increaseMediaItems,
   decreaseMediaItems,

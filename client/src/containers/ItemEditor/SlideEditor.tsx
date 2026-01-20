@@ -1,16 +1,11 @@
 import Button from "../../components/Button/Button";
 import cn from "classnames";
-import { Lock } from "lucide-react";
-import { Unlock } from "lucide-react";
 import { ChevronsUpDown } from "lucide-react";
 import { ChevronsDownUp } from "lucide-react";
 import { Pencil } from "lucide-react";
 import { PencilLine } from "lucide-react";
 import { Check } from "lucide-react";
 import { X } from "lucide-react";
-import { BoxIcon } from "lucide-react";
-import { Trash2 } from "lucide-react";
-import { Plus } from "lucide-react";
 
 import Input from "../../components/Input/Input";
 import {
@@ -23,6 +18,7 @@ import {
   useState,
 } from "react";
 import { borderColorMap } from "../../utils/itemTypeMaps";
+import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -34,14 +30,14 @@ import {
 } from "../../store/itemSlice";
 import { setName, updateBoxes } from "../../store/itemSlice";
 import { formatBible, formatFree, formatSong } from "../../utils/overflow";
-import { Box } from "../../types";
+import { Box, ItemSlideType } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
-import Icon from "../../components/Icon/Icon";
-import { createBox } from "../../utils/slideCreation";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { AccessType } from "../../context/globalInfo";
+import SectionTextEditor from "../../components/SectionTextEditor/SectionTextEditor";
+import SlideBoxes from "../../components/SlideBoxes/SlideBoxes";
 
 const SlideEditor = ({ access }: { access?: AccessType }) => {
   const dispatch = useDispatch();
@@ -54,13 +50,20 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     selectedArrangement,
     selectedSlide,
     selectedBox,
-    slides,
+    slides: __slides,
     isLoading,
   } = item;
 
+  const arrangement = arrangements[selectedArrangement];
+  
+  const slides = useMemo(() => {
+    const _slides = arrangement?.slides || __slides || [];
+    return isLoading ? [] : _slides;
+  }, [isLoading, __slides, arrangement?.slides]);
+
   const canEdit = access === "full" || (access === "music" && type === "song");
 
-  const { shouldShowItemEditor } = useSelector(
+  const { shouldShowItemEditor, toolbarSection = "settings" } = useSelector(
     (state: RootState) => state.undoable.present.preferences
   );
 
@@ -77,9 +80,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   }, [numBoxes]);
 
   const [localName, setLocalName] = useState(name);
-  const arrangement = arrangements[selectedArrangement];
-
-  const slideInfoRef = useRef(null);
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
 
@@ -95,8 +95,12 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     Record<number, number>
   >({});
 
+  const reformatTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [isReformatting, setIsReformatting] = useState(false);
+
   useEffect(() => {
     if (!slides?.[selectedSlide] && selectedSlide !== 0) {
+      console.log({selectedSlide, slides,  slide: slides?.[selectedSlide], length: slides.length})
       dispatch(setSelectedSlide(Math.max(slides.length - 2, 0)));
     }
   }, [selectedSlide, slides, dispatch]);
@@ -235,94 +239,103 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     }
 
     if (type === "song") {
+      const currentArrangement = arrangements[selectedArrangement];
+      if (!currentArrangement?.slides) return;
+
       // Last slide should not be editable
-      if (
-        selectedSlide ===
-        arrangements[selectedArrangement]?.slides?.length - 1
-      ) {
+      if (selectedSlide === currentArrangement.slides.length - 1) {
         return;
       }
+
+      // For title slide or boxes excluded from overflow, update directly
       if (box.excludeFromOverflow || selectedSlide === 0) {
         dispatch(updateBoxes({ boxes: newBoxes }));
-      } else {
-        const formattedLyrics =
-          item.arrangements[item.selectedArrangement].formattedLyrics;
-        const slides = item.arrangements[item.selectedArrangement].slides;
-        const _index = formattedLyrics.findIndex((e) =>
-          slides[selectedSlide].name.startsWith(e.name)
-        );
+        return;
+      }
 
-        const start =
-          selectedSlide -
-          (slides[selectedSlide]?.boxes[index]?.slideIndex || 0);
-        const end = start + formattedLyrics[_index].slideSpan - 1;
-        let newWords = "";
+      // For overflow slides, update the formatted lyrics
+      const formattedLyrics = currentArrangement.formattedLyrics || [];
+      const arrangementSlides = currentArrangement.slides;
+      const currentSlide = arrangementSlides[selectedSlide];
+      
+      if (!currentSlide) return;
 
-        for (let i = start; i <= end; ++i) {
-          if (i === selectedSlide) {
-            // Check if the current slide already ends with a newline
-            const alreadyHasNewline = value.endsWith("\n");
+      // Find the formatted lyric that matches this slide
+      const lyricIndex = formattedLyrics.findIndex((lyric) =>
+        currentSlide.name.startsWith(lyric.name)
+      );
 
-            // Only add newline if:
-            // 1. It's not the last slide in the range
-            // 2. The slide doesn't already end with a newline
-            // 3. The slide has some content (not empty)
-            const shouldAddNewline =
-              i < end && !alreadyHasNewline && value.trim().length > 0;
+      if (lyricIndex === -1) {
+        // If no matching lyric found, just update boxes directly
+        dispatch(updateBoxes({ boxes: newBoxes }));
+        return;
+      }
 
-            newWords += shouldAddNewline ? value + "\n" : value;
-            // newWords += value;
-          } else {
-            newWords += slides[i].boxes[index].words;
+      const formattedLyric = formattedLyrics[lyricIndex];
+      
+      // Calculate the range of slides for this section
+      const slideIndex = currentSlide.boxes[index]?.slideIndex || 0;
+      const start = selectedSlide - slideIndex;
+      const end = start + formattedLyric.slideSpan - 1;
+
+      // Build the combined text from all slides in the section
+      let newWords = "";
+      for (let i = start; i <= end && i < arrangementSlides.length; ++i) {
+        if (i === selectedSlide) {
+          // Use the new value for the current slide
+          const alreadyHasNewline = value.endsWith("\n");
+          const shouldAddNewline =
+            i < end && !alreadyHasNewline && value.trim().length > 0;
+          newWords += shouldAddNewline ? value + "\n" : value;
+        } else {
+          // Preserve text from other slides in the section
+          const slideBox = arrangementSlides[i]?.boxes[index];
+          if (slideBox?.words) {
+            newWords += slideBox.words;
           }
         }
-        if (shouldDeleteCurrentSlide) {
-          newWords = newWords.trim();
-        }
-
-        if (newWords !== "") {
-          const updatedArrangements = item.arrangements.map(
-            (arrangement, index) => {
-              if (index === item.selectedArrangement) {
-                return {
-                  ...arrangement,
-                  formattedLyrics: formattedLyrics.map((lyric, i) => {
-                    if (i === _index) {
-                      return {
-                        ...lyric,
-                        words: newWords,
-                      };
-                    } else {
-                      return lyric;
-                    }
-                  }),
-                  slides: updatedSlides,
-                };
-              } else {
-                return arrangement;
-              }
-            }
-          );
-
-          const _item = formatSong(
-            {
-              ...item,
-              arrangements: updatedArrangements,
-              selectedArrangement,
-            },
-            isMobile
-          );
-
-          dispatch(updateArrangements({ arrangements: _item.arrangements }));
-        }
       }
+
+      if (shouldDeleteCurrentSlide) {
+        newWords = newWords.trim();
+      }
+
+      if (newWords === "") return;
+
+      // Update the formatted lyrics and reformat
+      const updatedArrangements = item.arrangements.map((arr, idx) => {
+        if (idx === selectedArrangement) {
+          return {
+            ...arr,
+            formattedLyrics: formattedLyrics.map((lyric, i) =>
+              i === lyricIndex ? { ...lyric, words: newWords } : lyric
+            ),
+          };
+        }
+        return arr;
+      });
+
+      const formattedItem = formatSong(
+        {
+          ...item,
+          arrangements: updatedArrangements,
+          selectedArrangement,
+        },
+        isMobile
+      );
+
+      dispatch(updateArrangements({ arrangements: formattedItem.arrangements }));
     }
   };
 
-  const _boxes =
-    slides?.[selectedSlide]?.boxes ||
-    arrangement?.slides[selectedSlide]?.boxes ||
-    [];
+  const _boxes = useMemo(() => {
+    // For songs, always use arrangement slides
+    if (type === "song" && arrangement?.slides) {
+      return arrangement.slides[selectedSlide]?.boxes || [];
+    }
+    // For other types, use item slides
+    return slides?.[selectedSlide]?.boxes || [];
+  }, [type, slides, selectedSlide, arrangement]);
 
   const boxes = isLoading ? [] : _boxes;
 
@@ -346,6 +359,278 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   );
 
   const isEmpty = _boxes.length === 0;
+
+  // Helper function to get all section text
+  const getSectionText = useCallback(
+    (slide: ItemSlideType, allSlides: ItemSlideType[], boxIndex: number): string => {
+      if (type === "song") {
+        const formattedLyrics =
+          item.arrangements[item.selectedArrangement]?.formattedLyrics || [];
+        const _index = formattedLyrics.findIndex((e) =>
+          slide.name.startsWith(e.name)
+        );
+
+        if (_index === -1) return slide.boxes[boxIndex]?.words || "";
+
+        // Use the stored words from formattedLyrics
+        return formattedLyrics[_index].words || "";
+      }
+
+      if (type === "free") {
+        const currentSectionMatch = slide.name.match(/Section (\d+)/);
+        const currentSectionNum = currentSectionMatch
+          ? parseInt(currentSectionMatch[1])
+          : 1;
+
+        const formattedSections = item.formattedSections || [];
+        const section = formattedSections.find((s) => s.sectionNum === currentSectionNum);
+        
+        return section?.words || "";
+      }
+
+      // For other types, just return current slide text
+      return slide.boxes[boxIndex]?.words || "";
+    },
+    [type, item]
+  );
+
+  // Get current section text for unified editor
+  const sectionText = useMemo(() => {
+    // For songs, use arrangement slides; for others, use item slides
+    const currentSlides = type === "song" && arrangement?.slides ? arrangement.slides : slides;
+    const currentSlide = currentSlides?.[selectedSlide];
+    if (!currentSlide) return "";
+    return getSectionText(currentSlide, currentSlides, selectedBox);
+  }, [type, slides, selectedSlide, selectedBox, getSectionText, arrangement]);
+
+  // Get current section name and color for display
+  const { sectionName, sectionColor } = useMemo(() => {
+    // For songs, use arrangement slides; for others, use item slides
+    const currentSlides = type === "song" && arrangement?.slides ? arrangement.slides : slides;
+    const currentSlide = currentSlides?.[selectedSlide];
+    if (!currentSlide) {
+      return { sectionName: "Editing section text", sectionColor: "bg-gray-500" };
+    }
+
+    if (type === "song") {
+      // For songs, get the base section name (remove letter suffix like "A", "B", etc.)
+      const formattedLyrics =
+        item.arrangements[item.selectedArrangement]?.formattedLyrics || [];
+      const lyricIndex = formattedLyrics.findIndex((lyric) =>
+        currentSlide.name.startsWith(lyric.name)
+      );
+      let name = "Editing section text";
+      if (lyricIndex !== -1) {
+        name = formattedLyrics[lyricIndex].name;
+      } else {
+        // Fallback to slide name without letter suffix
+        name = currentSlide.name.replace(/[A-Z]$/, "") || currentSlide.name;
+      }
+      
+      // Extract section type (e.g., "Verse", "Chorus") from name like "Verse 1"
+      const sectionType = name.split(" ")[0];
+      const bgColor = itemSectionBgColorMap.get(sectionType) || "bg-stone-500";
+      
+      return { sectionName: name, sectionColor: bgColor };
+    }
+
+    if (type === "free") {
+      // For free types, show "Section X"
+      const sectionMatch = currentSlide.name.match(/Section (\d+)/);
+      const name = sectionMatch ? `Section ${sectionMatch[1]}` : currentSlide.name;
+      const bgColor = itemSectionBgColorMap.get("Section") || "bg-stone-500";
+      return { sectionName: name, sectionColor: bgColor };
+    }
+
+    // For other types, show the slide name with item type color
+    const name = currentSlide.name || "Editing section text";
+    const itemColor = borderColorMap.get(type) || "border-gray-500";
+    // Convert border color to background color (e.g., "border-orange-500" -> "bg-orange-500")
+    const bgColor = itemColor.replace("border-", "bg-");
+    return { sectionName: name, sectionColor: bgColor };
+  }, [type, slides, selectedSlide, arrangement, item]);
+
+  // Handle unified section text changes
+  const handleSectionTextChange = useCallback(
+    (newText: string, cursorPosition?: number) => {
+      if (!canEdit) return;
+
+      // Cursor position is tracked in SectionTextEditor component
+
+      // Optimistic update: Update formattedSections immediately for instant feedback
+      // For songs, use arrangement slides; for others, use item slides
+      const currentSlides = type === "song" && arrangement?.slides ? arrangement.slides : slides;
+      const currentSlide = currentSlides?.[selectedSlide];
+      if (!currentSlide) return;
+
+      if (type === "free") {
+        const currentSectionMatch = currentSlide.name.match(/Section (\d+)/);
+        const currentSectionNum = currentSectionMatch
+          ? parseInt(currentSectionMatch[1])
+          : 1;
+
+        const formattedSections = item.formattedSections || [];
+        const updatedFormattedSections = formattedSections.map((section) => {
+          if (section.sectionNum === currentSectionNum) {
+            return {
+              ...section,
+              words: newText,
+            };
+          }
+          return section;
+        });
+
+        if (!updatedFormattedSections.find((s) => s.sectionNum === currentSectionNum)) {
+          updatedFormattedSections.push({
+            sectionNum: currentSectionNum,
+            words: newText,
+            slideSpan: 1,
+          });
+        }
+
+        // Optimistic update - update state immediately
+        dispatch(
+          updateSlides({
+            slides: item.slides, // Keep current slides for now
+            formattedSections: updatedFormattedSections,
+          })
+        );
+      }
+
+      // Clear any pending reformatting
+      if (reformatTimeoutRef.current) {
+        clearTimeout(reformatTimeoutRef.current);
+      }
+
+      // Debounce the actual reformatting
+      setIsReformatting(true);
+      reformatTimeoutRef.current = setTimeout(() => {
+        try {
+          if (type === "song") {
+            const formattedLyrics =
+              item.arrangements[item.selectedArrangement]?.formattedLyrics || [];
+            const _index = formattedLyrics.findIndex((e) =>
+              currentSlide.name.startsWith(e.name)
+            );
+
+            if (_index === -1) {
+              setIsReformatting(false);
+              return;
+            }
+
+            const updatedArrangements = item.arrangements.map((arr, idx) => {
+              if (idx === item.selectedArrangement) {
+                return {
+                  ...arr,
+                  formattedLyrics: formattedLyrics.map((lyric, i) => {
+                    if (i === _index) {
+                      return {
+                        ...lyric,
+                        words: newText,
+                      };
+                    }
+                    return lyric;
+                  }),
+                };
+              }
+              return arr;
+            });
+
+            const _item = formatSong(
+              {
+                ...item,
+                arrangements: updatedArrangements,
+                selectedArrangement,
+              },
+              isMobile
+            );
+
+            dispatch(updateArrangements({ arrangements: _item.arrangements }));
+          }
+
+          if (type === "free") {
+            const currentSectionMatch = currentSlide.name.match(/Section (\d+)/);
+            const currentSectionNum = currentSectionMatch
+              ? parseInt(currentSectionMatch[1])
+              : 1;
+
+            const formattedSections = item.formattedSections || [];
+            const updatedFormattedSections = formattedSections.map((section) => {
+              if (section.sectionNum === currentSectionNum) {
+                return {
+                  ...section,
+                  words: newText,
+                };
+              }
+              return section;
+            });
+
+            if (!updatedFormattedSections.find((s) => s.sectionNum === currentSectionNum)) {
+              updatedFormattedSections.push({
+                sectionNum: currentSectionNum,
+                words: newText,
+                slideSpan: 1,
+              });
+            }
+
+            const updatedItem = {
+              ...item,
+              formattedSections: updatedFormattedSections,
+            };
+
+            const _item = formatFree(updatedItem, isMobile);
+            dispatch(
+              updateSlides({
+                slides: _item.slides,
+                formattedSections: _item.formattedSections,
+              })
+            );
+          } else {
+            // For other types (bible, timer, etc.), update the box words directly
+            const updatedSlides = item.slides.map((slide, index) => {
+              if (index === selectedSlide) {
+                const updatedBoxes = slide.boxes.map((box, boxIndex) => {
+                  if (boxIndex === selectedBox) {
+                    return {
+                      ...box,
+                      words: newText,
+                    };
+                  }
+                  return box;
+                });
+                return {
+                  ...slide,
+                  boxes: updatedBoxes,
+                };
+              }
+              return slide;
+            });
+            dispatch(updateSlides({ slides: updatedSlides }));
+          }
+        } catch (error) {
+          console.error("Error reformatting section:", error);
+          // Show error toast if available
+          // Could use toast context here if needed
+        } finally {
+          setIsReformatting(false);
+        }
+      }, 300); // 300ms debounce
+    },
+    [
+      canEdit,
+      slides,
+      selectedSlide,
+      selectedBox,
+      type,
+      item,
+      selectedArrangement,
+      arrangement,
+      isMobile,
+      dispatch,
+    ]
+  );
+
+  console.log({item})
 
   return (
     <ErrorBoundary>
@@ -427,115 +712,50 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             } as CSSProperties
           }
         >
-          <section
-            className={cn(
-              "ml-1 lg:w-[12vw] max-lg:w-full",
-              isEmpty && "hidden"
-            )}
-            ref={slideInfoRef}
-          >
-            <p className="text-center font-semibold border-b-2 border-black text-sm flex items-center gap-1 justify-center pb-1">
-              <Icon svg={BoxIcon} color="#93c5fd" />
-              Slide Boxes
-            </p>
-            {boxes.map((box, index) => {
-              return (
-                <span
-                  key={box.id}
-                  className={`flex gap-1 bg-gray-600 border-gray-300 ${
-                    index !== boxes.length - 1 && "border-b"
-                  } ${selectedBox === index && "bg-gray-800"}`}
-                >
-                  <Button
-                    truncate
-                    className="flex-1 text-xs hover:bg-gray-500"
-                    variant="none"
-                    onClick={() => dispatch(setSelectedBox(index))}
-                  >
-                    <p>
-                      {box.label ||
-                        box.words?.trim() ||
-                        box.background?.replace(
-                          /https:\/\/res\.cloudinary\.com\/.+\/.+\/upload\/v.+\/.+\//g,
-                          ""
-                        )}
-                    </p>
-                  </Button>
-                  <Button
-                    svg={isBoxLocked[index] ? Lock : Unlock}
-                    color={isBoxLocked[index] ? "gray" : "green"}
-                    variant="tertiary"
-                    disabled={!canEdit}
-                    onClick={() => {
-                      setIsBoxLocked((prev) => {
-                        const newLocked = [...prev];
-                        newLocked[index] = !newLocked[index];
-                        return newLocked;
-                      });
-                    }}
-                  />
-                  {canDeleteBox(index) && canEdit && (
-                    <Button
-                      svg={Trash2}
-                      variant="tertiary"
-                      color="red"
-                      onClick={() => {
-                        dispatch(
-                          updateBoxes({
-                            boxes: boxes.filter((b, i) => i !== index),
-                          })
-                        );
-                        if (boxes[index - 1]) {
-                          dispatch(setSelectedBox(index - 1));
-                        } else {
-                          dispatch(setSelectedBox(boxes.length - 1));
-                        }
-                      }}
-                    />
-                  )}
-                </span>
-              );
-            })}
-            {canEdit && (
-              <Button
-                className="text-xs w-full justify-center"
-                svg={Plus}
-                onClick={() => {
-                  dispatch(
-                    updateBoxes({
-                      boxes: [
-                        ...boxes,
-                        createBox({
-                          width: 75,
-                          height: 75,
-                          x: 12.5,
-                          y: 12.5,
-                        }),
-                      ],
-                    })
-                  );
-                  dispatch(setSelectedBox(boxes.length));
-                }}
-              >
-                Add Box
-              </Button>
-            )}
-          </section>
           {!isEmpty ? (
-            <DisplayWindow
-              showBorder
-              boxes={boxes}
-              selectBox={(val) => dispatch(setSelectedBox(val))}
-              ref={editorRef}
-              onChange={(onChangeInfo) => {
-                onChange(onChangeInfo);
-              }}
-              width={isMobile ? 80 : 42}
-              displayType="editor"
-              selectedBox={selectedBox}
-              isBoxLocked={isBoxLocked}
-              disabled={!canEdit}
-            />
+            <div className="flex flex-col lg:flex-row gap-2 w-full px-2">
+              {/* Section Text Editor or Slide Boxes */}
+              {toolbarSection === "box-tools" ? (
+                <SlideBoxes
+                  className="lg:flex-[0_0_30%] w-full max-lg:max-h-[25vh] overflow-y-auto"
+                  canEdit={canEdit}
+                  canDeleteBox={canDeleteBox}
+                  isBoxLocked={isBoxLocked}
+                  setIsBoxLocked={setIsBoxLocked}
+                />
+              ) : (
+                <SectionTextEditor
+                  value={sectionText}
+                  onChange={handleSectionTextChange}
+                  disabled={
+                    !canEdit ||
+                    (type !== "song" && type !== "free") ||
+                    ((type === "song" && arrangement?.slides ? arrangement.slides : slides)?.[selectedSlide]?.type === "Blank")
+                  }
+                  className="lg:flex-[0_0_30%] w-full h-full max-lg:min-h-0 max-lg:overflow-y-auto"
+                  sectionName={sectionName}
+                  sectionColor={sectionColor}
+                  isReformatting={isReformatting}
+                />
+              )}
+              
+              {/* Preview */}
+              <div className="flex flex-col gap-2 flex-1 min-w-0">
+                <DisplayWindow
+                  showBorder
+                  boxes={boxes}
+                  selectBox={(val) => dispatch(setSelectedBox(val))}
+                  ref={editorRef}
+                  onChange={(onChangeInfo) => {
+                    onChange(onChangeInfo);
+                  }}
+                  displayType="editor"
+                  selectedBox={selectedBox}
+                  isBoxLocked={isBoxLocked}
+                  disabled={!canEdit}
+                />
+              </div>
+            </div>
           ) : (
             <p
               id="slide-editor-empty"

@@ -54,16 +54,11 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { cn } from "../../utils/cnHelper";
 import { updateTimer } from "../../store/timersSlice";
 
-export type SizeMap = Map<
-  number,
-  {
-    width: number;
-    mobileWidth: number;
-    borderWidth: string;
-    hSize: string;
-    cols: string;
-  }
->;
+type SizeConfig = {
+  borderWidth: string;
+  hSize: string;
+  cols: string;
+};
 
 const ItemSlides = () => {
   const {
@@ -112,82 +107,46 @@ const ItemSlides = () => {
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
   const size = type === "timer" ? Math.min(_size, 3) : _size;
 
-  const sizeMap: SizeMap = useMemo(
-    () =>
-      new Map([
-        [
-          7,
-          {
-            width: isMusic ? 11 : 7,
-            mobileWidth: isMusic ? 12 : 11,
-            cols: "grid-cols-7",
-            hSize: "text-xs",
-            borderWidth: "clamp(0.2rem, 0.2vw, 0.4rem)",
-          },
-        ],
-        [
-          6,
-          {
-            width: isMusic ? 13 : 8.25,
-            mobileWidth: isMusic ? 14 : 13,
-            cols: "grid-cols-6",
-            hSize: isMusic ? "text-sm" : "text-xs",
-            borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
-          },
-        ],
-        [
-          5,
-          {
-            width: isMusic ? 15.5 : 10,
-            mobileWidth: isMusic ? 17 : 15,
-            cols: "grid-cols-5",
-            hSize: isMusic ? "text-sm" : "text-xs",
-            borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
-          },
-        ],
-        [
-          4,
-          {
-            width: isMusic ? 20 : 12.75,
-            mobileWidth: isMusic ? 21 : 19,
-            cols: "grid-cols-4",
-            hSize: "text-sm",
-            borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
-          },
-        ],
-        [
-          3,
-          {
-            width: isMusic ? 26 : 17,
-            mobileWidth: isMusic ? 28 : 26,
-            cols: "grid-cols-3",
-            hSize: "text-base",
-            borderWidth: "clamp(0.3rem, 0.35vw, 0.7rem)",
-          },
-        ],
-        [
-          2,
-          {
-            width: isMusic ? 39 : 26,
-            mobileWidth: isMusic ? 42 : 40,
-            cols: "grid-cols-2",
-            hSize: "text-base",
-            borderWidth: "clamp(0.35rem, 0.45vw, 0.9rem)",
-          },
-        ],
-        [
-          1,
-          {
-            width: isMusic ? 78 : 52.25,
-            mobileWidth: isMusic ? 84 : 80,
-            cols: "grid-cols-1",
-            hSize: "text-base",
-            borderWidth: "clamp(0.4rem, 0.5vw, 1rem)",
-          },
-        ],
-      ]),
-    [isMusic]
-  );
+  const sizeConfig: SizeConfig = useMemo(() => {
+    const configs: Record<number, SizeConfig> = {
+      7: {
+        cols: "grid-cols-7",
+        hSize: "text-xs",
+        borderWidth: "clamp(0.2rem, 0.2vw, 0.4rem)",
+      },
+      6: {
+        cols: "grid-cols-6",
+        hSize: isMusic ? "text-sm" : "text-xs",
+        borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+      },
+      5: {
+        cols: "grid-cols-5",
+        hSize: isMusic ? "text-sm" : "text-xs",
+        borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+      },
+      4: {
+        cols: "grid-cols-4",
+        hSize: "text-sm",
+        borderWidth: "clamp(0.25rem, 0.25vw, 0.5rem)",
+      },
+      3: {
+        cols: "grid-cols-3",
+        hSize: "text-base",
+        borderWidth: "clamp(0.3rem, 0.35vw, 0.7rem)",
+      },
+      2: {
+        cols: "grid-cols-2",
+        hSize: "text-base",
+        borderWidth: "clamp(0.35rem, 0.45vw, 0.9rem)",
+      },
+      1: {
+        cols: "grid-cols-1",
+        hSize: "text-base",
+        borderWidth: "clamp(0.4rem, 0.5vw, 1rem)",
+      },
+    };
+    return configs[size] || configs[7];
+  }, [size, isMusic]);
 
   const debounceTime = useRef(0);
 
@@ -616,7 +575,7 @@ const ItemSlides = () => {
             id="item-slides-container"
             className={cn(
               "scrollbar-variable max-h-full px-2 overflow-y-auto grid pb-2 focus-visible:outline-none",
-              sizeMap.get(size)?.cols
+              sizeConfig.cols
             )}
           >
             <SortableContext
@@ -638,7 +597,8 @@ const ItemSlides = () => {
                   draggedSection={draggedSection}
                   isStreamFormat={shouldShowStreamFormat}
                   getBibleInfo={getBibleInfo}
-                  sizeMap={sizeMap}
+                  borderWidth={sizeConfig.borderWidth}
+                  hSize={sizeConfig.hSize}
                 />
               ))}
             </SortableContext>

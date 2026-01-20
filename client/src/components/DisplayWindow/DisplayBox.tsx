@@ -6,13 +6,13 @@ import cn from "classnames";
 import TimerDisplay from "./TimerDisplay";
 import VerseDisplay from "./VerseDisplay";
 import NowDisplay from "./NowDisplay";
+import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "./constants";
 
 type DisplayBoxProps = {
   prevBox?: Box;
   box: Box;
   width: number;
   showBackground: boolean;
-  fontAdjustment: number;
   index: number;
   shouldAnimate?: boolean;
   isPrev?: boolean;
@@ -20,6 +20,8 @@ type DisplayBoxProps = {
   timerInfo?: TimerInfo;
   activeVideoUrl?: string;
   isWindowVideoLoaded?: boolean;
+  referenceWidth?: number; // Reference width for pixel calculations (1920px)
+  referenceHeight?: number; // Reference height for pixel calculations (1080px)
 };
 
 const DisplayBox = ({
@@ -27,7 +29,6 @@ const DisplayBox = ({
   box,
   width,
   showBackground,
-  fontAdjustment,
   index,
   shouldAnimate,
   isPrev,
@@ -35,6 +36,8 @@ const DisplayBox = ({
   timerInfo,
   activeVideoUrl,
   isWindowVideoLoaded,
+  referenceWidth = REFERENCE_WIDTH,
+  referenceHeight = REFERENCE_HEIGHT,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline | null>(null);
@@ -137,25 +140,33 @@ const DisplayBox = ({
   const bWords = box.words || "";
   const words = bWords;
   const bFontSize = box.fontSize;
-  const fontSizeValue = bFontSize ? bFontSize / fontAdjustment : 1;
-  const tSS = fontSizeValue / (width > 20 ? 32 : 10); // text shadow size
-  const fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size
-  const boxWidth = `calc(${box.width}% - ${
-    box.sideMargin ? box.sideMargin * 2 : 0
-  }%)`;
-  // % margin is calculated based on the width so we get the percentage of top and bottom margin, then multiply by the width of the container
-  const boxHeight = `calc(${box.height}% - (${width}vw * (${
-    box.topMargin || 0
-  } + ${box.topMargin || 0}) / 100) )`;
-  const marginLeft = `${box.sideMargin}%`;
-  const marginRight = `${box.sideMargin}%`;
-  const marginTop = `${box.topMargin}%`;
-  const marginBottom = `${box.topMargin}%`;
-  const boxTop = `${box.y || 0}%`;
-  const boxLeft = `${box.x || 0}%`;
+  
+  // Convert fontSize to pixels using the font size multiplier
+  const fontSizeInPx = bFontSize ? bFontSize * FONT_SIZE_MULTIPLIER : FONT_SIZE_MULTIPLIER;
+  
+  // Text shadow and outline sizes in pixels (will scale with transform)
+  const REFERENCE_WIDTH_VW = (REFERENCE_WIDTH / window.innerWidth) * 100;
+  const useReferenceWidth = width >= REFERENCE_WIDTH_VW * 0.5;
+  const tSS = fontSizeInPx / (useReferenceWidth ? 32 : 10); // text shadow size in px
+  const fOS = fontSizeInPx / (useReferenceWidth ? 32 : 114); // font outline size in px
+  
+  // Convert all percentage values to pixels based on reference dimensions
+  const boxWidthPx = (referenceWidth * box.width) / 100;
+  const boxHeightPx = (referenceHeight * box.height) / 100;
+  const sideMarginPx = box.sideMargin ? (referenceWidth * box.sideMargin) / 100 : 0;
+  const topMarginPx = box.topMargin ? (referenceHeight * box.topMargin) / 100 : 0;
+  
+  const boxWidth = `${boxWidthPx - sideMarginPx * 2}px`;
+  const boxHeight = `${boxHeightPx - topMarginPx * 2}px`;
+  const marginLeft = `${sideMarginPx}px`;
+  const marginRight = `${sideMarginPx}px`;
+  const marginTop = `${topMarginPx}px`;
+  const marginBottom = `${topMarginPx}px`;
+  const boxTop = `${(referenceHeight * (box.y || 0)) / 100}px`;
+  const boxLeft = `${(referenceWidth * (box.x || 0)) / 100}px`;
   const textStyles = {
-    textShadow: `${tSS}vw ${tSS}vw ${tSS}vw #000, ${tSS}vw ${tSS}vw ${tSS}vw #000`,
-    WebkitTextStroke: `${fOS}vw #000`,
+    textShadow: `${tSS}px ${tSS}px ${tSS}px #000, ${tSS}px ${tSS}px ${tSS}px #000`,
+    WebkitTextStroke: `${fOS}px #000`,
     textAlign: box.align || "center",
     lineHeight: 1.25,
     fontWeight: box.isBold ? "bold" : "normal",
@@ -187,7 +198,7 @@ const DisplayBox = ({
         width: boxWidth,
         height: boxHeight,
         pointerEvents: "none",
-        fontSize: `${fontSizeValue}vw`,
+        fontSize: `${fontSizeInPx}px`,
         marginTop,
         marginBottom,
         marginLeft,

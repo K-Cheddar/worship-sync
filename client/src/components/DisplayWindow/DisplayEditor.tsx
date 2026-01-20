@@ -7,6 +7,7 @@ import cn from "classnames";
 import { ResizeDirection } from "re-resizable";
 import Button from "../Button/Button";
 import { useToast } from "../../context/toastContext";
+import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "./constants";
 
 type DraggableData = {
   node: HTMLElement;
@@ -21,25 +22,29 @@ type DraggableData = {
 type DisplayEditorProps = {
   box: Box;
   width: number;
-  fontAdjustment: number;
   onChange?: Function;
   index: number;
   selectBox?: Function;
   isSelected?: boolean;
   isBoxLocked?: boolean;
   disabled?: boolean;
+  referenceWidth?: number; // Reference width for coordinate calculations (1920px)
+  referenceHeight?: number; // Reference height for coordinate calculations (1080px)
+  scaleFactor?: number; // Scale factor applied to parent container (for react-rnd coordinate calculations)
 };
 
 const DisplayEditor = ({
   box,
   width,
-  fontAdjustment,
   onChange,
   selectBox,
   index,
   isSelected,
   isBoxLocked,
   disabled = false,
+  referenceWidth = REFERENCE_WIDTH,
+  referenceHeight = REFERENCE_HEIGHT,
+  scaleFactor = 1,
 }: DisplayEditorProps) => {
   const [boxWidth, setBoxWidth] = useState(`${box.width}%`);
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
@@ -52,6 +57,7 @@ const DisplayEditor = ({
     : box.background;
   let textAreaFocusTimeout: NodeJS.Timeout | null = null;
 
+
   const { showToast } = useToast();
 
   const [isOverflowing, setIsOverflowing] = useState(() => {
@@ -60,15 +66,13 @@ const DisplayEditor = ({
   });
 
   const [x, setX] = useState(() => {
-    const parent = document.getElementById("display-editor");
-    const width = parent?.offsetWidth || 0;
-    return Math.round((width * (box.x || 0)) / 100);
+    // Use reference width for coordinate calculations (matches transform scale)
+    return Math.round((referenceWidth * (box.x || 0)) / 100);
   });
 
   const [y, setY] = useState(() => {
-    const parent = document.getElementById("display-editor");
-    const height = parent?.offsetHeight || 0;
-    return Math.round((height * (box.y || 0)) / 100);
+    // Use reference height for coordinate calculations (matches transform scale)
+    return Math.round((referenceHeight * (box.y || 0)) / 100);
   });
 
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
@@ -133,33 +137,29 @@ const DisplayEditor = ({
   }, [box, textAreaRef]);
 
   const updateBoxSize = useCallback(() => {
-    const parent = document.getElementById("display-editor");
-    const width = parent?.offsetWidth || 0;
-    const height = parent?.offsetHeight || 0;
-    const adjustedWidth = (width * box.width) / 100;
-    const adjustedHeight = (height * box.height) / 100;
+    // Use reference dimensions for coordinate calculations (matches transform scale)
+    const adjustedWidth = (referenceWidth * box.width) / 100;
+    const adjustedHeight = (referenceHeight * box.height) / 100;
 
     setBoxWidth(`${adjustedWidth}px`);
     setBoxHeight(`${adjustedHeight}px`);
-  }, [box.width, box.height]);
+  }, [box.width, box.height, referenceWidth, referenceHeight]);
 
   useEffect(() => {
     updateBoxSize();
   }, [updateBoxSize]);
 
   const updateBoxXY = useCallback(() => {
-    const parent = document.getElementById("display-editor");
+    // Use reference dimensions for coordinate calculations (matches transform scale)
     const boxX = box.x || 0;
     const boxY = box.y || 0;
-    const width = parent?.offsetWidth || 0;
-    const height = parent?.offsetHeight || 0;
 
-    const adjustedX = Math.round(width * (boxX / 100));
-    const adjustedY = Math.round(height * (boxY / 100));
+    const adjustedX = Math.round(referenceWidth * (boxX / 100));
+    const adjustedY = Math.round(referenceHeight * (boxY / 100));
 
     setX(adjustedX);
     setY(adjustedY);
-  }, [box.x, box.y]);
+  }, [box.x, box.y, referenceWidth, referenceHeight]);
 
   useEffect(() => {
     updateBoxXY();
@@ -171,11 +171,9 @@ const DisplayEditor = ({
     setX(_x);
     setY(_y);
 
-    const parent = document.getElementById("display-editor");
-    const currentWidth = parent?.offsetWidth || 0;
-    const currentHeight = parent?.offsetHeight || 0;
-    const xPercent = Math.round((_x / currentWidth) * 100);
-    const yPercent = Math.round((_y / currentHeight) * 100);
+    // Use reference dimensions for coordinate calculations (matches transform scale)
+    const xPercent = Math.round((_x / referenceWidth) * 100);
+    const yPercent = Math.round((_y / referenceHeight) * 100);
 
     onChange?.({
       index,
@@ -196,13 +194,11 @@ const DisplayEditor = ({
     const _x = position.x;
     const _y = position.y;
 
-    const parent = document.getElementById("display-editor");
-    const currentWidth = parent?.offsetWidth || 0;
-    const currentHeight = parent?.offsetHeight || 0;
-    const widthPercent = Math.round((parseInt(_width) / currentWidth) * 100);
-    const heightPercent = Math.round((parseInt(_height) / currentHeight) * 100);
-    const xPercent = Math.round((_x / currentWidth) * 100);
-    const yPercent = Math.round((_y / currentHeight) * 100);
+    // Use reference dimensions for coordinate calculations (matches transform scale)
+    const widthPercent = Math.round((parseInt(_width) / referenceWidth) * 100);
+    const heightPercent = Math.round((parseInt(_height) / referenceHeight) * 100);
+    const xPercent = Math.round((_x / referenceWidth) * 100);
+    const yPercent = Math.round((_y / referenceHeight) * 100);
 
     setBoxWidth(_width);
     setBoxHeight(_height);
@@ -240,30 +236,41 @@ const DisplayEditor = ({
 
   const bFontSize = box.fontSize;
   const words = box.words || "";
-  const fontSizeValue = bFontSize ? bFontSize / fontAdjustment : 1;
-  const tSS = fontSizeValue / (width > 20 ? 32 : 10); // text shadow size
-  const fOS = fontSizeValue / (width > 20 ? 32 : 114); // font outline size
-  const marginLeft = `${box.sideMargin}%`;
-  const marginRight = `${box.sideMargin}%`;
-  const marginTop = `${box.topMargin}%`;
-  const marginBottom = `${box.topMargin}%`;
-  const textBoxWidth = `calc(100% - ${
-    box.sideMargin ? box.sideMargin * 2 : 0
-  }%)`;
-  // % margin is calculated based on the width so we get the percentage of top and bottom margin, then multiply by the width of the container
-  const textBoxHeight = `calc(100% - (${width}vw * (${box.topMargin || 0} + ${
-    box.topMargin || 0
-  }) / 100) )`;
+  
+  // Convert fontSize to pixels using the font size multiplier
+  const fontSizeInPx = bFontSize ? bFontSize * FONT_SIZE_MULTIPLIER : FONT_SIZE_MULTIPLIER;
+  
+  // Text shadow and outline sizes in pixels (will scale with transform)
+  const REFERENCE_WIDTH_VW = (REFERENCE_WIDTH / window.innerWidth) * 100;
+  const useReferenceWidth = width >= REFERENCE_WIDTH_VW * 0.5;
+  const tSS = fontSizeInPx / (useReferenceWidth ? 32 : 10); // text shadow size in px
+  const fOS = fontSizeInPx / (useReferenceWidth ? 32 : 114); // font outline size in px
+  
+  // Convert margins to pixels based on reference dimensions
+  const sideMarginPx = box.sideMargin ? (referenceWidth * box.sideMargin) / 100 : 0;
+  const topMarginPx = box.topMargin ? (referenceHeight * box.topMargin) / 100 : 0;
+  
+  const marginLeft = `${sideMarginPx}px`;
+  const marginRight = `${sideMarginPx}px`;
+  const marginTop = `${topMarginPx}px`;
+  const marginBottom = `${topMarginPx}px`;
+  
+  // Calculate text box dimensions in pixels
+  const boxWidthPx = (referenceWidth * box.width) / 100;
+  const boxHeightPx = (referenceHeight * box.height) / 100;
+  const textBoxWidth = `${boxWidthPx - sideMarginPx * 2}px`;
+  const textBoxHeight = `${boxHeightPx - topMarginPx * 2}px`;
   const textStyles = {
-    textShadow: `${tSS}vw ${tSS}vw ${tSS}vw #000, ${tSS}vw ${tSS}vw ${tSS}vw #000`,
-    WebkitTextStroke: `${fOS}vw #000`,
+    textShadow: `${tSS}px ${tSS}px ${tSS}px #000, ${tSS}px ${tSS}px ${tSS}px #000`,
+    WebkitTextStroke: `${fOS}px #000`,
     textAlign: box.align || "center",
     lineHeight: 1.25,
-    fontSize: `${fontSizeValue}vw`,
+    fontSize: `${fontSizeInPx}px`,
     color: box.fontColor,
     fontWeight: box.isBold ? "bold" : "normal",
     fontStyle: box.isItalic ? "italic" : "normal",
   };
+
   return (
     <Rnd
       size={{ width: boxWidth, height: boxHeight }}
@@ -273,13 +280,14 @@ const DisplayEditor = ({
         isSelected && !box.background && "z-10"
       )}
       position={{ x, y }}
+      scale={scaleFactor}
       disableDragging={isBoxLocked || disabled}
       onDragStop={handleDragStop}
       onResizeStop={handleResizeStop}
-      minWidth={"7.5%"}
-      minHeight={"7.5%"}
-      maxHeight={"100%"}
-      maxWidth={"100%"}
+      minWidth={`${(referenceWidth * 7.5) / 100}px`}
+      minHeight={`${(referenceHeight * 7.5) / 100}px`}
+      maxHeight={`${referenceHeight}px`}
+      maxWidth={`${referenceWidth}px`}
       resizeGrid={[5, 5]}
       dragGrid={[5, 5]}
       bounds={"parent"}
@@ -300,7 +308,7 @@ const DisplayEditor = ({
       {background && (
         <img
           className={cn(
-            "display-box-background",
+            "display-box-background h-full w-full absolute",
             box.shouldKeepAspectRatio && "object-contain"
           )}
           style={{

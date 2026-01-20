@@ -205,24 +205,37 @@ export const keepElementInView = ({
   try {
     const parentRect = parent.getBoundingClientRect();
     const childRect = child.getBoundingClientRect();
+    const childHeight = childRect.height;
+    const parentHeight = parentRect.height;
+    const currentScrollTop = parent.scrollTop;
+
+    // Calculate padding based on scroll mode
     const scrollPadding = shouldScrollToCenter
-      ? parentRect.height / 2
-      : Math.min(childRect.height / 2, parentRect.height - childRect.height);
+      ? parentHeight / 2 - childHeight / 2
+      : Math.max(0, Math.min(childHeight / 2, parentHeight - childHeight));
 
-    const leadingDistance = keepNextInView ? childRect.height : 0;
+    // Account for next element visibility if needed
+    const leadingDistance = keepNextInView ? childHeight : 0;
 
-    if (childRect.top - leadingDistance < parentRect.top) {
+    // Calculate if child is above or below viewport
+    const isAboveViewport = childRect.top - leadingDistance < parentRect.top;
+    const isBelowViewport = childRect.bottom + leadingDistance > parentRect.bottom;
+
+    if (isAboveViewport) {
+      // Child is above viewport - scroll up
+      const distanceAbove = parentRect.top - (childRect.top - leadingDistance);
+      const targetScrollTop = currentScrollTop - distanceAbove - scrollPadding;
       parent.scrollTo({
-        top:
-          parent.scrollTop - (parentRect.top - childRect.top) - scrollPadding,
+        top: Math.max(0, targetScrollTop),
         behavior: "smooth",
       });
-    } else if (childRect.bottom + leadingDistance > parentRect.bottom) {
+    } else if (isBelowViewport) {
+      // Child is below viewport - scroll down
+      const distanceBelow = (childRect.bottom + leadingDistance) - parentRect.bottom;
+      const targetScrollTop = currentScrollTop + distanceBelow + scrollPadding;
+      const maxScroll = parent.scrollHeight - parentHeight;
       parent.scrollTo({
-        top:
-          parent.scrollTop +
-          (childRect.bottom - parentRect.bottom) +
-          scrollPadding,
+        top: Math.min(maxScroll, targetScrollTop),
         behavior: "smooth",
       });
     }

@@ -5,7 +5,6 @@ import { ItemSlideType, TimerInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import cn from "classnames";
-import { SizeMap } from "./ItemSlides";
 
 type ItemSlideProps = {
   slide: ItemSlideType;
@@ -20,7 +19,8 @@ type ItemSlideProps = {
   isTransmitting: boolean;
   isStreamFormat: boolean;
   getBibleInfo: (index: number) => { title: string; text: string };
-  sizeMap?: SizeMap;
+  borderWidth: string;
+  hSize: string;
 };
 
 const ItemSlide = ({
@@ -36,11 +36,9 @@ const ItemSlide = ({
   draggedSection,
   isStreamFormat,
   getBibleInfo,
-  sizeMap,
+  borderWidth,
+  hSize,
 }: ItemSlideProps) => {
-  const width =
-    (isMobile ? sizeMap?.get(size)?.mobileWidth : sizeMap?.get(size)?.width) ||
-    12;
 
   const {
     attributes,
@@ -79,7 +77,7 @@ const ItemSlide = ({
       ref={setNodeRef}
       style={(() => {
         const borderStyle = {
-          "--border-width": sizeMap?.get(size)?.borderWidth,
+          "--border-width": borderWidth,
           borderWidth: "var(--border-width)",
         } as React.CSSProperties;
         if (!isFree) {
@@ -97,7 +95,7 @@ const ItemSlide = ({
       {...(isFree && listeners)}
       key={slide.id}
       className={cn(
-        "cursor-pointer w-fit rounded-lg",
+        "cursor-pointer w-full rounded-lg",
         selectedSlide === index && !isTransmitting && "border-gray-300",
         selectedSlide === index && isTransmitting && "border-green-500",
         selectedSlide !== index && "border-transparent",
@@ -108,11 +106,10 @@ const ItemSlide = ({
     >
       <h4
         className={cn(
-          "rounded-t-md truncate px-2 text-center flex",
-          sizeMap?.get(size)?.hSize,
+          "rounded-t-md truncate px-2 text-center flex w-full",
+          hSize,
           itemSectionBgColorMap.get(slide.type)
         )}
-        style={{ width: `${width}vw` }}
       >
         {slide.name?.split(/\u200B(.*?)\u200B/).map((part, index) => {
           // Even indices are regular text, odd indices are special parts
@@ -140,7 +137,6 @@ const ItemSlide = ({
             ? []
             : slide.boxes
         }
-        width={width}
         displayType={isStreamFormat ? "stream" : "slide"}
         timerInfo={timerInfo}
         bibleDisplayInfo={

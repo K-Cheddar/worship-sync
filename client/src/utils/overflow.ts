@@ -6,10 +6,12 @@ import {
   verseType,
   BibleFontMode,
   MediaType,
+  FormattedSection,
 } from "../types";
 import { getLetterFromIndex } from "./generalUtils";
 import { createBox, createNewSlide } from "./slideCreation";
 import generateRandomId from "./generateRandomId";
+import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "../components/DisplayWindow/constants";
 
 type getMaxLinesProps = {
   fontSize: number;
@@ -34,34 +36,20 @@ export const getMaxLines = ({
   isMobile,
 }: getMaxLinesProps): MaxLinesResult => {
   try {
-    const adjustedFontSize = isMobile
-      ? fontSize / (42 / 80)
-      : fontSize / (42 / 42);
-    const fontSizeVw = `${adjustedFontSize}vw`;
-    const windowWidth = window.innerWidth;
-    const verticalMargin = _topMargin ? (_topMargin * 2) / 100 : 0.06;
-    const containerHeight = isMobile
-      ? windowWidth * 0.45
-      : windowWidth * 0.23625;
-    const containerWidth = isMobile ? windowWidth * 0.8 : windowWidth * 0.42;
+    // Convert fontSize to pixels using the font size multiplier (same as DisplayBox)
+    const fontSizePx = fontSize * FONT_SIZE_MULTIPLIER;
 
-    const editorOuterContainer = document.getElementById("display-editor");
+    // Vertical margin is still based on the reference width
+    const verticalMarginFactor = _topMargin ? (_topMargin * 2) / 100 : 0.06;
 
-    const editorOuterContainerWidth =
-      editorOuterContainer?.getBoundingClientRect().width || containerWidth;
-
-    const editorOuterContainerHeight =
-      editorOuterContainer?.getBoundingClientRect().height || containerHeight;
-
-    const editorHeight = editorOuterContainerHeight * (height / 100);
-    // Vertical margin percentage is calculated based on the width on a container in css
-    const calculatedHeight =
-      editorHeight - verticalMargin * editorOuterContainerWidth;
+    // Height is a percentage of the reference height
+    const boxHeight = REFERENCE_HEIGHT * (height / 100);
+    const calculatedHeight = boxHeight - (verticalMarginFactor * REFERENCE_WIDTH);
 
     // Create a hidden span once for measuring
     const measureSpan = document.createElement("span");
     measureSpan.style.cssText = `
-      font-size: ${fontSizeVw};
+      font-size: ${fontSizePx}px;
       font-family: Verdana;
       overflow-wrap: break-word;
       position: fixed;
@@ -74,6 +62,7 @@ export const getMaxLines = ({
       white-space: pre-wrap;
       word-break: break-word;
       box-sizing: border-box;
+      width: ${REFERENCE_WIDTH}px;
     `;
 
     measureSpan.textContent = "Sample Text";
@@ -125,25 +114,20 @@ export const getNumLines = ({
   isMobile,
 }: getNumLinesProps): number => {
   try {
-    const adjustedFontSize = isMobile
-      ? fontSize / (42 / 80)
-      : fontSize / (42 / 42);
-    const fontSizeVw = `${adjustedFontSize}vw`;
-    const windowWidth = window.innerWidth;
-    const sideMargin = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.92;
-    const containerWidth = isMobile ? windowWidth * 0.8 : windowWidth * 0.42;
-    const editorOuterContainer = document.getElementById("display-editor");
+    // Convert fontSize to pixels using the font size multiplier (same as DisplayBox)
+    const fontSizePx = fontSize * FONT_SIZE_MULTIPLIER;
 
-    const editorOuterContainerWidth =
-      editorOuterContainer?.getBoundingClientRect().width || containerWidth;
+    // Side margin as a fraction of the reference width
+    const sideMarginFactor = _sideMargin ? 1 - (_sideMargin * 2) / 100 : 0.92;
 
-    const editorWidth = editorOuterContainerWidth * (width / 100);
-    const calculatedWidth = editorWidth * sideMargin;
+    // Width is a percentage of the reference width
+    const boxWidth = (REFERENCE_WIDTH * width) / 100;
+    const calculatedWidth = boxWidth * sideMarginFactor;
 
     // Reusable span for measurement
     const measureSpan = document.createElement("span");
     measureSpan.style.cssText = `
-      font-size: ${fontSizeVw};
+      font-size: ${fontSizePx}px;
       font-family: Verdana;
       overflow-wrap: break-word;
       white-space: pre-wrap;
@@ -152,11 +136,11 @@ export const getNumLines = ({
       line-height: ${lineHeight}px;
       font-weight: ${isBold ? "bold" : "normal"};
       font-style: ${isItalic ? "italic" : "normal"};
-      visibility: hidden;
       padding: 0;
       margin: 0;
       box-sizing: border-box;
       word-break: break-word;
+      width: ${calculatedWidth}px;
     `;
     measureSpan.textContent = text;
     document.body.appendChild(measureSpan);
@@ -311,6 +295,47 @@ export const formatSection = ({
   return formattedSlides;
 };
 
+// Helper function to get or initialize formattedSections from slides
+export const getFormattedSections = (
+  slides: ItemSlideType[],
+  selectedBox: number
+): FormattedSection[] => {
+  const sectionsMap = new Map<number, { words: string; slideSpan: number }>();
+
+  slides.forEach((slide) => {
+    const sectionMatch = slide.name.match(/Section (\d+)/);
+    if (sectionMatch) {
+      const sectionNum = parseInt(sectionMatch[1]);
+      const words = slide.boxes[selectedBox]?.words || "";
+
+      if (!sectionsMap.has(sectionNum)) {
+        sectionsMap.set(sectionNum, { words: "", slideSpan: 0 });
+      }
+
+      const section = sectionsMap.get(sectionNum)!;
+      // Combine words from all slides in the section
+      if (section.words) {
+        const alreadyHasNewline = section.words.endsWith("\n");
+        const shouldAddNewline =
+          !alreadyHasNewline && words.trim().length > 0;
+        section.words += shouldAddNewline ? "\n" + words : words;
+      } else {
+        section.words = words;
+      }
+      section.slideSpan += 1;
+    }
+  });
+
+  return Array.from(sectionsMap.entries())
+    .map(([sectionNum, { words, slideSpan }]) => ({
+      sectionNum,
+      words,
+      slideSpan,
+      id: generateRandomId(),
+    }))
+    .sort((a, b) => a.sectionNum - b.sectionNum);
+};
+
 export const formatFree = (item: ItemState, isMobile: boolean) => {
   const { selectedSlide, selectedBox } = item;
   const slides = item.slides;
@@ -330,32 +355,21 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
     ? parseInt(currentSectionMatch[1])
     : 1;
 
+  // Get formattedSections - should always exist after migration
+  const formattedSections = item.formattedSections || getFormattedSections(slides, selectedBox);
+  const currentSection = formattedSections.find((s) => s.sectionNum === currentSectionNum);
+  
+  if (!currentSection) {
+    console.error(`Section ${currentSectionNum} not found in formattedSections`);
+    return { ...item, slides: item.slides };
+  }
+
+  const sectionWords = currentSection.words;
+
+  // Get the background from the last slide in the section
   const currentSectionSlides = slides.filter((slide) =>
     slide.name.includes(`Section ${currentSectionNum}`)
   );
-
-  // Get words from selected box of all slides of section
-  const sectionWords = currentSectionSlides
-    .map((slide, index) => {
-      const words = slide.boxes[selectedBox]?.words || "";
-
-      // Check if the current slide already ends with a newline
-      const alreadyHasNewline = words.endsWith("\n");
-
-      // Only add newline if:
-      // 1. It's not the last slide
-      // 2. The slide doesn't already end with a newline
-      // 3. The slide has some content (not empty)
-      const shouldAddNewline =
-        index < currentSectionSlides.length - 1 &&
-        !alreadyHasNewline &&
-        words.trim().length > 0;
-
-      return shouldAddNewline ? words + "\n" : words;
-    })
-    .join("");
-
-  // Get the background from the last slide in the section
   const lastSlideInSection =
     currentSectionSlides[currentSectionSlides.length - 1];
   const background = lastSlideInSection?.boxes[0]?.background || undefined;
@@ -495,9 +509,22 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
   // Replace all slides of section with updated slides
   updatedSlides.splice(firstSlideLocation, 0, ...formattedSlides);
 
+  // Update formattedSections with the new section data
+  const updatedFormattedSections = formattedSections.map((section) => {
+    if (section.sectionNum === currentSectionNum) {
+      return {
+        ...section,
+        words: sectionWords,
+        slideSpan: formattedSlides.length,
+      };
+    }
+    return section;
+  });
+
   return {
     ...item,
     slides: updatedSlides,
+    formattedSections: updatedFormattedSections,
   };
 };
 
