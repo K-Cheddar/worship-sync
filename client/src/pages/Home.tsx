@@ -39,7 +39,7 @@ const Welcome = () => {
               component="button"
               svg={Download}
             >
-              {isMobile ? <Download size={18} /> : "Download for Windows"}
+              {isMobile ? "Download" : "Download for Windows"}
             </Button>
           )}
         </div>

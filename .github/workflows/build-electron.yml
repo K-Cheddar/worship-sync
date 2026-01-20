@@ -45,12 +45,15 @@ jobs:
         run: cd client && npm ci
 
       - name: Build Electron files
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: cd client && npm run build:electron:files
 
       - name: Build web app
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           ELECTRON_BUILD: true
+          NODE_OPTIONS: --max-old-space-size=4096
         run: cd client && npm run build
 
       - name: Build Electron app (Linux)
@@ -61,6 +64,7 @@ jobs:
           npx electron-builder --linux --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Build Electron app (Windows)
         if: matrix.platform == 'win'
@@ -70,6 +74,7 @@ jobs:
           npx electron-builder --win --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Build Electron app (macOS)
         if: matrix.platform == 'mac'
@@ -84,6 +89,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
