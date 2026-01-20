@@ -1,3 +1,10 @@
+## [1.25.3](https://github.com/K-Cheddar/worship-sync/compare/v1.25.2...v1.25.3) (2026-01-20)
+
+
+### Bug Fixes
+
+* update electron build ([67b8b89](https://github.com/K-Cheddar/worship-sync/commit/67b8b894dba26693f5fb6e589d25be9450115ff5))
+
 ## [1.25.2](https://github.com/K-Cheddar/worship-sync/compare/v1.25.1...v1.25.2) (2026-01-20)
 
 
