@@ -18,7 +18,12 @@ export default {
         pkgRoot: "client",
       },
     ],
-
+    [
+      "@semantic-release/exec",
+      {
+        prepareCmd: "node scripts/preservePackageFields.js",
+      },
+    ],
     [
       "@semantic-release/git",
       {
