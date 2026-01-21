@@ -1,3 +1,15 @@
+# [1.26.0](https://github.com/K-Cheddar/worship-sync/compare/v1.25.9...v1.26.0) (2026-01-21)
+
+
+### Bug Fixes
+
+* Fix Windows exe generation ([d3584d8](https://github.com/K-Cheddar/worship-sync/commit/d3584d898e0fcebc20b60aa1e1a1973dcacac134))
+
+
+### Features
+
+* Add display control for desktop ([5164501](https://github.com/K-Cheddar/worship-sync/commit/5164501a099fdac85f26baee91b920624fd34251))
+
 ## [1.25.9](https://github.com/K-Cheddar/worship-sync/compare/v1.25.8...v1.25.9) (2026-01-21)
 
 
