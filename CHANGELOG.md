@@ -1,3 +1,12 @@
+## [1.27.1](https://github.com/K-Cheddar/worship-sync/compare/v1.27.0...v1.27.1) (2026-01-21)
+
+
+### Bug Fixes
+
+* Fix desktop ([1b3b7e6](https://github.com/K-Cheddar/worship-sync/commit/1b3b7e6f817be3ba8367b6ec741ca2dfa3c0586a))
+* Fix desktop build ([a8accd2](https://github.com/K-Cheddar/worship-sync/commit/a8accd233d5c32c20bccfede1a407b39945050f6))
+* Update video input style ([9dd39aa](https://github.com/K-Cheddar/worship-sync/commit/9dd39aa50a0a088674818216bb60e38c330a6e0c))
+
 # [1.27.0](https://github.com/K-Cheddar/worship-sync/compare/v1.26.0...v1.27.0) (2026-01-21)
 
 
