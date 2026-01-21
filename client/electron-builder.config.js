@@ -4,15 +4,22 @@ export default defineConfig({
   appId: "com.worshipsync.app",
   productName: "WorshipSync",
 
+  publish: {
+    provider: "github",
+    owner: "K-Cheddar",
+    repo: "worship-sync",
+    releaseType: "release"
+  },
+
   directories: {
-    output: "client/dist",
-    buildResources: "client/buildResources",
+    output: "dist",
+    buildResources: "buildResources",
   },
 
   files: [
-    "client/dist/**/*",
-    "client/dist-electron/**/*",
-    "client/package.json"
+    "dist/**/*",
+    "dist-electron/**/*",
+    "package.json"
   ],
 
   asar: true,
@@ -21,7 +28,7 @@ export default defineConfig({
 
   win: {
     target: [{ target: "nsis", arch: ["x64", "ia32"] }],
-    icon: "client/buildResources/icon.ico",
+    icon: "buildResources/icon.ico",
     publisherName: "WorshipSync",
   },
 
@@ -30,7 +37,7 @@ export default defineConfig({
       { target: "AppImage", arch: ["x64"] },
       { target: "deb", arch: ["x64"] },
     ],
-    icon: "client/buildResources/icons",
+    icon: "buildResources/icons",
     category: "Office",
   },
 

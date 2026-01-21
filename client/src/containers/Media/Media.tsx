@@ -29,11 +29,13 @@ import { retrieveImages } from "../../utils/itemUtil";
 import CloudinaryUploadWidget, {
   mediaInfoType,
 } from "./CloudinaryUploadWidget";
+import MuxVideoInput from "./MuxVideoInput";
 import generateRandomId from "../../utils/generateRandomId";
 import {
   deleteFromCloudinary,
   extractPublicId,
 } from "../../utils/cloudinaryUtils";
+import { getApiBasePath } from "../../utils/environment";
 import {
   decreaseMediaItems,
   increaseMediaItems,
@@ -79,6 +81,7 @@ const emptyMedia: MediaType = {
   frameRate: 0,
   duration: 0,
   hasAudio: false,
+  source: "cloudinary",
 };
 
 const Media = () => {
@@ -198,26 +201,45 @@ const Media = () => {
   };
 
   const handleConfirmDelete = async () => {
-    if (!db || !cloud || !mediaToDelete) return;
+    if (!db || !mediaToDelete) return;
 
     try {
-      let publicId = mediaToDelete.publicId;
-      if (!publicId) {
-        // Extract public_id from the background URL
-        publicId = extractPublicId(mediaToDelete.background) || "";
-      }
+      // Delete from source (Cloudinary or Mux)
+      if (mediaToDelete.source === "cloudinary" && cloud) {
+        let publicId = mediaToDelete.publicId;
+        if (!publicId) {
+          // Extract public_id from the background URL
+          publicId = extractPublicId(mediaToDelete.background) || "";
+        }
 
-      if (publicId) {
-        // Delete from Cloudinary
-        const cloudinarySuccess = await deleteFromCloudinary(
-          cloud,
-          publicId,
-          mediaToDelete.type
-        );
-        if (!cloudinarySuccess) {
-          console.warn(
-            "Failed to delete from Cloudinary, but continuing with local deletion"
+        if (publicId) {
+          // Delete from Cloudinary
+          const cloudinarySuccess = await deleteFromCloudinary(
+            cloud,
+            publicId,
+            mediaToDelete.type
           );
+          if (!cloudinarySuccess) {
+            console.warn(
+              "Failed to delete from Cloudinary, but continuing with local deletion"
+            );
+          }
+        }
+      } else if (mediaToDelete.source === "mux" && mediaToDelete.muxAssetId) {
+        // Delete from Mux
+        try {
+          const response = await fetch(
+            `${getApiBasePath()}api/mux/asset/${mediaToDelete.muxAssetId}`,
+            { method: "DELETE" }
+          );
+          
+          if (!response.ok) {
+            console.warn(
+              "Failed to delete from Mux, but continuing with local deletion"
+            );
+          }
+        } catch (error) {
+          console.warn("Error deleting from Mux:", error);
         }
       }
 
@@ -228,7 +250,7 @@ const Media = () => {
       dispatch(ActionCreators.clearHistory());
     } catch (error) {
       console.error("Error deleting background:", error);
-      // Still remove from local list even if Cloudinary deletion fails
+      // Still remove from local list even if deletion fails
       const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
       dispatch(updateMediaList(updatedList));
       setSelectedMedia(emptyMedia);
@@ -289,6 +311,44 @@ const Media = () => {
       frameRate: frame_rate,
       duration,
       hasAudio: is_audio,
+      source: "cloudinary",
+    };
+
+    dispatch(addItemToMediaList(newMedia));
+  };
+
+  const addMuxVideo = ({
+    playbackId,
+    assetId,
+    playbackUrl,
+    thumbnailUrl,
+    name,
+  }: {
+    playbackId: string;
+    assetId: string;
+    playbackUrl: string;
+    thumbnailUrl: string;
+    name: string;
+  }) => {
+    const currentTime = new Date().toISOString();
+    
+    const newMedia: MediaType = {
+      path: "",
+      createdAt: currentTime,
+      updatedAt: currentTime,
+      format: "m3u8",
+      height: 1920,
+      width: 1080,
+      publicId: playbackId,
+      name,
+      type: "video",
+      id: generateRandomId(),
+      background: playbackUrl,
+      thumbnail: thumbnailUrl,
+      placeholderImage: thumbnailUrl,
+      source: "mux",
+      muxPlaybackId: playbackId,
+      muxAssetId: assetId,
     };
 
     dispatch(addItemToMediaList(newMedia));
@@ -526,9 +586,16 @@ const Media = () => {
             uwConfig={{
               uploadPreset: "bpqu4ma5",
               cloudName: "portable-media",
+              clientAllowedFormats: ["png", "jpg", "jpeg", "webp", "gif"],
+              resourceType: "image",
             }}
             onComplete={(info) => {
               addNewBackground(info);
+            }}
+          />
+          <MuxVideoInput
+            onComplete={(muxData) => {
+              addMuxVideo(muxData);
             }}
           />
           <Button

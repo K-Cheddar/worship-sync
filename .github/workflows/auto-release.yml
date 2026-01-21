@@ -116,36 +116,19 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Package Linux
+      - name: Package and Publish Linux
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux --publish never
+        run: npx electron-builder --linux --publish always
         working-directory: client
+        env:
+          GH_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 
-      - name: Package Windows
+      - name: Package and Publish Windows
         if: matrix.platform == 'win'
-        run: npx electron-builder --win --publish never
+        run: npx electron-builder --win --publish always
         working-directory: client
-
-      - name: Upload Windows artifacts
-        if: matrix.platform == 'win'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ needs.release.outputs.version }}
-          files: |
-            client/dist/WorshipSync*.exe
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
-
-      - name: Upload Linux artifacts
-        if: matrix.platform == 'linux'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ needs.release.outputs.version }}
-          files: |
-            client/dist/*.AppImage
-            client/dist/*.deb
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 
   deploy-heroku:
     name: Deploy Heroku

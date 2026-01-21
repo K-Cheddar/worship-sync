@@ -1,4 +1,4 @@
-import { BrowserWindow } from "electron";
+import { BrowserWindow, app } from "electron";
 import { join } from "node:path";
 
 type WindowType = "projector" | "monitor";
@@ -70,7 +70,9 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
   if (config.isDev) {
     window.loadURL(`https://local.worshipsync.net:3000#${config.route}`);
   } else {
-    const indexPath = join(config.dirname, "../dist/index.html");
+    // Use app.getAppPath() for reliable path resolution in packaged apps
+    const appPath = app.getAppPath();
+    const indexPath = join(appPath, "dist", "index.html");
     window.loadFile(indexPath, { hash: config.route });
   }
 

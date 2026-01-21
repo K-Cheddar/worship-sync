@@ -53,6 +53,10 @@ export interface ElectronAPI {
   moveProjectorToDisplay: (displayId: number) => Promise<boolean>;
   moveMonitorToDisplay: (displayId: number) => Promise<boolean>;
   getWindowStates: () => Promise<WindowStatesInfo>;
+  
+  // Auto-updater
+  checkForUpdates: () => Promise<{ available: boolean; updateInfo?: any; error?: string; message?: string }>;
+  installUpdate: () => Promise<void>;
 }
 
 declare global {

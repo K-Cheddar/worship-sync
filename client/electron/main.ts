@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, screen } from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { autoUpdater } from "electron-updater";
 import { WindowStateManager } from "./windowState";
 import {
   createDisplayWindow,
@@ -118,19 +119,18 @@ const createWindow = () => {
     mainWindow.webContents.openDevTools();
   } else {
     // In production, load from the built files
-    // When packed, __dirname points to app.asar, so we can use relative path
-    const indexPath = join(__dirname, "../dist/index.html");
+    // Use app.getAppPath() for reliable path resolution in packaged apps
+    const appPath = app.getAppPath();
+    const indexPath = join(appPath, "dist", "index.html");
     
-    console.log("Loading from:", indexPath);
+    console.log("App path:", appPath);
+    console.log("Index path:", indexPath);
     console.log("__dirname:", __dirname);
     console.log("isPackaged:", app.isPackaged);
     
     mainWindow.loadFile(indexPath).catch((err) => {
       console.error("Failed to load index.html:", err);
     });
-    
-    // Temporarily open DevTools to see errors (remove this later)
-    mainWindow.webContents.openDevTools();
   }
 
   // Log any errors
@@ -169,6 +169,29 @@ const createWindow = () => {
 app.whenReady().then(() => {
   windowStateManager = new WindowStateManager();
   createWindow();
+
+  // Configure auto-updater (only in production)
+  if (!isDev) {
+    autoUpdater.checkForUpdatesAndNotify();
+    
+    // Check for updates every hour
+    setInterval(() => {
+      autoUpdater.checkForUpdatesAndNotify();
+    }, 60 * 60 * 1000);
+
+    // Log update events
+    autoUpdater.on("update-available", () => {
+      console.log("Update available");
+    });
+
+    autoUpdater.on("update-downloaded", () => {
+      console.log("Update downloaded - will install on quit");
+    });
+
+    autoUpdater.on("error", (error) => {
+      console.error("Auto-updater error:", error);
+    });
+  }
 
   app.on("activate", () => {
     // On macOS, re-create window when dock icon is clicked
@@ -306,4 +329,28 @@ ipcMain.handle("get-window-states", () => {
     projectorOpen: projectorWindow !== null,
     monitorOpen: monitorWindow !== null,
   };
+});
+
+// Auto-updater IPC handlers
+ipcMain.handle("check-for-updates", async () => {
+  if (isDev) {
+    return { available: false, message: "Updates disabled in development" };
+  }
+  
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { 
+      available: result !== null,
+      updateInfo: result?.updateInfo 
+    };
+  } catch (error) {
+    console.error("Error checking for updates:", error);
+    return { available: false, error: error.message };
+  }
+});
+
+ipcMain.handle("install-update", () => {
+  if (!isDev) {
+    autoUpdater.quitAndInstall();
+  }
 });

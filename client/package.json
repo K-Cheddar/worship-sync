@@ -33,6 +33,7 @@
     "class-variance-authority": "^0.7.1",
     "classnames": "^2.5.1",
     "clsx": "^2.1.1",
+    "electron-updater": "^6.7.3",
     "firebase": "^12.7.0",
     "gsap": "^3.14.2",
     "lucide-react": "^0.562.0",
