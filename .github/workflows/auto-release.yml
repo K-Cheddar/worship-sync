@@ -132,11 +132,9 @@ jobs:
         with:
           tag_name: v${{ needs.release.outputs.version }}
           files: |
-            "client/dist/WorshipSync Setup *.exe"
-            "client/dist/WorshipSync*.exe"
+            client/dist/WorshipSync*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
-      
 
       - name: Upload Linux artifacts
         if: matrix.platform == 'linux'
