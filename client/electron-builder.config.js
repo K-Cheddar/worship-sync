@@ -12,7 +12,7 @@ export default defineConfig({
   },
 
   directories: {
-    output: "dist",
+    output: "release",
     buildResources: "buildResources",
   },
 

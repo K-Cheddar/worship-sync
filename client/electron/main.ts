@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, screen } from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { autoUpdater } from "electron-updater";
+import updaterPkg from "electron-updater";
+
 import { WindowStateManager } from "./windowState";
 import {
   createDisplayWindow,
@@ -9,6 +10,8 @@ import {
   setupReadyToShow,
   focusWindow,
 } from "./windowHelpers";
+
+const { autoUpdater } = updaterPkg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -55,6 +58,7 @@ const createProjectorWindow = () => {
     "projector",
     windowStateManager,
     () => {
+      windowStateManager.markWindowClosed("projector");
       projectorWindow = null;
       notifyWindowStateChanged();
     }
@@ -84,6 +88,7 @@ const createMonitorWindow = () => {
     "monitor",
     windowStateManager,
     () => {
+      windowStateManager.markWindowClosed("monitor");
       monitorWindow = null;
       notifyWindowStateChanged();
     }
@@ -142,12 +147,17 @@ const createWindow = () => {
     console.log("Console:", message);
   });
 
-  // When main window is ready, open projector and monitor windows
+  // When main window is ready, open projector and monitor windows only if they were previously open
   mainWindow.webContents.once("did-finish-load", () => {
     // Delay slightly to ensure main window is fully loaded
     setTimeout(() => {
-      createProjectorWindow();
-      createMonitorWindow();
+      // Only open windows if they were open when app last closed
+      if (windowStateManager.wasWindowOpen("projector")) {
+        createProjectorWindow();
+      }
+      if (windowStateManager.wasWindowOpen("monitor")) {
+        createMonitorWindow();
+      }
     }, 500);
   });
 

@@ -6,8 +6,10 @@
     "start": "node server.js",
     "heroku-postbuild": "cd client && npm install && npm install --only=dev --no-shrinkwrap && npm run build",
     "client": "cd client && npm run dev",
+    "client:electron": "cd client && npm run electron:dev",
     "server": "npx nodemon server.js",
     "dev": "concurrently --kill-others-on-fail \"npm run server\" \"npm run client\"",
+    "dev:electron": "concurrently --kill-others-on-fail \"npm run server\" \"npm run client:electron\"",
     "prepare": "husky",
     "release": "semantic-release && node scripts/updateClientVersion.js"
   },

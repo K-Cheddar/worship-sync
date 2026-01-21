@@ -116,19 +116,39 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Package and Publish Linux
+      - name: Package Linux
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux --publish always
+        run: npx electron-builder --linux --publish never
         working-directory: client
-        env:
-          GH_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 
-      - name: Package and Publish Windows
+      - name: Package Windows
         if: matrix.platform == 'win'
-        run: npx electron-builder --win --publish always
+        run: npx electron-builder --win --publish never
         working-directory: client
+
+      - name: Upload Windows artifacts
+        if: matrix.platform == 'win'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.release.outputs.version }}
+          files: |
+            client/release/*.exe
+            client/release/*.exe.blockmap
+            client/release/latest.yml
         env:
-          GH_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
+
+      - name: Upload Linux artifacts
+        if: matrix.platform == 'linux'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.release.outputs.version }}
+          files: |
+            client/release/*.AppImage
+            client/release/*.deb
+            client/release/latest-linux.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 
   deploy-heroku:
     name: Deploy Heroku
