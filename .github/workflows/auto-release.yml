@@ -111,12 +111,12 @@ jobs:
 
       - name: Package Linux
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux --publish never --config electron-builder.config.js
+        run: npx electron-builder --linux --publish never
         working-directory: client
 
       - name: Package Windows
         if: matrix.platform == 'win'
-        run: npx electron-builder --win --publish never --config electron-builder.config.js
+        run: npx electron-builder --win --publish never
         working-directory: client
 
       - name: Upload Windows artifacts
