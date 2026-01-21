@@ -12,7 +12,7 @@
     "release": "semantic-release && node scripts/updateClientVersion.js"
   },
   "engines": {
-    "node": "20.x"
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "@mux/mux-node": "^12.8.1",
