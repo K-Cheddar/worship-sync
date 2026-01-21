@@ -21,7 +21,7 @@ export default defineConfig({
 
   win: {
     target: [{ target: "nsis", arch: ["x64", "ia32"] }],
-    icon: "buildResources/icon.png",
+    icon: "buildResources/icon.ico",
     publisherName: "WorshipSync",
   },
 
@@ -30,7 +30,7 @@ export default defineConfig({
       { target: "AppImage", arch: ["x64"] },
       { target: "deb", arch: ["x64"] },
     ],
-    icon: "buildResources/icon.png",
+    icon: "buildResources/icons",
     category: "Office",
   },
 
@@ -41,9 +41,4 @@ export default defineConfig({
     createStartMenuShortcut: true,
   },
 
-  publish: {
-    provider: "github",
-    owner: "K-Cheddar",
-    repo: "worship-sync",
-  },
 });

@@ -2,19 +2,20 @@ name: Auto Release
 
 permissions:
   contents: write
+  id-token: write
 
 on:
   push:
-    branches:
-      - master
+    branches: [master]
 
 jobs:
   release:
-    name: Create Release
+    name: Release
     runs-on: ubuntu-latest
     outputs:
-      new_release_published: ${{ steps.check_release.outputs.published }}
-      new_release_version: ${{ steps.check_release.outputs.version }}
+      published: ${{ steps.check.outputs.published }}
+      version: ${{ steps.check.outputs.version }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,135 +23,126 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_RELEASE_PAT }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: "npm"
+          node-version: 22
+          cache: npm
 
-      - name: Install server dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Install client dependencies
-        run: cd client && npm ci
+      - run: npm ci
+        working-directory: client
 
-      - name: Build client
+      - name: Build web
+        run: npm run build
+        working-directory: client
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=4096
-        run: cd client && npm run build
 
-      - name: Configure Git
-        run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-
-      - name: Release
-        id: semantic
+      - name: Semantic release
         run: npm run release
         env:
           GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 
-      - name: Check if release was created
-        id: check_release
+      - name: Detect new release
+        id: check
         uses: actions/github-script@v7
         with:
           script: |
-            // Get the latest release
-            const { data: releases } = await github.rest.repos.listReleases({
+            const { data } = await github.rest.repos.listReleases({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              per_page: 1
+              per_page: 1,
             });
-            
-            if (releases.length > 0) {
-              const latestRelease = releases[0];
-              const releaseTime = new Date(latestRelease.created_at);
-              const now = new Date();
-              const ageMinutes = (now - releaseTime) / 1000 / 60;
-              
-              // If release was created in the last 5 minutes, it's from this run
-              if (ageMinutes < 5) {
-                console.log('New release detected:', latestRelease.tag_name);
-                core.setOutput('published', 'true');
-                core.setOutput('version', latestRelease.tag_name.replace('v', ''));
-              } else {
-                console.log('No new release (latest is', ageMinutes.toFixed(1), 'minutes old)');
-                core.setOutput('published', 'false');
-              }
-            } else {
-              console.log('No releases found');
+
+            if (!data.length) {
               core.setOutput('published', 'false');
+              return;
+            }
+
+            const r = data[0];
+            const ageMin = (Date.now() - new Date(r.created_at)) / 60000;
+
+            core.setOutput('published', ageMin < 5 ? 'true' : 'false');
+
+            if (ageMin < 5) {
+              core.setOutput('version', r.tag_name.replace('v', ''));
             }
 
   build-electron:
-    name: Build Electron App
+    name: Build Electron
     needs: release
-    if: needs.release.outputs.new_release_published == 'true'
+    if: needs.release.outputs.published == 'true'
     runs-on: ${{ matrix.os }}
+
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
         include:
           - os: ubuntu-latest
             platform: linux
           - os: windows-latest
             platform: win
+
     steps:
-      - name: Checkout code
+      - name: Checkout release tag
         uses: actions/checkout@v4
         with:
-          ref: v${{ needs.release.outputs.new_release_version }}
+          ref: v${{ needs.release.outputs.version }}
           fetch-depth: 0
+          token: ${{ secrets.GH_RELEASE_PAT }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: "npm"
+          node-version: 22
+          cache: npm
 
-      - name: Install server dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Install client dependencies
-        run: cd client && npm ci
+      - run: npm ci
+        working-directory: client
 
-      - name: Build Electron files
+      - name: Build Electron preload/main
+        run: npm run build:electron:files
+        working-directory: client
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-        run: cd client && npm run build:electron:files
 
-      - name: Build web app
+      - name: Build renderer
+        run: npm run build
+        working-directory: client
         env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           ELECTRON_BUILD: true
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=4096
-        run: cd client && npm run build
 
-      - name: Build Electron app (Linux)
+      - name: Package Linux
         if: matrix.platform == 'linux'
-        run: cd client && npx electron-builder --linux --publish always -c.snap.publish=null
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=4096
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-          EP_DRAFT: "false"
-          EP_PRE_RELEASE: "false"
+        run: npx electron-builder --linux --publish never
+        working-directory: client
 
-      - name: Build Electron app (Windows)
+      - name: Package Windows
         if: matrix.platform == 'win'
-        run: cd client && npx electron-builder --win --publish always
+        run: npx electron-builder --win --publish never
+        working-directory: client
+
+      - name: Upload artifacts to release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.release.outputs.version }}
+          files: |
+            client/dist/**/*.exe
+            client/dist/**/*.AppImage
+            client/dist/**/*.deb
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=4096
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-          EP_DRAFT: "false"
-          EP_PRE_RELEASE: "false"
+          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 
   deploy-heroku:
-    name: Deploy to Heroku
+    name: Deploy Heroku
     needs: release
+    if: needs.release.outputs.published == 'true'
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -158,28 +150,28 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_RELEASE_PAT }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: "npm"
+          node-version: 22
+          cache: npm
 
-      - name: Install server dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Install client dependencies
-        run: cd client && npm ci
+      - run: npm ci
+        working-directory: client
 
-      - name: Build client
+      - name: Build web
+        run: npm run build
+        working-directory: client
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=4096
-        run: cd client && npm run build
 
       - name: Deploy to Heroku
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: |
           git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/${{ secrets.HEROKU_APP_NAME }}.git
-          git status --porcelain | grep . && git add . && git commit -m "chore(release): Deploy to Heroku" || true
+          git add .
+          git commit -m "chore(release): deploy" || true
           git push heroku HEAD:refs/heads/main --force
