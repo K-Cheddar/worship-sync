@@ -67,7 +67,8 @@
     "workbox-streams": "^7.4.0"
   },
   "overrides": {
-    "resolve-url-loader": "5.0.0"
+    "resolve-url-loader": "5.0.0",
+    "esbuild": "^0.27.2"
   },
   "scripts": {
     "dev": "electron-vite dev",
@@ -138,7 +139,7 @@
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.18",
     "ts-jest": "^29.4.6",
-    "tsx": "^4.21.0",
+    "tsx": "^4.21.1",
     "wait-on": "^9.0.3"
   }
 }
