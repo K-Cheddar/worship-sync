@@ -6,6 +6,7 @@ import {
   Monitor,
   RectangleEllipsis,
   Pencil,
+  MonitorPlay,
 } from "lucide-react";
 import Menu from "./ToolbarElements/Menu";
 import Outlines from "./ToolbarElements/Outlines";
@@ -49,10 +50,21 @@ const Toolbar = ({ className }: { className: string }) => {
     (state) => state.undoable.present.item
   );
   const [section, setSection] = useState<sections>("settings");
+  const [isElectron, setIsElectron] = useState(false);
   const { isPhone, isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
 
   const dispatch = useDispatch();
+
+  useEffect(() => {
+    const checkElectron = async () => {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.isElectron();
+        setIsElectron(result);
+      }
+    };
+    checkElectron();
+  }, []);
 
   const updateItem = useCallback(
     (updatedItem: ItemState) => {
@@ -202,6 +214,7 @@ const Toolbar = ({ className }: { className: string }) => {
               className={cn(
                 section !== "settings" && "hidden",
                 location.pathname.includes("monitor-settings") &&
+                  !location.pathname.includes("monitor-controls") &&
                   "outline-2 outline-white"
               )}
               variant="tertiary"
@@ -211,6 +224,21 @@ const Toolbar = ({ className }: { className: string }) => {
             >
               Monitor Settings
             </Button>
+            {isElectron && (
+              <Button
+                className={cn(
+                  section !== "settings" && "hidden",
+                  location.pathname.includes("monitor-controls") &&
+                    "outline-2 outline-white"
+                )}
+                variant="tertiary"
+                svg={MonitorPlay}
+                component="link"
+                to="/controller/monitor-controls"
+              >
+                Monitor Controls
+              </Button>
+            )}
             <SlideEditTools
               className={cn(section !== "slide-tools" && "hidden")}
             />

@@ -1,6 +1,7 @@
 import { useSelector } from "../hooks";
 import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
-import { useEffect } from "react";
+import { useEffect, useCallback } from "react";
+import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 
 const ProjectorFull = () => {
   const { projectorInfo, prevProjectorInfo } = useSelector(
@@ -26,6 +27,15 @@ const ProjectorFull = () => {
 
     keepScreenOn();
   }, []);
+
+  // Close window on ESC key press when running in Electron
+  const closeWindow = useCallback(async () => {
+    if (window.electronAPI) {
+      await window.electronAPI.closeProjectorWindow();
+    }
+  }, []);
+
+  useCloseOnEscape(closeWindow);
 
   return (
     <DisplayWindow

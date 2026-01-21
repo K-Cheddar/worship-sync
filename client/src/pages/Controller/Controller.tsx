@@ -64,6 +64,7 @@ import Timers from "../../containers/Timers/Timers";
 import Preferences from "./Preferences";
 import QuickLinks from "./QuickLinks";
 import MonitorSettings from "./MonitorSettings";
+import MonitorControls from "./MonitorControls";
 import {
   initiateMonitorSettings,
   initiatePreferences,
@@ -442,6 +443,7 @@ const Controller = () => {
               <Route path="preferences" element={<Preferences />} />
               <Route path="quick-links" element={<QuickLinks />} />
               <Route path="monitor-settings" element={<MonitorSettings />} />
+              <Route path="monitor-controls" element={<MonitorControls />} />
             </Routes>
           </div>
 

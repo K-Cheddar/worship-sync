@@ -1,6 +1,6 @@
 import { useSelector, useDispatch } from "../hooks";
 import Presentation from "../containers/PresentationPage";
-import { useContext, useEffect } from "react";
+import { useContext, useEffect, useCallback } from "react";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { onValue, ref } from "firebase/database";
 import {
@@ -10,6 +10,7 @@ import {
   setMonitorTimerId,
 } from "../store/preferencesSlice";
 import { setMonitorTimerFontSize } from "../store/preferencesSlice";
+import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 
 const Monitor = () => {
   const { monitorInfo, prevMonitorInfo } = useSelector(
@@ -59,6 +60,15 @@ const Monitor = () => {
 
     keepScreenOn();
   }, []);
+
+  // Close window on ESC key press when running in Electron
+  const closeWindow = useCallback(async () => {
+    if (window.electronAPI) {
+      await window.electronAPI.closeMonitorWindow();
+    }
+  }, []);
+
+  useCloseOnEscape(closeWindow);
 
   return (
     <Presentation
