@@ -34,19 +34,17 @@ export const isElectron = (): boolean => {
  */
 export const getApiBasePath = (): string => {
   if (isElectron()) {
-    // In Electron, detect if we're in development or production
-    // In development, the server runs on HTTPS at local.worshipsync.net:5000
-    // In production, it runs on HTTP at localhost:5000
-    // Check if we're loading from file:// (production) or https:// (dev server)
-    // Also check via Electron API if available
-    const isDev = window.location.protocol === "https:" || import.meta.env.DEV;
+    // In Electron, check if we're in production
+    // file:// protocol means we're in a packaged app (production)
+    // https:// protocol means we're loading from dev server (development)
+    const isDev = window.location.protocol === "https:";
     
     if (isDev) {
-      // Development: use HTTPS server
+      // Development: use local HTTPS server
       return import.meta.env.VITE_ELECTRON_API_URL || "https://local.worshipsync.net:5000/";
     } else {
-      // Production: use HTTP server
-      return import.meta.env.VITE_ELECTRON_API_URL || "http://localhost:5000/";
+      // Production: use production API server (packaged app loads from file://)
+      return import.meta.env.VITE_ELECTRON_API_URL || "https://www.worshipsync.net/api/";
     }
   }
   

@@ -1,4 +1,4 @@
-import { BrowserWindow, app } from "electron";
+import { BrowserWindow } from "electron";
 import { join } from "node:path";
 
 type WindowType = "projector" | "monitor";
@@ -10,16 +10,12 @@ interface WindowConfig {
   dirname: string;
 }
 
-/**
- * Setup common event listeners for window state management
- */
 export const setupWindowEventListeners = (
   window: BrowserWindow,
   windowType: WindowType,
   windowStateManager: any,
   onClosed: () => void
 ) => {
-  // Save state when window moves or resizes
   window.on("moved", () => {
     if (!window.isDestroyed()) {
       windowStateManager.updateState(windowType, window);
@@ -47,56 +43,44 @@ export const setupWindowEventListeners = (
   window.on("closed", onClosed);
 };
 
-/**
- * Create a display window (projector or monitor) with common configuration
- */
 export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
   const window = new BrowserWindow({
     ...config.bounds,
     webPreferences: {
-      preload: join(config.dirname, "preload.js"),
+      preload: join(config.dirname, "../preload/preload.mjs"),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
-      webSecurity: true,
     },
     autoHideMenuBar: true,
     frame: false,
     show: false,
-    icon: join(config.dirname, "../dist/WorshipSyncIcon.png"),
   });
 
-  // Load the appropriate page
   if (config.isDev) {
-    window.loadURL(`https://local.worshipsync.net:3000#${config.route}`);
+    window.loadURL(`https://local.worshipsync.net:3000${config.route}`);
   } else {
-    // Use app.getAppPath() for reliable path resolution in packaged apps
-    const appPath = app.getAppPath();
-    const indexPath = join(appPath, "dist", "index.html");
-    window.loadFile(indexPath, { hash: config.route });
+    window.loadFile(
+      join(config.dirname, "../renderer/index.html"),
+      { hash: config.route }
+    );
   }
 
   return window;
 };
 
-/**
- * Setup window ready-to-show event with fullscreen
- */
 export const setupReadyToShow = (window: BrowserWindow) => {
   window.once("ready-to-show", () => {
     if (window && !window.isDestroyed()) {
-      // Temporarily set always on top to force window to foreground
       window.setAlwaysOnTop(true);
       window.show();
       window.focus();
       window.moveTop();
 
-      // Always set fullscreen for display windows
       window.setFullScreen(true);
 
-      // Remove always on top after a brief delay
       setTimeout(() => {
-        if (window && !window.isDestroyed()) {
+        if (!window.isDestroyed()) {
           window.setAlwaysOnTop(false);
         }
       }, 100);
@@ -104,23 +88,16 @@ export const setupReadyToShow = (window: BrowserWindow) => {
   });
 };
 
-/**
- * Focus a window and bring it to foreground
- */
 export const focusWindow = (window: BrowserWindow | null): boolean => {
-  if (!window || window.isDestroyed()) {
-    return false;
-  }
+  if (!window || window.isDestroyed()) return false;
 
-  // Temporarily set always on top to force window to foreground
   window.setAlwaysOnTop(true);
   window.show();
   window.focus();
   window.moveTop();
 
-  // Remove always on top after a brief delay
   setTimeout(() => {
-    if (window && !window.isDestroyed()) {
+    if (!window.isDestroyed()) {
       window.setAlwaysOnTop(false);
     }
   }, 100);

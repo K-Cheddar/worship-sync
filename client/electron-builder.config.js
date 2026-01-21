@@ -1,23 +1,13 @@
-import { defineConfig } from "electron-builder";
-
-export default defineConfig({
+const config = {
   appId: "com.worshipsync.app",
   productName: "WorshipSync",
 
-  publish: {
-    provider: "github",
-    owner: "K-Cheddar",
-    repo: "worship-sync",
-    releaseType: "release"
-  },
-
   directories: {
-    output: "release",
+    output: "dist",
     buildResources: "buildResources",
   },
 
   files: [
-    "dist/**/*",
     "dist-electron/**/*",
     "package.json"
   ],
@@ -27,17 +17,14 @@ export default defineConfig({
   buildDependenciesFromSource: false,
 
   win: {
-    target: [{ target: "nsis", arch: ["x64", "ia32"] }],
-    icon: "buildResources/icon.ico",
+    target: ["nsis"],
+    icon: "buildResources/icon.ico",   // correct Windows icon
     publisherName: "WorshipSync",
   },
 
   linux: {
-    target: [
-      { target: "AppImage", arch: ["x64"] },
-      { target: "deb", arch: ["x64"] },
-    ],
-    icon: "buildResources/icons",
+    target: ["AppImage", "deb"],
+    icon: "buildResources/icons",      // folder with PNGs
     category: "Office",
   },
 
@@ -47,5 +34,6 @@ export default defineConfig({
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
   },
+};
+module.exports = config;
 
-});
