@@ -1,15 +1,4 @@
-declare module "*.svg" {
-  import * as React from "react";
-
-  const ReactComponent: React.FunctionComponent<
-    React.SVGProps<SVGSVGElement> & { title?: string }
-  >;
-
-  export default ReactComponent;
-}
-
-// Electron API Types
-interface Display {
+export interface Display {
   id: number;
   bounds: {
     x: number;
@@ -29,7 +18,7 @@ interface Display {
   label?: string;
 }
 
-interface WindowState {
+export interface WindowState {
   displayId?: number;
   x?: number;
   y?: number;
@@ -38,14 +27,14 @@ interface WindowState {
   isFullScreen: boolean;
 }
 
-interface WindowStatesInfo {
+export interface WindowStatesInfo {
   projector: WindowState;
   monitor: WindowState;
   projectorOpen: boolean;
   monitorOpen: boolean;
 }
 
-interface ElectronAPI {
+export interface ElectronAPI {
   getAppVersion: () => Promise<string>;
   getPlatform: () => Promise<string>;
   isElectron: () => Promise<boolean>;
@@ -64,12 +53,13 @@ interface ElectronAPI {
   moveProjectorToDisplay: (displayId: number) => Promise<boolean>;
   moveMonitorToDisplay: (displayId: number) => Promise<boolean>;
   getWindowStates: () => Promise<WindowStatesInfo>;
-  
-  // Event listeners
-  onWindowStateChanged: (callback: () => void) => () => void;
 }
 
-interface Window {
-  electronAPI?: ElectronAPI;
-  __ELECTRON__?: boolean;
+declare global {
+  interface Window {
+    electronAPI?: ElectronAPI;
+    __ELECTRON__?: boolean;
+  }
 }
+
+export {};

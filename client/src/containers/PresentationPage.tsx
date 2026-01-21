@@ -19,12 +19,30 @@ const Presentation = ({
   prevTimerInfo,
 }: PresentationProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isElectron, setIsElectron] = useState(false);
 
   const handleClick = () => {
     document.body.requestFullscreen();
   };
 
   useEffect(() => {
+    const checkElectron = async () => {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.isElectron();
+        setIsElectron(result);
+        // In Electron, windows are always fullscreen, so set it immediately
+        if (result) {
+          setIsFullscreen(true);
+        }
+      }
+    };
+    checkElectron();
+  }, []);
+
+  useEffect(() => {
+    // Only listen for browser fullscreen changes if not in Electron
+    if (isElectron) return;
+
     const onFullScreenChange = () => {
       setIsFullscreen(document.fullscreenElement !== null);
     };
@@ -33,7 +51,7 @@ const Presentation = ({
     return () => {
       document.removeEventListener("fullscreenchange", onFullScreenChange);
     };
-  }, []);
+  }, [isElectron]);
 
   return isFullscreen ? (
     <DisplayWindow

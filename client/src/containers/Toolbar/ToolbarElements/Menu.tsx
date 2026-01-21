@@ -5,6 +5,7 @@ import { MenuItemType } from "../../../types";
 import { RedoButton, UndoButton } from "./Undo";
 import ChangelogModal from "../../../components/ChangelogModal/ChangelogModal";
 import { useState, useEffect } from "react";
+import { useElectronWindows } from "../../../hooks/useElectronWindows";
 
 const ToolbarMenu = ({
   isPhone,
@@ -15,6 +16,7 @@ const ToolbarMenu = ({
 }) => {
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
+  const { isElectron, openMonitorWindow, openProjectorWindow } = useElectronWindows();
 
   useEffect(() => {
     // Base font size from index.css (92.5%)
@@ -49,8 +51,11 @@ const ToolbarMenu = ({
       text: "Open Stage Monitor",
       onClick: async () => {
         try {
-          // TODO place on existing monitor
-          window.open("#/monitor", "_monitor", "width=500,height=360");
+          if (isElectron) {
+            await openMonitorWindow();
+          } else {
+            window.open("#/monitor", "_monitor", "width=500,height=360");
+          }
         } catch (err) {
           console.error(err);
         }
@@ -60,7 +65,11 @@ const ToolbarMenu = ({
       text: "Open Projector",
       onClick: async () => {
         try {
-          window.open("#/projector", "_projector", "width=500,height=360");
+          if (isElectron) {
+            await openProjectorWindow();
+          } else {
+            window.open("#/projector", "_projector", "width=500,height=360");
+          }
         } catch (err) {
           console.error(err);
         }
