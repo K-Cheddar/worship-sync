@@ -102,33 +102,46 @@ jobs:
       - run: npm ci
         working-directory: client
 
-      - name: Build Electron preload/main
-        run: npm run build:electron:files
-        working-directory: client
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-
-      - name: Build renderer
+      - name: Build Electron app
         run: npm run build
         working-directory: client
         env:
-          ELECTRON_BUILD: true
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Package and Publish Linux
+      - name: Package Linux
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux --publish always
+        run: npx electron-builder --linux --publish never --config electron-builder.config.js
         working-directory: client
-        env:
-          GH_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 
-      - name: Package and Publish Windows
+      - name: Package Windows
         if: matrix.platform == 'win'
-        run: npx electron-builder --win --publish always
+        run: npx electron-builder --win --publish never --config electron-builder.config.js
         working-directory: client
+
+      - name: Upload Windows artifacts
+        if: matrix.platform == 'win'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.release.outputs.version }}
+          files: |
+            client/dist/*.exe
+            client/dist/*.exe.blockmap
+            client/dist/latest.yml
         env:
-          GH_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
+
+      - name: Upload Linux artifacts
+        if: matrix.platform == 'linux'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.release.outputs.version }}
+          files: |
+            client/dist/*.AppImage
+            client/dist/*.deb
+            client/dist/latest-linux.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 
   deploy-heroku:
     name: Deploy Heroku

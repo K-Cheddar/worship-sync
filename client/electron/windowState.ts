@@ -9,6 +9,7 @@ export interface WindowState {
   width: number;
   height: number;
   isFullScreen: boolean;
+  wasOpen?: boolean; // Track if window was open when app closed
 }
 
 export interface WindowStates {
@@ -81,9 +82,25 @@ export class WindowStateManager {
       width: bounds.width,
       height: bounds.height,
       isFullScreen: window.isFullScreen(),
+      wasOpen: true, // Mark as open when updating state
     };
 
     this.saveStates();
+  }
+
+  /**
+   * Mark a window as closed
+   */
+  markWindowClosed(windowType: "projector" | "monitor") {
+    this.states[windowType].wasOpen = false;
+    this.saveStates();
+  }
+
+  /**
+   * Check if window was open when app last closed
+   */
+  wasWindowOpen(windowType: "projector" | "monitor"): boolean {
+    return this.states[windowType].wasOpen ?? false;
   }
 
   /**

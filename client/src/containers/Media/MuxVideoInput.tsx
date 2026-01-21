@@ -239,6 +239,7 @@ const MuxVideoInput = ({ onComplete }: MuxVideoInputProps) => {
         title="Upload Video to Mux"
         size="sm"
         showCloseButton={!isUploading}
+        
       >
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
@@ -249,13 +250,26 @@ const MuxVideoInput = ({ onComplete }: MuxVideoInputProps) => {
               accept="video/*"
               onChange={handleFileSelect}
               disabled={isUploading}
-              className="text-sm file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 file:cursor-pointer disabled:opacity-50"
+              className="hidden"
             />
-            {selectedFile && (
-              <p className="text-xs text-gray-400">
-                Selected: {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
-              </p>
-            )}
+            <div className="flex flex-col items-center gap-2">
+              <Button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="w-full justify-center"
+              >
+                Choose File
+              </Button>
+              <div className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded flex items-center justify-center text-sm">
+                {selectedFile ? (
+                  <span className="text-gray-300 truncate">
+                    {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
+                  </span>
+                ) : (
+                  <span className="text-gray-500">No file selected</span>
+                )}
+              </div>
+            </div>
           </div>
 
           <Input
@@ -300,7 +314,7 @@ const MuxVideoInput = ({ onComplete }: MuxVideoInputProps) => {
               Cancel
             </Button>
             <Button
-              variant="primary"
+              variant="cta"
               onClick={handleUpload}
               disabled={!selectedFile || isUploading}
               svg={Upload}

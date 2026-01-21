@@ -19,6 +19,7 @@ export default defineConfig({
       },
       external: [
         "electron",
+        "electron-updater",
         /^node:/,
         "path",
         "url",
@@ -28,7 +29,6 @@ export default defineConfig({
     },
     target: "node18",
     minify: false,
-    treeshake: false,
   },
   resolve: {
     alias: {

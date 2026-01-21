@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, screen } from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { autoUpdater } from "electron-updater";
+import updaterPkg from "electron-updater";
+
 import { WindowStateManager } from "./windowState";
 import {
   createDisplayWindow,
@@ -9,6 +10,8 @@ import {
   setupReadyToShow,
   focusWindow,
 } from "./windowHelpers";
+
+const { autoUpdater } = updaterPkg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -55,6 +58,7 @@ const createProjectorWindow = () => {
     "projector",
     windowStateManager,
     () => {
+      windowStateManager.markWindowClosed("projector");
       projectorWindow = null;
       notifyWindowStateChanged();
     }
@@ -84,6 +88,7 @@ const createMonitorWindow = () => {
     "monitor",
     windowStateManager,
     () => {
+      windowStateManager.markWindowClosed("monitor");
       monitorWindow = null;
       notifyWindowStateChanged();
     }
@@ -92,19 +97,23 @@ const createMonitorWindow = () => {
 
 const createWindow = () => {
   // Create the browser window
+  // Get icon path - use .ico on Windows, .png on other platforms
+  const iconPath = process.platform === "win32" 
+    ? join(app.getAppPath(), "buildResources", "icon.ico")
+    : join(app.getAppPath(), "buildResources", "icon.png");
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     show: false,
-    webPreferences: {
-      preload: join(__dirname, "preload.js"),
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: false,
-      webSecurity: true,
-    },
-    autoHideMenuBar: true,
-    icon: join(__dirname, "../dist/WorshipSyncIcon.png"),
+      webPreferences: {
+        preload: join(__dirname, "../preload/preload.mjs"),
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: false,
+      },
+    autoHideMenuBar: false, // Show menu for debugging
+    icon: iconPath,
   });
 
   // Maximize the window before showing
@@ -115,23 +124,21 @@ const createWindow = () => {
   if (isDev) {
     // In development, load from Vite dev server
     mainWindow.loadURL("https://local.worshipsync.net:3000");
-    // Open DevTools in development
-    mainWindow.webContents.openDevTools();
   } else {
     // In production, load from the built files
-    // Use app.getAppPath() for reliable path resolution in packaged apps
-    const appPath = app.getAppPath();
-    const indexPath = join(appPath, "dist", "index.html");
+    // electron-vite outputs renderer to dist-electron/renderer/
+    const indexPath = join(__dirname, "../renderer/index.html");
     
-    console.log("App path:", appPath);
-    console.log("Index path:", indexPath);
+    console.log("Loading from:", indexPath);
     console.log("__dirname:", __dirname);
-    console.log("isPackaged:", app.isPackaged);
     
     mainWindow.loadFile(indexPath).catch((err) => {
       console.error("Failed to load index.html:", err);
     });
   }
+  
+  // Always open DevTools for debugging
+  mainWindow.webContents.openDevTools();
 
   // Log any errors
   mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
@@ -142,12 +149,17 @@ const createWindow = () => {
     console.log("Console:", message);
   });
 
-  // When main window is ready, open projector and monitor windows
+  // When main window is ready, open projector and monitor windows only if they were previously open
   mainWindow.webContents.once("did-finish-load", () => {
     // Delay slightly to ensure main window is fully loaded
     setTimeout(() => {
-      createProjectorWindow();
-      createMonitorWindow();
+      // Only open windows if they were open when app last closed
+      if (windowStateManager.wasWindowOpen("projector")) {
+        createProjectorWindow();
+      }
+      if (windowStateManager.wasWindowOpen("monitor")) {
+        createMonitorWindow();
+      }
     }, 500);
   });
 

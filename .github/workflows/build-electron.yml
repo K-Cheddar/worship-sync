@@ -9,9 +9,6 @@ name: Build Electron App
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*.*.*"
   release:
     types: [published]
 
