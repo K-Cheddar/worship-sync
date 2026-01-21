@@ -126,14 +126,26 @@ jobs:
         run: npx electron-builder --win --publish never
         working-directory: client
 
-      - name: Upload artifacts to release
+      - name: Upload Windows artifacts
+        if: matrix.platform == 'win'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ needs.release.outputs.version }}
           files: |
-            client/dist/**/*.exe
-            client/dist/**/*.AppImage
-            client/dist/**/*.deb
+            "client/dist/WorshipSync Setup *.exe"
+            "client/dist/WorshipSync*.exe"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
+      
+
+      - name: Upload Linux artifacts
+        if: matrix.platform == 'linux'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.release.outputs.version }}
+          files: |
+            client/dist/*.AppImage
+            client/dist/*.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
 

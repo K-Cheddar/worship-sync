@@ -5,14 +5,14 @@ export default defineConfig({
   productName: "WorshipSync",
 
   directories: {
-    output: "dist",
-    buildResources: "buildResources",
+    output: "client/dist",
+    buildResources: "client/buildResources",
   },
 
   files: [
-    "dist/**/*",
-    "dist-electron/**/*",
-    "package.json"
+    "client/dist/**/*",
+    "client/dist-electron/**/*",
+    "client/package.json"
   ],
 
   asar: true,
@@ -21,7 +21,7 @@ export default defineConfig({
 
   win: {
     target: [{ target: "nsis", arch: ["x64", "ia32"] }],
-    icon: "buildResources/icon.ico",
+    icon: "client/buildResources/icon.ico",
     publisherName: "WorshipSync",
   },
 
@@ -30,7 +30,7 @@ export default defineConfig({
       { target: "AppImage", arch: ["x64"] },
       { target: "deb", arch: ["x64"] },
     ],
-    icon: "buildResources/icons",
+    icon: "client/buildResources/icons",
     category: "Office",
   },
 
