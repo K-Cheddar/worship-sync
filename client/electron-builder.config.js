@@ -35,5 +35,6 @@ const config = {
     createStartMenuShortcut: true,
   },
 };
-module.exports = config;
+
+export default config;
 
