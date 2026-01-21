@@ -247,7 +247,10 @@ export const keepElementInView = ({
 export const checkMediaType = (mediaUrl?: string) => {
   if (!mediaUrl) return "image";
 
-  if (mediaUrl.includes("portable-media/video/upload")) {
+  if (
+    mediaUrl.includes("portable-media/video/upload") ||
+    mediaUrl.includes("stream.mux.com")
+  ) {
     return "video";
   }
   return "image";
@@ -255,6 +258,16 @@ export const checkMediaType = (mediaUrl?: string) => {
 
 export const getImageFromVideoUrl = (videoUrl?: string) => {
   if (!videoUrl) return "";
+  
+  // Handle Mux URLs
+  if (videoUrl.includes("stream.mux.com")) {
+    const playbackIdMatch = videoUrl.match(/stream\.mux\.com\/([a-zA-Z0-9]+)/);
+    if (playbackIdMatch) {
+      return `https://image.mux.com/${playbackIdMatch[1]}/thumbnail.png?width=250&height=141&fit_mode=pad&time=1`;
+    }
+  }
+  
+  // Handle Cloudinary URLs
   let updatedUrl = videoUrl.split("?")[0];
   updatedUrl = updatedUrl.replace(/sp_auto\/|\.m3u8/g, "");
   return updatedUrl + ".png";

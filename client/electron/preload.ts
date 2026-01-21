@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("window-state-changed", listener);
     return () => ipcRenderer.removeListener("window-state-changed", listener);
   },
+  
+  // Auto-updater
+  checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
+  installUpdate: () => ipcRenderer.invoke("install-update"),
 });
 
 // Expose a flag to indicate we're running in Electron

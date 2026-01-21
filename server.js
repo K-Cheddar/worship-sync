@@ -10,6 +10,7 @@ import axios from "axios";
 import dotenv from "dotenv";
 import { readFileSync } from "node:fs";
 import { v2 as cloudinary } from "cloudinary";
+import Mux from "@mux/mux-node";
 import https from "https";
 import { fetchExcelFile } from "./getScheduleFunctions.js";
 
@@ -45,6 +46,15 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+
+// Configure Mux
+let mux;
+if (process.env.MUX_TOKEN_ID && process.env.MUX_TOKEN_SECRET) {
+  mux = new Mux({
+    tokenId: process.env.MUX_TOKEN_ID,
+    tokenSecret: process.env.MUX_TOKEN_SECRET,
+  });
+}
 
 if (isDevelopment) {
   const options = {
@@ -264,6 +274,89 @@ app.delete("/api/cloudinary/delete", async (req, res) => {
     res
       .status(500)
       .json({ error: "Failed to delete image", details: error.message });
+  }
+});
+
+// Mux endpoints
+app.post("/api/mux/upload", async (req, res) => {
+  try {
+    if (!mux) {
+      return res.status(503).json({ error: "Mux is not configured. Please set MUX_TOKEN_ID and MUX_TOKEN_SECRET environment variables." });
+    }
+
+    const { corsOrigin } = req.body;
+
+    const upload = await mux.video.uploads.create({
+      cors_origin: corsOrigin || "*",
+      new_asset_settings: {
+        playback_policy: ["public"],
+        encoding_tier: "baseline",
+      },
+    });
+
+    res.json({
+      uploadId: upload.id,
+      url: upload.url,
+    });
+  } catch (error) {
+    console.error("Error creating Mux upload:", error);
+    res.status(500).json({ error: "Failed to create upload", details: error.message });
+  }
+});
+
+app.get("/api/mux/upload/:uploadId", async (req, res) => {
+  try {
+    if (!mux) {
+      return res.status(503).json({ error: "Mux is not configured" });
+    }
+
+    const { uploadId } = req.params;
+    const upload = await mux.video.uploads.retrieve(uploadId);
+
+    res.json({
+      status: upload.status,
+      assetId: upload.asset_id,
+    });
+  } catch (error) {
+    console.error("Error getting Mux upload status:", error);
+    res.status(500).json({ error: "Failed to get upload status", details: error.message });
+  }
+});
+
+app.get("/api/mux/asset/:assetId", async (req, res) => {
+  try {
+    if (!mux) {
+      return res.status(503).json({ error: "Mux is not configured" });
+    }
+
+    const { assetId } = req.params;
+    const asset = await mux.video.assets.retrieve(assetId);
+
+    res.json({
+      status: asset.status,
+      playbackId: asset.playback_ids?.[0]?.id,
+      duration: asset.duration,
+      aspectRatio: asset.aspect_ratio,
+    });
+  } catch (error) {
+    console.error("Error getting Mux asset:", error);
+    res.status(500).json({ error: "Failed to get asset", details: error.message });
+  }
+});
+
+app.delete("/api/mux/asset/:assetId", async (req, res) => {
+  try {
+    if (!mux) {
+      return res.status(503).json({ error: "Mux is not configured" });
+    }
+
+    const { assetId } = req.params;
+    await mux.video.assets.delete(assetId);
+
+    res.json({ success: true, message: "Asset deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting Mux asset:", error);
+    res.status(500).json({ error: "Failed to delete asset", details: error.message });
   }
 });
 

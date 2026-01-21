@@ -67,6 +67,10 @@ interface ElectronAPI {
   
   // Event listeners
   onWindowStateChanged: (callback: () => void) => () => void;
+  
+  // Auto-updater
+  checkForUpdates: () => Promise<{ available: boolean; updateInfo?: any; error?: string; message?: string }>;
+  installUpdate: () => Promise<void>;
 }
 
 interface Window {

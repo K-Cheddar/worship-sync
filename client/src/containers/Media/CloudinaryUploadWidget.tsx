@@ -1,5 +1,5 @@
 import { createContext, useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { Image } from "lucide-react";
 
 import Button from "../../components/Button/Button";
 
@@ -79,6 +79,8 @@ type CloudinaryUploadWidgetProps = {
   uwConfig: {
     cloudName: string;
     uploadPreset: string;
+    clientAllowedFormats?: string[];
+    resourceType?: string;
   };
   onComplete: (info: mediaInfoType) => void;
 };
@@ -128,9 +130,11 @@ const CloudinaryUploadWidget = ({
       <Button
         variant="tertiary"
         className="lg:ml-auto"
-        svg={Plus}
+        svg={Image}
         onClick={initializeCloudinaryWidget}
-      />
+      >
+        Add
+      </Button>
     </CloudinaryScriptContext.Provider>
   );
 };

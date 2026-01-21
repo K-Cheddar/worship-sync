@@ -522,6 +522,9 @@ export type MediaType = {
   frameRate?: number;
   hasAudio?: boolean;
   duration?: number;
+  source?: "cloudinary" | "mux";
+  muxPlaybackId?: string;
+  muxAssetId?: string;
 };
 
 export type DBMedia = {
