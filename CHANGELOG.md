@@ -1,3 +1,11 @@
+## [1.25.9](https://github.com/K-Cheddar/worship-sync/compare/v1.25.8...v1.25.9) (2026-01-21)
+
+
+### Bug Fixes
+
+* Correct windows uploads ([c16e8e1](https://github.com/K-Cheddar/worship-sync/commit/c16e8e1c379310e2f28b97d27e9954734614bb23))
+* Correcting build folder ([363de3c](https://github.com/K-Cheddar/worship-sync/commit/363de3c345273221e2d51693d5cb1dd0cc0038d8))
+
 ## [1.25.8](https://github.com/K-Cheddar/worship-sync/compare/v1.25.7...v1.25.8) (2026-01-21)
 
 
