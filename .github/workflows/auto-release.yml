@@ -98,8 +98,6 @@ jobs:
           cache: npm
 
       - run: npm ci
-
-      - run: npm ci
         working-directory: client
 
       - name: Build Electron app
