@@ -12,6 +12,12 @@ const config = {
     "package.json"
   ],
 
+  // Ensure buildResources (including icons) are available at runtime
+  // This is separate from icon embedding - that's handled by win.icon
+  extraResources: [
+    "buildResources/**/*"
+  ],
+
   asar: true,
   npmRebuild: false,
   buildDependenciesFromSource: false,
