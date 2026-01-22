@@ -1,3 +1,11 @@
+## [1.28.1](https://github.com/K-Cheddar/worship-sync/compare/v1.28.0...v1.28.1) (2026-01-22)
+
+
+### Bug Fixes
+
+* Fix crashing in section text preview ([8ceb0b8](https://github.com/K-Cheddar/worship-sync/commit/8ceb0b8f8344b98d3b0ba93f1f437589ddb8a25a))
+* Fixed free form item editing ([daa2ded](https://github.com/K-Cheddar/worship-sync/commit/daa2ded698797633aa64e01a479b04d0db9c6ad9))
+
 # [1.28.0](https://github.com/K-Cheddar/worship-sync/compare/v1.27.15...v1.28.0) (2026-01-22)
 
 
