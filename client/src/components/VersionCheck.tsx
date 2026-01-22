@@ -10,7 +10,7 @@ import {
 } from "../utils/versionUtils";
 import { useVersionContext } from "../context/versionContext";
 import { GlobalInfoContext } from "../context/globalInfo";
-import { getApiBasePath } from "../utils/environment";
+import { getApiBasePath, isElectron } from "../utils/environment";
 import Button from "./Button/Button";
 import Modal from "./Modal/Modal";
 import MarkdownRenderer from "./MarkdownRenderer/MarkdownRenderer";
@@ -30,6 +30,7 @@ const isControllerRoute = () => {
 };
 
 const VersionCheck: React.FC = () => {
+  // Call all hooks first (Rules of Hooks)
   const {
     versionUpdate,
     setVersionUpdate,
@@ -56,6 +57,10 @@ const VersionCheck: React.FC = () => {
   const wasActiveRef = useRef<boolean>(false);
 
   const handleUpdate = useCallback(() => {
+    // Skip if Electron
+    if (isElectron()) {
+      return;
+    }
     setIsUpdating(true);
     const getLatestVersion = () => {
       setTimeout(() => {
@@ -123,6 +128,11 @@ const VersionCheck: React.FC = () => {
 
   // Check version directly from the server
   const checkVersion = useCallback(async () => {
+    // Skip if Electron
+    if (isElectron()) {
+      return;
+    }
+
     try {
       const response = await fetch(
         `${getApiBasePath()}api/version`,
@@ -132,6 +142,13 @@ const VersionCheck: React.FC = () => {
       );
 
       if (response.ok) {
+        // Check if response is actually JSON
+        const contentType = response.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          console.warn("VersionCheck: Response is not JSON, skipping");
+          return;
+        }
+        
         const { version } = await response.json();
         const currentVersion = getBuildTimeVersion();
 
@@ -157,8 +174,13 @@ const VersionCheck: React.FC = () => {
     }
   }, [fetchChangelog, setVersionUpdate, handleUpdate]);
 
-  // Set up periodic version checking
+  // Set up periodic version checking (only for web)
   useEffect(() => {
+    // Skip if Electron
+    if (isElectron()) {
+      return;
+    }
+
     // Initial version check
     checkVersion();
 
@@ -183,8 +205,13 @@ const VersionCheck: React.FC = () => {
     };
   }, [checkVersion]);
 
-  // Monitor active instances to detect when user becomes active
+  // Monitor active instances to detect when user becomes active (only for web)
   useEffect(() => {
+    // Skip if Electron
+    if (isElectron()) {
+      return;
+    }
+
     // If user was not active before but is now active, trigger version check
     if (!wasActiveRef.current && isUserActive) {
       checkVersion();
@@ -213,6 +240,12 @@ const VersionCheck: React.FC = () => {
     }
     setVersionUpdate(null);
   };
+
+  // Skip version checking in Electron - it has its own auto-updater
+  // Check after ALL hooks are called
+  if (isElectron()) {
+    return null;
+  }
 
   // Only render modal if we're in a controller route and should show update
   if (!isControllerRoute()) {

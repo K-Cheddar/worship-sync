@@ -70,7 +70,14 @@ interface ElectronAPI {
   
   // Auto-updater
   checkForUpdates: () => Promise<{ available: boolean; updateInfo?: any; error?: string; message?: string }>;
+  downloadUpdate: () => Promise<boolean>;
   installUpdate: () => Promise<void>;
+  
+  // Update event listeners
+  onUpdateAvailable?: (callback: (info: { version: string; releaseDate?: string }) => void) => () => void;
+  onUpdateDownloaded?: (callback: (info: { version: string; releaseDate?: string }) => void) => () => void;
+  onUpdateDownloadProgress?: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => () => void;
+  onUpdateError?: (callback: (error: { message: string }) => void) => () => void;
 }
 
 interface Window {
