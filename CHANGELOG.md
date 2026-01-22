@@ -1,3 +1,10 @@
+## [1.27.14](https://github.com/K-Cheddar/worship-sync/compare/v1.27.13...v1.27.14) (2026-01-22)
+
+
+### Bug Fixes
+
+* Testing ([712c0ad](https://github.com/K-Cheddar/worship-sync/commit/712c0ade1f200d77144df3f52ab1d489a1e96c3e))
+
 ## [1.27.13](https://github.com/K-Cheddar/worship-sync/compare/v1.27.12...v1.27.13) (2026-01-22)
 
 
