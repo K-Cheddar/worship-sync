@@ -19,10 +19,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [windows-latest]
+        # os: [ubuntu-latest, windows-latest]  # Linux commented out for now
         include:
-          - os: ubuntu-latest
-            platform: linux
+          # - os: ubuntu-latest
+          #   platform: linux
           - os: windows-latest
             platform: win
 
@@ -66,13 +67,13 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: cd client && npm run build:electron
 
-      - name: Build Electron app (Linux)
-        if: matrix.platform == 'linux'
-        run: cd client && npx electron-builder --linux --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=4096
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      # - name: Build Electron app (Linux)
+      #   if: matrix.platform == 'linux'
+      #   run: cd client && npx electron-builder --linux --publish never
+      #   env:
+      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #     NODE_OPTIONS: --max-old-space-size=4096
+      #     ELECTRON_SKIP_BINARY_DOWNLOAD: 1
 
       - name: Debug - Verify buildResources structure (Windows)
         if: matrix.platform == 'win'
@@ -119,6 +120,6 @@ jobs:
           name: electron-${{ matrix.platform }}
           path: |
             client/dist/*.exe
-            client/dist/*.AppImage
-            client/dist/*.deb
+            # client/dist/*.AppImage  # Linux commented out
+            # client/dist/*.deb       # Linux commented out
           retention-days: 30
