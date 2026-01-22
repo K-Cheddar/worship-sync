@@ -44,7 +44,7 @@ export const getApiBasePath = (): string => {
       return import.meta.env.VITE_ELECTRON_API_URL || "https://local.worshipsync.net:5000/";
     } else {
       // Production: use production API server (packaged app loads from file://)
-      return import.meta.env.VITE_ELECTRON_API_URL || "https://www.worshipsync.net/api/";
+      return import.meta.env.VITE_ELECTRON_API_URL || "https://www.worshipsync.net/";
     }
   }
   
