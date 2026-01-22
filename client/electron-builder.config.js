@@ -4,7 +4,7 @@ const config = {
 
   directories: {
     output: "dist",
-    buildResources: "buildResources",
+    buildResources: "buildResources", // Icons are relative to this directory
   },
 
   files: [
@@ -18,13 +18,19 @@ const config = {
 
   win: {
     target: ["nsis"],
-    icon: "buildResources/icon.ico",   // correct Windows icon
+    icon: "icon.ico",   // Path relative to buildResources directory
     publisherName: "WorshipSync",
+  },
+
+  mac: {
+    target: ["dmg"],
+    icon: "icon.png",   // Path relative to buildResources. For better quality, use .icns format
+    category: "public.app-category.productivity",
   },
 
   linux: {
     target: ["AppImage", "deb"],
-    icon: "buildResources/icons",      // folder with PNGs
+    icon: "icons",      // Path relative to buildResources directory
     category: "Office",
   },
 

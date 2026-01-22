@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, screen } from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import updaterPkg from "electron-updater";
 
 import { WindowStateManager } from "./windowState";
@@ -17,6 +18,37 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
+
+/**
+ * Get the icon path for the current platform
+ * Tries multiple locations to find the icon file
+ */
+const getIconPath = (): string | undefined => {
+  const iconName = process.platform === "win32" ? "icon.ico" : "icon.png";
+  
+  // Try different paths in order of preference
+  const possiblePaths = [
+    // Production: electron-builder puts buildResources in app resources
+    join(process.resourcesPath || app.getAppPath(), "buildResources", iconName),
+    // Development: from dist-electron/main, go up to client/buildResources
+    join(__dirname, "../../buildResources", iconName),
+    // Alternative: from app path
+    join(app.getAppPath(), "buildResources", iconName),
+    // Fallback: try relative to __dirname
+    join(__dirname, "../buildResources", iconName),
+  ];
+
+  // Return the first path that exists
+  for (const path of possiblePaths) {
+    if (existsSync(path)) {
+      return path;
+    }
+  }
+
+  // If no icon found, return undefined (Electron will use default)
+  console.warn(`Icon not found. Tried paths: ${possiblePaths.join(", ")}`);
+  return undefined;
+};
 
 // Allow self-signed certificates in development
 if (isDev) {
@@ -97,10 +129,7 @@ const createMonitorWindow = () => {
 
 const createWindow = () => {
   // Create the browser window
-  // Get icon path - use .ico on Windows, .png on other platforms
-  const iconPath = process.platform === "win32" 
-    ? join(app.getAppPath(), "buildResources", "icon.ico")
-    : join(app.getAppPath(), "buildResources", "icon.png");
+  const iconPath = getIconPath();
 
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -113,7 +142,7 @@ const createWindow = () => {
         sandbox: false,
       },
     autoHideMenuBar: false, // Show menu for debugging
-    icon: iconPath,
+    ...(iconPath && { icon: iconPath }), // Only set icon if found
   });
 
   // Maximize the window before showing
@@ -184,24 +213,55 @@ app.whenReady().then(() => {
 
   // Configure auto-updater (only in production)
   if (!isDev) {
-    autoUpdater.checkForUpdatesAndNotify();
+    // Don't use checkForUpdatesAndNotify() - we'll handle UI ourselves
+    autoUpdater.autoDownload = false; // Don't auto-download, let user choose
     
     // Check for updates every hour
     setInterval(() => {
-      autoUpdater.checkForUpdatesAndNotify();
+      autoUpdater.checkForUpdates();
     }, 60 * 60 * 1000);
 
-    // Log update events
-    autoUpdater.on("update-available", () => {
-      console.log("Update available");
+    // Initial check
+    autoUpdater.checkForUpdates();
+
+    // Send update events to renderer
+    autoUpdater.on("update-available", (info) => {
+      console.log("Update available:", info.version);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update-available", {
+          version: info.version,
+          releaseDate: info.releaseDate,
+        });
+      }
     });
 
-    autoUpdater.on("update-downloaded", () => {
-      console.log("Update downloaded - will install on quit");
+    autoUpdater.on("update-downloaded", (info) => {
+      console.log("Update downloaded:", info.version);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update-downloaded", {
+          version: info.version,
+          releaseDate: info.releaseDate,
+        });
+      }
+    });
+
+    autoUpdater.on("download-progress", (progressObj) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update-download-progress", {
+          percent: progressObj.percent,
+          transferred: progressObj.transferred,
+          total: progressObj.total,
+        });
+      }
     });
 
     autoUpdater.on("error", (error) => {
       console.error("Auto-updater error:", error);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update-error", {
+          message: error.message,
+        });
+      }
     });
   }
 
@@ -355,10 +415,18 @@ ipcMain.handle("check-for-updates", async () => {
       available: result !== null,
       updateInfo: result?.updateInfo 
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error checking for updates:", error);
     return { available: false, error: error.message };
   }
+});
+
+ipcMain.handle("download-update", () => {
+  if (!isDev) {
+    autoUpdater.downloadUpdate();
+    return true;
+  }
+  return false;
 });
 
 ipcMain.handle("install-update", () => {

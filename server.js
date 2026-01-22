@@ -434,9 +434,26 @@ app.get("/api/getDbSession", async (req, res) => {
 
 setupExpressErrorHandler(app);
 
-// Serve any static files
-app.use(express.static(path.join(dirname, "/client/dist")));
-// Handle React routing, return all requests to React app
-app.get("*", function (req, res) {
+app.use(
+  express.static(path.join(dirname, "/client/dist"), {
+    setHeaders(res, filePath) {
+      if (filePath.endsWith("index.html")) {
+        // Always fetch a fresh HTML file - never cache index.html
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+      } else {
+        // Vite fingerprints assets, so they can be cached forever
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      }
+    },
+  })
+);
+
+// React router fallback
+app.get("*", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   res.sendFile(path.join(dirname, "/client/dist", "index.html"));
 });

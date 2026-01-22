@@ -105,15 +105,28 @@ const ControllerInfoProvider = ({ children }: any) => {
   const bibleReplicateRef = useRef<any>(null);
 
   const getCouchSession = useCallback(async () => {
-    const response = await fetch(
-      `${getApiBasePath()}api/getDbSession`,
-      {
-        credentials: "include",
+    try {
+      const response = await fetch(
+        `${getApiBasePath()}api/getDbSession`,
+        {
+          credentials: "include",
+        }
+      );
+      
+      // Check if response is actually JSON
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        console.warn("getCouchSession: Response is not JSON, skipping");
+        return false;
       }
-    );
-    const data = await response.json();
-    setHasCouchSession(data.success);
-    return data.success;
+      
+      const data = await response.json();
+      setHasCouchSession(data.success);
+      return data.success;
+    } catch (error) {
+      console.error("getCouchSession: Error fetching session:", error);
+      return false;
+    }
   }, []);
 
   const syncDb = useCallback(
