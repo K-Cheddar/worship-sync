@@ -1,3 +1,10 @@
+## [1.27.15](https://github.com/K-Cheddar/worship-sync/compare/v1.27.14...v1.27.15) (2026-01-22)
+
+
+### Bug Fixes
+
+* Updated icons for desktop ([6429638](https://github.com/K-Cheddar/worship-sync/commit/6429638a985d6b6ae30400f9fb13760c5f0cc6da))
+
 ## [1.27.14](https://github.com/K-Cheddar/worship-sync/compare/v1.27.13...v1.27.14) (2026-01-22)
 
 
