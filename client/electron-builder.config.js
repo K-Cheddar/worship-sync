@@ -1,6 +1,8 @@
 const config = {
   appId: "com.worshipsync.app",
   productName: "WorshipSync",
+  // Publisher name at root level (not in win section)
+  publisherName: "WorshipSync",
 
   directories: {
     output: "dist",
@@ -26,7 +28,6 @@ const config = {
     target: ["nsis"],
     // Icon path relative to buildResources directory
     icon: "icon.ico",
-    publisherName: "WorshipSync",
     // Critical: This ensures the icon is embedded in the executable
     signAndEditExecutable: true,
   },
