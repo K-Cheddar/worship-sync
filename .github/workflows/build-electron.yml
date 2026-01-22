@@ -28,25 +28,28 @@ jobs:
             platform: win
 
     steps:
-      - name: Get latest release tag
-        id: latest_release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { data: releases } = await github.rest.repos.listReleases({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              per_page: 1
-            });
-            if (releases.length > 0) {
-              core.setOutput('tag', releases[0].tag_name);
-              console.log('Latest release tag:', releases[0].tag_name);
-            }
+      # Commented out - checking out release tag uses old code
+      # For testing, checkout current branch/commit instead
+      # - name: Get latest release tag
+      #   id: latest_release
+      #   uses: actions/github-script@v7
+      #   with:
+      #     script: |
+      #       const { data: releases } = await github.rest.repos.listReleases({
+      #         owner: context.repo.owner,
+      #         repo: context.repo.repo,
+      #         per_page: 1
+      #       });
+      #       if (releases.length > 0) {
+      #         core.setOutput('tag', releases[0].tag_name);
+      #         console.log('Latest release tag:', releases[0].tag_name);
+      #       }
 
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.latest_release.outputs.tag || github.ref }}
+          # Checkout current branch/commit instead of release tag for testing
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Setup Node.js
