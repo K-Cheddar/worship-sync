@@ -74,13 +74,44 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
 
+      - name: Debug - Verify buildResources structure (Windows)
+        if: matrix.platform == 'win'
+        run: |
+          Write-Host "=== Current directory ==="
+          Get-Location
+          Write-Host "=== Listing buildResources directory ==="
+          Get-ChildItem client\buildResources
+          Write-Host "=== Icon file details ==="
+          Get-Item client\buildResources\icon.ico | Format-List
+          Write-Host "=== Checking config file ==="
+          Select-String -Path client\electron-builder.config.js -Pattern "win:" -Context 0,5
+          Write-Host "=== Running verification script ==="
+          cd client
+          node scripts/verify-icon-config.js
+        shell: pwsh
+
       - name: Build Electron app (Windows)
         if: matrix.platform == 'win'
-        run: cd client && npx electron-builder --win --publish never
+        run: cd client && npx electron-builder --win --publish never --config electron-builder.config.js
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=4096
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          DEBUG: electron-builder
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+
+      - name: Debug - Verify built executable (Windows)
+        if: matrix.platform == 'win'
+        run: |
+          Write-Host "=== Built files ==="
+          Get-ChildItem client\dist\*.exe
+          Write-Host "=== Checking executable properties ==="
+          Get-Item client\dist\*.exe | Select-Object Name, Length, LastWriteTime | Format-List
+          Write-Host "=== Attempting to read executable icon info ==="
+          $exe = Get-Item client\dist\*.exe | Select-Object -First 1
+          Write-Host "Executable: $($exe.FullName)"
+        shell: pwsh
+        continue-on-error: true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
