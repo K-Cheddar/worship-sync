@@ -186,10 +186,6 @@ app.get("/getMembers", async (req, res) => {
   res.send(members);
 });
 
-app.get("/api/version", (req, res) => {
-  res.json({ version: packageJson.version });
-});
-
 app.get("/api/changelog", async (req, res) => {
   try {
     const changelogPath = path.join(dirname, "CHANGELOG.md");
@@ -454,12 +450,8 @@ app.use(
   express.static(path.join(dirname, "/client/dist"), {
     setHeaders(res, filePath) {
       if (filePath.endsWith("index.html")) {
-        // Always fetch a fresh HTML file - never cache index.html
-        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-        res.setHeader("Pragma", "no-cache");
-        res.setHeader("Expires", "0");
-      } else {
-        // Vite fingerprints assets, so they can be cached forever
+        res.setHeader("Cache-Control", "no-store");
+      } else if (/\.(js|css|woff2?|png|jpg|svg)$/.test(filePath)) {
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
       }
     },
@@ -468,8 +460,6 @@ app.use(
 
 // React router fallback
 app.get("*", (req, res) => {
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
+  res.setHeader("Cache-Control", "no-store");
   res.sendFile(path.join(dirname, "/client/dist", "index.html"));
 });

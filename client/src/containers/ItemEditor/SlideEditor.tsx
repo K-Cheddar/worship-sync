@@ -79,7 +79,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     setIsBoxLocked(Array(numBoxes).fill(true));
   }, [numBoxes]);
 
-  const [localName, setLocalName] = useState(name);
+  const [localName, setLocalName] = useState(name || "");
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
 
@@ -125,7 +125,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   }, []);
 
   useEffect(() => {
-    setLocalName(name);
+    setLocalName(name || "");
   }, [name]);
 
   useEffect(() => {
@@ -361,7 +361,9 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
   // Helper function to get all section text
   const getSectionText = useCallback(
-    (slide: ItemSlideType, allSlides: ItemSlideType[], boxIndex: number): string => {
+    (slide: ItemSlideType | undefined, boxIndex: number): string => {
+      if (!slide) return "";
+
       if (type === "song") {
         const formattedLyrics =
           item.arrangements[item.selectedArrangement]?.formattedLyrics || [];
@@ -398,8 +400,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     // For songs, use arrangement slides; for others, use item slides
     const currentSlides = type === "song" && arrangement?.slides ? arrangement.slides : slides;
     const currentSlide = currentSlides?.[selectedSlide];
-    if (!currentSlide) return "";
-    return getSectionText(currentSlide, currentSlides, selectedBox);
+    return getSectionText(currentSlide, selectedBox);
   }, [type, slides, selectedSlide, selectedBox, getSectionText, arrangement]);
 
   // Get current section name and color for display
@@ -668,7 +669,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               <Input
                 hideLabel
                 className="text-base font-semibold flex-1 truncate flex items-center gap-2 max-w-[calc(100%-2rem)]"
-                value={localName}
+                value={localName || ""}
                 onChange={(val) => setLocalName(val as string)}
                 data-ignore-undo="true"
               />

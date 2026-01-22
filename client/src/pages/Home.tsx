@@ -24,7 +24,7 @@ const HomeButton = ({
 
 const Welcome = () => {
   const { loginState } = useContext(GlobalInfoContext) || {};
-  const { logout, isMobile } = useContext(ControllerInfoContext) || {};
+  const { logout } = useContext(ControllerInfoContext) || {};
   const isLoggedIn = loginState === "success";
 
   return (
@@ -34,12 +34,13 @@ const Welcome = () => {
           {!isElectron() && (
             <Button
               variant="tertiary"
-              className="text-sm md:text-base px-3 py-1.5 flex items-center gap-1 md:gap-2"
+              className="flex items-center gap-2"
               onClick={() => window.open(getLatestReleaseUrl(), "_blank")}
               component="button"
               svg={Download}
+              iconSize="md"
             >
-              {isMobile ? "Download" : "Download for Windows"}
+              Download
             </Button>
           )}
         </div>

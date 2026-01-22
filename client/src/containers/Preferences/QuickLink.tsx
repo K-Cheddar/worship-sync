@@ -150,7 +150,7 @@ const QuickLink = ({
         label="Label"
         type="text"
         className="w-32"
-        value={label}
+        value={label || ""}
         onChange={(val) => updateQuickLink("label", val as string)}
         disabled={!canDelete}
       />

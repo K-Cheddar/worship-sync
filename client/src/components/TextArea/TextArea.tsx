@@ -73,7 +73,7 @@ const TextArea = ({
         id={id}
         ref={textAreaRef}
         className="w-full h-full rounded px-2 py-1 select text-black resize-none text-sm"
-        value={value}
+        value={value ?? ""}
         onChange={(e) => {
           if (autoResize) resizeTextArea();
           onChange(e.target.value);

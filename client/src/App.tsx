@@ -13,13 +13,11 @@ import store from "./store/store";
 import Login from "./pages/Login";
 import ControllerContextWrapper from "./ControllerContextWrapper";
 import GlobalInfoProvider from "./context/globalInfo";
-import { VersionProvider } from "./context/versionContext";
 import { ToastProvider } from "./context/toastContext";
 import Credits from "./pages/Credits";
 import ProjectorFull from "./pages/ProjectorFull";
 import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
 import TimerManager from "./components/TimerManager/TimerManager";
-import VersionCheck from "./components/VersionCheck";
 import ElectronUpdateCheck from "./components/ElectronUpdateCheck";
 import StreamInfo from "./pages/StreamInfo";
 import InfoController from "./pages/InfoController";
@@ -46,11 +44,9 @@ const App: React.FC = () => {
     <Provider store={store}>
       <Router>
         <GlobalInfoProvider>
-          <VersionProvider>
-            <ToastProvider>
-              <TimerManager />
-              <VersionCheck />
-              <ElectronUpdateCheck />
+          <ToastProvider>
+            <TimerManager />
+            <ElectronUpdateCheck />
               <Routes>
                 <Route element={<ControllerContextWrapper />}>
                   <Route path="/" element={<Home />} />
@@ -67,7 +63,6 @@ const App: React.FC = () => {
                 <Route path="/credits" element={<Credits />} />
               </Routes>
             </ToastProvider>
-          </VersionProvider>
         </GlobalInfoProvider>
       </Router>
     </Provider>
