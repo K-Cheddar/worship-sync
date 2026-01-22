@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useContext, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   getChangelogForVersion,
   getBuildTimeVersion,
   isVersionUpdateDismissed,
   markVersionUpdateDismissed,
 } from "../utils/versionUtils";
-import { GlobalInfoContext } from "../context/globalInfo";
 import { isElectron } from "../utils/environment";
 import Button from "./Button/Button";
 import Modal from "./Modal/Modal";
@@ -26,11 +25,7 @@ const isControllerRoute = () => {
 };
 
 const ElectronUpdateCheck: React.FC = () => {
-  // Only run in Electron
-  if (!isElectron() || !window.electronAPI) {
-    return null;
-  }
-
+  // Call all hooks first (Rules of Hooks)
   const [updateInfo, setUpdateInfo] = useState<{
     version: string;
     releaseDate?: string;
@@ -41,8 +36,6 @@ const ElectronUpdateCheck: React.FC = () => {
   const [isInstalling, setIsInstalling] = useState(false);
   const [changelog, setChangelog] = useState<string | null>(null);
   const [isLoadingChangelog, setIsLoadingChangelog] = useState(false);
-
-  const { hostId, activeInstances } = useContext(GlobalInfoContext) || {};
 
   // Fetch changelog for the new version
   const fetchChangelog = useCallback(
@@ -142,6 +135,11 @@ const ElectronUpdateCheck: React.FC = () => {
     }
     setUpdateInfo(null);
   };
+
+  // Only run in Electron - check after all hooks are called
+  if (!isElectron() || !window.electronAPI) {
+    return null;
+  }
 
   // Only render modal if we're in a controller route and should show update
   if (!isControllerRoute() || !showUpdateModal || !updateInfo) {
