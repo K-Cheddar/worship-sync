@@ -37,6 +37,9 @@ const config = {
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
+    installerIcon: "buildResources/icon.ico",
+    uninstallerIcon: "buildResources/icon.ico",
+    installerHeaderIcon: "buildResources/icon.ico",
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
   },
