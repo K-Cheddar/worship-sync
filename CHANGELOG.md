@@ -1,3 +1,11 @@
+## [1.27.5](https://github.com/K-Cheddar/worship-sync/compare/v1.27.4...v1.27.5) (2026-01-22)
+
+
+### Bug Fixes
+
+* fix electron install ([e5846da](https://github.com/K-Cheddar/worship-sync/commit/e5846da9e91005464c364b636ef864b65309b554))
+* install pouchdb ([e2eca06](https://github.com/K-Cheddar/worship-sync/commit/e2eca06d83793b8a9643fd0e772ea7eafe8f4639))
+
 ## [1.27.4](https://github.com/K-Cheddar/worship-sync/compare/v1.27.3...v1.27.4) (2026-01-22)
 
 
