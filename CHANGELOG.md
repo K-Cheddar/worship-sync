@@ -1,3 +1,10 @@
+# [1.28.0](https://github.com/K-Cheddar/worship-sync/compare/v1.27.15...v1.28.0) (2026-01-22)
+
+
+### Features
+
+* Improved video support ([4a1b2e6](https://github.com/K-Cheddar/worship-sync/commit/4a1b2e66a33f6cabc4007236f5eeb2b1b9e24516))
+
 ## [1.27.15](https://github.com/K-Cheddar/worship-sync/compare/v1.27.14...v1.27.15) (2026-01-22)
 
 
