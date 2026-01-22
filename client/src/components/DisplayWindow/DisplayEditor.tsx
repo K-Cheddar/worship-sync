@@ -1,7 +1,7 @@
 import { Box } from "../../types";
 import { ChevronsDown, ChevronsUp } from "lucide-react";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Position, ResizableDelta, Rnd } from "react-rnd";
 import cn from "classnames";
 import { ResizeDirection } from "re-resizable";
@@ -31,6 +31,8 @@ type DisplayEditorProps = {
   referenceWidth?: number; // Reference width for coordinate calculations (1920px)
   referenceHeight?: number; // Reference height for coordinate calculations (1080px)
   scaleFactor?: number; // Scale factor applied to parent container (for react-rnd coordinate calculations)
+  activeVideoUrl?: string;
+  isWindowVideoLoaded?: boolean;
 };
 
 const DisplayEditor = ({
@@ -45,6 +47,8 @@ const DisplayEditor = ({
   referenceWidth = REFERENCE_WIDTH,
   referenceHeight = REFERENCE_HEIGHT,
   scaleFactor = 1,
+  activeVideoUrl,
+  isWindowVideoLoaded,
 }: DisplayEditorProps) => {
   const [boxWidth, setBoxWidth] = useState(`${box.width}%`);
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
@@ -52,6 +56,15 @@ const DisplayEditor = ({
   const [isTextAreaFocused, setIsTextAreaFocused] = useState(false);
   const lastKeyPressedRef = useRef<string | null>(null);
   const isVideoBg = box.mediaInfo?.type === "video";
+  const videoUrl = box.mediaInfo?.background;
+  const shouldImageBeHidden = useMemo(
+    () =>
+      isVideoBg &&
+      videoUrl &&
+      videoUrl === activeVideoUrl &&
+      isWindowVideoLoaded,
+    [isVideoBg, videoUrl, activeVideoUrl, isWindowVideoLoaded]
+  );
   const background = isVideoBg
     ? box.mediaInfo?.placeholderImage
     : box.background;
@@ -309,7 +322,8 @@ const DisplayEditor = ({
         <img
           className={cn(
             "display-box-background h-full w-full absolute",
-            box.shouldKeepAspectRatio && "object-contain"
+            box.shouldKeepAspectRatio && "object-contain",
+            shouldImageBeHidden ? "opacity-0" : "opacity-100"
           )}
           style={{
             filter: `brightness(${box.brightness}%)`,

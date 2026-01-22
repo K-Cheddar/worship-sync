@@ -100,7 +100,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
   useEffect(() => {
     if (!slides?.[selectedSlide] && selectedSlide !== 0) {
-      console.log({selectedSlide, slides,  slide: slides?.[selectedSlide], length: slides.length})
       dispatch(setSelectedSlide(Math.max(slides.length - 2, 0)));
     }
   }, [selectedSlide, slides, dispatch]);
@@ -630,8 +629,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     ]
   );
 
-  console.log({item})
-
   return (
     <ErrorBoundary>
       <div>
@@ -753,6 +750,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                   selectedBox={selectedBox}
                   isBoxLocked={isBoxLocked}
                   disabled={!canEdit}
+                  shouldPlayVideo
                 />
               </div>
             </div>

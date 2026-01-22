@@ -214,7 +214,15 @@ export const preferencesSlice = createSlice({
       state.quickLinks = action.payload;
     },
     initiateQuickLinks: (state, action: PayloadAction<QuickLinkType[]>) => {
-      state.quickLinks = action.payload || [];
+      // Only update if payload is provided and non-empty, or if state is empty (initialization)
+      // This prevents overwriting existing quickLinks with empty array during rapid reloads
+      if (action.payload && action.payload.length > 0) {
+        state.quickLinks = action.payload;
+      } else if (state.quickLinks.length === 0) {
+        // Only set to empty array if state is already empty (true initialization)
+        state.quickLinks = action.payload || [];
+      }
+      // Otherwise, preserve existing quickLinks
     },
     setSelectedQuickLink: (state, action: PayloadAction<string>) => {
       state.selectedQuickLink =
@@ -407,7 +415,7 @@ export const preferencesSlice = createSlice({
     increaseFormattedLyrics: (state) => {
       state.formattedLyricsPerRow = Math.min(
         (state.formattedLyricsPerRow || 3) + 1,
-        4
+        6
       );
     },
     decreaseFormattedLyrics: (state) => {

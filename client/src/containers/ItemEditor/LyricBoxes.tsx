@@ -28,6 +28,8 @@ type FormattedLyricsProps = {
   availableSections: { value: string; label: string }[];
   onFormattedLyricsDelete: (index: number) => void;
   isMobile: boolean;
+  selectedSectionIndex?: number | null;
+  onSectionSelect?: (index: number | null) => void;
 };
 
 const LyricBoxes = ({
@@ -37,6 +39,8 @@ const LyricBoxes = ({
   availableSections,
   onFormattedLyricsDelete,
   isMobile,
+  selectedSectionIndex,
+  onSectionSelect,
 }: FormattedLyricsProps) => {
   const { formattedLyricsPerRow } = useSelector(
     (state: RootState) => state.undoable.present.preferences
@@ -83,7 +87,13 @@ const LyricBoxes = ({
       )}
     >
       {formattedLyrics.map(({ id, type, name, words }, index) => (
-        <li key={id} className="text-sm px-2">
+        <li 
+          key={id} 
+          className={cn(
+            "text-sm border-4 rounded-lg",
+            selectedSectionIndex === index ? "border-cyan-500" : "border-transparent"
+          )}
+        >
           <div
             className={cn(
               "flex font-semibold text-sm rounded-t-md px-1 py-0.5",
@@ -110,20 +120,26 @@ const LyricBoxes = ({
               }}
             />
           </div>
-          <TextArea
-            hideLabel
-            className="h-[30vh]"
-            data-ignore-undo="true"
-            value={words}
-            autoResize={isMobile}
-            onChange={(val) => {
-              const copiedFormattedLyrics = [...formattedLyrics];
-              const lyric = { ...copiedFormattedLyrics[index] };
-              lyric.words = val as string;
-              copiedFormattedLyrics[index] = lyric;
-              setFormattedLyrics(copiedFormattedLyrics);
-            }}
-          />
+          <div
+            onClick={() => onSectionSelect && onSectionSelect(index)}
+            className={cn( "cursor-pointer")}
+          >
+            <TextArea
+              hideLabel
+              className="h-[30vh]"
+              data-ignore-undo="true"
+              value={words}
+              autoResize={isMobile}
+              onChange={(val) => {
+                const copiedFormattedLyrics = [...formattedLyrics];
+                const lyric = { ...copiedFormattedLyrics[index] };
+                lyric.words = val as string;
+                copiedFormattedLyrics[index] = lyric;
+                setFormattedLyrics(copiedFormattedLyrics);
+              }}
+              onFocus={() => onSectionSelect && onSectionSelect(index)}
+            />
+          </div>
         </li>
       ))}
       <li className="flex flex-col px-2">

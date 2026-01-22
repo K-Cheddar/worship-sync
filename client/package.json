@@ -73,9 +73,7 @@
     "esbuild": "^0.27.2"
   },
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail --names \"WEB,ELECTRON\" --prefix-colors \"blue,green\" \"npm run dev:web\" \"npm run dev:electron\"",
-    "dev:web": "vite dev",
-    "dev:electron": "electron-vite dev",
+    "dev": "npm run electron",
     "build": "vite build",
     "build:electron": "electron-vite build",
     "build:lint": "npm run lint && vite build",

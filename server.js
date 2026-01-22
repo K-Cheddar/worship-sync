@@ -291,6 +291,11 @@ app.post("/api/mux/upload", async (req, res) => {
       new_asset_settings: {
         playback_policy: ["public"],
         encoding_tier: "baseline",
+        static_renditions: [
+          {
+            resolution: "highest",
+          },
+        ],
       },
     });
 
@@ -332,11 +337,22 @@ app.get("/api/mux/asset/:assetId", async (req, res) => {
     const { assetId } = req.params;
     const asset = await mux.video.assets.retrieve(assetId);
 
+    // Check static renditions status
+    const staticRenditions = asset.static_renditions || [];
+    const highestRendition = staticRenditions.find((r) => r.resolution === "highest");
+    const staticRenditionReady = highestRendition?.status === "ready";
+
     res.json({
       status: asset.status,
       playbackId: asset.playback_ids?.[0]?.id,
       duration: asset.duration,
       aspectRatio: asset.aspect_ratio,
+      staticRenditions: staticRenditions.map((r) => ({
+        resolution: r.resolution,
+        status: r.status,
+        name: r.name,
+      })),
+      staticRenditionReady,
     });
   } catch (error) {
     console.error("Error getting Mux asset:", error);
