@@ -64,7 +64,7 @@ jobs:
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=4096
-        run: cd client && npm run build
+        run: cd client && npm run build:electron
 
       - name: Build Electron app (Linux)
         if: matrix.platform == 'linux'

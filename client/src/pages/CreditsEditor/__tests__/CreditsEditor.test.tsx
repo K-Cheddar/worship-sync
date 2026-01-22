@@ -5,7 +5,7 @@ import CreditsEditor from "../CreditsEditor";
 import { configureStore } from "@reduxjs/toolkit";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import { GlobalInfoContext } from "../../../context/globalInfo";
-import PouchDB from "pouchdb";
+import PouchDB from "pouchdb-browser";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { Database } from "firebase/database";
 import { creditsSlice } from "../../../store/creditsSlice";

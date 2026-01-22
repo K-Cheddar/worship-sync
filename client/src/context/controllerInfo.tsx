@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 
-import PouchDB from "pouchdb";
+import PouchDB from "pouchdb-browser";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext } from "./globalInfo";
 import { useLocation } from "react-router-dom";
