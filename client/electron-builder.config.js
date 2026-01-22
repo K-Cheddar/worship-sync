@@ -1,8 +1,6 @@
 const config = {
   appId: "com.worshipsync.app",
   productName: "WorshipSync",
-  // Publisher name at root level (not in win section)
-  publisherName: "WorshipSync",
 
   directories: {
     output: "dist",
