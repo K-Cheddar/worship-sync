@@ -18,25 +18,29 @@ const config = {
 
   win: {
     target: ["nsis"],
-    icon: "icon.ico", // relative to buildResources
+    // Icon path relative to buildResources directory
+    icon: "icon.ico",
     publisherName: "WorshipSync",
+    // Critical: This ensures the icon is embedded in the executable
+    signAndEditExecutable: true,
   },
 
   mac: {
     target: ["dmg"],
-    icon: "icon.png", // relative to buildResources
+    icon: "icon.png",
     category: "public.app-category.productivity",
   },
 
   linux: {
     target: ["AppImage", "deb"],
-    icon: "icons", // folder relative to buildResources
+    icon: "icons",
     category: "Office",
   },
 
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
+    // NSIS icons are relative to buildResources directory
     installerIcon: "icon.ico",
     uninstallerIcon: "icon.ico",
     installerHeaderIcon: "icon.ico",
