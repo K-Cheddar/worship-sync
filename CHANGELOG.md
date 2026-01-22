@@ -1,3 +1,10 @@
+## [1.27.6](https://github.com/K-Cheddar/worship-sync/compare/v1.27.5...v1.27.6) (2026-01-22)
+
+
+### Bug Fixes
+
+* patch hls.js ([8356ba6](https://github.com/K-Cheddar/worship-sync/commit/8356ba6da9cad52bc7cc4883667763dcdf0fab9c))
+
 ## [1.27.5](https://github.com/K-Cheddar/worship-sync/compare/v1.27.4...v1.27.5) (2026-01-22)
 
 
