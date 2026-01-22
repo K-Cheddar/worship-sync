@@ -114,10 +114,40 @@ jobs:
         run: npx electron-builder --linux --publish never
         working-directory: client
 
+      - name: Debug - Verify buildResources structure (Windows)
+        if: matrix.platform == 'win'
+        run: |
+          echo "=== Current directory ==="
+          pwd
+          echo "=== Listing buildResources directory ==="
+          ls -la buildResources/ || dir buildResources\
+          echo "=== Icon file details ==="
+          ls -lh buildResources/icon.ico || dir buildResources\icon.ico
+          echo "=== Checking config file ==="
+          cat electron-builder.config.js | grep -A 5 "win:" || type electron-builder.config.js | findstr /C:"win:"
+          echo "=== Running verification script ==="
+          node scripts/verify-icon-config.js || echo "Verification script not found, skipping"
+        working-directory: client
+
       - name: Package Windows
         if: matrix.platform == 'win'
-        run: npx electron-builder --win --publish never
+        run: npx electron-builder --win --publish never --config electron-builder.config.js
         working-directory: client
+        env:
+          DEBUG: electron-builder
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+
+      - name: Debug - Verify built executable (Windows)
+        if: matrix.platform == 'win'
+        run: |
+          echo "=== Built files ==="
+          ls -lh dist/*.exe || dir dist\*.exe
+          echo "=== Checking executable properties ==="
+          powershell -Command "Get-Item dist\*.exe | Select-Object Name, Length, LastWriteTime | Format-List"
+          echo "=== Attempting to read executable icon info ==="
+          powershell -Command "Add-Type -AssemblyName System.Drawing; $exe = Get-Item dist\*.exe | Select-Object -First 1; Write-Host 'Executable: ' $exe.FullName"
+        working-directory: client
+        continue-on-error: true
 
       - name: Upload Windows artifacts
         if: matrix.platform == 'win'
