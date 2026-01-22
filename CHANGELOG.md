@@ -1,3 +1,10 @@
+## [1.27.10](https://github.com/K-Cheddar/worship-sync/compare/v1.27.9...v1.27.10) (2026-01-22)
+
+
+### Bug Fixes
+
+* api paths ([f88bdfd](https://github.com/K-Cheddar/worship-sync/commit/f88bdfdf95fa712721f2dc734dba531b2847fa77))
+
 ## [1.27.9](https://github.com/K-Cheddar/worship-sync/compare/v1.27.8...v1.27.9) (2026-01-22)
 
 
