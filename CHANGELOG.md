@@ -1,3 +1,12 @@
+## [1.27.9](https://github.com/K-Cheddar/worship-sync/compare/v1.27.8...v1.27.9) (2026-01-22)
+
+
+### Bug Fixes
+
+* electron updater ([c7796ee](https://github.com/K-Cheddar/worship-sync/commit/c7796ee5cb674b26941a1f0a5b51103e6b1afda1))
+* fix updating ([60a4b2c](https://github.com/K-Cheddar/worship-sync/commit/60a4b2c183d8c0cb5ec11617000c630e313888cb))
+* Improve updater on desktop ([b8ceaeb](https://github.com/K-Cheddar/worship-sync/commit/b8ceaeb5697bb967a6788aedbab592fa8744d1ed))
+
 ## [1.27.8](https://github.com/K-Cheddar/worship-sync/compare/v1.27.7...v1.27.8) (2026-01-22)
 
 
