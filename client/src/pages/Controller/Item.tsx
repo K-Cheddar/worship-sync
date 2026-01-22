@@ -8,6 +8,7 @@ import { setActiveItem, setItemIsLoading } from "../../store/itemSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setActiveItemInList } from "../../store/itemListSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 const Item = () => {
   const { itemId, listId } = useParams();
@@ -61,10 +62,10 @@ const Item = () => {
     );
 
   return (
-    <>
+    <ErrorBoundary>
       <SlideEditor access={access} />
       <ItemSlides />
-    </>
+    </ErrorBoundary>
   );
 };
 

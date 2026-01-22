@@ -182,40 +182,40 @@ const Media = () => {
   useGlobalBroadcast(updateMediaListFromExternal);
 
   // Expand media when selecting a preference with an image
-  useEffect(() => {
-    if (
-      location.pathname.includes("preferences") &&
-      !location.pathname.includes("quick-links") &&
-      !location.pathname.includes("monitor-settings") &&
-      selectedPreference &&
-      !isMediaExpanded
-    ) {
-      dispatch(setIsMediaExpanded(true));
-    }
-  }, [location.pathname, selectedPreference, isMediaExpanded, dispatch]);
+  // useEffect(() => {
+  //   if (
+  //     location.pathname.includes("preferences") &&
+  //     !location.pathname.includes("quick-links") &&
+  //     !location.pathname.includes("monitor-settings") &&
+  //     selectedPreference &&
+  //     !isMediaExpanded
+  //   ) {
+  //     dispatch(setIsMediaExpanded(true));
+  //   }
+  // }, [location.pathname, selectedPreference, isMediaExpanded, dispatch]);
 
-  // Expand media when selecting a quick link with media type
-  useEffect(() => {
-    if (
-      location.pathname.includes("quick-links") &&
-      selectedQuickLink?.linkType === "media" &&
-      !isMediaExpanded
-    ) {
-      dispatch(setIsMediaExpanded(true));
-    }
-  }, [location.pathname, selectedQuickLink, isMediaExpanded, dispatch]);
+  // // Expand media when selecting a quick link with media type
+  // useEffect(() => {
+  //   if (
+  //     location.pathname.includes("quick-links") &&
+  //     selectedQuickLink?.linkType === "media" &&
+  //     !isMediaExpanded
+  //   ) {
+  //     dispatch(setIsMediaExpanded(true));
+  //   }
+  // }, [location.pathname, selectedQuickLink, isMediaExpanded, dispatch]);
 
 
-  // Expand media when selecting an image overlay
-  useEffect(() => {
-    if (
-      location.pathname.includes("overlays") &&
-      selectedOverlay?.type === "image" &&
-      !isMediaExpanded
-    ) {
-      dispatch(setIsMediaExpanded(true));
-    }
-  }, [location.pathname, selectedOverlay, isMediaExpanded, dispatch]);
+  // // Expand media when selecting an image overlay
+  // useEffect(() => {
+  //   if (
+  //     location.pathname.includes("overlays") &&
+  //     selectedOverlay?.type === "image" &&
+  //     !isMediaExpanded
+  //   ) {
+  //     dispatch(setIsMediaExpanded(true));
+  //   }
+  // }, [location.pathname, selectedOverlay, isMediaExpanded, dispatch]);
 
   // Clear selection when clicking outside media items
   useEffect(() => {
