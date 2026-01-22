@@ -12,6 +12,12 @@ const config = {
     "package.json"
   ],
 
+  // Ensure buildResources (including icons) are available at runtime
+  // This is separate from icon embedding - that's handled by win.icon
+  extraResources: [
+    "buildResources/**/*"
+  ],
+
   asar: true,
   npmRebuild: false,
   buildDependenciesFromSource: false,
@@ -20,7 +26,6 @@ const config = {
     target: ["nsis"],
     // Icon path relative to buildResources directory
     icon: "icon.ico",
-    publisherName: "WorshipSync",
     // Critical: This ensures the icon is embedded in the executable
     signAndEditExecutable: true,
   },

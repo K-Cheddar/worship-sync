@@ -19,33 +19,37 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [windows-latest]
+        # os: [ubuntu-latest, windows-latest]  # Linux commented out for now
         include:
-          - os: ubuntu-latest
-            platform: linux
+          # - os: ubuntu-latest
+          #   platform: linux
           - os: windows-latest
             platform: win
 
     steps:
-      - name: Get latest release tag
-        id: latest_release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { data: releases } = await github.rest.repos.listReleases({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              per_page: 1
-            });
-            if (releases.length > 0) {
-              core.setOutput('tag', releases[0].tag_name);
-              console.log('Latest release tag:', releases[0].tag_name);
-            }
+      # Commented out - checking out release tag uses old code
+      # For testing, checkout current branch/commit instead
+      # - name: Get latest release tag
+      #   id: latest_release
+      #   uses: actions/github-script@v7
+      #   with:
+      #     script: |
+      #       const { data: releases } = await github.rest.repos.listReleases({
+      #         owner: context.repo.owner,
+      #         repo: context.repo.repo,
+      #         per_page: 1
+      #       });
+      #       if (releases.length > 0) {
+      #         core.setOutput('tag', releases[0].tag_name);
+      #         console.log('Latest release tag:', releases[0].tag_name);
+      #       }
 
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.latest_release.outputs.tag || github.ref }}
+          # Checkout current branch/commit instead of release tag for testing
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -66,21 +70,52 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: cd client && npm run build:electron
 
-      - name: Build Electron app (Linux)
-        if: matrix.platform == 'linux'
-        run: cd client && npx electron-builder --linux --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=4096
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      # - name: Build Electron app (Linux)
+      #   if: matrix.platform == 'linux'
+      #   run: cd client && npx electron-builder --linux --publish never
+      #   env:
+      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #     NODE_OPTIONS: --max-old-space-size=4096
+      #     ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+      - name: Debug - Verify buildResources structure (Windows)
+        if: matrix.platform == 'win'
+        run: |
+          Write-Host "=== Current directory ==="
+          Get-Location
+          Write-Host "=== Listing buildResources directory ==="
+          Get-ChildItem client\buildResources
+          Write-Host "=== Icon file details ==="
+          Get-Item client\buildResources\icon.ico | Format-List
+          Write-Host "=== Checking config file ==="
+          Select-String -Path client\electron-builder.config.js -Pattern "win:" -Context 0,5
+          Write-Host "=== Running verification script ==="
+          cd client
+          node scripts/verify-icon-config.js
+        shell: pwsh
 
       - name: Build Electron app (Windows)
         if: matrix.platform == 'win'
-        run: cd client && npx electron-builder --win --publish never
+        run: cd client && npx electron-builder --win --publish never --config electron-builder.config.js
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=4096
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          DEBUG: electron-builder
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+
+      - name: Debug - Verify built executable (Windows)
+        if: matrix.platform == 'win'
+        run: |
+          Write-Host "=== Built files ==="
+          Get-ChildItem client\dist\*.exe
+          Write-Host "=== Checking executable properties ==="
+          Get-Item client\dist\*.exe | Select-Object Name, Length, LastWriteTime | Format-List
+          Write-Host "=== Attempting to read executable icon info ==="
+          $exe = Get-Item client\dist\*.exe | Select-Object -First 1
+          Write-Host "Executable: $($exe.FullName)"
+        shell: pwsh
+        continue-on-error: true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -88,6 +123,6 @@ jobs:
           name: electron-${{ matrix.platform }}
           path: |
             client/dist/*.exe
-            client/dist/*.AppImage
-            client/dist/*.deb
+            # client/dist/*.AppImage  # Linux commented out
+            # client/dist/*.deb       # Linux commented out
           retention-days: 30

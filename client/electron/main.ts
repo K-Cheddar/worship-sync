@@ -141,7 +141,7 @@ const createWindow = () => {
         contextIsolation: true,
         sandbox: false,
       },
-    autoHideMenuBar: false, // Show menu for debugging
+    autoHideMenuBar: !isDev, // Hide menu bar in production
     ...(iconPath && { icon: iconPath }), // Only set icon if found
   });
 
@@ -153,30 +153,28 @@ const createWindow = () => {
   if (isDev) {
     // In development, load from Vite dev server
     mainWindow.loadURL("https://local.worshipsync.net:3000");
+    // Open DevTools in development only
+    mainWindow.webContents.openDevTools();
   } else {
     // In production, load from the built files
     // electron-vite outputs renderer to dist-electron/renderer/
     const indexPath = join(__dirname, "../renderer/index.html");
     
-    console.log("Loading from:", indexPath);
-    console.log("__dirname:", __dirname);
-    
     mainWindow.loadFile(indexPath).catch((err) => {
       console.error("Failed to load index.html:", err);
     });
   }
-  
-  // Always open DevTools for debugging
-  mainWindow.webContents.openDevTools();
 
-  // Log any errors
-  mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
-    console.error("Failed to load:", errorCode, errorDescription);
-  });
+  // Log errors (only in development)
+  if (isDev) {
+    mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
+      console.error("Failed to load:", errorCode, errorDescription);
+    });
 
-  mainWindow.webContents.on("console-message", (event, level, message) => {
-    console.log("Console:", message);
-  });
+    mainWindow.webContents.on("console-message", (event, level, message) => {
+      console.log("Console:", message);
+    });
+  }
 
   // When main window is ready, open projector and monitor windows only if they were previously open
   mainWindow.webContents.once("did-finish-load", () => {

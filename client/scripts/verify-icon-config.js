@@ -8,6 +8,7 @@ import { existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
+import { statSync } from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -29,7 +30,7 @@ console.log("icon.ico exists:", existsSync(iconPath));
 console.log("config file exists:", existsSync(configPath));
 
 if (existsSync(iconPath)) {
-  const stats = require("fs").statSync(iconPath);
+  const stats = statSync(iconPath);
   console.log("\n=== Icon File Details ===");
   console.log("Size:", stats.size, "bytes");
   console.log("Modified:", stats.mtime);
