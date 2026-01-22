@@ -79,7 +79,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     setIsBoxLocked(Array(numBoxes).fill(true));
   }, [numBoxes]);
 
-  const [localName, setLocalName] = useState(name);
+  const [localName, setLocalName] = useState(name || "");
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
 
@@ -125,7 +125,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   }, []);
 
   useEffect(() => {
-    setLocalName(name);
+    setLocalName(name || "");
   }, [name]);
 
   useEffect(() => {
@@ -227,13 +227,88 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       if (shouldDeleteCurrentSlide) {
         dispatch(updateSlides({ slides: updatedSlides }));
       } else {
+        // Get the current section number from the slide name
+        const currentSlide = updatedSlides[selectedSlide];
+        const currentSectionMatch = currentSlide?.name?.match(/Section (\d+)/);
+        const currentSectionNum = currentSectionMatch
+          ? parseInt(currentSectionMatch[1])
+          : 1;
+
+        // Get all slides in the current section (sorted by slide index to maintain order)
+        const currentSectionSlidesWithIndices = updatedSlides
+          .map((slide, idx) => ({ slide, idx }))
+          .filter(({ slide }) => slide.name?.includes(`Section ${currentSectionNum}`))
+          .sort((a, b) => a.idx - b.idx);
+
+        // Find the index of the current slide within the section
+        const currentSlideIndexInSection = currentSectionSlidesWithIndices.findIndex(
+          ({ idx }) => idx === selectedSlide
+        );
+
+        // Safety check: if current slide not found in section, fall back to direct update
+        if (currentSlideIndexInSection === -1) {
+          const _item = formatFree(
+            {
+              ...updatedItem,
+            },
+            isMobile
+          );
+          dispatch(updateSlides({ slides: _item.slides }));
+          return;
+        }
+
+        // Build the combined text from all slides in the section
+        // Use the same logic as getFormattedSections
+        let newWords = "";
+        for (let i = 0; i < currentSectionSlidesWithIndices.length; ++i) {
+          const { slide } = currentSectionSlidesWithIndices[i];
+          const slideBox = slide?.boxes[index];
+          const slideWords = i === currentSlideIndexInSection ? value : (slideBox?.words || "");
+          
+          if (slideWords.trim().length > 0) {
+            if (newWords) {
+              const alreadyHasNewline = newWords.endsWith("\n");
+              const shouldAddNewline = !alreadyHasNewline;
+              newWords += shouldAddNewline ? "\n" + slideWords : slideWords;
+            } else {
+              newWords = slideWords;
+            }
+          }
+        }
+
+        // Update formattedSections with the new combined text
+        const formattedSections = item.formattedSections || [];
+        const updatedFormattedSections = formattedSections.map((section) => {
+          if (section.sectionNum === currentSectionNum) {
+            return {
+              ...section,
+              words: newWords,
+            };
+          }
+          return section;
+        });
+
+        // If section doesn't exist, create it
+        if (!updatedFormattedSections.find((s) => s.sectionNum === currentSectionNum)) {
+          updatedFormattedSections.push({
+            sectionNum: currentSectionNum,
+            words: newWords,
+            slideSpan: currentSectionSlidesWithIndices.length,
+          });
+        }
+
+        // Now format with updated formattedSections
         const _item = formatFree(
           {
             ...updatedItem,
+            formattedSections: updatedFormattedSections,
           },
           isMobile
         );
-        dispatch(updateSlides({ slides: _item.slides }));
+        dispatch(updateSlides({ 
+          slides: _item.slides,
+          formattedSections: _item.formattedSections,
+        }));
       }
     }
 
@@ -361,7 +436,9 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
   // Helper function to get all section text
   const getSectionText = useCallback(
-    (slide: ItemSlideType, allSlides: ItemSlideType[], boxIndex: number): string => {
+    (slide: ItemSlideType | undefined, boxIndex: number): string => {
+      if (!slide) return "";
+
       if (type === "song") {
         const formattedLyrics =
           item.arrangements[item.selectedArrangement]?.formattedLyrics || [];
@@ -376,7 +453,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       }
 
       if (type === "free") {
-        const currentSectionMatch = slide.name.match(/Section (\d+)/);
+        const currentSectionMatch = slide.name?.match(/Section (\d+)/);
         const currentSectionNum = currentSectionMatch
           ? parseInt(currentSectionMatch[1])
           : 1;
@@ -398,8 +475,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     // For songs, use arrangement slides; for others, use item slides
     const currentSlides = type === "song" && arrangement?.slides ? arrangement.slides : slides;
     const currentSlide = currentSlides?.[selectedSlide];
-    if (!currentSlide) return "";
-    return getSectionText(currentSlide, currentSlides, selectedBox);
+    return getSectionText(currentSlide, selectedBox);
   }, [type, slides, selectedSlide, selectedBox, getSectionText, arrangement]);
 
   // Get current section name and color for display
@@ -435,7 +511,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
     if (type === "free") {
       // For free types, show "Section X"
-      const sectionMatch = currentSlide.name.match(/Section (\d+)/);
+      const sectionMatch = currentSlide.name?.match(/Section (\d+)/);
       const name = sectionMatch ? `Section ${sectionMatch[1]}` : currentSlide.name;
       const bgColor = itemSectionBgColorMap.get("Section") || "bg-stone-500";
       return { sectionName: name, sectionColor: bgColor };
@@ -463,7 +539,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       if (!currentSlide) return;
 
       if (type === "free") {
-        const currentSectionMatch = currentSlide.name.match(/Section (\d+)/);
+        const currentSectionMatch = currentSlide.name?.match(/Section (\d+)/);
         const currentSectionNum = currentSectionMatch
           ? parseInt(currentSectionMatch[1])
           : 1;
@@ -548,7 +624,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           }
 
           if (type === "free") {
-            const currentSectionMatch = currentSlide.name.match(/Section (\d+)/);
+            const currentSectionMatch = currentSlide.name?.match(/Section (\d+)/);
             const currentSectionNum = currentSectionMatch
               ? parseInt(currentSectionMatch[1])
               : 1;
@@ -668,7 +744,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               <Input
                 hideLabel
                 className="text-base font-semibold flex-1 truncate flex items-center gap-2 max-w-[calc(100%-2rem)]"
-                value={localName}
+                value={localName || ""}
                 onChange={(val) => setLocalName(val as string)}
                 data-ignore-undo="true"
               />

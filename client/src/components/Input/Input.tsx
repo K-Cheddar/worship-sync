@@ -88,7 +88,7 @@ const Input = ({
               "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]"
           )}
           type={type}
-          value={value}
+          value={value ?? ""}
           disabled={disabled}
           data-ignore-undo="true"
           onChange={(e) => {

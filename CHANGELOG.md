@@ -10,111 +10,6 @@
 
 ### Bug Fixes
 
-* Updated icons for desktop ([6429638](https://github.com/K-Cheddar/worship-sync/commit/6429638a985d6b6ae30400f9fb13760c5f0cc6da))
-
-## [1.27.14](https://github.com/K-Cheddar/worship-sync/compare/v1.27.13...v1.27.14) (2026-01-22)
-
-
-### Bug Fixes
-
-* Testing ([712c0ad](https://github.com/K-Cheddar/worship-sync/commit/712c0ade1f200d77144df3f52ab1d489a1e96c3e))
-
-## [1.27.13](https://github.com/K-Cheddar/worship-sync/compare/v1.27.12...v1.27.13) (2026-01-22)
-
-
-### Bug Fixes
-
-* last test for the night ([efaa1ef](https://github.com/K-Cheddar/worship-sync/commit/efaa1ef8cef929100cbb9375e261b7583e6febb8))
-
-## [1.27.12](https://github.com/K-Cheddar/worship-sync/compare/v1.27.11...v1.27.12) (2026-01-22)
-
-
-### Bug Fixes
-
-* Update icons for electron ([2bd265d](https://github.com/K-Cheddar/worship-sync/commit/2bd265d2941770a19d1a57903e853fb75ece6151))
-
-## [1.27.11](https://github.com/K-Cheddar/worship-sync/compare/v1.27.10...v1.27.11) (2026-01-22)
-
-
-### Bug Fixes
-
-* update icons ([029a55e](https://github.com/K-Cheddar/worship-sync/commit/029a55ee280e55696c1078ea8f603eaa75e55f4b))
-
-## [1.27.10](https://github.com/K-Cheddar/worship-sync/compare/v1.27.9...v1.27.10) (2026-01-22)
-
-
-### Bug Fixes
-
-* api paths ([f88bdfd](https://github.com/K-Cheddar/worship-sync/commit/f88bdfdf95fa712721f2dc734dba531b2847fa77))
-
-## [1.27.9](https://github.com/K-Cheddar/worship-sync/compare/v1.27.8...v1.27.9) (2026-01-22)
-
-
-### Bug Fixes
-
-* electron updater ([c7796ee](https://github.com/K-Cheddar/worship-sync/commit/c7796ee5cb674b26941a1f0a5b51103e6b1afda1))
-* fix updating ([60a4b2c](https://github.com/K-Cheddar/worship-sync/commit/60a4b2c183d8c0cb5ec11617000c630e313888cb))
-* Improve updater on desktop ([b8ceaeb](https://github.com/K-Cheddar/worship-sync/commit/b8ceaeb5697bb967a6788aedbab592fa8744d1ed))
-
-## [1.27.8](https://github.com/K-Cheddar/worship-sync/compare/v1.27.7...v1.27.8) (2026-01-22)
-
-
-### Bug Fixes
-
-* update build ([955e62c](https://github.com/K-Cheddar/worship-sync/commit/955e62ca06ed67435a4cc848a86ee18d49962cb2))
-
-## [1.27.7](https://github.com/K-Cheddar/worship-sync/compare/v1.27.6...v1.27.7) (2026-01-22)
-
-
-### Bug Fixes
-
-* update build ([2a8c8ab](https://github.com/K-Cheddar/worship-sync/commit/2a8c8ab2a93494751d2022374c8626ee4ef9847c))
-
-## [1.27.6](https://github.com/K-Cheddar/worship-sync/compare/v1.27.5...v1.27.6) (2026-01-22)
-
-
-### Bug Fixes
-
-* patch hls.js ([8356ba6](https://github.com/K-Cheddar/worship-sync/commit/8356ba6da9cad52bc7cc4883667763dcdf0fab9c))
-
-## [1.27.5](https://github.com/K-Cheddar/worship-sync/compare/v1.27.4...v1.27.5) (2026-01-22)
-
-
-### Bug Fixes
-
-* fix electron install ([e5846da](https://github.com/K-Cheddar/worship-sync/commit/e5846da9e91005464c364b636ef864b65309b554))
-* install pouchdb ([e2eca06](https://github.com/K-Cheddar/worship-sync/commit/e2eca06d83793b8a9643fd0e772ea7eafe8f4639))
-
-## [1.27.4](https://github.com/K-Cheddar/worship-sync/compare/v1.27.3...v1.27.4) (2026-01-22)
-
-
-### Bug Fixes
-
-* fix build ([a79c453](https://github.com/K-Cheddar/worship-sync/commit/a79c4536fbf62f3638e494c6570df35cd8d9bea0))
-* fix build ([e34e175](https://github.com/K-Cheddar/worship-sync/commit/e34e1759bfdf504180669e30ba83db123b852637))
-* update package.lock ([4cc2d5b](https://github.com/K-Cheddar/worship-sync/commit/4cc2d5bbede54a69a2ddf68b41906e8596ff1a83))
-
-## [1.27.3](https://github.com/K-Cheddar/worship-sync/compare/v1.27.2...v1.27.3) (2026-01-21)
-
-
-### Bug Fixes
-
-* Update build ([587f498](https://github.com/K-Cheddar/worship-sync/commit/587f4986c9a4b494be86aafe2426cba5e487faff))
-
-## [1.27.2](https://github.com/K-Cheddar/worship-sync/compare/v1.27.1...v1.27.2) (2026-01-21)
-
-
-### Bug Fixes
-
-* Fix desktop build ([6cdd300](https://github.com/K-Cheddar/worship-sync/commit/6cdd300d51226dcc3a222fde78070e896a1d1222))
-
-## [1.27.1](https://github.com/K-Cheddar/worship-sync/compare/v1.27.0...v1.27.1) (2026-01-21)
-
-
-### Bug Fixes
-
-* Fix desktop ([1b3b7e6](https://github.com/K-Cheddar/worship-sync/commit/1b3b7e6f817be3ba8367b6ec741ca2dfa3c0586a))
-* Fix desktop build ([a8accd2](https://github.com/K-Cheddar/worship-sync/commit/a8accd233d5c32c20bccfede1a407b39945050f6))
 * Update video input style ([9dd39aa](https://github.com/K-Cheddar/worship-sync/commit/9dd39aa50a0a088674818216bb60e38c330a6e0c))
 
 # [1.27.0](https://github.com/K-Cheddar/worship-sync/compare/v1.26.0...v1.27.0) (2026-01-21)
@@ -127,83 +22,12 @@
 # [1.26.0](https://github.com/K-Cheddar/worship-sync/compare/v1.25.9...v1.26.0) (2026-01-21)
 
 
-### Bug Fixes
-
-* Fix Windows exe generation ([d3584d8](https://github.com/K-Cheddar/worship-sync/commit/d3584d898e0fcebc20b60aa1e1a1973dcacac134))
-
 
 ### Features
 
 * Add display control for desktop ([5164501](https://github.com/K-Cheddar/worship-sync/commit/5164501a099fdac85f26baee91b920624fd34251))
 
 ## [1.25.9](https://github.com/K-Cheddar/worship-sync/compare/v1.25.8...v1.25.9) (2026-01-21)
-
-
-### Bug Fixes
-
-* Correct windows uploads ([c16e8e1](https://github.com/K-Cheddar/worship-sync/commit/c16e8e1c379310e2f28b97d27e9954734614bb23))
-* Correcting build folder ([363de3c](https://github.com/K-Cheddar/worship-sync/commit/363de3c345273221e2d51693d5cb1dd0cc0038d8))
-
-## [1.25.8](https://github.com/K-Cheddar/worship-sync/compare/v1.25.7...v1.25.8) (2026-01-21)
-
-
-### Bug Fixes
-
-* Fixing electron build ([2f91c69](https://github.com/K-Cheddar/worship-sync/commit/2f91c696e2f9e8d0e5f3afabc3ad060054907e52))
-
-## [1.25.7](https://github.com/K-Cheddar/worship-sync/compare/v1.25.6...v1.25.7) (2026-01-20)
-
-
-### Bug Fixes
-
-* Update electron build ([0650e58](https://github.com/K-Cheddar/worship-sync/commit/0650e586be977d9ca7e90f239686e3e5aa744370))
-
-## [1.25.6](https://github.com/K-Cheddar/worship-sync/compare/v1.25.5...v1.25.6) (2026-01-20)
-
-
-### Bug Fixes
-
-* Update electron build ([7e85668](https://github.com/K-Cheddar/worship-sync/commit/7e85668b3297dba3501bc7d1006e7fd885f196ce))
-
-## [1.25.5](https://github.com/K-Cheddar/worship-sync/compare/v1.25.4...v1.25.5) (2026-01-20)
-
-
-### Bug Fixes
-
-* Fixing icon on electron ([bfdcf49](https://github.com/K-Cheddar/worship-sync/commit/bfdcf49abf2ab47b10c01abcf3787b9ebbfa252e))
-
-## [1.25.4](https://github.com/K-Cheddar/worship-sync/compare/v1.25.3...v1.25.4) (2026-01-20)
-
-
-### Bug Fixes
-
-* fix electron release ([477aaf1](https://github.com/K-Cheddar/worship-sync/commit/477aaf1159fed6b22b72e597918904e063209fcc))
-
-## [1.25.3](https://github.com/K-Cheddar/worship-sync/compare/v1.25.2...v1.25.3) (2026-01-20)
-
-
-### Bug Fixes
-
-* update electron build ([67b8b89](https://github.com/K-Cheddar/worship-sync/commit/67b8b894dba26693f5fb6e589d25be9450115ff5))
-
-## [1.25.2](https://github.com/K-Cheddar/worship-sync/compare/v1.25.1...v1.25.2) (2026-01-20)
-
-
-### Bug Fixes
-
-* add productName and trigger electron builds from auto-release ([ec9a67b](https://github.com/K-Cheddar/worship-sync/commit/ec9a67bf5049d0490de85e5e51aa74e4077d52b7))
-* Updating electron build ([740bdf5](https://github.com/K-Cheddar/worship-sync/commit/740bdf535b6547267e1c70abe0c4703b771bf76f))
-
-## [1.25.1](https://github.com/K-Cheddar/worship-sync/compare/v1.25.0...v1.25.1) (2026-01-20)
-
-
-### Bug Fixes
-
-* add electron icon and update build config ([58afd61](https://github.com/K-Cheddar/worship-sync/commit/58afd61e05bcc2d75388260bae44ac7e471f8503))
-* fix download path ([9742537](https://github.com/K-Cheddar/worship-sync/commit/974253795d3c1c9c94cbdc7689a2fb5c1cbbd1b5))
-* updating electron ([59b30e9](https://github.com/K-Cheddar/worship-sync/commit/59b30e9a0c6d957df1424c03081959b436c63b0c))
-
-# [1.25.0](https://github.com/K-Cheddar/worship-sync/compare/v1.24.0...v1.25.0) (2026-01-20)
 
 
 ### Bug Fixes
