@@ -55,6 +55,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("update-error", listener);
     return () => ipcRenderer.removeListener("update-error", listener);
   },
+  
+  // Video cache
+  downloadVideo: (url: string) => ipcRenderer.invoke("download-video", url),
+  getLocalVideoPath: (url: string) => ipcRenderer.invoke("get-local-video-path", url),
+  cleanupUnusedVideos: (usedUrls: string[]) => ipcRenderer.invoke("cleanup-unused-videos", usedUrls),
+  syncVideoCache: (videoUrls: string[]) => ipcRenderer.invoke("sync-video-cache", videoUrls),
 });
 
 // Expose a flag to indicate we're running in Electron

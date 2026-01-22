@@ -12,6 +12,7 @@ interface ModalProps {
   size?: "sm" | "md" | "lg" | "xl";
   showCloseButton?: boolean;
   contentPadding?: string;
+  headerAction?: React.ReactNode;
 }
 
 const sizeClasses = {
@@ -29,6 +30,7 @@ const Modal = ({
   size = "md",
   showCloseButton = true,
   contentPadding = "p-4",
+  headerAction,
 }: ModalProps) => {
   const modalRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
@@ -103,23 +105,25 @@ const Modal = ({
         className={`relative bg-gray-800 rounded-lg shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden`}
         role="document"
       >
-        {(title || showCloseButton) && (
+        {(title || showCloseButton || headerAction) && (
           <div className="flex items-center justify-between p-4">
             {title && (
               <h2 id="modal-title" className="text-xl font-semibold text-white">
                 {title}
               </h2>
             )}
-            {showCloseButton && (
-              <Button
-                variant="tertiary"
-                svg={X}
-                onClick={onClose}
-                iconSize="lg"
-                className="ml-auto"
-                aria-label="Close modal"
-              />
-            )}
+            <div className="ml-auto flex items-center gap-2">
+              {headerAction}
+              {showCloseButton && (
+                <Button
+                  variant="tertiary"
+                  svg={X}
+                  onClick={onClose}
+                  iconSize="lg"
+                  aria-label="Close modal"
+                />
+              )}
+            </div>
           </div>
         )}
 

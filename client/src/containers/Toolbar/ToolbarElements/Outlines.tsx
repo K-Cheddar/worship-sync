@@ -79,6 +79,9 @@ const Services = ({ className }: { className: string }) => {
         if (_activeList) {
           dispatch(setInitialItemList(_activeList._id));
         }
+
+        // Note: Video cache sync is handled in Controller.tsx when database is ready
+        // No need to sync here as it would be redundant
       } catch (e) {
         console.error(e);
       }

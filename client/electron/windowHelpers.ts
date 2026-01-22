@@ -58,7 +58,9 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
   });
 
   if (config.isDev) {
-    window.loadURL(`https://local.worshipsync.net:3000${config.route}`);
+    // Ensure route starts with # for hash routing
+    const hashRoute = config.route.startsWith("#") ? config.route : `#${config.route}`;
+    window.loadURL(`https://local.worshipsync.net:3000${hashRoute}`);
   } else {
     window.loadFile(
       join(config.dirname, "../renderer/index.html"),

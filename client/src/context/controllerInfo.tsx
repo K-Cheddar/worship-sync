@@ -211,62 +211,101 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     const setupDb = async () => {
-      const dbName = `worship-sync-${database}`;
-      const localDb = new PouchDB(dbName);
-      const remoteUrl = `${import.meta.env.VITE_COUCHDB_HOST}/${dbName}`;
-      const remoteDb = new PouchDB(remoteUrl, {
-        fetch: (url, options: any) => {
-          options.credentials = "include";
-          return fetch(url, options);
-        },
-      });
-
-      syncRef.current?.cancel();
-      replicateRef.current?.cancel();
-
-      replicateRef.current = remoteDb.replicate
-        .to(localDb, { retry: true, batch_size: 150, batches_limit: 15 })
-        .on("change", (info) => {
-          const pending: number = (info as any).pending; // this property exists when printing info
-          pendingMax = pendingMax < pending ? pending : pendingMax;
-          if (pendingMax > 0) {
-            setDbProgress(Math.floor((1 - pending / pendingMax) * 100));
-          } else {
-            setDbProgress(100);
-          }
-        })
-        .on("error", async (error: any) => {
-          if (error.status === 401 || error.status === 403) {
-            setHasCouchSession(false);
-            replicateRef.current?.cancel();
-
-            const success = await getCouchSession();
-            console.log("error", error);
-            if (!success) {
-              replicateRetryRef.current++;
-              if (replicateRetryRef.current > 3) {
-                window.location.reload();
-                return;
-              }
-              await backoff(replicateRetryRef.current);
-            } else {
-              replicateRetryRef.current = 0;
+      try {
+        const dbName = `worship-sync-${database}`;
+        
+        // Wrap PouchDB initialization in try-catch to handle IndexedDB errors
+        let localDb: PouchDB.Database;
+        try {
+          localDb = new PouchDB(dbName);
+        } catch (dbError: any) {
+          console.error("Error creating local PouchDB:", dbError);
+          // If IndexedDB fails, try to handle it gracefully
+          if (dbError.name === "IndexedDBError" || dbError.message?.includes("IndexedDB")) {
+            console.error("IndexedDB error detected. This may be due to browser storage issues.");
+            // Try to clear and retry once
+            try {
+              // Wait a bit and retry
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              localDb = new PouchDB(dbName);
+            } catch (retryError) {
+              console.error("Failed to create PouchDB after retry:", retryError);
+              // Set error state or show user notification
+              setDbProgress(0);
+              return;
             }
+          } else {
+            throw dbError;
           }
-        })
-        .on("complete", () => {
-          setDbProgress(100);
-          setDb(localDb);
-          setIsDbSetup(true);
-          globalDb = localDb;
-          if (database) {
-            updateGlobalBroadcast(database);
-          }
-          console.log("Replication completed");
-          if (loginState === "success") {
-            syncDb(localDb, remoteDb);
-          }
-        });
+        }
+        
+        const remoteUrl = `${import.meta.env.VITE_COUCHDB_HOST}/${dbName}`;
+        let remoteDb: PouchDB.Database;
+        try {
+          remoteDb = new PouchDB(remoteUrl, {
+            fetch: (url, options: any) => {
+              options.credentials = "include";
+              return fetch(url, options);
+            },
+          });
+        } catch (remoteError) {
+          console.error("Error creating remote PouchDB:", remoteError);
+          setDbProgress(0);
+          return;
+        }
+
+        syncRef.current?.cancel();
+        replicateRef.current?.cancel();
+
+        replicateRef.current = remoteDb.replicate
+          .to(localDb, { retry: true, batch_size: 150, batches_limit: 15 })
+          .on("change", (info) => {
+            const pending: number = (info as any).pending; // this property exists when printing info
+            pendingMax = pendingMax < pending ? pending : pendingMax;
+            if (pendingMax > 0) {
+              setDbProgress(Math.floor((1 - pending / pendingMax) * 100));
+            } else {
+              setDbProgress(100);
+            }
+          })
+          .on("error", async (error: any) => {
+            console.error("Replication error:", error);
+            if (error.status === 401 || error.status === 403) {
+              setHasCouchSession(false);
+              replicateRef.current?.cancel();
+
+              const success = await getCouchSession();
+              console.log("error", error);
+              if (!success) {
+                replicateRetryRef.current++;
+                if (replicateRetryRef.current > 3) {
+                  window.location.reload();
+                  return;
+                }
+                await backoff(replicateRetryRef.current);
+              } else {
+                replicateRetryRef.current = 0;
+              }
+            }
+          })
+          .on("complete", () => {
+            setDbProgress(100);
+            setDb(localDb);
+            setIsDbSetup(true);
+            globalDb = localDb;
+            if (database) {
+              updateGlobalBroadcast(database);
+            }
+            console.log("Replication completed");
+            if (loginState === "success") {
+              syncDb(localDb, remoteDb);
+            }
+          });
+      } catch (error) {
+        console.error("Error in setupDb:", error);
+        setDbProgress(0);
+        // Don't set isDbSetup to true on error, so it can retry
+      }
     };
 
     if (

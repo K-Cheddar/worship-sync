@@ -178,13 +178,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     // Determine the active background video (if any) from boxes
     const { videoBox, desiredVideoUrl } = useMemo(() => {
-      if (!shouldPlayVideo || !isDisplay || !showBackground)
+      if (!shouldPlayVideo || !showBackground)
         return { videoBox: undefined, desiredVideoUrl: undefined };
       const videoBox = boxes.find(
         (b) => b.mediaInfo?.type === "video" && b.mediaInfo?.background
       );
       return { videoBox, desiredVideoUrl: videoBox?.mediaInfo?.background };
-    }, [boxes, isDisplay, showBackground, shouldPlayVideo]);
+    }, [boxes, showBackground, shouldPlayVideo]);
 
     const [activeVideoUrl, setActiveVideoUrl] = useState<string | undefined>(
       undefined
@@ -236,7 +236,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const renderContent = () => {
       const innerContent = (
         <>
-          {isDisplay && showBackground && shouldPlayVideo && activeVideoUrl && (
+          {showBackground && shouldPlayVideo && activeVideoUrl && (
             <HLSPlayer
               src={activeVideoUrl}
               onLoadedData={() => setIsWindowVideoLoaded(true)}
@@ -260,6 +260,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                   referenceWidth={REFERENCE_WIDTH}
                   referenceHeight={REFERENCE_HEIGHT}
                   scaleFactor={scaleFactor}
+                  activeVideoUrl={activeVideoUrl}
+                  isWindowVideoLoaded={isWindowVideoLoaded}
                 />
               );
             if (isStream)

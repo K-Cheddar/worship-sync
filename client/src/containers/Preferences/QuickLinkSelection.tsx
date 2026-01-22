@@ -131,7 +131,6 @@ const QuickLinkSelection = ({
         },
       })
     );
-    dispatch(setSelectedQuickLink(""));
     removeToast(toastId);
     showToast("Slide linked successfully!", "success");
   };
@@ -196,7 +195,6 @@ const QuickLinkSelection = ({
     }
 
     dispatch(setSelectedQuickLinkPresentation(presentationInfo));
-    dispatch(setSelectedQuickLink(""));
     removeToast(toastId);
     showToast("Overlay linked successfully!", "success");
   };

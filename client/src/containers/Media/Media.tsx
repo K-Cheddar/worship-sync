@@ -1,7 +1,8 @@
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import DeleteModal from "../../components/Modal/DeleteModal";
+import ContextMenu from "../../components/ContextMenu/ContextMenu";
 import {
   Trash2,
   Settings2,
@@ -11,6 +12,7 @@ import {
   Image,
   Images,
   Eye,
+  Video,
 } from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
@@ -29,7 +31,7 @@ import { retrieveImages } from "../../utils/itemUtil";
 import CloudinaryUploadWidget, {
   mediaInfoType,
 } from "./CloudinaryUploadWidget";
-import MuxVideoInput from "./MuxVideoInput";
+import MuxVideoInput, { MuxVideoInputRef } from "./MuxVideoInput";
 import generateRandomId from "../../utils/generateRandomId";
 import {
   deleteFromCloudinary,
@@ -104,11 +106,16 @@ const Media = () => {
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
   const [selectedMedia, setSelectedMedia] = useState<MediaType>(emptyMedia);
+  const [selectedMediaIds, setSelectedMediaIds] = useState<Set<string>>(new Set());
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number>(-1);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
+  const [isDeletingMultiple, setIsDeletingMultiple] = useState(false);
   const [showName, setShowName] = useState(false);
+  const muxVideoInputRef = useRef<MuxVideoInputRef>(null);
+  const mediaListRef = useRef<HTMLUListElement>(null);
 
   // Filter media items based on search term
   const filteredList = list.filter((item) =>
@@ -118,9 +125,7 @@ const Media = () => {
   const { db, cloud, isMobile, updater } =
     useContext(ControllerInfoContext) || {};
 
-  const [visibleButtons, setVisibleButtons] = useState<{
-    [key: string]: boolean;
-  }>({});
+
 
   useEffect(() => {
     if (isMobile) {
@@ -156,6 +161,7 @@ const Media = () => {
             dispatch(updateMediaListFromRemote(images));
           }
         }
+        
       } catch (e) {
         console.error(e);
       }
@@ -175,32 +181,80 @@ const Media = () => {
 
   useGlobalBroadcast(updateMediaListFromExternal);
 
+  // Expand media when selecting a preference with an image
   useEffect(() => {
-    // Reset visibility states when pathname changes
-    setVisibleButtons({});
-  }, [location.pathname]);
-
-  const handleButtonVisibility = (
-    buttonId: string,
-    isVisible: boolean,
-    isDisabled?: boolean
-  ) => {
-    if (isVisible && !isDisabled && !visibleButtons[buttonId]) {
-      setVisibleButtons((prev) => ({ ...prev, [buttonId]: true }));
+    if (
+      location.pathname.includes("preferences") &&
+      !location.pathname.includes("quick-links") &&
+      !location.pathname.includes("monitor-settings") &&
+      selectedPreference &&
+      !isMediaExpanded
+    ) {
+      dispatch(setIsMediaExpanded(true));
     }
-  };
+  }, [location.pathname, selectedPreference, isMediaExpanded, dispatch]);
 
-  const showDeleteConfirmation = () => {
-    if (!selectedMedia.id) return;
+  // Expand media when selecting a quick link with media type
+  useEffect(() => {
+    if (
+      location.pathname.includes("quick-links") &&
+      selectedQuickLink?.linkType === "media" &&
+      !isMediaExpanded
+    ) {
+      dispatch(setIsMediaExpanded(true));
+    }
+  }, [location.pathname, selectedQuickLink, isMediaExpanded, dispatch]);
 
-    const mediaItem = list.find((item) => item.id === selectedMedia.id);
-    if (!mediaItem) return;
 
-    setMediaToDelete(mediaItem);
-    setShowDeleteModal(true);
-  };
+  // Expand media when selecting an image overlay
+  useEffect(() => {
+    if (
+      location.pathname.includes("overlays") &&
+      selectedOverlay?.type === "image" &&
+      !isMediaExpanded
+    ) {
+      dispatch(setIsMediaExpanded(true));
+    }
+  }, [location.pathname, selectedOverlay, isMediaExpanded, dispatch]);
+
+  // Clear selection when clicking outside media items
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Check if click is outside the media list and not on a context menu
+      if (
+        mediaListRef.current &&
+        !mediaListRef.current.contains(target) &&
+        !target.closest('[data-slot="dropdown-menu-content"]') &&
+        !target.closest(".fixed.z-50")
+      ) {
+        setSelectedMediaIds(new Set());
+        setLastSelectedIndex(-1);
+        if (selectedMediaIds.size > 0) {
+          setSelectedMedia(emptyMedia);
+        }
+      }
+    };
+
+    if (selectedMediaIds.size > 0) {
+      document.addEventListener("click", handleClickOutside);
+      return () => {
+        document.removeEventListener("click", handleClickOutside);
+      };
+    }
+  }, [selectedMediaIds.size]);
+
+
 
   const handleConfirmDelete = async () => {
+    if (isDeletingMultiple) {
+      // Handle multiple deletions
+      await handleDeleteAll();
+      setShowDeleteModal(false);
+      setIsDeletingMultiple(false);
+      return;
+    }
+
     if (!db || !mediaToDelete) return;
 
     try {
@@ -263,6 +317,103 @@ const Media = () => {
   const handleCancelDelete = () => {
     setShowDeleteModal(false);
     setMediaToDelete(null);
+    setIsDeletingMultiple(false);
+  };
+
+  const handleMediaClick = (
+    e: React.MouseEvent,
+    mediaItem: MediaType,
+    index: number
+  ) => {
+    const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+    const isShift = e.shiftKey;
+
+    if (isCtrlOrCmd) {
+      // Toggle selection with Ctrl/Cmd
+      setSelectedMediaIds((prev) => {
+        const newSet = new Set(prev);
+        if (newSet.has(mediaItem.id)) {
+          newSet.delete(mediaItem.id);
+          if (newSet.size === 0) {
+            setSelectedMedia(emptyMedia);
+          } else if (selectedMedia.id === mediaItem.id) {
+            // If we're deselecting the currently selected media, select the first remaining
+            const firstId = Array.from(newSet)[0];
+            const firstItem = list.find((item) => item.id === firstId);
+            if (firstItem) setSelectedMedia(firstItem);
+          }
+        } else {
+          newSet.add(mediaItem.id);
+          setSelectedMedia(mediaItem);
+        }
+        return newSet;
+      });
+      setLastSelectedIndex(index);
+    } else if (isShift && lastSelectedIndex >= 0) {
+      // Range selection with Shift
+      const start = Math.min(lastSelectedIndex, index);
+      const end = Math.max(lastSelectedIndex, index);
+      const newSet = new Set(selectedMediaIds);
+      for (let i = start; i <= end; i++) {
+        newSet.add(filteredList[i].id);
+      }
+      setSelectedMediaIds(newSet);
+      setSelectedMedia(mediaItem);
+    } else {
+      // Single selection
+      setSelectedMediaIds(new Set([mediaItem.id]));
+      setSelectedMedia(mediaItem);
+      setLastSelectedIndex(index);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (!db || selectedMediaIds.size === 0) return;
+
+    const itemsToDelete = list.filter((item) => selectedMediaIds.has(item.id));
+    
+    try {
+      // Delete all items from their sources
+      for (const item of itemsToDelete) {
+        if (item.source === "cloudinary" && cloud) {
+          let publicId = item.publicId;
+          if (!publicId) {
+            publicId = extractPublicId(item.background) || "";
+          }
+          if (publicId) {
+            await deleteFromCloudinary(cloud, publicId, item.type);
+          }
+        } else if (item.source === "mux" && item.muxAssetId) {
+          try {
+            await fetch(`${getApiBasePath()}api/mux/asset/${item.muxAssetId}`, {
+              method: "DELETE",
+            });
+          } catch (error) {
+            console.warn("Error deleting from Mux:", error);
+          }
+        }
+      }
+
+      // Remove from local list
+      const updatedList = list.filter(
+        (item) => !selectedMediaIds.has(item.id)
+      );
+      dispatch(updateMediaList(updatedList));
+      setSelectedMedia(emptyMedia);
+      setSelectedMediaIds(new Set());
+      setLastSelectedIndex(-1);
+      dispatch(ActionCreators.clearHistory());
+    } catch (error) {
+      console.error("Error deleting media:", error);
+      // Still remove from local list even if deletion fails
+      const updatedList = list.filter(
+        (item) => !selectedMediaIds.has(item.id)
+      );
+      dispatch(updateMediaList(updatedList));
+      setSelectedMedia(emptyMedia);
+      setSelectedMediaIds(new Set());
+      setLastSelectedIndex(-1);
+    }
   };
 
   const addNewBackground = ({
@@ -377,8 +528,7 @@ const Media = () => {
               disabled={isLoading}
               className={cn(
                 "mr-2",
-                !location.pathname.includes("item") && "hidden",
-                visibleButtons["clearBackground"] && "button-appear"
+                !location.pathname.includes("item") && "hidden"
               )}
               svg={ImageOff}
               onClick={() => {
@@ -390,172 +540,8 @@ const Media = () => {
                   );
                 }
               }}
-            />
-            <Button
-              variant="tertiary"
-              disabled={selectedMedia.id === "" || isLoading}
-              className={cn(
-                "mr-2",
-                !location.pathname.includes("item") && "hidden",
-                visibleButtons["setItem"] && "button-appear"
-              )}
-              svg={Images}
-              onClick={() => {
-                if (selectedMedia.background && db) {
-                  dispatch(
-                    updateAllSlideBackgrounds({
-                      background: selectedMedia.background,
-                      mediaInfo: selectedMedia,
-                    })
-                  );
-                }
-              }}
-              // ref={(el) => {
-              //   if (el) {
-              //     handleButtonVisibility(
-              //       "setItem",
-              //       location.pathname.includes("item"),
-              //       selectedMedia.id === "" || isLoading
-              //     );
-              //   }
-              // }}
             >
-              {isMobile ? "" : "Set All"}
-            </Button>
-            <Button
-              variant="tertiary"
-              disabled={selectedMedia.id === "" || isLoading}
-              className={cn(
-                !location.pathname.includes("item") && "hidden",
-                visibleButtons["setSlide"] && "button-appear"
-              )}
-              svg={Image}
-              onClick={() => {
-                if (selectedMedia.background && db) {
-                  dispatch(
-                    updateSlideBackground({
-                      background: selectedMedia.background,
-                      mediaInfo: selectedMedia,
-                    })
-                  );
-                }
-              }}
-              // ref={(el) => {
-              //   if (el) {
-              //     handleButtonVisibility(
-              //       "setSlide",
-              //       location.pathname.includes("item"),
-              //       selectedMedia.id === "" || isLoading
-              //     );
-              //   }
-              // }}
-            >
-              {isMobile ? "" : "Set One"}
-            </Button>
-            <Button
-              variant="tertiary"
-              disabled={selectedMedia.id === ""}
-              className={cn(
-                !(
-                  location.pathname.includes("overlays") &&
-                  selectedOverlay?.type === "image"
-                ) && "hidden",
-                visibleButtons["setImageOverlay"] && "button-appear"
-              )}
-              svg={Image}
-              onClick={() => {
-                if (selectedMedia.background && db) {
-                  dispatch(
-                    updateOverlay({
-                      imageUrl: selectedMedia.background,
-                      id: selectedOverlay?.id,
-                    })
-                  );
-                  dispatch(
-                    updateOverlayInList({
-                      imageUrl: selectedMedia.background,
-                      id: selectedOverlay?.id,
-                    })
-                  );
-                }
-              }}
-              ref={(el) => {
-                if (el) {
-                  handleButtonVisibility(
-                    "setImageOverlay",
-                    location.pathname.includes("overlays") &&
-                      selectedOverlay?.type === "image",
-                    selectedMedia.id === ""
-                  );
-                }
-              }}
-            >
-              {isMobile ? "" : "Set Image Overlay"}
-            </Button>
-            <Button
-              variant="tertiary"
-              disabled={selectedMedia.id === "" || !selectedPreference}
-              className={cn(
-                (!location.pathname.includes("preferences") ||
-                  location.pathname.includes("quick-links") ||
-                  location.pathname.includes("monitor-settings")) &&
-                  "hidden",
-                visibleButtons["setBackground"] && "button-appear"
-              )}
-              svg={Image}
-              onClick={() => {
-                dispatch(
-                  setDefaultPreferences({
-                    [selectedPreference]: {
-                      background: selectedMedia.background,
-                      mediaInfo: selectedMedia,
-                    },
-                  })
-                );
-              }}
-              ref={(el) => {
-                if (el) {
-                  handleButtonVisibility(
-                    "setBackground",
-                    location.pathname.includes("preferences") &&
-                      !location.pathname.includes("quick-links") &&
-                      !location.pathname.includes("monitor-settings"),
-                    selectedMedia.id === "" || !selectedPreference
-                  );
-                }
-              }}
-            >
-              {isMobile ? "" : "Set Background"}
-            </Button>
-            <Button
-              variant="tertiary"
-              disabled={!selectedQuickLink || selectedMedia.id === ""}
-              className={cn(
-                (!location.pathname.includes("quick-links") ||
-                  selectedQuickLink?.linkType !== "media") &&
-                  "hidden",
-                visibleButtons["setQuickLink"] && "button-appear"
-              )}
-              svg={Image}
-              onClick={() => {
-                dispatch(setSelectedQuickLinkImage(selectedMedia));
-              }}
-              ref={(el) => {
-                if (el) {
-                  const isVisible = Boolean(
-                    location.pathname.includes("quick-links") &&
-                      selectedQuickLink?.linkType === "media"
-                  );
-                  const isDisabled = Boolean(
-                    !selectedQuickLink ||
-                      selectedMedia.id === "" ||
-                      selectedQuickLink?.linkType !== "media"
-                  );
-                  handleButtonVisibility("setQuickLink", isVisible, isDisabled);
-                }
-              }}
-            >
-              {isMobile ? "" : "Set Quick Link Background"}
+              Clear Background
             </Button>
             <Button
               className="ml-auto"
@@ -570,6 +556,14 @@ const Media = () => {
           </>
         )}
       </div>
+      {/* Always render MuxVideoInput to keep popup alive when media is collapsed */}
+      <MuxVideoInput
+        ref={muxVideoInputRef}
+        onComplete={(muxData) => {
+          addMuxVideo(muxData);
+        }}
+        showButton={false}
+      />
       {!isMediaLoading && isMediaExpanded && (
         <div className="flex gap-2 justify-center items-center z-10 py-1 px-4 bg-gray-900 mx-2">
           <Button
@@ -593,17 +587,14 @@ const Media = () => {
               addNewBackground(info);
             }}
           />
-          <MuxVideoInput
-            onComplete={(muxData) => {
-              addMuxVideo(muxData);
-            }}
-          />
           <Button
             variant="tertiary"
-            disabled={selectedMedia.id === ""}
-            svg={Trash2}
-            onClick={() => showDeleteConfirmation()}
-          />
+            svg={Video}
+            onClick={() => muxVideoInputRef.current?.openModal()}
+            title="Upload Mux Video"
+          >
+            Add
+          </Button>
         </div>
       )}
       {!isMediaLoading && isMediaExpanded && (
@@ -638,57 +629,213 @@ const Media = () => {
       )}
       {!isMediaLoading && isMediaExpanded && filteredList.length !== 0 && (
         <ul
+          ref={mediaListRef}
           className={cn(
             "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-2 z-10 rounded-b-md",
             sizeMap.get(mediaItemsPerRow)
           )}
         >
-          {filteredList.map((mediaItem) => {
-            const { id, thumbnail, name } = mediaItem;
+          {filteredList.map((mediaItem, index) => {
+            const { id, thumbnail, name, type } = mediaItem;
             const isSelected = id === selectedMedia.id;
+            const isMultiSelected = selectedMediaIds.has(id);
+            const hasMultipleSelection = selectedMediaIds.size > 1;
             const shownName = name.includes("/")
               ? name.split("/").slice(1).join("/")
               : name;
+            
+            const contextMenuItems = hasMultipleSelection
+              ? [
+                  {
+                    label: `Delete ${selectedMediaIds.size} items`,
+                    onClick: () => {
+                      setIsDeletingMultiple(true);
+                      setShowDeleteModal(true);
+                    },
+                    icon: <Trash2 className="w-4 h-4" />,
+                    variant: "destructive" as const,
+                  },
+                ]
+              : [
+                  ...(location.pathname.includes("item")
+                    ? [
+                        {
+                          label: "Set All Slides",
+                          onClick: () => {
+                            if (mediaItem.background && db) {
+                              dispatch(
+                                updateAllSlideBackgrounds({
+                                  background: mediaItem.background,
+                                  mediaInfo: mediaItem,
+                                })
+                              );
+                            }
+                          },
+                          icon: <Images className="w-4 h-4" />,
+                          disabled: isLoading || !mediaItem.background,
+                        },
+                        {
+                          label: "Set Selected Slide",
+                          onClick: () => {
+                            if (mediaItem.background && db) {
+                              dispatch(
+                                updateSlideBackground({
+                                  background: mediaItem.background,
+                                  mediaInfo: mediaItem,
+                                })
+                              );
+                            }
+                          },
+                          icon: <Image className="w-4 h-4" />,
+                          disabled: isLoading || !mediaItem.background,
+                        },
+                      ]
+                    : []),
+                  ...(location.pathname.includes("overlays") &&
+                  selectedOverlay?.type === "image"
+                    ? [
+                        {
+                          label: "Set Image Overlay",
+                          onClick: () => {
+                            if (mediaItem.background && db) {
+                              dispatch(
+                                updateOverlay({
+                                  imageUrl: mediaItem.background,
+                                  id: selectedOverlay?.id,
+                                })
+                              );
+                              dispatch(
+                                updateOverlayInList({
+                                  imageUrl: mediaItem.background,
+                                  id: selectedOverlay?.id,
+                                })
+                              );
+                            }
+                          },
+                          icon: <Image className="w-4 h-4" />,
+                          disabled: !mediaItem.background || !selectedOverlay,
+                        },
+                      ]
+                    : []),
+                  ...(location.pathname.includes("preferences") &&
+                  !location.pathname.includes("quick-links") &&
+                  !location.pathname.includes("monitor-settings") &&
+                  selectedPreference
+                    ? [
+                        {
+                          label: "Set Background",
+                          onClick: () => {
+                            dispatch(
+                              setDefaultPreferences({
+                                [selectedPreference]: {
+                                  background: mediaItem.background,
+                                  mediaInfo: mediaItem,
+                                },
+                              })
+                            );
+                          },
+                          icon: <Image className="w-4 h-4" />,
+                          disabled: !selectedPreference || !mediaItem.background,
+                        },
+                      ]
+                    : []),
+                  ...(location.pathname.includes("quick-links") &&
+                  selectedQuickLink?.linkType === "media"
+                    ? [
+                        {
+                          label: "Set Quick Link Background",
+                          onClick: () => {
+                            dispatch(setSelectedQuickLinkImage(mediaItem));
+                          },
+                          icon: <Image className="w-4 h-4" />,
+                          disabled: !selectedQuickLink || selectedQuickLink?.linkType !== "media",
+                        },
+                      ]
+                    : []),
+                  {
+                    label: "Delete",
+                    onClick: () => {
+                      setMediaToDelete(mediaItem);
+                      setShowDeleteModal(true);
+                    },
+                    icon: <Trash2 className="w-4 h-4" />,
+                    variant: "destructive" as const,
+                  },
+                ];
+
             return (
               <li key={id}>
-                <Button
-                  variant="none"
-                  padding="p-0"
-                  className={cn(
-                    "w-full h-full justify-center flex flex-col items-center border-2",
-                    isSelected
-                      ? "border-cyan-400"
-                      : "border-gray-500 hover:border-gray-300"
-                  )}
-                  onClick={() => {
-                    setSelectedMedia(mediaItem);
+                <ContextMenu
+                  menuItems={contextMenuItems}
+                  header={
+                    hasMultipleSelection
+                      ? {
+                          title: `${selectedMediaIds.size} items selected`,
+                          subtitle: "Multiple selection",
+                        }
+                      : {
+                          title: shownName,
+                          subtitle: type.charAt(0).toUpperCase() + type.slice(1),
+                        }
+                  }
+                  onOpen={() => {
+                    // Ensure this item is selected when context menu opens
+                    if (!isMultiSelected && !hasMultipleSelection) {
+                      handleMediaClick(
+                        { ctrlKey: false, metaKey: false, shiftKey: false } as React.MouseEvent,
+                        mediaItem,
+                        index
+                      );
+                    }
                   }}
                 >
-                  <div
+                  <Button
+                    variant="none"
+                    padding="p-0"
                     className={cn(
-                      "aspect-video flex items-center justify-center w-full flex-1 overflow-hidden",
-                      isMediaExpanded && "border-b border-gray-500"
+                      "w-full h-full justify-center flex flex-col items-center border-2",
+                      isMultiSelected
+                        ? "border-cyan-400 bg-cyan-400/10"
+                        : isSelected
+                        ? "border-cyan-400"
+                        : "border-gray-500 hover:border-gray-300"
                     )}
+                    onClick={(e) => {
+                      handleMediaClick(e, mediaItem, index);
+                    }}
+                    onContextMenu={(e) => {
+                      // Ensure selection happens on right-click too
+                      if (!isMultiSelected && !isSelected) {
+                        handleMediaClick(e, mediaItem, index);
+                      }
+                    }}
                   >
-                    <img
-                      className="max-w-full max-h-full"
-                      alt={id}
-                      src={thumbnail}
-                      loading="lazy"
-                    />
-                  </div>
-
-                  {isMediaExpanded && name && showName && (
-                    <div className="w-full px-1 py-1 text-center">
-                      <p
-                        className="text-xs text-gray-300 truncate"
-                        title={name}
-                      >
-                        {shownName}
-                      </p>
+                    <div
+                      className={cn(
+                        "aspect-video flex items-center justify-center w-full flex-1 overflow-hidden",
+                        isMediaExpanded && "border-b border-gray-500"
+                      )}
+                    >
+                      <img
+                        className="max-w-full max-h-full"
+                        alt={id}
+                        src={thumbnail}
+                        loading="lazy"
+                      />
                     </div>
-                  )}
-                </Button>
+
+                    {isMediaExpanded && name && showName && (
+                      <div className="w-full px-1 py-1 text-center">
+                        <p
+                          className="text-xs text-gray-300 truncate"
+                          title={name}
+                        >
+                          {shownName}
+                        </p>
+                      </div>
+                    )}
+                  </Button>
+                </ContextMenu>
               </li>
             );
           })}
@@ -706,9 +853,18 @@ const Media = () => {
         isOpen={showDeleteModal}
         onClose={handleCancelDelete}
         onConfirm={handleConfirmDelete}
-        itemName={mediaToDelete?.name}
+        itemName={
+          isDeletingMultiple
+            ? undefined
+            : mediaToDelete?.name
+        }
         title="Delete Media"
-        imageUrl={mediaToDelete?.thumbnail}
+        message={
+          isDeletingMultiple
+            ? `Are you sure you want to delete ${selectedMediaIds.size} items`
+            : "Are you sure you want to delete"
+        }
+        imageUrl={isDeletingMultiple ? undefined : mediaToDelete?.thumbnail}
       />
     </ErrorBoundary>
   );

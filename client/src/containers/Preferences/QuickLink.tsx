@@ -175,7 +175,7 @@ const QuickLink = ({
             ) || ""
           }
           helpText="Click to select media."
-          selectedText="Now select media and click set."
+          selectedText="Now right click media and click set."
           isSelected={isSelected}
           onClick={setSelectedQuickLinkProp}
         />
