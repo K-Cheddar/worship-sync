@@ -4,7 +4,7 @@ const config = {
 
   directories: {
     output: "dist",
-    buildResources: "buildResources", // Icons are relative to this directory
+    buildResources: "buildResources",
   },
 
   files: [
@@ -18,32 +18,31 @@ const config = {
 
   win: {
     target: ["nsis"],
-    icon: "icon.ico",   // Path relative to buildResources directory
+    icon: "icon.ico", // relative to buildResources
     publisherName: "WorshipSync",
   },
 
   mac: {
     target: ["dmg"],
-    icon: "icon.png",   // Path relative to buildResources. For better quality, use .icns format
+    icon: "icon.png", // relative to buildResources
     category: "public.app-category.productivity",
   },
 
   linux: {
     target: ["AppImage", "deb"],
-    icon: "icons",      // Path relative to buildResources directory
+    icon: "icons", // folder relative to buildResources
     category: "Office",
   },
 
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
-    installerIcon: "buildResources/icon.ico",
-    uninstallerIcon: "buildResources/icon.ico",
-    installerHeaderIcon: "buildResources/icon.ico",
+    installerIcon: "icon.ico",
+    uninstallerIcon: "icon.ico",
+    installerHeaderIcon: "icon.ico",
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
   },
 };
 
 export default config;
-
