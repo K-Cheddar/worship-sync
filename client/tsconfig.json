@@ -25,8 +25,7 @@
       "@/context/*": ["./src/context/*"],
       "@/hooks/*": ["./src/hooks/*"]
     },
-    "types": ["vite/client"]
+    "types": ["vite/client", "node", "dom-screen-wake-lock"]
   },
-  "include": ["src", "custom.d.ts"],
-  "types": ["dom-screen-wake-lock"]
+  "include": ["src", "custom.d.ts"]
 }
