@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, protocol, session } from "electron";
+import { app, BrowserWindow, ipcMain, screen, protocol, session, dialog } from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, createReadStream, statSync, readFileSync, writeFileSync } from "node:fs";
@@ -82,6 +82,7 @@ let projectorWindow: BrowserWindow | null = null;
 let monitorWindow: BrowserWindow | null = null;
 let windowStateManager: WindowStateManager;
 let videoCacheManager: VideoCacheManager;
+let isUploadInProgress = false;
 
 const notifyWindowStateChanged = () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -209,16 +210,55 @@ const createWindow = () => {
     }, 500);
   });
 
+  // Handle window close - check for upload in progress
+  mainWindow.on("close", async (event) => {
+    if (isUploadInProgress) {
+      event.preventDefault();
+      
+      const result = await dialog.showMessageBox(mainWindow!, {
+        type: "warning",
+        title: "Upload in Progress",
+        message: "A video upload is currently in progress.",
+        detail: "If you close the app now, your upload will be cancelled and you may lose progress. Do you want to close anyway?",
+        buttons: ["Cancel", "Close Anyway"],
+        defaultId: 0,
+        cancelId: 0,
+      });
+
+      if (result.response === 1) {
+        // User chose to close anyway
+        isUploadInProgress = false;
+        // Close projector and monitor windows
+        if (projectorWindow) {
+          projectorWindow.close();
+          projectorWindow = null;
+        }
+        if (monitorWindow) {
+          monitorWindow.close();
+          monitorWindow = null;
+        }
+        // Actually close the window
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.destroy();
+        }
+        mainWindow = null;
+      }
+      // If user chose Cancel (response === 0), do nothing - window stays open
+    } else {
+      // No upload in progress, close normally
+      if (projectorWindow) {
+        projectorWindow.close();
+        projectorWindow = null;
+      }
+      if (monitorWindow) {
+        monitorWindow.close();
+        monitorWindow = null;
+      }
+      mainWindow = null;
+    }
+  });
+
   mainWindow.on("closed", () => {
-    // Close projector and monitor windows when main window closes
-    if (projectorWindow) {
-      projectorWindow.close();
-      projectorWindow = null;
-    }
-    if (monitorWindow) {
-      monitorWindow.close();
-      monitorWindow = null;
-    }
     mainWindow = null;
   });
 };
@@ -232,7 +272,7 @@ app.whenReady().then(() => {
         ...details.responseHeaders,
         "Content-Security-Policy": [
           "default-src 'self'; " +
-          "script-src 'self' 'unsafe-inline' https://upload-widget.cloudinary.com; " +
+          "script-src 'self' 'unsafe-inline'; " +
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
           "font-src 'self' https://fonts.gstatic.com data:; " +
           "img-src 'self' data: https: http:; " +
@@ -777,4 +817,10 @@ ipcMain.handle("get-last-route", () => {
     console.error("Error loading last route:", error);
   }
   return null;
+});
+
+// Upload status IPC handlers
+ipcMain.handle("set-upload-in-progress", (_event, inProgress: boolean) => {
+  isUploadInProgress = inProgress;
+  return true;
 });

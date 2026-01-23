@@ -65,6 +65,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Route persistence
   saveLastRoute: (route: string) => ipcRenderer.invoke("save-last-route", route),
   getLastRoute: () => ipcRenderer.invoke("get-last-route"),
+  
+  // Upload status
+  setUploadInProgress: (inProgress: boolean) => ipcRenderer.invoke("set-upload-in-progress", inProgress),
 });
 
 // Expose a flag to indicate we're running in Electron

@@ -334,7 +334,17 @@ app.get("/api/mux/asset/:assetId", async (req, res) => {
     const asset = await mux.video.assets.retrieve(assetId);
 
     // Check static renditions status
-    const staticRenditions = asset.static_renditions || [];
+    // Ensure static_renditions is always an array
+    let staticRenditions = [];
+    if (asset.static_renditions) {
+      if (Array.isArray(asset.static_renditions)) {
+        staticRenditions = asset.static_renditions;
+      } else if (typeof asset.static_renditions === 'object') {
+        // If it's an object, try to convert it to an array
+        staticRenditions = Object.values(asset.static_renditions);
+      }
+    }
+    
     const highestRendition = staticRenditions.find((r) => r.resolution === "highest");
     const staticRenditionReady = highestRendition?.status === "ready";
 
