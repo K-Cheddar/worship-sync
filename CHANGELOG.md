@@ -1,3 +1,11 @@
+## [1.29.2](https://github.com/K-Cheddar/worship-sync/compare/v1.29.1...v1.29.2) (2026-01-23)
+
+
+### Bug Fixes
+
+* Improve local video handling ([c6703c0](https://github.com/K-Cheddar/worship-sync/commit/c6703c015b3d191125b8ae9b6e3fc4662d88ce99))
+* media modal on mobile ([b4c53ad](https://github.com/K-Cheddar/worship-sync/commit/b4c53ad03cbbe7cc62956628bacf8237c04c3ad9))
+
 ## [1.29.1](https://github.com/K-Cheddar/worship-sync/compare/v1.29.0...v1.29.1) (2026-01-23)
 
 
