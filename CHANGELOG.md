@@ -1,3 +1,10 @@
+## [1.29.1](https://github.com/K-Cheddar/worship-sync/compare/v1.29.0...v1.29.1) (2026-01-23)
+
+
+### Bug Fixes
+
+* Improve electron auto updater ([2fa03c8](https://github.com/K-Cheddar/worship-sync/commit/2fa03c889ee2a354c97047df3c7880fa7918835b))
+
 # [1.29.0](https://github.com/K-Cheddar/worship-sync/compare/v1.28.1...v1.29.0) (2026-01-23)
 
 
