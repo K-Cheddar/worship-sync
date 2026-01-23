@@ -283,12 +283,14 @@ const Media = () => {
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      // Check if click is outside the media list and not on a context menu
+      // Check if click is outside the media list and not on a context menu or modal
       if (
         mediaListRef.current &&
         !mediaListRef.current.contains(target) &&
         !target.closest('[data-slot="dropdown-menu-content"]') &&
-        !target.closest(".fixed.z-50")
+        !target.closest(".fixed.z-50") &&
+        !target.closest('[role="dialog"]') &&
+        !isFullscreen
       ) {
         setSelectedMediaIds(new Set());
         setLastSelectedIndex(-1);
@@ -305,7 +307,7 @@ const Media = () => {
         document.removeEventListener("click", handleClickOutside);
       };
     }
-  }, [selectedMediaIds.size]);
+  }, [selectedMediaIds.size, isFullscreen]);
 
 
 

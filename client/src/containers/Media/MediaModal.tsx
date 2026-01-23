@@ -141,7 +141,7 @@ const MediaModal = ({
       size="full"
       contentPadding="p-0"
     >
-      <div className={cn("flex flex-col", isMobile ? "h-[calc(99vh-120px)]" : "h-[calc(90vh-120px)]")}>
+      <div className={cn("flex flex-col", isMobile ? "h-[calc(95vh-120px)]" : "h-[calc(90vh-120px)]")}>
         {/* Preview area in fullscreen */}
         {previewMedia && (
           <div className="px-4 py-2 bg-gray-900 border-b border-gray-700 relative">
@@ -193,7 +193,10 @@ const MediaModal = ({
           <div className="flex gap-1 items-center border border-gray-600 rounded-md ml-auto">
             <Button
               variant={typeFilter === "all" ? "secondary" : "tertiary"}
-              onClick={() => setTypeFilter("all")}
+              onClick={(e) => {
+                e.stopPropagation();
+                setTypeFilter("all");
+              }}
               className="rounded-r-none"
             >
               All
@@ -201,7 +204,10 @@ const MediaModal = ({
             <Button
               variant={typeFilter === "image" ? "secondary" : "tertiary"}
               svg={Image}
-              onClick={() => setTypeFilter("image")}
+              onClick={(e) => {
+                e.stopPropagation();
+                setTypeFilter("image");
+              }}
               className="rounded-none border-x border-gray-600"
             >
               Images
@@ -209,7 +215,10 @@ const MediaModal = ({
             <Button
               variant={typeFilter === "video" ? "secondary" : "tertiary"}
               svg={Video}
-              onClick={() => setTypeFilter("video")}
+              onClick={(e) => {
+                e.stopPropagation();
+                setTypeFilter("video");
+              }}
               className="rounded-l-none"
             >
               Videos
