@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, createContext, useContext, useMemo } from "react";
 import {
   getChangelogForVersion,
   getBuildTimeVersion,
@@ -25,12 +25,29 @@ const isControllerRoute = () => {
 // Storage key for tracking dismissed PWA updates
 const PWA_UPDATE_DISMISSED_KEY = "worshipSync_pwaUpdateDismissed";
 
+// Context for manually triggering PWA update checks
+interface PWAUpdateCheckContextType {
+  checkForUpdates: () => Promise<{ available: boolean; message?: string }>;
+}
+
+// Default context value
+const defaultPWAContextValue: PWAUpdateCheckContextType = {
+  checkForUpdates: async () => ({ available: false, message: "Service workers not available" }),
+};
+
+export const PWAUpdateCheckContext = createContext<PWAUpdateCheckContextType>(defaultPWAContextValue);
+
+export const usePWAUpdateCheck = () => {
+  return useContext(PWAUpdateCheckContext);
+};
+
 const PWAUpdateCheck: React.FC = () => {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [registration, setRegistration] = useState<ServiceWorkerRegistration | null>(null);
   const [changelog, setChangelog] = useState<string | null>(null);
   const [isLoadingChangelog, setIsLoadingChangelog] = useState(false);
   const [isReloading, setIsReloading] = useState(false);
+  const [isManualCheck, setIsManualCheck] = useState(false);
 
   // Fetch changelog for the update
   const fetchChangelog = useCallback(async () => {
@@ -191,18 +208,67 @@ const PWAUpdateCheck: React.FC = () => {
     setRegistration(null);
   }, [markPWAUpdateDismissed]);
 
+  // Manual update check function for web
+  const checkForUpdates = useCallback(async (): Promise<{ available: boolean; message?: string }> => {
+    if (isElectron() || !("serviceWorker" in navigator)) {
+      return { available: false, message: "Service workers not available" };
+    }
+
+    setIsManualCheck(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      
+      // Manually trigger update check
+      await reg.update();
+      
+      // Wait a moment for the update check to complete
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Check if there's a waiting service worker (update available)
+      if (reg.waiting) {
+        // Update is available
+        setRegistration(reg);
+        setShowUpdateModal(true);
+        fetchChangelog();
+        return { available: true };
+      } else {
+        // Check if there's an installing worker (update in progress)
+        if (reg.installing) {
+          return { available: false, message: "Update check in progress..." };
+        }
+        setIsManualCheck(false);
+        return { available: false, message: "You're using the latest version!" };
+      }
+    } catch (error: any) {
+      console.error("Error checking for PWA updates:", error);
+      setIsManualCheck(false);
+      return { available: false, message: error.message || "Error checking for updates" };
+    }
+  }, [fetchChangelog]);
+
+  // Memoize context value
+  const contextValue = useMemo(() => {
+    if (isElectron() || !("serviceWorker" in navigator)) {
+      return defaultPWAContextValue;
+    }
+    return { checkForUpdates };
+  }, [checkForUpdates]);
+
   // Only run in web (not Electron)
   if (isElectron() || !("serviceWorker" in navigator)) {
-    return null;
+    return (
+      <PWAUpdateCheckContext.Provider value={contextValue} />
+    );
   }
 
   // Only render modal if we're in a controller route and should show update
-  if (!isControllerRoute() || !showUpdateModal || !registration) {
-    return null;
-  }
+  // OR if it's a manual check (allow showing outside controller route)
+  const shouldRenderModal = showUpdateModal && registration && (isControllerRoute() || isManualCheck);
 
   return (
-    <Modal
+    <PWAUpdateCheckContext.Provider value={contextValue}>
+      {shouldRenderModal && (
+        <Modal
       isOpen={showUpdateModal}
       onClose={handleDismiss}
       title="Update Available"
@@ -262,7 +328,9 @@ const PWAUpdateCheck: React.FC = () => {
           <span className="ml-2 text-sm text-gray-300">Reloading app...</span>
         </div>
       )}
-    </Modal>
+        </Modal>
+      )}
+    </PWAUpdateCheckContext.Provider>
   );
 };
 
