@@ -355,21 +355,56 @@ app.whenReady().then(() => {
   createWindow();
 
   // Configure auto-updater (only in production)
+  // Per electron-builder docs: https://www.electron.build/auto-update
+  // - electron-builder automatically creates app-update.yml in resources folder
+  // - Do NOT call setFeedURL - it's handled automatically
+  // - Update server info comes from publish config in electron-builder.config.js
   if (!isDev) {
     // Don't use checkForUpdatesAndNotify() - we'll handle UI ourselves
     autoUpdater.autoDownload = false; // Don't auto-download, let user choose
     
+    // Set logger for better debugging (optional but recommended)
+    // Using console for now, but electron-log can be added if needed
+    autoUpdater.logger = {
+      info: (message: string) => console.log("[Auto-Updater]", message),
+      warn: (message: string) => console.warn("[Auto-Updater]", message),
+      error: (message: string) => console.error("[Auto-Updater]", message),
+      debug: (message: string) => console.debug("[Auto-Updater]", message),
+    };
+    
+    // Log updater configuration
+    console.log("[Auto-Updater] Configuration:", {
+      autoDownload: autoUpdater.autoDownload,
+      channel: autoUpdater.channel,
+      currentVersion: app.getVersion(),
+      updateServer: "GitHub Releases (auto-detected from app-update.yml)",
+    });
+
     // Check for updates every hour
     setInterval(() => {
-      autoUpdater.checkForUpdates();
+      console.log("[Auto-Updater] Checking for updates (scheduled)...");
+      autoUpdater.checkForUpdates().catch((error) => {
+        console.error("[Auto-Updater] Error during scheduled check:", error);
+      });
     }, 60 * 60 * 1000);
 
     // Initial check
-    autoUpdater.checkForUpdates();
+    console.log("[Auto-Updater] Performing initial update check...");
+    autoUpdater.checkForUpdates().catch((error) => {
+      console.error("[Auto-Updater] Error during initial check:", error);
+    });
 
     // Send update events to renderer
+    autoUpdater.on("checking-for-update", () => {
+      console.log("[Auto-Updater] Checking for update...");
+    });
+
     autoUpdater.on("update-available", (info) => {
-      console.log("Update available:", info.version);
+      console.log("[Auto-Updater] Update available:", {
+        version: info.version,
+        releaseDate: info.releaseDate,
+        releaseName: info.releaseName,
+      });
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("update-available", {
           version: info.version,
@@ -378,8 +413,18 @@ app.whenReady().then(() => {
       }
     });
 
+    autoUpdater.on("update-not-available", (info) => {
+      console.log("[Auto-Updater] Update not available. Current version is latest:", {
+        version: info.version,
+        currentVersion: app.getVersion(),
+      });
+    });
+
     autoUpdater.on("update-downloaded", (info) => {
-      console.log("Update downloaded:", info.version);
+      console.log("[Auto-Updater] Update downloaded:", {
+        version: info.version,
+        releaseDate: info.releaseDate,
+      });
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("update-downloaded", {
           version: info.version,
@@ -389,6 +434,11 @@ app.whenReady().then(() => {
     });
 
     autoUpdater.on("download-progress", (progressObj) => {
+      console.log("[Auto-Updater] Download progress:", {
+        percent: Math.round(progressObj.percent),
+        transferred: progressObj.transferred,
+        total: progressObj.total,
+      });
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("update-download-progress", {
           percent: progressObj.percent,
@@ -399,7 +449,11 @@ app.whenReady().then(() => {
     });
 
     autoUpdater.on("error", (error) => {
-      console.error("Auto-updater error:", error);
+      console.error("[Auto-Updater] Error:", {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+      });
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("update-error", {
           message: error.message,
