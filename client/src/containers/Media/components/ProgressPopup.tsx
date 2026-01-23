@@ -23,7 +23,7 @@ export const ProgressPopup = ({
 }: ProgressPopupProps) => {
   return (
     <div
-      className="fixed bottom-10 right-4 z-10 bg-gray-800 border border-gray-600 rounded-lg shadow-2xl min-w-[320px] max-w-[400px] cursor-pointer hover:border-gray-500 transition-colors"
+      className="fixed bottom-1 right-4 z-10 bg-gray-800 border border-gray-600 rounded-lg shadow-2xl min-w-[320px] max-w-[400px] cursor-pointer hover:border-gray-500 transition-colors"
       onClick={onRestore}
     >
       <div className="p-4">
