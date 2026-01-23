@@ -152,7 +152,7 @@ const ContextMenu = ({
               <>
                 <div className="px-3 py-2 border-b border-gray-600">
                   <div className="flex flex-col">
-                    <span className="font-semibold text-sm">{header.title}</span>
+                    <span className="font-semibold text-sm max-w-[250px] truncate">{header.title}</span>
                     {header.subtitle && (
                       <span className="text-xs text-gray-400 font-normal">
                         {header.subtitle}
