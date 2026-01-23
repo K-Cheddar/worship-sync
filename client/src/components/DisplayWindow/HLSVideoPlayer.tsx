@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useState, useCallback } from "react";
 import Hls from "hls.js";
 import { Box } from "../../types";
 
@@ -38,7 +38,7 @@ const HLSPlayer = ({
             // Use the protocol URL returned by getLocalPath (video-cache://)
             // This is safer than file:// and works with Electron's security model
             console.log(`[HLSPlayer] Using cached video: ${localPath}`);
-            // localPath is now an HTTP URL from the local server
+            // localPath is now a video-cache:// protocol URL
             setActualSrc(localPath);
             setIsCheckingCache(false);
             return;
@@ -55,110 +55,75 @@ const HLSPlayer = ({
     checkLocalVideo();
   }, [src]);
 
-  useEffect(() => {
-    // Don't load video while checking cache or if no source
-    // Also ensure we clear the src if we're still checking
-    if (isCheckingCache && videoRef.current) {
-      videoRef.current.src = "";
-      return;
+  // Helper function to play native video (MP4, cached or remote)
+  const playNative = useCallback((video: HTMLVideoElement, videoSrc: string) => {
+    // Clear any existing HLS instance
+    if (video.src && video.src !== videoSrc) {
+      video.src = "";
     }
     
-    if (!videoRef.current || !actualSrc) return;
+    // Set the source and handle loading
+    video.src = videoSrc;
     
-    // If it's a local cached file (http://127.0.0.1), don't use HLS
-    if (actualSrc.startsWith("http://127.0.0.1") || actualSrc.startsWith("http://localhost")) {
-      const video = videoRef.current;
+    const handleLoadedMetadata = () => {
+      if (videoSrc.startsWith("video-cache://")) {
+        console.log(`[HLSPlayer] Cached video metadata loaded: ${videoSrc}`);
+      }
+      video.play().catch((e) => {
+        console.warn("Error playing video", e);
+      });
+    };
+    
+    const handleError = (e: Event) => {
+      const videoElement = e.target as HTMLVideoElement;
+      const error = videoElement.error;
+      console.error(`[HLSPlayer] Error loading video: ${videoSrc}`, {
+        error,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        networkState: videoElement.networkState,
+        readyState: videoElement.readyState,
+      });
       
-      // Clear any existing HLS instance
-      if (video.src && video.src !== actualSrc) {
-        video.src = "";
+      // Log more details about the error
+      if (error) {
+        switch (error.code) {
+          case MediaError.MEDIA_ERR_ABORTED:
+            console.error(`[HLSPlayer] Video loading aborted`);
+            break;
+          case MediaError.MEDIA_ERR_NETWORK:
+            console.error(`[HLSPlayer] Network error while loading video`);
+            break;
+          case MediaError.MEDIA_ERR_DECODE:
+            console.error(`[HLSPlayer] Video decode error`);
+            break;
+          case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+            console.error(`[HLSPlayer] Video source not supported: ${videoSrc}`);
+            break;
+        }
       }
       
-      // Set the source and handle loading
-      video.src = actualSrc;
-      
-      const handleLoadedMetadata = () => {
-        console.log(`[HLSPlayer] Cached video metadata loaded: ${actualSrc}`);
-        video.play().catch((e) => {
-          console.warn("Error playing cached video", e);
-        });
-      };
-      
-      const handleError = (e: Event) => {
-        const video = e.target as HTMLVideoElement;
-        const error = video.error;
-        console.error(`[HLSPlayer] Error loading cached video: ${actualSrc}`, {
-          error,
-          errorCode: error?.code,
-          errorMessage: error?.message,
-          networkState: video.networkState,
-          readyState: video.readyState,
-        });
-        
-        // Log more details about the error
-        if (error) {
-          switch (error.code) {
-            case MediaError.MEDIA_ERR_ABORTED:
-              console.error(`[HLSPlayer] Video loading aborted`);
-              break;
-            case MediaError.MEDIA_ERR_NETWORK:
-              console.error(`[HLSPlayer] Network error while loading video`);
-              break;
-            case MediaError.MEDIA_ERR_DECODE:
-              console.error(`[HLSPlayer] Video decode error`);
-              break;
-            case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-              console.error(`[HLSPlayer] Video source not supported: ${actualSrc}`);
-              break;
-          }
-        }
-        
-        // Fallback to original URL if cached video fails
-        if (src && src !== actualSrc) {
-          console.log(`[HLSPlayer] Falling back to original URL: ${src}`);
-          setActualSrc(src);
-        }
-      };
-      
-      video.addEventListener("loadedmetadata", handleLoadedMetadata);
-      video.addEventListener("error", handleError);
-      
-      // Try to load immediately
-      video.load();
-      
-      return () => {
-        video.removeEventListener("loadedmetadata", handleLoadedMetadata);
-        video.removeEventListener("error", handleError);
-      };
-    }
-
-    // If it's an HLS video (.m3u8), use HLS.js
-    if (!actualSrc.includes(".m3u8")) {
-      const video = videoRef.current;
-      
-      // Clear any existing HLS instance
-      if (video.src && video.src !== actualSrc) {
-        video.src = "";
+      // Fallback to original URL if cached video fails
+      if (src && src !== videoSrc && videoSrc.startsWith("video-cache://")) {
+        console.log(`[HLSPlayer] Falling back to original URL: ${src}`);
+        setActualSrc(src);
       }
-      
-      video.src = actualSrc;
-      video.load();
-      
-      const handleLoadedMetadata = () => {
-        video.play().catch((e) => {
-          console.warn("Error playing video", e);
-        });
-      };
-      
-      video.addEventListener("loadedmetadata", handleLoadedMetadata);
-      
-      return () => {
-        video.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      };
-    }
+    };
+    
+    video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("error", handleError);
+    
+    // Try to load immediately
+    video.load();
+    
+    return () => {
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener("error", handleError);
+    };
+  }, [src, setActualSrc]);
 
-    const video = videoRef.current;
-
+  // Helper function to play HLS streams
+  const playHLS = useCallback((video: HTMLVideoElement, videoSrc: string) => {
     if (Hls.isSupported()) {
       const hls = new Hls();
       
@@ -166,20 +131,20 @@ const HLSPlayer = ({
         if (data.fatal) {
           console.error(`[HLSPlayer] HLS fatal error: ${data.type}`, data);
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            console.log(`[HLSPlayer] Network error for: ${actualSrc}`);
+            console.log(`[HLSPlayer] Network error for: ${videoSrc}`);
             // Try to recover
             hls.startLoad();
           } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            console.log(`[HLSPlayer] Media error for: ${actualSrc}`);
+            console.log(`[HLSPlayer] Media error for: ${videoSrc}`);
             hls.recoverMediaError();
           } else {
-            console.error(`[HLSPlayer] Unrecoverable HLS error for: ${actualSrc}`);
+            console.error(`[HLSPlayer] Unrecoverable HLS error for: ${videoSrc}`);
             hls.destroy();
           }
         }
       });
       
-      hls.loadSource(actualSrc);
+      hls.loadSource(videoSrc);
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -192,7 +157,7 @@ const HLSPlayer = ({
         hls.destroy();
       };
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = actualSrc;
+      video.src = videoSrc;
       video.load();
       
       const handleLoadedMetadata = () => {
@@ -207,7 +172,33 @@ const HLSPlayer = ({
         video.removeEventListener("loadedmetadata", handleLoadedMetadata);
       };
     }
-  }, [actualSrc, isCheckingCache, src]);
+    
+    return () => {};
+  }, []);
+
+  useEffect(() => {
+    // Don't load video while checking cache or if no source
+    // Also ensure we clear the src if we're still checking
+    if (isCheckingCache && videoRef.current) {
+      videoRef.current.src = "";
+      return;
+    }
+    
+    if (!videoRef.current || !actualSrc) return;
+    
+    // 1. Cached MP4s (video-cache://)
+    if (actualSrc.startsWith("video-cache://")) {
+      return playNative(videoRef.current, actualSrc);
+    }
+    
+    // 2. HLS streams (.m3u8)
+    if (actualSrc.endsWith(".m3u8")) {
+      return playHLS(videoRef.current, actualSrc);
+    }
+    
+    // 3. Normal MP4 URLs
+    return playNative(videoRef.current, actualSrc);
+  }, [actualSrc, isCheckingCache, playNative, playHLS]);
 
   // Don't set src attribute until cache check is complete
   // This prevents the video from trying to load the original URL before we check cache
