@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, protocol } from "electron";
+import { app, BrowserWindow, ipcMain, screen, protocol, session } from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, createReadStream, statSync } from "node:fs";
@@ -72,6 +72,11 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
+
+// Set different userData path in development to separate dev and production data
+if (!app.isPackaged) {
+  app.setPath("userData", join(app.getPath("userData"), "dev"));
+}
 
 let mainWindow: BrowserWindow | null = null;
 let projectorWindow: BrowserWindow | null = null;
@@ -226,6 +231,27 @@ const createWindow = () => {
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
+  // Set Content Security Policy to prevent security warnings
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": [
+          "default-src 'self'; " +
+          "script-src 'self' 'unsafe-inline' https://upload-widget.cloudinary.com; " +
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+          "font-src 'self' https://fonts.gstatic.com data:; " +
+          "img-src 'self' data: https: http:; " +
+          "media-src 'self' https: http: blob:; " +
+          "connect-src 'self' https: http: ws: wss:; " +
+          "frame-src 'self'; " +
+          "object-src 'none'; " +
+          "base-uri 'self';"
+        ],
+      },
+    });
+  });
+
   // Create local HTTP server for video cache (more compatible than custom protocol)
   const cacheDir = join(app.getPath("userData"), "video-cache");
   

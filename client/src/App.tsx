@@ -19,6 +19,7 @@ import ProjectorFull from "./pages/ProjectorFull";
 import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
 import TimerManager from "./components/TimerManager/TimerManager";
 import ElectronUpdateCheck from "./components/ElectronUpdateCheck";
+import PWAUpdateCheck from "./components/PWAUpdateCheck";
 import StreamInfo from "./pages/StreamInfo";
 import InfoController from "./pages/InfoController";
 import { useEffect } from "react";
@@ -47,6 +48,7 @@ const App: React.FC = () => {
           <ToastProvider>
             <TimerManager />
             <ElectronUpdateCheck />
+            <PWAUpdateCheck />
               <Routes>
                 <Route element={<ControllerContextWrapper />}>
                   <Route path="/" element={<Home />} />
