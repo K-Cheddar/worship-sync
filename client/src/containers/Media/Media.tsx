@@ -8,7 +8,6 @@ import {
   Image,
   Images,
   Eye,
-  Video,
   ChevronDown,
   ChevronUp,
   Maximize,
@@ -29,10 +28,8 @@ import {
   addItemToMediaList,
 } from "../../store/mediaSlice";
 import { retrieveImages } from "../../utils/itemUtil";
-import {
-  mediaInfoType,
-} from "./CloudinaryUploadWidget";
-import MuxVideoInput, { MuxVideoInputRef } from "./MuxVideoInput";
+import { mediaInfoType } from "./cloudinaryTypes";
+import MediaUploadInput, { MediaUploadInputRef } from "./MediaUploadInput";
 import generateRandomId from "../../utils/generateRandomId";
 import {
   deleteFromCloudinary,
@@ -57,61 +54,6 @@ import { updateOverlay } from "../../store/overlaySlice";
 import { ActionCreators } from "redux-undo";
 import MediaModal from "./MediaModal";
 
-// Hidden Cloudinary widget component that auto-triggers
-const HiddenCloudinaryWidget = ({
-  uwConfig,
-  onComplete,
-}: {
-  uwConfig: {
-    cloudName: string;
-    uploadPreset: string;
-    clientAllowedFormats?: string[];
-    resourceType?: string;
-  };
-  onComplete: (info: any) => void;
-}) => {
-  useEffect(() => {
-    let checkInterval: NodeJS.Timeout | null = null;
-    
-    const initializeCloudinaryWidget = () => {
-      if (window.cloudinary) {
-        const myWidget = window.cloudinary.createUploadWidget(
-          uwConfig,
-          (error: any, result: any) => {
-            if (!error && result && result.event === "success") {
-              onComplete(result.info);
-            }
-          }
-        );
-        myWidget.open();
-      } else {
-        // Wait for script to load
-        checkInterval = setInterval(() => {
-          if (window.cloudinary) {
-            if (checkInterval) clearInterval(checkInterval);
-            const myWidget = window.cloudinary.createUploadWidget(
-              uwConfig,
-              (error: any, result: any) => {
-                if (!error && result && result.event === "success") {
-                  onComplete(result.info);
-                }
-              }
-            );
-            myWidget.open();
-          }
-        }, 100);
-      }
-    };
-
-    initializeCloudinaryWidget();
-    
-    return () => {
-      if (checkInterval) clearInterval(checkInterval);
-    };
-  }, [uwConfig, onComplete]);
-
-  return null;
-};
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -172,12 +114,9 @@ const Media = () => {
   const [showName, setShowName] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [previewMedia, setPreviewMedia] = useState<MediaType | null>(null);
-  const [triggerCloudinaryUpload, setTriggerCloudinaryUpload] = useState(0);
-  const [contextMenuOpen, setContextMenuOpen] = useState(false);
-  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
-  const muxVideoInputRef = useRef<MuxVideoInputRef>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ isUploading: boolean; progress: number }>({ isUploading: false, progress: 0 });
+  const mediaUploadInputRef = useRef<MediaUploadInputRef>(null);
   const mediaListRef = useRef<HTMLUListElement>(null);
-  const contextMenuButtonRef = useRef<HTMLButtonElement>(null);
 
   // Filter media items based on search term
   const filteredList = list.filter((item) =>
@@ -208,6 +147,23 @@ const Media = () => {
     };
     getAllItems();
   }, [dispatch, db, cloud]);
+
+  // Poll upload status to show progress on Add button
+  useEffect(() => {
+    if (!mediaUploadInputRef.current) return;
+
+    const interval = setInterval(() => {
+      const status = mediaUploadInputRef.current?.getUploadStatus();
+      if (status) {
+        setUploadProgress({
+          isUploading: status.isUploading,
+          progress: status.progress,
+        });
+      }
+    }, 500); // Poll every 500ms
+
+    return () => clearInterval(interval);
+  }, []);
 
   const updateMediaListFromExternal = useCallback(
     async (event: CustomEventInit) => {
@@ -577,35 +533,6 @@ const Media = () => {
     dispatch(addItemToMediaList(newMedia));
   };
 
-  const mediaContextMenuItems = [
-    {
-      label: "Add Image",
-      onClick: () => {
-        setTriggerCloudinaryUpload((prev) => prev + 1);
-        setContextMenuOpen(false);
-      },
-      icon: <Image className="w-4 h-4" />,
-    },
-    {
-      label: "Add Video",
-      onClick: () => {
-        muxVideoInputRef.current?.openModal();
-        setContextMenuOpen(false);
-      },
-      icon: <Video className="w-4 h-4" />,
-    },
-  ];
-
-  const handleContextMenuButtonClick = (e: React.MouseEvent) => {
-    if (contextMenuButtonRef.current) {
-      const rect = contextMenuButtonRef.current.getBoundingClientRect();
-      setContextMenuPosition({
-        x: rect.right - 200, // Align right edge of menu to right edge of button
-        y: rect.bottom + 4, // Position below button with small gap
-      });
-      setContextMenuOpen(true);
-    }
-  };
 
 
   return (
@@ -631,12 +558,14 @@ const Media = () => {
         <div className="flex items-center gap-2">
           {isMediaExpanded && (
             <Button
-              ref={contextMenuButtonRef}
               variant="tertiary"
               svg={Plus}
-              onClick={handleContextMenuButtonClick}
-              title="Media Actions"
-            />
+              onClick={() => mediaUploadInputRef.current?.openModal()}
+              title={uploadProgress.isUploading ? `Uploading... ${Math.round(uploadProgress.progress)}%` : "Add Media"}
+              disabled={uploadProgress.isUploading}
+            >
+              {uploadProgress.isUploading ? `${Math.round(uploadProgress.progress)}%` : ""}
+            </Button>
           )}
           <Button
             variant="tertiary"
@@ -646,68 +575,25 @@ const Media = () => {
           />
         </div>
       </div>
-      {contextMenuOpen && (
-        <div
-          className="fixed z-50 bg-gray-700 text-white min-w-[200px] rounded-md border border-gray-600 shadow-lg py-1"
-          style={{
-            left: `${contextMenuPosition.x}px`,
-            top: `${contextMenuPosition.y}px`,
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="px-3 py-2 border-b border-gray-600">
-            <div className="flex flex-col">
-              <span className="font-semibold text-sm">Media Actions</span>
-              <span className="text-xs text-gray-400 font-normal">
-                Add new media
-              </span>
-            </div>
-          </div>
-          {mediaContextMenuItems.map((item, index) => (
-            <button
-              key={index}
-              className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-600 transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                item.onClick();
-              }}
-            >
-              {item.icon && <span className="shrink-0">{item.icon}</span>}
-              <span>{item.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-      {contextMenuOpen && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setContextMenuOpen(false)}
-        />
-      )}
-      {/* Always render MuxVideoInput to keep popup alive when media is collapsed */}
-      <MuxVideoInput
-        ref={muxVideoInputRef}
-        onComplete={(muxData) => {
+      {/* Unified media upload component */}
+      <MediaUploadInput
+        ref={mediaUploadInputRef}
+        onImageComplete={(info: mediaInfoType) => {
+          addNewBackground(info);
+        }}
+        onVideoComplete={(muxData: {
+          playbackId: string;
+          assetId: string;
+          playbackUrl: string;
+          thumbnailUrl: string;
+          name: string;
+        }) => {
           addMuxVideo(muxData);
         }}
         showButton={false}
+        uploadPreset="bpqu4ma5"
+        cloudName="portable-media"
       />
-      {/* Hidden CloudinaryUploadWidget triggered by context menu */}
-      {triggerCloudinaryUpload > 0 && (
-        <HiddenCloudinaryWidget
-          key={triggerCloudinaryUpload}
-          uwConfig={{
-            uploadPreset: "bpqu4ma5",
-            cloudName: "portable-media",
-            clientAllowedFormats: ["png", "jpg", "jpeg", "webp", "gif"],
-            resourceType: "image",
-          }}
-          onComplete={(info) => {
-            addNewBackground(info);
-            setTriggerCloudinaryUpload(0);
-          }}
-        />
-      )}
       {!isMediaLoading && isMediaExpanded && (
         <div className="px-4 py-2 bg-gray-900 mx-2 flex items-center gap-2">
           <Input

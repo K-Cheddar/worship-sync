@@ -74,6 +74,9 @@ export interface ElectronAPI {
   // Route persistence
   saveLastRoute: (route: string) => Promise<boolean>;
   getLastRoute: () => Promise<string | null>;
+  
+  // Upload status
+  setUploadInProgress: (inProgress: boolean) => Promise<boolean>;
 }
 
 declare global {
