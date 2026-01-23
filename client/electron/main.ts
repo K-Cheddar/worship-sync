@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, screen, protocol, session } from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, createReadStream, statSync } from "node:fs";
+import { existsSync, createReadStream, statSync, readFileSync, writeFileSync } from "node:fs";
 import updaterPkg from "electron-updater";
 
 import { WindowStateManager } from "./windowState";
@@ -240,7 +240,8 @@ app.whenReady().then(() => {
           "connect-src 'self' https: http: ws: wss:; " +
           "frame-src 'self'; " +
           "object-src 'none'; " +
-          "base-uri 'self';"
+          "base-uri 'self'; " +
+          "worker-src 'self' blob:;"
         ],
       },
     });
@@ -418,91 +419,78 @@ app.whenReady().then(() => {
   // - electron-builder automatically creates app-update.yml in resources folder
   // - Do NOT call setFeedURL - it's handled automatically
   // - Update server info comes from publish config in electron-builder.config.js
+
   if (!isDev) {
-    // Don't use checkForUpdatesAndNotify() - we'll handle UI ourselves
-    autoUpdater.autoDownload = false; // Don't auto-download, let user choose
-    
-    // Set logger for better debugging (optional but recommended)
-    // Using console for now, but electron-log can be added if needed
+    autoUpdater.autoDownload = false;
+  
     autoUpdater.logger = {
-      info: (message: string) => console.log("[Auto-Updater]", message),
-      warn: (message: string) => console.warn("[Auto-Updater]", message),
-      error: (message: string) => console.error("[Auto-Updater]", message),
-      debug: (message: string) => console.debug("[Auto-Updater]", message),
+      info: (m) => console.log("[Auto-Updater]", m),
+      warn: (m) => console.warn("[Auto-Updater]", m),
+      error: (m) => console.error("[Auto-Updater]", m),
+      debug: (m) => console.debug("[Auto-Updater]", m),
     };
-    
-    // Check for updates every hour
-    setInterval(() => {
+  
+    let updateInterval: NodeJS.Timeout | null = null;
+  
+    app.whenReady().then(() => {
+      // Initial check
       autoUpdater.checkForUpdates().catch((error) => {
-        console.error("[Auto-Updater] Error during scheduled check:", error);
+        console.error("[Auto-Updater] Error during initial check:", error);
       });
-    }, 60 * 60 * 1000);
-
-    // Initial check
-    autoUpdater.checkForUpdates().catch((error) => {
-      console.error("[Auto-Updater] Error during initial check:", error);
+  
+      // Hourly checks
+      if (!updateInterval) {
+        updateInterval = setInterval(() => {
+          autoUpdater.checkForUpdates().catch((error) => {
+            console.error("[Auto-Updater] Error during scheduled check:", error);
+          });
+        }, 60 * 60 * 1000);
+      }
     });
-
-    // Send update events to renderer
+  
+    // Events
     autoUpdater.on("checking-for-update", () => {
-      // Silent check
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("checking-for-update");
+      }
     });
-
+  
     autoUpdater.on("update-available", (info) => {
-      console.log("[Auto-Updater] Update available:", {
+      console.log("[Auto-Updater] Update available:", info);
+      mainWindow?.webContents.send("update-available", {
         version: info.version,
         releaseDate: info.releaseDate,
-        releaseName: info.releaseName,
       });
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("update-available", {
-          version: info.version,
-          releaseDate: info.releaseDate,
-        });
-      }
     });
-
+  
     autoUpdater.on("update-not-available", () => {
-      // Silent - no update available
+      mainWindow?.webContents.send("update-not-available");
     });
-
+  
     autoUpdater.on("update-downloaded", (info) => {
-      console.log("[Auto-Updater] Update downloaded:", {
+      console.log("[Auto-Updater] Update downloaded:", info);
+      mainWindow?.webContents.send("update-downloaded", {
         version: info.version,
         releaseDate: info.releaseDate,
       });
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("update-downloaded", {
-          version: info.version,
-          releaseDate: info.releaseDate,
-        });
-      }
     });
-
-    autoUpdater.on("download-progress", (progressObj) => {
-      // Progress updates sent to renderer, no need to log
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("update-download-progress", {
-          percent: progressObj.percent,
-          transferred: progressObj.transferred,
-          total: progressObj.total,
-        });
-      }
-    });
-
-    autoUpdater.on("error", (error) => {
-      console.error("[Auto-Updater] Error:", {
-        message: error.message,
-        stack: error.stack,
-        name: error.name,
+  
+    autoUpdater.on("download-progress", (progress) => {
+      mainWindow?.webContents.send("update-download-progress", {
+        percent: progress.percent,
+        transferred: progress.transferred,
+        total: progress.total,
       });
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("update-error", {
-          message: error.message,
-        });
-      }
+    });
+  
+    autoUpdater.on("error", (error) => {
+      console.error("[Auto-Updater] Error:", error);
+      mainWindow?.webContents.send("update-error", {
+        message: error.message,
+      });
     });
   }
+  
 
   app.on("activate", () => {
     // On macOS, re-create window when dock icon is clicked
@@ -759,4 +747,34 @@ ipcMain.handle("sync-video-cache", async (_event, videoUrls: string[]) => {
     console.error("Error syncing video cache:", error);
     return { downloaded: 0, cleaned: 0 };
   }
+});
+
+// Route persistence IPC handlers
+const getRouteFilePath = (): string => {
+  return join(app.getPath("userData"), "last-route.json");
+};
+
+ipcMain.handle("save-last-route", (_event, route: string) => {
+  try {
+    const routeFilePath = getRouteFilePath();
+    writeFileSync(routeFilePath, JSON.stringify({ route }, null, 2), "utf-8");
+    return true;
+  } catch (error) {
+    console.error("Error saving last route:", error);
+    return false;
+  }
+});
+
+ipcMain.handle("get-last-route", () => {
+  try {
+    const routeFilePath = getRouteFilePath();
+    if (existsSync(routeFilePath)) {
+      const data = readFileSync(routeFilePath, "utf-8");
+      const parsed = JSON.parse(data);
+      return parsed.route || null;
+    }
+  } catch (error) {
+    console.error("Error loading last route:", error);
+  }
+  return null;
 });

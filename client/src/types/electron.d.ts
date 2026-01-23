@@ -70,6 +70,10 @@ export interface ElectronAPI {
   getLocalVideoPath: (url: string) => Promise<string | null>;
   cleanupUnusedVideos: (usedUrls: string[]) => Promise<void>;
   syncVideoCache: (videoUrls: string[]) => Promise<{ downloaded: number; cleaned: number }>;
+  
+  // Route persistence
+  saveLastRoute: (route: string) => Promise<boolean>;
+  getLastRoute: () => Promise<string | null>;
 }
 
 declare global {

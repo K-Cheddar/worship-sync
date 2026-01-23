@@ -22,6 +22,7 @@ import ElectronUpdateCheck from "./components/ElectronUpdateCheck";
 import PWAUpdateCheck from "./components/PWAUpdateCheck";
 import StreamInfo from "./pages/StreamInfo";
 import InfoController from "./pages/InfoController";
+import RoutePersistence from "./components/RoutePersistence/RoutePersistence";
 import { useEffect } from "react";
 import { delay } from "./utils/generalUtils";
 
@@ -46,6 +47,7 @@ const App: React.FC = () => {
       <Router>
         <GlobalInfoProvider>
           <ToastProvider>
+            <RoutePersistence />
             <TimerManager />
             <ElectronUpdateCheck />
             <PWAUpdateCheck />

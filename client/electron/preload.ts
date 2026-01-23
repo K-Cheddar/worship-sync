@@ -61,6 +61,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getLocalVideoPath: (url: string) => ipcRenderer.invoke("get-local-video-path", url),
   cleanupUnusedVideos: (usedUrls: string[]) => ipcRenderer.invoke("cleanup-unused-videos", usedUrls),
   syncVideoCache: (videoUrls: string[]) => ipcRenderer.invoke("sync-video-cache", videoUrls),
+  
+  // Route persistence
+  saveLastRoute: (route: string) => ipcRenderer.invoke("save-last-route", route),
+  getLastRoute: () => ipcRenderer.invoke("get-last-route"),
 });
 
 // Expose a flag to indicate we're running in Electron

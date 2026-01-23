@@ -67,7 +67,7 @@ import QuickLinks from "./QuickLinks";
 import MonitorSettings from "./MonitorSettings";
 import MonitorControls from "./MonitorControls";
 import { useVideoCache } from "../../hooks/useVideoCache";
-import { extractVideoUrlsFromItem } from "../../utils/videoCacheUtils";
+import { extractVideoUrlsFromItem, extractAllVideoUrlsFromOutlines } from "../../utils/videoCacheUtils";
 import {
   initiateMonitorSettings,
   initiatePreferences,
@@ -236,7 +236,6 @@ const Controller = () => {
     
     const syncVideos = async () => {
       try {
-        const { extractAllVideoUrlsFromOutlines } = await import("../../utils/videoCacheUtils");
         const videoUrls = await extractAllVideoUrlsFromOutlines(db);
         const urlArray = Array.from(videoUrls);
         
