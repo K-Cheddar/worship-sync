@@ -1,3 +1,10 @@
+# [1.29.0](https://github.com/K-Cheddar/worship-sync/compare/v1.28.1...v1.29.0) (2026-01-23)
+
+
+### Features
+
+* Add updater for PWA ([f09983c](https://github.com/K-Cheddar/worship-sync/commit/f09983c9b10829eaf779c80658a941a2d9d0b7f0))
+
 ## [1.28.1](https://github.com/K-Cheddar/worship-sync/compare/v1.28.0...v1.28.1) (2026-01-22)
 
 
