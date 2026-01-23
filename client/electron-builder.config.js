@@ -2,6 +2,13 @@ const config = {
   appId: "com.worshipsync.app",
   productName: "WorshipSync",
 
+  // Configure update server (GitHub Releases)
+  publish: {
+    provider: "github",
+    owner: "K-Cheddar",
+    repo: "worship-sync",
+  },
+
   directories: {
     output: "dist",
     buildResources: "buildResources",
