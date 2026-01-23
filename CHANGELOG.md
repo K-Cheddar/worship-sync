@@ -1,3 +1,11 @@
+## [1.30.2](https://github.com/K-Cheddar/worship-sync/compare/v1.30.1...v1.30.2) (2026-01-23)
+
+
+### Bug Fixes
+
+* Fixed image and video uploads ([10f7d45](https://github.com/K-Cheddar/worship-sync/commit/10f7d45c539ed143ec93b996cf639b8aac6691c9))
+* Update progress popup positioning ([3acd1e7](https://github.com/K-Cheddar/worship-sync/commit/3acd1e7635e41785ad9df4e91492050bdcc22477))
+
 ## [1.30.1](https://github.com/K-Cheddar/worship-sync/compare/v1.30.0...v1.30.1) (2026-01-23)
 
 
