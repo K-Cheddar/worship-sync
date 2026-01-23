@@ -9,7 +9,7 @@ interface ModalProps {
   onClose: () => void;
   title?: string;
   children: React.ReactNode;
-  size?: "sm" | "md" | "lg" | "xl";
+  size?: "sm" | "md" | "lg" | "xl" | "2xl" | "full";
   showCloseButton?: boolean;
   contentPadding?: string;
   headerAction?: React.ReactNode;
@@ -20,6 +20,8 @@ const sizeClasses = {
   md: "max-w-2xl",
   lg: "max-w-4xl",
   xl: "max-w-6xl",
+  "2xl": "max-w-7xl",
+  full: "max-w-[95vw]",
 };
 
 const Modal = ({
@@ -102,7 +104,11 @@ const Modal = ({
 
       <div
         ref={modalRef}
-        className={`relative bg-gray-800 rounded-lg shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden`}
+        className={cn(
+          "relative bg-gray-800 rounded-lg shadow-2xl w-full overflow-hidden",
+          sizeClasses[size],
+          "max-h-[90vh] max-md:max-h-[95vh] max-md:h-[95vh] max-md:rounded-none"
+        )}
         role="document"
       >
         {(title || showCloseButton || headerAction) && (
@@ -129,7 +135,7 @@ const Modal = ({
 
         <div
           className={cn(
-            "overflow-y-auto max-h-[calc(90vh-120px)] scrollbar-variable",
+            "overflow-y-auto max-h-[calc(90vh-120px)] max-md:max-h-[calc(95vh-120px)] scrollbar-variable",
             contentPadding
           )}
         >

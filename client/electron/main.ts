@@ -2,7 +2,6 @@ import { app, BrowserWindow, ipcMain, screen, protocol, session } from "electron
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, createReadStream, statSync } from "node:fs";
-import { createServer, Server } from "node:http";
 import updaterPkg from "electron-updater";
 
 import { WindowStateManager } from "./windowState";
@@ -83,8 +82,6 @@ let projectorWindow: BrowserWindow | null = null;
 let monitorWindow: BrowserWindow | null = null;
 let windowStateManager: WindowStateManager;
 let videoCacheManager: VideoCacheManager;
-let videoCacheServer: Server | null = null;
-let videoCacheServerPort: number = 0;
 
 const notifyWindowStateChanged = () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -196,9 +193,6 @@ const createWindow = () => {
       console.error("Failed to load:", errorCode, errorDescription);
     });
 
-    mainWindow.webContents.on("console-message", (event, level, message) => {
-      console.log("Console:", message);
-    });
   }
 
   // When main window is ready, open projector and monitor windows only if they were previously open
@@ -242,7 +236,7 @@ app.whenReady().then(() => {
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
           "font-src 'self' https://fonts.gstatic.com data:; " +
           "img-src 'self' data: https: http:; " +
-          "media-src 'self' https: http: blob:; " +
+          "media-src 'self' https: http: blob: video-cache:; " +
           "connect-src 'self' https: http: ws: wss:; " +
           "frame-src 'self'; " +
           "object-src 'none'; " +
@@ -252,102 +246,167 @@ app.whenReady().then(() => {
     });
   });
 
-  // Create local HTTP server for video cache (more compatible than custom protocol)
+  // Register protocol handler for video-cache:// to serve files from filesystem
   const cacheDir = join(app.getPath("userData"), "video-cache");
   
-  videoCacheServer = createServer((req, res) => {
+  protocol.handle("video-cache", async (request) => {
     try {
-      // Handle CORS preflight requests
-      if (req.method === "OPTIONS") {
-        res.writeHead(200, {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-          "Access-Control-Allow-Headers": "Range",
-        });
-        res.end();
-        return;
+      const url = new URL(request.url);
+      // For video-cache:// URLs, filename can be in hostname (video-cache://filename.mp4) 
+      // or pathname (video-cache:///filename.mp4)
+      // Extract from pathname first, then hostname, or parse from the full URL as fallback
+      let filename = url.pathname.replace(/^\//, "").replace(/\/$/, "");
+      if (!filename) {
+        filename = url.hostname || "";
       }
-
-      if (!req.url) {
-        res.writeHead(400);
-        res.end("Bad Request");
-        return;
+      // If still empty, try to extract from the URL string directly
+      if (!filename) {
+        const urlMatch = request.url.match(new RegExp("video-cache:///?([^/?#]+)"));
+        if (urlMatch) {
+          filename = urlMatch[1];
+        }
       }
-
-      // Parse the filename from the URL (e.g., /j83fap.mp4)
-      const filename = req.url.split("?")[0].replace(/^\//, "");
-      if (!filename || filename.includes("..") || filename.includes("/")) {
-        res.writeHead(400);
-        res.end("Invalid filename");
-        return;
-      }
-
       const filePath = join(cacheDir, filename);
-      
-      // Security check: ensure the file is in the video cache directory
-      const normalizedFilePath = filePath.replace(/\\/g, "/").toLowerCase();
-      const normalizedCacheDir = cacheDir.replace(/\\/g, "/").toLowerCase();
-      
-      if (!normalizedFilePath.startsWith(normalizedCacheDir)) {
-        console.error(`[Video Cache Server] Security violation: Attempted to access file outside cache directory`);
-        res.writeHead(403);
-        res.end("Forbidden");
-        return;
-      }
 
-      // Check if file exists
       if (!existsSync(filePath)) {
-        console.warn(`[Video Cache Server] File not found: ${filePath}`);
-        res.writeHead(404);
-        res.end("Not Found");
-        return;
+        return new Response("Not Found", { status: 404 });
       }
+  
+      const stat = statSync(filePath);
+      const fileSize = stat.size;
+  
+      // Electron quirk: request.headers is a plain object, not a Headers instance
+      const rangeHeader =
+        (request.headers as any)["range"] ||
+        (request.headers as any)["Range"];
 
-      // Get file stats for content length and range support
-      const stats = statSync(filePath);
-      const fileSize = stats.size;
-      
-      // Support range requests for video seeking
-      const range = req.headers.range;
-      if (range) {
-        const parts = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-        const chunksize = end - start + 1;
-        const file = createReadStream(filePath, { start, end });
-        
-        res.writeHead(206, {
-          "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+  
+      if (rangeHeader) {
+        const [startStr, endStr] = rangeHeader.replace(/bytes=/, "").split("-");
+        const start = parseInt(startStr, 10);
+        const end = endStr ? parseInt(endStr, 10) : fileSize - 1;
+        const chunkSize = end - start + 1;
+  
+        const nodeStream = createReadStream(filePath, { start, end });
+  
+        // Convert Node stream → Web ReadableStream
+        const webStream = new ReadableStream({
+          start(controller) {
+            let isClosed = false;
+            
+            const safeClose = () => {
+              if (!isClosed) {
+                isClosed = true;
+                try {
+                  controller.close();
+                } catch (err) {
+                  // Controller already closed, ignore
+                }
+              }
+            };
+            
+            const safeError = (err: Error) => {
+              if (!isClosed) {
+                isClosed = true;
+                try {
+                  controller.error(err);
+                } catch (error) {
+                  // Controller already closed, ignore
+                }
+              }
+            };
+            
+            nodeStream.on("data", (chunk) => {
+              if (!isClosed) {
+                try {
+                  controller.enqueue(chunk);
+                } catch (err) {
+                  // Controller closed during enqueue, stop reading
+                  nodeStream.destroy();
+                  safeClose();
+                }
+              }
+            });
+            
+            nodeStream.on("end", safeClose);
+            nodeStream.on("error", safeError);
+          },
+          cancel() {
+            nodeStream.destroy();
+          },
+        });
+  
+        return new Response(webStream, {
+          status: 206,
+          headers: {
+            "Content-Type": "video/mp4",
+            "Content-Length": chunkSize.toString(),
+            "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+            "Accept-Ranges": "bytes",
+          },
+        });
+      }
+  
+      // No range → full file
+      const nodeStream = createReadStream(filePath);
+      const webStream = new ReadableStream({
+        start(controller) {
+          let isClosed = false;
+          
+          const safeClose = () => {
+            if (!isClosed) {
+              isClosed = true;
+              try {
+                controller.close();
+              } catch (err) {
+                // Controller already closed, ignore
+              }
+            }
+          };
+          
+          const safeError = (err: Error) => {
+            if (!isClosed) {
+              isClosed = true;
+              try {
+                controller.error(err);
+              } catch (error) {
+                // Controller already closed, ignore
+              }
+            }
+          };
+          
+          nodeStream.on("data", (chunk) => {
+            if (!isClosed) {
+              try {
+                controller.enqueue(chunk);
+              } catch (err) {
+                // Controller closed during enqueue, stop reading
+                nodeStream.destroy();
+                safeClose();
+              }
+            }
+          });
+          
+          nodeStream.on("end", safeClose);
+          nodeStream.on("error", safeError);
+        },
+        cancel() {
+          nodeStream.destroy();
+        },
+      });
+  
+      return new Response(webStream, {
+        status: 200,
+        headers: {
+          "Content-Type": "video/mp4",
+          "Content-Length": fileSize.toString(),
           "Accept-Ranges": "bytes",
-          "Content-Length": chunksize,
-          "Content-Type": "video/mp4",
-        });
-        file.pipe(res);
-      } else {
-        res.writeHead(200, {
-          "Content-Length": fileSize,
-          "Content-Type": "video/mp4",
-        });
-        createReadStream(filePath).pipe(res);
-      }
-    } catch (error) {
-      console.error(`[Video Cache Server] Error serving file: ${req.url}`, error);
-      res.writeHead(500);
-      res.end("Internal Server Error");
+        },
+      });
+    } catch (err) {
+      console.error("Protocol error:", err);
+      return new Response("Internal Server Error", { status: 500 });
     }
-  });
-
-  // Start server on a random available port
-  videoCacheServer.listen(0, "127.0.0.1", () => {
-    const address = videoCacheServer?.address();
-    if (address && typeof address === "object") {
-      videoCacheServerPort = address.port;
-      console.log(`[Video Cache Server] Started on http://127.0.0.1:${videoCacheServerPort}`);
-    }
-  });
-
-  videoCacheServer.on("error", (error) => {
-    console.error("[Video Cache Server] Error:", error);
   });
 
   windowStateManager = new WindowStateManager();
@@ -372,31 +431,21 @@ app.whenReady().then(() => {
       debug: (message: string) => console.debug("[Auto-Updater]", message),
     };
     
-    // Log updater configuration
-    console.log("[Auto-Updater] Configuration:", {
-      autoDownload: autoUpdater.autoDownload,
-      channel: autoUpdater.channel,
-      currentVersion: app.getVersion(),
-      updateServer: "GitHub Releases (auto-detected from app-update.yml)",
-    });
-
     // Check for updates every hour
     setInterval(() => {
-      console.log("[Auto-Updater] Checking for updates (scheduled)...");
       autoUpdater.checkForUpdates().catch((error) => {
         console.error("[Auto-Updater] Error during scheduled check:", error);
       });
     }, 60 * 60 * 1000);
 
     // Initial check
-    console.log("[Auto-Updater] Performing initial update check...");
     autoUpdater.checkForUpdates().catch((error) => {
       console.error("[Auto-Updater] Error during initial check:", error);
     });
 
     // Send update events to renderer
     autoUpdater.on("checking-for-update", () => {
-      console.log("[Auto-Updater] Checking for update...");
+      // Silent check
     });
 
     autoUpdater.on("update-available", (info) => {
@@ -413,11 +462,8 @@ app.whenReady().then(() => {
       }
     });
 
-    autoUpdater.on("update-not-available", (info) => {
-      console.log("[Auto-Updater] Update not available. Current version is latest:", {
-        version: info.version,
-        currentVersion: app.getVersion(),
-      });
+    autoUpdater.on("update-not-available", () => {
+      // Silent - no update available
     });
 
     autoUpdater.on("update-downloaded", (info) => {
@@ -434,11 +480,7 @@ app.whenReady().then(() => {
     });
 
     autoUpdater.on("download-progress", (progressObj) => {
-      console.log("[Auto-Updater] Download progress:", {
-        percent: Math.round(progressObj.percent),
-        transferred: progressObj.transferred,
-        total: progressObj.total,
-      });
+      // Progress updates sent to renderer, no need to log
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("update-download-progress", {
           percent: progressObj.percent,
@@ -477,14 +519,6 @@ app.on("window-all-closed", () => {
   }
 });
 
-// Clean up video cache server on app quit
-app.on("before-quit", () => {
-  if (videoCacheServer) {
-    videoCacheServer.close(() => {
-      console.log("[Video Cache Server] Closed");
-    });
-  }
-});
 
 // IPC handlers for Electron-specific functionality
 ipcMain.handle("get-app-version", () => {
@@ -663,18 +697,16 @@ ipcMain.handle("get-local-video-path", (_event, url: string) => {
     return null;
   }
   
-  // If it's already a URL (http://), return as-is
+  // If it's already a URL (http:// or https://), return as-is
   if (localPath.startsWith("http://") || localPath.startsWith("https://")) {
     return localPath;
   }
   
-  // Convert file path to HTTP URL served by local server
-  if (videoCacheServerPort > 0) {
-    // Extract just the filename from the path
-    const filename = localPath.split(/[/\\]/).pop();
-    if (filename) {
-      return `http://127.0.0.1:${videoCacheServerPort}/${filename}`;
-    }
+  // Convert file path to video-cache:// protocol URL
+  // Extract just the filename from the path
+  const filename = localPath.split(/[/\\]/).pop();
+  if (filename) {
+    return `video-cache://${filename}`;
   }
   
   return null;

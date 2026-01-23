@@ -648,6 +648,55 @@ listenerMiddleware.startListening({
   },
 });
 
+// handle video cache sync when videos are set on items
+listenerMiddleware.startListening({
+  predicate: (action) => {
+    return (
+      action.type === "item/updateSlideBackground" ||
+      action.type === "item/updateAllSlideBackgrounds"
+    );
+  },
+  effect: async (action, listenerApi) => {
+    // Only sync in Electron
+    if (!window.electronAPI) return;
+    
+    // Check if a video is being set
+    const payload = action.payload as { background: string; mediaInfo?: { type: string } };
+    if (payload?.mediaInfo?.type !== "video") return;
+    
+    // Debounce sync - wait 2 seconds after video is set
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(2000);
+    
+    try {
+      // Import the utility function
+      const { extractAllVideoUrlsFromOutlines } = await import("../utils/videoCacheUtils");
+      
+      // Extract all video URLs from outlines
+      if (!db) return;
+      const videoUrls = await extractAllVideoUrlsFromOutlines(db);
+      const urlArray = Array.from(videoUrls);
+      
+      // Sync the cache
+      const electronAPI = window.electronAPI as unknown as { 
+        syncVideoCache: (urls: string[]) => Promise<{ downloaded: number; cleaned: number }> 
+      };
+      
+      if (urlArray.length > 0) {
+        const result = await electronAPI.syncVideoCache(urlArray);
+        console.log(
+          `Video cache sync after item update: ${result.downloaded} downloaded, ${result.cleaned} cleaned`
+        );
+      } else {
+        // No videos, just cleanup
+        await electronAPI.syncVideoCache([]);
+      }
+    } catch (error) {
+      console.error("Error syncing video cache after item update:", error);
+    }
+  },
+});
+
 // handle updating preferences
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {

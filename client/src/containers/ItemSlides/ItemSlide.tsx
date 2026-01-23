@@ -5,6 +5,14 @@ import { ItemSlideType, TimerInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import cn from "classnames";
+import ContextMenu from "../../components/ContextMenu/ContextMenu";
+import { ImageOff } from "lucide-react";
+import { useDispatch } from "../../hooks";
+import { updateSlideBackground } from "../../store/itemSlice";
+import { useContext } from "react";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import { useSelector } from "../../hooks";
+import { RootState } from "../../store/store";
 
 type ItemSlideProps = {
   slide: ItemSlideType;
@@ -39,6 +47,11 @@ const ItemSlide = ({
   borderWidth,
   hSize,
 }: ItemSlideProps) => {
+  const dispatch = useDispatch();
+  const { db } = useContext(ControllerInfoContext) || {};
+  const { isLoading } = useSelector(
+    (state: RootState) => state.undoable.present.item
+  );
 
   const {
     attributes,
@@ -72,6 +85,23 @@ const ItemSlide = ({
         }
       : undefined;
 
+  const contextMenuItems = [
+    {
+      label: "Clear Background",
+      onClick: () => {
+        if (db) {
+          dispatch(
+            updateSlideBackground({
+              background: "",
+            })
+          );
+        }
+      },
+      icon: <ImageOff className="w-4 h-4" />,
+      disabled: isLoading,
+    },
+  ];
+
   return (
     <li
       ref={setNodeRef}
@@ -101,65 +131,80 @@ const ItemSlide = ({
         selectedSlide !== index && "border-transparent",
         isInDraggedSection && "z-10"
       )}
-      onClick={() => selectSlide(index)}
       id={`item-slide-${index}`}
     >
-      <h4
-        className={cn(
-          "rounded-t-md truncate px-2 text-center flex w-full",
-          hSize,
-          itemSectionBgColorMap.get(slide.type)
-        )}
+      <ContextMenu
+        menuItems={contextMenuItems}
+        header={{
+          title: slide.name || `Slide ${index + 1}`,
+          subtitle: "Item Slide",
+        }}
+        onOpen={() => {
+          // Select the slide when context menu opens
+          if (selectedSlide !== index) {
+            selectSlide(index);
+          }
+        }}
       >
-        {slide.name?.split(/\u200B(.*?)\u200B/).map((part, index) => {
-          // Even indices are regular text, odd indices are special parts
-          if (index % 2 === 1) {
-            return (
-              <span key={index} className="text-gray-400">
-                {part}
-              </span>
-            );
-          }
-          if (part.trim()) {
-            return (
-              <span className="flex-1" key={index}>
-                {part}
-              </span>
-            );
-          }
-          return null;
-        })}
-      </h4>
-      <DisplayWindow
-        showBorder
-        boxes={
-          isStreamFormat && (itemType === "free" || itemType === "bible")
-            ? []
-            : slide.boxes
-        }
-        displayType={isStreamFormat ? "stream" : "slide"}
-        timerInfo={timerInfo}
-        bibleDisplayInfo={
-          itemType === "bible" ? getBibleInfo(index) : undefined
-        }
-        formattedTextDisplayInfo={
-          itemType === "free"
-            ? {
-                text: slide.boxes[1]?.words?.trim() || "",
-                backgroundColor:
-                  slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
-                textColor:
-                  slide.formattedTextDisplayInfo?.textColor || "#ffffff",
-                fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
-                paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
-                paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
-                isBold: slide.formattedTextDisplayInfo?.isBold || false,
-                isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
-                align: slide.formattedTextDisplayInfo?.align || "left",
+        <div onClick={() => selectSlide(index)}>
+          <h4
+            className={cn(
+              "rounded-t-md truncate px-2 text-center flex w-full",
+              hSize,
+              itemSectionBgColorMap.get(slide.type)
+            )}
+          >
+            {slide.name?.split(/\u200B(.*?)\u200B/).map((part, index) => {
+              // Even indices are regular text, odd indices are special parts
+              if (index % 2 === 1) {
+                return (
+                  <span key={index} className="text-gray-400">
+                    {part}
+                  </span>
+                );
               }
-            : undefined
-        }
-      />
+              if (part.trim()) {
+                return (
+                  <span className="flex-1" key={index}>
+                    {part}
+                  </span>
+                );
+              }
+              return null;
+            })}
+          </h4>
+          <DisplayWindow
+            showBorder
+            boxes={
+              isStreamFormat && (itemType === "free" || itemType === "bible")
+                ? []
+                : slide.boxes
+            }
+            displayType={isStreamFormat ? "stream" : "slide"}
+            timerInfo={timerInfo}
+            bibleDisplayInfo={
+              itemType === "bible" ? getBibleInfo(index) : undefined
+            }
+            formattedTextDisplayInfo={
+              itemType === "free"
+                ? {
+                    text: slide.boxes[1]?.words?.trim() || "",
+                    backgroundColor:
+                      slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
+                    textColor:
+                      slide.formattedTextDisplayInfo?.textColor || "#ffffff",
+                    fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
+                    paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
+                    paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
+                    isBold: slide.formattedTextDisplayInfo?.isBold || false,
+                    isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
+                    align: slide.formattedTextDisplayInfo?.align || "left",
+                  }
+                : undefined
+            }
+          />
+        </div>
+      </ContextMenu>
     </li>
   );
 };

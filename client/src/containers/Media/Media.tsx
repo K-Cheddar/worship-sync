@@ -5,14 +5,15 @@ import DeleteModal from "../../components/Modal/DeleteModal";
 import ContextMenu from "../../components/ContextMenu/ContextMenu";
 import {
   Trash2,
-  Settings2,
-  ZoomIn,
-  ZoomOut,
-  ImageOff,
   Image,
   Images,
   Eye,
   Video,
+  ChevronDown,
+  ChevronUp,
+  Maximize,
+  Plus,
+  X,
 } from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
@@ -28,7 +29,7 @@ import {
   addItemToMediaList,
 } from "../../store/mediaSlice";
 import { retrieveImages } from "../../utils/itemUtil";
-import CloudinaryUploadWidget, {
+import {
   mediaInfoType,
 } from "./CloudinaryUploadWidget";
 import MuxVideoInput, { MuxVideoInputRef } from "./MuxVideoInput";
@@ -39,8 +40,6 @@ import {
 } from "../../utils/cloudinaryUtils";
 import { getApiBasePath } from "../../utils/environment";
 import {
-  decreaseMediaItems,
-  increaseMediaItems,
   setDefaultPreferences,
   setIsMediaExpanded,
   setMediaItems,
@@ -56,6 +55,63 @@ import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { updateOverlay } from "../../store/overlaySlice";
 import { ActionCreators } from "redux-undo";
+import MediaModal from "./MediaModal";
+
+// Hidden Cloudinary widget component that auto-triggers
+const HiddenCloudinaryWidget = ({
+  uwConfig,
+  onComplete,
+}: {
+  uwConfig: {
+    cloudName: string;
+    uploadPreset: string;
+    clientAllowedFormats?: string[];
+    resourceType?: string;
+  };
+  onComplete: (info: any) => void;
+}) => {
+  useEffect(() => {
+    let checkInterval: NodeJS.Timeout | null = null;
+    
+    const initializeCloudinaryWidget = () => {
+      if (window.cloudinary) {
+        const myWidget = window.cloudinary.createUploadWidget(
+          uwConfig,
+          (error: any, result: any) => {
+            if (!error && result && result.event === "success") {
+              onComplete(result.info);
+            }
+          }
+        );
+        myWidget.open();
+      } else {
+        // Wait for script to load
+        checkInterval = setInterval(() => {
+          if (window.cloudinary) {
+            if (checkInterval) clearInterval(checkInterval);
+            const myWidget = window.cloudinary.createUploadWidget(
+              uwConfig,
+              (error: any, result: any) => {
+                if (!error && result && result.event === "success") {
+                  onComplete(result.info);
+                }
+              }
+            );
+            myWidget.open();
+          }
+        }, 100);
+      }
+    };
+
+    initializeCloudinaryWidget();
+    
+    return () => {
+      if (checkInterval) clearInterval(checkInterval);
+    };
+  }, [uwConfig, onComplete]);
+
+  return null;
+};
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -114,8 +170,14 @@ const Media = () => {
   const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
   const [isDeletingMultiple, setIsDeletingMultiple] = useState(false);
   const [showName, setShowName] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [previewMedia, setPreviewMedia] = useState<MediaType | null>(null);
+  const [triggerCloudinaryUpload, setTriggerCloudinaryUpload] = useState(0);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
   const muxVideoInputRef = useRef<MuxVideoInputRef>(null);
   const mediaListRef = useRef<HTMLUListElement>(null);
+  const contextMenuButtonRef = useRef<HTMLButtonElement>(null);
 
   // Filter media items based on search term
   const filteredList = list.filter((item) =>
@@ -221,17 +283,20 @@ const Media = () => {
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      // Check if click is outside the media list and not on a context menu
+      // Check if click is outside the media list and not on a context menu or modal
       if (
         mediaListRef.current &&
         !mediaListRef.current.contains(target) &&
         !target.closest('[data-slot="dropdown-menu-content"]') &&
-        !target.closest(".fixed.z-50")
+        !target.closest(".fixed.z-50") &&
+        !target.closest('[role="dialog"]') &&
+        !isFullscreen
       ) {
         setSelectedMediaIds(new Set());
         setLastSelectedIndex(-1);
         if (selectedMediaIds.size > 0) {
           setSelectedMedia(emptyMedia);
+          setPreviewMedia(null);
         }
       }
     };
@@ -242,7 +307,7 @@ const Media = () => {
         document.removeEventListener("click", handleClickOutside);
       };
     }
-  }, [selectedMediaIds.size]);
+  }, [selectedMediaIds.size, isFullscreen]);
 
 
 
@@ -336,15 +401,20 @@ const Media = () => {
           newSet.delete(mediaItem.id);
           if (newSet.size === 0) {
             setSelectedMedia(emptyMedia);
+            setPreviewMedia(null);
           } else if (selectedMedia.id === mediaItem.id) {
             // If we're deselecting the currently selected media, select the first remaining
             const firstId = Array.from(newSet)[0];
             const firstItem = list.find((item) => item.id === firstId);
-            if (firstItem) setSelectedMedia(firstItem);
+            if (firstItem) {
+              setSelectedMedia(firstItem);
+              setPreviewMedia(firstItem);
+            }
           }
         } else {
           newSet.add(mediaItem.id);
           setSelectedMedia(mediaItem);
+          setPreviewMedia(mediaItem);
         }
         return newSet;
       });
@@ -359,10 +429,12 @@ const Media = () => {
       }
       setSelectedMediaIds(newSet);
       setSelectedMedia(mediaItem);
+      setPreviewMedia(mediaItem);
     } else {
       // Single selection
       setSelectedMediaIds(new Set([mediaItem.id]));
       setSelectedMedia(mediaItem);
+      setPreviewMedia(mediaItem);
       setLastSelectedIndex(index);
     }
   };
@@ -505,6 +577,37 @@ const Media = () => {
     dispatch(addItemToMediaList(newMedia));
   };
 
+  const mediaContextMenuItems = [
+    {
+      label: "Add Image",
+      onClick: () => {
+        setTriggerCloudinaryUpload((prev) => prev + 1);
+        setContextMenuOpen(false);
+      },
+      icon: <Image className="w-4 h-4" />,
+    },
+    {
+      label: "Add Video",
+      onClick: () => {
+        muxVideoInputRef.current?.openModal();
+        setContextMenuOpen(false);
+      },
+      icon: <Video className="w-4 h-4" />,
+    },
+  ];
+
+  const handleContextMenuButtonClick = (e: React.MouseEvent) => {
+    if (contextMenuButtonRef.current) {
+      const rect = contextMenuButtonRef.current.getBoundingClientRect();
+      setContextMenuPosition({
+        x: rect.right - 200, // Align right edge of menu to right edge of button
+        y: rect.bottom + 4, // Position below button with small gap
+      });
+      setContextMenuOpen(true);
+    }
+  };
+
+
   return (
     <ErrorBoundary>
       <div
@@ -512,50 +615,75 @@ const Media = () => {
           isMediaExpanded ? " py-1" : "rounded-b-md py-0.5"
         }`}
       >
-        <h2 className="font-semibold flex-1">Media</h2>
-        {!isMediaExpanded ? (
+        <h2 className="font-semibold">Media</h2>
+        <div className="flex-1 flex items-center justify-center">
           <Button
-            className="ml-auto"
-            svg={Settings2}
+            variant="tertiary"
+            svg={isMediaExpanded ? ChevronDown : ChevronUp}
             onClick={() => {
               dispatch(setIsMediaExpanded(!isMediaExpanded));
+              if (isMediaExpanded) {
+                setSearchTerm("");
+              }
             }}
           />
-        ) : (
-          <>
+        </div>
+        <div className="flex items-center gap-2">
+          {isMediaExpanded && (
             <Button
+              ref={contextMenuButtonRef}
               variant="tertiary"
-              disabled={isLoading}
-              className={cn(
-                "mr-2",
-                !location.pathname.includes("item") && "hidden"
-              )}
-              svg={ImageOff}
-              onClick={() => {
-                if (db) {
-                  dispatch(
-                    updateSlideBackground({
-                      background: "",
-                    })
-                  );
-                }
+              svg={Plus}
+              onClick={handleContextMenuButtonClick}
+              title="Media Actions"
+            />
+          )}
+          <Button
+            variant="tertiary"
+            svg={Maximize}
+            onClick={() => setIsFullscreen(true)}
+            title="Fullscreen"
+          />
+        </div>
+      </div>
+      {contextMenuOpen && (
+        <div
+          className="fixed z-50 bg-gray-700 text-white min-w-[200px] rounded-md border border-gray-600 shadow-lg py-1"
+          style={{
+            left: `${contextMenuPosition.x}px`,
+            top: `${contextMenuPosition.y}px`,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3 py-2 border-b border-gray-600">
+            <div className="flex flex-col">
+              <span className="font-semibold text-sm">Media Actions</span>
+              <span className="text-xs text-gray-400 font-normal">
+                Add new media
+              </span>
+            </div>
+          </div>
+          {mediaContextMenuItems.map((item, index) => (
+            <button
+              key={index}
+              className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-600 transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                item.onClick();
               }}
             >
-              Clear Background
-            </Button>
-            <Button
-              className="ml-auto"
-              svg={Settings2}
-              onClick={() => {
-                dispatch(setIsMediaExpanded(!isMediaExpanded));
-                if (isMediaExpanded) {
-                  setSearchTerm("");
-                }
-              }}
-            />
-          </>
-        )}
-      </div>
+              {item.icon && <span className="shrink-0">{item.icon}</span>}
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {contextMenuOpen && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setContextMenuOpen(false)}
+        />
+      )}
       {/* Always render MuxVideoInput to keep popup alive when media is collapsed */}
       <MuxVideoInput
         ref={muxVideoInputRef}
@@ -564,58 +692,39 @@ const Media = () => {
         }}
         showButton={false}
       />
-      {!isMediaLoading && isMediaExpanded && (
-        <div className="flex gap-2 justify-center items-center z-10 py-1 px-4 bg-gray-900 mx-2">
-          <Button
-            variant="tertiary"
-            svg={ZoomOut}
-            onClick={() => dispatch(increaseMediaItems())}
-          />
-          <Button
-            variant="tertiary"
-            svg={ZoomIn}
-            onClick={() => dispatch(decreaseMediaItems())}
-          />
-          <CloudinaryUploadWidget
-            uwConfig={{
-              uploadPreset: "bpqu4ma5",
-              cloudName: "portable-media",
-              clientAllowedFormats: ["png", "jpg", "jpeg", "webp", "gif"],
-              resourceType: "image",
-            }}
-            onComplete={(info) => {
-              addNewBackground(info);
-            }}
-          />
-          <Button
-            variant="tertiary"
-            svg={Video}
-            onClick={() => muxVideoInputRef.current?.openModal()}
-            title="Upload Mux Video"
-          >
-            Add
-          </Button>
-        </div>
+      {/* Hidden CloudinaryUploadWidget triggered by context menu */}
+      {triggerCloudinaryUpload > 0 && (
+        <HiddenCloudinaryWidget
+          key={triggerCloudinaryUpload}
+          uwConfig={{
+            uploadPreset: "bpqu4ma5",
+            cloudName: "portable-media",
+            clientAllowedFormats: ["png", "jpg", "jpeg", "webp", "gif"],
+            resourceType: "image",
+          }}
+          onComplete={(info) => {
+            addNewBackground(info);
+            setTriggerCloudinaryUpload(0);
+          }}
+        />
       )}
       {!isMediaLoading && isMediaExpanded && (
-        <div className="px-4 py-2 bg-gray-900 mx-2 flex items-center max-md:flex-col max-md:gap-4">
+        <div className="px-4 py-2 bg-gray-900 mx-2 flex items-center gap-2">
           <Input
             type="text"
             label="Search"
             value={searchTerm}
             onChange={(value) => {
               setSearchTerm(value as string);
-              if (value) {
-                setShowName(true);
-              }
             }}
             placeholder="Name"
             className="flex gap-4 items-center flex-1"
             inputWidth="w-full"
             inputTextSize="text-sm"
+            svg={searchTerm ? X : undefined}
+            svgAction={() => setSearchTerm("")}
           />
           <Toggle
-            className="ml-2"
             icon={Eye}
             value={showName}
             onChange={() => setShowName(!showName)}
@@ -631,9 +740,12 @@ const Media = () => {
         <ul
           ref={mediaListRef}
           className={cn(
-            "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-2 z-10 rounded-b-md",
+            "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-x-2 gap-y-1 z-10 rounded-b-md",
             sizeMap.get(mediaItemsPerRow)
           )}
+          style={{
+            gridAutoRows: "auto",
+          }}
         >
           {filteredList.map((mediaItem, index) => {
             const { id, thumbnail, name, type } = mediaItem;
@@ -827,7 +939,7 @@ const Media = () => {
                     {isMediaExpanded && name && showName && (
                       <div className="w-full px-1 py-1 text-center">
                         <p
-                          className="text-xs text-gray-300 truncate"
+                          className="text-sm text-gray-300 truncate"
                           title={name}
                         >
                           {shownName}
@@ -865,6 +977,30 @@ const Media = () => {
             : "Are you sure you want to delete"
         }
         imageUrl={isDeletingMultiple ? undefined : mediaToDelete?.thumbnail}
+      />
+
+      {/* Fullscreen Modal */}
+      <MediaModal
+        isOpen={isFullscreen}
+        onClose={() => setIsFullscreen(false)}
+        mediaList={list}
+        selectedMedia={selectedMedia}
+        selectedMediaIds={selectedMediaIds}
+        previewMedia={previewMedia}
+        searchTerm={searchTerm}
+        showName={showName}
+        onMediaClick={handleMediaClick}
+        onSearchChange={(value) => setSearchTerm(value)}
+        onShowNameToggle={() => setShowName(!showName)}
+        onDeleteClick={(mediaItem) => {
+          setMediaToDelete(mediaItem);
+          setShowDeleteModal(true);
+        }}
+        onDeleteMultipleClick={() => {
+          setIsDeletingMultiple(true);
+          setShowDeleteModal(true);
+        }}
+        onPreviewChange={setPreviewMedia}
       />
     </ErrorBoundary>
   );
