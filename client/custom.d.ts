@@ -78,6 +78,16 @@ interface ElectronAPI {
   onUpdateDownloaded?: (callback: (info: { version: string; releaseDate?: string }) => void) => () => void;
   onUpdateDownloadProgress?: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => () => void;
   onUpdateError?: (callback: (error: { message: string }) => void) => () => void;
+  
+  // Video cache
+  downloadVideo: (url: string) => Promise<string | null>;
+  getLocalVideoPath: (url: string) => Promise<string | null>;
+  cleanupUnusedVideos: (usedUrls: string[]) => Promise<void>;
+  syncVideoCache: (videoUrls: string[]) => Promise<{ downloaded: number; cleaned: number }>;
+  
+  // Route persistence
+  saveLastRoute: (route: string) => Promise<boolean>;
+  getLastRoute: () => Promise<string | null>;
 }
 
 interface Window {

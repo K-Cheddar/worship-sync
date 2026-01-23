@@ -54,6 +54,7 @@ import { timersSlice, updateTimerFromRemote } from "./timersSlice";
 import { overlayTemplatesSlice } from "./overlayTemplatesSlice";
 import serviceTimesSlice from "./serviceTimesSlice";
 import { mergeTimers } from "../utils/timerUtils";
+import { extractAllVideoUrlsFromOutlines } from "../utils/videoCacheUtils";
 import _ from "lodash";
 
 // Helper function to safely post messages to the broadcast channel
@@ -669,9 +670,6 @@ listenerMiddleware.startListening({
     await listenerApi.delay(2000);
     
     try {
-      // Import the utility function
-      const { extractAllVideoUrlsFromOutlines } = await import("../utils/videoCacheUtils");
-      
       // Extract all video URLs from outlines
       if (!db) return;
       const videoUrls = await extractAllVideoUrlsFromOutlines(db);

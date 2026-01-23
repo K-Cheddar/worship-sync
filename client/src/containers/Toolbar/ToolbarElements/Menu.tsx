@@ -4,6 +4,7 @@ import { Menu as MenuIcon, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 import { MenuItemType } from "../../../types";
 import { RedoButton, UndoButton } from "./Undo";
 import ChangelogModal from "../../../components/ChangelogModal/ChangelogModal";
+import AboutModal from "../../../components/AboutModal/AboutModal";
 import { useState, useEffect } from "react";
 import { useElectronWindows } from "../../../hooks/useElectronWindows";
 
@@ -15,6 +16,7 @@ const ToolbarMenu = ({
   isEditMode?: boolean;
 }) => {
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
   const { isElectron, openMonitorWindow, openProjectorWindow } = useElectronWindows();
 
@@ -82,6 +84,10 @@ const ToolbarMenu = ({
     {
       text: "Changelog",
       onClick: () => setIsChangelogOpen(true),
+    },
+    {
+      text: "About",
+      onClick: () => setIsAboutOpen(true),
     },
     {
       element: (
@@ -160,6 +166,10 @@ const ToolbarMenu = ({
       <ChangelogModal
         isOpen={isChangelogOpen}
         onClose={() => setIsChangelogOpen(false)}
+      />
+      <AboutModal
+        isOpen={isAboutOpen}
+        onClose={() => setIsAboutOpen(false)}
       />
     </>
   );

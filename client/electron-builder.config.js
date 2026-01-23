@@ -1,6 +1,8 @@
 const config = {
   appId: "com.worshipsync.app",
   productName: "WorshipSync",
+  // eslint-disable-next-line no-template-curly-in-string
+  artifactName: "WorshipSync-Setup-${version}.${ext}",
 
   // Configure update server (GitHub Releases)
   publish: {
