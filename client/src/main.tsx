@@ -41,13 +41,11 @@ root.render(
   </React.StrictMode>
 );
 
-// Register service worker and handle updates
+// Register service worker - updates are handled by PWAUpdateCheck component
 serviceWorkerRegistration.register({
   onUpdate: (registration) => {
-    const waitingWorker = registration.waiting;
-    if (waitingWorker) {
-      waitingWorker.postMessage({ type: "SKIP_WAITING" });
-    }
+    // Update detected - PWAUpdateCheck component will handle the UI
+    console.log("Service worker update available");
   },
 });
 

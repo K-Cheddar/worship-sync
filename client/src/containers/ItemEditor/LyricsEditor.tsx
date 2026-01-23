@@ -450,7 +450,7 @@ const LyricsEditor = () => {
                 currentSections={currentSections}
               />
               {!isMobile && (
-                <div className="flex justify-end gap-4 mt-4 pt-4 border-t border-gray-600">
+                <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-gray-600">
                   <Button
                     variant="secondary"
                     className="flex-1 justify-center"

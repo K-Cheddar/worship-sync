@@ -98,7 +98,10 @@ const QuickLink = ({
             timerInfo={timerInfo}
           />
         )}
-        <p className="text-center text-[0.5rem] font-semibold whitespace-break-spaces w-full overflow-hidden text-ellipsis">
+        <p 
+          className="text-center font-semibold whitespace-break-spaces w-full overflow-clip text-ellipsis max-h-10"
+          style={{ fontSize: 'clamp(0.5rem, 0.6vw, 0.7rem)' }}
+        >
           {label}
         </p>
       </Button>

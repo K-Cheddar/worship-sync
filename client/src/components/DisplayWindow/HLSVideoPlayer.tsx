@@ -207,7 +207,7 @@ const HLSPlayer = ({
         video.removeEventListener("loadedmetadata", handleLoadedMetadata);
       };
     }
-  }, [actualSrc, isCheckingCache]);
+  }, [actualSrc, isCheckingCache, src]);
 
   // Don't set src attribute until cache check is complete
   // This prevents the video from trying to load the original URL before we check cache
