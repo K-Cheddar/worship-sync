@@ -1,3 +1,10 @@
+# [1.30.0](https://github.com/K-Cheddar/worship-sync/compare/v1.29.2...v1.30.0) (2026-01-23)
+
+
+### Features
+
+* Navigate to previous page on app open ([c4b0c41](https://github.com/K-Cheddar/worship-sync/commit/c4b0c41406f744cc953528b606bac5c913e8d228))
+
 ## [1.29.2](https://github.com/K-Cheddar/worship-sync/compare/v1.29.1...v1.29.2) (2026-01-23)
 
 
