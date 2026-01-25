@@ -110,7 +110,7 @@ const Controller = () => {
   const { isEditMode } = useSelector(
     (state: RootState) => state.undoable.present.item
   );
-  const { selectedList } = useSelector(
+  const { selectedList, activeList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
 
@@ -219,7 +219,7 @@ const Controller = () => {
 
   // Get item state to watch for changes
   const item = useSelector((state: RootState) => state.undoable.present.item);
-  const { syncVideoCache } = useVideoCache();
+  const { syncVideoCache, preloadOutlineVideos } = useVideoCache();
   const itemSyncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const previousVideoUrlsRef = useRef<Set<string>>(new Set());
 
@@ -229,6 +229,16 @@ const Controller = () => {
     const urls = extractVideoUrlsFromItem(item);
     return new Set(urls);
   }, [item]);
+
+  // Preload videos from active outline when it changes (Strategy A: Proactive Outline Preloading)
+  useEffect(() => {
+    if (!db || !window.electronAPI || !activeList?._id) return;
+    
+    // Preload videos from the active outline in the background
+    preloadOutlineVideos(activeList._id).catch((error) => {
+      console.warn("Error preloading active outline videos:", error);
+    });
+  }, [activeList?._id, db, preloadOutlineVideos]);
 
   // Sync video cache when database is ready (only in Electron)
   useEffect(() => {

@@ -670,10 +670,22 @@ listenerMiddleware.startListening({
     await listenerApi.delay(2000);
     
     try {
-      // Extract all video URLs from outlines
+      // Get current state to extract video URLs from Redux state (not database)
+      // This ensures we get the latest video even if database save is still pending
+      const state = listenerApi.getState() as RootState;
+      const currentItem = state.undoable.present.item;
+      
+      // Extract video URLs from the current item in Redux state
+      const { extractVideoUrlsFromItem } = await import("../utils/videoCacheUtils");
+      const itemVideoUrls = extractVideoUrlsFromItem(currentItem);
+      
+      // Also get all other video URLs from database (for cleanup)
       if (!db) return;
-      const videoUrls = await extractAllVideoUrlsFromOutlines(db);
-      const urlArray = Array.from(videoUrls);
+      const allVideoUrls = await extractAllVideoUrlsFromOutlines(db);
+      
+      // Combine: current item videos + all other videos from database
+      const combinedUrls = new Set([...itemVideoUrls, ...Array.from(allVideoUrls)]);
+      const urlArray = Array.from(combinedUrls);
       
       // Sync the cache
       const electronAPI = window.electronAPI as unknown as { 
