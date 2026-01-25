@@ -120,10 +120,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const containerRef = setRef;
     
     const [actualWidthPx, setActualWidthPx] = useState<number>(0);
+    const [actualHeightPx, setActualHeightPx] = useState<number>(0);
 
-    const aspectRatio = 16 / 9;
-
-    // Use ResizeObserver to track actual container width in pixels
+    // Use ResizeObserver to track actual container width and height in pixels
     useEffect(() => {
       const element = elementRef.current || fallbackRef.current;
       
@@ -133,8 +132,12 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           const retryElement = elementRef.current || fallbackRef.current;
           if (retryElement) {
             const widthInPixels = retryElement.offsetWidth || retryElement.clientWidth;
+            const heightInPixels = retryElement.offsetHeight || retryElement.clientHeight;
             if (widthInPixels > 0) {
               setActualWidthPx(widthInPixels);
+            }
+            if (heightInPixels > 0) {
+              setActualHeightPx(heightInPixels);
             }
           }
         }, 0);
@@ -145,8 +148,12 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         const entry = entries[0];
         if (entry) {
           const widthInPixels = entry.borderBoxSize?.[0]?.inlineSize || entry.contentRect.width;
+          const heightInPixels = entry.borderBoxSize?.[0]?.blockSize || entry.contentRect.height;
           if (widthInPixels > 0) {
             setActualWidthPx(widthInPixels);
+          }
+          if (heightInPixels > 0) {
+            setActualHeightPx(heightInPixels);
           }
         }
       });
@@ -158,10 +165,14 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       };
     }, []);
 
-    // Calculate scale factor based on actual container width vs reference width.
-    // Always use transform scaling. Until we've measured the container (actualWidthPx === 0),
-    // render at scale 0 to avoid a flash of unscaled 1920×1080 content.
-    const scaleFactor = actualWidthPx > 0 ? actualWidthPx / REFERENCE_WIDTH : 0;
+    // Calculate scale factors based on both width and height constraints.
+    // Use the smaller scale factor to ensure content fits within both constraints.
+    // Always use transform scaling. Until we've measured the container, render at scale 0.
+    const widthScale = actualWidthPx > 0 ? actualWidthPx / REFERENCE_WIDTH : 0;
+    const heightScale = actualHeightPx > 0 ? actualHeightPx / REFERENCE_HEIGHT : 0;
+    const scaleFactor = actualWidthPx > 0 && actualHeightPx > 0 
+      ? Math.min(widthScale, heightScale) 
+      : widthScale; // Fallback to width scale if height not measured yet
     
     // Components should use reference width for calculations
     const effectiveWidth = (REFERENCE_WIDTH / window.innerWidth) * 100; // Convert px to vw for compatibility
@@ -445,11 +456,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           style={{
             width: `${REFERENCE_WIDTH}px`,
             height: `${REFERENCE_HEIGHT}px`,
-            transform: `scale(${scaleFactor})`,
-            transformOrigin: "top left",
+            transform: `translate(-50%, -50%) scale(${scaleFactor})`,
+            transformOrigin: "center center",
             position: "absolute",
-            top: 0,
-            left: 0,
+            top: "50%",
+            left: "50%",
           }}
         >
           {innerContent}
@@ -460,9 +471,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     return (
       <div
         className={cn(
-          "relative overflow-hidden overflow-anywhere text-white",
+          "relative overflow-hidden overflow-anywhere text-white aspect-video",
           showBorder && "border border-gray-500",
-          displayType !== "stream" && "bg-black",
+          !isStream && !isEditor && "bg-black",
           className
         )}
         ref={containerRef}
@@ -475,7 +486,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             : className 
               ? "100%" // When using transform with className, ensure width is set
               : "100%",
-          aspectRatio: `${aspectRatio}`,
           fontFamily: "Verdana",
           // Prevent scaled inner container from affecting layout
           contain: "layout size",

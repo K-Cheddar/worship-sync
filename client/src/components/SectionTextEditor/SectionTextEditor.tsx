@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import cn from "classnames";
+import TextArea from "../TextArea/TextArea";
 
 type SectionTextEditorProps = {
   value: string;
@@ -76,7 +77,7 @@ const SectionTextEditor = ({
   );
 
   return (
-    <div className={cn("flex flex-col h-full border-gray-600 border rounded-md", className)}>
+    <div className={cn("flex flex-col border-gray-600 border rounded-md lg:flex-[0_0_30%] w-full h-fit max-lg:min-h-0 max-lg:overflow-y-auto", className)}>
       {sectionName && sectionColor && (
         <div className={cn("flex items-center gap-2 px-2 rounded-t-md shrink-0", sectionColor)}>
           <p className="text-sm font-semibold text-white">{sectionName}</p>
@@ -87,18 +88,22 @@ const SectionTextEditor = ({
           )}
         </div>
       )}
-      <textarea
+      <TextArea
         ref={textAreaRef}
         value={localValue}
-        onChange={(e) => handleChange(e.target.value)}
+        onChange={(value) => handleChange(value as string)}
         onSelect={(e) => {
           const target = e.target as HTMLTextAreaElement;
           onCursorChange?.(target.selectionStart);
         }}
+        label="Section Text"
+        hideLabel={true}
+        // autoResize={autoResize}
         disabled={disabled}
         placeholder={placeholder}
-        className={cn(`w-full min-h-[200px] max-h-[60vh] bg-gray-800 text-white text-sm
-            rounded-b-md p-3 focus:border-blue-500 focus:outline-none resize-none scrollbar-variable flex-1`)}
+        className="w-full max-h-[60vh] scrollbar-variable flex-1 min-h-0 max-lg:min-h-[15vh] flex flex-col"
+        textareaClassName={cn(`bg-gray-800 text-white text-sm rounded-b-md p-3 flex-1
+            focus:border-blue-500 focus:outline-none`)}
         data-ignore-undo="true"
         style={{
           height: autoResize ? "auto" : undefined,

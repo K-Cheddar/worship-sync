@@ -107,7 +107,7 @@ const Modal = ({
         className={cn(
           "relative bg-gray-800 rounded-lg shadow-2xl w-full overflow-hidden",
           sizeClasses[size],
-          "max-h-[90vh] max-md:max-h-[95vh] max-md:h-[95vh] max-md:rounded-none"
+          "max-h-[90vh] max-md:max-h-[95vh] max-md:rounded-none"
         )}
         role="document"
       >
