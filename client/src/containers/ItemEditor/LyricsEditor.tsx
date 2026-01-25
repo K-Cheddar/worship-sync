@@ -76,10 +76,8 @@ const LyricsEditor = () => {
     setLocalArrangements(arrangements);
     setLocalSelectedArrangement(selectedArrangement);
     // Reset selection when arrangement changes to allow auto-selection of first section
-    if (selectedArrangement !== localSelectedArrangement) {
-      setSelectedSectionIndex(null);
-    }
-  }, [arrangements, selectedArrangement, localSelectedArrangement]);
+    setSelectedSectionIndex(null);
+  }, [arrangements, selectedArrangement]);
 
   useEffect(() => {
     if (!localArrangements[localSelectedArrangement]) {
@@ -396,7 +394,7 @@ const LyricsEditor = () => {
               <h3 className="text-base mt-4 mb-2 font-semibold">
                 Arrangements
               </h3>
-              <ul className="scrollbar-variable rounded-md flex-1 overflow-y-auto bg-gray-800">
+              <ul className="scrollbar-variable rounded-md flex-1 overflow-y-auto bg-gray-800 flex flex-col gap-2">
                 {localArrangements.map((arrangement, index) => (
                   <Arrangement
                     key={arrangement.name}
@@ -419,7 +417,7 @@ const LyricsEditor = () => {
             <div className="flex-1 flex flex-col min-h-0 min-w-0">
               <div className={cn(
                 "shrink min-h-0",
-                !isMobile && selectedSectionIndex !== null && !isPreviewMinimized && "max-h-[75%] overflow-hidden"
+                !isMobile && selectedSectionIndex !== null && !isPreviewMinimized && "max-h-[75%] overflow-hidden flex-1"
               )}>
                 <LyricBoxes
                   formattedLyrics={localFormattedLyrics}
