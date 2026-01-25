@@ -29,33 +29,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("window-state-changed", listener);
   },
   
-  // Auto-updater
-  checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
-  downloadUpdate: () => ipcRenderer.invoke("download-update"),
-  installUpdate: () => ipcRenderer.invoke("install-update"),
-  
-  // Update event listeners
-  onUpdateAvailable: (callback: (info: { version: string; releaseDate?: string }) => void) => {
-    const listener = (_event: any, info: { version: string; releaseDate?: string }) => callback(info);
-    ipcRenderer.on("update-available", listener);
-    return () => ipcRenderer.removeListener("update-available", listener);
-  },
-  onUpdateDownloaded: (callback: (info: { version: string; releaseDate?: string }) => void) => {
-    const listener = (_event: any, info: { version: string; releaseDate?: string }) => callback(info);
-    ipcRenderer.on("update-downloaded", listener);
-    return () => ipcRenderer.removeListener("update-downloaded", listener);
-  },
-  onUpdateDownloadProgress: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => {
-    const listener = (_event: any, progress: { percent: number; transferred: number; total: number }) => callback(progress);
-    ipcRenderer.on("update-download-progress", listener);
-    return () => ipcRenderer.removeListener("update-download-progress", listener);
-  },
-  onUpdateError: (callback: (error: { message: string }) => void) => {
-    const listener = (_event: any, error: { message: string }) => callback(error);
-    ipcRenderer.on("update-error", listener);
-    return () => ipcRenderer.removeListener("update-error", listener);
-  },
-  
   // Video cache
   downloadVideo: (url: string) => ipcRenderer.invoke("download-video", url),
   getLocalVideoPath: (url: string) => ipcRenderer.invoke("get-local-video-path", url),

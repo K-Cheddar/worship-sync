@@ -52,9 +52,7 @@ const config = {
   },
 
   nsis: {
-    oneClick: false,
-    allowToChangeInstallationDirectory: true,
-    // NSIS icons are relative to buildResources directory
+    oneClick: true,
     installerIcon: "icon.ico",
     uninstallerIcon: "icon.ico",
     installerHeaderIcon: "icon.ico",

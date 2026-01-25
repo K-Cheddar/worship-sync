@@ -54,17 +54,6 @@ export interface ElectronAPI {
   moveMonitorToDisplay: (displayId: number) => Promise<boolean>;
   getWindowStates: () => Promise<WindowStatesInfo>;
   
-  // Auto-updater
-  checkForUpdates: () => Promise<{ available: boolean; updateInfo?: any; error?: string; message?: string }>;
-  downloadUpdate: () => Promise<boolean>;
-  installUpdate: () => Promise<void>;
-  
-  // Update event listeners
-  onUpdateAvailable?: (callback: (info: { version: string; releaseDate?: string }) => void) => () => void;
-  onUpdateDownloaded?: (callback: (info: { version: string; releaseDate?: string }) => void) => () => void;
-  onUpdateDownloadProgress?: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => () => void;
-  onUpdateError?: (callback: (error: { message: string }) => void) => () => void;
-  
   // Video cache
   downloadVideo: (url: string) => Promise<string | null>;
   getLocalVideoPath: (url: string) => Promise<string | null>;

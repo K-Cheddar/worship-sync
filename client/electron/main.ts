@@ -461,73 +461,35 @@ app.whenReady().then(() => {
   // - Update server info comes from publish config in electron-builder.config.js
 
   if (!isDev) {
-    autoUpdater.autoDownload = false;
-  
-    autoUpdater.logger = {
-      info: (m) => console.log("[Auto-Updater]", m),
-      warn: (m) => console.warn("[Auto-Updater]", m),
-      error: (m) => console.error("[Auto-Updater]", m),
-      debug: (m) => console.debug("[Auto-Updater]", m),
-    };
-  
-    let updateInterval: NodeJS.Timeout | null = null;
+    // Silent background updates: auto-download and install on quit
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
   
     app.whenReady().then(() => {
       // Initial check
       autoUpdater.checkForUpdates().catch((error) => {
-        console.error("[Auto-Updater] Error during initial check:", error);
+        console.error("[Auto-Updater] Error checking for updates:", error);
       });
   
       // Hourly checks
-      if (!updateInterval) {
-        updateInterval = setInterval(() => {
-          autoUpdater.checkForUpdates().catch((error) => {
-            console.error("[Auto-Updater] Error during scheduled check:", error);
-          });
-        }, 60 * 60 * 1000);
-      }
+      setInterval(() => {
+        autoUpdater.checkForUpdates().catch((error) => {
+          console.error("[Auto-Updater] Error during scheduled check:", error);
+        });
+      }, 60 * 60 * 1000);
     });
   
-    // Events
-    autoUpdater.on("checking-for-update", () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("checking-for-update");
-      }
-    });
-  
+    // Log events for debugging (no UI notifications)
     autoUpdater.on("update-available", (info) => {
-      console.log("[Auto-Updater] Update available:", info);
-      mainWindow?.webContents.send("update-available", {
-        version: info.version,
-        releaseDate: info.releaseDate,
-      });
-    });
-  
-    autoUpdater.on("update-not-available", () => {
-      mainWindow?.webContents.send("update-not-available");
+      console.log("[Auto-Updater] Update available, downloading in background...", info.version);
     });
   
     autoUpdater.on("update-downloaded", (info) => {
-      console.log("[Auto-Updater] Update downloaded:", info);
-      mainWindow?.webContents.send("update-downloaded", {
-        version: info.version,
-        releaseDate: info.releaseDate,
-      });
-    });
-  
-    autoUpdater.on("download-progress", (progress) => {
-      mainWindow?.webContents.send("update-download-progress", {
-        percent: progress.percent,
-        transferred: progress.transferred,
-        total: progress.total,
-      });
+      console.log("[Auto-Updater] Update downloaded, will install on app quit", info.version);
     });
   
     autoUpdater.on("error", (error) => {
       console.error("[Auto-Updater] Error:", error);
-      mainWindow?.webContents.send("update-error", {
-        message: error.message,
-      });
     });
   }
   
@@ -546,6 +508,7 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
 
 
 // IPC handlers for Electron-specific functionality
@@ -671,37 +634,6 @@ ipcMain.handle("get-window-states", () => {
   };
 });
 
-// Auto-updater IPC handlers
-ipcMain.handle("check-for-updates", async () => {
-  if (isDev) {
-    return { available: false, message: "Updates disabled in development" };
-  }
-  
-  try {
-    const result = await autoUpdater.checkForUpdates();
-    return { 
-      available: result !== null,
-      updateInfo: result?.updateInfo 
-    };
-  } catch (error: any) {
-    console.error("Error checking for updates:", error);
-    return { available: false, error: error.message };
-  }
-});
-
-ipcMain.handle("download-update", () => {
-  if (!isDev) {
-    autoUpdater.downloadUpdate();
-    return true;
-  }
-  return false;
-});
-
-ipcMain.handle("install-update", () => {
-  if (!isDev) {
-    autoUpdater.quitAndInstall();
-  }
-});
 
 // Video cache IPC handlers
 ipcMain.handle("download-video", async (_event, url: string) => {
