@@ -4,7 +4,6 @@ import { getAppVersion } from "../../utils/environment";
 import { getBuildTimeVersion } from "../../utils/versionUtils";
 import { isElectron } from "../../utils/environment";
 import { useUpdateCheck } from "../ElectronUpdateCheck";
-import { usePWAUpdateCheck } from "../PWAUpdateCheck";
 import Button from "../Button/Button";
 
 interface AboutModalProps {
@@ -17,10 +16,9 @@ const AboutModal = ({ isOpen, onClose }: AboutModalProps) => {
   const [isChecking, setIsChecking] = useState(false);
   const [checkMessage, setCheckMessage] = useState<string>("");
   const electronUpdateCheck = useUpdateCheck();
-  const pwaUpdateCheck = usePWAUpdateCheck();
   
-  // Use the appropriate update check based on environment
-  const updateCheck = isElectron() ? electronUpdateCheck : pwaUpdateCheck;
+  // Only use Electron update check
+  const updateCheck = isElectron() ? electronUpdateCheck : null;
 
   useEffect(() => {
     if (isOpen) {
@@ -54,7 +52,7 @@ const AboutModal = ({ isOpen, onClose }: AboutModalProps) => {
       setIsChecking(false);
       
       if (result.available) {
-        // Update modal will be shown by ElectronUpdateCheck or PWAUpdateCheck
+        // Update modal will be shown by ElectronUpdateCheck
         setCheckMessage("");
       } else {
         // Filter out technical messages and show user-friendly ones
