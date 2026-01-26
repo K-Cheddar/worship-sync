@@ -12,14 +12,10 @@ const WindowManager = () => {
     windowStates,
     refreshDisplays,
     refreshWindowStates,
-    openProjectorWindow,
-    openMonitorWindow,
-    closeProjectorWindow,
-    closeMonitorWindow,
-    moveProjectorToDisplay,
-    moveMonitorToDisplay,
-    focusProjectorWindow,
-    focusMonitorWindow,
+    openWindow,
+    closeWindow,
+    focusWindow,
+    moveWindowToDisplay,
   } = useElectronWindows();
 
   const [selectedProjectorDisplay, setSelectedProjectorDisplay] = useState<string>("");
@@ -42,12 +38,12 @@ const WindowManager = () => {
 
   const handleProjectorDisplayChange = async (displayId: string) => {
     setSelectedProjectorDisplay(displayId);
-    await moveProjectorToDisplay(parseInt(displayId));
+    await moveWindowToDisplay("projector", parseInt(displayId));
   };
 
   const handleMonitorDisplayChange = async (displayId: string) => {
     setSelectedMonitorDisplay(displayId);
-    await moveMonitorToDisplay(parseInt(displayId));
+    await moveWindowToDisplay("monitor", parseInt(displayId));
   };
 
   const getDisplayName = (display: Display, index: number) => {
@@ -123,7 +119,7 @@ const WindowManager = () => {
               <>
                 <Button
                   variant="secondary"
-                  onClick={closeProjectorWindow}
+                  onClick={() => closeWindow("projector")}
                   className="w-full"
                 >
                   Close
@@ -131,14 +127,14 @@ const WindowManager = () => {
                 <Button
                   variant="secondary"
                   svg={Focus}
-                  onClick={focusProjectorWindow}
+                  onClick={() => focusWindow("projector")}
                   className="w-full"
                 >
                   Bring to Front
                 </Button>
               </>
             ) : (
-              <Button variant="primary" onClick={openProjectorWindow} className="w-full">
+              <Button variant="primary" onClick={() => openWindow("projector")} className="w-full">
                 Open
               </Button>
             )}
@@ -188,7 +184,7 @@ const WindowManager = () => {
               <>
                 <Button
                   variant="secondary"
-                  onClick={closeMonitorWindow}
+                  onClick={() => closeWindow("monitor")}
                   className="w-full"
                 >
                   Close
@@ -196,14 +192,14 @@ const WindowManager = () => {
                 <Button
                   variant="secondary"
                   svg={Focus}
-                  onClick={focusMonitorWindow}
+                  onClick={() => focusWindow("monitor")}
                   className="w-full"
                 >
                   Bring to Front
                 </Button>
               </>
             ) : (
-              <Button variant="primary" onClick={openMonitorWindow} className="w-full">
+              <Button variant="primary" onClick={() => openWindow("monitor")} className="w-full">
                 Open
               </Button>
             )}

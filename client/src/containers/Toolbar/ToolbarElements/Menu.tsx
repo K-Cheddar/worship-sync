@@ -18,7 +18,7 @@ const ToolbarMenu = ({
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
-  const { isElectron, openMonitorWindow, openProjectorWindow } = useElectronWindows();
+  const { isElectron, openWindow } = useElectronWindows();
 
   useEffect(() => {
     // Base font size from index.css (92.5%)
@@ -54,7 +54,7 @@ const ToolbarMenu = ({
       onClick: async () => {
         try {
           if (isElectron) {
-            await openMonitorWindow();
+            await openWindow("monitor");
           } else {
             window.open("#/monitor", "_monitor", "width=500,height=360");
           }
@@ -68,7 +68,7 @@ const ToolbarMenu = ({
       onClick: async () => {
         try {
           if (isElectron) {
-            await openProjectorWindow();
+            await openWindow("projector");
           } else {
             window.open("#/projector", "_projector", "width=500,height=360");
           }

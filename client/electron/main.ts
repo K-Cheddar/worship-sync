@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync, createReadStream, statSync, readFileSync, writeFileSync } from "node:fs";
 import updaterPkg from "electron-updater";
 
-import { WindowStateManager } from "./windowState";
+import { WindowStateManager, type WindowType } from "./windowState";
 import {
   createDisplayWindow,
   setupWindowEventListeners,
@@ -99,22 +99,24 @@ const createProjectorWindow = () => {
   const display = windowStateManager.getDisplayForWindow("projector");
   const bounds = windowStateManager.getWindowBounds("projector", display);
 
-  projectorWindow = createDisplayWindow({
+  const newWindow = createDisplayWindow({
     bounds,
     route: "/projector-full",
     isDev,
     dirname: __dirname,
   });
 
-  setupReadyToShow(projectorWindow);
+  setWindowByType("projector", newWindow);
+
+  setupReadyToShow(newWindow);
 
   setupWindowEventListeners(
-    projectorWindow,
+    newWindow,
     "projector",
     windowStateManager,
     () => {
       windowStateManager.markWindowClosed("projector");
-      projectorWindow = null;
+      setWindowByType("projector", null);
       notifyWindowStateChanged();
     }
   );
@@ -129,22 +131,24 @@ const createMonitorWindow = () => {
   const display = windowStateManager.getDisplayForWindow("monitor");
   const bounds = windowStateManager.getWindowBounds("monitor", display);
 
-  monitorWindow = createDisplayWindow({
+  const newWindow = createDisplayWindow({
     bounds,
     route: "/monitor",
     isDev,
     dirname: __dirname,
   });
 
-  setupReadyToShow(monitorWindow);
+  setWindowByType("monitor", newWindow);
+
+  setupReadyToShow(newWindow);
 
   setupWindowEventListeners(
-    monitorWindow,
+    newWindow,
     "monitor",
     windowStateManager,
     () => {
       windowStateManager.markWindowClosed("monitor");
-      monitorWindow = null;
+      setWindowByType("monitor", null);
       notifyWindowStateChanged();
     }
   );
@@ -231,11 +235,11 @@ const createWindow = () => {
         // Close projector and monitor windows
         if (projectorWindow) {
           projectorWindow.close();
-          projectorWindow = null;
+          setWindowByType("projector", null);
         }
         if (monitorWindow) {
           monitorWindow.close();
-          monitorWindow = null;
+          setWindowByType("monitor", null);
         }
         // Actually close the window
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -248,11 +252,11 @@ const createWindow = () => {
       // No upload in progress, close normally
       if (projectorWindow) {
         projectorWindow.close();
-        projectorWindow = null;
+        setWindowByType("projector", null);
       }
       if (monitorWindow) {
         monitorWindow.close();
-        monitorWindow = null;
+        setWindowByType("monitor", null);
       }
       mainWindow = null;
     }
@@ -461,73 +465,35 @@ app.whenReady().then(() => {
   // - Update server info comes from publish config in electron-builder.config.js
 
   if (!isDev) {
-    autoUpdater.autoDownload = false;
-  
-    autoUpdater.logger = {
-      info: (m) => console.log("[Auto-Updater]", m),
-      warn: (m) => console.warn("[Auto-Updater]", m),
-      error: (m) => console.error("[Auto-Updater]", m),
-      debug: (m) => console.debug("[Auto-Updater]", m),
-    };
-  
-    let updateInterval: NodeJS.Timeout | null = null;
+    // Silent background updates: auto-download and install on quit
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
   
     app.whenReady().then(() => {
       // Initial check
       autoUpdater.checkForUpdates().catch((error) => {
-        console.error("[Auto-Updater] Error during initial check:", error);
+        console.error("[Auto-Updater] Error checking for updates:", error);
       });
   
       // Hourly checks
-      if (!updateInterval) {
-        updateInterval = setInterval(() => {
-          autoUpdater.checkForUpdates().catch((error) => {
-            console.error("[Auto-Updater] Error during scheduled check:", error);
-          });
-        }, 60 * 60 * 1000);
-      }
+      setInterval(() => {
+        autoUpdater.checkForUpdates().catch((error) => {
+          console.error("[Auto-Updater] Error during scheduled check:", error);
+        });
+      }, 60 * 60 * 1000);
     });
   
-    // Events
-    autoUpdater.on("checking-for-update", () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("checking-for-update");
-      }
-    });
-  
+    // Log events for debugging (no UI notifications)
     autoUpdater.on("update-available", (info) => {
-      console.log("[Auto-Updater] Update available:", info);
-      mainWindow?.webContents.send("update-available", {
-        version: info.version,
-        releaseDate: info.releaseDate,
-      });
-    });
-  
-    autoUpdater.on("update-not-available", () => {
-      mainWindow?.webContents.send("update-not-available");
+      console.log("[Auto-Updater] Update available, downloading in background...", info.version);
     });
   
     autoUpdater.on("update-downloaded", (info) => {
-      console.log("[Auto-Updater] Update downloaded:", info);
-      mainWindow?.webContents.send("update-downloaded", {
-        version: info.version,
-        releaseDate: info.releaseDate,
-      });
-    });
-  
-    autoUpdater.on("download-progress", (progress) => {
-      mainWindow?.webContents.send("update-download-progress", {
-        percent: progress.percent,
-        transferred: progress.transferred,
-        total: progress.total,
-      });
+      console.log("[Auto-Updater] Update downloaded, will install on app quit", info.version);
     });
   
     autoUpdater.on("error", (error) => {
       console.error("[Auto-Updater] Error:", error);
-      mainWindow?.webContents.send("update-error", {
-        message: error.message,
-      });
     });
   }
   
@@ -548,6 +514,7 @@ app.on("window-all-closed", () => {
 });
 
 
+
 // IPC handlers for Electron-specific functionality
 ipcMain.handle("get-app-version", () => {
   return app.getVersion();
@@ -565,35 +532,24 @@ ipcMain.handle("is-dev", () => {
   return isDev;
 });
 
-// Window management IPC handlers
-ipcMain.handle("open-projector-window", () => {
-  createProjectorWindow();
-  return true;
-});
+// Generic window creation helper
+const createWindowByType = (windowType: WindowType): void => {
+  if (windowType === "projector") {
+    createProjectorWindow();
+  } else {
+    createMonitorWindow();
+  }
+};
 
-ipcMain.handle("open-monitor-window", () => {
-  createMonitorWindow();
-  return true;
-});
-
-ipcMain.handle("focus-projector-window", () => focusWindow(projectorWindow));
-ipcMain.handle("focus-monitor-window", () => focusWindow(monitorWindow));
-
-ipcMain.handle("close-projector-window", () => {
-  if (projectorWindow && !projectorWindow.isDestroyed()) {
-    projectorWindow.close();
+// Generic window management functions
+const closeWindowByType = (windowType: WindowType): boolean => {
+  const window = getWindowByType(windowType);
+  if (window && !window.isDestroyed()) {
+    window.close();
     return true;
   }
   return false;
-});
-
-ipcMain.handle("close-monitor-window", () => {
-  if (monitorWindow && !monitorWindow.isDestroyed()) {
-    monitorWindow.close();
-    return true;
-  }
-  return false;
-});
+};
 
 const toggleFullscreen = (window: BrowserWindow | null): boolean => {
   if (window && !window.isDestroyed()) {
@@ -604,8 +560,25 @@ const toggleFullscreen = (window: BrowserWindow | null): boolean => {
   return false;
 };
 
-ipcMain.handle("toggle-projector-fullscreen", () => toggleFullscreen(projectorWindow));
-ipcMain.handle("toggle-monitor-fullscreen", () => toggleFullscreen(monitorWindow));
+// Generic IPC handlers
+ipcMain.handle("open-window", (_event, windowType: WindowType) => {
+  createWindowByType(windowType);
+  return true;
+});
+
+ipcMain.handle("close-window", (_event, windowType: WindowType) => {
+  return closeWindowByType(windowType);
+});
+
+ipcMain.handle("focus-window", (_event, windowType: WindowType) => {
+  const window = getWindowByType(windowType);
+  return focusWindow(window);
+});
+
+ipcMain.handle("toggle-window-fullscreen", (_event, windowType: WindowType) => {
+  const window = getWindowByType(windowType);
+  return toggleFullscreen(window);
+});
 
 ipcMain.handle("get-displays", () => {
   const displays = screen.getAllDisplays();
@@ -620,9 +593,23 @@ ipcMain.handle("get-displays", () => {
   }));
 });
 
+// Helper function to get window by type
+const getWindowByType = (windowType: WindowType): BrowserWindow | null => {
+  return windowType === "projector" ? projectorWindow : monitorWindow;
+};
+
+// Helper function to set window by type
+const setWindowByType = (windowType: WindowType, window: BrowserWindow | null): void => {
+  if (windowType === "projector") {
+    projectorWindow = window;
+  } else {
+    monitorWindow = window;
+  }
+};
+
 const moveWindowToDisplay = (
   window: BrowserWindow | null,
-  windowType: "projector" | "monitor",
+  windowType: WindowType,
   displayId: number
 ): boolean => {
   if (!window || window.isDestroyed()) return false;
@@ -643,13 +630,17 @@ const moveWindowToDisplay = (
   return true;
 };
 
-ipcMain.handle("move-projector-to-display", (_event, displayId: number) =>
-  moveWindowToDisplay(projectorWindow, "projector", displayId)
-);
+// Generic IPC handlers
+ipcMain.handle("move-window-to-display", (_event, windowType: WindowType, displayId: number) => {
+  const window = getWindowByType(windowType);
+  return moveWindowToDisplay(window, windowType, displayId);
+});
 
-ipcMain.handle("move-monitor-to-display", (_event, displayId: number) =>
-  moveWindowToDisplay(monitorWindow, "monitor", displayId)
-);
+ipcMain.handle("set-display-preference", (_event, windowType: WindowType, displayId: number) => {
+  windowStateManager.setDisplayPreference(windowType, displayId);
+  return true;
+});
+
 
 ipcMain.handle("get-window-states", () => {
   const projectorState = windowStateManager.getState("projector");
@@ -671,37 +662,6 @@ ipcMain.handle("get-window-states", () => {
   };
 });
 
-// Auto-updater IPC handlers
-ipcMain.handle("check-for-updates", async () => {
-  if (isDev) {
-    return { available: false, message: "Updates disabled in development" };
-  }
-  
-  try {
-    const result = await autoUpdater.checkForUpdates();
-    return { 
-      available: result !== null,
-      updateInfo: result?.updateInfo 
-    };
-  } catch (error: any) {
-    console.error("Error checking for updates:", error);
-    return { available: false, error: error.message };
-  }
-});
-
-ipcMain.handle("download-update", () => {
-  if (!isDev) {
-    autoUpdater.downloadUpdate();
-    return true;
-  }
-  return false;
-});
-
-ipcMain.handle("install-update", () => {
-  if (!isDev) {
-    autoUpdater.quitAndInstall();
-  }
-});
 
 // Video cache IPC handlers
 ipcMain.handle("download-video", async (_event, url: string) => {

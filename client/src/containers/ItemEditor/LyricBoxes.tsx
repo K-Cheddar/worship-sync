@@ -126,7 +126,7 @@ const LyricBoxes = ({
           >
             <TextArea
               hideLabel
-              className="h-[30vh]"
+              className="lg:h-[30vh]"
               data-ignore-undo="true"
               value={words}
               autoResize={isMobile}

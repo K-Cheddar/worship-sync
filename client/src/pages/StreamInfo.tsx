@@ -18,9 +18,10 @@ import { useDispatch, useSelector } from "../hooks";
 import { RootState } from "../store/store";
 import { addTimer, deleteTimer } from "../store/timersSlice";
 import { updateService } from "../store/serviceTimesSlice";
+import { capitalizeFirstLetter } from "../utils/generalUtils";
 
 const StreamInfo = () => {
-  const { user, firebaseDb, hostId } = useContext(GlobalInfoContext) || {};
+  const { user, database, firebaseDb, hostId } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
   const timers = useSelector((s: RootState) => s.timers.timers);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -32,16 +33,17 @@ const StreamInfo = () => {
   const [services, setServices] = useState<ServiceTime[]>([]);
 
   useEffect(() => {
-    if (!firebaseDb || user === "Demo") return;
+    if (!firebaseDb || user === "Demo" || !database) return;
 
-    const getServicesRef = ref(firebaseDb, "users/" + user + "/v2/services");
+    const capitalizedDatabase = capitalizeFirstLetter(database);
+    const getServicesRef = ref(firebaseDb, "users/" + capitalizedDatabase + "/v2/services");
     onValue(getServicesRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
         setServices(data);
       }
     });
-  }, [firebaseDb, user]);
+  }, [firebaseDb, database, user]);
 
   const updateUpcomingService = useCallback(() => {
     if (!services?.length) return;

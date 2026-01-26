@@ -768,7 +768,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               dispatch(setShouldShowItemEditor(!shouldShowItemEditor))
             }
             className="text-xs"
-          ></Button>
+          />
         </section>
         <div
           className={cn(
@@ -805,16 +805,14 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                     (type !== "song" && type !== "free") ||
                     ((type === "song" && arrangement?.slides ? arrangement.slides : slides)?.[selectedSlide]?.type === "Blank")
                   }
-                  className="lg:flex-[0_0_30%] w-full h-full max-lg:min-h-0 max-lg:overflow-y-auto"
                   sectionName={sectionName}
                   sectionColor={sectionColor}
                   isReformatting={isReformatting}
                 />
               )}
               
-              {/* Preview */}
-              <div className="flex flex-col gap-2 flex-1 min-w-0">
                 <DisplayWindow
+                  className="lg:max-h-[42vh] max-lg:max-h-[30vh]"
                   showBorder
                   boxes={boxes}
                   selectBox={(val) => dispatch(setSelectedBox(val))}
@@ -828,7 +826,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                   disabled={!canEdit}
                   shouldPlayVideo
                 />
-              </div>
             </div>
           ) : (
             <p

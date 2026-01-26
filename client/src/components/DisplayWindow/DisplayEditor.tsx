@@ -7,7 +7,7 @@ import cn from "classnames";
 import { ResizeDirection } from "re-resizable";
 import Button from "../Button/Button";
 import { useToast } from "../../context/toastContext";
-import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "./constants";
+import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "../../constants";
 
 type DraggableData = {
   node: HTMLElement;

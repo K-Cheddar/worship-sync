@@ -29,6 +29,7 @@ import {
   Presentation as PresentationType,
 } from "../types";
 import { ActionCreators } from "redux-undo";
+import { capitalizeFirstLetter } from "../utils/generalUtils";
 
 type LoginStateType = "idle" | "loading" | "error" | "success" | "demo";
 
@@ -71,11 +72,13 @@ const firebaseConfig = {
 type globalFireBaseInfoType = {
   db: Database | undefined;
   user: string;
+  database: string;
 };
 
 export const globalFireDbInfo: globalFireBaseInfoType = {
   db: undefined,
   user: "Demo",
+  database: "demo",
 };
 
 export const globalHostId =
@@ -205,6 +208,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const _database = localStorage.getItem("database");
     if (_database !== null && _database !== "null") {
       setDatabase(_database);
+      globalFireDbInfo.database = _database;
     }
     const _uploadPreset = localStorage.getItem("upload_preset");
     if (_uploadPreset !== null && _uploadPreset !== "null") {
@@ -272,7 +276,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         const updateRef = ref(
           firebaseDb,
-          "users/" + user + "/v2/presentation/" + key
+          "users/" + capitalizeFirstLetter(database) + "/v2/presentation/" + key
         );
 
         onValueRef.current[_key] = onValue(updateRef, (snapshot) => {
@@ -283,7 +287,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         });
       }
     }
-  }, [firebaseDb, user, updateFromRemote]);
+  }, [firebaseDb, database, updateFromRemote]);
 
   // Function to set up storage listener
   const setupStorageListener = useCallback(() => {
@@ -325,7 +329,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
     const activeInstancesRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/activeInstances"
+      "users/" + capitalizeFirstLetter(database) + "/v2/activeInstances"
     );
 
     // Listen for changes in active instances
@@ -345,7 +349,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         staleInstances.forEach(([hostId]) => {
           const staleRef = ref(
             firebaseDb,
-            `users/${user}/v2/activeInstances/${hostId}`
+            `users/${capitalizeFirstLetter(database)}/v2/activeInstances/${hostId}`
           );
           set(staleRef, null);
         });
@@ -363,7 +367,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     // Set this instance as active only if on controller page
     instanceRef.current = ref(
       firebaseDb,
-      `users/${user}/v2/activeInstances/${hostId}`
+      `users/${capitalizeFirstLetter(database)}/v2/activeInstances/${hostId}`
     );
 
     // Function to update the instance
@@ -398,7 +402,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         set(instanceRef.current, null);
       }
     };
-  }, [firebaseDb, loginState, user, database, hostId, isOnController]);
+  }, [firebaseDb, loginState, database, hostId, isOnController]);
 
   // Handle navigation away from the app - set up once when component mounts
   useEffect(() => {
@@ -443,6 +447,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         setUser(user.username);
         globalFireDbInfo.user = user.username;
         setDatabase(user.database);
+        globalFireDbInfo.database = user.database;
         setUploadPreset(user.upload_preset);
         setAccess(user.access || "full");
         navigate("/");
@@ -468,6 +473,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setUser("Demo");
     globalFireDbInfo.user = "Demo";
     setDatabase("demo");
+    globalFireDbInfo.database = "demo";
     setUploadPreset("bpqu4ma5");
     navigate("/");
     setLoginState("demo");

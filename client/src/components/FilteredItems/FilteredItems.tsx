@@ -18,6 +18,7 @@ import {
   getMatchForString,
   punctuationRegex,
   updateWordMatches,
+  capitalizeFirstLetter,
 } from "../../utils/generalUtils";
 import Spinner from "../Spinner/Spinner";
 import { ref, get, set } from "firebase/database";
@@ -225,11 +226,11 @@ const FilteredItems = ({
       }
 
       // Delete from Firebase
-      if (globalFireDbInfo.db && globalFireDbInfo.user) {
+      if (globalFireDbInfo.db && globalFireDbInfo.database) {
         try {
           const timersRef = ref(
             globalFireDbInfo.db,
-            "users/" + globalFireDbInfo.user + "/v2/timers"
+            "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/timers"
           );
 
           const snapshot = await get(timersRef);

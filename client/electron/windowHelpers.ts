@@ -1,7 +1,6 @@
 import { BrowserWindow } from "electron";
 import { join } from "node:path";
-
-type WindowType = "projector" | "monitor";
+import type { WindowType } from "./windowState";
 
 interface WindowConfig {
   bounds: { x: number; y: number; width: number; height: number };

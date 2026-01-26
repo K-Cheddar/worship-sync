@@ -110,7 +110,7 @@ const Controller = () => {
   const { isEditMode } = useSelector(
     (state: RootState) => state.undoable.present.item
   );
-  const { selectedList } = useSelector(
+  const { selectedList, activeList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
 
@@ -124,10 +124,10 @@ const Controller = () => {
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
 
-  const { db, cloud, updater, setIsMobile, setIsPhone, dbProgress } =
+  const { db, cloud, updater, setIsMobile, setIsPhone, dbProgress, connectionStatus } =
     useContext(ControllerInfoContext) || {};
 
-  const { user, access, firebaseDb, hostId, refreshPresentationListeners } =
+  const { user, database, access, firebaseDb, hostId, refreshPresentationListeners } =
     useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
@@ -219,7 +219,7 @@ const Controller = () => {
 
   // Get item state to watch for changes
   const item = useSelector((state: RootState) => state.undoable.present.item);
-  const { syncVideoCache } = useVideoCache();
+  const { syncVideoCache, preloadOutlineVideos } = useVideoCache();
   const itemSyncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const previousVideoUrlsRef = useRef<Set<string>>(new Set());
 
@@ -229,6 +229,16 @@ const Controller = () => {
     const urls = extractVideoUrlsFromItem(item);
     return new Set(urls);
   }, [item]);
+
+  // Preload videos from active outline when it changes (Strategy A: Proactive Outline Preloading)
+  useEffect(() => {
+    if (!db || !window.electronAPI || !activeList?._id) return;
+    
+    // Preload videos from the active outline in the background
+    preloadOutlineVideos(activeList._id).catch((error) => {
+      console.warn("Error preloading active outline videos:", error);
+    });
+  }, [activeList?._id, db, preloadOutlineVideos]);
 
   // Sync video cache when database is ready (only in Electron)
   useEffect(() => {
@@ -417,7 +427,7 @@ const Controller = () => {
 
   useGlobalBroadcast(updatePreferencesFromExternal);
 
-  useSyncRemoteTimers(firebaseDb, user, hostId);
+  useSyncRemoteTimers(firebaseDb, database, user, hostId);
 
   const controllerRef = useCallback(
     (node: HTMLDivElement) => {
@@ -456,16 +466,42 @@ const Controller = () => {
     <>
       {dbProgress !== 100 && (
         <div className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8">
-          <p>
-            Setting up <span className="font-bold">Worship</span>
-            <span className="text-orange-500 font-semibold">Sync</span> for{" "}
-            <span className="font-semibold">{user}</span>
-          </p>
-          <Spinner />
-          {dbProgress !== 0 && (
-            <p>
-              Progress: <span className="text-orange-500">{dbProgress}%</span>
-            </p>
+          {connectionStatus?.status === "failed" ? (
+            <>
+              <p className="text-center">
+                Unable to connect to the server
+              </p>
+              <p className="text-lg text-gray-300 text-center max-w-md">
+                Oh no! We encountered an unexpected error.
+                Please try again later.
+              </p>
+              <Button
+                onClick={() => window.location.reload()}
+                variant="cta"
+                padding="px-4 py-2"
+              >
+                Try Again
+              </Button>
+            </>
+          ) : (
+            <>
+              <p>
+                Setting up <span className="font-bold">Worship</span>
+                <span className="text-orange-500 font-semibold">Sync</span> for{" "}
+                <span className="font-semibold">{user}</span>
+              </p>
+              {connectionStatus?.status === "retrying" && (
+                <p className="text-lg text-yellow-400">
+                  Connection failed. Retrying...
+                </p>
+              )}
+              <Spinner />
+              {dbProgress !== 0 && (
+                <p>
+                  Progress: <span className="text-orange-500">{dbProgress}%</span>
+                </p>
+              )}
+            </>
           )}
         </div>
       )}

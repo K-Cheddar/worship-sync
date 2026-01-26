@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, HTMLProps, useId } from "react";
+import { useCallback, useEffect, useRef, HTMLProps, useId, forwardRef } from "react";
 import cn from "classnames";
 
 type TextAreaProps = HTMLProps<HTMLTextAreaElement> & {
   className?: string;
+  textareaClassName?: string;
   type?: string;
   value: string | number;
   label?: string;
@@ -12,8 +13,9 @@ type TextAreaProps = HTMLProps<HTMLTextAreaElement> & {
   labelClassName?: string;
 };
 
-const TextArea = ({
+const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(({
   className,
+  textareaClassName,
   type = "text",
   value,
   onChange,
@@ -22,45 +24,43 @@ const TextArea = ({
   autoResize = false,
   labelClassName,
   ...rest
-}: TextAreaProps) => {
-  const containerRef = useRef<HTMLDivElement>(null);
+}, forwardedRef) => {
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
-  const labelRef = useRef<HTMLLabelElement>(null);
   const id = useId();
 
-  const resizeTextArea = useCallback(() => {
-    if (containerRef.current && textAreaRef.current && labelRef.current) {
-      if (autoResize) {
-        // Save current scroll positions to prevent unwanted scrolling
-        const scrollX = window.scrollX || window.pageXOffset;
-        const scrollY = window.scrollY || window.pageYOffset;
+  // Callback ref that sets both forwarded ref and internal ref
+  const setTextAreaRef = useCallback((node: HTMLTextAreaElement | null) => {
+    textAreaRef.current = node;
+    if (typeof forwardedRef === 'function') {
+      forwardedRef(node);
+    } else if (forwardedRef) {
+      (forwardedRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = node;
+    }
+  }, [forwardedRef]);
 
-        containerRef.current.style.height = "auto";
-        containerRef.current.style.height =
-          textAreaRef.current.scrollHeight +
-          labelRef.current.offsetHeight +
-          4 +
-          "px";
-
-        // Restore scroll position after resize
-        requestAnimationFrame(() => {
-          window.scrollTo(scrollX, scrollY);
-        });
-      } else {
-        containerRef.current.style.height = "";
-      }
+  // Resize function that works directly on the textarea element
+  const resize = useCallback((textarea: HTMLTextAreaElement) => {
+    if (autoResize) {
+      textarea.style.height = "auto";
+      textarea.style.height = `${textarea.scrollHeight}px`;
     }
   }, [autoResize]);
 
+  // Resize when value changes externally (e.g., clicking different slides)
   useEffect(() => {
-    resizeTextArea();
-  }, [resizeTextArea]);
+    if (autoResize && textAreaRef.current) {
+      requestAnimationFrame(() => {
+        if (textAreaRef.current) {
+          resize(textAreaRef.current);
+        }
+      });
+    }
+  }, [value, autoResize, resize]);
 
   return (
-    <div ref={containerRef} className={cn("scrollbar-variable", className)}>
+    <div className={cn("scrollbar-variable", className)}>
       <label
         htmlFor={id}
-        ref={labelRef}
         className={cn(
           "text-sm font-semibold",
           hideLabel && "sr-only",
@@ -71,17 +71,21 @@ const TextArea = ({
       </label>
       <textarea
         id={id}
-        ref={textAreaRef}
-        className="w-full h-full rounded px-2 py-1 select text-black resize-none text-sm"
+        ref={setTextAreaRef}
+        className={cn("w-full h-full rounded px-2 py-1 select text-black resize-none text-sm", textareaClassName)}
         value={value ?? ""}
-        onChange={(e) => {
-          if (autoResize) resizeTextArea();
-          onChange(e.target.value);
+        onChange={(e) => onChange(e.target.value)}
+        onInput={(e) => {
+          const target = e.target as HTMLTextAreaElement;
+          resize(target);
+          rest.onInput?.(e);
         }}
         {...rest}
       />
     </div>
   );
-};
+});
+
+TextArea.displayName = "TextArea";
 
 export default TextArea;

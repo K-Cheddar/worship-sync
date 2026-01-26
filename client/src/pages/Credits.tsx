@@ -8,13 +8,14 @@ import {
 } from "../store/creditsSlice";
 import { onValue, ref } from "firebase/database";
 import { GlobalInfoContext } from "../context/globalInfo";
+import { capitalizeFirstLetter } from "../utils/generalUtils";
 
 const Credits = () => {
   const { publishedList, transitionScene, creditsScene } = useSelector(
     (state) => state.undoable.present.credits,
   );
   const dispatch = useDispatch();
-  const { user, firebaseDb } = useContext(GlobalInfoContext) || {};
+  const { user, database, firebaseDb } = useContext(GlobalInfoContext) || {};
   const [isActive, setIsActive] = useState(false);
 
   useEffect(() => {
@@ -22,7 +23,7 @@ const Credits = () => {
 
     const getPublishedRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/credits/publishedList",
+      "users/" + capitalizeFirstLetter(database) + "/v2/credits/publishedList",
     );
     onValue(getPublishedRef, (snapshot) => {
       const data = snapshot.val();
@@ -33,7 +34,7 @@ const Credits = () => {
 
     const getTransitionSceneRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/credits/transitionScene",
+      "users/" + capitalizeFirstLetter(database) + "/v2/credits/transitionScene",
     );
     onValue(getTransitionSceneRef, (snapshot) => {
       const data = snapshot.val();
@@ -44,7 +45,7 @@ const Credits = () => {
 
     const getCreditsSceneRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/credits/creditsScene",
+      "users/" + capitalizeFirstLetter(database) + "/v2/credits/creditsScene",
     );
     onValue(getCreditsSceneRef, (snapshot) => {
       const data = snapshot.val();
@@ -52,7 +53,7 @@ const Credits = () => {
         dispatch(initiateCreditsScene(data));
       }
     });
-  }, [dispatch, firebaseDb, user]);
+  }, [dispatch, firebaseDb, database]);
 
   const runObsTransition = useCallback(() => {
     if (isActive) {

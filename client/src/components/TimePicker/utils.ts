@@ -1,4 +1,4 @@
-import { pad2 } from "./constants";
+import { pad2 } from "../../constants";
 import type { Meridiem } from "./types";
 
 export const formatTimeTo24Hour = (time: string | undefined) => {

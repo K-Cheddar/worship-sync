@@ -6,7 +6,7 @@ import cn from "classnames";
 import TimerDisplay from "./TimerDisplay";
 import VerseDisplay from "./VerseDisplay";
 import NowDisplay from "./NowDisplay";
-import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "./constants";
+import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "../../constants";
 
 type DisplayBoxProps = {
   prevBox?: Box;

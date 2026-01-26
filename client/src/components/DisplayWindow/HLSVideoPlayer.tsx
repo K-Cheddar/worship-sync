@@ -35,10 +35,6 @@ const HLSPlayer = ({
         try {
           const localPath = await (window.electronAPI as unknown as { getLocalVideoPath: (url: string) => Promise<string | null> }).getLocalVideoPath(src);
           if (localPath) {
-            // Use the protocol URL returned by getLocalPath (video-cache://)
-            // This is safer than file:// and works with Electron's security model
-            console.log(`[HLSPlayer] Using cached video: ${localPath}`);
-            // localPath is now a video-cache:// protocol URL
             setActualSrc(localPath);
             setIsCheckingCache(false);
             return;
@@ -66,9 +62,6 @@ const HLSPlayer = ({
     video.src = videoSrc;
     
     const handleLoadedMetadata = () => {
-      if (videoSrc.startsWith("video-cache://")) {
-        console.log(`[HLSPlayer] Cached video metadata loaded: ${videoSrc}`);
-      }
       video.play().catch((e) => {
         console.warn("Error playing video", e);
       });
@@ -204,10 +197,14 @@ const HLSPlayer = ({
   // This prevents the video from trying to load the original URL before we check cache
   const videoSrc = isCheckingCache ? undefined : (actualSrc || undefined);
   
+  // Use preload="auto" for cached videos (instant playback), "metadata" for remote videos
+  const preloadValue = actualSrc?.startsWith("video-cache://") ? "auto" : "metadata";
+  
   return (
     <video
       ref={videoRef}
       src={videoSrc}
+      preload={preloadValue}
       className={className || "absolute inset-0 w-full h-full object-cover z-0"}
       style={{
         filter: videoBox?.brightness

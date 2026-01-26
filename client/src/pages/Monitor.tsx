@@ -11,6 +11,7 @@ import {
 } from "../store/preferencesSlice";
 import { setMonitorTimerFontSize } from "../store/preferencesSlice";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
+import { capitalizeFirstLetter } from "../utils/generalUtils";
 
 const Monitor = () => {
   const { monitorInfo, prevMonitorInfo } = useSelector(
@@ -19,14 +20,15 @@ const Monitor = () => {
 
   const dispatch = useDispatch();
 
-  const { firebaseDb, user } = useContext(GlobalInfoContext) || {};
+  const { firebaseDb, database } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     const getMonitorSettingsFromFirebase = async () => {
       if (!firebaseDb) return;
+
       const monitorSettingsRef = ref(
         firebaseDb,
-        "users/" + user + "/v2/monitorSettings"
+        "users/" + capitalizeFirstLetter(database) + "/v2/monitorSettings"
       );
       onValue(monitorSettingsRef, (snapshot) => {
         const data = snapshot.val();
@@ -41,7 +43,7 @@ const Monitor = () => {
       });
     };
     getMonitorSettingsFromFirebase();
-  }, [firebaseDb, user, dispatch]);
+  }, [firebaseDb, database, dispatch]);
 
   const timers = useSelector((state) => state.timers.timers);
   const monitorTimer = timers.find((timer) => timer.id === monitorInfo.timerId);
@@ -64,7 +66,7 @@ const Monitor = () => {
   // Close window on ESC key press when running in Electron
   const closeWindow = useCallback(async () => {
     if (window.electronAPI) {
-      await window.electronAPI.closeMonitorWindow();
+      await window.electronAPI.closeWindow("monitor");
     }
   }, []);
 

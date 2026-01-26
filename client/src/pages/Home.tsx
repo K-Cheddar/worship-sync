@@ -30,22 +30,20 @@ const Welcome = () => {
   return (
     <main className="bg-gray-700 h-dvh text-white overflow-y-auto">
       <div className="flex w-full justify-between items-center p-2 gap-4 text-lg">
-        <div className="flex items-center gap-2 px-2">
-          {!isElectron() && (
-            <Button
-              variant="tertiary"
-              className="flex items-center gap-2"
-              onClick={() => window.open(getLatestReleaseUrl(), "_blank")}
-              component="button"
-              svg={Download}
-              iconSize="md"
-            >
-              Download
-            </Button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-4">
+        {!isElectron() && (
+          <Button
+            component="link"
+            to={getLatestReleaseUrl()}
+            variant="tertiary"
+            className="flex items-center gap-2"
+            svg={Download}
+            iconSize="md"
+            target="_blank"
+          >
+            Downloads
+          </Button>
+        )}
+        <div className="flex gap-4 flex-1 justify-end">
           <Button
             variant="tertiary"
             onClick={isLoggedIn && logout ? logout : undefined}

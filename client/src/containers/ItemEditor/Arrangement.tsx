@@ -96,11 +96,10 @@ const Arrangement = ({
         ) : (
           <Button
             variant="tertiary"
-            wrap
-            className="px-2 py-1 text-base flex justify-center w-full break-words rounded-b-sm"
+            className="px-2 py-1 rounded-b-sm mt-1"
             onClick={() => setSelectedArrangement()}
           >
-            {arrangement.name}
+            <p className="min-w-0 text-center wrap-break-word whitespace-normal max-h-12 overflow-hidden w-full">{arrangement.name}</p>
           </Button>
         )}
       </li>

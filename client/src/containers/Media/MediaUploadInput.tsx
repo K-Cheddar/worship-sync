@@ -309,6 +309,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           title="Upload Media"
           size="sm"
           showCloseButton={!isUploading}
+          zIndexLevel={2}
           headerAction={
             isUploading ? (
               <Button

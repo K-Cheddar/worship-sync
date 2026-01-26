@@ -5,27 +5,28 @@ import { ref, onValue } from "firebase/database";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { tickTimers, setShouldUpdateTimers } from "../../store/timersSlice";
 import { useSyncRemoteTimers } from "../../hooks";
+import { capitalizeFirstLetter } from "../../utils/generalUtils";
 
 const TimerManager = () => {
   const dispatch = useDispatch();
-  const { user, firebaseDb, hostId } = useContext(GlobalInfoContext) || {};
+  const { user, database, firebaseDb, hostId } = useContext(GlobalInfoContext) || {};
   const { timers } = useSelector((state: RootState) => state.timers);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  useSyncRemoteTimers(firebaseDb, user, hostId);
+  useSyncRemoteTimers(firebaseDb, database, user, hostId);
 
   useEffect(() => {
     if (!firebaseDb || user === "Demo") return;
 
     const activeInstancesRef = ref(
       firebaseDb,
-      "users/" + user + "/v2/activeInstances"
+      "users/" + capitalizeFirstLetter(database) + "/v2/activeInstances"
     );
     onValue(activeInstancesRef, (snapshot) => {
       const data = snapshot.val();
       dispatch(setShouldUpdateTimers(data?.length > 0));
     });
-  }, [firebaseDb, user, dispatch]);
+  }, [firebaseDb, database, user, dispatch]);
 
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);

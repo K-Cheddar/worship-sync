@@ -56,6 +56,7 @@ import serviceTimesSlice from "./serviceTimesSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { extractAllVideoUrlsFromOutlines } from "../utils/videoCacheUtils";
 import _ from "lodash";
+import { capitalizeFirstLetter } from "../utils/generalUtils";
 
 // Helper function to safely post messages to the broadcast channel
 const safePostMessage = (message: any) => {
@@ -249,6 +250,10 @@ listenerMiddleware.startListening({
 // handle ItemList updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).undoable.present.itemList;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).undoable.present.itemList !==
         (previousState as RootState).undoable.present.itemList &&
@@ -299,6 +304,10 @@ listenerMiddleware.startListening({
 // handle itemLists updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).undoable.present.itemLists;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).undoable.present.itemLists !==
         (previousState as RootState).undoable.present.itemLists &&
@@ -339,6 +348,10 @@ listenerMiddleware.startListening({
 // handle allItems updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).allItems;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).allItems !==
         (previousState as RootState).allItems &&
@@ -507,11 +520,11 @@ listenerMiddleware.startListening({
     if (ownTimers.length > 0) {
       localStorage.setItem("timerInfo", JSON.stringify(ownTimers));
 
-      if (globalFireDbInfo.db && globalFireDbInfo.user) {
+      if (globalFireDbInfo.db && globalFireDbInfo.database) {
         // Get current timers from Firebase
         const timersRef = ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/timers"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/timers"
         );
 
         // Get current timers and merge with own timers
@@ -536,6 +549,10 @@ listenerMiddleware.startListening({
 // handle updating credits
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).undoable.present.credits;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).undoable.present.credits !==
         (previousState as RootState).undoable.present.credits &&
@@ -565,33 +582,33 @@ listenerMiddleware.startListening({
       action.type ===
         creditsSlice.actions.updatePublishedCreditsList.toString() &&
       globalFireDbInfo.db &&
-      globalFireDbInfo.user
+      globalFireDbInfo.database
     ) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/publishedList"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/publishedList"
         ),
         cleanObject(publishedList)
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/transitionScene"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/transitionScene"
         ),
         transitionScene
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/creditsScene"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/creditsScene"
         ),
         creditsScene
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/scheduleName"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/scheduleName"
         ),
         scheduleName
       );
@@ -616,6 +633,10 @@ listenerMiddleware.startListening({
 // handle updating media
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).media;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).media !==
         (previousState as RootState).media &&
@@ -670,10 +691,22 @@ listenerMiddleware.startListening({
     await listenerApi.delay(2000);
     
     try {
-      // Extract all video URLs from outlines
+      // Get current state to extract video URLs from Redux state (not database)
+      // This ensures we get the latest video even if database save is still pending
+      const state = listenerApi.getState() as RootState;
+      const currentItem = state.undoable.present.item;
+      
+      // Extract video URLs from the current item in Redux state
+      const { extractVideoUrlsFromItem } = await import("../utils/videoCacheUtils");
+      const itemVideoUrls = extractVideoUrlsFromItem(currentItem);
+      
+      // Also get all other video URLs from database (for cleanup)
       if (!db) return;
-      const videoUrls = await extractAllVideoUrlsFromOutlines(db);
-      const urlArray = Array.from(videoUrls);
+      const allVideoUrls = await extractAllVideoUrlsFromOutlines(db);
+      
+      // Combine: current item videos + all other videos from database
+      const combinedUrls = new Set([...itemVideoUrls, ...Array.from(allVideoUrls)]);
+      const urlArray = Array.from(combinedUrls);
       
       // Sync the cache
       const electronAPI = window.electronAPI as unknown as { 
@@ -698,6 +731,10 @@ listenerMiddleware.startListening({
 // handle updating preferences
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).undoable.present.preferences;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).undoable.present.preferences !==
         (previousState as RootState).undoable.present.preferences &&
@@ -735,11 +772,11 @@ listenerMiddleware.startListening({
       listenerApi.getState() as RootState
     ).undoable.present.preferences;
 
-    if (globalFireDbInfo.db && globalFireDbInfo.user) {
+    if (globalFireDbInfo.db && globalFireDbInfo.database) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/monitorSettings"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/monitorSettings"
         ),
         cleanObject({
           ...monitorSettings,
@@ -782,6 +819,10 @@ listenerMiddleware.startListening({
 // handle updating overlay templates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).undoable.present.overlayTemplates;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).undoable.present.overlayTemplates !==
         (previousState as RootState).undoable.present.overlayTemplates &&
@@ -912,11 +953,11 @@ listenerMiddleware.startListening({
         }
       }
     }
-    if (globalFireDbInfo.db && globalFireDbInfo.user) {
+    if (globalFireDbInfo.db && globalFireDbInfo.database) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/services"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/services"
         ),
         cleanObject(list)
       );
@@ -944,11 +985,11 @@ listenerMiddleware.startListening({
       return;
     }
 
-    if (globalFireDbInfo.db && globalFireDbInfo.user) {
+    if (globalFireDbInfo.db && globalFireDbInfo.database) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/services"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/services"
         ),
         cleanObject(list)
       );
@@ -1035,7 +1076,7 @@ listenerMiddleware.startListening({
     set(
       ref(
         globalFireDbInfo.db,
-        "users/" + globalFireDbInfo.user + "/v2/presentation"
+        "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/presentation"
       ),
       cleanObject(presentationUpdate)
     );
@@ -1419,6 +1460,8 @@ listenerMiddleware.startListening({
       state.undoable.present.itemList.isInitialized &&
       state.undoable.present.overlays.isInitialized &&
       state.undoable.present.itemLists.isInitialized &&
+      state.undoable.present.credits.isInitialized &&
+      state.media.isInitialized &&
       (state.undoable.present.overlayTemplates as any).isInitialized;
 
     return allSlicesInitialized;
