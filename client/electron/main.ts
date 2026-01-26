@@ -97,7 +97,7 @@ const createProjectorWindow = () => {
   }
 
   const display = windowStateManager.getDisplayForWindow("projector");
-  const bounds = windowStateManager.getWindowBounds("projector", display);
+  const bounds = windowStateManager.getWindowBounds(display);
 
   const newWindow = createDisplayWindow({
     bounds,
@@ -129,7 +129,7 @@ const createMonitorWindow = () => {
   }
 
   const display = windowStateManager.getDisplayForWindow("monitor");
-  const bounds = windowStateManager.getWindowBounds("monitor", display);
+  const bounds = windowStateManager.getWindowBounds(display);
 
   const newWindow = createDisplayWindow({
     bounds,
@@ -619,14 +619,20 @@ const moveWindowToDisplay = (
 
   if (!targetDisplay) return false;
 
+  // Move window to display and make it fullscreen
   window.setBounds({
     x: targetDisplay.bounds.x,
     y: targetDisplay.bounds.y,
     width: targetDisplay.bounds.width,
     height: targetDisplay.bounds.height,
   });
+  
+  // Ensure it's fullscreen (in case it was somehow not)
+  if (!window.isFullScreen()) {
+    window.setFullScreen(true);
+  }
 
-  windowStateManager.updateState(windowType, window);
+  windowStateManager.saveWindowState(windowType, window);
   return true;
 };
 
@@ -645,14 +651,6 @@ ipcMain.handle("set-display-preference", (_event, windowType: WindowType, displa
 ipcMain.handle("get-window-states", () => {
   const projectorState = windowStateManager.getState("projector");
   const monitorState = windowStateManager.getState("monitor");
-  
-  // Get the actual current fullscreen state from the windows
-  if (projectorWindow) {
-    projectorState.isFullScreen = projectorWindow.isFullScreen();
-  }
-  if (monitorWindow) {
-    monitorState.isFullScreen = monitorWindow.isFullScreen();
-  }
   
   return {
     projector: projectorState,

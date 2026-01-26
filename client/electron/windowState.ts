@@ -6,11 +6,6 @@ export type WindowType = "projector" | "monitor";
 
 export interface WindowState {
   displayId?: number;
-  x?: number;
-  y?: number;
-  width: number;
-  height: number;
-  isFullScreen: boolean;
   wasOpen?: boolean; // Track if window was open when app closed
 }
 
@@ -19,18 +14,10 @@ export interface WindowStates {
   monitor: WindowState;
 }
 
-// Default window states - both windows are always fullscreen
+// Default window states
 const DEFAULT_WINDOW_STATES: WindowStates = {
-  projector: {
-    width: 1920,
-    height: 1080,
-    isFullScreen: true,
-  },
-  monitor: {
-    width: 1920,
-    height: 1080,
-    isFullScreen: true,
-  },
+  projector: {},
+  monitor: {},
 };
 
 export class WindowStateManager {
@@ -74,17 +61,13 @@ export class WindowStateManager {
     windowType: WindowType,
     window: BrowserWindow
   ): void {
+    // Since windows are always fullscreen, just detect which display they're on
     const bounds = window.getBounds();
-    const display = screen.getDisplayMatching(bounds);
-
+    const detectedDisplay = screen.getDisplayMatching(bounds);
+    
     this.states[windowType] = {
-      displayId: display.id,
-      x: bounds.x,
-      y: bounds.y,
-      width: bounds.width,
-      height: bounds.height,
-      isFullScreen: window.isFullScreen(),
-      wasOpen: true, // Mark as open when updating state
+      displayId: detectedDisplay.id,
+      wasOpen: true,
     };
 
     this.saveStates();
@@ -113,7 +96,7 @@ export class WindowStateManager {
     const displays = screen.getAllDisplays();
 
     // Try to find the saved display
-    if (state.displayId) {
+    if (state.displayId !== undefined && state.displayId !== null) {
       const savedDisplay = displays.find((d) => d.id === state.displayId);
       if (savedDisplay) {
         return savedDisplay;
@@ -135,25 +118,10 @@ export class WindowStateManager {
   }
 
   /**
-   * Get window bounds for a specific display and window type
+   * Get window bounds for a specific display (always fullscreen)
    */
-  getWindowBounds(
-    windowType: WindowType,
-    display: Electron.Display
-  ): { x: number; y: number; width: number; height: number } {
-    const state = this.states[windowType];
-
-    // If we have saved position on this display, use it
-    if (state.x !== undefined && state.y !== undefined) {
-      return {
-        x: state.x,
-        y: state.y,
-        width: state.width,
-        height: state.height,
-      };
-    }
-
-    // Otherwise, center on the display
+  getWindowBounds(display: Electron.Display): { x: number; y: number; width: number; height: number } {
+    // Windows are always fullscreen, so just use the display's bounds
     return {
       x: display.bounds.x,
       y: display.bounds.y,
@@ -163,16 +131,12 @@ export class WindowStateManager {
   }
 
   /**
-   * Update state when a window moves or resizes
-   */
-  updateState(windowType: WindowType, window: BrowserWindow): void {
-    this.saveWindowState(windowType, window);
-  }
-
-  /**
-   * Set display preference for a window (used when window is closed)
+   * Set display preference for a window
    */
   setDisplayPreference(windowType: WindowType, displayId: number): void {
+    if (!this.states[windowType]) {
+      this.states[windowType] = {};
+    }
     this.states[windowType].displayId = displayId;
     this.saveStates();
   }
