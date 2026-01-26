@@ -1,3 +1,20 @@
+## [1.30.4](https://github.com/K-Cheddar/worship-sync/compare/v1.30.3...v1.30.4) (2026-01-26)
+
+
+### Bug Fixes
+
+* Fixed song arrangements not working ([e30570f](https://github.com/K-Cheddar/worship-sync/commit/e30570f3865b4a0eba5c5d2b2d653abaf69fb284))
+* Improve display controls on desktop ([a79366d](https://github.com/K-Cheddar/worship-sync/commit/a79366d93e1c58b0d276b45d213a56fc03b65b4f))
+* Improve media files user experience ([bf039de](https://github.com/K-Cheddar/worship-sync/commit/bf039ded8d511bc71c1a1d0d86d87f52e3af3e9c))
+* Improve mobile responsiveness on editor ([9449a18](https://github.com/K-Cheddar/worship-sync/commit/9449a18b98af3b61e0076b954e60dfc10fd94513))
+* Improve UI for Music users ([dae9ada](https://github.com/K-Cheddar/worship-sync/commit/dae9ada6f1614feba8034bb58907117b8b72f0b0))
+* Improve video playback ([d27c94c](https://github.com/K-Cheddar/worship-sync/commit/d27c94cb920157a6c971b7f337c3d7b51c0be995))
+
+
+### Performance Improvements
+
+* Wait for data to sync from db before adding changes ([f941989](https://github.com/K-Cheddar/worship-sync/commit/f94198914b000aa4329e2ad3cf158e2076da1416))
+
 ## [1.30.3](https://github.com/K-Cheddar/worship-sync/compare/v1.30.2...v1.30.3) (2026-01-23)
 
 
