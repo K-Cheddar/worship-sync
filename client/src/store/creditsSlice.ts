@@ -232,6 +232,7 @@ type CreditsState = {
   creditsScene: string;
   scheduleName: string;
   selectedCreditId: string;
+  isInitialized: boolean;
 };
 
 const initialState: CreditsState = {
@@ -243,6 +244,7 @@ const initialState: CreditsState = {
   creditsScene: "",
   scheduleName: "",
   selectedCreditId: "",
+  isInitialized: false,
 };
 
 export const creditsSlice = createSlice({
@@ -291,13 +293,14 @@ export const creditsSlice = createSlice({
     initiateCreditsList: (state, action: PayloadAction<CreditsInfo[]>) => {
       if (action.payload.length === 0) {
         state.list = dummyList;
-        return;
+      } else {
+        state.list = action.payload.map((credit) => ({
+          ...credit,
+          id: generateRandomId(),
+        }));
       }
-      state.list = action.payload.map((credit) => ({
-        ...credit,
-        id: generateRandomId(),
-      }));
       state.initialList = state.list.map((credit) => credit.id);
+      state.isInitialized = true;
     },
     initiatePublishedCreditsList: (
       state,

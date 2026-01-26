@@ -249,6 +249,10 @@ listenerMiddleware.startListening({
 // handle ItemList updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).undoable.present.itemList;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).undoable.present.itemList !==
         (previousState as RootState).undoable.present.itemList &&
@@ -299,6 +303,10 @@ listenerMiddleware.startListening({
 // handle itemLists updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).undoable.present.itemLists;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).undoable.present.itemLists !==
         (previousState as RootState).undoable.present.itemLists &&
@@ -339,6 +347,10 @@ listenerMiddleware.startListening({
 // handle allItems updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).allItems;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).allItems !==
         (previousState as RootState).allItems &&
@@ -536,6 +548,10 @@ listenerMiddleware.startListening({
 // handle updating credits
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).undoable.present.credits;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).undoable.present.credits !==
         (previousState as RootState).undoable.present.credits &&
@@ -616,6 +632,10 @@ listenerMiddleware.startListening({
 // handle updating media
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).media;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).media !==
         (previousState as RootState).media &&
@@ -710,6 +730,10 @@ listenerMiddleware.startListening({
 // handle updating preferences
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).undoable.present.preferences;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).undoable.present.preferences !==
         (previousState as RootState).undoable.present.preferences &&
@@ -794,6 +818,10 @@ listenerMiddleware.startListening({
 // handle updating overlay templates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const state = (currentState as RootState).undoable.present.overlayTemplates;
+    // Don't save until initialization is complete
+    if (!state.isInitialized) return false;
+    
     return (
       (currentState as RootState).undoable.present.overlayTemplates !==
         (previousState as RootState).undoable.present.overlayTemplates &&
@@ -1431,6 +1459,8 @@ listenerMiddleware.startListening({
       state.undoable.present.itemList.isInitialized &&
       state.undoable.present.overlays.isInitialized &&
       state.undoable.present.itemLists.isInitialized &&
+      state.undoable.present.credits.isInitialized &&
+      state.media.isInitialized &&
       (state.undoable.present.overlayTemplates as any).isInitialized;
 
     return allSlicesInitialized;
