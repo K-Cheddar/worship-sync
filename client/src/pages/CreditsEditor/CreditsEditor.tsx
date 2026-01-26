@@ -39,6 +39,7 @@ import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
 import { setItemListIsLoading } from "../../store/itemListSlice";
 import { initiateOverlayList } from "../../store/overlaysSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
+import { capitalizeFirstLetter } from "../../utils/generalUtils";
 
 const CreditsEditor = () => {
   const { list, transitionScene, creditsScene, scheduleName } = useSelector(
@@ -53,7 +54,7 @@ const CreditsEditor = () => {
 
   const { db, dbProgress, setIsMobile, updater } =
     useContext(ControllerInfoContext) || {};
-  const { user, firebaseDb } = useContext(GlobalInfoContext) || {};
+  const { database, firebaseDb } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -153,9 +154,10 @@ const CreditsEditor = () => {
   useEffect(() => {
     const getCreditsFromFirebase = async () => {
       if (!firebaseDb) return;
+
       const transitionSceneRef = ref(
         firebaseDb,
-        "users/" + user + "/v2/credits/transitionScene"
+        "users/" + capitalizeFirstLetter(database) + "/v2/credits/transitionScene"
       );
       onValue(transitionSceneRef, (snapshot) => {
         const data = snapshot.val();
@@ -166,7 +168,7 @@ const CreditsEditor = () => {
 
       const creditsSceneRef = ref(
         firebaseDb,
-        "users/" + user + "/v2/credits/creditsScene"
+        "users/" + capitalizeFirstLetter(database) + "/v2/credits/creditsScene"
       );
       onValue(creditsSceneRef, (snapshot) => {
         const data = snapshot.val();
@@ -177,7 +179,7 @@ const CreditsEditor = () => {
 
       const scheduleNameRef = ref(
         firebaseDb,
-        "users/" + user + "/v2/credits/scheduleName"
+        "users/" + capitalizeFirstLetter(database) + "/v2/credits/scheduleName"
       );
       onValue(scheduleNameRef, (snapshot) => {
         const data = snapshot.val();
@@ -188,7 +190,7 @@ const CreditsEditor = () => {
 
       const getPublishedRef = ref(
         firebaseDb,
-        "users/" + user + "/v2/credits/publishedList"
+        "users/" + capitalizeFirstLetter(database) + "/v2/credits/publishedList"
       );
       onValue(getPublishedRef, (snapshot) => {
         const data = snapshot.val();
@@ -199,7 +201,7 @@ const CreditsEditor = () => {
     };
 
     getCreditsFromFirebase();
-  }, [dispatch, firebaseDb, user]);
+  }, [dispatch, firebaseDb, database]);
 
   const editorRef = useCallback(
     (node: HTMLDivElement) => {

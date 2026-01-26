@@ -127,7 +127,7 @@ const Controller = () => {
   const { db, cloud, updater, setIsMobile, setIsPhone, dbProgress } =
     useContext(ControllerInfoContext) || {};
 
-  const { user, access, firebaseDb, hostId, refreshPresentationListeners } =
+  const { user, database, access, firebaseDb, hostId, refreshPresentationListeners } =
     useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
@@ -427,7 +427,7 @@ const Controller = () => {
 
   useGlobalBroadcast(updatePreferencesFromExternal);
 
-  useSyncRemoteTimers(firebaseDb, user, hostId);
+  useSyncRemoteTimers(firebaseDb, database, user, hostId);
 
   const controllerRef = useCallback(
     (node: HTMLDivElement) => {

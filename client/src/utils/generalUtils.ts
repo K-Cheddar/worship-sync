@@ -302,3 +302,8 @@ export const backoff = async (
   const ms = Math.min(cap, base * 2 ** attempt);
   await delay(ms);
 };
+
+export const capitalizeFirstLetter = (str?: string | null): string => {
+  if (!str) return "";
+  return str.charAt(0).toUpperCase() + str.slice(1);
+};

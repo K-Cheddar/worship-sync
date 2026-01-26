@@ -83,7 +83,7 @@ const initialState: PreferencesState = {
     defaultFreeFormBackgroundBrightness: 100,
     defaultSlidesPerRow: 4,
     defaultSlidesPerRowMobile: 3,
-    defaultSlidesPerRowMusic: 5,
+    defaultSlidesPerRowMusic: 6,
     defaultSlidesPerRowMusicMobile: 3,
     defaultFormattedLyricsPerRow: 4,
     defaultMediaItemsPerRow: 4,

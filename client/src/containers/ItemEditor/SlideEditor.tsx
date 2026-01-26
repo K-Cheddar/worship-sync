@@ -812,7 +812,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               )}
               
                 <DisplayWindow
-                  className="max-lg:max-h-[30vh]"
+                  className="lg:max-h-[42vh] max-lg:max-h-[30vh]"
                   showBorder
                   boxes={boxes}
                   selectBox={(val) => dispatch(setSelectedBox(val))}

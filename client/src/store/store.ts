@@ -56,6 +56,7 @@ import serviceTimesSlice from "./serviceTimesSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { extractAllVideoUrlsFromOutlines } from "../utils/videoCacheUtils";
 import _ from "lodash";
+import { capitalizeFirstLetter } from "../utils/generalUtils";
 
 // Helper function to safely post messages to the broadcast channel
 const safePostMessage = (message: any) => {
@@ -519,11 +520,11 @@ listenerMiddleware.startListening({
     if (ownTimers.length > 0) {
       localStorage.setItem("timerInfo", JSON.stringify(ownTimers));
 
-      if (globalFireDbInfo.db && globalFireDbInfo.user) {
+      if (globalFireDbInfo.db && globalFireDbInfo.database) {
         // Get current timers from Firebase
         const timersRef = ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/timers"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/timers"
         );
 
         // Get current timers and merge with own timers
@@ -581,33 +582,33 @@ listenerMiddleware.startListening({
       action.type ===
         creditsSlice.actions.updatePublishedCreditsList.toString() &&
       globalFireDbInfo.db &&
-      globalFireDbInfo.user
+      globalFireDbInfo.database
     ) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/publishedList"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/publishedList"
         ),
         cleanObject(publishedList)
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/transitionScene"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/transitionScene"
         ),
         transitionScene
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/creditsScene"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/creditsScene"
         ),
         creditsScene
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/credits/scheduleName"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/scheduleName"
         ),
         scheduleName
       );
@@ -771,11 +772,11 @@ listenerMiddleware.startListening({
       listenerApi.getState() as RootState
     ).undoable.present.preferences;
 
-    if (globalFireDbInfo.db && globalFireDbInfo.user) {
+    if (globalFireDbInfo.db && globalFireDbInfo.database) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/monitorSettings"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/monitorSettings"
         ),
         cleanObject({
           ...monitorSettings,
@@ -952,11 +953,11 @@ listenerMiddleware.startListening({
         }
       }
     }
-    if (globalFireDbInfo.db && globalFireDbInfo.user) {
+    if (globalFireDbInfo.db && globalFireDbInfo.database) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/services"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/services"
         ),
         cleanObject(list)
       );
@@ -984,11 +985,11 @@ listenerMiddleware.startListening({
       return;
     }
 
-    if (globalFireDbInfo.db && globalFireDbInfo.user) {
+    if (globalFireDbInfo.db && globalFireDbInfo.database) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + globalFireDbInfo.user + "/v2/services"
+          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/services"
         ),
         cleanObject(list)
       );
@@ -1075,7 +1076,7 @@ listenerMiddleware.startListening({
     set(
       ref(
         globalFireDbInfo.db,
-        "users/" + globalFireDbInfo.user + "/v2/presentation"
+        "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/presentation"
       ),
       cleanObject(presentationUpdate)
     );
