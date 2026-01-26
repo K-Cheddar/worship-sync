@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync, createReadStream, statSync, readFileSync, writeFileSync } from "node:fs";
 import updaterPkg from "electron-updater";
 
-import { WindowStateManager } from "./windowState";
+import { WindowStateManager, type WindowType } from "./windowState";
 import {
   createDisplayWindow,
   setupWindowEventListeners,
@@ -99,22 +99,24 @@ const createProjectorWindow = () => {
   const display = windowStateManager.getDisplayForWindow("projector");
   const bounds = windowStateManager.getWindowBounds("projector", display);
 
-  projectorWindow = createDisplayWindow({
+  const newWindow = createDisplayWindow({
     bounds,
     route: "/projector-full",
     isDev,
     dirname: __dirname,
   });
 
-  setupReadyToShow(projectorWindow);
+  setWindowByType("projector", newWindow);
+
+  setupReadyToShow(newWindow);
 
   setupWindowEventListeners(
-    projectorWindow,
+    newWindow,
     "projector",
     windowStateManager,
     () => {
       windowStateManager.markWindowClosed("projector");
-      projectorWindow = null;
+      setWindowByType("projector", null);
       notifyWindowStateChanged();
     }
   );
@@ -129,22 +131,24 @@ const createMonitorWindow = () => {
   const display = windowStateManager.getDisplayForWindow("monitor");
   const bounds = windowStateManager.getWindowBounds("monitor", display);
 
-  monitorWindow = createDisplayWindow({
+  const newWindow = createDisplayWindow({
     bounds,
     route: "/monitor",
     isDev,
     dirname: __dirname,
   });
 
-  setupReadyToShow(monitorWindow);
+  setWindowByType("monitor", newWindow);
+
+  setupReadyToShow(newWindow);
 
   setupWindowEventListeners(
-    monitorWindow,
+    newWindow,
     "monitor",
     windowStateManager,
     () => {
       windowStateManager.markWindowClosed("monitor");
-      monitorWindow = null;
+      setWindowByType("monitor", null);
       notifyWindowStateChanged();
     }
   );
@@ -231,11 +235,11 @@ const createWindow = () => {
         // Close projector and monitor windows
         if (projectorWindow) {
           projectorWindow.close();
-          projectorWindow = null;
+          setWindowByType("projector", null);
         }
         if (monitorWindow) {
           monitorWindow.close();
-          monitorWindow = null;
+          setWindowByType("monitor", null);
         }
         // Actually close the window
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -248,11 +252,11 @@ const createWindow = () => {
       // No upload in progress, close normally
       if (projectorWindow) {
         projectorWindow.close();
-        projectorWindow = null;
+        setWindowByType("projector", null);
       }
       if (monitorWindow) {
         monitorWindow.close();
-        monitorWindow = null;
+        setWindowByType("monitor", null);
       }
       mainWindow = null;
     }
@@ -528,35 +532,24 @@ ipcMain.handle("is-dev", () => {
   return isDev;
 });
 
-// Window management IPC handlers
-ipcMain.handle("open-projector-window", () => {
-  createProjectorWindow();
-  return true;
-});
+// Generic window creation helper
+const createWindowByType = (windowType: WindowType): void => {
+  if (windowType === "projector") {
+    createProjectorWindow();
+  } else {
+    createMonitorWindow();
+  }
+};
 
-ipcMain.handle("open-monitor-window", () => {
-  createMonitorWindow();
-  return true;
-});
-
-ipcMain.handle("focus-projector-window", () => focusWindow(projectorWindow));
-ipcMain.handle("focus-monitor-window", () => focusWindow(monitorWindow));
-
-ipcMain.handle("close-projector-window", () => {
-  if (projectorWindow && !projectorWindow.isDestroyed()) {
-    projectorWindow.close();
+// Generic window management functions
+const closeWindowByType = (windowType: WindowType): boolean => {
+  const window = getWindowByType(windowType);
+  if (window && !window.isDestroyed()) {
+    window.close();
     return true;
   }
   return false;
-});
-
-ipcMain.handle("close-monitor-window", () => {
-  if (monitorWindow && !monitorWindow.isDestroyed()) {
-    monitorWindow.close();
-    return true;
-  }
-  return false;
-});
+};
 
 const toggleFullscreen = (window: BrowserWindow | null): boolean => {
   if (window && !window.isDestroyed()) {
@@ -567,8 +560,25 @@ const toggleFullscreen = (window: BrowserWindow | null): boolean => {
   return false;
 };
 
-ipcMain.handle("toggle-projector-fullscreen", () => toggleFullscreen(projectorWindow));
-ipcMain.handle("toggle-monitor-fullscreen", () => toggleFullscreen(monitorWindow));
+// Generic IPC handlers
+ipcMain.handle("open-window", (_event, windowType: WindowType) => {
+  createWindowByType(windowType);
+  return true;
+});
+
+ipcMain.handle("close-window", (_event, windowType: WindowType) => {
+  return closeWindowByType(windowType);
+});
+
+ipcMain.handle("focus-window", (_event, windowType: WindowType) => {
+  const window = getWindowByType(windowType);
+  return focusWindow(window);
+});
+
+ipcMain.handle("toggle-window-fullscreen", (_event, windowType: WindowType) => {
+  const window = getWindowByType(windowType);
+  return toggleFullscreen(window);
+});
 
 ipcMain.handle("get-displays", () => {
   const displays = screen.getAllDisplays();
@@ -583,9 +593,23 @@ ipcMain.handle("get-displays", () => {
   }));
 });
 
+// Helper function to get window by type
+const getWindowByType = (windowType: WindowType): BrowserWindow | null => {
+  return windowType === "projector" ? projectorWindow : monitorWindow;
+};
+
+// Helper function to set window by type
+const setWindowByType = (windowType: WindowType, window: BrowserWindow | null): void => {
+  if (windowType === "projector") {
+    projectorWindow = window;
+  } else {
+    monitorWindow = window;
+  }
+};
+
 const moveWindowToDisplay = (
   window: BrowserWindow | null,
-  windowType: "projector" | "monitor",
+  windowType: WindowType,
   displayId: number
 ): boolean => {
   if (!window || window.isDestroyed()) return false;
@@ -606,13 +630,17 @@ const moveWindowToDisplay = (
   return true;
 };
 
-ipcMain.handle("move-projector-to-display", (_event, displayId: number) =>
-  moveWindowToDisplay(projectorWindow, "projector", displayId)
-);
+// Generic IPC handlers
+ipcMain.handle("move-window-to-display", (_event, windowType: WindowType, displayId: number) => {
+  const window = getWindowByType(windowType);
+  return moveWindowToDisplay(window, windowType, displayId);
+});
 
-ipcMain.handle("move-monitor-to-display", (_event, displayId: number) =>
-  moveWindowToDisplay(monitorWindow, "monitor", displayId)
-);
+ipcMain.handle("set-display-preference", (_event, windowType: WindowType, displayId: number) => {
+  windowStateManager.setDisplayPreference(windowType, displayId);
+  return true;
+});
+
 
 ipcMain.handle("get-window-states", () => {
   const projectorState = windowStateManager.getState("projector");

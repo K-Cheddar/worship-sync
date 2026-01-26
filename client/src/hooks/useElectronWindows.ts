@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { Display, WindowStatesInfo } from "../types/electron";
+import type { Display, WindowStatesInfo, WindowType } from "../types/electron";
 
 export const useElectronWindows = () => {
   const [isElectron, setIsElectron] = useState(false);
@@ -50,68 +50,11 @@ export const useElectronWindows = () => {
     };
   }, [refreshWindowStates]);
 
-  const openProjectorWindow = useCallback(async () => {
-    if (window.electronAPI) {
-      const result = await window.electronAPI.openProjectorWindow();
-      await refreshWindowStates();
-      return result;
-    }
-    return false;
-  }, [refreshWindowStates]);
-
-  const openMonitorWindow = useCallback(async () => {
-    if (window.electronAPI) {
-      const result = await window.electronAPI.openMonitorWindow();
-      await refreshWindowStates();
-      return result;
-    }
-    return false;
-  }, [refreshWindowStates]);
-
-  const closeProjectorWindow = useCallback(async () => {
-    if (window.electronAPI) {
-      const result = await window.electronAPI.closeProjectorWindow();
-      await refreshWindowStates();
-      return result;
-    }
-    return false;
-  }, [refreshWindowStates]);
-
-  const closeMonitorWindow = useCallback(async () => {
-    if (window.electronAPI) {
-      const result = await window.electronAPI.closeMonitorWindow();
-      await refreshWindowStates();
-      return result;
-    }
-    return false;
-  }, [refreshWindowStates]);
-
-  const toggleProjectorFullscreen = useCallback(async () => {
-    if (window.electronAPI) {
-      const result = await window.electronAPI.toggleProjectorFullscreen();
-      // Wait longer for fullscreen transition and event to complete
-      await new Promise(resolve => setTimeout(resolve, 400));
-      await refreshWindowStates();
-      return result;
-    }
-    return false;
-  }, [refreshWindowStates]);
-
-  const toggleMonitorFullscreen = useCallback(async () => {
-    if (window.electronAPI) {
-      const result = await window.electronAPI.toggleMonitorFullscreen();
-      // Wait longer for fullscreen transition and event to complete
-      await new Promise(resolve => setTimeout(resolve, 400));
-      await refreshWindowStates();
-      return result;
-    }
-    return false;
-  }, [refreshWindowStates]);
-
-  const moveProjectorToDisplay = useCallback(
-    async (displayId: number) => {
+  // Generic window management functions
+  const openWindow = useCallback(
+    async (windowType: WindowType) => {
       if (window.electronAPI) {
-        const result = await window.electronAPI.moveProjectorToDisplay(displayId);
+        const result = await window.electronAPI.openWindow(windowType);
         await refreshWindowStates();
         return result;
       }
@@ -120,10 +63,10 @@ export const useElectronWindows = () => {
     [refreshWindowStates]
   );
 
-  const moveMonitorToDisplay = useCallback(
-    async (displayId: number) => {
+  const closeWindow = useCallback(
+    async (windowType: WindowType) => {
       if (window.electronAPI) {
-        const result = await window.electronAPI.moveMonitorToDisplay(displayId);
+        const result = await window.electronAPI.closeWindow(windowType);
         await refreshWindowStates();
         return result;
       }
@@ -132,19 +75,53 @@ export const useElectronWindows = () => {
     [refreshWindowStates]
   );
 
-  const focusProjectorWindow = useCallback(async () => {
-    if (window.electronAPI) {
-      return await window.electronAPI.focusProjectorWindow();
-    }
-    return false;
-  }, []);
+  const focusWindow = useCallback(
+    async (windowType: WindowType) => {
+      if (window.electronAPI) {
+        return await window.electronAPI.focusWindow(windowType);
+      }
+      return false;
+    },
+    []
+  );
 
-  const focusMonitorWindow = useCallback(async () => {
-    if (window.electronAPI) {
-      return await window.electronAPI.focusMonitorWindow();
-    }
-    return false;
-  }, []);
+  const toggleWindowFullscreen = useCallback(
+    async (windowType: WindowType) => {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.toggleWindowFullscreen(windowType);
+        // Wait longer for fullscreen transition and event to complete
+        await new Promise(resolve => setTimeout(resolve, 400));
+        await refreshWindowStates();
+        return result;
+      }
+      return false;
+    },
+    [refreshWindowStates]
+  );
+
+  const moveWindowToDisplay = useCallback(
+    async (windowType: WindowType, displayId: number) => {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.moveWindowToDisplay(windowType, displayId);
+        await refreshWindowStates();
+        return result;
+      }
+      return false;
+    },
+    [refreshWindowStates]
+  );
+
+  const setDisplayPreference = useCallback(
+    async (windowType: WindowType, displayId: number) => {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.setDisplayPreference(windowType, displayId);
+        await refreshWindowStates();
+        return result;
+      }
+      return false;
+    },
+    [refreshWindowStates]
+  );
 
   return {
     isElectron,
@@ -152,15 +129,12 @@ export const useElectronWindows = () => {
     windowStates,
     refreshDisplays,
     refreshWindowStates,
-    openProjectorWindow,
-    openMonitorWindow,
-    closeProjectorWindow,
-    closeMonitorWindow,
-    toggleProjectorFullscreen,
-    toggleMonitorFullscreen,
-    moveProjectorToDisplay,
-    moveMonitorToDisplay,
-    focusProjectorWindow,
-    focusMonitorWindow,
+    // Generic window management functions
+    openWindow,
+    closeWindow,
+    focusWindow,
+    toggleWindowFullscreen,
+    moveWindowToDisplay,
+    setDisplayPreference,
   };
 };

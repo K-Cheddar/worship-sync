@@ -31,7 +31,7 @@ const ProjectorFull = () => {
   // Close window on ESC key press when running in Electron
   const closeWindow = useCallback(async () => {
     if (window.electronAPI) {
-      await window.electronAPI.closeProjectorWindow();
+      await window.electronAPI.closeWindow("projector");
     }
   }, []);
 

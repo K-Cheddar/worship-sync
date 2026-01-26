@@ -29,6 +29,8 @@ interface Display {
   label?: string;
 }
 
+type WindowType = "projector" | "monitor";
+
 interface WindowState {
   displayId?: number;
   x?: number;
@@ -51,18 +53,14 @@ interface ElectronAPI {
   isElectron: () => Promise<boolean>;
   isDev: () => Promise<boolean>;
   
-  // Window management
-  openProjectorWindow: () => Promise<boolean>;
-  openMonitorWindow: () => Promise<boolean>;
-  closeProjectorWindow: () => Promise<boolean>;
-  closeMonitorWindow: () => Promise<boolean>;
-  toggleProjectorFullscreen: () => Promise<boolean>;
-  toggleMonitorFullscreen: () => Promise<boolean>;
-  focusProjectorWindow: () => Promise<boolean>;
-  focusMonitorWindow: () => Promise<boolean>;
+  // Window management - all generic handlers
+  openWindow: (windowType: WindowType) => Promise<boolean>;
+  closeWindow: (windowType: WindowType) => Promise<boolean>;
+  focusWindow: (windowType: WindowType) => Promise<boolean>;
+  toggleWindowFullscreen: (windowType: WindowType) => Promise<boolean>;
+  moveWindowToDisplay: (windowType: WindowType, displayId: number) => Promise<boolean>;
+  setDisplayPreference: (windowType: WindowType, displayId: number) => Promise<boolean>;
   getDisplays: () => Promise<Display[]>;
-  moveProjectorToDisplay: (displayId: number) => Promise<boolean>;
-  moveMonitorToDisplay: (displayId: number) => Promise<boolean>;
   getWindowStates: () => Promise<WindowStatesInfo>;
   
   // Event listeners

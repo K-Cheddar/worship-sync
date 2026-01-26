@@ -11,7 +11,7 @@ import {
 import { getLetterFromIndex } from "./generalUtils";
 import { createBox, createNewSlide } from "./slideCreation";
 import generateRandomId from "./generateRandomId";
-import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "../components/DisplayWindow/constants";
+import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "../constants";
 
 type getMaxLinesProps = {
   fontSize: number;

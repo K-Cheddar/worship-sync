@@ -66,7 +66,7 @@ const Monitor = () => {
   // Close window on ESC key press when running in Electron
   const closeWindow = useCallback(async () => {
     if (window.electronAPI) {
-      await window.electronAPI.closeMonitorWindow();
+      await window.electronAPI.closeWindow("monitor");
     }
   }, []);
 

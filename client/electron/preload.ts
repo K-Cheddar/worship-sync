@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { WindowType } from "./windowState";
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -8,18 +9,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: () => ipcRenderer.invoke("is-electron"),
   isDev: () => ipcRenderer.invoke("is-dev"),
   
-  // Window management
-  openProjectorWindow: () => ipcRenderer.invoke("open-projector-window"),
-  openMonitorWindow: () => ipcRenderer.invoke("open-monitor-window"),
-  closeProjectorWindow: () => ipcRenderer.invoke("close-projector-window"),
-  closeMonitorWindow: () => ipcRenderer.invoke("close-monitor-window"),
-  toggleProjectorFullscreen: () => ipcRenderer.invoke("toggle-projector-fullscreen"),
-  toggleMonitorFullscreen: () => ipcRenderer.invoke("toggle-monitor-fullscreen"),
-  focusProjectorWindow: () => ipcRenderer.invoke("focus-projector-window"),
-  focusMonitorWindow: () => ipcRenderer.invoke("focus-monitor-window"),
+  // Window management - all generic handlers
+  openWindow: (windowType: WindowType) => ipcRenderer.invoke("open-window", windowType),
+  closeWindow: (windowType: WindowType) => ipcRenderer.invoke("close-window", windowType),
+  focusWindow: (windowType: WindowType) => ipcRenderer.invoke("focus-window", windowType),
+  toggleWindowFullscreen: (windowType: WindowType) => ipcRenderer.invoke("toggle-window-fullscreen", windowType),
+  moveWindowToDisplay: (windowType: WindowType, displayId: number) => ipcRenderer.invoke("move-window-to-display", windowType, displayId),
+  setDisplayPreference: (windowType: WindowType, displayId: number) => ipcRenderer.invoke("set-display-preference", windowType, displayId),
   getDisplays: () => ipcRenderer.invoke("get-displays"),
-  moveProjectorToDisplay: (displayId: number) => ipcRenderer.invoke("move-projector-to-display", displayId),
-  moveMonitorToDisplay: (displayId: number) => ipcRenderer.invoke("move-monitor-to-display", displayId),
   getWindowStates: () => ipcRenderer.invoke("get-window-states"),
   
   // Event listeners

@@ -14,6 +14,12 @@ import { useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import { backoff } from "../utils/generalUtils";
 import { getApiBasePath } from "../utils/environment";
+import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
+
+export type ConnectionStatus = {
+  status: "connecting" | "retrying" | "failed" | "connected";
+  retryCount: number;
+};
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
@@ -24,6 +30,7 @@ type ControllerInfoContextType = {
   isPhone: boolean;
   dbProgress: number;
   bibleDbProgress: number;
+  connectionStatus: ConnectionStatus;
   setIsMobile: (val: boolean) => void;
   setIsPhone: (val: boolean) => void;
   logout: () => Promise<void>;
@@ -80,6 +87,10 @@ const ControllerInfoProvider = ({ children }: any) => {
   const [isBibleDbSetup, setIsBibleDbSetup] = useState(false);
   const [hasCouchSession, setHasCouchSession] = useState(false);
   const [hasCheckedSession, setHasCheckedSession] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
+    status: "connecting",
+    retryCount: 0,
+  });
 
   const location = useLocation();
   const dispatch = useDispatch();
@@ -103,15 +114,22 @@ const ControllerInfoProvider = ({ children }: any) => {
   const bibleSyncRetryRef = useRef(0);
   const bibleReplicateRetryRef = useRef(0);
   const bibleReplicateRef = useRef<any>(null);
+  const initialSessionRetryRef = useRef(0);
 
   const getCouchSession = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
     try {
       const response = await fetch(
         `${getApiBasePath()}api/getDbSession`,
         {
           credentials: "include",
+          signal: controller.signal,
         }
       );
+      
+      clearTimeout(timeoutId);
       
       // Check if response is actually JSON
       const contentType = response.headers.get("content-type");
@@ -123,8 +141,14 @@ const ControllerInfoProvider = ({ children }: any) => {
       const data = await response.json();
       setHasCouchSession(data.success);
       return data.success;
-    } catch (error) {
-      console.error("getCouchSession: Error fetching session:", error);
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      // Network error (server down, no internet, timeout)
+      if (error.name === "AbortError" || error.name === "TypeError") {
+        console.error("getCouchSession: Network error or timeout:", error);
+      } else {
+        console.error("getCouchSession: Error fetching session:", error);
+      }
       return false;
     }
   }, []);
@@ -198,16 +222,57 @@ const ControllerInfoProvider = ({ children }: any) => {
   );
 
   useEffect(() => {
-    if (
-      (loginState === "success" || loginState === "demo") &&
-      location.pathname !== "/" &&
-      location.pathname !== "/login" &&
-      !hasCheckedSession
-    ) {
-      getCouchSession();
-      setHasCheckedSession(true);
-    }
+    const attemptSession = async () => {
+      if (
+        (loginState === "success" || loginState === "demo") &&
+        location.pathname !== "/" &&
+        location.pathname !== "/login" &&
+        !hasCheckedSession
+      ) {
+        setConnectionStatus({ status: "connecting", retryCount: 0 });
+        const success = await getCouchSession();
+
+        if (!success) {
+          initialSessionRetryRef.current++;
+
+          if (initialSessionRetryRef.current <= MAX_INITIAL_SESSION_RETRIES) {
+            console.log(
+              `Initial session check failed. Retrying (${initialSessionRetryRef.current}/${MAX_INITIAL_SESSION_RETRIES})...`
+            );
+            setConnectionStatus({
+              status: "retrying",
+              retryCount: initialSessionRetryRef.current,
+            });
+            // Start at 5 seconds (base=2500ms), grow exponentially, cap at 8 seconds
+            await backoff(initialSessionRetryRef.current, 2500, 8000);
+            attemptSession();
+          } else {
+            console.error(
+              `Failed to establish session after ${MAX_INITIAL_SESSION_RETRIES} attempts. Server may be down.`
+            );
+            setConnectionStatus({
+              status: "failed",
+              retryCount: MAX_INITIAL_SESSION_RETRIES,
+            });
+            setHasCheckedSession(true);
+          }
+        } else {
+          // Success! Reset retry counter and mark as checked
+          initialSessionRetryRef.current = 0;
+          setConnectionStatus({ status: "connected", retryCount: 0 });
+          setHasCheckedSession(true);
+        }
+      }
+    };
+
+    attemptSession();
   }, [getCouchSession, loginState, location.pathname, hasCheckedSession]);
+
+  // Reset retry counter when login state or database changes
+  useEffect(() => {
+    initialSessionRetryRef.current = 0;
+    setConnectionStatus({ status: "connecting", retryCount: 0 });
+  }, [loginState, database]);
 
   useEffect(() => {
     const setupDb = async () => {
@@ -480,6 +545,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         isPhone,
         setIsPhone,
         dbProgress,
+        connectionStatus,
         login: _login,
       }}
     >

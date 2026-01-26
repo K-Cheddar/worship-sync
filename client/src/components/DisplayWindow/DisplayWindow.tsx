@@ -21,7 +21,7 @@ import HLSPlayer from "./HLSVideoPlayer";
 import DisplayClock from "./DisplayClock";
 import DisplayTimer from "./DisplayTimer";
 import { useSelector } from "../../hooks";
-import { REFERENCE_WIDTH, REFERENCE_HEIGHT } from "./constants";
+import { REFERENCE_WIDTH, REFERENCE_HEIGHT } from "../../constants";
 
 type DisplayWindowProps = {
   prevBoxes?: Box[];

@@ -1,3 +1,7 @@
+// Re-export WindowType from windowState for use in React code
+// The actual type is defined in electron/windowState.ts
+export type WindowType = "projector" | "monitor";
+
 export interface Display {
   id: number;
   bounds: {
@@ -40,18 +44,14 @@ export interface ElectronAPI {
   isElectron: () => Promise<boolean>;
   isDev: () => Promise<boolean>;
   
-  // Window management
-  openProjectorWindow: () => Promise<boolean>;
-  openMonitorWindow: () => Promise<boolean>;
-  closeProjectorWindow: () => Promise<boolean>;
-  closeMonitorWindow: () => Promise<boolean>;
-  toggleProjectorFullscreen: () => Promise<boolean>;
-  toggleMonitorFullscreen: () => Promise<boolean>;
-  focusProjectorWindow: () => Promise<boolean>;
-  focusMonitorWindow: () => Promise<boolean>;
+  // Window management - all generic handlers
+  openWindow: (windowType: WindowType) => Promise<boolean>;
+  closeWindow: (windowType: WindowType) => Promise<boolean>;
+  focusWindow: (windowType: WindowType) => Promise<boolean>;
+  toggleWindowFullscreen: (windowType: WindowType) => Promise<boolean>;
+  moveWindowToDisplay: (windowType: WindowType, displayId: number) => Promise<boolean>;
+  setDisplayPreference: (windowType: WindowType, displayId: number) => Promise<boolean>;
   getDisplays: () => Promise<Display[]>;
-  moveProjectorToDisplay: (displayId: number) => Promise<boolean>;
-  moveMonitorToDisplay: (displayId: number) => Promise<boolean>;
   getWindowStates: () => Promise<WindowStatesInfo>;
   
   // Video cache

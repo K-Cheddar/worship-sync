@@ -2,6 +2,8 @@ import { app, screen, BrowserWindow } from "electron";
 import { join } from "node:path";
 import * as fs from "node:fs";
 
+export type WindowType = "projector" | "monitor";
+
 export interface WindowState {
   displayId?: number;
   x?: number;
@@ -64,12 +66,12 @@ export class WindowStateManager {
     }
   }
 
-  getState(windowType: "projector" | "monitor"): WindowState {
+  getState(windowType: WindowType): WindowState {
     return this.states[windowType];
   }
 
   saveWindowState(
-    windowType: "projector" | "monitor",
+    windowType: WindowType,
     window: BrowserWindow
   ): void {
     const bounds = window.getBounds();
@@ -91,7 +93,7 @@ export class WindowStateManager {
   /**
    * Mark a window as closed
    */
-  markWindowClosed(windowType: "projector" | "monitor") {
+  markWindowClosed(windowType: WindowType) {
     this.states[windowType].wasOpen = false;
     this.saveStates();
   }
@@ -99,14 +101,14 @@ export class WindowStateManager {
   /**
    * Check if window was open when app last closed
    */
-  wasWindowOpen(windowType: "projector" | "monitor"): boolean {
+  wasWindowOpen(windowType: WindowType): boolean {
     return this.states[windowType].wasOpen ?? false;
   }
 
   /**
    * Get the best display for a window based on saved state
    */
-  getDisplayForWindow(windowType: "projector" | "monitor") {
+  getDisplayForWindow(windowType: WindowType) {
     const state = this.states[windowType];
     const displays = screen.getAllDisplays();
 
@@ -136,7 +138,7 @@ export class WindowStateManager {
    * Get window bounds for a specific display and window type
    */
   getWindowBounds(
-    windowType: "projector" | "monitor",
+    windowType: WindowType,
     display: Electron.Display
   ): { x: number; y: number; width: number; height: number } {
     const state = this.states[windowType];
@@ -163,7 +165,15 @@ export class WindowStateManager {
   /**
    * Update state when a window moves or resizes
    */
-  updateState(windowType: "projector" | "monitor", window: BrowserWindow): void {
+  updateState(windowType: WindowType, window: BrowserWindow): void {
     this.saveWindowState(windowType, window);
+  }
+
+  /**
+   * Set display preference for a window (used when window is closed)
+   */
+  setDisplayPreference(windowType: WindowType, displayId: number): void {
+    this.states[windowType].displayId = displayId;
+    this.saveStates();
   }
 }
