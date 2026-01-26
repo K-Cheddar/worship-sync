@@ -13,6 +13,7 @@ interface ModalProps {
   showCloseButton?: boolean;
   contentPadding?: string;
   headerAction?: React.ReactNode;
+  zIndexLevel?: 1 | 2;
 }
 
 const sizeClasses = {
@@ -21,7 +22,7 @@ const sizeClasses = {
   lg: "max-w-4xl",
   xl: "max-w-6xl",
   "2xl": "max-w-7xl",
-  full: "max-w-[95vw]",
+  full: "max-w-[95vw] max-md:w-full max-md:h-full max-md:max-w-none",
 };
 
 const Modal = ({
@@ -33,6 +34,7 @@ const Modal = ({
   showCloseButton = true,
   contentPadding = "p-4",
   headerAction,
+  zIndexLevel = 1,
 }: ModalProps) => {
   const modalRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
@@ -63,6 +65,11 @@ const Modal = ({
     }
   };
 
+  const handleModalContentClick = (event: React.MouseEvent) => {
+    // Prevent clicks inside the modal from propagating outside
+    event.stopPropagation();
+  };
+
   useEffect(() => {
     if (isOpen && modalRef.current) {
       // Focus the modal when it opens
@@ -88,11 +95,16 @@ const Modal = ({
     return document.body;
   };
 
+  const zIndexClass = zIndexLevel === 2 ? "z-[55]" : "z-50";
+
   const modalContent = (
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${
+      className={cn(
+        "fixed inset-0 flex items-center justify-center p-4",
+        zIndexClass,
+        size === "full" ? "max-md:p-0" : "p-4",
         isOpen ? "block" : "hidden"
-      }`}
+      )}
       onClick={handleBackdropClick}
       onKeyDown={handleKeyDown}
       role="dialog"
@@ -105,11 +117,12 @@ const Modal = ({
       <div
         ref={modalRef}
         className={cn(
-          "relative bg-gray-800 rounded-lg shadow-2xl w-full overflow-hidden",
-          sizeClasses[size],
-          "max-h-[90vh] max-md:max-h-[95vh] max-md:rounded-none"
+          "relative bg-gray-800 shadow-2xl w-full overflow-hidden",
+          size === "full" ? "max-md:rounded-none max-md:h-full" : "rounded-lg max-h-[90vh] max-md:max-h-[95vh] max-md:rounded-none",
+          sizeClasses[size]
         )}
         role="document"
+        onClick={handleModalContentClick}
       >
         {(title || showCloseButton || headerAction) && (
           <div className="flex items-center justify-between p-4">
@@ -135,7 +148,7 @@ const Modal = ({
 
         <div
           className={cn(
-            "overflow-y-auto max-h-[calc(90vh-120px)] max-md:max-h-[calc(95vh-120px)] scrollbar-variable",
+            "overflow-y-auto max-h-[calc(90vh-120px)] max-md:max-h-[calc(100vh)] scrollbar-variable",
             contentPadding
           )}
         >

@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { useDispatch, useSelector } from "../../hooks";
+import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
 import {
   updateAllSlideBackgrounds,
   updateSlideBackground,
@@ -64,26 +64,6 @@ const sizeMap: Map<number, string> = new Map([
   [2, "grid-cols-2"],
 ]);
 
-const emptyMedia: MediaType = {
-  id: "",
-  background: "",
-  type: "image",
-  path: "",
-  createdAt: "",
-  updatedAt: "",
-  format: "",
-  height: 0,
-  width: 0,
-  publicId: "",
-  name: "",
-  thumbnail: "",
-  placeholderImage: "",
-  frameRate: 0,
-  duration: 0,
-  hasAudio: false,
-  source: "cloudinary",
-};
-
 const Media = () => {
   const dispatch = useDispatch();
   const location = useLocation();
@@ -103,9 +83,6 @@ const Media = () => {
     selectedQuickLink,
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
-  const [selectedMedia, setSelectedMedia] = useState<MediaType>(emptyMedia);
-  const [selectedMediaIds, setSelectedMediaIds] = useState<Set<string>>(new Set());
-  const [lastSelectedIndex, setLastSelectedIndex] = useState<number>(-1);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -113,7 +90,6 @@ const Media = () => {
   const [isDeletingMultiple, setIsDeletingMultiple] = useState(false);
   const [showName, setShowName] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [previewMedia, setPreviewMedia] = useState<MediaType | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ isUploading: boolean; progress: number }>({ isUploading: false, progress: 0 });
   const mediaUploadInputRef = useRef<MediaUploadInputRef>(null);
   const mediaListRef = useRef<HTMLUListElement>(null);
@@ -122,6 +98,20 @@ const Media = () => {
   const filteredList = list.filter((item) =>
     item.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  // Use shared selection hook
+  const {
+    selectedMedia,
+    selectedMediaIds,
+    previewMedia,
+    setPreviewMedia,
+    handleMediaClick,
+    clearSelection,
+  } = useMediaSelection({
+    mediaList: list,
+    filteredList,
+    enableRangeSelection: true,
+  });
 
   const { db, cloud, isMobile, updater } =
     useContext(ControllerInfoContext) || {};
@@ -199,41 +189,7 @@ const Media = () => {
 
   useGlobalBroadcast(updateMediaListFromExternal);
 
-  // Expand media when selecting a preference with an image
-  // useEffect(() => {
-  //   if (
-  //     location.pathname.includes("preferences") &&
-  //     !location.pathname.includes("quick-links") &&
-  //     !location.pathname.includes("monitor-settings") &&
-  //     selectedPreference &&
-  //     !isMediaExpanded
-  //   ) {
-  //     dispatch(setIsMediaExpanded(true));
-  //   }
-  // }, [location.pathname, selectedPreference, isMediaExpanded, dispatch]);
 
-  // // Expand media when selecting a quick link with media type
-  // useEffect(() => {
-  //   if (
-  //     location.pathname.includes("quick-links") &&
-  //     selectedQuickLink?.linkType === "media" &&
-  //     !isMediaExpanded
-  //   ) {
-  //     dispatch(setIsMediaExpanded(true));
-  //   }
-  // }, [location.pathname, selectedQuickLink, isMediaExpanded, dispatch]);
-
-
-  // // Expand media when selecting an image overlay
-  // useEffect(() => {
-  //   if (
-  //     location.pathname.includes("overlays") &&
-  //     selectedOverlay?.type === "image" &&
-  //     !isMediaExpanded
-  //   ) {
-  //     dispatch(setIsMediaExpanded(true));
-  //   }
-  // }, [location.pathname, selectedOverlay, isMediaExpanded, dispatch]);
 
   // Clear selection when clicking outside media items
   useEffect(() => {
@@ -248,12 +204,7 @@ const Media = () => {
         !target.closest('[role="dialog"]') &&
         !isFullscreen
       ) {
-        setSelectedMediaIds(new Set());
-        setLastSelectedIndex(-1);
-        if (selectedMediaIds.size > 0) {
-          setSelectedMedia(emptyMedia);
-          setPreviewMedia(null);
-        }
+        clearSelection();
       }
     };
 
@@ -263,7 +214,7 @@ const Media = () => {
         document.removeEventListener("click", handleClickOutside);
       };
     }
-  }, [selectedMediaIds.size, isFullscreen]);
+  }, [selectedMediaIds.size, isFullscreen, clearSelection]);
 
 
 
@@ -321,14 +272,14 @@ const Media = () => {
       // Remove from local list
       const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
       dispatch(updateMediaList(updatedList));
-      setSelectedMedia(emptyMedia);
+      clearSelection();
       dispatch(ActionCreators.clearHistory());
     } catch (error) {
       console.error("Error deleting background:", error);
       // Still remove from local list even if deletion fails
       const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
       dispatch(updateMediaList(updatedList));
-      setSelectedMedia(emptyMedia);
+      clearSelection();
     } finally {
       setShowDeleteModal(false);
       setMediaToDelete(null);
@@ -341,59 +292,6 @@ const Media = () => {
     setIsDeletingMultiple(false);
   };
 
-  const handleMediaClick = (
-    e: React.MouseEvent,
-    mediaItem: MediaType,
-    index: number
-  ) => {
-    const isCtrlOrCmd = e.ctrlKey || e.metaKey;
-    const isShift = e.shiftKey;
-
-    if (isCtrlOrCmd) {
-      // Toggle selection with Ctrl/Cmd
-      setSelectedMediaIds((prev) => {
-        const newSet = new Set(prev);
-        if (newSet.has(mediaItem.id)) {
-          newSet.delete(mediaItem.id);
-          if (newSet.size === 0) {
-            setSelectedMedia(emptyMedia);
-            setPreviewMedia(null);
-          } else if (selectedMedia.id === mediaItem.id) {
-            // If we're deselecting the currently selected media, select the first remaining
-            const firstId = Array.from(newSet)[0];
-            const firstItem = list.find((item) => item.id === firstId);
-            if (firstItem) {
-              setSelectedMedia(firstItem);
-              setPreviewMedia(firstItem);
-            }
-          }
-        } else {
-          newSet.add(mediaItem.id);
-          setSelectedMedia(mediaItem);
-          setPreviewMedia(mediaItem);
-        }
-        return newSet;
-      });
-      setLastSelectedIndex(index);
-    } else if (isShift && lastSelectedIndex >= 0) {
-      // Range selection with Shift
-      const start = Math.min(lastSelectedIndex, index);
-      const end = Math.max(lastSelectedIndex, index);
-      const newSet = new Set(selectedMediaIds);
-      for (let i = start; i <= end; i++) {
-        newSet.add(filteredList[i].id);
-      }
-      setSelectedMediaIds(newSet);
-      setSelectedMedia(mediaItem);
-      setPreviewMedia(mediaItem);
-    } else {
-      // Single selection
-      setSelectedMediaIds(new Set([mediaItem.id]));
-      setSelectedMedia(mediaItem);
-      setPreviewMedia(mediaItem);
-      setLastSelectedIndex(index);
-    }
-  };
 
   const handleDeleteAll = async () => {
     if (!db || selectedMediaIds.size === 0) return;
@@ -427,9 +325,7 @@ const Media = () => {
         (item) => !selectedMediaIds.has(item.id)
       );
       dispatch(updateMediaList(updatedList));
-      setSelectedMedia(emptyMedia);
-      setSelectedMediaIds(new Set());
-      setLastSelectedIndex(-1);
+      clearSelection();
       dispatch(ActionCreators.clearHistory());
     } catch (error) {
       console.error("Error deleting media:", error);
@@ -438,9 +334,7 @@ const Media = () => {
         (item) => !selectedMediaIds.has(item.id)
       );
       dispatch(updateMediaList(updatedList));
-      setSelectedMedia(emptyMedia);
-      setSelectedMediaIds(new Set());
-      setLastSelectedIndex(-1);
+      clearSelection();
     }
   };
 
@@ -887,6 +781,8 @@ const Media = () => {
           setShowDeleteModal(true);
         }}
         onPreviewChange={setPreviewMedia}
+        mediaUploadInputRef={mediaUploadInputRef}
+        uploadProgress={uploadProgress}
       />
     </ErrorBoundary>
   );

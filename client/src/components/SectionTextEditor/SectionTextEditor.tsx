@@ -77,7 +77,7 @@ const SectionTextEditor = ({
   );
 
   return (
-    <div className={cn("flex flex-col border-gray-600 border rounded-md lg:flex-[0_0_30%] w-full h-fit max-lg:min-h-0 max-lg:overflow-y-auto", className)}>
+    <div className={cn("flex flex-col border-gray-600 border rounded-md lg:flex-[0_0_30%] w-full h-full max-lg:min-h-0 max-lg:overflow-y-auto", className)}>
       {sectionName && sectionColor && (
         <div className={cn("flex items-center gap-2 px-2 rounded-t-md shrink-0", sectionColor)}>
           <p className="text-sm font-semibold text-white">{sectionName}</p>
@@ -98,7 +98,6 @@ const SectionTextEditor = ({
         }}
         label="Section Text"
         hideLabel={true}
-        // autoResize={autoResize}
         disabled={disabled}
         placeholder={placeholder}
         className="w-full max-h-[60vh] scrollbar-variable flex-1 min-h-0 max-lg:min-h-[15vh] flex flex-col"
