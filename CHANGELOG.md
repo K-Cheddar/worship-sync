@@ -1,3 +1,11 @@
+## [1.30.5](https://github.com/K-Cheddar/worship-sync/compare/v1.30.4...v1.30.5) (2026-01-27)
+
+
+### Bug Fixes
+
+* Fix displays reopening on launch ([5c3a38e](https://github.com/K-Cheddar/worship-sync/commit/5c3a38e04f0f83d31f9c6955fd32cd339198e35c))
+* Improve desktop window functionality ([b282856](https://github.com/K-Cheddar/worship-sync/commit/b282856665d7e00578b8876c99197b45104ca61c))
+
 ## [1.30.4](https://github.com/K-Cheddar/worship-sync/compare/v1.30.3...v1.30.4) (2026-01-26)
 
 
