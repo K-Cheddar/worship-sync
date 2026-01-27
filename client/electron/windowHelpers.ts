@@ -15,30 +15,8 @@ export const setupWindowEventListeners = (
   windowStateManager: any,
   onClosed: () => void
 ) => {
-  window.on("moved", () => {
-    if (!window.isDestroyed()) {
-      windowStateManager.updateState(windowType, window);
-    }
-  });
-
-  window.on("resized", () => {
-    if (!window.isDestroyed()) {
-      windowStateManager.updateState(windowType, window);
-    }
-  });
-
-  window.on("enter-full-screen", () => {
-    if (!window.isDestroyed()) {
-      windowStateManager.updateState(windowType, window);
-    }
-  });
-
-  window.on("leave-full-screen", () => {
-    if (!window.isDestroyed()) {
-      windowStateManager.updateState(windowType, window);
-    }
-  });
-
+  // Only track when window closes to update wasOpen state
+  // Since windows are always fullscreen, we don't need to track moves/resizes
   window.on("closed", onClosed);
 };
 
@@ -70,7 +48,11 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
   return window;
 };
 
-export const setupReadyToShow = (window: BrowserWindow) => {
+export const setupReadyToShow = (
+  window: BrowserWindow,
+  windowType: WindowType,
+  windowStateManager: any
+) => {
   window.once("ready-to-show", () => {
     if (window && !window.isDestroyed()) {
       window.setAlwaysOnTop(true);
@@ -79,6 +61,9 @@ export const setupReadyToShow = (window: BrowserWindow) => {
       window.moveTop();
 
       window.setFullScreen(true);
+
+      // Mark window as open and save its state
+      windowStateManager.saveWindowState(windowType, window);
 
       setTimeout(() => {
         if (!window.isDestroyed()) {

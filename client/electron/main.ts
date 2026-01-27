@@ -83,6 +83,7 @@ let monitorWindow: BrowserWindow | null = null;
 let windowStateManager: WindowStateManager;
 let videoCacheManager: VideoCacheManager;
 let isUploadInProgress = false;
+let isAppClosing = false;
 
 const notifyWindowStateChanged = () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -97,7 +98,7 @@ const createProjectorWindow = () => {
   }
 
   const display = windowStateManager.getDisplayForWindow("projector");
-  const bounds = windowStateManager.getWindowBounds("projector", display);
+  const bounds = windowStateManager.getWindowBounds(display);
 
   const newWindow = createDisplayWindow({
     bounds,
@@ -108,14 +109,17 @@ const createProjectorWindow = () => {
 
   setWindowByType("projector", newWindow);
 
-  setupReadyToShow(newWindow);
+  setupReadyToShow(newWindow, "projector", windowStateManager);
 
   setupWindowEventListeners(
     newWindow,
     "projector",
     windowStateManager,
     () => {
-      windowStateManager.markWindowClosed("projector");
+      // Only mark as closed if app is not closing (user manually closed the window)
+      if (!isAppClosing) {
+        windowStateManager.markWindowClosed("projector");
+      }
       setWindowByType("projector", null);
       notifyWindowStateChanged();
     }
@@ -129,7 +133,7 @@ const createMonitorWindow = () => {
   }
 
   const display = windowStateManager.getDisplayForWindow("monitor");
-  const bounds = windowStateManager.getWindowBounds("monitor", display);
+  const bounds = windowStateManager.getWindowBounds(display);
 
   const newWindow = createDisplayWindow({
     bounds,
@@ -140,14 +144,17 @@ const createMonitorWindow = () => {
 
   setWindowByType("monitor", newWindow);
 
-  setupReadyToShow(newWindow);
+  setupReadyToShow(newWindow, "monitor", windowStateManager);
 
   setupWindowEventListeners(
     newWindow,
     "monitor",
     windowStateManager,
     () => {
-      windowStateManager.markWindowClosed("monitor");
+      // Only mark as closed if app is not closing (user manually closed the window)
+      if (!isAppClosing) {
+        windowStateManager.markWindowClosed("monitor");
+      }
       setWindowByType("monitor", null);
       notifyWindowStateChanged();
     }
@@ -232,6 +239,14 @@ const createWindow = () => {
       if (result.response === 1) {
         // User chose to close anyway
         isUploadInProgress = false;
+        isAppClosing = true;
+        // Save window states before closing (preserve wasOpen: true)
+        if (projectorWindow && !projectorWindow.isDestroyed()) {
+          windowStateManager.saveWindowState("projector", projectorWindow);
+        }
+        if (monitorWindow && !monitorWindow.isDestroyed()) {
+          windowStateManager.saveWindowState("monitor", monitorWindow);
+        }
         // Close projector and monitor windows
         if (projectorWindow) {
           projectorWindow.close();
@@ -250,6 +265,15 @@ const createWindow = () => {
       // If user chose Cancel (response === 0), do nothing - window stays open
     } else {
       // No upload in progress, close normally
+      isAppClosing = true;
+      // Save window states before closing (preserve wasOpen: true)
+      if (projectorWindow && !projectorWindow.isDestroyed()) {
+        windowStateManager.saveWindowState("projector", projectorWindow);
+      }
+      if (monitorWindow && !monitorWindow.isDestroyed()) {
+        windowStateManager.saveWindowState("monitor", monitorWindow);
+      }
+      // Close projector and monitor windows
       if (projectorWindow) {
         projectorWindow.close();
         setWindowByType("projector", null);
@@ -619,14 +643,20 @@ const moveWindowToDisplay = (
 
   if (!targetDisplay) return false;
 
+  // Move window to display and make it fullscreen
   window.setBounds({
     x: targetDisplay.bounds.x,
     y: targetDisplay.bounds.y,
     width: targetDisplay.bounds.width,
     height: targetDisplay.bounds.height,
   });
+  
+  // Ensure it's fullscreen (in case it was somehow not)
+  if (!window.isFullScreen()) {
+    window.setFullScreen(true);
+  }
 
-  windowStateManager.updateState(windowType, window);
+  windowStateManager.saveWindowState(windowType, window);
   return true;
 };
 
@@ -645,14 +675,6 @@ ipcMain.handle("set-display-preference", (_event, windowType: WindowType, displa
 ipcMain.handle("get-window-states", () => {
   const projectorState = windowStateManager.getState("projector");
   const monitorState = windowStateManager.getState("monitor");
-  
-  // Get the actual current fullscreen state from the windows
-  if (projectorWindow) {
-    projectorState.isFullScreen = projectorWindow.isFullScreen();
-  }
-  if (monitorWindow) {
-    monitorState.isFullScreen = monitorWindow.isFullScreen();
-  }
   
   return {
     projector: projectorState,

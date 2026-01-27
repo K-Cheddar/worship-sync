@@ -118,7 +118,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const getCouchSession = useCallback(async () => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
     try {
       const response = await fetch(
@@ -236,15 +236,12 @@ const ControllerInfoProvider = ({ children }: any) => {
           initialSessionRetryRef.current++;
 
           if (initialSessionRetryRef.current <= MAX_INITIAL_SESSION_RETRIES) {
-            console.log(
-              `Initial session check failed. Retrying (${initialSessionRetryRef.current}/${MAX_INITIAL_SESSION_RETRIES})...`
-            );
             setConnectionStatus({
               status: "retrying",
               retryCount: initialSessionRetryRef.current,
             });
-            // Start at 5 seconds (base=2500ms), grow exponentially, cap at 8 seconds
-            await backoff(initialSessionRetryRef.current, 2500, 8000);
+            // Start at 5 seconds (base=5000ms), grow exponentially, cap at 30 seconds
+            await backoff(initialSessionRetryRef.current, 5000, 30000);
             attemptSession();
           } else {
             console.error(
