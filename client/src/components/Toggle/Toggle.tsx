@@ -27,7 +27,7 @@ const Toggle = ({
   return (
     <div
       className={cn(
-        "flex gap-1 relative items-center h-4 cursor-pointer",
+        "flex gap-1 relative items-center cursor-pointer",
         className
       )}
     >
