@@ -1,3 +1,11 @@
+## [1.31.1](https://github.com/K-Cheddar/worship-sync/compare/v1.31.0...v1.31.1) (2026-01-28)
+
+
+### Bug Fixes
+
+* Correct media icon size on mobile ([f017600](https://github.com/K-Cheddar/worship-sync/commit/f017600222a49d403294bb6533139801e1f7f4f4))
+* Improve font ([60704c4](https://github.com/K-Cheddar/worship-sync/commit/60704c40a7a94f83b78cfd19191f3e1341779c01))
+
 # [1.31.0](https://github.com/K-Cheddar/worship-sync/compare/v1.30.5...v1.31.0) (2026-01-28)
 
 
