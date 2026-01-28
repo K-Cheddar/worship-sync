@@ -450,17 +450,15 @@ const Media = () => {
           />
         </div>
         <div className="flex items-center gap-2">
-          {isMediaExpanded && (
-            <Button
-              variant="tertiary"
-              svg={Plus}
-              onClick={() => mediaUploadInputRef.current?.openModal()}
-              title={uploadProgress.isUploading ? `Uploading... ${Math.round(uploadProgress.progress)}%` : "Add Media"}
-              disabled={uploadProgress.isUploading}
-            >
-              {uploadProgress.isUploading ? `${Math.round(uploadProgress.progress)}%` : ""}
-            </Button>
-          )}
+          <Button
+            variant="tertiary"
+            svg={Plus}
+            onClick={() => mediaUploadInputRef.current?.openModal()}
+            title={uploadProgress.isUploading ? `Uploading... ${Math.round(uploadProgress.progress)}%` : "Add Media"}
+            disabled={uploadProgress.isUploading}
+          >
+            {uploadProgress.isUploading ? `${Math.round(uploadProgress.progress)}%` : ""}
+          </Button>
           <Button
             variant="tertiary"
             svg={Maximize}
