@@ -150,9 +150,7 @@ const DisplayBox = ({
   
   // Text shadow and outline sizes in pixels (will scale with transform)
   const tSS = fontSizeInPx / 32 // text shadow size in px
-  const fOSBase = fontSizeInPx / 64 // font outline size in px
-  
-  const fOS = fOSBase;
+  const fOS = fontSizeInPx / 128 // font outline size in px
   
   // Convert all percentage values to pixels based on reference dimensions
   const boxWidthPx = (referenceWidth * box.width) / 100;
