@@ -30,6 +30,7 @@ import {
 import { retrieveImages } from "../../utils/itemUtil";
 import { mediaInfoType } from "./cloudinaryTypes";
 import MediaUploadInput, { MediaUploadInputRef } from "./MediaUploadInput";
+import MediaTypeBadge from "./MediaTypeBadge";
 import generateRandomId from "../../utils/generateRandomId";
 import {
   deleteFromCloudinary,
@@ -450,17 +451,15 @@ const Media = () => {
           />
         </div>
         <div className="flex items-center gap-2">
-          {isMediaExpanded && (
-            <Button
-              variant="tertiary"
-              svg={Plus}
-              onClick={() => mediaUploadInputRef.current?.openModal()}
-              title={uploadProgress.isUploading ? `Uploading... ${Math.round(uploadProgress.progress)}%` : "Add Media"}
-              disabled={uploadProgress.isUploading}
-            >
-              {uploadProgress.isUploading ? `${Math.round(uploadProgress.progress)}%` : ""}
-            </Button>
-          )}
+          <Button
+            variant="tertiary"
+            svg={Plus}
+            onClick={() => mediaUploadInputRef.current?.openModal()}
+            title={uploadProgress.isUploading ? `Uploading... ${Math.round(uploadProgress.progress)}%` : "Add Media"}
+            disabled={uploadProgress.isUploading}
+          >
+            {uploadProgress.isUploading ? `${Math.round(uploadProgress.progress)}%` : ""}
+          </Button>
           <Button
             variant="tertiary"
             svg={Maximize}
@@ -704,7 +703,7 @@ const Media = () => {
                   >
                     <div
                       className={cn(
-                        "aspect-video flex items-center justify-center w-full flex-1 overflow-hidden",
+                        "aspect-video flex items-center justify-center w-full flex-1 overflow-hidden relative",
                         isMediaExpanded && "border-b border-gray-500"
                       )}
                     >
@@ -714,6 +713,7 @@ const Media = () => {
                         src={thumbnail}
                         loading="lazy"
                       />
+                      <MediaTypeBadge type={type} />
                     </div>
 
                     {isMediaExpanded && name && showName && (

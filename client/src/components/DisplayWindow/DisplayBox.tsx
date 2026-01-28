@@ -142,19 +142,17 @@ const DisplayBox = ({
   const bWords = box.words || "";
   const words = bWords;
   const bFontSize = box.fontSize;
+
+
   
   // Convert fontSize to pixels using the font size multiplier
   const fontSizeInPx = bFontSize ? bFontSize * FONT_SIZE_MULTIPLIER : FONT_SIZE_MULTIPLIER;
   
   // Text shadow and outline sizes in pixels (will scale with transform)
-  const REFERENCE_WIDTH_VW = (REFERENCE_WIDTH / window.innerWidth) * 100;
-  const useReferenceWidth = width >= REFERENCE_WIDTH_VW * 0.5;
-  const tSSBase = fontSizeInPx / (useReferenceWidth ? 32 : 10); // text shadow size in px
-  const fOSBase = fontSizeInPx / (useReferenceWidth ? 32 : 114); // font outline size in px
+  const tSS = fontSizeInPx / 32 // text shadow size in px
+  const fOSBase = fontSizeInPx / 64 // font outline size in px
   
-  // If scale is less than 0.25, cut the stroke in half and double the shadow
-  const tSS = scaleFactor < 0.25 ? tSSBase * 2 : tSSBase;
-  const fOS = scaleFactor < 0.25 ? fOSBase / 2 : fOSBase;
+  const fOS = fOSBase;
   
   // Convert all percentage values to pixels based on reference dimensions
   const boxWidthPx = (referenceWidth * box.width) / 100;

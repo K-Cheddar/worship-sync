@@ -50,7 +50,7 @@ export const getMaxLines = ({
     const measureSpan = document.createElement("span");
     measureSpan.style.cssText = `
       font-size: ${fontSizePx}px;
-      font-family: Verdana;
+      font-family: Inter, sans-serif;
       overflow-wrap: break-word;
       position: fixed;
       font-weight: ${isBold ? "bold" : "normal"};
@@ -128,7 +128,7 @@ export const getNumLines = ({
     const measureSpan = document.createElement("span");
     measureSpan.style.cssText = `
       font-size: ${fontSizePx}px;
-      font-family: Verdana;
+      font-family: Inter, sans-serif;
       overflow-wrap: break-word;
       white-space: pre-wrap;
       width: ${calculatedWidth}px;

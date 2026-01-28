@@ -481,12 +481,12 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         style={{
           // Ensure parent has defined width to constrain scaled content
           // If className is provided (like "w-full"), let CSS handle it but ensure container is constrained
-          width: width 
-            ? `${width}vw` 
-            : className 
+          width: width
+            ? `${width}vw`
+            : className
               ? "100%" // When using transform with className, ensure width is set
               : "100%",
-          fontFamily: "Verdana",
+          fontFamily: "Inter, sans-serif",
           // Prevent scaled inner container from affecting layout
           contain: "layout size",
           isolation: "isolate",

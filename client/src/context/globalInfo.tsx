@@ -402,7 +402,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         set(instanceRef.current, null);
       }
     };
-  }, [firebaseDb, loginState, database, hostId, isOnController]);
+  }, [firebaseDb, loginState, database, hostId, isOnController, user]);
 
   // Handle navigation away from the app - set up once when component mounts
   useEffect(() => {

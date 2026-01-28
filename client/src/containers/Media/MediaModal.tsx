@@ -35,6 +35,7 @@ import { RootState } from "../../store/store";
 import { updateOverlay } from "../../store/overlaySlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { MediaUploadInputRef } from "./MediaUploadInput";
+import MediaTypeBadge from "./MediaTypeBadge";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -588,13 +589,14 @@ const MediaModal = ({
                         }
                       }}
                     >
-                        <div className="aspect-video flex items-center justify-center w-full flex-1 overflow-hidden border-b border-gray-500">
+                        <div className="aspect-video flex items-center justify-center w-full flex-1 overflow-hidden border-b border-gray-500 relative">
                           <img
                             className="max-w-full max-h-full"
                             alt={id}
                             src={thumbnail}
                             loading="lazy"
                           />
+                          <MediaTypeBadge type={type} />
                         </div>
 
                         {name && showName && (
