@@ -253,11 +253,7 @@ const DisplayEditor = ({
   // Convert fontSize to pixels using the font size multiplier
   const fontSizeInPx = bFontSize ? bFontSize * FONT_SIZE_MULTIPLIER : FONT_SIZE_MULTIPLIER;
   
-  // Text shadow and outline sizes in pixels (will scale with transform)
-  const REFERENCE_WIDTH_VW = (REFERENCE_WIDTH / window.innerWidth) * 100;
-  const useReferenceWidth = width >= REFERENCE_WIDTH_VW * 0.5;
-  const tSS = fontSizeInPx / (useReferenceWidth ? 32 : 10); // text shadow size in px
-  const fOS = fontSizeInPx / (useReferenceWidth ? 32 : 114); // font outline size in px
+  const tSS = fontSizeInPx / 32; // text shadow size in px
   
   // Convert margins to pixels based on reference dimensions
   const sideMarginPx = box.sideMargin ? (referenceWidth * box.sideMargin) / 100 : 0;
@@ -275,7 +271,6 @@ const DisplayEditor = ({
   const textBoxHeight = `${boxHeightPx - topMarginPx * 2}px`;
   const textStyles = {
     textShadow: `${tSS}px ${tSS}px ${tSS}px #000, ${tSS}px ${tSS}px ${tSS}px #000`,
-    WebkitTextStroke: `${fOS}px #000`,
     textAlign: box.align || "center",
     lineHeight: 1.25,
     fontSize: `${fontSizeInPx}px`,

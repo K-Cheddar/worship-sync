@@ -11,7 +11,7 @@ const MediaTypeBadge = ({ type }: MediaTypeBadgeProps) => {
     ? Video
     : Image;
   return (
-      <Icon svg={svg} size="xs" className="absolute bottom-0.25 left-0.25 opacity-50 bg-black/50 rounded-full p-0.5" />
+      <Icon svg={svg} size="xs" className="absolute bottom-0.25 left-0.25 opacity-50 bg-black/50 rounded-full p-0.5" overrideSmallMobile svgClassName="max-md:min-h-4 max-md:min-w-4" />
   );
 };
 

@@ -5,11 +5,13 @@ type IconProps = {
   svg: FunctionComponent<React.SVGProps<SVGSVGElement>>;
   size?: "xs" | "sm" | "md" | "lg" | "xl" | number;
   className?: string;
+  svgClassName?: string;
+  overrideSmallMobile?: boolean;
   alt?: string;
   color?: string;
 };
 
-const Icon = ({ svg: SVG, size = "md", className, color, alt }: IconProps) => {
+const Icon = ({ svg: SVG, size = "md", className, svgClassName, overrideSmallMobile = false, color, alt }: IconProps) => {
   const width = useMemo(() => {
     switch (size) {
       case "xs":
@@ -30,7 +32,7 @@ const Icon = ({ svg: SVG, size = "md", className, color, alt }: IconProps) => {
   return (
     <span className={cn("flex items-center justify-center", className)}>
       <SVG
-        className={cn(width, "max-md:min-h-6 max-md:min-w-6")}
+        className={cn(width, !overrideSmallMobile && "max-md:min-h-6 max-md:min-w-6", svgClassName)}
         color={color}
       />
     </span>
