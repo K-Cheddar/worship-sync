@@ -1,3 +1,17 @@
+# [1.31.0](https://github.com/K-Cheddar/worship-sync/compare/v1.30.5...v1.31.0) (2026-01-28)
+
+
+### Bug Fixes
+
+* Always show media upload button ([3d974e4](https://github.com/K-Cheddar/worship-sync/commit/3d974e423614990f908304c18a9855a4ed7ecbdc))
+* Improve media icon display ([e02fd05](https://github.com/K-Cheddar/worship-sync/commit/e02fd05e8e0e739a0d835384177962c5dff63728))
+
+
+### Features
+
+* Added font for consistency ([2f71932](https://github.com/K-Cheddar/worship-sync/commit/2f71932ba570e020c43b3d0c7d2bf66dde03640f))
+* Added icons to media items ([f44d179](https://github.com/K-Cheddar/worship-sync/commit/f44d1792ae54e2967140ef04ebc51937758a3fe9))
+
 ## [1.30.5](https://github.com/K-Cheddar/worship-sync/compare/v1.30.4...v1.30.5) (2026-01-27)
 
 
