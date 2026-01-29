@@ -254,6 +254,7 @@ const DisplayEditor = ({
   const fontSizeInPx = bFontSize ? bFontSize * FONT_SIZE_MULTIPLIER : FONT_SIZE_MULTIPLIER;
   
   const tSS = fontSizeInPx / 32; // text shadow size in px
+  const fOS = fontSizeInPx / 128; // font outline size in px
   
   // Convert margins to pixels based on reference dimensions
   const sideMarginPx = box.sideMargin ? (referenceWidth * box.sideMargin) / 100 : 0;
@@ -271,6 +272,7 @@ const DisplayEditor = ({
   const textBoxHeight = `${boxHeightPx - topMarginPx * 2}px`;
   const textStyles = {
     textShadow: `${tSS}px ${tSS}px ${tSS}px #000, ${tSS}px ${tSS}px ${tSS}px #000`,
+    WebkitTextStroke: `${fOS}px #000`,
     textAlign: box.align || "center",
     lineHeight: 1.25,
     fontSize: `${fontSizeInPx}px`,
