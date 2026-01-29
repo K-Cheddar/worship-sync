@@ -7,6 +7,7 @@ import {
   RectangleEllipsis,
   Pencil,
   MonitorPlay,
+  MonitorCog
 } from "lucide-react";
 import Menu from "./ToolbarElements/Menu";
 import Outlines from "./ToolbarElements/Outlines";
@@ -146,7 +147,7 @@ const Toolbar = ({ className }: { className: string }) => {
             {access === "full" && (
               <>
                 <ToolbarButton
-                  svg={SquarePen}
+                  svg={MonitorPlay}
                   onClick={() => setSection("stream-format")}
                   disabled={!onItemPage}
                   hidden={!onItemPage}
@@ -232,7 +233,7 @@ const Toolbar = ({ className }: { className: string }) => {
                     "outline-2 outline-white"
                 )}
                 variant="tertiary"
-                svg={MonitorPlay}
+                svg={MonitorCog}
                 component="link"
                 to="/controller/monitor-controls"
               >
