@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
+import { VitePWA } from "vite-plugin-pwa";
 import { resolve } from "path";
 import fs from "fs";
 
@@ -33,6 +34,12 @@ export default defineConfig(({ mode }) => {
         authToken: process.env.SENTRY_AUTH_TOKEN,
         org: "worshipsync",
         project: "javascript-react",
+      }),
+      VitePWA({
+        strategies: "injectManifest",
+        srcDir: "src",
+        filename: "service-worker.ts",
+        registerType: "autoUpdate",
       }),
     ],
     server: isDev
