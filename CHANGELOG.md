@@ -1,3 +1,10 @@
+## [1.31.7](https://github.com/K-Cheddar/worship-sync/compare/v1.31.6...v1.31.7) (2026-01-29)
+
+
+### Bug Fixes
+
+* Credits update ([a073f4c](https://github.com/K-Cheddar/worship-sync/commit/a073f4cb26031ee4a92a0a1832bb26b963086ec6))
+
 ## [1.31.6](https://github.com/K-Cheddar/worship-sync/compare/v1.31.5...v1.31.6) (2026-01-29)
 
 
