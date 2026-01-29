@@ -40,6 +40,9 @@ export default defineConfig(({ mode }) => {
         srcDir: "src",
         filename: "service-worker.ts",
         registerType: "autoUpdate",
+        injectManifest: {
+          maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB (main bundle ~3 MB)
+        },
       }),
     ],
     server: isDev
