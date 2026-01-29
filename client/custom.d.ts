@@ -91,7 +91,13 @@ interface ElectronAPI {
   setUploadInProgress: (inProgress: boolean) => Promise<boolean>;
 }
 
+interface ObsStudioAPI {
+  setCurrentScene?: (sceneName: string) => void;
+  getCurrentScene?: (callback: (scene: { name?: string }) => void) => void;
+}
+
 interface Window {
   electronAPI?: ElectronAPI;
   __ELECTRON__?: boolean;
+  obsstudio?: ObsStudioAPI;
 }

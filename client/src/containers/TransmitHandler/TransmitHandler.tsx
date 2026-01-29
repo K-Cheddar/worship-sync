@@ -19,10 +19,6 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import cn from "classnames";
 import { MonitorUp, MonitorX } from "lucide-react";
 
-// Keeping this as previous urls
-// https://res.cloudinary.com/portable-media/image/upload/v1729199662/eliathah/Welcome_To_Eliathah.jpg
-// https://res.cloudinary.com/portable-media/image/upload/v1/eliathah/psalm-145-5-1292446461_j02gov
-
 const TransmitHandler = () => {
   const {
     isMonitorTransmitting,
@@ -119,7 +115,7 @@ const TransmitHandler = () => {
               }
               quickLinks={allQuickLinks
                 .filter((link) => link.displayType === "projector")
-                }
+              }
               isMobile={isMobile}
             />
             <Presentation
@@ -133,7 +129,7 @@ const TransmitHandler = () => {
               toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
               quickLinks={allQuickLinks
                 .filter((link) => link.displayType === "monitor")
-                }
+              }
               isMobile={isMobile}
               showMonitorClockTimer
             />
@@ -148,7 +144,7 @@ const TransmitHandler = () => {
               toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
               quickLinks={allQuickLinks
                 .filter((link) => link.displayType === "stream")
-                }
+              }
               isMobile={isMobile}
             />
           </div>

@@ -53,16 +53,16 @@ const Credits = () => {
         dispatch(initiateCreditsScene(data));
       }
     });
-  }, [dispatch, firebaseDb, database]);
+  }, [dispatch, firebaseDb, database, user]);
 
   const runObsTransition = useCallback(() => {
     if (isActive) {
-      window.obsstudio?.setCurrentScene(transitionScene);
+      window.obsstudio?.setCurrentScene?.(transitionScene);
     }
   }, [transitionScene, isActive]);
 
   useEffect(() => {
-    window.obsstudio?.getCurrentScene((scene) => {
+    window.obsstudio?.getCurrentScene?.((scene) => {
       setIsActive(scene?.name === creditsScene);
     });
   }, [creditsScene]);
