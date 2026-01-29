@@ -1,3 +1,10 @@
+## [1.31.6](https://github.com/K-Cheddar/worship-sync/compare/v1.31.5...v1.31.6) (2026-01-29)
+
+
+### Bug Fixes
+
+* real time database update ([57972d3](https://github.com/K-Cheddar/worship-sync/commit/57972d3edcd5c7411feb78438d9231450e7ed895))
+
 ## [1.31.5](https://github.com/K-Cheddar/worship-sync/compare/v1.31.4...v1.31.5) (2026-01-29)
 
 
