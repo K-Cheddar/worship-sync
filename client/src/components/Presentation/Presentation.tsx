@@ -66,10 +66,8 @@ const Presentation = ({
             <h2 className="bg-gray-900 text-center font-semibold text-sm flex items-center gap-2 px-2 py-1 justify-around">
               <span>{name}</span>
               <Button
-                variant="tertiary"
                 svg={MonitorX}
                 onClick={handleClear}
-                className="p-1"
                 iconSize="md"
               />
               <Toggle
