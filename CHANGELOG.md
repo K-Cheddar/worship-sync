@@ -1,3 +1,10 @@
+## [1.31.4](https://github.com/K-Cheddar/worship-sync/compare/v1.31.3...v1.31.4) (2026-01-29)
+
+
+### Bug Fixes
+
+* Update icons ([f7f5b20](https://github.com/K-Cheddar/worship-sync/commit/f7f5b2017f00ce9261dda63cacc650c8fc3e4847))
+
 ## [1.31.3](https://github.com/K-Cheddar/worship-sync/compare/v1.31.2...v1.31.3) (2026-01-29)
 
 
