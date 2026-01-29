@@ -5,6 +5,9 @@ import App from "./App";
 import * as serviceWorkerRegistration from "./serviceWorkerRegistration";
 import reportWebVitals from "./reportWebVitals";
 import * as Sentry from "@sentry/react";
+import { initConsoleLogForwarder } from "./utils/consoleLogForwarder";
+
+initConsoleLogForwarder();
 
 if (import.meta.env.PROD) {
   Sentry.init({

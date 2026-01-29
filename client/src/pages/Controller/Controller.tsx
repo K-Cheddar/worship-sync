@@ -173,8 +173,8 @@ const Controller = () => {
 
   // Leaving this in case we need to reformat all songs in the db
   // useEffect(() => {
-    // if (!db || !cloud) return;
-    // formatAllSongs(db, cloud);
+  // if (!db || !cloud) return;
+  // formatAllSongs(db, cloud);
   // }, [db, cloud]);
 
   useEffect(() => {
@@ -183,16 +183,15 @@ const Controller = () => {
       try {
         const preferences: DBPreferences | undefined =
           await db.get("preferences");
-        if (preferences) {
-          dispatch(
-            initiatePreferences({
-              preferences: preferences.preferences,
-              isMusic: access === "music",
-            })
-          );
-          dispatch(initiateQuickLinks(preferences.quickLinks || []));
-          dispatch(initiateMonitorSettings(preferences.monitorSettings));
-        }
+        console.log("preferences", preferences);
+        dispatch(
+          initiatePreferences({
+            preferences: preferences.preferences,
+            isMusic: access === "music",
+          })
+        );
+        dispatch(initiateQuickLinks(preferences.quickLinks));
+        dispatch(initiateMonitorSettings(preferences.monitorSettings));
       } catch (e) {
         console.error(e);
       } finally {
@@ -233,7 +232,7 @@ const Controller = () => {
   // Preload videos from active outline when it changes (Strategy A: Proactive Outline Preloading)
   useEffect(() => {
     if (!db || !window.electronAPI || !activeList?._id) return;
-    
+
     // Preload videos from the active outline in the background
     preloadOutlineVideos(activeList._id).catch((error) => {
       console.warn("Error preloading active outline videos:", error);
@@ -243,16 +242,16 @@ const Controller = () => {
   // Sync video cache when database is ready (only in Electron)
   useEffect(() => {
     if (!db || !window.electronAPI) return;
-    
+
     const syncVideos = async () => {
       try {
         const videoUrls = await extractAllVideoUrlsFromOutlines(db);
         const urlArray = Array.from(videoUrls);
-        
-        const electronAPI = window.electronAPI as unknown as { 
-          syncVideoCache: (urls: string[]) => Promise<{ downloaded: number; cleaned: number }> 
+
+        const electronAPI = window.electronAPI as unknown as {
+          syncVideoCache: (urls: string[]) => Promise<{ downloaded: number; cleaned: number }>
         };
-        
+
         if (urlArray.length > 0) {
           const result = await electronAPI.syncVideoCache(urlArray);
           console.log(
@@ -275,9 +274,9 @@ const Controller = () => {
   // Sync video cache when item video URLs change (debounced, only in Electron)
   useEffect(() => {
     if (!db || !window.electronAPI || !item._id) return;
-    
+
     // Check if video URLs actually changed
-    const urlsChanged = 
+    const urlsChanged =
       currentVideoUrls.size !== previousVideoUrlsRef.current.size ||
       Array.from(currentVideoUrls).some((url) => !previousVideoUrlsRef.current.has(url)) ||
       Array.from(previousVideoUrlsRef.current).some((url) => !currentVideoUrls.has(url));
@@ -285,7 +284,7 @@ const Controller = () => {
     if (urlsChanged) {
       // Update ref for next comparison
       previousVideoUrlsRef.current = new Set(currentVideoUrls);
-      
+
       // Clear existing timeout
       if (itemSyncTimeoutRef.current) {
         clearTimeout(itemSyncTimeoutRef.current);
@@ -527,9 +526,8 @@ const Controller = () => {
             onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
           />
           <div
-            className={`flex flex-col border-r-2 border-gray-500 bg-gray-700 h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${
-              isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
-            }`}
+            className={`flex flex-col border-r-2 border-gray-500 bg-gray-700 h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
+              }`}
             ref={leftPanelRef}
           >
             <Button
@@ -577,9 +575,8 @@ const Controller = () => {
                 onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
               />
               <div
-                className={`flex flex-col h-full lg:w-[25%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:absolute ${
-                  isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
-                }`}
+                className={`flex flex-col h-full lg:w-[25%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:absolute ${isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
+                  }`}
                 ref={rightPanelRef}
               >
                 <Button

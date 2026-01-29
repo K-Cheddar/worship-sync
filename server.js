@@ -100,6 +100,17 @@ app.get("/api/hello", (req, res) => {
   res.send({ express: "Hello From Express" });
 });
 
+app.post("/api/log", (req, res) => {
+  const { level = "log", messages } = req.body || {};
+  const prefix = `[client ${level}]`;
+  if (Array.isArray(messages)) {
+    console.log(prefix, ...messages);
+  } else {
+    console.log(prefix, messages);
+  }
+  res.status(204).send();
+});
+
 app.get("/api/bible", async (req, res) => {
   let book = req.query.book;
   let chapter = req.query.chapter;
