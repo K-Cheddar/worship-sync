@@ -23,6 +23,7 @@ import InfoController from "./pages/InfoController";
 import RoutePersistence from "./components/RoutePersistence/RoutePersistence";
 import { useEffect } from "react";
 import { delay } from "./utils/generalUtils";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
@@ -47,6 +48,7 @@ const App: React.FC = () => {
           <ToastProvider>
             <RoutePersistence />
             <TimerManager />
+            <ErrorBoundary>
               <Routes>
                 <Route element={<ControllerContextWrapper />}>
                   <Route path="/" element={<Home />} />
@@ -62,7 +64,8 @@ const App: React.FC = () => {
                 <Route path="/stream-info" element={<StreamInfo />} />
                 <Route path="/credits" element={<Credits />} />
               </Routes>
-            </ToastProvider>
+            </ErrorBoundary>
+          </ToastProvider>
         </GlobalInfoProvider>
       </Router>
     </Provider>

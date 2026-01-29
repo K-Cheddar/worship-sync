@@ -54,7 +54,7 @@ const CreditsEditor = () => {
 
   const { db, dbProgress, setIsMobile, updater } =
     useContext(ControllerInfoContext) || {};
-  const { database, firebaseDb } = useContext(GlobalInfoContext) || {};
+  const { database, firebaseDb, user } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -277,9 +277,8 @@ const CreditsEditor = () => {
       const year = now.getFullYear();
       const quarter = Math.floor(now.getMonth() / 3) + 1;
       const quarterNames = ["1st", "2nd", "3rd", "4th"];
-      const fallbackScheduleName = `${
-        quarterNames[quarter - 1]
-      } Quarter ${year} - Schedule`;
+      const fallbackScheduleName = `${quarterNames[quarter - 1]
+        } Quarter ${year} - Schedule`;
 
       const schedule = await getScheduleFromExcel(
         `${scheduleName || fallbackScheduleName}.xlsx`,
