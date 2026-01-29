@@ -453,6 +453,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       return (
         <div
           id={isEditor ? "display-editor-inner" : undefined}
+          className={cn(!isStream && "bg-black")}
           style={{
             width: `${REFERENCE_WIDTH}px`,
             height: `${REFERENCE_HEIGHT}px`,
@@ -473,7 +474,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         className={cn(
           "relative overflow-hidden overflow-anywhere text-white aspect-video",
           showBorder && "border border-gray-500",
-          !isStream && !isEditor && "bg-black",
           className
         )}
         ref={containerRef}

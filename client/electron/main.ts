@@ -300,13 +300,13 @@ app.whenReady().then(() => {
         ...details.responseHeaders,
         "Content-Security-Policy": [
           "default-src 'self'; " +
-          "script-src 'self' 'unsafe-inline' https://portable-media.firebaseio.com; " +
+          "script-src 'self' 'unsafe-inline'; " +
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
           "font-src 'self' https://fonts.gstatic.com data:; " +
           "img-src 'self' data: https: http:; " +
           "media-src 'self' https: http: blob: video-cache:; " +
-          "connect-src 'self' https: http: ws: wss:; " +
-          "frame-src 'self'; " +
+          "connect-src 'self' https: http: ws: wss: https://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com https://securetoken.googleapis.com; " +
+          "frame-src 'self' https://*.google.com https://*.firebaseapp.com; " +
           "object-src 'none'; " +
           "base-uri 'self'; " +
           "worker-src 'self' blob:;"
