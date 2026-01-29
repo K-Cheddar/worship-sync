@@ -299,17 +299,18 @@ app.whenReady().then(() => {
       responseHeaders: {
         ...details.responseHeaders,
         "Content-Security-Policy": [
-          "default-src 'self'; " +
-          "script-src 'self' 'unsafe-inline'; " +
-          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-          "font-src 'self' https://fonts.gstatic.com data:; " +
+          "default-src 'self' https: http: data: blob: video-cache:; " +
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: http:; " +
+          "style-src 'self' 'unsafe-inline' https: http: data:; " +
+          "font-src 'self' data: https: http:; " +
           "img-src 'self' data: https: http:; " +
           "media-src 'self' https: http: blob: video-cache:; " +
-          "connect-src 'self' https: http: ws: wss: https://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com https://securetoken.googleapis.com; " +
-          "frame-src 'self' https://*.google.com https://*.firebaseapp.com; " +
+          "connect-src 'self' https: http: ws: wss:; " +
+          "frame-src 'self' https: http:; " +
+          "worker-src 'self' blob: https:; " +
+          "child-src 'self' blob: https:; " +
           "object-src 'none'; " +
-          "base-uri 'self'; " +
-          "worker-src 'self' blob:;"
+          "base-uri 'self';"
         ],
       },
     });
