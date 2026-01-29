@@ -1,3 +1,11 @@
+## [1.31.3](https://github.com/K-Cheddar/worship-sync/compare/v1.31.2...v1.31.3) (2026-01-29)
+
+
+### Bug Fixes
+
+* Correct editor background color ([dfcbe0e](https://github.com/K-Cheddar/worship-sync/commit/dfcbe0ebeef42db611be01bec5bd888371925fb7))
+* Fix web app installation ([506cfce](https://github.com/K-Cheddar/worship-sync/commit/506cfceef545f7edde502232e35c81f4dd3017ad))
+
 ## [1.31.2](https://github.com/K-Cheddar/worship-sync/compare/v1.31.1...v1.31.2) (2026-01-29)
 
 
