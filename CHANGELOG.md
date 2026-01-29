@@ -1,3 +1,10 @@
+## [1.31.2](https://github.com/K-Cheddar/worship-sync/compare/v1.31.1...v1.31.2) (2026-01-29)
+
+
+### Bug Fixes
+
+* Fix outline in slide editor ([d43fdd0](https://github.com/K-Cheddar/worship-sync/commit/d43fdd0686e76027a318990f3c36df5cf5134d18))
+
 ## [1.31.1](https://github.com/K-Cheddar/worship-sync/compare/v1.31.0...v1.31.1) (2026-01-28)
 
 
