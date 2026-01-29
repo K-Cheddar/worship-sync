@@ -1,3 +1,10 @@
+## [1.31.5](https://github.com/K-Cheddar/worship-sync/compare/v1.31.4...v1.31.5) (2026-01-29)
+
+
+### Bug Fixes
+
+* Fix credits editor not loading ([e44f761](https://github.com/K-Cheddar/worship-sync/commit/e44f761747600a9003892d831a7dd5a813382668))
+
 ## [1.31.4](https://github.com/K-Cheddar/worship-sync/compare/v1.31.3...v1.31.4) (2026-01-29)
 
 
