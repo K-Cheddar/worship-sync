@@ -1,3 +1,10 @@
+# [1.32.0](https://github.com/K-Cheddar/worship-sync/compare/v1.31.7...v1.32.0) (2026-01-31)
+
+
+### Features
+
+* Add NIRV bible version option ([8640408](https://github.com/K-Cheddar/worship-sync/commit/8640408740445201663078d55a04ba39b5168641))
+
 ## [1.31.7](https://github.com/K-Cheddar/worship-sync/compare/v1.31.6...v1.31.7) (2026-01-29)
 
 
