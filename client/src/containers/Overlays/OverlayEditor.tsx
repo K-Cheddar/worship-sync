@@ -226,50 +226,50 @@ const OverlayEditor = ({
           participantOverlayInfo={
             selectedOverlay.type === "participant"
               ? {
-                  name: selectedOverlay.name,
-                  title: selectedOverlay.title,
-                  event: selectedOverlay.event,
-                  duration: selectedOverlay.duration,
-                  type: selectedOverlay.type,
-                  id: selectedOverlay.id,
-                  formatting: selectedOverlay.formatting,
-                }
+                name: selectedOverlay.name,
+                title: selectedOverlay.title,
+                event: selectedOverlay.event,
+                duration: selectedOverlay.duration,
+                type: selectedOverlay.type,
+                id: selectedOverlay.id,
+                formatting: selectedOverlay.formatting,
+              }
               : undefined
           }
           stbOverlayInfo={
             selectedOverlay.type === "stick-to-bottom"
               ? {
-                  heading: selectedOverlay.heading,
-                  subHeading: selectedOverlay.subHeading,
-                  duration: selectedOverlay.duration,
-                  type: selectedOverlay.type,
-                  id: selectedOverlay.id,
-                  formatting: selectedOverlay.formatting,
-                }
+                heading: selectedOverlay.heading,
+                subHeading: selectedOverlay.subHeading,
+                duration: selectedOverlay.duration,
+                type: selectedOverlay.type,
+                id: selectedOverlay.id,
+                formatting: selectedOverlay.formatting,
+              }
               : undefined
           }
           qrCodeOverlayInfo={
             selectedOverlay.type === "qr-code"
               ? {
-                  url: selectedOverlay.url,
-                  description: selectedOverlay.description,
-                  duration: selectedOverlay.duration,
-                  type: selectedOverlay.type,
-                  id: selectedOverlay.id,
-                  formatting: selectedOverlay.formatting,
-                }
+                url: selectedOverlay.url,
+                description: selectedOverlay.description,
+                duration: selectedOverlay.duration,
+                type: selectedOverlay.type,
+                id: selectedOverlay.id,
+                formatting: selectedOverlay.formatting,
+              }
               : undefined
           }
           imageOverlayInfo={
             selectedOverlay.type === "image"
               ? {
-                  imageUrl: selectedOverlay.imageUrl,
-                  name: selectedOverlay.name,
-                  duration: selectedOverlay.duration,
-                  type: selectedOverlay.type,
-                  id: selectedOverlay.id,
-                  formatting: selectedOverlay.formatting,
-                }
+                imageUrl: selectedOverlay.imageUrl,
+                name: selectedOverlay.name,
+                duration: selectedOverlay.duration,
+                type: selectedOverlay.type,
+                id: selectedOverlay.id,
+                formatting: selectedOverlay.formatting,
+              }
               : undefined
           }
           displayType="stream"
@@ -393,7 +393,7 @@ const OverlayEditor = ({
                   imageUrl: val as string,
                 })
               }
-              onClick={() => showToast("Select from the available media.")}
+              onClick={() => showToast(`Select from the available media. ${isMobile ? "Long press and Set Image Overlay." : "Right click and Set Image Overlay."}`)}
             />
           </>
         )}
@@ -478,50 +478,50 @@ const OverlayEditor = ({
                 participantOverlayInfo={
                   selectedOverlay.type === "participant"
                     ? {
-                        name: selectedOverlay.name,
-                        title: selectedOverlay.title,
-                        event: selectedOverlay.event,
-                        duration: selectedOverlay.duration,
-                        type: selectedOverlay.type,
-                        id: selectedOverlay.id,
-                        formatting: selectedOverlay.formatting,
-                      }
+                      name: selectedOverlay.name,
+                      title: selectedOverlay.title,
+                      event: selectedOverlay.event,
+                      duration: selectedOverlay.duration,
+                      type: selectedOverlay.type,
+                      id: selectedOverlay.id,
+                      formatting: selectedOverlay.formatting,
+                    }
                     : undefined
                 }
                 stbOverlayInfo={
                   selectedOverlay.type === "stick-to-bottom"
                     ? {
-                        heading: selectedOverlay.heading,
-                        subHeading: selectedOverlay.subHeading,
-                        duration: selectedOverlay.duration,
-                        type: selectedOverlay.type,
-                        id: selectedOverlay.id,
-                        formatting: selectedOverlay.formatting,
-                      }
+                      heading: selectedOverlay.heading,
+                      subHeading: selectedOverlay.subHeading,
+                      duration: selectedOverlay.duration,
+                      type: selectedOverlay.type,
+                      id: selectedOverlay.id,
+                      formatting: selectedOverlay.formatting,
+                    }
                     : undefined
                 }
                 qrCodeOverlayInfo={
                   selectedOverlay.type === "qr-code"
                     ? {
-                        url: selectedOverlay.url,
-                        description: selectedOverlay.description,
-                        duration: selectedOverlay.duration,
-                        type: selectedOverlay.type,
-                        id: selectedOverlay.id,
-                        formatting: selectedOverlay.formatting,
-                      }
+                      url: selectedOverlay.url,
+                      description: selectedOverlay.description,
+                      duration: selectedOverlay.duration,
+                      type: selectedOverlay.type,
+                      id: selectedOverlay.id,
+                      formatting: selectedOverlay.formatting,
+                    }
                     : undefined
                 }
                 imageOverlayInfo={
                   selectedOverlay.type === "image"
                     ? {
-                        imageUrl: selectedOverlay.imageUrl,
-                        name: selectedOverlay.name,
-                        duration: selectedOverlay.duration,
-                        type: selectedOverlay.type,
-                        id: selectedOverlay.id,
-                        formatting: selectedOverlay.formatting,
-                      }
+                      imageUrl: selectedOverlay.imageUrl,
+                      name: selectedOverlay.name,
+                      duration: selectedOverlay.duration,
+                      type: selectedOverlay.type,
+                      id: selectedOverlay.id,
+                      formatting: selectedOverlay.formatting,
+                    }
                     : undefined
                 }
               />

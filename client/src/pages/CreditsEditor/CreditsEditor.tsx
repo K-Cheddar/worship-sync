@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import Credits from "../../containers/Credits/Credits";
 import { default as CreditsEditorContainer } from "../../containers/Credits/CreditsEditor";
 import { ArrowLeft } from "lucide-react";
@@ -41,11 +41,13 @@ import { initiateOverlayList } from "../../store/overlaysSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
 import { capitalizeFirstLetter } from "../../utils/generalUtils";
+import { CREDITS_EDITOR_PAGE_READY } from "../../store/store";
 
 const CreditsEditor = () => {
-  const { list, transitionScene, creditsScene, scheduleName } = useSelector(
+  const { list, transitionScene, creditsScene, scheduleName, isInitialized: creditsInitialized } = useSelector(
     (state) => state.undoable.present.credits
   );
+  const hasDispatchedPageReady = useRef(false);
 
   const { list: overlays } = useSelector(
     (state) => state.undoable.present.overlays
@@ -121,6 +123,13 @@ const CreditsEditor = () => {
 
     getCredits();
   }, [db, dispatch]);
+
+  useEffect(() => {
+    if (creditsInitialized && !hasDispatchedPageReady.current) {
+      hasDispatchedPageReady.current = true;
+      dispatch({ type: CREDITS_EDITOR_PAGE_READY });
+    }
+  }, [creditsInitialized, dispatch]);
 
   const updateCreditsListFromExternal = useCallback(
     async (event: CustomEventInit) => {

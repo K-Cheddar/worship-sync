@@ -1439,37 +1439,23 @@ const safeRequestIdleCallback =
     return setTimeout(cb, 1);
   };
 
+// Page-ready actions: each page dispatches when its required slices are initialized.
+// Credits editor only needs credits; Controller needs all controller slices (by access).
+export const CREDITS_EDITOR_PAGE_READY = "CREDITS_EDITOR_PAGE_READY";
+export const CONTROLLER_PAGE_READY = "CONTROLLER_PAGE_READY";
+
 listenerMiddleware.startListening({
-  predicate: (action, currentState, previousState) => {
+  predicate: (action) => {
     if (action.type === "RESET_INITIALIZATION") {
       hasFinishedInitialization = false;
     }
-
-    // Check if any slice state changed
-    if (currentState === previousState) return false;
-
-    // Only proceed if we haven't cleared history yet
-    if (hasFinishedInitialization) return false;
-
-    const state = currentState as RootState;
-
-    // Check if all required slices have isInitialized = true
-    const allSlicesInitialized =
-      state.allItems.isInitialized &&
-      state.undoable.present.preferences.isInitialized &&
-      state.undoable.present.itemList.isInitialized &&
-      state.undoable.present.overlays.isInitialized &&
-      state.undoable.present.itemLists.isInitialized &&
-      state.undoable.present.credits.isInitialized &&
-      state.media.isInitialized &&
-      (state.undoable.present.overlayTemplates as any).isInitialized;
-
-    return allSlicesInitialized;
+    return (
+      action.type === CREDITS_EDITOR_PAGE_READY ||
+      action.type === CONTROLLER_PAGE_READY
+    );
   },
 
   effect: async (_, listenerApi) => {
-    // Wait for browser to be idle to ensure all state updates are processed
-
     if (!hasFinishedInitialization) {
       hasFinishedInitialization = true;
       safeRequestIdleCallback(

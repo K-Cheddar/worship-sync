@@ -76,11 +76,12 @@ import {
   updatePreferencesFromRemote,
 } from "../../store/preferencesSlice";
 import { initiateTemplates } from "../../store/overlayTemplatesSlice";
+import { initiateMediaList } from "../../store/mediaSlice";
 import { setIsEditMode } from "../../store/itemSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
 import cn from "classnames";
-import { RootState } from "../../store/store";
+import { CONTROLLER_PAGE_READY, RootState } from "../../store/store";
 import { useSyncRemoteTimers } from "../../hooks";
 
 // Here for future to implement resizable
@@ -130,6 +131,17 @@ const Controller = () => {
 
   const { user, database, access, firebaseDb, hostId, refreshPresentationListeners } =
     useContext(GlobalInfoContext) || {};
+
+  const allControllerSlicesInitialized = useSelector((state: RootState) =>
+    state.allItems.isInitialized &&
+    state.undoable.present.preferences.isInitialized &&
+    state.undoable.present.itemList.isInitialized &&
+    state.undoable.present.overlays.isInitialized &&
+    state.undoable.present.itemLists.isInitialized &&
+    state.media.isInitialized &&
+    (state.undoable.present.overlayTemplates as { isInitialized: boolean }).isInitialized
+  );
+  const hasDispatchedControllerPageReady = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -216,6 +228,21 @@ const Controller = () => {
     };
     getTemplates();
   }, [dispatch, db]);
+
+  // Media panel only mounts when access === "full". Initialize media slice with
+  // empty list when not full access so undo/redo init can complete.
+  useEffect(() => {
+    if (db && access !== "full") {
+      dispatch(initiateMediaList([]));
+    }
+  }, [dispatch, db, access]);
+
+  useEffect(() => {
+    if (allControllerSlicesInitialized && !hasDispatchedControllerPageReady.current) {
+      hasDispatchedControllerPageReady.current = true;
+      dispatch({ type: CONTROLLER_PAGE_READY });
+    }
+  }, [allControllerSlicesInitialized, dispatch]);
 
   // Get item state to watch for changes
   const item = useSelector((state: RootState) => state.undoable.present.item);
