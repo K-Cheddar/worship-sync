@@ -152,12 +152,12 @@ const DisplayBox = ({
   const tSS = fontSizeInPx / 32 // text shadow size in px
   const fOS = fontSizeInPx / 128 // font outline size in px
   
-  // Convert all percentage values to pixels based on reference dimensions
+  // Calculate box dimensions in pixels first, then margins from actual box size
   const boxWidthPx = (referenceWidth * box.width) / 100;
   const boxHeightPx = (referenceHeight * box.height) / 100;
-  const sideMarginPx = box.sideMargin ? (referenceWidth * box.sideMargin) / 100 : 0;
-  const topMarginPx = box.topMargin ? (referenceHeight * box.topMargin) / 100 : 0;
-  
+  const sideMarginPx = box.sideMargin ? (boxWidthPx * box.sideMargin) / 100 : 0;
+  const topMarginPx = box.topMargin ? (boxHeightPx * box.topMargin) / 100 : 0;
+
   const boxWidth = `${boxWidthPx - sideMarginPx * 2}px`;
   const boxHeight = `${boxHeightPx - topMarginPx * 2}px`;
   const marginLeft = `${sideMarginPx}px`;

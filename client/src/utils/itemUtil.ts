@@ -73,7 +73,6 @@ type CreateNewSongType = {
   background: string;
   mediaInfo?: MediaType;
   brightness: number;
-  isMobile: boolean;
 };
 
 export const createNewSong = async ({
@@ -85,7 +84,6 @@ export const createNewSong = async ({
   background,
   mediaInfo,
   brightness,
-  isMobile,
 }: CreateNewSongType): Promise<ItemState> => {
   const arrangements: Arrangment[] = [
     {
@@ -135,7 +133,7 @@ export const createNewSong = async ({
     },
   };
 
-  const item = formatSong(newItem, isMobile);
+  const item = formatSong(newItem);
 
   const _item = await createNewItemInDb({ item, db });
 
@@ -234,7 +232,6 @@ export const createNewBible = async ({
     mediaInfo,
     brightness,
     isNew: true,
-    isMobile,
   });
 
   const _item = await createNewItemInDb({ item, db });
@@ -323,7 +320,6 @@ type CreateNewFreeFormType = {
   db: PouchDB.Database | undefined;
   background: string;
   brightness: number;
-  isMobile: boolean;
   mediaInfo?: MediaType;
   overflow?: OverflowMode;
 };
@@ -336,7 +332,6 @@ export const createNewFreeForm = async ({
   background,
   mediaInfo,
   brightness,
-  isMobile,
   overflow = "fit",
 }: CreateNewFreeFormType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
@@ -369,7 +364,7 @@ export const createNewFreeForm = async ({
     },
   };
 
-  const formattedItem = formatFree(newItem, isMobile);
+  const formattedItem = formatFree(newItem);
 
   const item = await createNewItemInDb({ item: formattedItem, db });
 

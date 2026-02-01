@@ -233,7 +233,6 @@ const Bible = () => {
       background: defaultBibleBackground.background,
       mediaInfo: defaultBibleBackground.mediaInfo,
       brightness: defaultBibleBackgroundBrightness,
-      isMobile,
     });
 
     const itemForList = {
@@ -276,7 +275,6 @@ const Bible = () => {
       background: defaultBibleBackground.background,
       mediaInfo: defaultBibleBackground.mediaInfo,
       brightness: defaultBibleBackgroundBrightness,
-      isMobile,
     });
 
     const slides = item.slides || [];

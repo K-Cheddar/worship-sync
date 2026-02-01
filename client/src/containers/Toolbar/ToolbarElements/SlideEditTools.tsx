@@ -106,7 +106,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         updatedProperties: { fontSize: fSize },
         item,
         shouldFormatItem: true,
-        isMobile,
       });
       updateItem(updatedItem);
     }, 250);
@@ -121,7 +120,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       shouldUpdateBgOnly: true,
       shouldApplyToAll: true,
       shouldSkipTitleSlide: false,
-      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -132,7 +130,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       updatedProperties: { shouldKeepAspectRatio: val },
       item,
       shouldUpdateBgOnly: true,
-      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -188,7 +185,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       item,
       shouldFormatItem: true,
       shouldApplyToAll: true,
-      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -212,7 +208,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       item,
       shouldApplyToAll: true,
       shouldFormatItem: true,
-      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -230,7 +225,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     const updatedItem = updateBibleFontMode({
       fontMode: mode,
       item,
-      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -344,15 +338,12 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               label="Fit"
               value={slide.overflow === "fit"}
               onChange={() => {
-                const updatedItem = formatFree(
-                  {
-                    ...item,
-                    slides: slides.map((s, index) =>
-                      index === selectedSlide ? { ...s, overflow: "fit" } : s
-                    ),
-                  },
-                  isMobile || false
-                );
+                const updatedItem = formatFree({
+                  ...item,
+                  slides: slides.map((s, index) =>
+                    index === selectedSlide ? { ...s, overflow: "fit" } : s
+                  ),
+                });
                 updateItem(updatedItem);
               }}
             />
@@ -361,17 +352,14 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               label="Separate"
               value={slide.overflow === "separate"}
               onChange={() => {
-                const updatedItem = formatFree(
-                  {
-                    ...item,
-                    slides: slides.map((s, index) =>
-                      index === selectedSlide
-                        ? { ...s, overflow: "separate" }
-                        : s
-                    ),
-                  },
-                  isMobile || false
-                );
+                const updatedItem = formatFree({
+                  ...item,
+                  slides: slides.map((s, index) =>
+                    index === selectedSlide
+                      ? { ...s, overflow: "separate" }
+                      : s
+                  ),
+                });
                 updateItem(updatedItem);
               }}
             />

@@ -63,7 +63,6 @@ const BoxEditor = ({
       item,
       shouldFormatItem: true,
       shouldApplyToAll: shouldApplyToAll,
-      isMobile,
     });
     updateItem(updatedItem);
   };

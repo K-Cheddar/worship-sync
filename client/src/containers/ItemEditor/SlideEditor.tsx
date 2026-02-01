@@ -218,7 +218,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       const _item = formatBible({
         item: updatedItem,
         mode: item.bibleInfo?.fontMode || "separate",
-        isMobile,
       });
       dispatch(updateSlides({ slides: _item.slides }));
     }
@@ -247,12 +246,9 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
         // Safety check: if current slide not found in section, fall back to direct update
         if (currentSlideIndexInSection === -1) {
-          const _item = formatFree(
-            {
-              ...updatedItem,
-            },
-            isMobile
-          );
+          const _item = formatFree({
+            ...updatedItem,
+          });
           dispatch(updateSlides({ slides: _item.slides }));
           return;
         }
@@ -298,13 +294,10 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         }
 
         // Now format with updated formattedSections
-        const _item = formatFree(
-          {
-            ...updatedItem,
-            formattedSections: updatedFormattedSections,
-          },
-          isMobile
-        );
+        const _item = formatFree({
+          ...updatedItem,
+          formattedSections: updatedFormattedSections,
+        });
         dispatch(updateSlides({ 
           slides: _item.slides,
           formattedSections: _item.formattedSections,
@@ -389,14 +382,11 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         return arr;
       });
 
-      const formattedItem = formatSong(
-        {
-          ...item,
-          arrangements: updatedArrangements,
-          selectedArrangement,
-        },
-        isMobile
-      );
+      const formattedItem = formatSong({
+        ...item,
+        arrangements: updatedArrangements,
+        selectedArrangement,
+      });
 
       dispatch(updateArrangements({ arrangements: formattedItem.arrangements }));
     }
@@ -653,7 +643,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               formattedSections: updatedFormattedSections,
             };
 
-            const _item = formatFree(updatedItem, isMobile);
+            const _item = formatFree(updatedItem);
             dispatch(
               updateSlides({
                 slides: _item.slides,

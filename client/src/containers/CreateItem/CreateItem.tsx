@@ -154,7 +154,6 @@ const CreateItem = () => {
         background: defaultSongBackground.background,
         mediaInfo: defaultSongBackground.mediaInfo,
         brightness: defaultSongBackgroundBrightness,
-        isMobile,
       });
 
       dispatchNewItem(newItem);
@@ -169,7 +168,6 @@ const CreateItem = () => {
         mediaInfo: defaultFreeFormBackground.mediaInfo,
         brightness: defaultFreeFormBackgroundBrightness,
         text,
-        isMobile,
         overflow: defaultFreeFormFontMode,
       });
 

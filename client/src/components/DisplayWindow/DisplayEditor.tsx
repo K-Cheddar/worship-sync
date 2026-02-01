@@ -249,25 +249,26 @@ const DisplayEditor = ({
 
   const bFontSize = box.fontSize;
   const words = box.words || "";
-  
+
   // Convert fontSize to pixels using the font size multiplier
   const fontSizeInPx = bFontSize ? bFontSize * FONT_SIZE_MULTIPLIER : FONT_SIZE_MULTIPLIER;
-  
+
   const tSS = fontSizeInPx / 32; // text shadow size in px
   const fOS = fontSizeInPx / 128; // font outline size in px
-  
-  // Convert margins to pixels based on reference dimensions
-  const sideMarginPx = box.sideMargin ? (referenceWidth * box.sideMargin) / 100 : 0;
-  const topMarginPx = box.topMargin ? (referenceHeight * box.topMargin) / 100 : 0;
-  
+
+  // Calculate box dimensions in pixels first
+  const boxWidthPx = (referenceWidth * box.width) / 100;
+  const boxHeightPx = (referenceHeight * box.height) / 100;
+
+  // Convert margins to pixels based on actual box dimensions (after height/width are known)
+  const sideMarginPx = box.sideMargin ? (boxWidthPx * box.sideMargin) / 100 : 0;
+  const topMarginPx = box.topMargin ? (boxHeightPx * box.topMargin) / 100 : 0;
+
   const marginLeft = `${sideMarginPx}px`;
   const marginRight = `${sideMarginPx}px`;
   const marginTop = `${topMarginPx}px`;
   const marginBottom = `${topMarginPx}px`;
-  
-  // Calculate text box dimensions in pixels
-  const boxWidthPx = (referenceWidth * box.width) / 100;
-  const boxHeightPx = (referenceHeight * box.height) / 100;
+
   const textBoxWidth = `${boxWidthPx - sideMarginPx * 2}px`;
   const textBoxHeight = `${boxHeightPx - topMarginPx * 2}px`;
   const textStyles = {
@@ -286,7 +287,7 @@ const DisplayEditor = ({
       size={{ width: boxWidth, height: boxHeight }}
       className={cn(
         (!isBoxLocked || isSelected) &&
-          "outline-1 outline-gray-300 -outline-offset-2",
+        "outline-1 outline-gray-300 -outline-offset-2",
         isSelected && !box.background && "z-10"
       )}
       position={{ x, y }}

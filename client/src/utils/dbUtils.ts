@@ -117,8 +117,7 @@ export const updateAllDocs = async (dispatch: Function) => {
 
 export const formatAllDocs = async (
   db: PouchDB.Database,
-  cloud: Cloudinary,
-  isMobile: boolean
+  cloud: Cloudinary
 ) => {
   if (!db) return;
   try {
@@ -136,11 +135,7 @@ export const formatAllDocs = async (
 
     for (const item of allItems) {
       try {
-        const formattedItem = formatItemInfo(
-          item.doc as DBItem,
-          cloud,
-          isMobile
-        );
+        const formattedItem = formatItemInfo(item.doc as DBItem, cloud);
         const updatedItem = {
           ...item.doc,
           name: formattedItem.name,
@@ -169,8 +164,7 @@ export const formatAllDocs = async (
 
 export const formatAllSongs = async (
   db: PouchDB.Database,
-  cloud: Cloudinary,
-  isMobile: boolean
+  cloud: Cloudinary
 ) => {
   if (!db) return;
   try {
@@ -183,8 +177,8 @@ export const formatAllSongs = async (
 
     for (const song of allSongs) {
       const retrievedSong: DBItem | undefined = await db.get(song._id);
-      const formattedItem = formatItemInfo(retrievedSong, cloud, isMobile);
-      const formattedSong = formatSong(formattedItem, isMobile);
+      const formattedItem = formatItemInfo(retrievedSong, cloud);
+      const formattedSong = formatSong(formattedItem);
       const updatedItem = {
         ...retrievedSong,
         name: formattedSong.name,

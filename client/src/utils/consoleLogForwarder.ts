@@ -29,10 +29,10 @@ export const initConsoleLogForwarder = () => {
   const originalWarn = console.warn;
   const originalError = console.error;
 
-  console.log = (...args: unknown[]) => {
-    originalLog.apply(console, args);
-    sendToServer("log", args.map(serializeArg));
-  };
+  // console.log = (...args: unknown[]) => {
+  //   originalLog.apply(console, args);
+  //   sendToServer("log", args.map(serializeArg));
+  // };
   console.warn = (...args: unknown[]) => {
     originalWarn.apply(console, args);
     sendToServer("warn", args.map(serializeArg));
