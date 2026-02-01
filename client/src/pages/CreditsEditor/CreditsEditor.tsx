@@ -39,6 +39,7 @@ import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
 import { setItemListIsLoading } from "../../store/itemListSlice";
 import { initiateOverlayList } from "../../store/overlaysSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
+import { useSyncOnReconnect } from "../../hooks";
 import { capitalizeFirstLetter } from "../../utils/generalUtils";
 
 const CreditsEditor = () => {
@@ -52,7 +53,7 @@ const CreditsEditor = () => {
 
   const shownOverlays = overlays.filter((overlay) => !overlay.isHidden);
 
-  const { db, dbProgress, setIsMobile, updater } =
+  const { db, dbProgress, setIsMobile, updater, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
   const { database, firebaseDb, user } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
@@ -150,6 +151,7 @@ const CreditsEditor = () => {
   }, [updater, updateCreditsListFromExternal]);
 
   useGlobalBroadcast(updateCreditsListFromExternal);
+  useSyncOnReconnect(pullFromRemote);
 
   useEffect(() => {
     const getCreditsFromFirebase = async () => {

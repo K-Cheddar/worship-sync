@@ -4,11 +4,14 @@ import Undo from "../containers/Toolbar/ToolbarElements/Undo";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import ServiceTimes from "../containers/ServiceTimes/ServiceTimes";
 import { ControllerInfoContext } from "../context/controllerInfo";
-import { useContext } from "react";
-import { useCallback } from "react";
+import { useSyncOnReconnect } from "../hooks";
+import { useCallback, useContext } from "react";
 
 const InfoController = () => {
-  const { setIsMobile, setIsPhone } = useContext(ControllerInfoContext) || {};
+  const { setIsMobile, setIsPhone, pullFromRemote } =
+    useContext(ControllerInfoContext) || {};
+
+  useSyncOnReconnect(pullFromRemote);
 
   const infoControllerRef = useCallback(
     (node: HTMLDivElement) => {

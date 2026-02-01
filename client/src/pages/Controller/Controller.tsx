@@ -78,6 +78,7 @@ import {
 import { initiateTemplates } from "../../store/overlayTemplatesSlice";
 import { setIsEditMode } from "../../store/itemSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
+import { useSyncOnReconnect } from "../../hooks";
 import cn from "classnames";
 import { RootState } from "../../store/store";
 import { useSyncRemoteTimers } from "../../hooks";
@@ -124,7 +125,7 @@ const Controller = () => {
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
 
-  const { db, cloud, updater, setIsMobile, setIsPhone, dbProgress, connectionStatus } =
+  const { db, cloud, updater, setIsMobile, setIsPhone, dbProgress, connectionStatus, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
 
   const { user, database, access, firebaseDb, hostId, refreshPresentationListeners } =
@@ -427,6 +428,7 @@ const Controller = () => {
   useGlobalBroadcast(updatePreferencesFromExternal);
 
   useSyncRemoteTimers(firebaseDb, database, user, hostId);
+  useSyncOnReconnect(pullFromRemote);
 
   const controllerRef = useCallback(
     (node: HTMLDivElement) => {

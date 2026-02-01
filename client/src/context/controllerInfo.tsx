@@ -41,6 +41,7 @@ type ControllerInfoContextType = {
     username: string;
     password: string;
   }) => Promise<void>;
+  pullFromRemote: () => void;
 };
 
 export const ControllerInfoContext =
@@ -107,6 +108,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
+  const remoteDbRef = useRef<PouchDB.Database | null>(null);
   const syncRetryRef = useRef(0);
   const replicateRetryRef = useRef(0);
   const replicateRef = useRef<any>(null);
@@ -128,16 +130,16 @@ const ControllerInfoProvider = ({ children }: any) => {
           signal: controller.signal,
         }
       );
-      
+
       clearTimeout(timeoutId);
-      
+
       // Check if response is actually JSON
       const contentType = response.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
         console.warn("getCouchSession: Response is not JSON, skipping");
         return false;
       }
-      
+
       const data = await response.json();
       setHasCouchSession(data.success);
       return data.success;
@@ -189,6 +191,20 @@ const ControllerInfoProvider = ({ children }: any) => {
     },
     [getCouchSession]
   );
+
+  const pullFromRemote = useCallback(() => {
+    const remote = remoteDbRef.current;
+    if (!db || !remote || loginState !== "success") return;
+    remote
+      .replicate.to(db, { retry: false })
+      .on("change", (info: any) => {
+        if (info.docs?.length) {
+          updater.current.dispatchEvent(
+            new CustomEvent("update", { detail: info.docs })
+          );
+        }
+      });
+  }, [db, loginState]);
 
   const bibleSyncDb = useCallback(
     async (localDb: PouchDB.Database, remoteDb: PouchDB.Database) => {
@@ -275,7 +291,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     const setupDb = async () => {
       try {
         const dbName = `worship-sync-${database}`;
-        
+
         // Wrap PouchDB initialization in try-catch to handle IndexedDB errors
         let localDb: PouchDB.Database;
         try {
@@ -300,16 +316,18 @@ const ControllerInfoProvider = ({ children }: any) => {
             throw dbError;
           }
         }
-        
+
         const remoteUrl = `${import.meta.env.VITE_COUCHDB_HOST}/${dbName}`;
         let remoteDb: PouchDB.Database;
         try {
           remoteDb = new PouchDB(remoteUrl, {
             fetch: (url, options: any) => {
-              options.credentials = "include";
-              return fetch(url, options);
+              const opts = options ?? {};
+              opts.credentials = "include";
+              return fetch(url, opts);
             },
           });
+          remoteDbRef.current = remoteDb;
         } catch (remoteError) {
           console.error("Error creating remote PouchDB:", remoteError);
           setDbProgress(0);
@@ -471,6 +489,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     setLoginState?.("loading");
     await syncRef.current?.cancel();
     await bibleSyncRef.current?.cancel();
+    remoteDbRef.current = null;
     globalDb = undefined;
     setDb(undefined);
     setDbProgress(0);
@@ -496,6 +515,15 @@ const ControllerInfoProvider = ({ children }: any) => {
     username: string;
     password: string;
   }) => {
+    if (syncTimeout) {
+      clearTimeout(syncTimeout);
+      syncTimeout = null;
+    }
+    syncRef.current?.cancel();
+    bibleSyncRef.current?.cancel();
+    replicateRef.current?.cancel();
+    bibleReplicateRef.current?.cancel();
+    remoteDbRef.current = null;
     globalDb = undefined;
     setDb(undefined);
     setDbProgress(0);
@@ -525,6 +553,7 @@ const ControllerInfoProvider = ({ children }: any) => {
       bibleSyncRef.current?.cancel();
       replicateRef.current?.cancel();
       bibleReplicateRef.current?.cancel();
+      remoteDbRef.current = null;
     };
   }, []);
 
@@ -544,6 +573,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         dbProgress,
         connectionStatus,
         login: _login,
+        pullFromRemote,
       }}
     >
       {children}
