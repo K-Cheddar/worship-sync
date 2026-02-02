@@ -126,11 +126,10 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
         alignItems: source.alignItems,
         flexWrap: source.flexWrap,
         gap: source.gap ? `${source.gap}%` : undefined,
-
-        // Special properties for global styles
-        ...(useGlobalStyles && { whiteSpace: isPrev ? "normal" : "pre-line" }),
       };
     };
+
+    const childWhiteSpace = isPrev ? "normal" : "pre-line";
 
     // Helper function to render child elements based on overlay type
     const renderChildren = () => {
@@ -186,7 +185,10 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
           <p
             key={index}
             className={className}
-            style={getSharedStyles(child, defaultTextAlign)}
+            style={{
+              ...getSharedStyles(child, defaultTextAlign),
+              whiteSpace: childWhiteSpace,
+            }}
           >
             {dataValue}
           </p>
@@ -205,7 +207,10 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
             <div
               key={index}
               className="overlay-qr-code-info-url"
-              style={getSharedStyles(child)}
+              style={{
+                ...getSharedStyles(child),
+                whiteSpace: childWhiteSpace,
+              }}
             >
               <QRCode
                 style={{ width: "100%", height: "auto" }}
@@ -221,8 +226,11 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
           return (
             <p
               key={index}
-              className="overlay-qr-code-info-description whitespace-pre-line"
-              style={getSharedStyles(child, "left")}
+              className="overlay-qr-code-info-description"
+              style={{
+                ...getSharedStyles(child, "left"),
+                whiteSpace: childWhiteSpace,
+              }}
             >
               {overlayInfo.description}
             </p>
@@ -277,6 +285,20 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
       }
     };
 
+    const participantPosition =
+      overlayType === "participant"
+        ? (styles.participantOverlayPosition ?? "left")
+        : null;
+    const positionOverrides: CSSProperties =
+      participantPosition === "center"
+        ? { left: "50%", right: undefined, transform: "translateX(-50%)" }
+        : participantPosition === "right"
+          ? {
+            left: undefined,
+            right: typeof styles.right === "number" ? `${styles.right}%` : "2%",
+          }
+          : {};
+
     return (
       <div
         ref={ref}
@@ -284,6 +306,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
         style={{
           position: "absolute",
           ...getSharedStyles(styles as OverlayChild, "left", true),
+          ...positionOverrides,
           // Override specific properties for container
           paddingTop: needsPadding ? `${styles.paddingTop || 0}%` : 0,
           paddingBottom: needsPadding ? `${styles.paddingBottom || 0}%` : 0,

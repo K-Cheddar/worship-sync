@@ -16,6 +16,7 @@ export type ServiceItem = {
     | "timer"
     | "announcement"
     | "free"
+    | "heading"
     | string;
 };
 
@@ -101,7 +102,16 @@ export type DBItem = ItemProperties & {
   updatedAt?: string;
 };
 
-export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";
+export type DBHeading = {
+  _id: string;
+  name: string;
+  type: "heading";
+  _rev?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "heading" | "";
 export type TimerStatus = "running" | "paused" | "stopped";
 export type TimerType = "timer" | "countdown";
 export type TimerInfo = {
@@ -158,6 +168,7 @@ export type ItemState = ItemProperties & {
   selectedBox: number;
   isEditMode?: boolean;
   isLoading?: boolean;
+  isSectionLoading?: boolean;
   hasPendingUpdate?: boolean;
 };
 
@@ -312,6 +323,8 @@ export type OverlayFormatting = {
   alignItems?: "flex-start" | "flex-end" | "center" | "baseline" | "stretch";
   flexWrap?: "nowrap" | "wrap" | "wrap-reverse";
   children?: OverlayChild[];
+  /** Participant overlay only: horizontal position on screen */
+  participantOverlayPosition?: "left" | "center" | "right";
 };
 
 export type OverlayChild = Omit<OverlayFormatting, "children"> & {

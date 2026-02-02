@@ -68,6 +68,50 @@ export const deleteUnusedBibleItems = async ({ db, allItems }: propsType) => {
   }
 };
 
+export const deleteUnusedHeadings = async ({ db, allItems }: propsType) => {
+  const items = allItems.items;
+  const headingItems = items.filter((item) => item.type === "heading");
+
+  const allItemLists: DBItemLists | undefined = await db.get("ItemLists");
+  const itemLists = allItemLists?.itemLists || [];
+  const headingsInLists: ServiceItem[] = [];
+
+  for (const itemList of itemLists) {
+    const listDetails: DBItemListDetails = await db.get(itemList._id);
+    const listItems = listDetails?.items || [];
+    headingsInLists.push(
+      ...listItems.filter((item) => item.type === "heading")
+    );
+  }
+
+  const headingsToBeDeleted = headingItems.filter(
+    (headingItem) =>
+      !headingsInLists.some(
+        (headingInList) => headingInList._id === headingItem._id
+      )
+  );
+
+  if (headingsToBeDeleted.length === 0) return;
+
+  const updatedItems = items.filter(
+    (item) => !headingsToBeDeleted.includes(item)
+  );
+
+  await db.put({
+    ...allItems,
+    items: updatedItems,
+    updatedAt: new Date().toISOString(),
+  });
+  for (const item of headingsToBeDeleted) {
+    try {
+      const doc = await db.get(item._id);
+      db.remove(doc);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+};
+
 export const deleteUnusedOverlays = async (db: PouchDB.Database) => {
   const allDocs: allDocsType = (await db.allDocs({
     include_docs: true,
@@ -117,8 +161,7 @@ export const updateAllDocs = async (dispatch: Function) => {
 
 export const formatAllDocs = async (
   db: PouchDB.Database,
-  cloud: Cloudinary,
-  isMobile: boolean
+  cloud: Cloudinary
 ) => {
   if (!db) return;
   try {
@@ -136,11 +179,7 @@ export const formatAllDocs = async (
 
     for (const item of allItems) {
       try {
-        const formattedItem = formatItemInfo(
-          item.doc as DBItem,
-          cloud,
-          isMobile
-        );
+        const formattedItem = formatItemInfo(item.doc as DBItem, cloud);
         const updatedItem = {
           ...item.doc,
           name: formattedItem.name,
@@ -169,8 +208,7 @@ export const formatAllDocs = async (
 
 export const formatAllSongs = async (
   db: PouchDB.Database,
-  cloud: Cloudinary,
-  isMobile: boolean
+  cloud: Cloudinary
 ) => {
   if (!db) return;
   try {
@@ -183,8 +221,8 @@ export const formatAllSongs = async (
 
     for (const song of allSongs) {
       const retrievedSong: DBItem | undefined = await db.get(song._id);
-      const formattedItem = formatItemInfo(retrievedSong, cloud, isMobile);
-      const formattedSong = formatSong(formattedItem, isMobile);
+      const formattedItem = formatItemInfo(retrievedSong, cloud);
+      const formattedSong = formatSong(formattedItem);
       const updatedItem = {
         ...retrievedSong,
         name: formattedSong.name,

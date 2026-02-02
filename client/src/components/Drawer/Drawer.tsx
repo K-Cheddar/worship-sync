@@ -22,7 +22,7 @@ export interface DrawerProps {
 
 const sizeClasses = {
   sm: "w-[20%]",
-  md: "w-[30%]",
+  md: "w-[25%]",
   lg: "w-[40%]",
   xl: "w-[50%]",
   full: "w-full",
@@ -174,7 +174,7 @@ const Drawer: React.FC<DrawerProps> = ({
         style={{ transform: getTransform(position, isOpen && isAnimating) }}
       >
         {(title || showCloseButton) && (
-          <div className="flex items-center justify-between p-4 border-b border-gray-700 flex-shrink-0">
+          <div className="flex items-center justify-between p-4 border-b border-gray-700 shrink-0">
             {title && (
               <h2
                 id="drawer-title"
@@ -221,7 +221,7 @@ const Drawer: React.FC<DrawerProps> = ({
       style={{ transform: getTransform(position, isOpen && isAnimating) }}
     >
       {(title || showCloseButton) && (
-        <div className="flex items-center justify-between p-4 border-b border-gray-700 flex-shrink-0">
+        <div className="flex items-center justify-between p-4 border-b border-gray-700 shrink-0">
           {title && (
             <h2 id="drawer-title" className="text-xl font-semibold text-white">
               {title}

@@ -28,6 +28,7 @@ import {
   updateArrangements,
   updateSlides,
 } from "../../store/itemSlice";
+import BibleItemActions from "./BibleItemActions";
 import { setName, updateBoxes } from "../../store/itemSlice";
 import { formatBible, formatFree, formatSong } from "../../utils/overflow";
 import { Box, ItemSlideType } from "../../types";
@@ -38,6 +39,7 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { AccessType } from "../../context/globalInfo";
 import SectionTextEditor from "../../components/SectionTextEditor/SectionTextEditor";
 import SlideBoxes from "../../components/SlideBoxes/SlideBoxes";
+import LoadingOverlay from "../../components/LoadingOverlay/LoadingOverlay";
 
 const SlideEditor = ({ access }: { access?: AccessType }) => {
   const dispatch = useDispatch();
@@ -52,10 +54,12 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     selectedBox,
     slides: __slides,
     isLoading,
+    isSectionLoading,
   } = item;
+  const showLoadingOverlay = isLoading || isSectionLoading;
 
   const arrangement = arrangements[selectedArrangement];
-  
+
   const slides = useMemo(() => {
     const _slides = arrangement?.slides || __slides || [];
     return isLoading ? [] : _slides;
@@ -184,13 +188,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     const newBoxes = boxes.map((b, i) =>
       i === index
         ? {
-            ...b,
-            x: box.x,
-            y: box.y,
-            width: box.width,
-            height: box.height,
-            words: type === "bible" ? box.words : value,
-          }
+          ...b,
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          words: type === "bible" ? box.words : value,
+        }
         : b
     );
 
@@ -218,7 +222,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       const _item = formatBible({
         item: updatedItem,
         mode: item.bibleInfo?.fontMode || "separate",
-        isMobile,
       });
       dispatch(updateSlides({ slides: _item.slides }));
     }
@@ -247,12 +250,9 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
         // Safety check: if current slide not found in section, fall back to direct update
         if (currentSlideIndexInSection === -1) {
-          const _item = formatFree(
-            {
-              ...updatedItem,
-            },
-            isMobile
-          );
+          const _item = formatFree({
+            ...updatedItem,
+          });
           dispatch(updateSlides({ slides: _item.slides }));
           return;
         }
@@ -264,7 +264,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           const { slide } = currentSectionSlidesWithIndices[i];
           const slideBox = slide?.boxes[index];
           const slideWords = i === currentSlideIndexInSection ? value : (slideBox?.words || "");
-          
+
           if (slideWords.trim().length > 0) {
             if (newWords) {
               const alreadyHasNewline = newWords.endsWith("\n");
@@ -298,14 +298,11 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         }
 
         // Now format with updated formattedSections
-        const _item = formatFree(
-          {
-            ...updatedItem,
-            formattedSections: updatedFormattedSections,
-          },
-          isMobile
-        );
-        dispatch(updateSlides({ 
+        const _item = formatFree({
+          ...updatedItem,
+          formattedSections: updatedFormattedSections,
+        });
+        dispatch(updateSlides({
           slides: _item.slides,
           formattedSections: _item.formattedSections,
         }));
@@ -331,7 +328,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       const formattedLyrics = currentArrangement.formattedLyrics || [];
       const arrangementSlides = currentArrangement.slides;
       const currentSlide = arrangementSlides[selectedSlide];
-      
+
       if (!currentSlide) return;
 
       // Find the formatted lyric that matches this slide
@@ -346,7 +343,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       }
 
       const formattedLyric = formattedLyrics[lyricIndex];
-      
+
       // Calculate the range of slides for this section
       const slideIndex = currentSlide.boxes[index]?.slideIndex || 0;
       const start = selectedSlide - slideIndex;
@@ -389,14 +386,11 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         return arr;
       });
 
-      const formattedItem = formatSong(
-        {
-          ...item,
-          arrangements: updatedArrangements,
-          selectedArrangement,
-        },
-        isMobile
-      );
+      const formattedItem = formatSong({
+        ...item,
+        arrangements: updatedArrangements,
+        selectedArrangement,
+      });
 
       dispatch(updateArrangements({ arrangements: formattedItem.arrangements }));
     }
@@ -460,7 +454,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
         const formattedSections = item.formattedSections || [];
         const section = formattedSections.find((s) => s.sectionNum === currentSectionNum);
-        
+
         return section?.words || "";
       }
 
@@ -501,11 +495,11 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         // Fallback to slide name without letter suffix
         name = currentSlide.name.replace(/[A-Z]$/, "") || currentSlide.name;
       }
-      
+
       // Extract section type (e.g., "Verse", "Chorus") from name like "Verse 1"
       const sectionType = name.split(" ")[0];
       const bgColor = itemSectionBgColorMap.get(sectionType) || "bg-stone-500";
-      
+
       return { sectionName: name, sectionColor: bgColor };
     }
 
@@ -617,7 +611,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                 arrangements: updatedArrangements,
                 selectedArrangement,
               },
-              isMobile
             );
 
             dispatch(updateArrangements({ arrangements: _item.arrangements }));
@@ -653,7 +646,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               formattedSections: updatedFormattedSections,
             };
 
-            const _item = formatFree(updatedItem, isMobile);
+            const _item = formatFree(updatedItem);
             dispatch(
               updateSlides({
                 slides: _item.slides,
@@ -700,10 +693,55 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       item,
       selectedArrangement,
       arrangement,
-      isMobile,
       dispatch,
     ]
   );
+
+  const leftColumnContent = useMemo(() => {
+    if (toolbarSection === "box-tools") {
+      return (
+        <SlideBoxes
+          canEdit={canEdit}
+          canDeleteBox={canDeleteBox}
+          isBoxLocked={isBoxLocked}
+          setIsBoxLocked={setIsBoxLocked}
+        />
+      );
+    }
+    if (type === "bible" && item.bibleInfo) {
+      return <BibleItemActions item={item} />;
+    }
+    return (
+      <SectionTextEditor
+        value={sectionText}
+        onChange={handleSectionTextChange}
+        disabled={
+          !canEdit ||
+          (type !== "song" && type !== "free") ||
+          ((type === "song" && arrangement?.slides ? arrangement.slides : slides)?.[selectedSlide]?.type === "Blank")
+        }
+        sectionName={sectionName}
+        sectionColor={sectionColor}
+        isReformatting={isReformatting}
+      />
+    );
+  }, [
+    toolbarSection,
+    type,
+    item,
+    canEdit,
+    canDeleteBox,
+    isBoxLocked,
+    setIsBoxLocked,
+    sectionText,
+    handleSectionTextChange,
+    sectionName,
+    sectionColor,
+    isReformatting,
+    arrangement?.slides,
+    slides,
+    selectedSlide,
+  ]);
 
   return (
     <ErrorBoundary>
@@ -787,32 +825,19 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         >
           {!isEmpty ? (
             <div className="flex flex-col lg:flex-row gap-2 w-full px-2">
-              {/* Section Text Editor or Slide Boxes */}
-              {toolbarSection === "box-tools" ? (
-                <SlideBoxes
-                  className="lg:flex-[0_0_30%] w-full max-lg:max-h-[25vh] overflow-y-auto"
-                  canEdit={canEdit}
-                  canDeleteBox={canDeleteBox}
-                  isBoxLocked={isBoxLocked}
-                  setIsBoxLocked={setIsBoxLocked}
-                />
-              ) : (
-                <SectionTextEditor
-                  value={sectionText}
-                  onChange={handleSectionTextChange}
-                  disabled={
-                    !canEdit ||
-                    (type !== "song" && type !== "free") ||
-                    ((type === "song" && arrangement?.slides ? arrangement.slides : slides)?.[selectedSlide]?.type === "Blank")
-                  }
-                  sectionName={sectionName}
-                  sectionColor={sectionColor}
-                  isReformatting={isReformatting}
-                />
-              )}
-              
+              <LoadingOverlay
+                isLoading={!!showLoadingOverlay}
+                className="lg:flex-[0_0_30%] w-full min-h-0"
+              >
+                {leftColumnContent}
+              </LoadingOverlay>
+
+              <LoadingOverlay
+                isLoading={!!showLoadingOverlay}
+                className="lg:max-h-[42vh] max-lg:max-h-[30vh] flex-1 min-w-0 min-h-0"
+              >
                 <DisplayWindow
-                  className="lg:max-h-[42vh] max-lg:max-h-[30vh]"
+                  className="lg:max-h-[42vh] max-lg:max-h-[30vh] h-full w-full"
                   showBorder
                   boxes={boxes}
                   selectBox={(val) => dispatch(setSelectedBox(val))}
@@ -826,6 +851,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                   disabled={!canEdit}
                   shouldPlayVideo
                 />
+              </LoadingOverlay>
             </div>
           ) : (
             <p

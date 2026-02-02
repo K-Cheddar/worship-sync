@@ -370,7 +370,7 @@ const Overlays = () => {
               25,
               (matchingWords.length /
                 Math.max(elementWords.length, overlayWords.length)) *
-                60
+              60
             );
           }
         }
@@ -551,6 +551,7 @@ const Overlays = () => {
           <StyleEditor
             formatting={selectedOverlay.formatting || {}}
             onChange={handleFormattingChange}
+            overlayType={selectedOverlay.type}
             className="p-4 flex-1 overflow-y-auto"
           />
         </Drawer>

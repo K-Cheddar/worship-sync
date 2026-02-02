@@ -19,7 +19,6 @@ type getMaxLinesProps = {
   topMargin?: number;
   isBold?: boolean;
   isItalic?: boolean;
-  isMobile?: boolean;
 };
 
 type MaxLinesResult = {
@@ -33,7 +32,6 @@ export const getMaxLines = ({
   topMargin: _topMargin,
   isBold,
   isItalic,
-  isMobile,
 }: getMaxLinesProps): MaxLinesResult => {
   try {
     // Convert fontSize to pixels using the font size multiplier (same as DisplayBox)
@@ -68,6 +66,7 @@ export const getMaxLines = ({
     measureSpan.textContent = "Sample Text";
     document.body.appendChild(measureSpan);
 
+
     // Use `getBoundingClientRect()` for more precise height
     const singleLineHeight = measureSpan.getBoundingClientRect().height;
 
@@ -100,7 +99,6 @@ type getNumLinesProps = {
   sideMargin?: number;
   isBold?: boolean;
   isItalic?: boolean;
-  isMobile?: boolean;
 };
 
 export const getNumLines = ({
@@ -111,7 +109,6 @@ export const getNumLines = ({
   sideMargin: _sideMargin,
   isBold,
   isItalic,
-  isMobile,
 }: getNumLinesProps): number => {
   try {
     // Convert fontSize to pixels using the font size multiplier (same as DisplayBox)
@@ -190,7 +187,6 @@ type FormatSectionType = {
   fontSize: number;
   selectedBox: number;
   selectedSlide: ItemSlideType;
-  isMobile?: boolean;
 };
 
 export const formatSection = ({
@@ -202,7 +198,6 @@ export const formatSection = ({
   fontSize,
   selectedBox,
   selectedSlide,
-  isMobile,
 }: FormatSectionType): ItemSlideType[] => {
   const lines = text.split("\n");
   const formattedSlides = [];
@@ -233,7 +228,6 @@ export const formatSection = ({
       isBold: currentBox.isBold,
       isItalic: currentBox.isItalic,
       topMargin: currentBox.topMargin,
-      isMobile,
     }));
 
     while (i + counter < lines.length && lineCounter < maxLines) {
@@ -249,7 +243,6 @@ export const formatSection = ({
         isBold: currentBox.isBold,
         isItalic: currentBox.isItalic,
         sideMargin: currentBox.sideMargin,
-        isMobile,
       });
 
       // If the text can't fit and we're not on the first round of the loop
@@ -336,7 +329,7 @@ export const getFormattedSections = (
     .sort((a, b) => a.sectionNum - b.sectionNum);
 };
 
-export const formatFree = (item: ItemState, isMobile: boolean) => {
+export const formatFree = (item: ItemState) => {
   const { selectedSlide, selectedBox } = item;
   const slides = item.slides;
   const slide = slides[selectedSlide];
@@ -388,7 +381,6 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
         height: slide.boxes[selectedBox].height,
         isBold,
         isItalic,
-        isMobile,
       }));
 
       numLines = getNumLines({
@@ -398,7 +390,6 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
         width: slide.boxes[selectedBox].width,
         isBold,
         isItalic,
-        isMobile,
       });
 
       if (numLines <= maxLines) {
@@ -418,7 +409,6 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
         fontSize: minFontSize,
         selectedSlide: slide,
         selectedBox,
-        isMobile,
       });
     } else {
       // Create a single slide with the adjusted font size
@@ -458,7 +448,6 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
       fontSize,
       selectedSlide: slide,
       selectedBox,
-      isMobile,
     });
   }
 
@@ -528,7 +517,7 @@ export const formatFree = (item: ItemState, isMobile: boolean) => {
   };
 };
 
-export const formatLyrics = (item: ItemState, isMobile: boolean) => {
+export const formatLyrics = (item: ItemState) => {
   const selectedArrangement = item.selectedArrangement || 0;
   const selectedSlide = item.selectedSlide || 1;
   const arrangements = item.arrangements || [];
@@ -567,7 +556,6 @@ export const formatLyrics = (item: ItemState, isMobile: boolean) => {
         fontSize,
         selectedSlide: slide,
         selectedBox: 1,
-        isMobile,
       })
     );
   }
@@ -576,13 +564,13 @@ export const formatLyrics = (item: ItemState, isMobile: boolean) => {
   return newSlides;
 };
 
-export const formatSong = (_item: ItemState, isMobile: boolean) => {
+export const formatSong = (_item: ItemState) => {
   const item = {
     ..._item,
     arrangements: _item.arrangements
       ? _item.arrangements.map((el, i): Arrangment => {
           if (i === _item.selectedArrangement) {
-            return { ...el, slides: formatLyrics(_item, isMobile) };
+            return { ...el, slides: formatLyrics(_item) };
           }
           return el;
         })
@@ -655,7 +643,6 @@ type formatBibleType = {
   mediaInfo?: MediaType;
   brightness?: number;
   isNew?: boolean;
-  isMobile: boolean;
 };
 export const formatBible = ({
   item,
@@ -668,7 +655,6 @@ export const formatBible = ({
   mediaInfo,
   brightness,
   isNew,
-  isMobile,
 }: formatBibleType): ItemState => {
   const slides = item.slides.length
     ? item.slides
@@ -736,7 +722,6 @@ export const formatBible = ({
         chapter: _chapter,
         version: _version,
         isNew,
-        isMobile,
       })
     );
   else
@@ -749,7 +734,6 @@ export const formatBible = ({
         chapter: _chapter,
         version: _version,
         isNew,
-        isMobile,
       })
     );
 
@@ -784,7 +768,6 @@ type formatBibleVersesType = {
   book?: string;
   chapter?: string;
   version?: string;
-  isMobile: boolean;
 };
 const formatBibleVerses = ({
   verses,
@@ -794,7 +777,6 @@ const formatBibleVerses = ({
   chapter,
   version,
   isNew,
-  isMobile,
 }: formatBibleVersesType) => {
   const slides = item.slides || [];
   const referenceIndex = item.selectedSlide > 0 ? item.selectedSlide : 1;
@@ -807,7 +789,6 @@ const formatBibleVerses = ({
     height: currentBoxes[1].height || 95,
     isBold: currentBoxes[1].isBold,
     isItalic: currentBoxes[1].isItalic,
-    isMobile,
   });
   const formattedVerses = [];
   // let type = currentSlide.type;
@@ -835,7 +816,6 @@ const formatBibleVerses = ({
             width: currentBoxes[1].width,
             isBold: currentBoxes[1].isBold,
             isItalic: currentBoxes[1].isItalic,
-            isMobile,
           }) <= maxLines
         ) {
           tempSlide = testSlide;
@@ -866,7 +846,6 @@ const formatBibleVerses = ({
             width: currentBoxes[1].width,
             isBold: currentBoxes[1].isBold,
             isItalic: currentBoxes[1].isItalic,
-            isMobile,
           }) <= maxLines
         ) {
           slide = testSlide;
@@ -986,7 +965,6 @@ const formatBibleVerses = ({
         height: currentBoxes[1].height || 95,
         isBold: currentBoxes[1].isBold,
         isItalic: currentBoxes[1].isItalic,
-        isMobile,
       }));
 
       while (fitProcessing) {
@@ -1002,7 +980,6 @@ const formatBibleVerses = ({
               width: currentBoxes[1].width,
               isBold: currentBoxes[1].isBold,
               isItalic: currentBoxes[1].isItalic,
-              isMobile,
             }) <= maxLines
           )
             tempSlide = update + " ";
@@ -1013,7 +990,6 @@ const formatBibleVerses = ({
               height: currentBoxes[1].height || 95,
               isBold: currentBoxes[1].isBold,
               isItalic: currentBoxes[1].isItalic,
-              isMobile,
             }));
             tempSlide = "";
             break;
@@ -1072,7 +1048,6 @@ const formatBibleVerses = ({
         width: currentBoxes[1]?.width || 95,
         isBold: currentBoxes[1].isBold,
         isItalic: currentBoxes[1].isItalic,
-        isMobile,
       });
 
       // If it doesn't fit, check if adding a letter suffix would make it fit
@@ -1086,7 +1061,6 @@ const formatBibleVerses = ({
           width: currentBoxes[1]?.width || 95,
           isBold: currentBoxes[1].isBold,
           isItalic: currentBoxes[1].isItalic,
-          isMobile,
         });
       }
 
@@ -1101,7 +1075,6 @@ const formatBibleVerses = ({
         width: currentBoxes[1]?.width || 95,
         isBold: currentBoxes[1].isBold,
         isItalic: currentBoxes[1].isItalic,
-        isMobile,
       });
 
       // If it doesn't fit with current slide, check if adding a letter suffix would make it fit
@@ -1118,7 +1091,6 @@ const formatBibleVerses = ({
           width: currentBoxes[1]?.width || 95,
           isBold: currentBoxes[1].isBold,
           isItalic: currentBoxes[1].isItalic,
-          isMobile,
         });
       }
 
@@ -1135,7 +1107,6 @@ const formatBibleVerses = ({
           width: currentBoxes[1]?.width || 95,
           isBold: currentBoxes[1].isBold,
           isItalic: currentBoxes[1].isItalic,
-          isMobile,
         });
         canCombineWithPrevious = combinedWithPreviousLines <= maxLines;
 
@@ -1152,7 +1123,6 @@ const formatBibleVerses = ({
             width: currentBoxes[1]?.width || 95,
             isBold: currentBoxes[1].isBold,
             isItalic: currentBoxes[1].isItalic,
-            isMobile,
           });
           canCombineWithPrevious =
             combinedWithPreviousWithLetterLines <= maxLines;
@@ -1235,7 +1205,6 @@ const formatBibleVerses = ({
                 width: currentBoxes[1]?.width || 95,
                 isBold: currentBoxes[1].isBold,
                 isItalic: currentBoxes[1].isItalic,
-                isMobile,
               }) <= maxLines
             ) {
               tempSlide = testText;
@@ -1301,7 +1270,6 @@ const formatBibleVerses = ({
                   height: currentBoxes[1].height || 95,
                   isBold: currentBoxes[1].isBold,
                   isItalic: currentBoxes[1].isItalic,
-                  isMobile,
                 }));
               }
             }

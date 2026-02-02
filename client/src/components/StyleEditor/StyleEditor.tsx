@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { OverlayFormatting, OverlayChild } from "../../types";
+import { OverlayFormatting, OverlayChild, OverlayType } from "../../types";
 import Section from "./Section";
 import InputField from "./InputField";
 import SelectField from "./SelectField";
@@ -8,9 +8,55 @@ import ColorField from "../ColorField/ColorField";
 import Toggle from "../Toggle/Toggle";
 import cn from "classnames";
 
+type ParticipantOverlayPosition = "left" | "center" | "right";
+
+const POSITION_OPTIONS: {
+  value: ParticipantOverlayPosition;
+  label: string;
+  Illustration: React.FC<{ className?: string }>;
+}[] = [
+    {
+      value: "left",
+      label: "Left",
+      Illustration: ({ className }) => (
+        <div
+          className={cn("relative w-14 aspect-video rounded bg-gray-700 border border-gray-600", className)}
+          aria-hidden
+        >
+          <div className="absolute left-0.5 bottom-0.5 w-4 h-3 rounded-sm bg-cyan-600/80 border border-cyan-500" />
+        </div>
+      ),
+    },
+    {
+      value: "center",
+      label: "Center",
+      Illustration: ({ className }) => (
+        <div
+          className={cn("relative w-14 aspect-video rounded bg-gray-700 border border-gray-600", className)}
+          aria-hidden
+        >
+          <div className="absolute left-1/2 bottom-0.5 -translate-x-1/2 w-4 h-3 rounded-sm bg-cyan-600/80 border border-cyan-500" />
+        </div>
+      ),
+    },
+    {
+      value: "right",
+      label: "Right",
+      Illustration: ({ className }) => (
+        <div
+          className={cn("relative w-14 aspect-video rounded bg-gray-700 border border-gray-600", className)}
+          aria-hidden
+        >
+          <div className="absolute right-0.5 bottom-0.5 w-4 h-3 rounded-sm bg-cyan-600/80 border border-cyan-500" />
+        </div>
+      ),
+    },
+  ];
+
 interface StyleEditorProps {
   formatting: OverlayFormatting;
   onChange: (formatting: OverlayFormatting) => void;
+  overlayType?: OverlayType;
   className?: string;
 }
 
@@ -32,6 +78,7 @@ type FieldConfig<T extends OverlayFormatting | OverlayChild> = {
 const StyleEditor: React.FC<StyleEditorProps> = ({
   formatting,
   onChange,
+  overlayType,
   className,
 }) => {
   const [showHiddenSections, setShowHiddenSections] = useState(false);
@@ -91,13 +138,13 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
     const shouldShow =
       index !== undefined
         ? shouldShowChildField(
-            data as OverlayChild,
-            config.key as keyof OverlayChild
-          )
+          data as OverlayChild,
+          config.key as keyof OverlayChild
+        )
         : shouldShowField(
-            data as OverlayFormatting,
-            config.key as keyof OverlayFormatting
-          );
+          data as OverlayFormatting,
+          config.key as keyof OverlayFormatting
+        );
 
     if (!shouldShow) return null;
 
@@ -518,67 +565,67 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
   // Since OverlayChild is just OverlayFormatting without 'children' + optional 'label',
   // we can use the same field configurations for both
   const unifiedFieldConfigs: Record<string, FieldConfig<OverlayFormatting>[]> =
-    {
-      basic: [
-        commonFields.fontSize,
-        commonFields.fontColor,
-        createFontWeightField<OverlayFormatting>(),
-        commonFields.fontStyle,
-        commonFields.textAlign,
-        commonFields.width,
-        commonFields.height,
-      ],
-      dimensions: [
-        commonFields.maxWidth,
-        commonFields.maxHeight,
-        commonFields.minWidth,
-        commonFields.minHeight,
-      ],
-      colors: [
-        commonFields.backgroundColor,
-        commonFields.borderColor,
-        commonFields.borderLeftColor,
-        commonFields.borderRightColor,
-        commonFields.borderTopColor,
-        commonFields.borderBottomColor,
-      ],
-      borders: [
-        commonFields.borderType,
-        commonFields.borderRadius,
-        commonFields.borderRadiusTopLeft,
-        commonFields.borderRadiusTopRight,
-        commonFields.borderRadiusBottomLeft,
-        commonFields.borderRadiusBottomRight,
-        commonFields.borderTopWidth,
-        commonFields.borderBottomWidth,
-        commonFields.borderLeftWidth,
-        commonFields.borderRightWidth,
-      ],
-      spacing: [
-        commonFields.paddingTop,
-        commonFields.paddingBottom,
-        commonFields.paddingLeft,
-        commonFields.paddingRight,
-        commonFields.marginTop,
-        commonFields.marginBottom,
-        commonFields.marginLeft,
-        commonFields.marginRight,
-      ],
-      position: [
-        commonFields.top,
-        commonFields.bottom,
-        commonFields.left,
-        commonFields.right,
-      ],
-      layout: [
-        commonFields.display,
-        commonFields.flexDirection,
-        commonFields.justifyContent,
-        commonFields.alignItems,
-        commonFields.flexWrap,
-        commonFields.gap,
-      ],
-    };
+  {
+    basic: [
+      commonFields.fontSize,
+      commonFields.fontColor,
+      createFontWeightField<OverlayFormatting>(),
+      commonFields.fontStyle,
+      commonFields.textAlign,
+      commonFields.width,
+      commonFields.height,
+    ],
+    dimensions: [
+      commonFields.maxWidth,
+      commonFields.maxHeight,
+      commonFields.minWidth,
+      commonFields.minHeight,
+    ],
+    colors: [
+      commonFields.backgroundColor,
+      commonFields.borderColor,
+      commonFields.borderLeftColor,
+      commonFields.borderRightColor,
+      commonFields.borderTopColor,
+      commonFields.borderBottomColor,
+    ],
+    borders: [
+      commonFields.borderType,
+      commonFields.borderRadius,
+      commonFields.borderRadiusTopLeft,
+      commonFields.borderRadiusTopRight,
+      commonFields.borderRadiusBottomLeft,
+      commonFields.borderRadiusBottomRight,
+      commonFields.borderTopWidth,
+      commonFields.borderBottomWidth,
+      commonFields.borderLeftWidth,
+      commonFields.borderRightWidth,
+    ],
+    spacing: [
+      commonFields.paddingTop,
+      commonFields.paddingBottom,
+      commonFields.paddingLeft,
+      commonFields.paddingRight,
+      commonFields.marginTop,
+      commonFields.marginBottom,
+      commonFields.marginLeft,
+      commonFields.marginRight,
+    ],
+    position: [
+      commonFields.top,
+      commonFields.bottom,
+      commonFields.left,
+      commonFields.right,
+    ],
+    layout: [
+      commonFields.display,
+      commonFields.flexDirection,
+      commonFields.justifyContent,
+      commonFields.alignItems,
+      commonFields.flexWrap,
+      commonFields.gap,
+    ],
+  };
 
   // Field configurations using unified configurations
   const fieldConfigs: Record<string, FieldConfig<OverlayFormatting>[]> = {
@@ -665,6 +712,44 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
 
   const children = formatting.children || [];
 
+  const participantPosition =
+    (formatting.participantOverlayPosition ?? "left") as ParticipantOverlayPosition;
+
+  const setParticipantPosition = (position: ParticipantOverlayPosition) => {
+    const updates: Partial<OverlayFormatting> = {
+      participantOverlayPosition: position,
+    };
+    const children = formatting.children || [];
+    if (position === "left") {
+      updates.left = 2;
+      updates.right = 0;
+      updates.borderLeftWidth = 5;
+      updates.borderRightWidth = 0;
+      updates.borderBottomWidth = 0;
+      updates.textAlign = "left";
+      updates.children = children.map((c) => ({ ...c, textAlign: "left" as const }));
+    } else if (position === "center") {
+      updates.left = undefined;
+      updates.right = undefined;
+      updates.borderLeftWidth = 0;
+      updates.borderBottomWidth = 2;
+      updates.borderBottomColor = formatting.borderColor ?? formatting.borderLeftColor ?? "#15803d";
+      updates.borderRightWidth = 0;
+      updates.textAlign = "center";
+      updates.children = children.map((c) => ({ ...c, textAlign: "center" as const }));
+    } else {
+      updates.left = undefined;
+      updates.right = 2;
+      updates.borderRightWidth = 5;
+      updates.borderBottomWidth = 0;
+      updates.borderRightColor = formatting.borderColor ?? formatting.borderRightColor ?? "#15803d";
+      updates.borderLeftWidth = 0;
+      updates.textAlign = "right";
+      updates.children = children.map((c) => ({ ...c, textAlign: "right" as const }));
+    }
+    onChange({ ...formatting, ...updates });
+  };
+
   return (
     <div className={cn("space-y-6 h-full scrollbar-variable", className)}>
       <Toggle
@@ -672,6 +757,35 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
         value={showHiddenSections}
         onChange={setShowHiddenSections}
       />
+
+      {overlayType === "participant" && (
+        <Section title="Position" shouldShow={true}>
+          <div className="flex flex-wrap gap-3">
+            {POSITION_OPTIONS.map(({ value, label, Illustration }) => (
+              <label
+                key={value}
+                className={cn(
+                  "flex flex-col items-center gap-1.5 cursor-pointer rounded-lg border-2 p-2 transition-colors",
+                  participantPosition === value
+                    ? "border-cyan-500 bg-cyan-500/10"
+                    : "border-gray-600 hover:border-gray-500"
+                )}
+              >
+                <input
+                  type="radio"
+                  name="participant-overlay-position"
+                  value={value}
+                  checked={participantPosition === value}
+                  onChange={() => setParticipantPosition(value)}
+                  className="sr-only"
+                />
+                <Illustration />
+                <span className="text-xs text-white font-medium">{label}</span>
+              </label>
+            ))}
+          </div>
+        </Section>
+      )}
 
       {renderSection(
         "Layout & Position",

@@ -516,98 +516,100 @@ const ItemSlides = () => {
         onDragEnd={canEdit ? onDragEnd : undefined}
         onDragStart={canEdit ? onDragStart : undefined}
       >
-        <div className="flex w-full px-2 bg-gray-900 mb-2 gap-1">
-          <Button
-            variant="tertiary"
-            svg={ZoomOut}
-            onClick={() => {
-              if (isMobile) {
-                dispatch(increaseSlidesMobile());
-                if (type === "timer") {
-                  dispatch(setSlidesMobile(size + 1));
+        <div className="flex flex-col min-h-0 h-full overflow-hidden">
+          <div className="flex w-full px-2 bg-gray-900 mb-2 gap-1 shrink-0">
+            <Button
+              variant="tertiary"
+              svg={ZoomOut}
+              onClick={() => {
+                if (isMobile) {
+                  dispatch(increaseSlidesMobile());
+                  if (type === "timer") {
+                    dispatch(setSlidesMobile(size + 1));
+                  }
+                } else {
+                  dispatch(increaseSlides());
+                  if (type === "timer") {
+                    dispatch(setSlides(size + 1));
+                  }
                 }
-              } else {
-                dispatch(increaseSlides());
-                if (type === "timer") {
-                  dispatch(setSlides(size + 1));
+              }}
+            />
+            <Button
+              variant="tertiary"
+              svg={ZoomIn}
+              onClick={() => {
+                if (isMobile) {
+                  dispatch(decreaseSlidesMobile());
+                  if (type === "timer") {
+                    dispatch(setSlidesMobile(size - 1));
+                  }
+                } else {
+                  dispatch(decreaseSlides());
+                  if (type === "timer") {
+                    dispatch(setSlides(size - 1));
+                  }
                 }
-              }
-            }}
-          />
-          <Button
-            variant="tertiary"
-            svg={ZoomIn}
-            onClick={() => {
-              if (isMobile) {
-                dispatch(decreaseSlidesMobile());
-                if (type === "timer") {
-                  dispatch(setSlidesMobile(size - 1));
-                }
-              } else {
-                dispatch(decreaseSlides());
-                if (type === "timer") {
-                  dispatch(setSlides(size - 1));
-                }
-              }
-            }}
-          />
-          {type === "free" && canEdit && (
-            <>
-              <Button
-                variant="tertiary"
-                className="ml-auto"
-                svg={Plus}
-                onClick={() => addSlide()}
-              />
-              <Button variant="tertiary" svg={Copy} onClick={copySlide} />
-              <Button
-                variant="tertiary"
-                svg={Trash2}
-                onClick={() => dispatch(removeSlide({ index: selectedSlide }))}
-              />
-            </>
+              }}
+            />
+            {type === "free" && canEdit && (
+              <>
+                <Button
+                  variant="tertiary"
+                  className="ml-auto"
+                  svg={Plus}
+                  onClick={() => addSlide()}
+                />
+                <Button variant="tertiary" svg={Copy} onClick={copySlide} />
+                <Button
+                  variant="tertiary"
+                  svg={Trash2}
+                  onClick={() => dispatch(removeSlide({ index: selectedSlide }))}
+                />
+              </>
+            )}
+          </div>
+          {hasSlides ? (
+            <ul
+              ref={setNodeRef}
+              tabIndex={0}
+              id="item-slides-container"
+              className={cn(
+                "scrollbar-variable max-h-full px-2 overflow-y-auto grid pb-2 focus-visible:outline-none",
+                sizeConfig.cols
+              )}
+            >
+              <SortableContext
+                items={slides.map((slide) => slide.id || "")}
+                strategy={rectSortingStrategy}
+              >
+                {debouncedSlides.map((slide, index) => (
+                  <ItemSlide
+                    isTransmitting={isTransmitting}
+                    timerInfo={timerInfo}
+                    key={slide.id}
+                    slide={slide}
+                    index={index}
+                    selectSlide={selectSlide}
+                    selectedSlide={selectedSlide}
+                    size={size}
+                    itemType={type}
+                    isMobile={isMobile || false}
+                    draggedSection={draggedSection}
+                    isStreamFormat={shouldShowStreamFormat}
+                    getBibleInfo={getBibleInfo}
+                    borderWidth={sizeConfig.borderWidth}
+                    hSize={sizeConfig.hSize}
+                  />
+                ))}
+              </SortableContext>
+            </ul>
+          ) : (
+            <div className="flex w-full items-center justify-center h-6 mb-2 gap-1 shrink-0">
+              <p className="text-gray-300">No slides for selected item</p>
+            </div>
           )}
         </div>
-        {hasSlides ? (
-          <ul
-            ref={setNodeRef}
-            tabIndex={0}
-            id="item-slides-container"
-            className={cn(
-              "scrollbar-variable max-h-full px-2 overflow-y-auto grid pb-2 focus-visible:outline-none",
-              sizeConfig.cols
-            )}
-          >
-            <SortableContext
-              items={slides.map((slide) => slide.id || "")}
-              strategy={rectSortingStrategy}
-            >
-              {debouncedSlides.map((slide, index) => (
-                <ItemSlide
-                  isTransmitting={isTransmitting}
-                  timerInfo={timerInfo}
-                  key={slide.id}
-                  slide={slide}
-                  index={index}
-                  selectSlide={selectSlide}
-                  selectedSlide={selectedSlide}
-                  size={size}
-                  itemType={type}
-                  isMobile={isMobile || false}
-                  draggedSection={draggedSection}
-                  isStreamFormat={shouldShowStreamFormat}
-                  getBibleInfo={getBibleInfo}
-                  borderWidth={sizeConfig.borderWidth}
-                  hSize={sizeConfig.hSize}
-                />
-              ))}
-            </SortableContext>
-          </ul>
-        ) : (
-          <div className="flex w-full items-center justify-center h-6 mb-2 gap-1">
-            <p className="text-gray-300">No slides for selected item</p>
-          </div>
-        )}
       </DndContext>
     </ErrorBoundary>
   );

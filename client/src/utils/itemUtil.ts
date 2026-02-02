@@ -6,12 +6,14 @@ import {
   MediaType,
   ServiceItem,
   DBItem,
+  DBHeading,
   verseType,
   ItemList,
   DBItemListDetails,
   TimerType,
   TimerStatus,
   BibleFontMode,
+  BibleInfo,
   OverflowMode,
   ItemListDetails,
   DBOverlay,
@@ -73,7 +75,6 @@ type CreateNewSongType = {
   background: string;
   mediaInfo?: MediaType;
   brightness: number;
-  isMobile: boolean;
 };
 
 export const createNewSong = async ({
@@ -85,7 +86,6 @@ export const createNewSong = async ({
   background,
   mediaInfo,
   brightness,
-  isMobile,
 }: CreateNewSongType): Promise<ItemState> => {
   const arrangements: Arrangment[] = [
     {
@@ -135,7 +135,7 @@ export const createNewSong = async ({
     },
   };
 
-  const item = formatSong(newItem, isMobile);
+  const item = formatSong(newItem);
 
   const _item = await createNewItemInDb({ item, db });
 
@@ -185,7 +185,6 @@ type CreateNewBibleType = {
   mediaInfo?: MediaType;
   brightness: number;
   fontMode: BibleFontMode;
-  isMobile: boolean;
 };
 
 export const createNewBible = async ({
@@ -200,7 +199,6 @@ export const createNewBible = async ({
   mediaInfo,
   brightness,
   fontMode,
-  isMobile,
 }: CreateNewBibleType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
 
@@ -223,22 +221,131 @@ export const createNewBible = async ({
       mediaInfo?.type === "video" ? mediaInfo?.placeholderImage : background,
   };
 
-  const item = formatBible({
+  const item = formatBibleFromScratch({
     item: newItem,
-    mode: fontMode,
     book,
     chapter,
     version,
     verses,
+    mode: fontMode,
     background,
     mediaInfo,
     brightness,
-    isNew: true,
-    isMobile,
   });
 
   const _item = await createNewItemInDb({ item, db });
   return _item;
+};
+
+type FormatBibleFromScratchType = {
+  item: ItemState;
+  book: string;
+  chapter: string;
+  version: string;
+  verses: verseType[];
+  mode: BibleFontMode;
+  background: string;
+  mediaInfo?: MediaType;
+  brightness?: number;
+};
+
+export const formatBibleFromScratch = ({
+  item,
+  book,
+  chapter,
+  version,
+  verses,
+  mode,
+  background,
+  mediaInfo,
+  brightness,
+}: FormatBibleFromScratchType): ItemState =>
+  formatBible({
+    item,
+    mode,
+    verses,
+    book,
+    chapter,
+    version,
+    background,
+    mediaInfo,
+    brightness,
+    isNew: true,
+  });
+
+export const getBibleVerseRange = (
+  bibleInfo: BibleInfo | undefined
+): { startVerse: number; endVerse: number } => {
+  if (!bibleInfo?.verses?.length)
+    return { startVerse: 0, endVerse: 0 };
+  return {
+    startVerse: bibleInfo.verses[0].index,
+    endVerse: bibleInfo.verses[bibleInfo.verses.length - 1].index,
+  };
+};
+
+export const getBibleItemName = (
+  book: string,
+  chapter: string,
+  verses: verseType[],
+  version: string
+): string => {
+  if (!verses?.length)
+    return `${book} ${chapter} ${version.toUpperCase()}`;
+  const startName = verses[0].name;
+  const endName = verses[verses.length - 1].name;
+  const verseRange =
+    startName === endName ? startName : `${startName} - ${endName}`;
+  return `${book} ${chapter}:${verseRange} ${version.toUpperCase()}`;
+};
+
+export const buildBibleOpenAtSearchParams = (
+  bibleInfo: BibleInfo | undefined
+): URLSearchParams | null => {
+  if (!bibleInfo?.book || !bibleInfo?.chapter || !bibleInfo?.version)
+    return null;
+  return new URLSearchParams({
+    book: bibleInfo.book,
+    chapter: bibleInfo.chapter,
+    version: bibleInfo.version,
+  });
+};
+
+type FormatBibleItemForVersionType = {
+  item: ItemState;
+  newVersion: string;
+  newVerses: verseType[];
+};
+export const formatBibleItemForVersion = ({
+  item,
+  newVersion,
+  newVerses,
+}: FormatBibleItemForVersionType): ItemState | null => {
+  const bibleInfo = item.bibleInfo;
+  if (!bibleInfo?.book || !bibleInfo?.chapter) return null;
+  const { startVerse, endVerse } = getBibleVerseRange(bibleInfo);
+  const versesToUse = newVerses.filter(
+    (v) => v.index >= startVerse && v.index <= endVerse
+  );
+  const verses = versesToUse.length ? versesToUse : newVerses;
+  const newName = getBibleItemName(
+    bibleInfo.book,
+    bibleInfo.chapter,
+    verses,
+    newVersion
+  );
+  const firstBox = item.slides?.[0]?.boxes?.[0];
+  return formatBibleFromScratch({
+    item: { ...item, name: newName, slides: [] },
+    book: bibleInfo.book,
+    chapter: bibleInfo.chapter,
+    version: newVersion,
+    verses,
+    mode: bibleInfo.fontMode,
+    background: firstBox?.background ?? item.background ?? "",
+    mediaInfo: firstBox?.mediaInfo,
+    brightness: firstBox?.brightness,
+  });
 };
 
 type updateFormattedSectionsType = {
@@ -323,7 +430,6 @@ type CreateNewFreeFormType = {
   db: PouchDB.Database | undefined;
   background: string;
   brightness: number;
-  isMobile: boolean;
   mediaInfo?: MediaType;
   overflow?: OverflowMode;
 };
@@ -336,7 +442,6 @@ export const createNewFreeForm = async ({
   background,
   mediaInfo,
   brightness,
-  isMobile,
   overflow = "fit",
 }: CreateNewFreeFormType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
@@ -369,7 +474,7 @@ export const createNewFreeForm = async ({
     },
   };
 
-  const formattedItem = formatFree(newItem, isMobile);
+  const formattedItem = formatFree(newItem);
 
   const item = await createNewItemInDb({ item: formattedItem, db });
 
@@ -542,6 +647,78 @@ export const createNewItemInDb = async ({
     });
     return item;
   }
+};
+
+type CreateNewHeadingType = {
+  name: string;
+  list: ServiceItem[];
+  db: PouchDB.Database | undefined;
+};
+
+export type NewHeadingResult = {
+  name: string;
+  _id: string;
+  type: "heading";
+};
+
+export const createNewHeading = async ({
+  name,
+  list,
+  db,
+}: CreateNewHeadingType): Promise<NewHeadingResult> => {
+  const _name = makeUnique({ value: name, property: "name", list });
+  const _id = makeUnique({ value: _name, property: "_id", list });
+
+  if (db) {
+    try {
+      const existing = (await db.get(_id)) as DBHeading | undefined;
+      if (existing?.type === "heading") {
+        return { name: existing.name, _id: existing._id, type: "heading" };
+      }
+    } catch {
+      // Doc does not exist, create new one
+    }
+  }
+
+  const doc: DBHeading = {
+    _id,
+    name: _name,
+    type: "heading",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (db) {
+    await db.put(doc);
+  }
+
+  return { name: _name, _id, type: "heading" };
+};
+
+type UpdateHeadingNameType = {
+  db: PouchDB.Database | undefined;
+  headingId: string;
+  newName: string;
+};
+
+export const updateHeadingName = async ({
+  db,
+  headingId,
+  newName,
+}: UpdateHeadingNameType): Promise<void> => {
+  if (!db) return;
+  let doc: DBHeading;
+  try {
+    doc = (await db.get(headingId)) as DBHeading;
+  } catch {
+    return;
+  }
+  if (!doc || doc.type !== "heading") return;
+  await db.put({
+    ...doc,
+    name: newName,
+    updatedAt: new Date().toISOString(),
+  });
 };
 
 type UpdateItemInListType = {

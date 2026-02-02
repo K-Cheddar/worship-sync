@@ -263,7 +263,6 @@ const LyricsEditor = () => {
         fontSize,
         selectedSlide: templateSlide,
         selectedBox: 1,
-        isMobile,
       });
     } catch (error) {
       console.error("Error generating preview slides:", error);
@@ -313,14 +312,11 @@ const LyricsEditor = () => {
       formattedLyrics: [...localFormattedLyrics],
     };
 
-    const _item = formatSong(
-      {
-        ...item,
-        arrangements: _arrangements,
-        selectedArrangement: localSelectedArrangement,
-      },
-      isMobile
-    );
+    const _item = formatSong({
+      ...item,
+      arrangements: _arrangements,
+      selectedArrangement: localSelectedArrangement,
+    });
 
     dispatch(
       updateArrangements({

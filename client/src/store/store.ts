@@ -73,6 +73,7 @@ let currentGroupId = 0;
 
 const excludedActions: string[] = [
   itemSlice.actions.setItemIsLoading.toString(),
+  itemSlice.actions.setSectionLoading.toString(),
   itemSlice.actions.setSelectedSlide.toString(),
   itemSlice.actions.setIsEditMode.toString(),
   itemSlice.actions.setHasPendingUpdate.toString(),
@@ -200,6 +201,7 @@ listenerMiddleware.startListening({
       action.type !== "item/setSelectedBox" &&
       action.type !== "item/setIsEditMode" &&
       action.type !== "item/setItemIsLoading" &&
+      action.type !== "item/setSectionLoading" &&
       action.type !== "item/setHasPendingUpdate" &&
       !!(currentState as RootState).undoable.present.item.hasPendingUpdate &&
       action.type !== "RESET"
@@ -1439,37 +1441,51 @@ const safeRequestIdleCallback =
     return setTimeout(cb, 1);
   };
 
+// Page-ready actions: each page dispatches when its required slices are initialized.
+// Credits editor only needs credits; Controller needs all controller slices (by access).
+export const CREDITS_EDITOR_PAGE_READY = "CREDITS_EDITOR_PAGE_READY";
+export const CONTROLLER_PAGE_READY = "CONTROLLER_PAGE_READY";
+
+const isCreditsPageReady = (state: RootState) => {
+  return state.undoable.present.credits.isInitialized;
+}
+
+const areControllerSlicesReady = (state: RootState) => {
+  return (
+    state.allItems.isInitialized &&
+    state.undoable.present.preferences.isInitialized &&
+    state.undoable.present.itemList.isInitialized &&
+    state.undoable.present.overlays.isInitialized &&
+    state.undoable.present.itemLists.isInitialized &&
+    state.media.isInitialized &&
+    (state.undoable.present.overlayTemplates as { isInitialized: boolean })
+      .isInitialized
+  );
+}
+
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type === "RESET_INITIALIZATION") {
       hasFinishedInitialization = false;
     }
 
-    // Check if any slice state changed
+    const explicitPageReady =
+      action.type === CREDITS_EDITOR_PAGE_READY ||
+      action.type === CONTROLLER_PAGE_READY;
+    if (explicitPageReady) return true;
+
+    // Fallback for hot reload / full reload: no page-ready was dispatched yet
+    // but state already has a page's slices initialized. Any state change can trigger this.
+    if (hasFinishedInitialization) return false;
     if (currentState === previousState) return false;
 
-    // Only proceed if we haven't cleared history yet
-    if (hasFinishedInitialization) return false;
-
     const state = currentState as RootState;
-
-    // Check if all required slices have isInitialized = true
-    const allSlicesInitialized =
-      state.allItems.isInitialized &&
-      state.undoable.present.preferences.isInitialized &&
-      state.undoable.present.itemList.isInitialized &&
-      state.undoable.present.overlays.isInitialized &&
-      state.undoable.present.itemLists.isInitialized &&
-      state.undoable.present.credits.isInitialized &&
-      state.media.isInitialized &&
-      (state.undoable.present.overlayTemplates as any).isInitialized;
-
-    return allSlicesInitialized;
+    const ready =
+      isCreditsPageReady(state) || areControllerSlicesReady(state);
+    return ready;
   },
 
   effect: async (_, listenerApi) => {
-    // Wait for browser to be idle to ensure all state updates are processed
-
     if (!hasFinishedInitialization) {
       hasFinishedInitialization = true;
       safeRequestIdleCallback(

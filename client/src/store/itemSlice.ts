@@ -37,6 +37,7 @@ const initialState: ItemState = {
   },
   timerInfo: undefined,
   isLoading: true,
+  isSectionLoading: false,
   hasPendingUpdate: false,
   shouldSendTo: {
     projector: true,
@@ -107,6 +108,9 @@ export const itemSlice = createSlice({
     },
     setItemIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
+    },
+    setSectionLoading: (state, action: PayloadAction<boolean>) => {
+      state.isSectionLoading = action.payload;
     },
     setBackground: (state, action: PayloadAction<string>) => {
       state.background = action.payload;
@@ -420,6 +424,7 @@ export const {
   _updateArrangements,
   setActiveItem,
   setItemIsLoading,
+  setSectionLoading,
   _updateSlides,
   _updateBibleInfo,
   _updateFormattedSections,
