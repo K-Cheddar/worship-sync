@@ -7,7 +7,6 @@ interface OverlayPreviewProps {
   overlay: any;
   defaultStyles: any;
   onApply: () => void;
-  isMobile: boolean;
   secondaryAction?: React.ReactNode;
 }
 
@@ -15,7 +14,6 @@ const OverlayPreview = ({
   overlay,
   defaultStyles,
   onApply,
-  isMobile,
   secondaryAction,
 }: OverlayPreviewProps) => {
   const getOverlayInfo = () => {
@@ -76,12 +74,12 @@ const OverlayPreview = ({
   const overlayInfoKey = getOverlayInfoKey();
 
   return (
-    <div className="flex flex-col gap-2 w-fit">
-      <div className="bg-gray-600 w-fit relative">
+    <div className="flex flex-col gap-2 w-full">
+      <div className="bg-gray-600 w-full relative">
         <DisplayWindow
           showBorder
           displayType="stream"
-          width={isMobile ? 85 : 25}
+          className="w-full"
           {...{ [overlayInfoKey]: overlayInfo }}
         />
       </div>

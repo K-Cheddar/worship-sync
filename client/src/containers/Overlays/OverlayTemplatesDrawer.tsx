@@ -142,7 +142,7 @@ const OverlayTemplatesDrawer = ({
       {currentTypeTemplates.length > 0 && (
         <>
           <h4 className="text-sm font-semibold mb-2">Custom Templates</h4>
-          <ul className="flex flex-col gap-2 w-fit">
+          <ul className="flex flex-col gap-2 w-full">
             {currentTypeTemplates.map((template) => (
               <li
                 key={template.id}
@@ -218,7 +218,6 @@ const OverlayTemplatesDrawer = ({
                       formatting: template.formatting,
                     })
                   }
-                  isMobile={isMobile}
                   secondaryAction={
                     <Button
                       className="justify-center flex-1 text-sm"
@@ -250,7 +249,6 @@ const OverlayTemplatesDrawer = ({
               formatting: defaultParticipantOverlayStyles,
             });
           }}
-          isMobile={isMobile}
         />
       )}
       {selectedOverlay.type === "stick-to-bottom" && (
@@ -263,7 +261,6 @@ const OverlayTemplatesDrawer = ({
               formatting: defaultStbOverlayStyles,
             });
           }}
-          isMobile={isMobile}
         />
       )}
       {selectedOverlay.type === "qr-code" && (
@@ -276,7 +273,6 @@ const OverlayTemplatesDrawer = ({
               formatting: defaultQrCodeOverlayStyles,
             });
           }}
-          isMobile={isMobile}
         />
       )}
       {selectedOverlay.type === "image" && (
@@ -289,7 +285,6 @@ const OverlayTemplatesDrawer = ({
               formatting: defaultImageOverlayStyles,
             });
           }}
-          isMobile={isMobile}
         />
       )}
     </Drawer>

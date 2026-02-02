@@ -537,6 +537,7 @@ const OverlayEditor = ({
             <StyleEditor
               formatting={selectedOverlay.formatting || {}}
               onChange={handleFormattingChange}
+              overlayType={selectedOverlay.type}
               className="p-2 flex-1 lg:overflow-y-auto"
             />
           </div>

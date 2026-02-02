@@ -30,6 +30,7 @@ const DisplayParticipantOverlay = forwardRef<
     const overlayTimeline = useRef<GSAPTimeline | null>(null);
     const prevOverlayTimeline = useRef<GSAPTimeline | null>(null);
     const containerXPercent = useRef(0);
+    const containerLeftPercent = useRef(50);
     const containerOpacity = useRef(1);
 
     const currentStyles = {
@@ -41,6 +42,11 @@ const DisplayParticipantOverlay = forwardRef<
       ...defaultParticipantOverlayStyles,
       ...prevParticipantOverlayInfo.formatting,
     };
+
+    const position =
+      currentStyles.participantOverlayPosition ?? "left";
+    const isCenter = position === "center";
+    const offScreenXPercent = position === "right" ? 105 : -105;
 
     // Get participant data for children
     const participantData = [
@@ -68,62 +74,109 @@ const DisplayParticipantOverlay = forwardRef<
         ];
         const targets = [participantOverlayRef.current, ...innerElements];
 
-        overlayTimeline.current = gsap
-          .timeline()
-          .set(targets, { xPercent: -105, opacity: 0 });
+        if (isCenter) {
+          overlayTimeline.current = gsap
+            .timeline()
+            .set(participantOverlayRef.current, {
+              opacity: 0,
+              xPercent: -50,
+            })
+            .set(innerElements, { xPercent: 0, opacity: 0 });
+        } else {
+          overlayTimeline.current = gsap
+            .timeline()
+            .set(targets, { xPercent: offScreenXPercent, opacity: 0 });
+        }
 
         // Only animate if there is overlay info
         if (participantData.length > 0) {
+          const enterProps = isCenter
+            ? {
+                duration: 2.5,
+                ease: "power1.out" as const,
+                opacity: 1,
+                onUpdate: () => {
+                  if (participantOverlayRef.current) {
+                    containerLeftPercent.current = 50;
+                    containerOpacity.current = gsap.getProperty(
+                      participantOverlayRef.current,
+                      "opacity"
+                    ) as number;
+                  }
+                },
+              }
+            : {
+                xPercent: 0,
+                duration: 2.5,
+                ease: "power1.out" as const,
+                opacity: 1,
+                onUpdate: () => {
+                  if (participantOverlayRef.current) {
+                    containerXPercent.current = gsap.getProperty(
+                      participantOverlayRef.current,
+                      "xPercent"
+                    ) as number;
+                    containerOpacity.current = gsap.getProperty(
+                      participantOverlayRef.current,
+                      "opacity"
+                    ) as number;
+                  }
+                },
+              };
+
           overlayTimeline.current = gsap
             .timeline()
-            .to(participantOverlayRef.current, {
-              xPercent: currentStyles.left,
-              duration: 2.5,
-              ease: "power1.out",
-              opacity: 1,
-              onUpdate: () => {
-                if (participantOverlayRef.current) {
-                  containerXPercent.current = gsap.getProperty(
-                    participantOverlayRef.current,
-                    "xPercent"
-                  ) as number;
-                  containerOpacity.current = gsap.getProperty(
-                    participantOverlayRef.current,
-                    "opacity"
-                  ) as number;
-                }
-              },
-            })
+            .to(participantOverlayRef.current, enterProps)
             .to(
               innerElements,
-              {
-                xPercent: 0,
-                opacity: 1,
-                duration: 2.5,
-                ease: "power1.out",
-                stagger: 0.5,
-              },
-              "-=2.25"
+              isCenter
+                ? { opacity: 1, duration: 2.5, ease: "power1.out", stagger: 0.5 }
+                : {
+                    xPercent: 0,
+                    opacity: 1,
+                    duration: 2.5,
+                    ease: "power1.out",
+                    stagger: 0.5,
+                  },
+              isCenter ? "-=2" : "-=2.25"
             )
-            .to(participantOverlayRef.current, {
-              xPercent: -105,
-              duration: 2.5,
-              opacity: 0,
-              ease: "none",
-              delay: participantOverlayInfo.duration,
-              onUpdate: () => {
-                if (participantOverlayRef.current) {
-                  containerXPercent.current = gsap.getProperty(
-                    participantOverlayRef.current,
-                    "xPercent"
-                  ) as number;
-                  containerOpacity.current = gsap.getProperty(
-                    participantOverlayRef.current,
-                    "opacity"
-                  ) as number;
-                }
-              },
-            });
+            .to(
+              participantOverlayRef.current,
+              isCenter
+                ? {
+                    duration: 2.5,
+                    opacity: 0,
+                    ease: "none",
+                    delay: participantOverlayInfo.duration,
+                    onUpdate: () => {
+                      if (participantOverlayRef.current) {
+                        containerOpacity.current = gsap.getProperty(
+                          participantOverlayRef.current,
+                          "opacity"
+                        ) as number;
+                      }
+                    },
+                  }
+                : {
+                    xPercent: offScreenXPercent,
+                    duration: 2.5,
+                    opacity: 0,
+                    ease: "none",
+                    delay: participantOverlayInfo.duration,
+                    onUpdate: () => {
+                      if (participantOverlayRef.current) {
+                        containerXPercent.current = gsap.getProperty(
+                          participantOverlayRef.current,
+                          "xPercent"
+                        ) as number;
+                        containerOpacity.current = gsap.getProperty(
+                          participantOverlayRef.current,
+                          "opacity"
+                        ) as number;
+                      }
+                    },
+                  }
+            );
         }
       },
       {
@@ -152,24 +205,34 @@ const DisplayParticipantOverlay = forwardRef<
         prevOverlayTimeline.current = gsap
           .timeline()
           .set(prevParticipantOverlayRef.current, {
-            xPercent: containerXPercent.current,
-            opacity: containerOpacity.current,
+            ...(isCenter
+              ? {
+                  opacity: containerOpacity.current,
+                  xPercent: -50,
+                }
+              : {
+                  xPercent: containerXPercent.current,
+                  opacity: containerOpacity.current,
+                }),
           });
 
         if (prevParticipantData.length > 0) {
           prevOverlayTimeline.current = gsap
             .timeline()
             .to(prevParticipantOverlayRef.current, {
-              xPercent: -105,
-              opacity: 0,
+              ...(isCenter
+                ? { opacity: 0 }
+                : { xPercent: offScreenXPercent, opacity: 0 }),
               duration: 1.5,
               ease: "power1.out",
               onUpdate: () => {
                 if (prevParticipantOverlayRef.current) {
-                  containerXPercent.current = gsap.getProperty(
-                    prevParticipantOverlayRef.current,
-                    "xPercent"
-                  ) as number;
+                  if (!isCenter) {
+                    containerXPercent.current = gsap.getProperty(
+                      prevParticipantOverlayRef.current,
+                      "xPercent"
+                    ) as number;
+                  }
                   containerOpacity.current = gsap.getProperty(
                     prevParticipantOverlayRef.current,
                     "opacity"
@@ -181,7 +244,7 @@ const DisplayParticipantOverlay = forwardRef<
       },
       {
         scope: prevParticipantOverlayRef,
-        dependencies: [prevParticipantOverlayInfo],
+        dependencies: [prevParticipantOverlayInfo, participantOverlayInfo],
       }
     );
 

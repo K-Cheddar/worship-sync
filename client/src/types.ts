@@ -323,6 +323,8 @@ export type OverlayFormatting = {
   alignItems?: "flex-start" | "flex-end" | "center" | "baseline" | "stretch";
   flexWrap?: "nowrap" | "wrap" | "wrap-reverse";
   children?: OverlayChild[];
+  /** Participant overlay only: horizontal position on screen */
+  participantOverlayPosition?: "left" | "center" | "right";
 };
 
 export type OverlayChild = Omit<OverlayFormatting, "children"> & {
