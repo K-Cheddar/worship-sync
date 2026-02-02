@@ -36,7 +36,7 @@ const SlideBoxes = ({
   return (
     <section
       className={cn(
-        "ml-1 lg:w-[12vw] max-lg:w-full lg:flex-[0_0_30%] w-full max-lg:max-h-[25vh] overflow-y-auto",
+        "w-full max-lg:max-h-[25vh] overflow-y-auto",
         className
       )}
     >
@@ -48,9 +48,8 @@ const SlideBoxes = ({
         return (
           <span
             key={box.id}
-            className={`flex gap-1 bg-gray-600 border-gray-300 ${
-              index !== boxes.length - 1 && "border-b"
-            } ${selectedBox === index && "bg-gray-800"}`}
+            className={`flex gap-1 bg-gray-600 border-gray-300 ${index !== boxes.length - 1 && "border-b"
+              } ${selectedBox === index && "bg-gray-800"}`}
           >
             <Button
               truncate

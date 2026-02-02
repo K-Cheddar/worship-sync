@@ -73,6 +73,7 @@ interface ElectronAPI {
   
   // Update event listeners
   onUpdateAvailable?: (callback: (info: { version: string; releaseDate?: string }) => void) => () => void;
+  onUpdateNotAvailable?: (callback: () => void) => () => void;
   onUpdateDownloaded?: (callback: (info: { version: string; releaseDate?: string }) => void) => () => void;
   onUpdateDownloadProgress?: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => () => void;
   onUpdateError?: (callback: (error: { message: string }) => void) => () => void;

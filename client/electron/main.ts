@@ -508,17 +508,38 @@ app.whenReady().then(() => {
       }, 60 * 60 * 1000);
     });
   
-    // Log events for debugging (no UI notifications)
+    // Log events and forward to renderer for About modal UI
     autoUpdater.on("update-available", (info) => {
       console.log("[Auto-Updater] Update available, downloading in background...", info.version);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update-available", { version: info.version, releaseDate: (info as { releaseDate?: string }).releaseDate });
+      }
     });
-  
+
+    autoUpdater.on("update-not-available", () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update-not-available");
+      }
+    });
+
     autoUpdater.on("update-downloaded", (info) => {
       console.log("[Auto-Updater] Update downloaded, will install on app quit", info.version);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update-downloaded", { version: info.version });
+      }
     });
-  
+
+    autoUpdater.on("download-progress", (progress: { percent: number; transferred: number; total: number }) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update-download-progress", { percent: progress.percent, transferred: progress.transferred, total: progress.total });
+      }
+    });
+
     autoUpdater.on("error", (error) => {
       console.error("[Auto-Updater] Error:", error);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update-error", { message: (error as Error).message });
+      }
     });
   }
   
@@ -555,6 +576,26 @@ ipcMain.handle("is-electron", () => {
 
 ipcMain.handle("is-dev", () => {
   return isDev;
+});
+
+// Auto-updater IPC (only functional in production builds)
+ipcMain.handle("check-for-updates", async () => {
+  if (isDev) {
+    return { available: false, message: "Updates are disabled in development." };
+  }
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    const updateInfo = result?.updateInfo;
+    return { available: !!updateInfo, updateInfo: updateInfo ?? undefined };
+  } catch (err) {
+    return { available: false, error: (err as Error).message };
+  }
+});
+
+ipcMain.handle("quit-and-install", () => {
+  if (!isDev) {
+    autoUpdater.quitAndInstall(false, true);
+  }
 });
 
 // Generic window creation helper
