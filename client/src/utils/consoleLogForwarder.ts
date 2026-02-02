@@ -25,7 +25,7 @@ const sendToServer = (level: string, messages: string[]) => {
 };
 
 export const initConsoleLogForwarder = () => {
-  const originalLog = console.log;
+  // const originalLog = console.log;
   const originalWarn = console.warn;
   const originalError = console.error;
 

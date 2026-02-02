@@ -13,7 +13,7 @@ const LoadingOverlay = ({
   children,
   className,
 }: LoadingOverlayProps) => (
-  <div className={cn("relative", className)}>
+  <div className={cn("relative", className, className?.includes("min-h-0") && "overflow-hidden")}>
     {children}
     {!!isLoading && (
       <div
