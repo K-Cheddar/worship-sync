@@ -575,7 +575,7 @@ const ItemSlides = () => {
               tabIndex={0}
               id="item-slides-container"
               className={cn(
-                "scrollbar-variable flex-1 min-h-0 px-2 overflow-y-auto grid pb-2 focus-visible:outline-none",
+                "scrollbar-variable max-h-full px-2 overflow-y-auto grid pb-2 focus-visible:outline-none",
                 sizeConfig.cols
               )}
             >
