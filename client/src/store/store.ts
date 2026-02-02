@@ -73,6 +73,7 @@ let currentGroupId = 0;
 
 const excludedActions: string[] = [
   itemSlice.actions.setItemIsLoading.toString(),
+  itemSlice.actions.setSectionLoading.toString(),
   itemSlice.actions.setSelectedSlide.toString(),
   itemSlice.actions.setIsEditMode.toString(),
   itemSlice.actions.setHasPendingUpdate.toString(),
@@ -200,6 +201,7 @@ listenerMiddleware.startListening({
       action.type !== "item/setSelectedBox" &&
       action.type !== "item/setIsEditMode" &&
       action.type !== "item/setItemIsLoading" &&
+      action.type !== "item/setSectionLoading" &&
       action.type !== "item/setHasPendingUpdate" &&
       !!(currentState as RootState).undoable.present.item.hasPendingUpdate &&
       action.type !== "RESET"

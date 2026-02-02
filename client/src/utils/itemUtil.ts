@@ -12,6 +12,7 @@ import {
   TimerType,
   TimerStatus,
   BibleFontMode,
+  BibleInfo,
   OverflowMode,
   ItemListDetails,
   DBOverlay,
@@ -183,7 +184,6 @@ type CreateNewBibleType = {
   mediaInfo?: MediaType;
   brightness: number;
   fontMode: BibleFontMode;
-  isMobile: boolean;
 };
 
 export const createNewBible = async ({
@@ -198,7 +198,6 @@ export const createNewBible = async ({
   mediaInfo,
   brightness,
   fontMode,
-  isMobile,
 }: CreateNewBibleType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
 
@@ -221,21 +220,131 @@ export const createNewBible = async ({
       mediaInfo?.type === "video" ? mediaInfo?.placeholderImage : background,
   };
 
-  const item = formatBible({
+  const item = formatBibleFromScratch({
     item: newItem,
-    mode: fontMode,
     book,
     chapter,
     version,
     verses,
+    mode: fontMode,
+    background,
+    mediaInfo,
+    brightness,
+  });
+
+  const _item = await createNewItemInDb({ item, db });
+  return _item;
+};
+
+type FormatBibleFromScratchType = {
+  item: ItemState;
+  book: string;
+  chapter: string;
+  version: string;
+  verses: verseType[];
+  mode: BibleFontMode;
+  background: string;
+  mediaInfo?: MediaType;
+  brightness?: number;
+};
+
+export const formatBibleFromScratch = ({
+  item,
+  book,
+  chapter,
+  version,
+  verses,
+  mode,
+  background,
+  mediaInfo,
+  brightness,
+}: FormatBibleFromScratchType): ItemState =>
+  formatBible({
+    item,
+    mode,
+    verses,
+    book,
+    chapter,
+    version,
     background,
     mediaInfo,
     brightness,
     isNew: true,
   });
 
-  const _item = await createNewItemInDb({ item, db });
-  return _item;
+export const getBibleVerseRange = (
+  bibleInfo: BibleInfo | undefined
+): { startVerse: number; endVerse: number } => {
+  if (!bibleInfo?.verses?.length)
+    return { startVerse: 0, endVerse: 0 };
+  return {
+    startVerse: bibleInfo.verses[0].index,
+    endVerse: bibleInfo.verses[bibleInfo.verses.length - 1].index,
+  };
+};
+
+export const getBibleItemName = (
+  book: string,
+  chapter: string,
+  verses: verseType[],
+  version: string
+): string => {
+  if (!verses?.length)
+    return `${book} ${chapter} ${version.toUpperCase()}`;
+  const startName = verses[0].name;
+  const endName = verses[verses.length - 1].name;
+  const verseRange =
+    startName === endName ? startName : `${startName} - ${endName}`;
+  return `${book} ${chapter}:${verseRange} ${version.toUpperCase()}`;
+};
+
+export const buildBibleOpenAtSearchParams = (
+  bibleInfo: BibleInfo | undefined
+): URLSearchParams | null => {
+  if (!bibleInfo?.book || !bibleInfo?.chapter || !bibleInfo?.version)
+    return null;
+  return new URLSearchParams({
+    book: bibleInfo.book,
+    chapter: bibleInfo.chapter,
+    version: bibleInfo.version,
+  });
+};
+
+type FormatBibleItemForVersionType = {
+  item: ItemState;
+  newVersion: string;
+  newVerses: verseType[];
+};
+export const formatBibleItemForVersion = ({
+  item,
+  newVersion,
+  newVerses,
+}: FormatBibleItemForVersionType): ItemState | null => {
+  const bibleInfo = item.bibleInfo;
+  if (!bibleInfo?.book || !bibleInfo?.chapter) return null;
+  const { startVerse, endVerse } = getBibleVerseRange(bibleInfo);
+  const versesToUse = newVerses.filter(
+    (v) => v.index >= startVerse && v.index <= endVerse
+  );
+  const verses = versesToUse.length ? versesToUse : newVerses;
+  const newName = getBibleItemName(
+    bibleInfo.book,
+    bibleInfo.chapter,
+    verses,
+    newVersion
+  );
+  const firstBox = item.slides?.[0]?.boxes?.[0];
+  return formatBibleFromScratch({
+    item: { ...item, name: newName, slides: [] },
+    book: bibleInfo.book,
+    chapter: bibleInfo.chapter,
+    version: newVersion,
+    verses,
+    mode: bibleInfo.fontMode,
+    background: firstBox?.background ?? item.background ?? "",
+    mediaInfo: firstBox?.mediaInfo,
+    brightness: firstBox?.brightness,
+  });
 };
 
 type updateFormattedSectionsType = {

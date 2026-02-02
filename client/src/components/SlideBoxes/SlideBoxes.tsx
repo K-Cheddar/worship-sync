@@ -35,7 +35,10 @@ const SlideBoxes = ({
 
   return (
     <section
-      className={cn("ml-1 lg:w-[12vw] max-lg:w-full", className)}
+      className={cn(
+        "ml-1 lg:w-[12vw] max-lg:w-full lg:flex-[0_0_30%] w-full max-lg:max-h-[25vh] overflow-y-auto",
+        className
+      )}
     >
       <p className="text-center font-semibold border-b-2 border-black text-sm flex items-center gap-1 justify-center pb-1">
         <Icon svg={BoxIcon} color="#93c5fd" />

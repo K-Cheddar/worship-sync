@@ -3,8 +3,10 @@ import SlideEditor from "../../containers/ItemEditor/SlideEditor";
 import ItemSlides from "../../containers/ItemSlides/ItemSlides";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { DBItem } from "../../types";
-import { useDispatch } from "../../hooks";
+import { useDispatch, useSelector } from "../../hooks";
 import { setActiveItem, setItemIsLoading } from "../../store/itemSlice";
+import { RootState } from "../../store/store";
+import LoadingOverlay from "../../components/LoadingOverlay/LoadingOverlay";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setActiveItemInList } from "../../store/itemListSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -35,6 +37,10 @@ const Item = () => {
     "loading"
   );
   const dispatch = useDispatch();
+  const { isLoading, isSectionLoading } = useSelector(
+    (state: RootState) => state.undoable.present.item
+  );
+  const showLoadingOverlay = isLoading || isSectionLoading;
 
   useEffect(() => {
     const selectItem = async () => {
@@ -63,8 +69,12 @@ const Item = () => {
 
   return (
     <ErrorBoundary>
-      <SlideEditor access={access} />
-      <ItemSlides />
+      <div className="flex-1 min-h-0 flex flex-col">
+        <SlideEditor access={access} />
+        <LoadingOverlay isLoading={!!showLoadingOverlay} className="flex-1 min-h-0">
+          <ItemSlides />
+        </LoadingOverlay>
+      </div>
     </ErrorBoundary>
   );
 };

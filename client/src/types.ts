@@ -158,6 +158,7 @@ export type ItemState = ItemProperties & {
   selectedBox: number;
   isEditMode?: boolean;
   isLoading?: boolean;
+  isSectionLoading?: boolean;
   hasPendingUpdate?: boolean;
 };
 

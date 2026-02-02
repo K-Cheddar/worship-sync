@@ -93,6 +93,39 @@ const Bible = () => {
 
   const createItemName = decodeURI(searchParams.get("name") || "");
 
+  const hasAppliedOpenAtParams = useRef(false);
+  // Open at location from URL params (e.g. from "Open Bible at location" on item page)
+  useEffect(() => {
+    if (hasAppliedOpenAtParams.current) return;
+    const paramBook = searchParams.get("book");
+    const paramChapter = searchParams.get("chapter");
+    const paramVersion = searchParams.get("version");
+    if (
+      !books?.length ||
+      paramBook == null ||
+      paramChapter == null ||
+      paramVersion == null
+    )
+      return;
+
+    const bookName = decodeURIComponent(paramBook);
+    const chapterName = decodeURIComponent(paramChapter);
+    const versionVal = decodeURIComponent(paramVersion);
+
+    const bookIndex = books.findIndex((b) => b.name === bookName);
+    if (bookIndex === -1) return;
+    const bookChapters = books[bookIndex]?.chapters;
+    const chapterIndex =
+      bookChapters?.findIndex((c) => c.name === chapterName) ?? -1;
+    if (chapterIndex === -1) return;
+
+    hasAppliedOpenAtParams.current = true;
+    dispatch(setBook(bookIndex));
+    dispatch(setChapters(bookChapters || []));
+    dispatch(setChapter(chapterIndex));
+    dispatch(setVersion(versionVal));
+  }, [books, dispatch, searchParams]);
+
   const {
     db,
     bibleDb,
@@ -212,9 +245,6 @@ const Bible = () => {
     true
   );
 
-  const versionOptions = bibleVersions.map(({ value, label }) => {
-    return { value, label };
-  });
 
   const submitVerses = async () => {
     const versesToUse = verses.filter(
@@ -257,9 +287,8 @@ const Bible = () => {
 
     const bookName = books[book]?.name || "";
     const chapterName = chapters[chapter]?.name || "";
-    const sendItemName = `${bookName} ${chapterName}:${
-      verseToUse.name
-    } ${version.toUpperCase()}`;
+    const sendItemName = `${bookName} ${chapterName}:${verseToUse.name
+      } ${version.toUpperCase()}`;
     const _item = createItemFromProps({
       name: sendItemName,
       type: "bible",
@@ -405,7 +434,7 @@ const Bible = () => {
       {bibleDbProgress !== 100 && (
         <div
           data-testid="loading-overlay"
-          className="absolute top-0 left-0 z-[5] bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8"
+          className="absolute top-0 left-0 z-5 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8"
         >
           <p>
             Setting up <span className="font-bold">Bible</span>
@@ -427,7 +456,7 @@ const Bible = () => {
             label="Version"
             className="max-lg:w-full flex justify-center"
             hideLabel
-            options={versionOptions}
+            options={bibleVersions}
           />
           <Input
             svg={search ? X : undefined}
