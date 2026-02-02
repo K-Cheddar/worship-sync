@@ -55,6 +55,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { sortNamesInList } from "../../utils/sort";
 import {
   deleteUnusedBibleItems,
+  deleteUnusedHeadings,
   deleteUnusedOverlays,
   // formatAllSongs,
   // formatAllDocs,
@@ -177,6 +178,9 @@ const Controller = () => {
 
       // delete unneeded bible items
       deleteUnusedBibleItems({ db, allItems });
+
+      // delete unused headings
+      deleteUnusedHeadings({ db, allItems });
 
       // delete unused overlays
       deleteUnusedOverlays(db);

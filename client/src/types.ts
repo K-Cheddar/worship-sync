@@ -16,6 +16,7 @@ export type ServiceItem = {
     | "timer"
     | "announcement"
     | "free"
+    | "heading"
     | string;
 };
 
@@ -101,7 +102,16 @@ export type DBItem = ItemProperties & {
   updatedAt?: string;
 };
 
-export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "";
+export type DBHeading = {
+  _id: string;
+  name: string;
+  type: "heading";
+  _rev?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "heading" | "";
 export type TimerStatus = "running" | "paused" | "stopped";
 export type TimerType = "timer" | "countdown";
 export type TimerInfo = {

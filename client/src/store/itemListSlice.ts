@@ -63,11 +63,17 @@ export const itemListSlice = createSlice({
         (e) => e.listId === state.selectedItemListId
       );
       if (selectedIndex !== -1) {
-        state.list.splice(selectedIndex + 1, 0, newItem);
-      } else {
+        const index = newItem.type === "heading" ? selectedIndex : selectedIndex + 1;
+        state.list.splice(index, 0, newItem);
+      } else if (newItem.type !== "heading") {
         state.list.push(newItem);
+      } else {
+        state.list.unshift(newItem);
       }
-      state.selectedItemListId = newItem.listId;
+      if (newItem.type !== "heading") {
+
+        state.selectedItemListId = newItem.listId;
+      }
       state.hasPendingUpdate = true;
     },
     setItemListIsLoading: (state, action: PayloadAction<boolean>) => {

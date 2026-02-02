@@ -6,6 +6,7 @@ import {
   MediaType,
   ServiceItem,
   DBItem,
+  DBHeading,
   verseType,
   ItemList,
   DBItemListDetails,
@@ -646,6 +647,78 @@ export const createNewItemInDb = async ({
     });
     return item;
   }
+};
+
+type CreateNewHeadingType = {
+  name: string;
+  list: ServiceItem[];
+  db: PouchDB.Database | undefined;
+};
+
+export type NewHeadingResult = {
+  name: string;
+  _id: string;
+  type: "heading";
+};
+
+export const createNewHeading = async ({
+  name,
+  list,
+  db,
+}: CreateNewHeadingType): Promise<NewHeadingResult> => {
+  const _name = makeUnique({ value: name, property: "name", list });
+  const _id = makeUnique({ value: _name, property: "_id", list });
+
+  if (db) {
+    try {
+      const existing = (await db.get(_id)) as DBHeading | undefined;
+      if (existing?.type === "heading") {
+        return { name: existing.name, _id: existing._id, type: "heading" };
+      }
+    } catch {
+      // Doc does not exist, create new one
+    }
+  }
+
+  const doc: DBHeading = {
+    _id,
+    name: _name,
+    type: "heading",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (db) {
+    await db.put(doc);
+  }
+
+  return { name: _name, _id, type: "heading" };
+};
+
+type UpdateHeadingNameType = {
+  db: PouchDB.Database | undefined;
+  headingId: string;
+  newName: string;
+};
+
+export const updateHeadingName = async ({
+  db,
+  headingId,
+  newName,
+}: UpdateHeadingNameType): Promise<void> => {
+  if (!db) return;
+  let doc: DBHeading;
+  try {
+    doc = (await db.get(headingId)) as DBHeading;
+  } catch {
+    return;
+  }
+  if (!doc || doc.type !== "heading") return;
+  await db.put({
+    ...doc,
+    name: newName,
+    updatedAt: new Date().toISOString(),
+  });
 };
 
 type UpdateItemInListType = {
