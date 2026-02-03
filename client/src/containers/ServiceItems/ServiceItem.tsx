@@ -19,9 +19,11 @@ type ServiceItemsProps = {
   isActive: boolean;
   timerValue?: number;
   selectedItemListId: string | undefined;
+  selectedListIds: Set<string>;
   location: Location;
   item: ServiceItemType;
   initialItems: string[];
+  onItemClick: (listId: string, e: React.MouseEvent) => void;
 };
 
 const ServiceItem = ({
@@ -29,8 +31,10 @@ const ServiceItem = ({
   timerValue,
   item,
   selectedItemListId,
+  selectedListIds,
   location,
   initialItems,
+  onItemClick,
 }: ServiceItemsProps) => {
   const dispatch = useDispatch();
   const serviceItemRef = useRef<HTMLElement | null>(null);
@@ -41,7 +45,9 @@ const ServiceItem = ({
   const previousItem = useRef<ServiceItemType | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const isSelected = item.listId === selectedItemListId;
+  const isSelected =
+    selectedListIds.has(item.listId) ||
+    (selectedListIds.size === 0 && item.listId === selectedItemListId);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -152,6 +158,7 @@ const ServiceItem = ({
         setNodeRef(element);
         serviceItemRef.current = element;
       }}
+      data-list-id={item.listId}
       title={item.name}
       className={cn(
         "border-b-2 border-r-4 overflow-hidden",
@@ -168,6 +175,7 @@ const ServiceItem = ({
       displayId={`service-item-${item.listId}`}
       id={item.listId}
       isActive={isActive}
+      onClick={(e) => onItemClick(item.listId, e)}
     />
   );
 };

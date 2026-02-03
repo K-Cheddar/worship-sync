@@ -12,6 +12,7 @@ type LeftPanelButtonProps = {
   title: string;
   type: string;
   id: string;
+  onClick?: (e: React.MouseEvent) => void;
   actions?: {
     action: (itemId: string) => void;
     svg: FunctionComponent<{}>;
@@ -39,6 +40,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
       displayId,
       timerValue,
       isActive,
+      onClick,
       ...rest
     },
     ref
@@ -71,6 +73,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           padding="py-1 px-2"
           component="link"
           to={`/controller/${to}`}
+          onClick={onClick}
         >
           {image && !isActive && (
             <img src={image} className="w-14 max-w-[30%]" alt={title} />

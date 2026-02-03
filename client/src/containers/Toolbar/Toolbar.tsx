@@ -129,7 +129,6 @@ const Toolbar = ({ className }: { className: string }) => {
             <ToolbarButton
               svg={SquarePen}
               onClick={() => setSection("slide-tools")}
-              disabled={!onItemPage}
               hidden={!onItemPage}
               isActive={section === "slide-tools"}
             >
@@ -138,7 +137,6 @@ const Toolbar = ({ className }: { className: string }) => {
             <ToolbarButton
               svg={Pencil}
               onClick={() => setSection("box-tools")}
-              disabled={!onItemPage}
               hidden={!onItemPage}
               isActive={section === "box-tools"}
             >
@@ -149,7 +147,6 @@ const Toolbar = ({ className }: { className: string }) => {
                 <ToolbarButton
                   svg={MonitorPlay}
                   onClick={() => setSection("stream-format")}
-                  disabled={!onItemPage}
                   hidden={!onItemPage}
                   isActive={section === "stream-format"}
                 >
@@ -158,8 +155,7 @@ const Toolbar = ({ className }: { className: string }) => {
                 <ToolbarButton
                   svg={Timer}
                   onClick={() => setSection("timer-manager")}
-                  disabled={!onItemPage || type !== "timer"}
-                  hidden={!onItemPage}
+                  hidden={!onItemPage || type !== "timer"}
                   isActive={section === "timer-manager"}
                 >
                   Timer Manager
@@ -167,7 +163,6 @@ const Toolbar = ({ className }: { className: string }) => {
                 <ToolbarButton
                   svg={SquarePen}
                   onClick={() => setSection("item-tools")}
-                  disabled={!onItemPage}
                   hidden={!onItemPage}
                   isActive={section === "item-tools"}
                 >
@@ -188,8 +183,8 @@ const Toolbar = ({ className }: { className: string }) => {
               className={cn(
                 section !== "settings" && "hidden",
                 location.pathname.includes("preferences") &&
-                  !location.pathname.includes("quick-links") &&
-                  "outline-2 outline-white"
+                !location.pathname.includes("quick-links") &&
+                "outline-2 outline-white"
               )}
               variant="tertiary"
               svg={Settings}
@@ -202,7 +197,7 @@ const Toolbar = ({ className }: { className: string }) => {
               className={cn(
                 section !== "settings" && "hidden",
                 location.pathname.includes("quick-links") &&
-                  "outline-2 outline-white"
+                "outline-2 outline-white"
               )}
               variant="tertiary"
               svg={RectangleEllipsis}
@@ -215,8 +210,8 @@ const Toolbar = ({ className }: { className: string }) => {
               className={cn(
                 section !== "settings" && "hidden",
                 location.pathname.includes("monitor-settings") &&
-                  !location.pathname.includes("monitor-controls") &&
-                  "outline-2 outline-white"
+                !location.pathname.includes("monitor-controls") &&
+                "outline-2 outline-white"
               )}
               variant="tertiary"
               svg={Monitor}
@@ -230,7 +225,7 @@ const Toolbar = ({ className }: { className: string }) => {
                 className={cn(
                   section !== "settings" && "hidden",
                   location.pathname.includes("monitor-controls") &&
-                    "outline-2 outline-white"
+                  "outline-2 outline-white"
                 )}
                 variant="tertiary"
                 svg={MonitorCog}
