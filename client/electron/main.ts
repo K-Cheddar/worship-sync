@@ -1,7 +1,21 @@
-import { app, BrowserWindow, ipcMain, screen, protocol, session, dialog } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  screen,
+  protocol,
+  session,
+  dialog,
+} from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, createReadStream, statSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  createReadStream,
+  statSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import updaterPkg from "electron-updater";
 
 import { WindowStateManager, type WindowType } from "./windowState";
@@ -11,6 +25,11 @@ import {
   setupReadyToShow,
   focusWindow,
 } from "./windowHelpers";
+import {
+  getDisplayWindow,
+  setDisplayWindow,
+  hasDisplayWindow,
+} from "./displayWindowStore";
 import { VideoCacheManager } from "./videoCache";
 
 const { autoUpdater } = updaterPkg;
@@ -26,7 +45,7 @@ const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
  */
 const getIconPath = (): string | undefined => {
   const iconName = process.platform === "win32" ? "icon.ico" : "icon.png";
-  
+
   // Try different paths in order of preference
   const possiblePaths = [
     // Production: electron-builder puts buildResources in app resources
@@ -78,8 +97,6 @@ if (!app.isPackaged) {
 }
 
 let mainWindow: BrowserWindow | null = null;
-let projectorWindow: BrowserWindow | null = null;
-let monitorWindow: BrowserWindow | null = null;
 let windowStateManager: WindowStateManager;
 let videoCacheManager: VideoCacheManager;
 let isUploadInProgress = false;
@@ -92,8 +109,9 @@ const notifyWindowStateChanged = () => {
 };
 
 const createProjectorWindow = () => {
-  if (projectorWindow) {
-    projectorWindow.focus();
+  const existing = getDisplayWindow("projector") as BrowserWindow | null;
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
     return;
   }
 
@@ -107,28 +125,24 @@ const createProjectorWindow = () => {
     dirname: __dirname,
   });
 
-  setWindowByType("projector", newWindow);
+  setDisplayWindow("projector", newWindow);
 
   setupReadyToShow(newWindow, "projector", windowStateManager);
 
-  setupWindowEventListeners(
-    newWindow,
-    "projector",
-    windowStateManager,
-    () => {
-      // Only mark as closed if app is not closing (user manually closed the window)
-      if (!isAppClosing) {
-        windowStateManager.markWindowClosed("projector");
-      }
-      setWindowByType("projector", null);
-      notifyWindowStateChanged();
+  setupWindowEventListeners(newWindow, "projector", windowStateManager, () => {
+    // Only mark as closed if app is not closing (user manually closed the window)
+    if (!isAppClosing) {
+      windowStateManager.markWindowClosed("projector");
     }
-  );
+    setDisplayWindow("projector", null);
+    notifyWindowStateChanged();
+  });
 };
 
 const createMonitorWindow = () => {
-  if (monitorWindow) {
-    monitorWindow.focus();
+  const existing = getDisplayWindow("monitor") as BrowserWindow | null;
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
     return;
   }
 
@@ -142,23 +156,18 @@ const createMonitorWindow = () => {
     dirname: __dirname,
   });
 
-  setWindowByType("monitor", newWindow);
+  setDisplayWindow("monitor", newWindow);
 
   setupReadyToShow(newWindow, "monitor", windowStateManager);
 
-  setupWindowEventListeners(
-    newWindow,
-    "monitor",
-    windowStateManager,
-    () => {
-      // Only mark as closed if app is not closing (user manually closed the window)
-      if (!isAppClosing) {
-        windowStateManager.markWindowClosed("monitor");
-      }
-      setWindowByType("monitor", null);
-      notifyWindowStateChanged();
+  setupWindowEventListeners(newWindow, "monitor", windowStateManager, () => {
+    // Only mark as closed if app is not closing (user manually closed the window)
+    if (!isAppClosing) {
+      windowStateManager.markWindowClosed("monitor");
     }
-  );
+    setDisplayWindow("monitor", null);
+    notifyWindowStateChanged();
+  });
 };
 
 const createWindow = () => {
@@ -169,12 +178,12 @@ const createWindow = () => {
     width: 1200,
     height: 800,
     show: false,
-      webPreferences: {
-        preload: join(__dirname, "../preload/preload.mjs"),
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: false,
-      },
+    webPreferences: {
+      preload: join(__dirname, "../preload/preload.mjs"),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+    },
     autoHideMenuBar: !isDev, // Hide menu bar in production
     ...(iconPath && { icon: iconPath }), // Only set icon if found
   });
@@ -193,7 +202,7 @@ const createWindow = () => {
     // In production, load from the built files
     // electron-vite outputs renderer to dist-electron/renderer/
     const indexPath = join(__dirname, "../renderer/index.html");
-    
+
     mainWindow.loadFile(indexPath).catch((err) => {
       console.error("Failed to load index.html:", err);
     });
@@ -201,10 +210,12 @@ const createWindow = () => {
 
   // Log errors (only in development)
   if (isDev) {
-    mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
-      console.error("Failed to load:", errorCode, errorDescription);
-    });
-
+    mainWindow.webContents.on(
+      "did-fail-load",
+      (event, errorCode, errorDescription) => {
+        console.error("Failed to load:", errorCode, errorDescription);
+      },
+    );
   }
 
   // When main window is ready, open projector and monitor windows only if they were previously open
@@ -225,12 +236,13 @@ const createWindow = () => {
   mainWindow.on("close", async (event) => {
     if (isUploadInProgress) {
       event.preventDefault();
-      
+
       const result = await dialog.showMessageBox(mainWindow!, {
         type: "warning",
         title: "Upload in Progress",
         message: "A video upload is currently in progress.",
-        detail: "If you close the app now, your upload will be cancelled and you may lose progress. Do you want to close anyway?",
+        detail:
+          "If you close the app now, your upload will be cancelled and you may lose progress. Do you want to close anyway?",
         buttons: ["Cancel", "Close Anyway"],
         defaultId: 0,
         cancelId: 0,
@@ -241,20 +253,22 @@ const createWindow = () => {
         isUploadInProgress = false;
         isAppClosing = true;
         // Save window states before closing (preserve wasOpen: true)
-        if (projectorWindow && !projectorWindow.isDestroyed()) {
-          windowStateManager.saveWindowState("projector", projectorWindow);
+        const projWin = getDisplayWindow("projector") as BrowserWindow | null;
+        const monWin = getDisplayWindow("monitor") as BrowserWindow | null;
+        if (projWin && !projWin.isDestroyed()) {
+          windowStateManager.saveWindowState("projector", projWin);
         }
-        if (monitorWindow && !monitorWindow.isDestroyed()) {
-          windowStateManager.saveWindowState("monitor", monitorWindow);
+        if (monWin && !monWin.isDestroyed()) {
+          windowStateManager.saveWindowState("monitor", monWin);
         }
         // Close projector and monitor windows
-        if (projectorWindow) {
-          projectorWindow.close();
-          setWindowByType("projector", null);
+        if (projWin) {
+          projWin.close();
+          setDisplayWindow("projector", null);
         }
-        if (monitorWindow) {
-          monitorWindow.close();
-          setWindowByType("monitor", null);
+        if (monWin) {
+          monWin.close();
+          setDisplayWindow("monitor", null);
         }
         // Actually close the window
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -267,20 +281,22 @@ const createWindow = () => {
       // No upload in progress, close normally
       isAppClosing = true;
       // Save window states before closing (preserve wasOpen: true)
-      if (projectorWindow && !projectorWindow.isDestroyed()) {
-        windowStateManager.saveWindowState("projector", projectorWindow);
+      const projWin = getDisplayWindow("projector") as BrowserWindow | null;
+      const monWin = getDisplayWindow("monitor") as BrowserWindow | null;
+      if (projWin && !projWin.isDestroyed()) {
+        windowStateManager.saveWindowState("projector", projWin);
       }
-      if (monitorWindow && !monitorWindow.isDestroyed()) {
-        windowStateManager.saveWindowState("monitor", monitorWindow);
+      if (monWin && !monWin.isDestroyed()) {
+        windowStateManager.saveWindowState("monitor", monWin);
       }
       // Close projector and monitor windows
-      if (projectorWindow) {
-        projectorWindow.close();
-        setWindowByType("projector", null);
+      if (projWin) {
+        projWin.close();
+        setDisplayWindow("projector", null);
       }
-      if (monitorWindow) {
-        monitorWindow.close();
-        setWindowByType("monitor", null);
+      if (monWin) {
+        monWin.close();
+        setDisplayWindow("monitor", null);
       }
       mainWindow = null;
     }
@@ -300,17 +316,17 @@ app.whenReady().then(() => {
         ...details.responseHeaders,
         "Content-Security-Policy": [
           "default-src 'self' https: http: data: blob: video-cache:; " +
-          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: http:; " +
-          "style-src 'self' 'unsafe-inline' https: http: data:; " +
-          "font-src 'self' data: https: http:; " +
-          "img-src 'self' data: https: http:; " +
-          "media-src 'self' https: http: blob: video-cache:; " +
-          "connect-src 'self' https: http: ws: wss:; " +
-          "frame-src 'self' https: http:; " +
-          "worker-src 'self' blob: https:; " +
-          "child-src 'self' blob: https:; " +
-          "object-src 'none'; " +
-          "base-uri 'self';"
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: http:; " +
+            "style-src 'self' 'unsafe-inline' https: http: data:; " +
+            "font-src 'self' data: https: http:; " +
+            "img-src 'self' data: https: http:; " +
+            "media-src 'self' https: http: blob: video-cache:; " +
+            "connect-src 'self' https: http: ws: wss:; " +
+            "frame-src 'self' https: http:; " +
+            "worker-src 'self' blob: https:; " +
+            "child-src 'self' blob: https:; " +
+            "object-src 'none'; " +
+            "base-uri 'self';",
         ],
       },
     });
@@ -318,11 +334,11 @@ app.whenReady().then(() => {
 
   // Register protocol handler for video-cache:// to serve files from filesystem
   const cacheDir = join(app.getPath("userData"), "video-cache");
-  
+
   protocol.handle("video-cache", async (request) => {
     try {
       const url = new URL(request.url);
-      // For video-cache:// URLs, filename can be in hostname (video-cache://filename.mp4) 
+      // For video-cache:// URLs, filename can be in hostname (video-cache://filename.mp4)
       // or pathname (video-cache:///filename.mp4)
       // Extract from pathname first, then hostname, or parse from the full URL as fallback
       let filename = url.pathname.replace(/^\//, "").replace(/\/$/, "");
@@ -331,7 +347,9 @@ app.whenReady().then(() => {
       }
       // If still empty, try to extract from the URL string directly
       if (!filename) {
-        const urlMatch = request.url.match(new RegExp("video-cache:///?([^/?#]+)"));
+        const urlMatch = request.url.match(
+          new RegExp("video-cache:///?([^/?#]+)"),
+        );
         if (urlMatch) {
           filename = urlMatch[1];
         }
@@ -341,29 +359,27 @@ app.whenReady().then(() => {
       if (!existsSync(filePath)) {
         return new Response("Not Found", { status: 404 });
       }
-  
+
       const stat = statSync(filePath);
       const fileSize = stat.size;
-  
+
       // Electron quirk: request.headers is a plain object, not a Headers instance
       const rangeHeader =
-        (request.headers as any)["range"] ||
-        (request.headers as any)["Range"];
+        (request.headers as any)["range"] || (request.headers as any)["Range"];
 
-  
       if (rangeHeader) {
         const [startStr, endStr] = rangeHeader.replace(/bytes=/, "").split("-");
         const start = parseInt(startStr, 10);
         const end = endStr ? parseInt(endStr, 10) : fileSize - 1;
         const chunkSize = end - start + 1;
-  
+
         const nodeStream = createReadStream(filePath, { start, end });
-  
+
         // Convert Node stream → Web ReadableStream
         const webStream = new ReadableStream({
           start(controller) {
             let isClosed = false;
-            
+
             const safeClose = () => {
               if (!isClosed) {
                 isClosed = true;
@@ -374,7 +390,7 @@ app.whenReady().then(() => {
                 }
               }
             };
-            
+
             const safeError = (err: Error) => {
               if (!isClosed) {
                 isClosed = true;
@@ -385,7 +401,7 @@ app.whenReady().then(() => {
                 }
               }
             };
-            
+
             nodeStream.on("data", (chunk) => {
               if (!isClosed) {
                 try {
@@ -397,7 +413,7 @@ app.whenReady().then(() => {
                 }
               }
             });
-            
+
             nodeStream.on("end", safeClose);
             nodeStream.on("error", safeError);
           },
@@ -405,7 +421,7 @@ app.whenReady().then(() => {
             nodeStream.destroy();
           },
         });
-  
+
         return new Response(webStream, {
           status: 206,
           headers: {
@@ -416,13 +432,13 @@ app.whenReady().then(() => {
           },
         });
       }
-  
+
       // No range → full file
       const nodeStream = createReadStream(filePath);
       const webStream = new ReadableStream({
         start(controller) {
           let isClosed = false;
-          
+
           const safeClose = () => {
             if (!isClosed) {
               isClosed = true;
@@ -433,7 +449,7 @@ app.whenReady().then(() => {
               }
             }
           };
-          
+
           const safeError = (err: Error) => {
             if (!isClosed) {
               isClosed = true;
@@ -444,7 +460,7 @@ app.whenReady().then(() => {
               }
             }
           };
-          
+
           nodeStream.on("data", (chunk) => {
             if (!isClosed) {
               try {
@@ -456,7 +472,7 @@ app.whenReady().then(() => {
               }
             }
           });
-          
+
           nodeStream.on("end", safeClose);
           nodeStream.on("error", safeError);
         },
@@ -464,7 +480,7 @@ app.whenReady().then(() => {
           nodeStream.destroy();
         },
       });
-  
+
       return new Response(webStream, {
         status: 200,
         headers: {
@@ -493,26 +509,38 @@ app.whenReady().then(() => {
     // Silent background updates: auto-download and install on quit
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
-  
+
     app.whenReady().then(() => {
       // Initial check
       autoUpdater.checkForUpdates().catch((error) => {
         console.error("[Auto-Updater] Error checking for updates:", error);
       });
-  
+
       // Hourly checks
-      setInterval(() => {
-        autoUpdater.checkForUpdates().catch((error) => {
-          console.error("[Auto-Updater] Error during scheduled check:", error);
-        });
-      }, 60 * 60 * 1000);
+      setInterval(
+        () => {
+          autoUpdater.checkForUpdates().catch((error) => {
+            console.error(
+              "[Auto-Updater] Error during scheduled check:",
+              error,
+            );
+          });
+        },
+        60 * 60 * 1000,
+      );
     });
-  
+
     // Log events and forward to renderer for About modal UI
     autoUpdater.on("update-available", (info) => {
-      console.log("[Auto-Updater] Update available, downloading in background...", info.version);
+      console.log(
+        "[Auto-Updater] Update available, downloading in background...",
+        info.version,
+      );
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("update-available", { version: info.version, releaseDate: (info as { releaseDate?: string }).releaseDate });
+        mainWindow.webContents.send("update-available", {
+          version: info.version,
+          releaseDate: (info as { releaseDate?: string }).releaseDate,
+        });
       }
     });
 
@@ -523,26 +551,39 @@ app.whenReady().then(() => {
     });
 
     autoUpdater.on("update-downloaded", (info) => {
-      console.log("[Auto-Updater] Update downloaded, will install on app quit", info.version);
+      console.log(
+        "[Auto-Updater] Update downloaded, will install on app quit",
+        info.version,
+      );
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("update-downloaded", { version: info.version });
+        mainWindow.webContents.send("update-downloaded", {
+          version: info.version,
+        });
       }
     });
 
-    autoUpdater.on("download-progress", (progress: { percent: number; transferred: number; total: number }) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("update-download-progress", { percent: progress.percent, transferred: progress.transferred, total: progress.total });
-      }
-    });
+    autoUpdater.on(
+      "download-progress",
+      (progress: { percent: number; transferred: number; total: number }) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("update-download-progress", {
+            percent: progress.percent,
+            transferred: progress.transferred,
+            total: progress.total,
+          });
+        }
+      },
+    );
 
     autoUpdater.on("error", (error) => {
       console.error("[Auto-Updater] Error:", error);
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("update-error", { message: (error as Error).message });
+        mainWindow.webContents.send("update-error", {
+          message: (error as Error).message,
+        });
       }
     });
   }
-  
 
   app.on("activate", () => {
     // On macOS, re-create window when dock icon is clicked
@@ -558,8 +599,6 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
-
-
 
 // IPC handlers for Electron-specific functionality
 ipcMain.handle("get-app-version", () => {
@@ -581,7 +620,10 @@ ipcMain.handle("is-dev", () => {
 // Auto-updater IPC (only functional in production builds)
 ipcMain.handle("check-for-updates", async () => {
   if (isDev) {
-    return { available: false, message: "Updates are disabled in development." };
+    return {
+      available: false,
+      message: "Updates are disabled in development.",
+    };
   }
   try {
     const result = await autoUpdater.checkForUpdates();
@@ -612,6 +654,7 @@ const closeWindowByType = (windowType: WindowType): boolean => {
   const window = getWindowByType(windowType);
   if (window && !window.isDestroyed()) {
     window.close();
+    setDisplayWindow(windowType, null);
     return true;
   }
   return false;
@@ -659,24 +702,15 @@ ipcMain.handle("get-displays", () => {
   }));
 });
 
-// Helper function to get window by type
+// Helper function to get window by type (uses generic display window store)
 const getWindowByType = (windowType: WindowType): BrowserWindow | null => {
-  return windowType === "projector" ? projectorWindow : monitorWindow;
-};
-
-// Helper function to set window by type
-const setWindowByType = (windowType: WindowType, window: BrowserWindow | null): void => {
-  if (windowType === "projector") {
-    projectorWindow = window;
-  } else {
-    monitorWindow = window;
-  }
+  return getDisplayWindow(windowType) as BrowserWindow | null;
 };
 
 const moveWindowToDisplay = (
   window: BrowserWindow | null,
   windowType: WindowType,
-  displayId: number
+  displayId: number,
 ): boolean => {
   if (!window || window.isDestroyed()) return false;
 
@@ -692,7 +726,7 @@ const moveWindowToDisplay = (
     width: targetDisplay.bounds.width,
     height: targetDisplay.bounds.height,
   });
-  
+
   // Ensure it's fullscreen (in case it was somehow not)
   if (!window.isFullScreen()) {
     window.setFullScreen(true);
@@ -703,29 +737,33 @@ const moveWindowToDisplay = (
 };
 
 // Generic IPC handlers
-ipcMain.handle("move-window-to-display", (_event, windowType: WindowType, displayId: number) => {
-  const window = getWindowByType(windowType);
-  return moveWindowToDisplay(window, windowType, displayId);
-});
+ipcMain.handle(
+  "move-window-to-display",
+  (_event, windowType: WindowType, displayId: number) => {
+    const window = getWindowByType(windowType);
+    return moveWindowToDisplay(window, windowType, displayId);
+  },
+);
 
-ipcMain.handle("set-display-preference", (_event, windowType: WindowType, displayId: number) => {
-  windowStateManager.setDisplayPreference(windowType, displayId);
-  return true;
-});
-
+ipcMain.handle(
+  "set-display-preference",
+  (_event, windowType: WindowType, displayId: number) => {
+    windowStateManager.setDisplayPreference(windowType, displayId);
+    return true;
+  },
+);
 
 ipcMain.handle("get-window-states", () => {
   const projectorState = windowStateManager.getState("projector");
   const monitorState = windowStateManager.getState("monitor");
-  
+
   return {
     projector: projectorState,
     monitor: monitorState,
-    projectorOpen: projectorWindow !== null,
-    monitorOpen: monitorWindow !== null,
+    projectorOpen: hasDisplayWindow("projector"),
+    monitorOpen: hasDisplayWindow("monitor"),
   };
 });
-
 
 // Video cache IPC handlers
 ipcMain.handle("download-video", async (_event, url: string) => {
@@ -748,19 +786,19 @@ ipcMain.handle("get-local-video-path", (_event, url: string) => {
   if (!localPath) {
     return null;
   }
-  
+
   // If it's already a URL (http:// or https://), return as-is
   if (localPath.startsWith("http://") || localPath.startsWith("https://")) {
     return localPath;
   }
-  
+
   // Convert file path to video-cache:// protocol URL
   // Extract just the filename from the path
   const filename = localPath.split(/[/\\]/).pop();
   if (filename) {
     return `video-cache://${filename}`;
   }
-  
+
   return null;
 });
 

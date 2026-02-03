@@ -104,7 +104,7 @@ const CreateItem = () => {
   const [justAdded, setJustAdded] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
 
-  const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
+  const { db } = useContext(ControllerInfoContext) || {};
 
   const naviagte = useNavigate();
   const dispatch = useDispatch();

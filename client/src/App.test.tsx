@@ -15,14 +15,14 @@ import { mediaItemsSlice } from "./store/mediaSlice";
 import { allDocsSlice } from "./store/allDocsSlice";
 import { creditsSlice } from "./store/creditsSlice";
 
-// Mock react-router-dom
+// controllerInfo/env use import.meta – replaced by jest.config.cjs moduleNameMapper (__mocks__)
+
+// Mock react-router-dom: use MemoryRouter so useLocation/useNavigate work in tests
 jest.mock("react-router-dom", () => {
   const originalModule = jest.requireActual("react-router-dom");
   return {
     ...originalModule,
-    HashRouter: ({ children }: { children: React.ReactNode }) => (
-      <div>{children}</div>
-    ),
+    HashRouter: originalModule.MemoryRouter,
     Routes: ({ children }: { children: React.ReactNode }) => (
       <div>{children}</div>
     ),
@@ -144,13 +144,26 @@ jest.mock("./pages/CreditsEditor/CreditsEditor", () => () => (
   <div data-testid="credits-editor-page">Credits Editor Page</div>
 ));
 
-// Mock the context providers
-jest.mock("./context/globalInfo", () => ({
-  __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
-  ),
-}));
+// Mock the context providers (value shape from shared mocks)
+jest.mock("./context/globalInfo", () => {
+  const React = require("react");
+  const { createMockGlobalContext } = require("./test/mocks");
+  const mockValue = createMockGlobalContext({
+    user: "Demo",
+    database: "demo",
+    firebaseDb: undefined,
+  });
+  const GlobalInfoContext = React.createContext(mockValue);
+  return {
+    __esModule: true,
+    GlobalInfoContext,
+    default: ({ children }: { children: React.ReactNode }) => (
+      <GlobalInfoContext.Provider value={mockValue}>
+        {children}
+      </GlobalInfoContext.Provider>
+    ),
+  };
+});
 
 jest.mock("./ControllerContextWrapper", () => ({
   __esModule: true,
