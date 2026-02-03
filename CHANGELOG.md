@@ -1,3 +1,21 @@
+# [1.33.0](https://github.com/K-Cheddar/worship-sync/compare/v1.32.0...v1.33.0) (2026-02-03)
+
+
+### Bug Fixes
+
+* Correct margin on boxes ([cac35f9](https://github.com/K-Cheddar/worship-sync/commit/cac35f9e7e2ec79725e5066501ff5034357ed254))
+* Fix item slides scroll area ([3104d1d](https://github.com/K-Cheddar/worship-sync/commit/3104d1d12ae8608f9a10f6649d7d84bb6673a10b))
+* Improve sync when coming back online ([28aee3f](https://github.com/K-Cheddar/worship-sync/commit/28aee3f3c3a90d7535b4c4be62fa19265263f528))
+* Reenable undo/redo ([6365cb7](https://github.com/K-Cheddar/worship-sync/commit/6365cb71470cf63c06cf2e16c7e1ab34944f8119))
+
+
+### Features
+
+* Add ability to update app on desktop ([f3a5805](https://github.com/K-Cheddar/worship-sync/commit/f3a5805aa1cecebcbbedcdf38b000420e607ab3a))
+* Added headings in outline ([4166c3e](https://github.com/K-Cheddar/worship-sync/commit/4166c3e62ad8516c0b1186c26fdb654c5f583925))
+* Allow participant overlays to be placed in the center, or right ([810c8e0](https://github.com/K-Cheddar/worship-sync/commit/810c8e0f9dcf4bc1cc334407781ba6cc12137f4b))
+* Bible items versions can be changed on the fly ([6654fea](https://github.com/K-Cheddar/worship-sync/commit/6654fea914f44eb0d2127a8fae7bc4acebfd42de))
+
 # [1.32.0](https://github.com/K-Cheddar/worship-sync/compare/v1.31.7...v1.32.0) (2026-01-31)
 
 
