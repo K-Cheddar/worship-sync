@@ -1,3 +1,16 @@
+## [1.33.1](https://github.com/K-Cheddar/worship-sync/compare/v1.33.0...v1.33.1) (2026-02-03)
+
+
+### Bug Fixes
+
+* Improve service outline interactions ([a80a573](https://github.com/K-Cheddar/worship-sync/commit/a80a57304a79216ef46b0d1fb4c262a89b3876bc))
+* Improve updates ([438a035](https://github.com/K-Cheddar/worship-sync/commit/438a035e224f482162aa057dc8e42f5a66c6fb9a))
+
+
+### Performance Improvements
+
+* Improve initialization logic ([515a544](https://github.com/K-Cheddar/worship-sync/commit/515a544b5a19906ef353c8f4ead835999a0c0e99))
+
 # [1.33.0](https://github.com/K-Cheddar/worship-sync/compare/v1.32.0...v1.33.0) (2026-02-03)
 
 
