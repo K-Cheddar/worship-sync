@@ -10,12 +10,10 @@ export const CHANGELOG_CACHE_KEY = "worshipSync_changelogCache";
 // Function to fetch and parse changelog for versions between current and new version
 export const getChangelogForVersion = async (
   newVersion: string,
-  currentVersion?: string
+  currentVersion?: string,
 ): Promise<string | null> => {
   try {
-    const response = await fetch(
-      `${getApiBasePath()}api/changelog`
-    );
+    const response = await fetch(`${getApiBasePath()}api/changelog`);
     if (!response.ok) {
       throw new Error("Failed to fetch changelog");
     }
@@ -87,7 +85,7 @@ export const getChangelogForVersion = async (
 // Helper function to check if a version is newer
 export const isNewerVersion = (
   newVersion: string,
-  currentVersion: string
+  currentVersion: string,
 ): boolean => {
   const v1Parts = newVersion.split(".").map(Number);
   const v2Parts = currentVersion.split(".").map(Number);
@@ -114,7 +112,7 @@ export const markVersionUpdateDismissed = (version: string): void => {
       JSON.stringify({
         version,
         timestamp: Date.now(),
-      })
+      }),
     );
   } catch (error) {
     console.error("Error marking version as dismissed:", error);
@@ -176,7 +174,7 @@ export const cacheChangelog = (version: string, changelog: string): void => {
         version,
         changelog,
         timestamp: Date.now(),
-      })
+      }),
     );
   } catch (error) {
     console.error("Error caching changelog:", error);
@@ -184,3 +182,18 @@ export const cacheChangelog = (version: string, changelog: string): void => {
 };
 
 export const getBuildTimeVersion = () => versionInfo.version || "1.0.0";
+
+/**
+ * Fetch the app version from the server (single source of truth for deployed version).
+ * Returns null if the request fails (e.g. offline, CORS).
+ */
+export const getServerVersion = async (): Promise<string | null> => {
+  try {
+    const response = await fetch(`${getApiBasePath()}api/version`);
+    if (!response.ok) return null;
+    const data = (await response.json()) as { version?: string };
+    return data.version ?? null;
+  } catch {
+    return null;
+  }
+};
