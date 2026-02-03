@@ -17,6 +17,8 @@ interface ContextMenuProps {
   };
   className?: string;
   onOpen?: () => void;
+  /** Called before opening; use to e.g. select the item under the cursor. When provided, menu may open even if menuItems is currently empty (they update on next render). */
+  onContextMenuOpen?: (e: React.MouseEvent) => void;
 }
 
 const ContextMenu = ({
@@ -25,6 +27,7 @@ const ContextMenu = ({
   header,
   className,
   onOpen,
+  onContextMenuOpen,
 }: ContextMenuProps) => {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -35,13 +38,21 @@ const ContextMenu = ({
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     // If menu is already open, close it instead of reopening
     if (open) {
       setOpen(false);
       return;
     }
-    
+
+    // Allow parent to select item under cursor (e.g. right-click an item → select it)
+    onContextMenuOpen?.(e);
+
+    // Don't open empty menu (unless we just ran onContextMenuOpen, which may update selection on next render)
+    if (menuItems.length === 0 && !onContextMenuOpen) {
+      return;
+    }
+
     const initialPosition = { x: e.clientX, y: e.clientY };
     setPosition(initialPosition);
     setOpen(true);
@@ -98,9 +109,8 @@ const ContextMenu = ({
     if (!open) return;
 
     const handleClickOutside = (e: MouseEvent) => {
+      // Close on any click except on the menu itself (so left-clicking items closes the menu)
       if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node) &&
         menuRef.current &&
         !menuRef.current.contains(e.target as Node)
       ) {
@@ -169,7 +179,7 @@ const ContextMenu = ({
                   "w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-600 transition-colors",
                   item.disabled && "opacity-50 cursor-not-allowed",
                   item.variant === "destructive" &&
-                    "text-red-400 hover:text-red-300 hover:bg-red-400/10"
+                  "text-red-400 hover:text-red-300 hover:bg-red-400/10"
                 )}
                 onClick={(e) => {
                   e.stopPropagation();

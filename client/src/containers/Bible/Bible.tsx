@@ -420,7 +420,7 @@ const Bible = () => {
         className="ml-auto mt-auto mb-2"
         onClick={submitVerses}
         isLoading={isLoadingChapter}
-        disabled={isLoadingChapter}
+        disabled={isLoadingChapter || justAdded}
         color={justAdded ? "#67e8f9" : undefined}
         svg={justAdded ? Check : Plus}
       >

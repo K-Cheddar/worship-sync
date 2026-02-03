@@ -51,6 +51,11 @@ export const itemListSlice = createSlice({
       });
       state.hasPendingUpdate = true;
     },
+    removeItemsFromList: (state, action: PayloadAction<string[]>) => {
+      const ids = new Set(action.payload);
+      state.list = state.list.filter((item) => !ids.has(item.listId));
+      state.hasPendingUpdate = true;
+    },
     removeItemFromListById: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((item) => {
         return item._id !== action.payload;
@@ -97,6 +102,7 @@ export const itemListSlice = createSlice({
 export const {
   updateItemList,
   removeItemFromList,
+  removeItemsFromList,
   addItemToItemList,
   initiateItemList,
   setIsInitialized,

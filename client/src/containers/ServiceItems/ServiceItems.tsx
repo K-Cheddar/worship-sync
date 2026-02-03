@@ -3,12 +3,14 @@ import {
   updateItemList,
   addItemToItemList,
   removeItemFromList,
+  removeItemsFromList,
+  setActiveItemInList,
 } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { useLocation, useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 
 import { useSensors } from "../../utils/dndUtils";
 import {
@@ -19,6 +21,7 @@ import ServiceItem from "./ServiceItem";
 import { keepElementInView } from "../../utils/generalUtils";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import Button from "../../components/Button/Button";
+import ContextMenu from "../../components/ContextMenu/ContextMenu";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { createNewHeading, updateHeadingName } from "../../utils/itemUtil";
@@ -47,10 +50,14 @@ const ServiceItems = () => {
   const [collapsedHeadingListIds, setCollapsedHeadingListIds] = useState<
     Set<string>
   >(new Set());
+  const [selectedListIds, setSelectedListIds] = useState<Set<string>>(new Set());
+  const [anchorListId, setAnchorListId] = useState<string | null>(null);
 
-  // Reset collapse state when switching outlines
+  // Reset collapse and selection when switching outlines
   useEffect(() => {
     setCollapsedHeadingListIds(new Set());
+    setSelectedListIds(new Set());
+    setAnchorListId(null);
   }, [selectedList?._id]);
 
   const hiddenListIds = useMemo(() => {
@@ -81,18 +88,38 @@ const ServiceItems = () => {
     const { over, active } = event;
     if (!over || !active) return;
 
-    const { id } = over;
-    const { id: activeId } = active;
+    const overId = over.id as string;
+    const activeId = active.id as string;
     const updatedServiceItems = [...serviceItems];
-    const newIndex = updatedServiceItems.findIndex(
-      (item) => item.listId === id
+    const dropIndex = updatedServiceItems.findIndex(
+      (item) => item.listId === overId
     );
-    const oldIndex = updatedServiceItems.findIndex(
+    const activeIndex = updatedServiceItems.findIndex(
       (item) => item.listId === activeId
     );
-    const element = serviceItems[oldIndex];
-    updatedServiceItems.splice(oldIndex, 1);
-    updatedServiceItems.splice(newIndex, 0, element);
+    if (dropIndex === -1 || activeIndex === -1) return;
+
+    const idsToMove = selectedListIds.has(activeId)
+      ? selectedListIds
+      : new Set([activeId]);
+    const indicesToMove = updatedServiceItems
+      .map((item, i) => (idsToMove.has(item.listId) ? i : -1))
+      .filter((i) => i >= 0)
+      .sort((a, b) => a - b);
+    const elementsToMove = indicesToMove.map((i) => updatedServiceItems[i]);
+
+    // Remove from high index to low to preserve indices
+    for (let i = indicesToMove.length - 1; i >= 0; i--) {
+      updatedServiceItems.splice(indicesToMove[i], 1);
+    }
+    const insertIndex =
+      dropIndex -
+      indicesToMove.filter((idx) => idx < dropIndex).length;
+    const clampedInsert = Math.max(
+      0,
+      Math.min(insertIndex, updatedServiceItems.length)
+    );
+    updatedServiceItems.splice(clampedInsert, 0, ...elementsToMove);
     dispatch(updateItemList(updatedServiceItems));
   };
 
@@ -190,6 +217,43 @@ const ServiceItems = () => {
     dispatch(removeItemFromList(listId));
   };
 
+  const handleItemClick = (listId: string, e: React.MouseEvent) => {
+    if (e.shiftKey) {
+      const clickedIndex = serviceItems.findIndex((i) => i.listId === listId);
+      const anchorIndex = anchorListId
+        ? serviceItems.findIndex((i) => i.listId === anchorListId)
+        : clickedIndex;
+      const start = Math.min(clickedIndex, anchorIndex);
+      const end = Math.max(clickedIndex, anchorIndex);
+      const rangeIds = new Set(
+        serviceItems
+          .slice(start, end + 1)
+          .map((i) => i.listId)
+      );
+      setSelectedListIds(rangeIds);
+    } else if (e.ctrlKey || e.metaKey) {
+      setSelectedListIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(listId)) next.delete(listId);
+        else next.add(listId);
+        return next;
+      });
+      setAnchorListId(listId);
+    } else {
+      setSelectedListIds(new Set([listId]));
+      setAnchorListId(listId);
+      dispatch(setActiveItemInList(listId));
+      // Link handles navigation on single click
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedListIds.size === 0) return;
+    dispatch(removeItemsFromList(Array.from(selectedListIds)));
+    setSelectedListIds(new Set());
+    setAnchorListId(null);
+  };
+
   useEffect(() => {
     const itemElement = document.getElementById(
       `service-item-${selectedItemListId}`
@@ -246,53 +310,90 @@ const ServiceItems = () => {
         {isLoading ? (
           <div className="text-lg text-center mt-2">Loading items...</div>
         ) : (
-          <ul
-            ref={setNodeRef}
-            className="scrollbar-variable overflow-y-auto overflow-x-hidden flex-1 pb-2 min-h-0"
-            id="service-items-list"
-            onKeyDown={handleItemListKeyDown}
+          <ContextMenu
+            className="flex-1 min-h-0 flex flex-col overflow-hidden"
+            menuItems={[
+              ...(selectedListIds.size > 0
+                ? [
+                  {
+                    label: `Delete selected (${selectedListIds.size})`,
+                    onClick: handleDeleteSelected,
+                    icon: <Trash2 className="w-4 h-4 shrink-0" />,
+                    variant: "destructive" as const,
+                  },
+                ]
+                : []),
+            ]}
+            header={
+              selectedListIds.size > 0
+                ? {
+                  title: `${selectedListIds.size} item${selectedListIds.size === 1 ? "" : "s"} selected`,
+                }
+                : undefined
+            }
+            onContextMenuOpen={(e) => {
+              const listId = (e.target as HTMLElement)
+                .closest("[data-list-id]")
+                ?.getAttribute("data-list-id");
+              if (listId && serviceItems.some((i) => i.listId === listId)) {
+                setSelectedListIds((prev) =>
+                  prev.has(listId) ? prev : new Set([listId])
+                );
+                setAnchorListId(listId);
+                dispatch(setActiveItemInList(listId));
+              }
+            }}
           >
-            <SortableContext
-              items={serviceItems.map((item) => item.listId)}
-              strategy={verticalListSortingStrategy}
+            <ul
+              ref={setNodeRef}
+              className="scrollbar-variable overflow-y-auto overflow-x-hidden flex-1 pb-2 min-h-0"
+              id="service-items-list"
+              onKeyDown={handleItemListKeyDown}
             >
-              {serviceItems.map((item, index) => {
-                if (item.type === "heading") {
+              <SortableContext
+                items={serviceItems.map((item) => item.listId)}
+                strategy={verticalListSortingStrategy}
+              >
+                {serviceItems.map((item, index) => {
+                  if (item.type === "heading") {
+                    return (
+                      <HeadingItem
+                        key={item.listId}
+                        item={item}
+                        isCollapsed={collapsedHeadingListIds.has(item.listId)}
+                        onToggleCollapse={() =>
+                          handleToggleHeadingCollapse(item.listId)
+                        }
+                        onSaveName={(newName) =>
+                          handleSaveHeadingName(item, newName)
+                        }
+                        onDelete={() => handleDeleteHeading(item.listId)}
+                      />
+                    );
+                  }
+                  if (hiddenListIds.has(item.listId)) return null;
                   return (
-                    <HeadingItem
+                    <ServiceItem
+                      isActive={activeTimers.some(
+                        (timer) => timer.id === item._id
+                      )}
+                      timerValue={
+                        activeTimers.find((timer) => timer.id === item._id)
+                          ?.remainingTime
+                      }
                       key={item.listId}
                       item={item}
-                      isCollapsed={collapsedHeadingListIds.has(item.listId)}
-                      onToggleCollapse={() =>
-                        handleToggleHeadingCollapse(item.listId)
-                      }
-                      onSaveName={(newName) =>
-                        handleSaveHeadingName(item, newName)
-                      }
-                      onDelete={() => handleDeleteHeading(item.listId)}
+                      selectedItemListId={selectedItemListId}
+                      selectedListIds={selectedListIds}
+                      initialItems={initialItems}
+                      location={location}
+                      onItemClick={handleItemClick}
                     />
                   );
-                }
-                if (hiddenListIds.has(item.listId)) return null;
-                return (
-                  <ServiceItem
-                    isActive={activeTimers.some(
-                      (timer) => timer.id === item._id
-                    )}
-                    timerValue={
-                      activeTimers.find((timer) => timer.id === item._id)
-                        ?.remainingTime
-                    }
-                    key={item.listId}
-                    item={item}
-                    selectedItemListId={selectedItemListId}
-                    initialItems={initialItems}
-                    location={location}
-                  />
-                );
-              })}
-            </SortableContext>
-          </ul>
+                })}
+              </SortableContext>
+            </ul>
+          </ContextMenu>
         )}
       </DndContext>
     </ErrorBoundary>

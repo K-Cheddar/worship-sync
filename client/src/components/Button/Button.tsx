@@ -120,12 +120,19 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
     );
 
     if (component === "link") {
+      const { onClick, ...linkRest } = rest;
       return (
         <Link
           className={commonClassName}
           ref={buttonRef as React.Ref<HTMLAnchorElement>}
-          to={rest.to || "#"}
-          {...rest}
+          to={linkRest.to || "#"}
+          {...linkRest}
+          onClick={(e) => {
+            if (e.shiftKey || e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+            }
+            onClick?.(e as React.MouseEvent<HTMLAnchorElement>);
+          }}
         >
           {commonContent}
         </Link>
