@@ -3,7 +3,7 @@ import { globalBroadcastRef } from "../context/controllerInfo";
 
 export const useGlobalBroadcast = (
   callback: (data: any) => void,
-  delay: number = 300
+  delay: number = 300,
 ) => {
   const callbackRef = useRef(callback);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);

@@ -258,7 +258,7 @@ export const creditsSlice = createSlice({
         id: generateRandomId(),
       };
       const selectedIndex = state.list.findIndex(
-        (credit) => credit.id === state.selectedCreditId
+        (credit) => credit.id === state.selectedCreditId,
       );
       if (selectedIndex === -1) {
         state.list.push(newCredit);
@@ -304,7 +304,7 @@ export const creditsSlice = createSlice({
     },
     initiatePublishedCreditsList: (
       state,
-      action: PayloadAction<CreditsInfo[]>
+      action: PayloadAction<CreditsInfo[]>,
     ) => {
       if (action.payload.length === 0) {
         state.publishedList = [];
@@ -317,7 +317,7 @@ export const creditsSlice = createSlice({
     },
     updateCreditsListFromRemote: (
       state,
-      action: PayloadAction<CreditsInfo[]>
+      action: PayloadAction<CreditsInfo[]>,
     ) => {
       if (action.payload.length === 0) {
         state.list = [];
@@ -330,7 +330,7 @@ export const creditsSlice = createSlice({
     },
     updatePublishedCreditsListFromRemote: (
       state,
-      action: PayloadAction<CreditsInfo[]>
+      action: PayloadAction<CreditsInfo[]>,
     ) => {
       if (action.payload.length === 0) {
         state.publishedList = [];
@@ -361,6 +361,9 @@ export const creditsSlice = createSlice({
     setScheduleName: (state, action: PayloadAction<string>) => {
       state.scheduleName = action.payload;
     },
+    setIsInitialized: (state, action: PayloadAction<boolean>) => {
+      state.isInitialized = action.payload;
+    },
     forceUpdate: () => {},
   },
 });
@@ -383,6 +386,7 @@ export const {
   updateInitialList,
   setIsLoading,
   setScheduleName,
+  setIsInitialized,
   forceUpdate,
 } = creditsSlice.actions;
 

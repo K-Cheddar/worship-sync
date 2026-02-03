@@ -92,7 +92,6 @@ const HeadingItem = ({
         "group flex items-center gap-1 border-b-2 border-slate-600/50 bg-gray-800/50",
       )}
     >
-
       <div className="flex-1 min-w-0 flex items-center gap-1">
         {!isEditing ? (
           <>

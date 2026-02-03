@@ -4,14 +4,35 @@ import Undo from "../containers/Toolbar/ToolbarElements/Undo";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import ServiceTimes from "../containers/ServiceTimes/ServiceTimes";
 import { ControllerInfoContext } from "../context/controllerInfo";
+import { useDispatch, useSelector } from "../hooks";
 import { useSyncOnReconnect } from "../hooks";
-import { useCallback, useContext } from "react";
+import { useCallback, useContext, useEffect, useRef } from "react";
+import { setIsInitialized as setServiceTimesIsInitialized } from "../store/serviceTimesSlice";
+import { INFO_CONTROLLER_PAGE_READY, RootState } from "../store/store";
 
 const InfoController = () => {
+  const dispatch = useDispatch();
+  const serviceTimesInitialized = useSelector(
+    (state: RootState) => state.undoable.present.serviceTimes.isInitialized
+  );
+  const hasDispatchedPageReady = useRef(false);
   const { setIsMobile, setIsPhone, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
 
   useSyncOnReconnect(pullFromRemote);
+
+  useEffect(() => {
+    return () => {
+      dispatch(setServiceTimesIsInitialized(false));
+    };
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (serviceTimesInitialized && !hasDispatchedPageReady.current) {
+      hasDispatchedPageReady.current = true;
+      dispatch({ type: INFO_CONTROLLER_PAGE_READY });
+    }
+  }, [serviceTimesInitialized, dispatch]);
 
   const infoControllerRef = useCallback(
     (node: HTMLDivElement) => {

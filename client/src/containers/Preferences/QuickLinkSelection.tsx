@@ -62,42 +62,42 @@ const QuickLinkSelection = ({
         participantOverlayInfo:
           selectedOverlay.type === "participant"
             ? {
-                id: selectedOverlay.id,
-                type: selectedOverlay.type,
-                duration: selectedOverlay.duration,
-                name: selectedOverlay.name,
-                event: selectedOverlay.event,
-                title: selectedOverlay.title,
-              }
+              id: selectedOverlay.id,
+              type: selectedOverlay.type,
+              duration: selectedOverlay.duration,
+              name: selectedOverlay.name,
+              event: selectedOverlay.event,
+              title: selectedOverlay.title,
+            }
             : undefined,
         stbOverlayInfo:
           selectedOverlay.type === "stick-to-bottom"
             ? {
-                id: selectedOverlay.id,
-                type: selectedOverlay.type,
-                duration: selectedOverlay.duration,
-                subHeading: selectedOverlay.subHeading,
-                title: selectedOverlay.title,
-              }
+              id: selectedOverlay.id,
+              type: selectedOverlay.type,
+              duration: selectedOverlay.duration,
+              subHeading: selectedOverlay.subHeading,
+              title: selectedOverlay.title,
+            }
             : undefined,
         qrCodeOverlayInfo:
           selectedOverlay.type === "qr-code"
             ? {
-                id: selectedOverlay.id,
-                type: selectedOverlay.type,
-                duration: selectedOverlay.duration,
-                url: selectedOverlay.url,
-                description: selectedOverlay.description,
-              }
+              id: selectedOverlay.id,
+              type: selectedOverlay.type,
+              duration: selectedOverlay.duration,
+              url: selectedOverlay.url,
+              description: selectedOverlay.description,
+            }
             : undefined,
         imageOverlayInfo:
           selectedOverlay.type === "image"
             ? {
-                id: selectedOverlay.id,
-                type: selectedOverlay.type,
-                duration: selectedOverlay.duration,
-                imageUrl: selectedOverlay.imageUrl,
-              }
+              id: selectedOverlay.id,
+              type: selectedOverlay.type,
+              duration: selectedOverlay.duration,
+              imageUrl: selectedOverlay.imageUrl,
+            }
             : undefined,
       };
     }

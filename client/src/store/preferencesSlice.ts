@@ -109,9 +109,7 @@ const initialState: PreferencesState = {
   toolbarSection: "settings",
   isLoading: true,
   selectedPreference: "",
-  defaultQuickLinks: [
-
-  ],
+  defaultQuickLinks: [],
   quickLinks: [],
   selectedQuickLink: null,
   tab: "defaults",
@@ -128,83 +126,83 @@ export const preferencesSlice = createSlice({
 
     setDefaultPreferences: (
       state,
-      action: PayloadAction<Partial<PreferencesType>>
+      action: PayloadAction<Partial<PreferencesType>>,
     ) => {
       state.preferences = { ...state.preferences, ...action.payload };
     },
     setDefaultSongBackgroundBrightness: (
       state,
-      action: PayloadAction<number>
+      action: PayloadAction<number>,
     ) => {
       state.preferences.defaultSongBackgroundBrightness = Math.min(
         Math.max(action.payload, 10),
-        100
+        100,
       );
     },
     setDefaultTimerBackgroundBrightness: (
       state,
-      action: PayloadAction<number>
+      action: PayloadAction<number>,
     ) => {
       state.preferences.defaultTimerBackgroundBrightness = Math.min(
         Math.max(action.payload, 10),
-        100
+        100,
       );
     },
     setDefaultBibleBackgroundBrightness: (
       state,
-      action: PayloadAction<number>
+      action: PayloadAction<number>,
     ) => {
       state.preferences.defaultBibleBackgroundBrightness = Math.min(
         Math.max(action.payload, 10),
-        100
+        100,
       );
     },
     setDefaultFreeFormBackgroundBrightness: (
       state,
-      action: PayloadAction<number>
+      action: PayloadAction<number>,
     ) => {
       state.preferences.defaultFreeFormBackgroundBrightness = Math.min(
         Math.max(action.payload, 10),
-        100
+        100,
       );
     },
     setDefaultSlidesPerRow: (state, action: PayloadAction<number>) => {
       state.preferences.defaultSlidesPerRow = Math.min(
         Math.max(action.payload, 1),
-        7
+        7,
       );
     },
     setDefaultSlidesPerRowMobile: (state, action: PayloadAction<number>) => {
       state.preferences.defaultSlidesPerRowMobile = Math.min(
         Math.max(action.payload, 1),
-        7
+        7,
       );
     },
     setDefaultSlidesPerRowMusic: (state, action: PayloadAction<number>) => {
       state.preferences.defaultSlidesPerRowMusic = Math.min(
         Math.max(action.payload, 1),
-        7
+        7,
       );
     },
     setDefaultSlidesPerRowMusicMobile: (
       state,
-      action: PayloadAction<number>
+      action: PayloadAction<number>,
     ) => {
       state.preferences.defaultSlidesPerRowMusicMobile = Math.min(
         Math.max(action.payload, 1),
-        7
+        7,
       );
     },
     setDefaultFormattedLyricsPerRow: (state, action: PayloadAction<number>) => {
       state.preferences.defaultFormattedLyricsPerRow = Math.min(
         Math.max(action.payload, 1),
-        4
+        4,
       );
     },
     setDefaultMediaItemsPerRow: (state, action: PayloadAction<number>) => {
       state.preferences.defaultMediaItemsPerRow = Math.min(
         Math.max(action.payload, 1),
-        7
+        7,
       );
     },
 
@@ -247,7 +245,7 @@ export const preferencesSlice = createSlice({
     },
     setSelectedQuickLinkPresentation: (
       state,
-      action: PayloadAction<Presentation>
+      action: PayloadAction<Presentation>,
     ) => {
       state.quickLinks.map((ql) => {
         if (ql.id === state.selectedQuickLink?.id) {
@@ -266,7 +264,7 @@ export const preferencesSlice = createSlice({
 
     initiatePreferences: (
       state,
-      action: PayloadAction<{ preferences: PreferencesType; isMusic: boolean }>
+      action: PayloadAction<{ preferences: PreferencesType; isMusic: boolean }>,
     ) => {
       const { preferences, isMusic } = action.payload;
 
@@ -361,12 +359,11 @@ export const preferencesSlice = createSlice({
       state.shouldShowItemEditor = preferences.defaultShouldShowItemEditor;
       state.isMediaExpanded = preferences.defaultIsMediaExpanded;
       state.bibleFontMode = preferences.defaultBibleFontMode;
-      state.isInitialized = true;
     },
 
     updatePreferencesFromRemote: (
       state,
-      action: PayloadAction<DBPreferences>
+      action: PayloadAction<DBPreferences>,
     ) => {
       state.preferences = {
         ...state.preferences,
@@ -386,7 +383,7 @@ export const preferencesSlice = createSlice({
     increaseSlidesMobile: (state) => {
       state.slidesPerRowMobile = Math.min(
         (state.slidesPerRowMobile || 4) + 1,
-        7
+        7,
       );
     },
     decreaseSlides: (state) => {
@@ -395,7 +392,7 @@ export const preferencesSlice = createSlice({
     decreaseSlidesMobile: (state) => {
       state.slidesPerRowMobile = Math.max(
         (state.slidesPerRowMobile || 3) - 1,
-        1
+        1,
       );
     },
     setSlides: (state, action: PayloadAction<number>) => {
@@ -407,13 +404,13 @@ export const preferencesSlice = createSlice({
     increaseFormattedLyrics: (state) => {
       state.formattedLyricsPerRow = Math.min(
         (state.formattedLyricsPerRow || 3) + 1,
-        6
+        6,
       );
     },
     decreaseFormattedLyrics: (state) => {
       state.formattedLyricsPerRow = Math.max(
         (state.formattedLyricsPerRow || 3) - 1,
-        1
+        1,
       );
     },
     setFormattedLyrics: (state, action: PayloadAction<number>) => {
@@ -451,16 +448,18 @@ export const preferencesSlice = createSlice({
     },
     setSelectedPreference: (
       state,
-      action: PayloadAction<SelectedPreferenceType>
+      action: PayloadAction<SelectedPreferenceType>,
     ) => {
       state.selectedPreference = action.payload;
     },
-
+    setIsInitialized: (state, action: PayloadAction<boolean>) => {
+      state.isInitialized = action.payload;
+    },
     // Monitor Settings
 
     initiateMonitorSettings: (
       state,
-      action: PayloadAction<MonitorSettingsType>
+      action: PayloadAction<MonitorSettingsType>,
     ) => {
       state.monitorSettings = {
         showClock:
@@ -486,13 +485,13 @@ export const preferencesSlice = createSlice({
     setMonitorClockFontSize: (state, action: PayloadAction<number>) => {
       state.monitorSettings.clockFontSize = Math.min(
         Math.max(action.payload, 12),
-        30
+        30,
       );
     },
     setMonitorTimerFontSize: (state, action: PayloadAction<number>) => {
       state.monitorSettings.timerFontSize = Math.min(
         Math.max(action.payload, 12),
-        30
+        30,
       );
     },
     setMonitorTimerId: (state, action: PayloadAction<string | null>) => {
@@ -549,6 +548,7 @@ export const {
   setMonitorTimerId,
   updatePreferencesFromRemote,
   forceUpdate,
+  setIsInitialized,
 } = preferencesSlice.actions;
 
 export default preferencesSlice.reducer;

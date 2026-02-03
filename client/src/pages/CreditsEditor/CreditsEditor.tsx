@@ -20,6 +20,7 @@ import {
   initiatePublishedCreditsList,
   initiateTransitionScene,
   setCreditsScene,
+  setIsInitialized as setCreditsIsInitialized,
   setIsLoading,
   setScheduleName,
   setTransitionScene,
@@ -65,6 +66,13 @@ const CreditsEditor = () => {
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
+    return () => {
+      dispatch(setCreditsIsInitialized(false));
+      dispatch(setIsLoading(true));
+    };
+  }, [dispatch]);
+
+  useEffect(() => {
     const getItemList = async () => {
       if (!db) return;
       dispatch(setItemListIsLoading(true));
@@ -105,6 +113,7 @@ const CreditsEditor = () => {
 
       try {
         const response: DBCredits = await db.get("credits");
+        console.log("getting credits", response);
         dispatch(initiateCreditsList(response.list));
         dispatch(setIsLoading(false));
       } catch (error: any) {

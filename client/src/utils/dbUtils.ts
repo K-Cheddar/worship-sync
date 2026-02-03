@@ -35,21 +35,21 @@ export const deleteUnusedBibleItems = async ({ db, allItems }: propsType) => {
     const listDetails: DBItemListDetails = await db.get(itemList._id);
     const listItems = listDetails?.items || [];
     bibleItemsInLists.push(
-      ...listItems.filter((item) => item.type === "bible")
+      ...listItems.filter((item) => item.type === "bible"),
     );
   }
 
   const bibleItemsToBeDeleted = bibleItems.filter(
     (bibleItem) =>
       !bibleItemsInLists.some(
-        (bibleItemInList) => bibleItemInList._id === bibleItem._id
-      )
+        (bibleItemInList) => bibleItemInList._id === bibleItem._id,
+      ),
   );
 
   if (bibleItemsToBeDeleted.length === 0) return; // nothing to delete
 
   const updatedItems = items.filter(
-    (item) => !bibleItemsToBeDeleted.includes(item)
+    (item) => !bibleItemsToBeDeleted.includes(item),
   );
 
   // Remove bible items from all items and delete them individually
@@ -80,21 +80,21 @@ export const deleteUnusedHeadings = async ({ db, allItems }: propsType) => {
     const listDetails: DBItemListDetails = await db.get(itemList._id);
     const listItems = listDetails?.items || [];
     headingsInLists.push(
-      ...listItems.filter((item) => item.type === "heading")
+      ...listItems.filter((item) => item.type === "heading"),
     );
   }
 
   const headingsToBeDeleted = headingItems.filter(
     (headingItem) =>
       !headingsInLists.some(
-        (headingInList) => headingInList._id === headingItem._id
-      )
+        (headingInList) => headingInList._id === headingItem._id,
+      ),
   );
 
   if (headingsToBeDeleted.length === 0) return;
 
   const updatedItems = items.filter(
-    (item) => !headingsToBeDeleted.includes(item)
+    (item) => !headingsToBeDeleted.includes(item),
   );
 
   await db.put({
@@ -161,7 +161,7 @@ export const updateAllDocs = async (dispatch: Function) => {
 
 export const formatAllDocs = async (
   db: PouchDB.Database,
-  cloud: Cloudinary
+  cloud: Cloudinary,
 ) => {
   if (!db) return;
   try {
@@ -174,7 +174,7 @@ export const formatAllDocs = async (
         (row.doc as any)?.type === "song" ||
         (row.doc as any)?.type === "free" ||
         (row.doc as any)?.type === "timer" ||
-        (row.doc as any)?.type === "bible"
+        (row.doc as any)?.type === "bible",
     );
 
     for (const item of allItems) {
@@ -208,7 +208,7 @@ export const formatAllDocs = async (
 
 export const formatAllSongs = async (
   db: PouchDB.Database,
-  cloud: Cloudinary
+  cloud: Cloudinary,
 ) => {
   if (!db) return;
   try {
@@ -246,7 +246,7 @@ export const formatAllSongs = async (
 
 export const formatAllItems = async (
   db: PouchDB.Database,
-  cloud: Cloudinary
+  cloud: Cloudinary,
 ) => {
   if (!db) return;
   try {
@@ -277,7 +277,7 @@ export const formatAllItems = async (
  * This should be run once to migrate existing data.
  */
 export const migrateFreeFormItemsToFormattedSections = async (
-  db: PouchDB.Database
+  db: PouchDB.Database,
 ) => {
   if (!db) return;
   try {
@@ -308,7 +308,7 @@ export const migrateFreeFormItemsToFormattedSections = async (
         const selectedBox = 1;
         const formattedSections = getFormattedSections(
           fullItem.slides || [],
-          selectedBox
+          selectedBox,
         );
 
         // Update the item with formattedSections
@@ -327,7 +327,7 @@ export const migrateFreeFormItemsToFormattedSections = async (
     }
 
     console.log(
-      `Migration complete: ${migratedCount} items migrated, ${skippedCount} items skipped`
+      `Migration complete: ${migratedCount} items migrated, ${skippedCount} items skipped`,
     );
     return { migratedCount, skippedCount };
   } catch (error) {

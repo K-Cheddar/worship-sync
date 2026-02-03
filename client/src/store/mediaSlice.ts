@@ -18,6 +18,9 @@ export const mediaItemsSlice = createSlice({
     updateMediaList: (state, action: PayloadAction<MediaType[]>) => {
       state.list = action.payload;
     },
+    setIsInitialized: (state, action: PayloadAction<boolean>) => {
+      state.isInitialized = action.payload;
+    },
     initiateMediaList: (state, action: PayloadAction<MediaType[]>) => {
       state.list = action.payload;
       state.isInitialized = true;
@@ -39,6 +42,7 @@ export const {
   removeItemFromMediaList,
   addItemToMediaList,
   initiateMediaList,
+  setIsInitialized,
   updateMediaListFromRemote,
 } = mediaItemsSlice.actions;
 

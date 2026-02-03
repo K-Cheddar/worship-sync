@@ -33,7 +33,7 @@ export const allItemsSlice = createSlice({
     },
     updateAllItemsListFromRemote: (
       state,
-      action: PayloadAction<ServiceItem[]>
+      action: PayloadAction<ServiceItem[]>,
     ) => {
       state.list = action.payload;
     },
@@ -42,6 +42,9 @@ export const allItemsSlice = createSlice({
     },
     addItemToAllItemsList: (state, action: PayloadAction<ServiceItem>) => {
       state.list.push(action.payload);
+    },
+    setIsInitialized: (state, action: PayloadAction<boolean>) => {
+      state.isInitialized = action.payload;
     },
     setSongSearchValue: (state, action: PayloadAction<string>) => {
       state.songSearchValue = action.payload;
@@ -61,6 +64,7 @@ export const {
   addItemToAllItemsList,
   initiateAllItemsList,
   updateAllItemsListFromRemote,
+  setIsInitialized,
   setSongSearchValue,
   setFreeFormSearchValue,
   setTimerSearchValue,

@@ -186,7 +186,7 @@ const undoableReducers = undoable(
       return !isExcluded;
     },
     limit: 100,
-  }
+  },
 );
 
 const listenerMiddleware = createListenerMiddleware();
@@ -255,7 +255,7 @@ listenerMiddleware.startListening({
     const state = (currentState as RootState).undoable.present.itemList;
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
-    
+
     return (
       (currentState as RootState).undoable.present.itemList !==
         (previousState as RootState).undoable.present.itemList &&
@@ -309,7 +309,7 @@ listenerMiddleware.startListening({
     const state = (currentState as RootState).undoable.present.itemLists;
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
-    
+
     return (
       (currentState as RootState).undoable.present.itemLists !==
         (previousState as RootState).undoable.present.itemLists &&
@@ -353,7 +353,7 @@ listenerMiddleware.startListening({
     const state = (currentState as RootState).allItems;
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
-    
+
     return (
       (currentState as RootState).allItems !==
         (previousState as RootState).allItems &&
@@ -464,7 +464,7 @@ listenerMiddleware.startListening({
     const currentList = db_itemList.overlays;
     const itemsToUpdate = list.filter(
       (overlay) =>
-        overlay.id !== selectedOverlay?.id && !currentList.includes(overlay.id)
+        overlay.id !== selectedOverlay?.id && !currentList.includes(overlay.id),
     );
 
     db_itemList.overlays = list.map((overlay) => overlay.id);
@@ -526,7 +526,9 @@ listenerMiddleware.startListening({
         // Get current timers from Firebase
         const timersRef = ref(
           globalFireDbInfo.db,
-          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/timers"
+          "users/" +
+            capitalizeFirstLetter(globalFireDbInfo.database) +
+            "/v2/timers",
         );
 
         // Get current timers and merge with own timers
@@ -538,7 +540,7 @@ listenerMiddleware.startListening({
         const mergedTimers = mergeTimers(
           currentTimers,
           ownTimers,
-          globalHostId
+          globalHostId,
         );
 
         set(timersRef, cleanObject(mergedTimers));
@@ -554,7 +556,7 @@ listenerMiddleware.startListening({
     const state = (currentState as RootState).undoable.present.credits;
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
-    
+
     return (
       (currentState as RootState).undoable.present.credits !==
         (previousState as RootState).undoable.present.credits &&
@@ -589,30 +591,38 @@ listenerMiddleware.startListening({
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/publishedList"
+          "users/" +
+            capitalizeFirstLetter(globalFireDbInfo.database) +
+            "/v2/credits/publishedList",
         ),
-        cleanObject(publishedList)
+        cleanObject(publishedList),
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/transitionScene"
+          "users/" +
+            capitalizeFirstLetter(globalFireDbInfo.database) +
+            "/v2/credits/transitionScene",
         ),
-        transitionScene
+        transitionScene,
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/creditsScene"
+          "users/" +
+            capitalizeFirstLetter(globalFireDbInfo.database) +
+            "/v2/credits/creditsScene",
         ),
-        creditsScene
+        creditsScene,
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/credits/scheduleName"
+          "users/" +
+            capitalizeFirstLetter(globalFireDbInfo.database) +
+            "/v2/credits/scheduleName",
         ),
-        scheduleName
+        scheduleName,
       );
     }
 
@@ -638,7 +648,7 @@ listenerMiddleware.startListening({
     const state = (currentState as RootState).media;
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
-    
+
     return (
       (currentState as RootState).media !==
         (previousState as RootState).media &&
@@ -683,42 +693,51 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     // Only sync in Electron
     if (!window.electronAPI) return;
-    
+
     // Check if a video is being set
-    const payload = action.payload as { background: string; mediaInfo?: { type: string } };
+    const payload = action.payload as {
+      background: string;
+      mediaInfo?: { type: string };
+    };
     if (payload?.mediaInfo?.type !== "video") return;
-    
+
     // Debounce sync - wait 2 seconds after video is set
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(2000);
-    
+
     try {
       // Get current state to extract video URLs from Redux state (not database)
       // This ensures we get the latest video even if database save is still pending
       const state = listenerApi.getState() as RootState;
       const currentItem = state.undoable.present.item;
-      
+
       // Extract video URLs from the current item in Redux state
-      const { extractVideoUrlsFromItem } = await import("../utils/videoCacheUtils");
+      const { extractVideoUrlsFromItem } =
+        await import("../utils/videoCacheUtils");
       const itemVideoUrls = extractVideoUrlsFromItem(currentItem);
-      
+
       // Also get all other video URLs from database (for cleanup)
       if (!db) return;
       const allVideoUrls = await extractAllVideoUrlsFromOutlines(db);
-      
+
       // Combine: current item videos + all other videos from database
-      const combinedUrls = new Set([...itemVideoUrls, ...Array.from(allVideoUrls)]);
+      const combinedUrls = new Set([
+        ...itemVideoUrls,
+        ...Array.from(allVideoUrls),
+      ]);
       const urlArray = Array.from(combinedUrls);
-      
+
       // Sync the cache
-      const electronAPI = window.electronAPI as unknown as { 
-        syncVideoCache: (urls: string[]) => Promise<{ downloaded: number; cleaned: number }> 
+      const electronAPI = window.electronAPI as unknown as {
+        syncVideoCache: (
+          urls: string[],
+        ) => Promise<{ downloaded: number; cleaned: number }>;
       };
-      
+
       if (urlArray.length > 0) {
         const result = await electronAPI.syncVideoCache(urlArray);
         console.log(
-          `Video cache sync after item update: ${result.downloaded} downloaded, ${result.cleaned} cleaned`
+          `Video cache sync after item update: ${result.downloaded} downloaded, ${result.cleaned} cleaned`,
         );
       } else {
         // No videos, just cleanup
@@ -736,7 +755,7 @@ listenerMiddleware.startListening({
     const state = (currentState as RootState).undoable.present.preferences;
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
-    
+
     return (
       (currentState as RootState).undoable.present.preferences !==
         (previousState as RootState).undoable.present.preferences &&
@@ -778,11 +797,13 @@ listenerMiddleware.startListening({
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/monitorSettings"
+          "users/" +
+            capitalizeFirstLetter(globalFireDbInfo.database) +
+            "/v2/monitorSettings",
         ),
         cleanObject({
           ...monitorSettings,
-        })
+        }),
       );
     }
 
@@ -824,7 +845,7 @@ listenerMiddleware.startListening({
     const state = (currentState as RootState).undoable.present.overlayTemplates;
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
-    
+
     return (
       (currentState as RootState).undoable.present.overlayTemplates !==
         (previousState as RootState).undoable.present.overlayTemplates &&
@@ -844,7 +865,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     listenerApi.dispatch(
-      overlayTemplatesSlice.actions.setHasPendingUpdate(false)
+      overlayTemplatesSlice.actions.setHasPendingUpdate(false),
     );
 
     // update overlay templates
@@ -888,6 +909,7 @@ listenerMiddleware.startListening({
         (previousState as RootState).undoable.present.serviceTimes &&
       action.type !== "serviceTimes/initiateServices" &&
       action.type !== "serviceTimes/updateServicesFromRemote" &&
+      action.type !== "serviceTimes/setIsInitialized" &&
       action.type !== "RESET"
     );
   },
@@ -959,9 +981,11 @@ listenerMiddleware.startListening({
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/services"
+          "users/" +
+            capitalizeFirstLetter(globalFireDbInfo.database) +
+            "/v2/services",
         ),
-        cleanObject(list)
+        cleanObject(list),
       );
     }
   },
@@ -991,9 +1015,11 @@ listenerMiddleware.startListening({
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/services"
+          "users/" +
+            capitalizeFirstLetter(globalFireDbInfo.database) +
+            "/v2/services",
         ),
-        cleanObject(list)
+        cleanObject(list),
       );
     }
   },
@@ -1052,35 +1078,37 @@ listenerMiddleware.startListening({
     localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
     localStorage.setItem(
       "stream_bibleInfo",
-      JSON.stringify(streamInfo.bibleDisplayInfo)
+      JSON.stringify(streamInfo.bibleDisplayInfo),
     );
     localStorage.setItem(
       "stream_participantOverlayInfo",
-      JSON.stringify(streamInfo.participantOverlayInfo)
+      JSON.stringify(streamInfo.participantOverlayInfo),
     );
     localStorage.setItem(
       "stream_stbOverlayInfo",
-      JSON.stringify(streamInfo.stbOverlayInfo)
+      JSON.stringify(streamInfo.stbOverlayInfo),
     );
     localStorage.setItem(
       "stream_qrCodeOverlayInfo",
-      JSON.stringify(streamInfo.qrCodeOverlayInfo)
+      JSON.stringify(streamInfo.qrCodeOverlayInfo),
     );
     localStorage.setItem(
       "stream_imageOverlayInfo",
-      JSON.stringify(streamInfo.imageOverlayInfo)
+      JSON.stringify(streamInfo.imageOverlayInfo),
     );
     localStorage.setItem(
       "stream_formattedTextDisplayInfo",
-      JSON.stringify(streamInfo.formattedTextDisplayInfo)
+      JSON.stringify(streamInfo.formattedTextDisplayInfo),
     );
 
     set(
       ref(
         globalFireDbInfo.db,
-        "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/presentation"
+        "users/" +
+          capitalizeFirstLetter(globalFireDbInfo.database) +
+          "/v2/presentation",
       ),
-      cleanObject(presentationUpdate)
+      cleanObject(presentationUpdate),
     );
   },
 });
@@ -1106,7 +1134,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateProjectorFromRemote(action.payload as Presentation)
+      updateProjectorFromRemote(action.payload as Presentation),
     );
   },
 });
@@ -1132,7 +1160,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateMonitorFromRemote(action.payload as Presentation)
+      updateMonitorFromRemote(action.payload as Presentation),
     );
   },
 });
@@ -1158,7 +1186,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateStreamFromRemote(action.payload as Presentation)
+      updateStreamFromRemote(action.payload as Presentation),
     );
   },
 });
@@ -1184,7 +1212,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo)
+      updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo),
     );
   },
 });
@@ -1210,7 +1238,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo)
+      updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo),
     );
   },
 });
@@ -1236,7 +1264,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateStbOverlayInfoFromRemote(action.payload as OverlayInfo)
+      updateStbOverlayInfoFromRemote(action.payload as OverlayInfo),
     );
   },
 });
@@ -1262,7 +1290,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo)
+      updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo),
     );
   },
 });
@@ -1288,7 +1316,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateImageOverlayInfoFromRemote(action.payload as OverlayInfo)
+      updateImageOverlayInfoFromRemote(action.payload as OverlayInfo),
     );
   },
 });
@@ -1315,8 +1343,8 @@ listenerMiddleware.startListening({
 
     listenerApi.dispatch(
       updateFormattedTextDisplayInfoFromRemote(
-        action.payload as FormattedTextDisplayInfo
-      )
+        action.payload as FormattedTextDisplayInfo,
+      ),
     );
   },
 });
@@ -1361,7 +1389,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.item,
-        previousState.undoable.present.item
+        previousState.undoable.present.item,
       )
     ) {
       listenerApi.dispatch(itemSlice.actions.forceUpdate());
@@ -1370,7 +1398,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.overlay,
-        previousState.undoable.present.overlay
+        previousState.undoable.present.overlay,
       )
     ) {
       listenerApi.dispatch(overlaySlice.actions.forceUpdate());
@@ -1379,7 +1407,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.overlays,
-        previousState.undoable.present.overlays
+        previousState.undoable.present.overlays,
       )
     ) {
       listenerApi.dispatch(overlaysSlice.actions.forceUpdate());
@@ -1388,7 +1416,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.itemList,
-        previousState.undoable.present.itemList
+        previousState.undoable.present.itemList,
       )
     ) {
       listenerApi.dispatch(itemListSlice.actions.forceUpdate());
@@ -1397,7 +1425,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.itemLists,
-        previousState.undoable.present.itemLists
+        previousState.undoable.present.itemLists,
       )
     ) {
       listenerApi.dispatch(itemListsSlice.actions.forceUpdate());
@@ -1406,7 +1434,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.preferences,
-        previousState.undoable.present.preferences
+        previousState.undoable.present.preferences,
       )
     ) {
       listenerApi.dispatch(preferencesSlice.actions.forceUpdate());
@@ -1415,7 +1443,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.credits,
-        previousState.undoable.present.credits
+        previousState.undoable.present.credits,
       )
     ) {
       listenerApi.dispatch(creditsSlice.actions.forceUpdate());
@@ -1424,7 +1452,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.overlayTemplates,
-        previousState.undoable.present.overlayTemplates
+        previousState.undoable.present.overlayTemplates,
       )
     ) {
       listenerApi.dispatch(overlayTemplatesSlice.actions.forceUpdate());
@@ -1445,10 +1473,11 @@ const safeRequestIdleCallback =
 // Credits editor only needs credits; Controller needs all controller slices (by access).
 export const CREDITS_EDITOR_PAGE_READY = "CREDITS_EDITOR_PAGE_READY";
 export const CONTROLLER_PAGE_READY = "CONTROLLER_PAGE_READY";
+export const INFO_CONTROLLER_PAGE_READY = "INFO_CONTROLLER_PAGE_READY";
 
 const isCreditsPageReady = (state: RootState) => {
   return state.undoable.present.credits.isInitialized;
-}
+};
 
 const areControllerSlicesReady = (state: RootState) => {
   return (
@@ -1461,7 +1490,11 @@ const areControllerSlicesReady = (state: RootState) => {
     (state.undoable.present.overlayTemplates as { isInitialized: boolean })
       .isInitialized
   );
-}
+};
+
+const isInfoControllerPageReady = (state: RootState) => {
+  return state.undoable.present.serviceTimes.isInitialized;
+};
 
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
@@ -1471,7 +1504,8 @@ listenerMiddleware.startListening({
 
     const explicitPageReady =
       action.type === CREDITS_EDITOR_PAGE_READY ||
-      action.type === CONTROLLER_PAGE_READY;
+      action.type === CONTROLLER_PAGE_READY ||
+      action.type === INFO_CONTROLLER_PAGE_READY;
     if (explicitPageReady) return true;
 
     // Fallback for hot reload / full reload: no page-ready was dispatched yet
@@ -1481,7 +1515,9 @@ listenerMiddleware.startListening({
 
     const state = currentState as RootState;
     const ready =
-      isCreditsPageReady(state) || areControllerSlicesReady(state);
+      isCreditsPageReady(state) ||
+      areControllerSlicesReady(state) ||
+      isInfoControllerPageReady(state);
     return ready;
   },
 
@@ -1493,7 +1529,7 @@ listenerMiddleware.startListening({
           console.log("✅ Initialization complete - Starting undo history");
           listenerApi.dispatch(ActionCreators.clearHistory());
         },
-        { timeout: 10000 }
+        { timeout: 10000 },
       );
     }
   },
