@@ -24,9 +24,12 @@ const overlayTemplatesSlice = createSlice({
   name: "overlayTemplates",
   initialState,
   reducers: {
+    setIsInitialized: (state, action: PayloadAction<boolean>) => {
+      state.isInitialized = action.payload;
+    },
     initiateTemplates: (
       state,
-      action: PayloadAction<TemplatesByType | undefined>
+      action: PayloadAction<TemplatesByType | undefined>,
     ) => {
       state.templatesByType = action.payload || initialState.templatesByType;
       state.isInitialized = true;
@@ -34,7 +37,7 @@ const overlayTemplatesSlice = createSlice({
     },
     addTemplate: (
       state,
-      action: PayloadAction<{ type: OverlayType; template: SavedTemplate }>
+      action: PayloadAction<{ type: OverlayType; template: SavedTemplate }>,
     ) => {
       const { type, template } = action.payload;
       state.templatesByType[type].push(template);
@@ -46,11 +49,11 @@ const overlayTemplatesSlice = createSlice({
         type: OverlayType;
         templateId: string;
         updates: Partial<SavedTemplate>;
-      }>
+      }>,
     ) => {
       const { type, templateId, updates } = action.payload;
       const templateIndex = state.templatesByType[type].findIndex(
-        (t) => t.id === templateId
+        (t) => t.id === templateId,
       );
       if (templateIndex !== -1) {
         state.templatesByType[type][templateIndex] = {
@@ -63,17 +66,17 @@ const overlayTemplatesSlice = createSlice({
     },
     deleteTemplate: (
       state,
-      action: PayloadAction<{ type: OverlayType; templateId: string }>
+      action: PayloadAction<{ type: OverlayType; templateId: string }>,
     ) => {
       const { type, templateId } = action.payload;
       state.templatesByType[type] = state.templatesByType[type].filter(
-        (t) => t.id !== templateId
+        (t) => t.id !== templateId,
       );
       state.hasPendingUpdate = true;
     },
     updateTemplatesFromRemote: (
       state,
-      action: PayloadAction<TemplatesByType>
+      action: PayloadAction<TemplatesByType>,
     ) => {
       state.templatesByType = action.payload;
     },
@@ -91,6 +94,7 @@ const overlayTemplatesSlice = createSlice({
 
 export const {
   initiateTemplates,
+  setIsInitialized,
   addTemplate,
   updateTemplate,
   deleteTemplate,

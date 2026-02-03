@@ -112,7 +112,7 @@ const MediaModal = ({
     const matchesType = typeFilter === "all" || item.type === typeFilter;
     return matchesSearch && matchesType;
   });
-  
+
   // Use shared selection hook for modal - independent from Media component
   const {
     selectedMedia: modalSelectedMedia,
@@ -214,100 +214,100 @@ const MediaModal = ({
     return [
       ...(location.pathname.includes("item")
         ? [
-            {
-              label: "Set All Slides",
-              onClick: () => {
-                if (mediaItem.background && db) {
-                  dispatch(
-                    updateAllSlideBackgrounds({
-                      background: mediaItem.background,
-                      mediaInfo: mediaItem,
-                    })
-                  );
-                }
-              },
-              icon: <Images className="w-4 h-4" />,
-              disabled: isLoading || !mediaItem.background,
-            },
-            {
-              label: "Set Selected Slide",
-              onClick: () => {
-                if (mediaItem.background && db) {
-                  dispatch(
-                    updateSlideBackground({
-                      background: mediaItem.background,
-                      mediaInfo: mediaItem,
-                    })
-                  );
-                }
-              },
-              icon: <Image className="w-4 h-4" />,
-              disabled: isLoading || !mediaItem.background,
-            },
-          ]
-        : []),
-      ...(location.pathname.includes("overlays") &&
-      selectedOverlay?.type === "image"
-        ? [
-            {
-              label: "Set Image Overlay",
-              onClick: () => {
-                if (mediaItem.background && db) {
-                  dispatch(
-                    updateOverlay({
-                      imageUrl: mediaItem.background,
-                      id: selectedOverlay?.id,
-                    })
-                  );
-                  dispatch(
-                    updateOverlayInList({
-                      imageUrl: mediaItem.background,
-                      id: selectedOverlay?.id,
-                    })
-                  );
-                }
-              },
-              icon: <Image className="w-4 h-4" />,
-              disabled: !mediaItem.background || !selectedOverlay,
-            },
-          ]
-        : []),
-      ...(location.pathname.includes("preferences") &&
-      !location.pathname.includes("quick-links") &&
-      !location.pathname.includes("monitor-settings") &&
-      selectedPreference
-        ? [
-            {
-              label: "Set Background",
-              onClick: () => {
+          {
+            label: "Set All Slides",
+            onClick: () => {
+              if (mediaItem.background && db) {
                 dispatch(
-                  setDefaultPreferences({
-                    [selectedPreference]: {
-                      background: mediaItem.background,
-                      mediaInfo: mediaItem,
-                    },
+                  updateAllSlideBackgrounds({
+                    background: mediaItem.background,
+                    mediaInfo: mediaItem,
                   })
                 );
-              },
-              icon: <Image className="w-4 h-4" />,
-              disabled: !selectedPreference || !mediaItem.background,
+              }
             },
-          ]
+            icon: <Images className="w-4 h-4" />,
+            disabled: isLoading || !mediaItem.background,
+          },
+          {
+            label: "Set Selected Slide",
+            onClick: () => {
+              if (mediaItem.background && db) {
+                dispatch(
+                  updateSlideBackground({
+                    background: mediaItem.background,
+                    mediaInfo: mediaItem,
+                  })
+                );
+              }
+            },
+            icon: <Image className="w-4 h-4" />,
+            disabled: isLoading || !mediaItem.background,
+          },
+        ]
+        : []),
+      ...(location.pathname.includes("overlays") &&
+        selectedOverlay?.type === "image"
+        ? [
+          {
+            label: "Set Image Overlay",
+            onClick: () => {
+              if (mediaItem.background && db) {
+                dispatch(
+                  updateOverlay({
+                    imageUrl: mediaItem.background,
+                    id: selectedOverlay?.id,
+                  })
+                );
+                dispatch(
+                  updateOverlayInList({
+                    imageUrl: mediaItem.background,
+                    id: selectedOverlay?.id,
+                  })
+                );
+              }
+            },
+            icon: <Image className="w-4 h-4" />,
+            disabled: !mediaItem.background || !selectedOverlay,
+          },
+        ]
+        : []),
+      ...(location.pathname.includes("preferences") &&
+        !location.pathname.includes("quick-links") &&
+        !location.pathname.includes("monitor-settings") &&
+        selectedPreference
+        ? [
+          {
+            label: "Set Background",
+            onClick: () => {
+              dispatch(
+                setDefaultPreferences({
+                  [selectedPreference]: {
+                    background: mediaItem.background,
+                    mediaInfo: mediaItem,
+                  },
+                })
+              );
+            },
+            icon: <Image className="w-4 h-4" />,
+            disabled: !selectedPreference || !mediaItem.background,
+          },
+        ]
         : []),
       ...(location.pathname.includes("quick-links") &&
-      selectedQuickLink?.linkType === "media"
+        selectedQuickLink?.linkType === "media"
         ? [
-            {
-              label: "Set Quick Link Background",
-              onClick: () => {
-                dispatch(setSelectedQuickLinkImage(mediaItem));
-              },
-              icon: <Image className="w-4 h-4" />,
-              disabled:
-                !selectedQuickLink ||
-                selectedQuickLink?.linkType !== "media",
+          {
+            label: "Set Quick Link Background",
+            onClick: () => {
+              dispatch(setSelectedQuickLinkImage(mediaItem));
             },
-          ]
+            icon: <Image className="w-4 h-4" />,
+            disabled:
+              !selectedQuickLink ||
+              selectedQuickLink?.linkType !== "media",
+          },
+        ]
         : []),
       {
         label: "Delete",
@@ -524,20 +524,20 @@ const MediaModal = ({
                 gridAutoRows: "auto",
               }}
             >
-            {filteredList.map((mediaItem, index) => {
-              const { id, thumbnail, name, type } = mediaItem;
-              const isSelected = id === modalSelectedMedia.id;
-              const isMultiSelected = modalSelectedMediaIds.has(id);
-              const hasMultipleSelection = modalSelectedMediaIds.size > 1;
-              const shownName = name.includes("/")
-                ? name.split("/").slice(1).join("/")
-                : name;
+              {filteredList.map((mediaItem, index) => {
+                const { id, thumbnail, name, type } = mediaItem;
+                const isSelected = id === modalSelectedMedia.id;
+                const isMultiSelected = modalSelectedMediaIds.has(id);
+                const hasMultipleSelection = modalSelectedMediaIds.size > 1;
+                const shownName = name.includes("/")
+                  ? name.split("/").slice(1).join("/")
+                  : name;
 
-              const contextMenuItems = getContextMenuItems(
-                mediaItem,
-                hasMultipleSelection,
-                modalSelectedMediaIds.size
-              );
+                const contextMenuItems = getContextMenuItems(
+                  mediaItem,
+                  hasMultipleSelection,
+                  modalSelectedMediaIds.size
+                );
 
                 return (
                   <li key={id}>
@@ -546,49 +546,49 @@ const MediaModal = ({
                       header={
                         hasMultipleSelection
                           ? {
-                              title: `${modalSelectedMediaIds.size} items selected`,
-                              subtitle: "Multiple selection",
-                            }
+                            title: `${modalSelectedMediaIds.size} items selected`,
+                            subtitle: "Multiple selection",
+                          }
                           : {
-                              title: shownName,
-                              subtitle:
-                                type.charAt(0).toUpperCase() + type.slice(1),
-                            }
+                            title: shownName,
+                            subtitle:
+                              type.charAt(0).toUpperCase() + type.slice(1),
+                          }
                       }
-                    onOpen={() => {
-                      if (!isMultiSelected && !hasMultipleSelection) {
-                        handleModalMediaClick(
-                          {
-                            ctrlKey: false,
-                            metaKey: false,
-                            shiftKey: false,
-                          } as React.MouseEvent,
-                          mediaItem,
-                          index
-                        );
-                      }
-                    }}
-                  >
-                    <Button
-                      variant="none"
-                      padding="p-0"
-                      className={cn(
-                        "w-full h-full justify-center flex flex-col items-center border-2",
-                        isMultiSelected
-                          ? "border-cyan-400 bg-cyan-400/10"
-                          : isSelected
-                          ? "border-cyan-400"
-                          : "border-gray-500 hover:border-gray-300"
-                      )}
-                      onClick={(e) => {
-                        handleModalMediaClick(e, mediaItem, index);
-                      }}
-                      onContextMenu={(e) => {
-                        if (!isMultiSelected && !isSelected) {
-                          handleModalMediaClick(e, mediaItem, index);
+                      onOpen={() => {
+                        if (!isMultiSelected && !hasMultipleSelection) {
+                          handleModalMediaClick(
+                            {
+                              ctrlKey: false,
+                              metaKey: false,
+                              shiftKey: false,
+                            } as React.MouseEvent,
+                            mediaItem,
+                            index
+                          );
                         }
                       }}
                     >
+                      <Button
+                        variant="none"
+                        padding="p-0"
+                        className={cn(
+                          "w-full h-full justify-center flex flex-col items-center border-2",
+                          isMultiSelected
+                            ? "border-cyan-400 bg-cyan-400/10"
+                            : isSelected
+                              ? "border-cyan-400"
+                              : "border-gray-500 hover:border-gray-300"
+                        )}
+                        onClick={(e) => {
+                          handleModalMediaClick(e, mediaItem, index);
+                        }}
+                        onContextMenu={(e) => {
+                          if (!isMultiSelected && !isSelected) {
+                            handleModalMediaClick(e, mediaItem, index);
+                          }
+                        }}
+                      >
                         <div className="aspect-video flex items-center justify-center w-full flex-1 overflow-hidden border-b border-gray-500 relative">
                           <img
                             className="max-w-full max-h-full"

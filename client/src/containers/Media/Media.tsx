@@ -170,7 +170,7 @@ const Media = () => {
             dispatch(updateMediaListFromRemote(images));
           }
         }
-        
+
       } catch (e) {
         console.error(e);
       }
@@ -259,7 +259,7 @@ const Media = () => {
             `${getApiBasePath()}api/mux/asset/${mediaToDelete.muxAssetId}`,
             { method: "DELETE" }
           );
-          
+
           if (!response.ok) {
             console.warn(
               "Failed to delete from Mux, but continuing with local deletion"
@@ -298,7 +298,7 @@ const Media = () => {
     if (!db || selectedMediaIds.size === 0) return;
 
     const itemsToDelete = list.filter((item) => selectedMediaIds.has(item.id));
-    
+
     try {
       // Delete all items from their sources
       for (const item of itemsToDelete) {
@@ -405,7 +405,7 @@ const Media = () => {
     name: string;
   }) => {
     const currentTime = new Date().toISOString();
-    
+
     const newMedia: MediaType = {
       path: "",
       createdAt: currentTime,
@@ -433,9 +433,8 @@ const Media = () => {
   return (
     <ErrorBoundary>
       <div
-        className={`mx-2 bg-gray-900 rounded-t-md flex items-center text-sm relative z-10 transition-all  mt-2 px-2 ${
-          isMediaExpanded ? " py-1" : "rounded-b-md py-0.5"
-        }`}
+        className={`mx-2 bg-gray-900 rounded-t-md flex items-center text-sm relative z-10 transition-all  mt-2 px-2 ${isMediaExpanded ? " py-1" : "rounded-b-md py-0.5"
+          }`}
       >
         <h2 className="font-semibold">Media</h2>
         <div className="flex-1 flex items-center justify-center">
@@ -534,125 +533,125 @@ const Media = () => {
             const shownName = name.includes("/")
               ? name.split("/").slice(1).join("/")
               : name;
-            
+
             const contextMenuItems = hasMultipleSelection
               ? [
-                  {
-                    label: `Delete ${selectedMediaIds.size} items`,
-                    onClick: () => {
-                      setIsDeletingMultiple(true);
-                      setShowDeleteModal(true);
-                    },
-                    icon: <Trash2 className="w-4 h-4" />,
-                    variant: "destructive" as const,
+                {
+                  label: `Delete ${selectedMediaIds.size} items`,
+                  onClick: () => {
+                    setIsDeletingMultiple(true);
+                    setShowDeleteModal(true);
                   },
-                ]
+                  icon: <Trash2 className="w-4 h-4" />,
+                  variant: "destructive" as const,
+                },
+              ]
               : [
-                  ...(location.pathname.includes("item")
-                    ? [
-                        {
-                          label: "Set All Slides",
-                          onClick: () => {
-                            if (mediaItem.background && db) {
-                              dispatch(
-                                updateAllSlideBackgrounds({
-                                  background: mediaItem.background,
-                                  mediaInfo: mediaItem,
-                                })
-                              );
-                            }
-                          },
-                          icon: <Images className="w-4 h-4" />,
-                          disabled: isLoading || !mediaItem.background,
-                        },
-                        {
-                          label: "Set Selected Slide",
-                          onClick: () => {
-                            if (mediaItem.background && db) {
-                              dispatch(
-                                updateSlideBackground({
-                                  background: mediaItem.background,
-                                  mediaInfo: mediaItem,
-                                })
-                              );
-                            }
-                          },
-                          icon: <Image className="w-4 h-4" />,
-                          disabled: isLoading || !mediaItem.background,
-                        },
-                      ]
-                    : []),
-                  ...(location.pathname.includes("overlays") &&
+                ...(location.pathname.includes("item")
+                  ? [
+                    {
+                      label: "Set All Slides",
+                      onClick: () => {
+                        if (mediaItem.background && db) {
+                          dispatch(
+                            updateAllSlideBackgrounds({
+                              background: mediaItem.background,
+                              mediaInfo: mediaItem,
+                            })
+                          );
+                        }
+                      },
+                      icon: <Images className="w-4 h-4" />,
+                      disabled: isLoading || !mediaItem.background,
+                    },
+                    {
+                      label: "Set Selected Slide",
+                      onClick: () => {
+                        if (mediaItem.background && db) {
+                          dispatch(
+                            updateSlideBackground({
+                              background: mediaItem.background,
+                              mediaInfo: mediaItem,
+                            })
+                          );
+                        }
+                      },
+                      icon: <Image className="w-4 h-4" />,
+                      disabled: isLoading || !mediaItem.background,
+                    },
+                  ]
+                  : []),
+                ...(location.pathname.includes("overlays") &&
                   selectedOverlay?.type === "image"
-                    ? [
-                        {
-                          label: "Set Image Overlay",
-                          onClick: () => {
-                            if (mediaItem.background && db) {
-                              dispatch(
-                                updateOverlay({
-                                  imageUrl: mediaItem.background,
-                                  id: selectedOverlay?.id,
-                                })
-                              );
-                              dispatch(
-                                updateOverlayInList({
-                                  imageUrl: mediaItem.background,
-                                  id: selectedOverlay?.id,
-                                })
-                              );
-                            }
-                          },
-                          icon: <Image className="w-4 h-4" />,
-                          disabled: !mediaItem.background || !selectedOverlay,
-                        },
-                      ]
-                    : []),
-                  ...(location.pathname.includes("preferences") &&
+                  ? [
+                    {
+                      label: "Set Image Overlay",
+                      onClick: () => {
+                        if (mediaItem.background && db) {
+                          dispatch(
+                            updateOverlay({
+                              imageUrl: mediaItem.background,
+                              id: selectedOverlay?.id,
+                            })
+                          );
+                          dispatch(
+                            updateOverlayInList({
+                              imageUrl: mediaItem.background,
+                              id: selectedOverlay?.id,
+                            })
+                          );
+                        }
+                      },
+                      icon: <Image className="w-4 h-4" />,
+                      disabled: !mediaItem.background || !selectedOverlay,
+                    },
+                  ]
+                  : []),
+                ...(location.pathname.includes("preferences") &&
                   !location.pathname.includes("quick-links") &&
                   !location.pathname.includes("monitor-settings") &&
                   selectedPreference
-                    ? [
-                        {
-                          label: "Set Background",
-                          onClick: () => {
-                            dispatch(
-                              setDefaultPreferences({
-                                [selectedPreference]: {
-                                  background: mediaItem.background,
-                                  mediaInfo: mediaItem,
-                                },
-                              })
-                            );
-                          },
-                          icon: <Image className="w-4 h-4" />,
-                          disabled: !selectedPreference || !mediaItem.background,
-                        },
-                      ]
-                    : []),
-                  ...(location.pathname.includes("quick-links") &&
-                  selectedQuickLink?.linkType === "media"
-                    ? [
-                        {
-                          label: "Set Quick Link Background",
-                          onClick: () => {
-                            dispatch(setSelectedQuickLinkImage(mediaItem));
-                          },
-                          icon: <Image className="w-4 h-4" />,
-                          disabled: !selectedQuickLink || selectedQuickLink?.linkType !== "media",
-                        },
-                      ]
-                    : []),
-                  {
-                    label: "Delete",
-                    onClick: () => {
-                      setMediaToDelete(mediaItem);
-                      setShowDeleteModal(true);
+                  ? [
+                    {
+                      label: "Set Background",
+                      onClick: () => {
+                        dispatch(
+                          setDefaultPreferences({
+                            [selectedPreference]: {
+                              background: mediaItem.background,
+                              mediaInfo: mediaItem,
+                            },
+                          })
+                        );
+                      },
+                      icon: <Image className="w-4 h-4" />,
+                      disabled: !selectedPreference || !mediaItem.background,
                     },
-                    icon: <Trash2 className="w-4 h-4" />,
-                    variant: "destructive" as const,
+                  ]
+                  : []),
+                ...(location.pathname.includes("quick-links") &&
+                  selectedQuickLink?.linkType === "media"
+                  ? [
+                    {
+                      label: "Set Quick Link Background",
+                      onClick: () => {
+                        dispatch(setSelectedQuickLinkImage(mediaItem));
+                      },
+                      icon: <Image className="w-4 h-4" />,
+                      disabled: !selectedQuickLink || selectedQuickLink?.linkType !== "media",
+                    },
+                  ]
+                  : []),
+                {
+                  label: "Delete",
+                  onClick: () => {
+                    setMediaToDelete(mediaItem);
+                    setShowDeleteModal(true);
                   },
-                ];
+                  icon: <Trash2 className="w-4 h-4" />,
+                  variant: "destructive" as const,
+                },
+              ];
 
             return (
               <li key={id}>
@@ -661,13 +660,13 @@ const Media = () => {
                   header={
                     hasMultipleSelection
                       ? {
-                          title: `${selectedMediaIds.size} items selected`,
-                          subtitle: "Multiple selection",
-                        }
+                        title: `${selectedMediaIds.size} items selected`,
+                        subtitle: "Multiple selection",
+                      }
                       : {
-                          title: shownName,
-                          subtitle: type.charAt(0).toUpperCase() + type.slice(1),
-                        }
+                        title: shownName,
+                        subtitle: type.charAt(0).toUpperCase() + type.slice(1),
+                      }
                   }
                   onOpen={() => {
                     // Ensure this item is selected when context menu opens
@@ -688,8 +687,8 @@ const Media = () => {
                       isMultiSelected
                         ? "border-cyan-400 bg-cyan-400/10"
                         : isSelected
-                        ? "border-cyan-400"
-                        : "border-gray-500 hover:border-gray-300"
+                          ? "border-cyan-400"
+                          : "border-gray-500 hover:border-gray-300"
                     )}
                     onClick={(e) => {
                       handleMediaClick(e, mediaItem, index);

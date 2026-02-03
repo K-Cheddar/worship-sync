@@ -41,6 +41,7 @@ import {
 } from "../../types";
 import {
   initiateItemList,
+  setIsInitialized as setItemListIsInitialized,
   setItemListIsLoading,
   updateItemListFromRemote,
 } from "../../store/itemListSlice";
@@ -75,9 +76,13 @@ import {
   initiateQuickLinks,
   setIsLoading,
   updatePreferencesFromRemote,
+  setIsInitialized as setPreferencesIsInitialized,
 } from "../../store/preferencesSlice";
-import { initiateTemplates } from "../../store/overlayTemplatesSlice";
-import { initiateMediaList } from "../../store/mediaSlice";
+import { initiateTemplates, setIsInitialized as setOverlayTemplatesIsInitialized } from "../../store/overlayTemplatesSlice";
+import { initiateMediaList, setIsInitialized as setMediaIsInitialized } from "../../store/mediaSlice";
+import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
+import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
+import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemListsSlice";
 import { setIsEditMode } from "../../store/itemSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
@@ -147,10 +152,20 @@ const Controller = () => {
   useEffect(() => {
     return () => {
       dispatch({ type: "RESET" });
+      dispatch(setAllItemsIsInitialized(false));
+      dispatch(setPreferencesIsInitialized(false));
+      dispatch(setItemListIsInitialized(false));
+      dispatch(setOverlaysIsInitialized(false));
+      dispatch(setItemListsIsInitialized(false));
+      dispatch(setMediaIsInitialized(false));
+      dispatch(setOverlayTemplatesIsInitialized(false));
       dispatch({ type: "RESET_INITIALIZATION" });
       refreshPresentationListeners?.();
     };
-  }, [dispatch, refreshPresentationListeners]);
+  }, [
+    dispatch,
+    refreshPresentationListeners,
+  ]);
 
   useEffect(() => {
     if (
@@ -196,6 +211,7 @@ const Controller = () => {
 
   useEffect(() => {
     if (!db) return;
+    console.log("getting preferences", { access });
     const getPreferences = async () => {
       try {
         const preferences: DBPreferences | undefined =
@@ -207,8 +223,10 @@ const Controller = () => {
             isMusic: access === "music",
           })
         );
+
         dispatch(initiateQuickLinks(preferences.quickLinks));
         dispatch(initiateMonitorSettings(preferences.monitorSettings));
+        dispatch(setPreferencesIsInitialized(true));
       } catch (e) {
         console.error(e);
       } finally {

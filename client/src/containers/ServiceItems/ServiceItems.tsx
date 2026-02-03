@@ -197,6 +197,7 @@ const ServiceItems = () => {
     const parentElement = document.getElementById("service-items-list");
 
     const isNewItem = serviceItems.length > prevItemsLengthRef.current;
+    const isSameLength = serviceItems.length === prevItemsLengthRef.current;
     prevItemsLengthRef.current = serviceItems.length;
 
     const scrollToItem = () => {
@@ -211,7 +212,7 @@ const ServiceItems = () => {
     if (isNewItem) {
       // Only delay if a new item was added
       setTimeout(scrollToItem, 500);
-    } else {
+    } else if (isSameLength) {
       // Scroll immediately for other cases
       scrollToItem();
     }

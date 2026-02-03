@@ -47,7 +47,19 @@ root.render(
 // Register service worker
 serviceWorkerRegistration.register({
   onUpdate: (registration) => {
-    console.log("Service worker update available");
+    // New SW is installed; it will activate soon (skipWaiting in SW).
+    // Reload once this page is controlled by the new SW so we run new code.
+    const onControllerChange = () => {
+      navigator.serviceWorker.removeEventListener(
+        "controllerchange",
+        onControllerChange
+      );
+      window.location.reload();
+    };
+    navigator.serviceWorker.addEventListener(
+      "controllerchange",
+      onControllerChange
+    );
   },
 });
 

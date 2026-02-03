@@ -81,9 +81,16 @@ app.use(
         "http://localhost:3000",
         "file://", // Electron file:// protocol
       ];
-      
+
       // Allow requests with no origin (like Electron or mobile apps)
-      if (!origin || allowedOrigins.some(allowed => origin.includes(allowed.replace(/https?:\/\//, "")) || origin.startsWith("file://"))) {
+      if (
+        !origin ||
+        allowedOrigins.some(
+          (allowed) =>
+            origin.includes(allowed.replace(/https?:\/\//, "")) ||
+            origin.startsWith("file://"),
+        )
+      ) {
         callback(null, true);
       } else {
         callback(null, true); // Allow all for now, can be more restrictive if needed
@@ -92,12 +99,16 @@ app.use(
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Origin", "X-Requested-With", "Content-Type", "Accept"],
     credentials: true,
-  })
+  }),
 );
 
 // API calls
 app.get("/api/hello", (req, res) => {
   res.send({ express: "Hello From Express" });
+});
+
+app.get("/api/version", (req, res) => {
+  res.json({ version: packageJson.version });
 });
 
 app.post("/api/log", (req, res) => {
@@ -154,7 +165,7 @@ app.get("/bible", async (req, res) => {
     function (err, data) {
       if (err) throw err;
       return JSON.parse(data);
-    }
+    },
   );
 
   res.send(bible);
@@ -172,7 +183,7 @@ app.use("/db", async (req, res) => {
         Authorization:
           "Basic " +
           Buffer.from(
-            `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`
+            `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`,
           ).toString("base64"),
         "Content-Type": "application/json",
       },
@@ -224,7 +235,7 @@ app.post("/api/login", async (req, res) => {
         Authorization:
           "Basic " +
           Buffer.from(
-            `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`
+            `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`,
           ).toString("base64"),
         "Content-Type": "application/json",
       },
@@ -232,7 +243,7 @@ app.post("/api/login", async (req, res) => {
 
     const db_logins = response.data;
     const user = db_logins.logins.find(
-      (e) => e.username === username && e.password === password
+      (e) => e.username === username && e.password === password,
     );
 
     if (!user) {
@@ -288,7 +299,10 @@ app.delete("/api/cloudinary/delete", async (req, res) => {
 app.post("/api/mux/upload", async (req, res) => {
   try {
     if (!mux) {
-      return res.status(503).json({ error: "Mux is not configured. Please set MUX_TOKEN_ID and MUX_TOKEN_SECRET environment variables." });
+      return res.status(503).json({
+        error:
+          "Mux is not configured. Please set MUX_TOKEN_ID and MUX_TOKEN_SECRET environment variables.",
+      });
     }
 
     const { corsOrigin } = req.body;
@@ -312,7 +326,9 @@ app.post("/api/mux/upload", async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating Mux upload:", error);
-    res.status(500).json({ error: "Failed to create upload", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Failed to create upload", details: error.message });
   }
 });
 
@@ -331,7 +347,9 @@ app.get("/api/mux/upload/:uploadId", async (req, res) => {
     });
   } catch (error) {
     console.error("Error getting Mux upload status:", error);
-    res.status(500).json({ error: "Failed to get upload status", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Failed to get upload status", details: error.message });
   }
 });
 
@@ -350,13 +368,15 @@ app.get("/api/mux/asset/:assetId", async (req, res) => {
     if (asset.static_renditions) {
       if (Array.isArray(asset.static_renditions)) {
         staticRenditions = asset.static_renditions;
-      } else if (typeof asset.static_renditions === 'object') {
+      } else if (typeof asset.static_renditions === "object") {
         // If it's an object, try to convert it to an array
         staticRenditions = Object.values(asset.static_renditions);
       }
     }
-    
-    const highestRendition = staticRenditions.find((r) => r.resolution === "highest");
+
+    const highestRendition = staticRenditions.find(
+      (r) => r.resolution === "highest",
+    );
     const staticRenditionReady = highestRendition?.status === "ready";
 
     res.json({
@@ -373,7 +393,9 @@ app.get("/api/mux/asset/:assetId", async (req, res) => {
     });
   } catch (error) {
     console.error("Error getting Mux asset:", error);
-    res.status(500).json({ error: "Failed to get asset", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Failed to get asset", details: error.message });
   }
 });
 
@@ -389,7 +411,9 @@ app.delete("/api/mux/asset/:assetId", async (req, res) => {
     res.json({ success: true, message: "Asset deleted successfully" });
   } catch (error) {
     console.error("Error deleting Mux asset:", error);
-    res.status(500).json({ error: "Failed to delete asset", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Failed to delete asset", details: error.message });
   }
 });
 
@@ -404,7 +428,7 @@ app.get("/api/getDbSession", async (req, res) => {
         Authorization:
           "Basic " +
           Buffer.from(
-            `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`
+            `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`,
           ).toString("base64"),
         "Content-Type": "application/x-www-form-urlencoded",
       },
@@ -421,8 +445,8 @@ app.get("/api/getDbSession", async (req, res) => {
           reqCookieHeader
             .split(";")
             .map((c) => c.split("=")[0].trim())
-            .filter(Boolean)
-        )
+            .filter(Boolean),
+        ),
       );
       const domainsToClear = [
         "worshipsync.net",
@@ -433,7 +457,7 @@ app.get("/api/getDbSession", async (req, res) => {
         domainsToClear.forEach((domain) => {
           res.append(
             "Set-Cookie",
-            `${name}=; Path=/; Domain=${domain}; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Secure; HttpOnly; SameSite=None`
+            `${name}=; Path=/; Domain=${domain}; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Secure; HttpOnly; SameSite=None`,
           );
         });
       });
@@ -446,7 +470,7 @@ app.get("/api/getDbSession", async (req, res) => {
       cookies.forEach((cookie) => {
         const updatedCookie = cookie.replace(
           /; HttpOnly/,
-          "; HttpOnly; SameSite=None; Secure; Domain=.worshipsync.net; Path=/"
+          "; HttpOnly; SameSite=None; Secure; Domain=.worshipsync.net; Path=/",
         );
         res.append("Set-Cookie", updatedCookie);
       });
@@ -467,19 +491,29 @@ app.get("/api/getDbSession", async (req, res) => {
 
 setupExpressErrorHandler(app);
 
+const HASHED_FILENAME = /-[A-Za-z0-9]{8,}\.(js|css|png|jpg|jpeg|svg|woff2?)$/;
+
 app.use(
   express.static(path.join(dirname, "/client/dist"), {
     setHeaders(res, filePath) {
+      const name = path.basename(filePath);
+
       if (filePath.endsWith("index.html")) {
         res.setHeader("Cache-Control", "no-store");
-      } else if (/\.(js|css|woff2?|png|jpg|svg)$/.test(filePath)) {
+      } else if (filePath.endsWith("service-worker.js")) {
+        // Must be revalidated, but still cacheable
+        res.setHeader("Cache-Control", "no-cache");
+      } else if (HASHED_FILENAME.test(name)) {
+        // Fingerprinted assets: safe to cache forever
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      } else {
+        // Non-hashed assets: safe revalidation
+        res.setHeader("Cache-Control", "no-cache");
       }
     },
-  })
+  }),
 );
 
-// React router fallback
 app.get("*", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.sendFile(path.join(dirname, "/client/dist", "index.html"));

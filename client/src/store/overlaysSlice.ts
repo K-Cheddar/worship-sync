@@ -26,11 +26,11 @@ export const overlaysSlice = createSlice({
       action: PayloadAction<{
         newOverlay: OverlayInfo;
         selectedOverlayId: string;
-      }>
+      }>,
     ) => {
       // get index of selected overlay
       const existingIndex = state.list.findIndex(
-        (overlay) => overlay.id === action.payload.selectedOverlayId
+        (overlay) => overlay.id === action.payload.selectedOverlayId,
       );
 
       if (existingIndex !== -1) {
@@ -43,6 +43,9 @@ export const overlaysSlice = createSlice({
     updateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
       state.list = action.payload;
       state.hasPendingUpdate = true;
+    },
+    setIsInitialized: (state, action: PayloadAction<boolean>) => {
+      state.isInitialized = action.payload;
     },
     initiateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
       // reset state when loading an item list
@@ -66,7 +69,7 @@ export const overlaysSlice = createSlice({
     },
     updateOverlayListFromRemote: (
       state,
-      action: PayloadAction<OverlayInfo[]>
+      action: PayloadAction<OverlayInfo[]>,
     ) => {
       if (action.payload.length === 0) {
         state.list = [];
@@ -79,13 +82,13 @@ export const overlaysSlice = createSlice({
     },
     deleteOverlayFromList: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter(
-        (overlay) => overlay.id !== action.payload
+        (overlay) => overlay.id !== action.payload,
       );
       state.hasPendingUpdate = true;
     },
     updateOverlayInList: (
       state,
-      action: PayloadAction<Partial<OverlayInfo>>
+      action: PayloadAction<Partial<OverlayInfo>>,
     ) => {
       state.list = state.list.map((overlay) => {
         if (overlay.id === action.payload.id) {
@@ -115,6 +118,7 @@ export const {
   deleteOverlayFromList,
   updateOverlayInList,
   initiateOverlayList,
+  setIsInitialized,
   updateOverlayListFromRemote,
   setHasPendingUpdate: setHasPendingListUpdate,
   updateInitialList,

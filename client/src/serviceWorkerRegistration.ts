@@ -18,12 +18,12 @@ const frontEndHost = import.meta.env.DEV
 
 const isLocalhost = Boolean(
   window.location.hostname === frontEndHost ||
-    // [::1] is the IPv6 localhost address.
-    window.location.hostname === "[::1]" ||
-    // 127.0.0.0/8 are considered localhost for IPv4.
-    window.location.hostname.match(
-      /^127(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$/
-    )
+  // [::1] is the IPv6 localhost address.
+  window.location.hostname === "[::1]" ||
+  // 127.0.0.0/8 are considered localhost for IPv4.
+  window.location.hostname.match(
+    /^127(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$/,
+  ),
 );
 
 type Config = {
@@ -36,11 +36,11 @@ export function register(config?: Config) {
   if (isElectron()) {
     return;
   }
-  
+
   if ("serviceWorker" in navigator) {
     // The URL constructor is available in all browsers that support SW.
     // Use BASE_URL from Vite, which defaults to '/' for root path
-    const baseUrl = import.meta.env.BASE_URL || '';
+    const baseUrl = import.meta.env.BASE_URL || "";
     const publicUrl = new URL(baseUrl, window.location.href);
     if (publicUrl.origin !== window.location.origin) {
       // Our service worker won't work if BASE_URL is on a different origin
@@ -61,21 +61,31 @@ export function register(config?: Config) {
         navigator.serviceWorker.ready.then(() => {
           console.log(
             "This web app is being served cache-first by a service " +
-              "worker. To learn more, visit https://cra.link/PWA"
+              "worker. To learn more, visit https://cra.link/PWA",
           );
         });
       } else {
         // Is not localhost. Just register service worker
-        registerValidSW(swUrl, config);
+        registerValidSW(swUrl, config, false);
       }
     });
   }
 }
 
-function registerValidSW(swUrl: string, config?: Config) {
+const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+function registerValidSW(
+  swUrl: string,
+  config?: Config,
+  isLocalhostEnv?: boolean,
+) {
   navigator.serviceWorker
     .register(swUrl)
     .then((registration) => {
+      // Periodically check for new service worker while app is open (skip on localhost)
+      if (!isLocalhostEnv) {
+        setInterval(() => registration.update(), UPDATE_CHECK_INTERVAL_MS);
+      }
       registration.onupdatefound = () => {
         const installingWorker = registration.installing;
         if (installingWorker == null) {
@@ -84,15 +94,9 @@ function registerValidSW(swUrl: string, config?: Config) {
         installingWorker.onstatechange = () => {
           if (installingWorker.state === "installed") {
             if (navigator.serviceWorker.controller) {
-              // At this point, the updated precached content has been fetched,
-              // but the previous service worker will still serve the older
-              // content until all client tabs are closed.
-              console.log(
-                "New content is available and will be used when all " +
-                  "tabs for this page are closed. See https://cra.link/PWA."
-              );
-
-              // Execute callback
+              // New service worker installed (our SW calls skipWaiting(), so it
+              // will activate soon). onUpdate lets the app reload once the new
+              // SW takes control so the page runs the new code.
               if (config && config.onUpdate) {
                 config.onUpdate(registration);
               }
@@ -136,14 +140,26 @@ function checkValidServiceWorker(swUrl: string, config?: Config) {
         });
       } else {
         // Service worker found. Proceed as normal.
-        registerValidSW(swUrl, config);
+        registerValidSW(swUrl, config, true);
       }
     })
     .catch(() => {
       console.log(
-        "No internet connection found. App is running in offline mode."
+        "No internet connection found. App is running in offline mode.",
       );
     });
+}
+
+/**
+ * Trigger an immediate service worker update check (instead of waiting for the
+ * hourly interval). If a new version is found, the SW installs and the app's
+ * onUpdate callback in main.tsx will reload the page. Call this when the user
+ * explicitly asks to get the latest version (e.g. "Get latest version" button).
+ */
+export async function checkForUpdate(): Promise<void> {
+  if (!("serviceWorker" in navigator)) return;
+  const registration = await navigator.serviceWorker.getRegistration();
+  if (registration) await registration.update();
 }
 
 export function unregister() {

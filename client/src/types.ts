@@ -111,7 +111,14 @@ export type DBHeading = {
   updatedAt?: string;
 };
 
-export type ItemType = "song" | "free" | "bible" | "timer" | "image" | "heading" | "";
+export type ItemType =
+  | "song"
+  | "free"
+  | "bible"
+  | "timer"
+  | "image"
+  | "heading"
+  | "";
 export type TimerStatus = "running" | "paused" | "stopped";
 export type TimerType = "timer" | "countdown";
 export type TimerInfo = {

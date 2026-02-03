@@ -4,25 +4,10 @@ import { configureStore } from "@reduxjs/toolkit";
 import Credits from "../Credits";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { onValue, ref } from "firebase/database";
-import { Database } from "firebase/database";
+import { createMockGlobalInfo, mockFirebaseDb } from "../../test/mocks";
 
-// Mock IntersectionObserver
-class MockIntersectionObserver {
-  observe = jest.fn();
-  unobserve = jest.fn();
-  disconnect = jest.fn();
-  constructor(callback: IntersectionObserverCallback) {
-    // Store callback for testing
-    this.callback = callback;
-  }
-  callback: IntersectionObserverCallback;
-}
-
-Object.defineProperty(window, "IntersectionObserver", {
-  writable: true,
-  configurable: true,
-  value: MockIntersectionObserver,
-});
+// controllerInfo/env use import.meta – replaced by jest.config.cjs moduleNameMapper (__mocks__)
+// IntersectionObserver – setupTests.ts
 
 // Mock firebase/database
 jest.mock("firebase/database", () => ({
@@ -53,25 +38,13 @@ const createMockStore = (initialState = {}) => {
 
 describe("Credits Component", () => {
   const mockUser = "testUser";
-  const mockFirebaseDb = {} as Database;
   const mockPublishedList = [
     { id: "1", heading: "Test Heading", text: "Test Text", hidden: false },
   ];
   const mockTransitionScene = "transition";
   const mockCreditsScene = "credits";
 
-  const mockGlobalInfo = {
-    user: mockUser,
-    firebaseDb: mockFirebaseDb,
-    login: jest.fn(),
-    logout: jest.fn(),
-    loginState: "success" as const,
-    database: "test-database",
-    auth: {} as any,
-    storage: {} as any,
-    uploadPreset: "test-preset",
-    setLoginState: jest.fn(),
-  };
+  const mockGlobalInfo = createMockGlobalInfo({ user: mockUser });
 
   const renderComponent = (store = createMockStore(), user = mockUser) => {
     return render(
@@ -105,20 +78,22 @@ describe("Credits Component", () => {
       transitionScene: mockTransitionScene,
       creditsScene: mockCreditsScene,
     });
+    // Credits uses capitalizeFirstLetter(database) for Firebase paths (mockGlobalInfo.database is "test-database")
+    const expectedPathPrefix = `users/Test-database/v2/credits`;
 
     renderComponent(store);
 
     expect(ref).toHaveBeenCalledWith(
       mockFirebaseDb,
-      `users/${mockUser}/v2/credits/publishedList`,
+      `${expectedPathPrefix}/publishedList`,
     );
     expect(ref).toHaveBeenCalledWith(
       mockFirebaseDb,
-      `users/${mockUser}/v2/credits/transitionScene`,
+      `${expectedPathPrefix}/transitionScene`,
     );
     expect(ref).toHaveBeenCalledWith(
       mockFirebaseDb,
-      `users/${mockUser}/v2/credits/creditsScene`,
+      `${expectedPathPrefix}/creditsScene`,
     );
   });
 
@@ -134,7 +109,7 @@ describe("Credits Component", () => {
     expect(mockObsStudio.getCurrentScene).toHaveBeenCalled();
   });
 
-  it("should set transition scene when active", async() => {
+  it("should set transition scene when active", async () => {
     const store = createMockStore({
       publishedList: mockPublishedList,
       transitionScene: mockTransitionScene,

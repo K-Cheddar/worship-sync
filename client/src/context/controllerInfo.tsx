@@ -336,6 +336,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
         syncRef.current?.cancel();
         replicateRef.current?.cancel();
+        pendingMax = 0;
 
         replicateRef.current = remoteDb.replicate
           .to(localDb, { retry: true, batch_size: 150, batches_limit: 15 })
@@ -421,6 +422,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
       bibleSyncRef.current?.cancel();
       bibleReplicateRef.current?.cancel();
+      pendingMax = 0;
 
       bibleReplicateRef.current = remoteDb.replicate
         .to(localDb, { retry: true, batch_size: 1000, batches_limit: 25 })
@@ -489,11 +491,16 @@ const ControllerInfoProvider = ({ children }: any) => {
     setLoginState?.("loading");
     await syncRef.current?.cancel();
     await bibleSyncRef.current?.cancel();
+    await replicateRef.current?.cancel();
+    await bibleReplicateRef.current?.cancel();
     remoteDbRef.current = null;
     globalDb = undefined;
     setDb(undefined);
     setDbProgress(0);
     setIsDbSetup(false);
+    setIsBibleDbSetup(false);
+    setBibleDbProgress(0);
+    pendingMax = 0;
 
     if (db) {
       db.destroy()
@@ -528,6 +535,10 @@ const ControllerInfoProvider = ({ children }: any) => {
     setDb(undefined);
     setDbProgress(0);
     setIsDbSetup(false);
+    setBibleDb(undefined);
+    setBibleDbProgress(0);
+    setIsBibleDbSetup(false);
+    pendingMax = 0;
     dispatch({ type: "RESET_INITIALIZATION" });
 
     if (db) {

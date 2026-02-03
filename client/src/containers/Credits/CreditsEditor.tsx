@@ -87,6 +87,8 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     }
   }, [selectedCreditId, list]);
 
+  console.log("isLoading", isLoading);
+
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <div

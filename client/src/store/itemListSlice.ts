@@ -60,10 +60,11 @@ export const itemListSlice = createSlice({
     addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
       const newItem = { ...action.payload, listId: generateRandomId() };
       const selectedIndex = state.list.findIndex(
-        (e) => e.listId === state.selectedItemListId
+        (e) => e.listId === state.selectedItemListId,
       );
       if (selectedIndex !== -1) {
-        const index = newItem.type === "heading" ? selectedIndex : selectedIndex + 1;
+        const index =
+          newItem.type === "heading" ? selectedIndex : selectedIndex + 1;
         state.list.splice(index, 0, newItem);
       } else if (newItem.type !== "heading") {
         state.list.push(newItem);
@@ -71,10 +72,12 @@ export const itemListSlice = createSlice({
         state.list.unshift(newItem);
       }
       if (newItem.type !== "heading") {
-
         state.selectedItemListId = newItem.listId;
       }
       state.hasPendingUpdate = true;
+    },
+    setIsInitialized: (state, action: PayloadAction<boolean>) => {
+      state.isInitialized = action.payload;
     },
     setItemListIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
@@ -96,6 +99,7 @@ export const {
   removeItemFromList,
   addItemToItemList,
   initiateItemList,
+  setIsInitialized,
   setActiveItemInList,
   setItemListIsLoading,
   removeItemFromListById,

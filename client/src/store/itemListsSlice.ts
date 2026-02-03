@@ -23,6 +23,9 @@ export const itemListsSlice = createSlice({
       state.currentLists = action.payload;
     },
 
+    setIsInitialized: (state, action: PayloadAction<boolean>) => {
+      state.isInitialized = action.payload;
+    },
     initiateItemLists: (state, action: PayloadAction<ItemList[]>) => {
       state.currentLists = action.payload;
       state.activeList = action.payload[0];
@@ -45,17 +48,17 @@ export const itemListsSlice = createSlice({
     },
     selectItemList: (state, action: PayloadAction<string>) => {
       state.selectedList = state.currentLists.find(
-        (item) => item._id === action.payload
+        (item) => item._id === action.payload,
       );
     },
     setActiveItemList: (state, action: PayloadAction<string>) => {
       state.activeList = state.currentLists.find(
-        (item) => item._id === action.payload
+        (item) => item._id === action.payload,
       );
     },
     setInitialItemList: (state, action: PayloadAction<string>) => {
       state.activeList = state.currentLists.find(
-        (item) => item._id === action.payload
+        (item) => item._id === action.payload,
       );
       state.selectedList = state.activeList;
     },
@@ -67,6 +70,7 @@ export const {
   updateItemLists,
   removeFromItemLists,
   initiateItemLists,
+  setIsInitialized,
   selectItemList,
   setActiveItemList,
   setInitialItemList,

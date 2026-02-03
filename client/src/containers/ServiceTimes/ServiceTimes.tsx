@@ -161,11 +161,10 @@ const ServiceTimes = () => {
       setIsLoading(true);
       try {
         const services: DBServices | undefined = await db.get("services");
-        if (services) {
-          dispatch(initiateServices(services.list));
-        }
+        dispatch(initiateServices(services?.list ?? []));
       } catch (e) {
         console.error(e);
+        dispatch(initiateServices([]));
       } finally {
         setIsLoading(false);
       }
