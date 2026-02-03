@@ -89,7 +89,7 @@ const HeadingItem = ({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "group flex items-center gap-1 min-h-8 border-b-2 border-slate-600/50 bg-gray-800/50",
+        "group flex items-center gap-1 border-b-2 border-slate-600/50 bg-gray-800/50",
       )}
     >
 
@@ -140,6 +140,7 @@ const HeadingItem = ({
               onClick={handleConfirm}
               className="shrink-0 p-1 min-w-6 text-green-500"
               title="Save"
+              iconSize="sm"
             />
             <Button
               variant="tertiary"
@@ -147,6 +148,7 @@ const HeadingItem = ({
               onClick={handleDiscard}
               className="shrink-0 p-1 min-w-6"
               title="Discard"
+              iconSize="sm"
             />
             <Button
               variant="tertiary"
@@ -154,6 +156,7 @@ const HeadingItem = ({
               onClick={onDelete}
               className="shrink-0 p-1 min-w-6 text-red-500"
               title="Delete heading"
+              iconSize="sm"
             />
           </div>
         )}
