@@ -1,3 +1,10 @@
+# [1.34.0](https://github.com/K-Cheddar/worship-sync/compare/v1.33.2...v1.34.0) (2026-02-03)
+
+
+### Features
+
+* Add multi select to outlines ([9282889](https://github.com/K-Cheddar/worship-sync/commit/92828890a83cde15548a37645eb20a7ef6e31bef))
+
 ## [1.33.2](https://github.com/K-Cheddar/worship-sync/compare/v1.33.1...v1.33.2) (2026-02-03)
 
 
