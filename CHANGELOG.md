@@ -1,3 +1,10 @@
+# [1.35.0](https://github.com/K-Cheddar/worship-sync/compare/v1.34.0...v1.35.0) (2026-02-04)
+
+
+### Features
+
+* Update timer controls ([52d8721](https://github.com/K-Cheddar/worship-sync/commit/52d8721d3def1d945e88280d76858230b701dae1))
+
 # [1.34.0](https://github.com/K-Cheddar/worship-sync/compare/v1.33.2...v1.34.0) (2026-02-03)
 
 
