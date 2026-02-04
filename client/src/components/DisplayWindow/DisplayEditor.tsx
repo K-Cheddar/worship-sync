@@ -1,12 +1,13 @@
 import { Box } from "../../types";
 import { ChevronsDown, ChevronsUp } from "lucide-react";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Position, ResizableDelta, Rnd } from "react-rnd";
 import cn from "classnames";
 import { ResizeDirection } from "re-resizable";
 import Button from "../Button/Button";
 import { useToast } from "../../context/toastContext";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "../../constants";
 
 type DraggableData = {
@@ -72,6 +73,7 @@ const DisplayEditor = ({
 
 
   const { showToast } = useToast();
+  const { isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const [isOverflowing, setIsOverflowing] = useState(() => {
     const textArea = document.getElementById(`display-editor-${index}`);
@@ -130,8 +132,13 @@ const DisplayEditor = ({
     if (textAreaRef.current) {
       textAreaRef.current.blur();
     }
-    showToast("To edit the timer use the Timer Manager above", "info");
-  }, [showToast]);
+    showToast(
+      isMobile
+        ? "To edit the timer use the controls in the panel above"
+        : "To edit the timer use the controls in the panel to the left",
+      "info"
+    );
+  }, [showToast, isMobile]);
 
   const checkAndHandleTimer = useCallback(() => {
     requestAnimationFrame(() => {

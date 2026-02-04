@@ -40,6 +40,7 @@ import { AccessType } from "../../context/globalInfo";
 import SectionTextEditor from "../../components/SectionTextEditor/SectionTextEditor";
 import SlideBoxes from "../../components/SlideBoxes/SlideBoxes";
 import LoadingOverlay from "../../components/LoadingOverlay/LoadingOverlay";
+import TimerControls from "../../components/TimerControls/TimerControls";
 
 const SlideEditor = ({ access }: { access?: AccessType }) => {
   const dispatch = useDispatch();
@@ -710,6 +711,9 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     }
     if (type === "bible" && item.bibleInfo) {
       return <BibleItemActions item={item} />;
+    }
+    if (type === "timer") {
+      return <TimerControls className="lg:flex-[0_0_30%] w-full" />;
     }
     return (
       <SectionTextEditor

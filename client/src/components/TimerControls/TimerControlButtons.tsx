@@ -19,7 +19,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
   className = "",
 }) => {
   return (
-    <div className={`flex gap-2 items-center px-2 ${className}`}>
+    <div className={`flex gap-2 items-center px-2 ${className} w-full justify-center`}>
       <Button
         variant="tertiary"
         svg={Play}
@@ -27,6 +27,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
         disabled={status === "running"}
         title="Play"
         color="#48bb78"
+        iconSize="xl"
       />
       <Button
         variant="tertiary"
@@ -35,6 +36,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
         disabled={status !== "running"}
         title="Pause"
         color="#ecc94b"
+        iconSize="xl"
       />
       <Button
         variant="tertiary"
@@ -43,6 +45,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
         disabled={status === "stopped"}
         title="Stop"
         color="#f56565"
+        iconSize="xl"
       />
       <Button
         variant="tertiary"
@@ -50,6 +53,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
         svg={RotateCw}
         onClick={onStop}
         color="#f59e0b"
+        iconSize="xl"
       />
     </div>
   );

@@ -2,7 +2,6 @@ import { useLocation } from "react-router-dom";
 import {
   Settings,
   SquarePen,
-  Timer,
   Monitor,
   RectangleEllipsis,
   Pencil,
@@ -19,7 +18,6 @@ import ToolbarButton from "./ToolbarElements/ToolbarButton";
 import { useDispatch, useSelector } from "../../hooks";
 import { useContext, useEffect, useMemo, useState, useCallback } from "react";
 import Button from "../../components/Button/Button";
-import TimerControls from "../../components/TimerControls/TimerControls";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import cn from "classnames";
 import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
@@ -40,7 +38,6 @@ import { ItemState } from "../../types";
 type sections =
   | "settings"
   | "slide-tools"
-  | "timer-manager"
   | "stream-format"
   | "item-tools"
   | "box-tools";
@@ -87,14 +84,12 @@ const Toolbar = ({ className }: { className: string }) => {
   );
 
   useEffect(() => {
-    if (onItemPage && type === "timer") {
-      setSection("timer-manager");
-    } else if (onItemPage) {
+    if (onItemPage) {
       setSection("slide-tools");
     } else {
       setSection("settings");
     }
-  }, [onItemPage, type]);
+  }, [onItemPage]);
 
   useEffect(() => {
     dispatch(setToolbarSection(section));
@@ -151,14 +146,6 @@ const Toolbar = ({ className }: { className: string }) => {
                   isActive={section === "stream-format"}
                 >
                   Stream Format
-                </ToolbarButton>
-                <ToolbarButton
-                  svg={Timer}
-                  onClick={() => setSection("timer-manager")}
-                  hidden={!onItemPage || type !== "timer"}
-                  isActive={section === "timer-manager"}
-                >
-                  Timer Manager
                 </ToolbarButton>
                 <ToolbarButton
                   svg={SquarePen}
@@ -240,11 +227,6 @@ const Toolbar = ({ className }: { className: string }) => {
             />
             <FormattedTextEditor
               className={cn(section !== "stream-format" && "hidden")}
-            />
-            <TimerControls
-              className={cn(
-                (section !== "timer-manager" || type !== "timer") && "hidden"
-              )}
             />
             <ItemEditTools
               className={cn(section !== "item-tools" && "hidden")}

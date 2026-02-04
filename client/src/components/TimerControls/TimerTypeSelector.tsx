@@ -13,7 +13,7 @@ const TimerTypeSelector: React.FC<TimerTypeSelectorProps> = ({
   className = "",
 }) => {
   return (
-    <div className={`flex gap-4 items-center ${className}`}>
+    <div className={`flex gap-4 items-center border-b-2 pt-2 pb-4 border-gray-600 w-full justify-center ${className}`}>
       <RadioButton
         label="Timer"
         value={timerType === "timer"}

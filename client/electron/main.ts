@@ -34,6 +34,19 @@ import { VideoCacheManager } from "./videoCache";
 
 const { autoUpdater } = updaterPkg;
 
+/** Returns true only when newVersion is strictly greater than currentVersion (semver-style). */
+function isNewerVersion(newVersion: string, currentVersion: string): boolean {
+  const v1Parts = newVersion.split(".").map(Number);
+  const v2Parts = currentVersion.split(".").map(Number);
+  for (let i = 0; i < Math.max(v1Parts.length, v2Parts.length); i++) {
+    const v1Part = v1Parts[i] ?? 0;
+    const v2Part = v2Parts[i] ?? 0;
+    if (v1Part > v2Part) return true;
+    if (v1Part < v2Part) return false;
+  }
+  return false;
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -530,12 +543,13 @@ app.whenReady().then(() => {
       );
     });
 
-    // Log events and forward to renderer for About modal UI
+    // Forward to renderer for About modal UI (only when remote is actually newer)
     autoUpdater.on("update-available", (info) => {
-      console.log(
-        "[Auto-Updater] Update available, downloading in background...",
-        info.version,
-      );
+      const current = app.getVersion();
+      if (!isNewerVersion(info.version, current)) {
+        return;
+      }
+
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("update-available", {
           version: info.version,
@@ -628,7 +642,10 @@ ipcMain.handle("check-for-updates", async () => {
   try {
     const result = await autoUpdater.checkForUpdates();
     const updateInfo = result?.updateInfo;
-    return { available: !!updateInfo, updateInfo: updateInfo ?? undefined };
+    const current = app.getVersion();
+    const available =
+      !!updateInfo?.version && isNewerVersion(updateInfo.version, current);
+    return { available, updateInfo: available ? updateInfo : undefined };
   } catch (err) {
     return { available: false, error: (err as Error).message };
   }

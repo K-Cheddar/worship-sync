@@ -1,8 +1,23 @@
-import { createSections, makeUnique } from "./itemUtil";
+import {
+  createSections,
+  createNewSong,
+  createNewFreeForm,
+  createNewBible,
+  createNewTimer,
+  updateFormattedSections,
+  makeUnique,
+} from "./itemUtil";
+import type { ServiceItem } from "../types";
 
 jest.mock("./generateRandomId", () => ({
   __esModule: true,
   default: () => "fixed-id",
+}));
+
+jest.mock("./overflow", () => ({
+  formatSong: (item: unknown) => item,
+  formatFree: (item: unknown) => item,
+  formatBible: (opts: { item: unknown }) => opts.item,
 }));
 
 describe("itemUtil", () => {
@@ -89,6 +104,195 @@ describe("itemUtil", () => {
       ];
       expect(makeUnique({ value: "a", property: "id", list })).toBe("a (1)");
       expect(makeUnique({ value: "c", property: "id", list })).toBe("c");
+    });
+  });
+
+  describe("createNewSong", () => {
+    it("creates a new song with lyrics (formattedLyrics and songOrder)", async () => {
+      const { formattedLyrics, songOrder } = createSections({
+        unformattedLyrics: "First verse line\n\nChorus line\n\nSecond verse",
+      });
+      const list: ServiceItem[] = [];
+      const item = await createNewSong({
+        name: "My Song",
+        formattedLyrics,
+        songOrder,
+        list,
+        db: undefined,
+        background: "#000",
+        brightness: 100,
+      });
+      expect(item.type).toBe("song");
+      expect(item.name).toBe("My Song");
+      expect(item.arrangements).toHaveLength(1);
+      expect(item.arrangements[0].formattedLyrics).toHaveLength(3);
+      expect(item.arrangements[0].formattedLyrics[0].words).toBe(
+        "First verse line",
+      );
+      expect(item.arrangements[0].formattedLyrics[1].words).toBe("Chorus line");
+      expect(item.arrangements[0].formattedLyrics[2].words).toBe(
+        "Second verse",
+      );
+      expect(item.arrangements[0].songOrder).toHaveLength(3);
+      expect(item.arrangements[0].songOrder.map((s) => s.name)).toEqual(
+        item.arrangements[0].formattedLyrics.map((f) => f.name),
+      );
+    });
+  });
+
+  describe("createNewFreeForm", () => {
+    it("creates a new free form item with text", async () => {
+      const list: ServiceItem[] = [];
+      const item = await createNewFreeForm({
+        name: "Announcement",
+        text: "Welcome and greeting",
+        list,
+        db: undefined,
+        background: "#1a1a1a",
+        brightness: 100,
+      });
+      expect(item.type).toBe("free");
+      expect(item.name).toBe("Announcement");
+      expect(item.slides).toHaveLength(1);
+      expect(item.slides[0].type).toBe("Section");
+      expect(item.slides[0].name).toBe("Section 1");
+      const textBox = item.slides[0].boxes?.find((b) =>
+        b.words?.includes("Welcome"),
+      );
+      expect(textBox?.words).toContain("Welcome and greeting");
+    });
+  });
+
+  describe("createNewBible", () => {
+    it("creates a new bible item with book, chapter, version and verses", async () => {
+      const list: ServiceItem[] = [];
+      const verses = [
+        { name: "1", index: 1, text: "In the beginning" },
+        { name: "2", index: 2, text: "God created" },
+      ];
+      const item = await createNewBible({
+        name: "Genesis 1",
+        book: "Genesis",
+        chapter: "1",
+        version: "NIV",
+        verses,
+        list,
+        db: undefined,
+        background: "#000",
+        brightness: 100,
+        fontMode: "separate",
+      });
+      expect(item.type).toBe("bible");
+      expect(item.name).toBe("Genesis 1");
+      expect(item._id).toBe("Genesis 1");
+    });
+  });
+
+  describe("createNewTimer", () => {
+    it("creates a new timer item with duration and type", async () => {
+      const list: ServiceItem[] = [];
+      const item = await createNewTimer({
+        name: "Welcome Timer",
+        list,
+        db: undefined,
+        hostId: "host-1",
+        duration: 300,
+        countdownTime: "00:00",
+        timerType: "timer",
+        background: "#000",
+        brightness: 100,
+      });
+      expect(item.type).toBe("timer");
+      expect(item.name).toBe("Welcome Timer");
+      expect(item.slides).toHaveLength(2);
+      expect(item.timerInfo).toBeDefined();
+      expect(item.timerInfo?.duration).toBe(300);
+      expect(item.timerInfo?.timerType).toBe("timer");
+      expect(item.timerInfo?.status).toBe("stopped");
+    });
+
+    it("creates a countdown timer with countdownTime", async () => {
+      const list: ServiceItem[] = [];
+      const item = await createNewTimer({
+        name: "Countdown",
+        list,
+        db: undefined,
+        hostId: "host-1",
+        duration: 0,
+        countdownTime: "12:00",
+        timerType: "countdown",
+        background: "#000",
+        brightness: 100,
+      });
+      expect(item.type).toBe("timer");
+      expect(item.timerInfo?.timerType).toBe("countdown");
+      expect(item.timerInfo?.countdownTime).toBe("12:00");
+    });
+  });
+
+  describe("updateFormattedSections", () => {
+    it("normalizes section names (Verse -> Verse 1, Verse 2) when editing lyrics", () => {
+      const formattedLyrics = [
+        {
+          type: "Verse",
+          name: "Verse 1",
+          words: "Line one",
+          id: "v1",
+          slideSpan: 1,
+        },
+        {
+          type: "Verse",
+          name: "Verse 2",
+          words: "Line two",
+          id: "v2",
+          slideSpan: 1,
+        },
+      ];
+      const songOrder = [
+        { name: "Verse 1", id: "s1" },
+        { name: "Verse 2", id: "s2" },
+      ];
+      const result = updateFormattedSections({ formattedLyrics, songOrder });
+      expect(result.formattedLyrics[0].name).toBe("Verse 1");
+      expect(result.formattedLyrics[1].name).toBe("Verse 2");
+      expect(result.songOrder[0].name).toBe("Verse 1");
+      expect(result.songOrder[1].name).toBe("Verse 2");
+    });
+
+    it("preserves single section name when only one section", () => {
+      const formattedLyrics = [
+        {
+          type: "Chorus",
+          name: "Chorus",
+          words: "Repeat",
+          id: "c1",
+          slideSpan: 1,
+        },
+      ];
+      const result = updateFormattedSections({
+        formattedLyrics,
+        songOrder: [{ name: "Chorus", id: "o1" }],
+      });
+      expect(result.formattedLyrics[0].name).toBe("Chorus");
+      expect(result.songOrder[0].name).toBe("Chorus");
+    });
+
+    it("builds songOrder from section names when songOrder is empty (edit flow)", () => {
+      const formattedLyrics = [
+        {
+          type: "Verse",
+          name: "Verse",
+          words: "Edited line",
+          id: "v1",
+          slideSpan: 1,
+        },
+      ];
+      const result = updateFormattedSections({
+        formattedLyrics,
+        songOrder: [],
+      });
+      expect(result.songOrder).toHaveLength(1);
+      expect(result.songOrder[0].name).toBe("Verse");
     });
   });
 });
