@@ -1,5 +1,4 @@
 import { useDispatch, useSelector } from "../../hooks";
-import { Expand } from "lucide-react";
 import { TimerInfo } from "../../types";
 import { updateTimer } from "../../store/timersSlice";
 import { RootState } from "../../store/store";
@@ -11,10 +10,12 @@ import TimerControlButtons from "./TimerControlButtons";
 import RadioButton from "../RadioButton/RadioButton";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import cn from "classnames";
-import PopOver from "../PopOver/PopOver";
-import Button from "../Button/Button";
 
-const TimerControls = ({ className }: { className?: string }) => {
+type TimerControlsProps = {
+  className?: string;
+};
+
+const TimerControls = ({ className }: TimerControlsProps) => {
   const dispatch = useDispatch();
   const { hostId } = useContext(GlobalInfoContext) || {};
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -92,69 +93,53 @@ const TimerControls = ({ className }: { className?: string }) => {
     updateTimerState({ showMinutesOnly: checked });
   };
 
-  const controls = (
+  return (
     <div
       className={cn(
-        "timer-controls flex gap-2 items-center max-lg:flex-col max-lg:gap-4",
+        "flex flex-col border border-gray-600 rounded-md w-full h-full max-h-full overflow-y-auto p-2",
         className
       )}
     >
-      <TimerTypeSelector
-        timerType={timerType}
-        onTypeChange={handleTypeChange}
-        className="lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4"
-      />
-
-      {timerType === "countdown" && (
-        <CountdownTimeInput
-          countdownTime={countdownTime}
-          onTimeChange={handleCountdownTimeChange}
+      <div className="timer-controls flex flex-col gap-4">
+        <TimerTypeSelector
+          timerType={timerType}
+          onTypeChange={handleTypeChange}
         />
-      )}
 
-      {timerType === "timer" && (
-        <DurationInputs
-          duration={duration}
-          onDurationChange={handleDurationChange}
-        />
-      )}
+        {timerType === "countdown" && (
+          <CountdownTimeInput
+            countdownTime={countdownTime}
+            onTimeChange={handleCountdownTimeChange}
+          />
+        )}
 
-      <div className="flex gap-4 items-center">
-        <RadioButton
-          label="Full timer"
-          value={!showMinutesOnly}
-          onChange={() => handleShowMinutesOnlyChange(false)}
-        />
-        <RadioButton
-          label="Minutes only"
-          value={showMinutesOnly}
-          onChange={() => handleShowMinutesOnlyChange(true)}
+        {timerType === "timer" && (
+          <DurationInputs
+            duration={duration}
+            onDurationChange={handleDurationChange}
+          />
+        )}
+
+        <div className="flex gap-4 items-center justify-center">
+          <RadioButton
+            label="Full timer"
+            value={!showMinutesOnly}
+            onChange={() => handleShowMinutesOnlyChange(false)}
+          />
+          <RadioButton
+            label="Minutes only"
+            value={showMinutesOnly}
+            onChange={() => handleShowMinutesOnlyChange(true)}
+          />
+        </div>
+
+        <TimerControlButtons
+          status={timer?.status || "stopped"}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onStop={handleStop}
         />
       </div>
-
-      <TimerControlButtons
-        status={timer?.status || "stopped"}
-        onPlay={handlePlay}
-        onPause={handlePause}
-        onStop={handleStop}
-      />
-    </div>
-  );
-
-  return (
-    <div className={`flex gap-2 items-center ${className || ""}`}>
-      {/* leaving this outer div in case more tools are added */}
-
-      <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>
-      <PopOver
-        TriggeringButton={
-          <Button className="lg:hidden" variant="tertiary" svg={Expand}>
-            Timer Controls
-          </Button>
-        }
-      >
-        <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
-      </PopOver>
     </div>
   );
 };

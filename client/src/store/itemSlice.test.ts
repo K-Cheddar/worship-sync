@@ -70,5 +70,63 @@ describe("itemSlice", () => {
       expect(store.getState().item.slides).toHaveLength(1);
       expect(store.getState().item.slides[0].name).toBe("V1");
     });
+
+    it("_updateArrangements replaces arrangements (editing lyrics)", () => {
+      const store = createStore({
+        item: {
+          name: "Test Song",
+          _id: "test-1",
+          type: "song",
+          selectedArrangement: 0,
+          selectedSlide: 0,
+          selectedBox: 1,
+          slides: [],
+          shouldSendTo: {
+            projector: true,
+            monitor: true,
+            stream: true,
+          },
+          arrangements: [
+            {
+              name: "Master",
+              id: "arr-1",
+              formattedLyrics: [
+                {
+                  type: "Verse",
+                  name: "Verse 1",
+                  words: "Original line",
+                  slideSpan: 1,
+                },
+              ],
+              songOrder: [{ name: "Verse 1", id: "o1" }],
+              slides: [],
+            },
+          ],
+        } as ItemState,
+      });
+      const editedArrangements = [
+        {
+          name: "Master",
+          id: "arr-1",
+          formattedLyrics: [
+            {
+              type: "Verse",
+              name: "Verse 1",
+              words: "Edited line",
+              slideSpan: 1,
+            },
+          ],
+          songOrder: [{ name: "Verse 1", id: "o1" }],
+          slides: [],
+        },
+      ];
+      store.dispatch(itemSlice.actions._updateArrangements(editedArrangements));
+      const state = store.getState().item;
+      expect(state.arrangements).toHaveLength(1);
+      expect(state.arrangements[0].formattedLyrics[0].words).toBe(
+        "Edited line",
+      );
+      expect(state.hasPendingUpdate).toBe(true);
+    });
   });
 });

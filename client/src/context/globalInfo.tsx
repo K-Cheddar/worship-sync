@@ -21,6 +21,7 @@ import { Instance, TimerInfo } from "../types";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import generateRandomId from "../utils/generateRandomId";
+import { syncTimers } from "../store/timersSlice";
 import { loginUser } from "../api/login";
 
 import {
@@ -96,6 +97,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
   const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
+  const hasRehydratedTimersRef = useRef(false);
   const location = useLocation();
   const isOnController = useMemo(() => {
     return location.pathname.startsWith("/controller");
@@ -219,6 +221,23 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setAccess(_access as AccessType);
     }
   }, []);
+
+  // Rehydrate timers from localStorage for Demo user so timers work after refresh
+  useEffect(() => {
+    if (user !== "Demo" || hasRehydratedTimersRef.current) return;
+    hasRehydratedTimersRef.current = true;
+    try {
+      const raw = localStorage.getItem("timerInfo");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          dispatch(syncTimers(parsed));
+        }
+      }
+    } catch {
+      // ignore invalid stored data
+    }
+  }, [user, dispatch]);
 
   // initialize firebase
   useEffect(() => {

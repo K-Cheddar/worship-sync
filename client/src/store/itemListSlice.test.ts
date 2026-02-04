@@ -133,6 +133,152 @@ describe("itemListSlice", () => {
       expect(state.selectedItemListId).toBe("fixed-list-id");
     });
 
+    it("addItemToItemList adds existing song to outline", () => {
+      const store = createStore({
+        itemList: {
+          list: [
+            createServiceItem({ name: "Intro", _id: "intro", listId: "l0" }),
+          ],
+          isLoading: false,
+          selectedItemListId: "l0",
+          hasPendingUpdate: false,
+          initialItems: [],
+          isInitialized: true,
+        },
+      });
+      const existingSong = createServiceItem({
+        name: "Amazing Grace",
+        _id: "song-1",
+        type: "song",
+      });
+      store.dispatch(addItemToItemList(existingSong));
+      const state = store.getState().itemList;
+      expect(state.list).toHaveLength(2);
+      expect(state.list[1].type).toBe("song");
+      expect(state.list[1].name).toBe("Amazing Grace");
+      expect(state.hasPendingUpdate).toBe(true);
+    });
+
+    it("addItemToItemList adds existing free form to outline", () => {
+      const store = createStore({
+        itemList: {
+          list: [createServiceItem({ name: "Song", _id: "s1", listId: "l1" })],
+          isLoading: false,
+          selectedItemListId: "l1",
+          hasPendingUpdate: false,
+          initialItems: [],
+          isInitialized: true,
+        },
+      });
+      const existingFree = createServiceItem({
+        name: "Announcement",
+        _id: "free-1",
+        type: "free",
+      });
+      store.dispatch(addItemToItemList(existingFree));
+      const state = store.getState().itemList;
+      expect(state.list).toHaveLength(2);
+      expect(state.list[1].type).toBe("free");
+      expect(state.list[1].name).toBe("Announcement");
+    });
+
+    it("addItemToItemList adds existing timer to outline", () => {
+      const store = createStore({
+        itemList: {
+          list: [createServiceItem({ name: "Song", _id: "s1", listId: "l1" })],
+          isLoading: false,
+          selectedItemListId: "l1",
+          hasPendingUpdate: false,
+          initialItems: [],
+          isInitialized: true,
+        },
+      });
+      const existingTimer = createServiceItem({
+        name: "Welcome Timer",
+        _id: "timer-1",
+        type: "timer",
+      });
+      store.dispatch(addItemToItemList(existingTimer));
+      const state = store.getState().itemList;
+      expect(state.list).toHaveLength(2);
+      expect(state.list[1].type).toBe("timer");
+      expect(state.list[1].name).toBe("Welcome Timer");
+    });
+
+    it("removeItemFromList deletes item from outline (e.g. remove song)", () => {
+      const store = createStore({
+        itemList: {
+          list: [
+            createServiceItem({
+              name: "Song A",
+              _id: "a",
+              listId: "l1",
+              type: "song",
+            }),
+            createServiceItem({
+              name: "Song B",
+              _id: "b",
+              listId: "l2",
+              type: "song",
+            }),
+            createServiceItem({
+              name: "Song C",
+              _id: "c",
+              listId: "l3",
+              type: "song",
+            }),
+          ],
+          isLoading: false,
+          selectedItemListId: "l2",
+          hasPendingUpdate: false,
+          initialItems: ["l1", "l2", "l3"],
+          isInitialized: true,
+        },
+      });
+      store.dispatch(removeItemFromList("l2"));
+      const state = store.getState().itemList;
+      expect(state.list).toHaveLength(2);
+      expect(state.list.map((i) => i.name)).toEqual(["Song A", "Song C"]);
+      expect(state.hasPendingUpdate).toBe(true);
+    });
+
+    it("removeItemFromListById deletes item from outline by _id (e.g. remove free form)", () => {
+      const store = createStore({
+        itemList: {
+          list: [
+            createServiceItem({
+              name: "Song",
+              _id: "s1",
+              listId: "l1",
+              type: "song",
+            }),
+            createServiceItem({
+              name: "Announcement",
+              _id: "ann-1",
+              listId: "l2",
+              type: "free",
+            }),
+            createServiceItem({
+              name: "Timer",
+              _id: "t1",
+              listId: "l3",
+              type: "timer",
+            }),
+          ],
+          isLoading: false,
+          selectedItemListId: "l2",
+          hasPendingUpdate: false,
+          initialItems: [],
+          isInitialized: true,
+        },
+      });
+      store.dispatch(removeItemFromListById("ann-1"));
+      const state = store.getState().itemList;
+      expect(state.list).toHaveLength(2);
+      expect(state.list.map((i) => i._id)).toEqual(["s1", "t1"]);
+      expect(state.hasPendingUpdate).toBe(true);
+    });
+
     it("setItemListIsLoading and setHasPendingUpdate update flags", () => {
       const store = createStore();
       store.dispatch(setItemListIsLoading(true));

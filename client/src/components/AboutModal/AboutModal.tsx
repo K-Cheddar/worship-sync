@@ -77,9 +77,15 @@ const AboutModal = ({ isOpen, onClose }: AboutModalProps) => {
       } else if (result.message) {
         setUpdateStatus("upToDate");
         setUpdateMessage(result.message);
-      } else if (result.available && result.updateInfo) {
-        setUpdateVersion(result.updateInfo.version ?? "");
-        setUpdateStatus("updateAvailable");
+      } else if (result.available && result.updateInfo?.version) {
+        const newVer = result.updateInfo.version;
+        const current = version || (await getAppVersion()) || "";
+        if (isNewerVersion(newVer, current)) {
+          setUpdateVersion(newVer);
+          setUpdateStatus("updateAvailable");
+        } else {
+          setUpdateStatus("upToDate");
+        }
       } else {
         setUpdateStatus("upToDate");
       }
@@ -87,7 +93,7 @@ const AboutModal = ({ isOpen, onClose }: AboutModalProps) => {
       setUpdateStatus("error");
       setUpdateError("Failed to check for updates.");
     }
-  }, []);
+  }, [version]);
 
   const handleRestartToInstall = useCallback(() => {
     if (!isElectron() || !window.electronAPI?.installUpdate) return;
@@ -119,8 +125,12 @@ const AboutModal = ({ isOpen, onClose }: AboutModalProps) => {
   useEffect(() => {
     if (!isOpen || !isElectron() || !window.electronAPI) return;
     const unsubAvailable = window.electronAPI.onUpdateAvailable?.((info) => {
-      setUpdateVersion(info.version);
-      setUpdateStatus("updateAvailable");
+      getAppVersion().then((current) => {
+        if (current && isNewerVersion(info.version, current)) {
+          setUpdateVersion(info.version);
+          setUpdateStatus("updateAvailable");
+        }
+      });
     });
     const unsubNotAvailable = window.electronAPI.onUpdateNotAvailable?.(() => {
       setUpdateStatus("upToDate");

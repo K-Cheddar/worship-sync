@@ -50,7 +50,7 @@ import {
 } from "../types";
 import { allDocsSlice } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
-import { timersSlice, updateTimerFromRemote } from "./timersSlice";
+import { timersSlice, addTimer, updateTimerFromRemote } from "./timersSlice";
 import { overlayTemplatesSlice } from "./overlayTemplatesSlice";
 import serviceTimesSlice from "./serviceTimesSlice";
 import { mergeTimers } from "../utils/timerUtils";
@@ -246,6 +246,25 @@ listenerMiddleware.startListening({
         hostId: globalHostId,
       },
     });
+  },
+});
+
+// When opening a timer item, ensure its timer is in the timers slice (for Demo and when timer was created elsewhere)
+listenerMiddleware.startListening({
+  predicate: (action) => action.type === "item/setActiveItem",
+
+  effect: (action, listenerApi) => {
+    const state = listenerApi.getState() as RootState;
+    const item = state.undoable.present.item;
+    if (item.type !== "timer" || !item.timerInfo) return;
+    const exists = state.timers.timers.some(
+      (t) => t.id === item.timerInfo!.id || t.id === item._id,
+    );
+    if (!exists) {
+      listenerApi.dispatch(
+        addTimer({ ...item.timerInfo, hostId: globalHostId }),
+      );
+    }
   },
 });
 
@@ -544,8 +563,9 @@ listenerMiddleware.startListening({
         );
 
         set(timersRef, cleanObject(mergedTimers));
-        listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
       }
+      // Reset flag after writing (to localStorage and/or Firebase) so effect doesn't keep re-running (e.g. for Demo)
+      listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
     }
   },
 });
