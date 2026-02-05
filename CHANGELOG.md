@@ -1,3 +1,11 @@
+## [1.35.1](https://github.com/K-Cheddar/worship-sync/compare/v1.35.0...v1.35.1) (2026-02-05)
+
+
+### Bug Fixes
+
+* Box editor buttons are now larger on mobile ([02b03ed](https://github.com/K-Cheddar/worship-sync/commit/02b03ed0a8493283e821b59aa77ae1bed6a416d8))
+* Improve heading usage in outlines ([1307cc9](https://github.com/K-Cheddar/worship-sync/commit/1307cc9eb3b042f6ec992e1e702571f4c3b90076))
+
 # [1.35.0](https://github.com/K-Cheddar/worship-sync/compare/v1.34.0...v1.35.0) (2026-02-04)
 
 
