@@ -143,7 +143,7 @@ const BoxEditor = ({
         <Button
           image={textFull}
           variant="tertiary"
-          className="w-10"
+          className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
             updateBoxSize({
@@ -157,7 +157,7 @@ const BoxEditor = ({
         <Button
           image={textMid}
           variant="tertiary"
-          className="w-10"
+          className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
             updateBoxSize({
@@ -171,7 +171,7 @@ const BoxEditor = ({
         <Button
           image={textLeftHalf}
           variant="tertiary"
-          className="w-10"
+          className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
             updateBoxSize({
@@ -185,7 +185,7 @@ const BoxEditor = ({
         <Button
           image={textRightHalf}
           variant="tertiary"
-          className="w-10"
+          className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
             updateBoxSize({
@@ -199,7 +199,7 @@ const BoxEditor = ({
         <Button
           image={textLowerThird}
           variant="tertiary"
-          className="w-10"
+          className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
             updateBoxSize({
@@ -213,7 +213,7 @@ const BoxEditor = ({
         <Button
           image={textMidThird}
           variant="tertiary"
-          className="w-10"
+          className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
             updateBoxSize({
@@ -227,7 +227,7 @@ const BoxEditor = ({
         <Button
           image={textUpperThird}
           variant="tertiary"
-          className="w-10"
+          className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
             updateBoxSize({
@@ -241,7 +241,7 @@ const BoxEditor = ({
         <Button
           image={textMatch}
           variant="tertiary"
-          className="w-10"
+          className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
             updateBoxSize({
