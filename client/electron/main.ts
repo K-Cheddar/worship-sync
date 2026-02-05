@@ -322,22 +322,33 @@ const createWindow = () => {
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
-  // Set Content Security Policy to prevent security warnings
+  // Strict CSP for Electron only (web/mobile builds use their own CSP).
+  // Firebase: connect-src + frame-src allow Realtime DB, Auth, and Google token endpoints.
+  // Local dev origins (port 5000) only when unpackaged; *.worshipsync.net covers db and other subdomains.
+  const devConnectSrc = app.isPackaged
+    ? ""
+    : "https://local.worshipsync.net:5000 https://localhost:5000 ";
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
         "Content-Security-Policy": [
-          "default-src 'self' https: http: data: blob: video-cache:; " +
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: http:; " +
-            "style-src 'self' 'unsafe-inline' https: http: data:; " +
-            "font-src 'self' data: https: http:; " +
-            "img-src 'self' data: https: http:; " +
-            "media-src 'self' https: http: blob: video-cache:; " +
-            "connect-src 'self' https: http: ws: wss:; " +
-            "frame-src 'self' https: http:; " +
-            "worker-src 'self' blob: https:; " +
-            "child-src 'self' blob: https:; " +
+          "default-src 'self'; " +
+            "script-src 'self' 'unsafe-inline'; " +
+            "style-src 'self' 'unsafe-inline' data:; " +
+            "font-src 'self' data:; " +
+            "img-src 'self' data: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com; " +
+            "media-src 'self' blob: video-cache:; " +
+            "connect-src 'self' video-cache: " +
+            devConnectSrc +
+            "https://*.worshipsync.net " +
+            "https://*.firebaseio.com wss://*.firebaseio.com " +
+            "https://*.firebasedatabase.app wss://*.firebasedatabase.app " +
+            "https://*.firebaseapp.com " +
+            "https://securetoken.googleapis.com https://www.googleapis.com https://*.googleapis.com; " +
+            "frame-src 'self' https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com; " +
+            "worker-src 'self' blob:; " +
+            "child-src 'self' blob:; " +
             "object-src 'none'; " +
             "base-uri 'self';",
         ],

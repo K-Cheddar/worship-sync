@@ -112,9 +112,12 @@ const ServiceItems = () => {
     for (let i = indicesToMove.length - 1; i >= 0; i--) {
       updatedServiceItems.splice(indicesToMove[i], 1);
     }
+    const removedCountBeforeDrop =
+      indicesToMove.filter((idx) => idx < dropIndex).length;
     const insertIndex =
       dropIndex -
-      indicesToMove.filter((idx) => idx < dropIndex).length;
+      removedCountBeforeDrop +
+      (activeIndex < dropIndex ? 1 : 0);
     const clampedInsert = Math.max(
       0,
       Math.min(insertIndex, updatedServiceItems.length)

@@ -274,10 +274,9 @@ export const formatBibleFromScratch = ({
   });
 
 export const getBibleVerseRange = (
-  bibleInfo: BibleInfo | undefined
+  bibleInfo: BibleInfo | undefined,
 ): { startVerse: number; endVerse: number } => {
-  if (!bibleInfo?.verses?.length)
-    return { startVerse: 0, endVerse: 0 };
+  if (!bibleInfo?.verses?.length) return { startVerse: 0, endVerse: 0 };
   return {
     startVerse: bibleInfo.verses[0].index,
     endVerse: bibleInfo.verses[bibleInfo.verses.length - 1].index,
@@ -288,10 +287,9 @@ export const getBibleItemName = (
   book: string,
   chapter: string,
   verses: verseType[],
-  version: string
+  version: string,
 ): string => {
-  if (!verses?.length)
-    return `${book} ${chapter} ${version.toUpperCase()}`;
+  if (!verses?.length) return `${book} ${chapter} ${version.toUpperCase()}`;
   const startName = verses[0].name;
   const endName = verses[verses.length - 1].name;
   const verseRange =
@@ -300,7 +298,7 @@ export const getBibleItemName = (
 };
 
 export const buildBibleOpenAtSearchParams = (
-  bibleInfo: BibleInfo | undefined
+  bibleInfo: BibleInfo | undefined,
 ): URLSearchParams | null => {
   if (!bibleInfo?.book || !bibleInfo?.chapter || !bibleInfo?.version)
     return null;
@@ -325,14 +323,14 @@ export const formatBibleItemForVersion = ({
   if (!bibleInfo?.book || !bibleInfo?.chapter) return null;
   const { startVerse, endVerse } = getBibleVerseRange(bibleInfo);
   const versesToUse = newVerses.filter(
-    (v) => v.index >= startVerse && v.index <= endVerse
+    (v) => v.index >= startVerse && v.index <= endVerse,
   );
   const verses = versesToUse.length ? versesToUse : newVerses;
   const newName = getBibleItemName(
     bibleInfo.book,
     bibleInfo.chapter,
     verses,
-    newVersion
+    newVersion,
   );
   const firstBox = item.slides?.[0]?.boxes?.[0];
   return formatBibleFromScratch({
@@ -667,18 +665,7 @@ export const createNewHeading = async ({
   db,
 }: CreateNewHeadingType): Promise<NewHeadingResult> => {
   const _name = makeUnique({ value: name, property: "name", list });
-  const _id = makeUnique({ value: _name, property: "_id", list });
-
-  if (db) {
-    try {
-      const existing = (await db.get(_id)) as DBHeading | undefined;
-      if (existing?.type === "heading") {
-        return { name: existing.name, _id: existing._id, type: "heading" };
-      }
-    } catch {
-      // Doc does not exist, create new one
-    }
-  }
+  const _id = `heading-${generateRandomId()}`;
 
   const doc: DBHeading = {
     _id,
