@@ -1,3 +1,10 @@
+## [1.35.2](https://github.com/K-Cheddar/worship-sync/compare/v1.35.1...v1.35.2) (2026-02-07)
+
+
+### Bug Fixes
+
+* transmission ([a2348b0](https://github.com/K-Cheddar/worship-sync/commit/a2348b032951f18b8eed8c7330b593f68826159c))
+
 ## [1.35.1](https://github.com/K-Cheddar/worship-sync/compare/v1.35.0...v1.35.1) (2026-02-05)
 
 
