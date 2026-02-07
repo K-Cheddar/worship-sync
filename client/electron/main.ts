@@ -227,7 +227,7 @@ const createWindow = () => {
       "did-fail-load",
       (event, errorCode, errorDescription) => {
         console.error("Failed to load:", errorCode, errorDescription);
-      },
+      }
     );
   }
 
@@ -322,33 +322,22 @@ const createWindow = () => {
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
-  // Strict CSP for Electron only (web/mobile builds use their own CSP).
-  // Firebase: connect-src + frame-src allow Realtime DB, Auth, and Google token endpoints.
-  // Local dev origins (port 5000) only when unpackaged; *.worshipsync.net covers db and other subdomains.
-  const devConnectSrc = app.isPackaged
-    ? ""
-    : "https://local.worshipsync.net:5000 https://localhost:5000 ";
+  // Set Content Security Policy to prevent security warnings
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
         "Content-Security-Policy": [
-          "default-src 'self'; " +
-            "script-src 'self' 'unsafe-inline'; " +
-            "style-src 'self' 'unsafe-inline' data:; " +
-            "font-src 'self' data:; " +
-            "img-src 'self' data: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com; " +
-            "media-src 'self' blob: video-cache:; " +
-            "connect-src 'self' video-cache: " +
-            devConnectSrc +
-            "https://*.worshipsync.net " +
-            "https://*.firebaseio.com wss://*.firebaseio.com " +
-            "https://*.firebasedatabase.app wss://*.firebasedatabase.app " +
-            "https://*.firebaseapp.com " +
-            "https://securetoken.googleapis.com https://www.googleapis.com https://*.googleapis.com; " +
-            "frame-src 'self' https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com; " +
-            "worker-src 'self' blob:; " +
-            "child-src 'self' blob:; " +
+          "default-src 'self' https: http: data: blob: video-cache:; " +
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: http:; " +
+            "style-src 'self' 'unsafe-inline' https: http: data:; " +
+            "font-src 'self' data: https: http:; " +
+            "img-src 'self' data: https: http:; " +
+            "media-src 'self' https: http: blob: video-cache:; " +
+            "connect-src 'self' https: http: ws: wss:; " +
+            "frame-src 'self' https: http:; " +
+            "worker-src 'self' blob: https:; " +
+            "child-src 'self' blob: https:; " +
             "object-src 'none'; " +
             "base-uri 'self';",
         ],
@@ -372,7 +361,7 @@ app.whenReady().then(() => {
       // If still empty, try to extract from the URL string directly
       if (!filename) {
         const urlMatch = request.url.match(
-          new RegExp("video-cache:///?([^/?#]+)"),
+          new RegExp("video-cache:///?([^/?#]+)")
         );
         if (urlMatch) {
           filename = urlMatch[1];
@@ -546,11 +535,11 @@ app.whenReady().then(() => {
           autoUpdater.checkForUpdates().catch((error) => {
             console.error(
               "[Auto-Updater] Error during scheduled check:",
-              error,
+              error
             );
           });
         },
-        60 * 60 * 1000,
+        60 * 60 * 1000
       );
     });
 
@@ -578,7 +567,7 @@ app.whenReady().then(() => {
     autoUpdater.on("update-downloaded", (info) => {
       console.log(
         "[Auto-Updater] Update downloaded, will install on app quit",
-        info.version,
+        info.version
       );
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("update-downloaded", {
@@ -597,7 +586,7 @@ app.whenReady().then(() => {
             total: progress.total,
           });
         }
-      },
+      }
     );
 
     autoUpdater.on("error", (error) => {
@@ -738,7 +727,7 @@ const getWindowByType = (windowType: WindowType): BrowserWindow | null => {
 const moveWindowToDisplay = (
   window: BrowserWindow | null,
   windowType: WindowType,
-  displayId: number,
+  displayId: number
 ): boolean => {
   if (!window || window.isDestroyed()) return false;
 
@@ -770,7 +759,7 @@ ipcMain.handle(
   (_event, windowType: WindowType, displayId: number) => {
     const window = getWindowByType(windowType);
     return moveWindowToDisplay(window, windowType, displayId);
-  },
+  }
 );
 
 ipcMain.handle(
@@ -778,7 +767,7 @@ ipcMain.handle(
   (_event, windowType: WindowType, displayId: number) => {
     windowStateManager.setDisplayPreference(windowType, displayId);
     return true;
-  },
+  }
 );
 
 ipcMain.handle("get-window-states", () => {
