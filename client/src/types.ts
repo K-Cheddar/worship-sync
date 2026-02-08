@@ -20,6 +20,11 @@ export type ServiceItem = {
     | string;
 };
 
+export type MenuSubItemType = {
+  text: string;
+  onClick?: () => void;
+};
+
 export type MenuItemType = {
   text?: string;
   onClick?: React.MouseEventHandler;
@@ -28,6 +33,8 @@ export type MenuItemType = {
   className?: string;
   padding?: string;
   preventClose?: boolean;
+  /** Submenu items (e.g. display list). Renders as DropdownMenuSub when present. */
+  subItems?: MenuSubItemType[];
 };
 
 export type Box = {

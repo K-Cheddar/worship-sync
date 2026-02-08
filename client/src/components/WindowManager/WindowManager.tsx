@@ -3,7 +3,7 @@ import Button from "../Button/Button";
 import RadioButton from "../RadioButton/RadioButton";
 import { useState, useEffect } from "react";
 import { Focus } from "lucide-react";
-import type { Display } from "../../types/electron";
+import { getDisplayLabel } from "../../utils/displayUtils";
 
 const WindowManager = () => {
   const {
@@ -44,18 +44,6 @@ const WindowManager = () => {
   const handleMonitorDisplayChange = async (displayId: string) => {
     setSelectedMonitorDisplay(displayId);
     await moveWindowToDisplay("monitor", parseInt(displayId));
-  };
-
-  const getDisplayName = (display: Display, index: number) => {
-    const resolution = `${display.bounds.width}×${display.bounds.height}`;
-    const type = display.internal ? "Built-in" : "External";
-    const displayNumber = index + 1;
-    
-    if (display.label) {
-      return `${display.label} (${resolution})`;
-    }
-    
-    return `Display ${displayNumber} - ${type} (${resolution})`;
   };
 
   return (
@@ -105,7 +93,7 @@ const WindowManager = () => {
               {displays.map((display, index) => (
                 <RadioButton
                   key={display.id}
-                  label={getDisplayName(display, index)}
+                  label={getDisplayLabel(display, index)}
                   value={selectedProjectorDisplay === display.id.toString()}
                   onChange={() => handleProjectorDisplayChange(display.id.toString())}
                   disabled={!windowStates?.projectorOpen}
@@ -170,7 +158,7 @@ const WindowManager = () => {
               {displays.map((display, index) => (
                 <RadioButton
                   key={display.id}
-                  label={getDisplayName(display, index)}
+                  label={getDisplayLabel(display, index)}
                   value={selectedMonitorDisplay === display.id.toString()}
                   onChange={() => handleMonitorDisplayChange(display.id.toString())}
                   disabled={!windowStates?.monitorOpen}

@@ -7,6 +7,7 @@ import ChangelogModal from "../../../components/ChangelogModal/ChangelogModal";
 import AboutModal from "../../../components/AboutModal/AboutModal";
 import { useState, useEffect } from "react";
 import { useElectronWindows } from "../../../hooks/useElectronWindows";
+import { getDisplayLabel } from "../../../utils/displayUtils";
 
 const ToolbarMenu = ({
   isPhone,
@@ -18,7 +19,7 @@ const ToolbarMenu = ({
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
-  const { isElectron, openWindow } = useElectronWindows();
+  const { isElectron, displays, openWindow, setDisplayPreference } = useElectronWindows();
 
   useEffect(() => {
     // Base font size from index.css (92.5%)
@@ -48,34 +49,70 @@ const ToolbarMenu = ({
     setZoomLevel(100);
   };
 
+  const openMonitorOnDisplay = async (displayId: number) => {
+    try {
+      await setDisplayPreference("monitor", displayId);
+      await openWindow("monitor");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const openProjectorOnDisplay = async (displayId: number) => {
+    try {
+      await setDisplayPreference("projector", displayId);
+      await openWindow("projector");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const menuItems: MenuItemType[] = [
     {
       text: "Open Stage Monitor",
-      onClick: async () => {
-        try {
-          if (isElectron) {
-            await openWindow("monitor");
-          } else {
-            window.open("#/monitor", "_monitor", "width=500,height=360");
+      ...(isElectron && displays.length > 0
+        ? {
+            subItems: displays.map((display, index) => ({
+              text: getDisplayLabel(display, index),
+              onClick: () => openMonitorOnDisplay(display.id),
+            })),
           }
-        } catch (err) {
-          console.error(err);
-        }
-      },
+        : {
+            onClick: async () => {
+              try {
+                if (isElectron) {
+                  await openWindow("monitor");
+                } else {
+                  window.open("#/monitor", "_monitor", "width=500,height=360");
+                }
+              } catch (err) {
+                console.error(err);
+              }
+            },
+          }),
     },
     {
       text: "Open Projector",
-      onClick: async () => {
-        try {
-          if (isElectron) {
-            await openWindow("projector");
-          } else {
-            window.open("#/projector", "_projector", "width=500,height=360");
+      ...(isElectron && displays.length > 0
+        ? {
+            subItems: displays.map((display, index) => ({
+              text: getDisplayLabel(display, index),
+              onClick: () => openProjectorOnDisplay(display.id),
+            })),
           }
-        } catch (err) {
-          console.error(err);
-        }
-      },
+        : {
+            onClick: async () => {
+              try {
+                if (isElectron) {
+                  await openWindow("projector");
+                } else {
+                  window.open("#/projector", "_projector", "width=500,height=360");
+                }
+              } catch (err) {
+                console.error(err);
+              }
+            },
+          }),
     },
     {
       text: "Home",
