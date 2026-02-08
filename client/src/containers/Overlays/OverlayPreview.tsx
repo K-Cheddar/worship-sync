@@ -1,5 +1,5 @@
 import Button from "../../components/Button/Button";
-import { Save } from "lucide-react";
+import { Save, SaveAll } from "lucide-react";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import generateRandomId from "../../utils/generateRandomId";
 
@@ -7,6 +7,8 @@ interface OverlayPreviewProps {
   overlay: any;
   defaultStyles: any;
   onApply: () => void;
+  onApplyToAll: () => void;
+  isApplyToAllLoading?: boolean;
   secondaryAction?: React.ReactNode;
 }
 
@@ -14,6 +16,8 @@ const OverlayPreview = ({
   overlay,
   defaultStyles,
   onApply,
+  onApplyToAll,
+  isApplyToAllLoading = false,
   secondaryAction,
 }: OverlayPreviewProps) => {
   const getOverlayInfo = () => {
@@ -92,6 +96,16 @@ const OverlayPreview = ({
           onClick={onApply}
         >
           Apply
+        </Button>
+        <Button
+          svg={SaveAll}
+          color="#22d3ee"
+          className="justify-center flex-1 text-sm"
+          onClick={onApplyToAll}
+          isLoading={isApplyToAllLoading}
+          disabled={isApplyToAllLoading}
+        >
+          Apply to all
         </Button>
       </div>
     </div>

@@ -26,7 +26,12 @@ import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import Drawer from "../../components/Drawer";
 import StyleEditor from "../../components/StyleEditor";
-import { DBOverlay, OverlayFormatting, OverlayInfo } from "../../types";
+import {
+  DBOverlay,
+  OverlayFormatting,
+  OverlayInfo,
+  OverlayType,
+} from "../../types";
 import OverlayTemplatesDrawer from "./OverlayTemplatesDrawer";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import {
@@ -85,6 +90,8 @@ const Overlays = () => {
   const [isTemplateDrawerOpen, setIsTemplateDrawerOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [isGettingNames, setIsGettingNames] = useState(false);
+  const [isApplyingFormattingToAll, setIsApplyingFormattingToAll] =
+    useState(false);
   useEffect(() => {
     if (isTemplateDrawerOpen) {
       setIsStyleDrawerOpen(false);
@@ -227,6 +234,31 @@ const Overlays = () => {
     dispatch(updateOverlayInList(overlay));
   };
 
+  const handleApplyFormattingToAll = async (formatting: OverlayFormatting) => {
+    const type = selectedOverlay.type as OverlayType;
+    const overlaysOfType = list.filter(
+      (o) => (o.type ?? "participant") === type
+    );
+    setIsApplyingFormattingToAll(true);
+    dispatch(updateOverlay({
+      ...selectedOverlay,
+      formatting: formatting,
+    }));
+    if (db) {
+      for (const overlay of overlaysOfType) {
+        try {
+          const db_overlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
+          db_overlay.formatting = formatting;
+          db_overlay.updatedAt = new Date().toISOString();
+          await db.put(db_overlay);
+        } catch (e) {
+          console.error("Failed to update overlay in db", overlay.id, e);
+        }
+      }
+    }
+    setIsApplyingFormattingToAll(false);
+  };
+
   const handleFormattingChange = (formatting: OverlayFormatting) => {
     handleOverlayUpdate({
       ...selectedOverlay,
@@ -305,8 +337,6 @@ const Overlays = () => {
   const getNames = async (url: string) => {
     setIsGettingNames(true);
     const names = await getNamesFromUrl(url);
-
-    console.log("Parsed event data:", names);
 
     // Compare names with existing overlays - find closest match for each element
     const matches: { leader: string; overlayEvent: string }[] = [];
@@ -561,6 +591,8 @@ const Overlays = () => {
           isMobile={isMobile}
           selectedOverlay={selectedOverlay}
           onApplyFormatting={(overlay) => handleOverlayUpdate(overlay)}
+          onApplyFormattingToAll={handleApplyFormattingToAll}
+          isApplyingFormattingToAll={isApplyingFormattingToAll}
         />
       </DndContext>
     </ErrorBoundary>

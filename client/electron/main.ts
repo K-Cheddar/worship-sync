@@ -322,22 +322,34 @@ const createWindow = () => {
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
-  // Set Content Security Policy to prevent security warnings
+  // Strict CSP for Electron; allowlists for Firebase (Realtime DB + Auth), Cloudinary, Mux, Sentry.
+  // Dev: local origins only when unpackaged. Prod: Firebase/Google must be explicit (app may load from file://).
+  const devConnectSrc = app.isPackaged
+    ? ""
+    : "https://local.worshipsync.net:5000 https://localhost:5000 ";
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
         "Content-Security-Policy": [
-          "default-src 'self' https: http: data: blob: video-cache:; " +
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: http:; " +
-            "style-src 'self' 'unsafe-inline' https: http: data:; " +
-            "font-src 'self' data: https: http:; " +
-            "img-src 'self' data: https: http:; " +
-            "media-src 'self' https: http: blob: video-cache:; " +
-            "connect-src 'self' https: http: ws: wss:; " +
-            "frame-src 'self' https: http:; " +
-            "worker-src 'self' blob: https:; " +
-            "child-src 'self' blob: https:; " +
+          "default-src 'self'; " +
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+            "style-src 'self' 'unsafe-inline' data:; " +
+            "font-src 'self' data:; " +
+            "img-src 'self' data: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com; " +
+            "media-src 'self' blob: video-cache:; " +
+            "connect-src 'self' blob: video-cache: " +
+            devConnectSrc +
+            "https://*.worshipsync.net " +
+            "https://*.firebaseio.com wss://*.firebaseio.com " +
+            "https://*.firebasedatabase.app wss://*.firebasedatabase.app " +
+            "https://*.firebaseapp.com https://*.googleapis.com " +
+            "https://securetoken.googleapis.com https://www.googleapis.com " +
+            "https://apis.google.com https://www.google.com " +
+            "https://*.ingest.us.sentry.io https://*.ingest.euro.sentry.io; " +
+            "frame-src 'self' https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com https://apis.google.com; " +
+            "worker-src 'self' blob:; " +
+            "child-src 'self' blob:; " +
             "object-src 'none'; " +
             "base-uri 'self';",
         ],
@@ -512,12 +524,8 @@ app.whenReady().then(() => {
   videoCacheManager = new VideoCacheManager();
   createWindow();
 
-  // Configure auto-updater (only in production)
+  // Configure auto-updater and check before boot (only in production)
   // Per electron-builder docs: https://www.electron.build/auto-update
-  // - electron-builder automatically creates app-update.yml in resources folder
-  // - Do NOT call setFeedURL - it's handled automatically
-  // - Update server info comes from publish config in electron-builder.config.js
-
   if (!isDev) {
     // Silent background updates: auto-download and install on quit
     autoUpdater.autoDownload = true;

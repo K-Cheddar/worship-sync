@@ -17,7 +17,7 @@ import {
   deleteTemplate,
   updateTemplate,
 } from "../../store/overlayTemplatesSlice";
-import { OverlayType, SavedTemplate } from "../../types";
+import { OverlayFormatting, OverlayType, SavedTemplate } from "../../types";
 import { Pencil } from "lucide-react";
 import { Trash2 } from "lucide-react";
 import { Check } from "lucide-react";
@@ -32,6 +32,8 @@ type Props = {
   isMobile: boolean;
   selectedOverlay: OverlayInfo;
   onApplyFormatting: (overlay: OverlayInfo) => void;
+  onApplyFormattingToAll: (formatting: OverlayFormatting) => void | Promise<void>;
+  isApplyingFormattingToAll: boolean;
 };
 
 const typeToName = {
@@ -47,6 +49,8 @@ const OverlayTemplatesDrawer = ({
   isMobile,
   selectedOverlay,
   onApplyFormatting,
+  onApplyFormattingToAll,
+  isApplyingFormattingToAll,
 }: Props) => {
   const dispatch = useDispatch();
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(
@@ -218,6 +222,10 @@ const OverlayTemplatesDrawer = ({
                       formatting: template.formatting,
                     })
                   }
+                  onApplyToAll={() =>
+                    onApplyFormattingToAll(template.formatting)
+                  }
+                  isApplyToAllLoading={isApplyingFormattingToAll}
                   secondaryAction={
                     <Button
                       className="justify-center flex-1 text-sm"
@@ -249,6 +257,10 @@ const OverlayTemplatesDrawer = ({
               formatting: defaultParticipantOverlayStyles,
             });
           }}
+          onApplyToAll={() =>
+            onApplyFormattingToAll(defaultParticipantOverlayStyles)
+          }
+          isApplyToAllLoading={isApplyingFormattingToAll}
         />
       )}
       {selectedOverlay.type === "stick-to-bottom" && (
@@ -261,6 +273,10 @@ const OverlayTemplatesDrawer = ({
               formatting: defaultStbOverlayStyles,
             });
           }}
+          onApplyToAll={() =>
+            onApplyFormattingToAll(defaultStbOverlayStyles)
+          }
+          isApplyToAllLoading={isApplyingFormattingToAll}
         />
       )}
       {selectedOverlay.type === "qr-code" && (
@@ -273,6 +289,10 @@ const OverlayTemplatesDrawer = ({
               formatting: defaultQrCodeOverlayStyles,
             });
           }}
+          onApplyToAll={() =>
+            onApplyFormattingToAll(defaultQrCodeOverlayStyles)
+          }
+          isApplyToAllLoading={isApplyingFormattingToAll}
         />
       )}
       {selectedOverlay.type === "image" && (
@@ -285,6 +305,10 @@ const OverlayTemplatesDrawer = ({
               formatting: defaultImageOverlayStyles,
             });
           }}
+          onApplyToAll={() =>
+            onApplyFormattingToAll(defaultImageOverlayStyles)
+          }
+          isApplyToAllLoading={isApplyingFormattingToAll}
         />
       )}
     </Drawer>
