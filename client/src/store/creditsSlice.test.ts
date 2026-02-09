@@ -91,7 +91,7 @@ describe("creditsSlice", () => {
       expect(state.publishedList[0].heading).toBe("A");
     });
 
-    it("initiateCreditsList with payload sets list and isInitialized", () => {
+    it("initiateCreditsList with payload sets list and preserves ids", () => {
       const store = createStore();
       const list = [
         createCreditsInfo({ id: "old-1", heading: "H1", text: "T1" }),
@@ -100,7 +100,7 @@ describe("creditsSlice", () => {
       const state = store.getState().credits;
       expect(state.list).toHaveLength(1);
       expect(state.list[0].heading).toBe("H1");
-      expect(state.list[0].id).toBe("fixed-credit-id");
+      expect(state.list[0].id).toBe("old-1");
       expect(state.isInitialized).toBe(true);
     });
   });

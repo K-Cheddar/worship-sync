@@ -4,7 +4,7 @@ import { Save } from "lucide-react";
 import { Check } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { selectCredit, updateList } from "../../store/creditsSlice";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import Credit from "./Credit";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import cn from "classnames";
@@ -18,13 +18,18 @@ import {
   addCredit,
   updatePublishedCreditsList,
 } from "../../store/creditsSlice";
+import { broadcastCreditsUpdate } from "../../store/store";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
+import generateRandomId from "../../utils/generateRandomId";
+import type { DBCredit } from "../../types";
 
 const CreditsEditor = ({ className }: { className?: string }) => {
   const { list, publishedList, initialList, isLoading, selectedCreditId } =
     useSelector((state: RootState) => state.undoable.present.credits);
   const dispatch = useDispatch();
+  const { db } = useContext(ControllerInfoContext) ?? {};
 
   const [justAdded, setJustAdded] = useState(false);
   const [justPublished, setJustPublished] = useState(false);
@@ -87,8 +92,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     }
   }, [selectedCreditId, list]);
 
-  console.log("isLoading", isLoading);
-
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <div
@@ -148,12 +151,22 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                 svg={justAdded ? Check : Plus}
                 color={justAdded ? "#84cc16" : "#22d3ee"}
                 disabled={justAdded}
-                onClick={() => {
+                onClick={async () => {
+                  if (!db) return;
                   setJustAdded(true);
-                  dispatch(addCredit());
-                  setTimeout(() => {
-                    setJustAdded(false);
-                  }, 500);
+                  const newId = generateRandomId();
+                  const newCredit: DBCredit = {
+                    _id: `credit-${newId}`,
+                    id: newId,
+                    heading: "",
+                    text: "",
+                    updatedAt: new Date().toISOString(),
+                    docType: "credit",
+                  };
+                  await db.put(newCredit);
+                  broadcastCreditsUpdate([newCredit]);
+                  dispatch(addCredit({ id: newId, heading: "", text: "" }));
+                  setTimeout(() => setJustAdded(false), 500);
                 }}
               >
                 {justAdded ? "Added!" : "Add Credit"}

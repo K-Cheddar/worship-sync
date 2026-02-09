@@ -251,12 +251,8 @@ export const creditsSlice = createSlice({
   name: "credits",
   initialState,
   reducers: {
-    addCredit: (state) => {
-      const newCredit = {
-        heading: "",
-        text: "",
-        id: generateRandomId(),
-      };
+    addCredit: (state, action: PayloadAction<CreditsInfo>) => {
+      const newCredit = action.payload;
       const selectedIndex = state.list.findIndex(
         (credit) => credit.id === state.selectedCreditId,
       );
@@ -296,7 +292,7 @@ export const creditsSlice = createSlice({
       } else {
         state.list = action.payload.map((credit) => ({
           ...credit,
-          id: generateRandomId(),
+          id: credit.id || generateRandomId(),
         }));
       }
       state.initialList = state.list.map((credit) => credit.id);

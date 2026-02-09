@@ -7,7 +7,9 @@ import {
 } from "../store/allDocsSlice";
 import {
   allDocsType,
+  CreditsInfo,
   DBAllItems,
+  DBCredit,
   DBItem,
   DBItemListDetails,
   DBItemLists,
@@ -35,21 +37,21 @@ export const deleteUnusedBibleItems = async ({ db, allItems }: propsType) => {
     const listDetails: DBItemListDetails = await db.get(itemList._id);
     const listItems = listDetails?.items || [];
     bibleItemsInLists.push(
-      ...listItems.filter((item) => item.type === "bible"),
+      ...listItems.filter((item) => item.type === "bible")
     );
   }
 
   const bibleItemsToBeDeleted = bibleItems.filter(
     (bibleItem) =>
       !bibleItemsInLists.some(
-        (bibleItemInList) => bibleItemInList._id === bibleItem._id,
-      ),
+        (bibleItemInList) => bibleItemInList._id === bibleItem._id
+      )
   );
 
   if (bibleItemsToBeDeleted.length === 0) return; // nothing to delete
 
   const updatedItems = items.filter(
-    (item) => !bibleItemsToBeDeleted.includes(item),
+    (item) => !bibleItemsToBeDeleted.includes(item)
   );
 
   // Remove bible items from all items and delete them individually
@@ -80,21 +82,21 @@ export const deleteUnusedHeadings = async ({ db, allItems }: propsType) => {
     const listDetails: DBItemListDetails = await db.get(itemList._id);
     const listItems = listDetails?.items || [];
     headingsInLists.push(
-      ...listItems.filter((item) => item.type === "heading"),
+      ...listItems.filter((item) => item.type === "heading")
     );
   }
 
   const headingsToBeDeleted = headingItems.filter(
     (headingItem) =>
       !headingsInLists.some(
-        (headingInList) => headingInList._id === headingItem._id,
-      ),
+        (headingInList) => headingInList._id === headingItem._id
+      )
   );
 
   if (headingsToBeDeleted.length === 0) return;
 
   const updatedItems = items.filter(
-    (item) => !headingsToBeDeleted.includes(item),
+    (item) => !headingsToBeDeleted.includes(item)
   );
 
   await db.put({
@@ -112,24 +114,82 @@ export const deleteUnusedHeadings = async ({ db, allItems }: propsType) => {
   }
 };
 
-export const deleteUnusedOverlays = async (db: PouchDB.Database) => {
-  const allDocs: allDocsType = (await db.allDocs({
+export const getOverlaysByIds = async (
+  db: PouchDB.Database,
+  overlayIds: string[]
+): Promise<DBOverlay[]> => {
+  if (overlayIds.length === 0) return [];
+  const keys = overlayIds.map((id) => `overlay-${id}`);
+  const result = (await db.allDocs({
+    keys,
     include_docs: true,
-  })) as allDocsType;
-  const allOverlays = allDocs.rows
-    .filter((row) => (row.doc as any)?._id?.startsWith("overlay-"))
+  })) as { rows: { doc?: DBOverlay }[] };
+  return result.rows
+    .filter((row) => row.doc != null)
     .map((row) => row.doc as DBOverlay);
+};
 
-  for (const overlay of allOverlays) {
-    const overlayDoc: DBOverlay | undefined = await db.get(overlay._id);
-    // was last updated more than 1 week ago
-    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const isOld =
-      overlayDoc.updatedAt && new Date(overlayDoc.updatedAt) < oneWeekAgo;
+export const getAllOverlayDocs = async (
+  db: PouchDB.Database
+): Promise<DBOverlay[]> => {
+  const result = (await db.allDocs({
+    include_docs: true,
+    startkey: "overlay-",
+    endkey: "overlay-\uffff",
+  })) as allDocsType;
+  return result.rows
+    .filter(
+      (row) =>
+        row.doc && (row.doc as { _id: string })._id !== "overlay-templates"
+    )
+    .map((row) => row.doc as DBOverlay);
+};
 
-    if (overlayDoc.isHidden && isOld) {
-      await db.remove(overlay);
+export const getCreditsByIds = async (
+  db: PouchDB.Database,
+  creditIds: string[]
+): Promise<CreditsInfo[]> => {
+  if (creditIds.length === 0) return [];
+  const keys = creditIds.map((id) => `credit-${id}`);
+  const result = (await db.allDocs({
+    keys,
+    include_docs: true,
+  })) as { rows: { doc?: DBCredit }[] };
+  const byId = new Map<string, CreditsInfo>();
+  for (const row of result.rows) {
+    const doc = row.doc;
+    if (doc && doc.id != null) {
+      byId.set(doc.id, {
+        id: doc.id,
+        heading: doc.heading,
+        text: doc.text,
+        hidden: doc.hidden,
+      });
     }
+  }
+  return creditIds
+    .map((id) => byId.get(id))
+    .filter((c): c is CreditsInfo => c != null);
+};
+
+/**
+ * Persist a single credit to the db (get-then-put; does not touch _rev). Returns the doc for broadcasting, or null on error.
+ */
+export const putCreditDoc = async (
+  db: PouchDB.Database,
+  credit: CreditsInfo
+): Promise<DBCredit | null> => {
+  try {
+    const existing: DBCredit = await db.get(`credit-${credit.id}`);
+    existing.heading = credit.heading;
+    existing.text = credit.text;
+    existing.hidden = credit.hidden;
+    existing.updatedAt = new Date().toISOString();
+    await db.put(existing);
+    return existing;
+  } catch (e) {
+    console.error("putCreditDoc failed", credit.id, e);
+    return null;
   }
 };
 
@@ -161,7 +221,7 @@ export const updateAllDocs = async (dispatch: Function) => {
 
 export const formatAllDocs = async (
   db: PouchDB.Database,
-  cloud: Cloudinary,
+  cloud: Cloudinary
 ) => {
   if (!db) return;
   try {
@@ -174,7 +234,7 @@ export const formatAllDocs = async (
         (row.doc as any)?.type === "song" ||
         (row.doc as any)?.type === "free" ||
         (row.doc as any)?.type === "timer" ||
-        (row.doc as any)?.type === "bible",
+        (row.doc as any)?.type === "bible"
     );
 
     for (const item of allItems) {
@@ -208,7 +268,7 @@ export const formatAllDocs = async (
 
 export const formatAllSongs = async (
   db: PouchDB.Database,
-  cloud: Cloudinary,
+  cloud: Cloudinary
 ) => {
   if (!db) return;
   try {
@@ -246,7 +306,7 @@ export const formatAllSongs = async (
 
 export const formatAllItems = async (
   db: PouchDB.Database,
-  cloud: Cloudinary,
+  cloud: Cloudinary
 ) => {
   if (!db) return;
   try {
@@ -277,7 +337,7 @@ export const formatAllItems = async (
  * This should be run once to migrate existing data.
  */
 export const migrateFreeFormItemsToFormattedSections = async (
-  db: PouchDB.Database,
+  db: PouchDB.Database
 ) => {
   if (!db) return;
   try {
@@ -308,7 +368,7 @@ export const migrateFreeFormItemsToFormattedSections = async (
         const selectedBox = 1;
         const formattedSections = getFormattedSections(
           fullItem.slides || [],
-          selectedBox,
+          selectedBox
         );
 
         // Update the item with formattedSections
@@ -327,7 +387,7 @@ export const migrateFreeFormItemsToFormattedSections = async (
     }
 
     console.log(
-      `Migration complete: ${migratedCount} items migrated, ${skippedCount} items skipped`,
+      `Migration complete: ${migratedCount} items migrated, ${skippedCount} items skipped`
     );
     return { migratedCount, skippedCount };
   } catch (error) {
@@ -335,3 +395,4 @@ export const migrateFreeFormItemsToFormattedSections = async (
     throw error;
   }
 };
+

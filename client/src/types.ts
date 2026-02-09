@@ -103,10 +103,27 @@ export type QuickLinkType = {
   canDelete: boolean;
 };
 
+/** Document kind discriminator for DB docs. Used to distinguish doc types without _id/type checks. */
+export type DocType =
+  | "item"
+  | "heading"
+  | "itemLists"
+  | "itemListDetails"
+  | "allItems"
+  | "overlay"
+  | "overlayTemplates"
+  | "preferences"
+  | "credits"
+  | "credit"
+  | "services"
+  | "media"
+  | "unknown";
+
 export type DBItem = ItemProperties & {
   _rev?: string;
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
 export type DBHeading = {
@@ -116,6 +133,7 @@ export type DBHeading = {
   _rev?: string;
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
 export type ItemType =
@@ -370,7 +388,6 @@ export type OverlayInfo = {
   time?: number;
   id: string;
   formatting?: OverlayFormatting;
-  isHidden?: boolean;
 };
 
 export type DBOverlay = OverlayInfo & {
@@ -378,6 +395,7 @@ export type DBOverlay = OverlayInfo & {
   _rev: string;
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
 export type CreditsInfo = {
@@ -476,6 +494,7 @@ export type DBItemList = {
   _rev: string;
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
 export type ItemListDetails = {
@@ -498,12 +517,14 @@ export type DBItemLists = {
   _rev: string;
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
 export type DBItemListDetails = ItemListDetails & {
   _rev: string;
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
 export type DBPreferences = {
@@ -514,14 +535,26 @@ export type DBPreferences = {
   monitorSettings: MonitorSettingsType;
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
+/** Index doc for credits: ordered credit ids. Each credit is stored as a separate doc (DBCredit). */
 export type DBCredits = {
   _id: string;
   _rev: string;
-  list: CreditsInfo[];
+  creditIds: string[];
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
+};
+
+/** Single credit document. _id = `credit-${id}`. */
+export type DBCredit = CreditsInfo & {
+  _id: string;
+  _rev?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  docType?: DocType;
 };
 
 export type DBAllItems = {
@@ -530,6 +563,7 @@ export type DBAllItems = {
   items: ServiceItem[];
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
 export type MediaType = {
@@ -560,6 +594,7 @@ export type DBMedia = {
   backgrounds: MediaType[];
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
 // Overlay Templates
@@ -579,6 +614,7 @@ export type DBOverlayTemplates = {
   templatesByType: TemplatesByType;
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
 export type DBBibleChapter = BibleChapter & {
@@ -586,6 +622,7 @@ export type DBBibleChapter = BibleChapter & {
   _rev: string;
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
 export type DBServices = {
@@ -594,6 +631,7 @@ export type DBServices = {
   list: ServiceTime[];
   createdAt?: string;
   updatedAt?: string;
+  docType?: DocType;
 };
 
 export type allDocsType = {
@@ -612,6 +650,7 @@ export type allDocsType = {
       | DBOverlay
       | DBPreferences
       | DBCredits
+      | DBCredit
       | DBBibleChapter
       | DBItemList
       | DBServices;

@@ -274,7 +274,7 @@ export const formatBibleFromScratch = ({
   });
 
 export const getBibleVerseRange = (
-  bibleInfo: BibleInfo | undefined,
+  bibleInfo: BibleInfo | undefined
 ): { startVerse: number; endVerse: number } => {
   if (!bibleInfo?.verses?.length) return { startVerse: 0, endVerse: 0 };
   return {
@@ -287,7 +287,7 @@ export const getBibleItemName = (
   book: string,
   chapter: string,
   verses: verseType[],
-  version: string,
+  version: string
 ): string => {
   if (!verses?.length) return `${book} ${chapter} ${version.toUpperCase()}`;
   const startName = verses[0].name;
@@ -298,7 +298,7 @@ export const getBibleItemName = (
 };
 
 export const buildBibleOpenAtSearchParams = (
-  bibleInfo: BibleInfo | undefined,
+  bibleInfo: BibleInfo | undefined
 ): URLSearchParams | null => {
   if (!bibleInfo?.book || !bibleInfo?.chapter || !bibleInfo?.version)
     return null;
@@ -323,14 +323,14 @@ export const formatBibleItemForVersion = ({
   if (!bibleInfo?.book || !bibleInfo?.chapter) return null;
   const { startVerse, endVerse } = getBibleVerseRange(bibleInfo);
   const versesToUse = newVerses.filter(
-    (v) => v.index >= startVerse && v.index <= endVerse,
+    (v) => v.index >= startVerse && v.index <= endVerse
   );
   const verses = versesToUse.length ? versesToUse : newVerses;
   const newName = getBibleItemName(
     bibleInfo.book,
     bibleInfo.chapter,
     verses,
-    newVersion,
+    newVersion
   );
   const firstBox = item.slides?.[0]?.boxes?.[0];
   return formatBibleFromScratch({
@@ -631,13 +631,6 @@ export const createNewItemInDb = async ({
       slides: response.slides,
     };
   } catch (error) {
-    // item does not exist
-    // db.get('allItems').then((allItems) {
-    // 	allItems.items.push(itemObj);
-    // 	allItems.items = Sort.sortNamesInList(allItems.items);
-    // 	updateState({allItems: allItems.items});
-    // 	db.put(allItems);
-    // });
     db.put({
       ...item,
       createdAt: new Date().toISOString(),

@@ -5,10 +5,8 @@ import { useNavigate } from "react-router-dom";
 import { getVerses as getVersesApi } from "../../api/getVerses";
 import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
-import {
-  buildBibleOpenAtSearchParams,
-  formatBibleItemForVersion,
-} from "../../utils/itemUtil";
+import { formatBibleItemForVersion } from "../../utils/itemUtil";
+import { openBibleAtLocation } from "../../store/bibleSlice";
 import { bibleVersions } from "../../utils/bibleVersions";
 import {
   updateBibleInfo,
@@ -29,11 +27,18 @@ const BibleItemActions = ({ item }: BibleItemActionsProps) => {
     (state: RootState) => state.undoable.present.item.isSectionLoading
   );
 
-  const openBibleAtLocation = useCallback(() => {
-    const params = buildBibleOpenAtSearchParams(item.bibleInfo);
-    if (!params) return;
-    navigate(`/controller/bible?${params.toString()}`);
-  }, [item.bibleInfo, navigate]);
+  const handleOpenChapter = useCallback(() => {
+    const info = item.bibleInfo;
+    if (!info?.book || !info?.chapter || !info?.version) return;
+    dispatch(
+      openBibleAtLocation({
+        book: info.book,
+        chapter: info.chapter,
+        version: info.version,
+      }),
+    );
+    navigate("/controller/bible");
+  }, [item.bibleInfo, dispatch, navigate]);
 
   const handleVersionChange = useCallback(
     async (newVersion: string) => {
@@ -76,7 +81,7 @@ const BibleItemActions = ({ item }: BibleItemActionsProps) => {
 
   return (
     <div className="flex flex-col gap-2 lg:flex-[0_0_30%] w-full py-2">
-      <Button variant="secondary" onClick={openBibleAtLocation} className="justify-center">
+      <Button variant="secondary" onClick={handleOpenChapter} className="justify-center">
         Open Chapter
       </Button>
       <Select

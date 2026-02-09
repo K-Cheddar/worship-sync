@@ -108,6 +108,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
+  const syncBatchSizeRef = useRef(50);
   const remoteDbRef = useRef<PouchDB.Database | null>(null);
   const syncRetryRef = useRef(0);
   const replicateRetryRef = useRef(0);
@@ -159,8 +160,14 @@ const ControllerInfoProvider = ({ children }: any) => {
     async (localDb: PouchDB.Database, remoteDb: PouchDB.Database) => {
       syncRef.current?.cancel();
 
+      const batchSize = syncBatchSizeRef.current;
       syncRef.current = localDb
-        .sync(remoteDb, { retry: true, live: true })
+        .sync(remoteDb, {
+          retry: true,
+          live: true,
+          batch_size: batchSize,
+          batches_limit: 5,
+        })
         .on("change", (event) => {
           if (event.direction === "push") {
             console.log("updating from local", event);
@@ -173,6 +180,15 @@ const ControllerInfoProvider = ({ children }: any) => {
           }
         })
         .on("error", async (error: any) => {
+          if (error.status === 413) {
+            syncBatchSizeRef.current = Math.max(10, syncBatchSizeRef.current - 20);
+            console.warn(
+              "Sync push 413 (Content Too Large), retrying with smaller batch_size:",
+              syncBatchSizeRef.current
+            );
+            syncDb(localDb, remoteDb);
+            return;
+          }
           if (error.status === 401 || error.status === 403) {
             setHasCouchSession(false);
             const success = await getCouchSession();

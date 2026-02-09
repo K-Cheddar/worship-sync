@@ -33,11 +33,9 @@ import FreeForms from "../../containers/FreeForms/FreeForms";
 import {
   DBAllItems,
   DBItemListDetails,
-  DBOverlay,
   DBPreferences,
   DBOverlayTemplates,
   TemplatesByType,
-  OverlayInfo,
 } from "../../types";
 import {
   initiateItemList,
@@ -57,7 +55,7 @@ import { sortNamesInList } from "../../utils/sort";
 import {
   deleteUnusedBibleItems,
   deleteUnusedHeadings,
-  deleteUnusedOverlays,
+  getOverlaysByIds,
   // formatAllSongs,
   // formatAllDocs,
   // formatAllItems,
@@ -196,9 +194,6 @@ const Controller = () => {
 
       // delete unused headings
       deleteUnusedHeadings({ db, allItems });
-
-      // delete unused overlays
-      deleteUnusedOverlays(db);
     };
     getAllItems();
   }, [dispatch, db]);
@@ -370,17 +365,7 @@ const Controller = () => {
           dispatch(initiateItemList(formatItemList(itemList, cloud)));
         }
 
-        const formattedOverlays: OverlayInfo[] = [];
-
-        for (const overlayId of overlayIds) {
-          const overlayDetails: DBOverlay | undefined = await db.get(
-            `overlay-${overlayId}`
-          );
-          if (overlayDetails && !overlayDetails.isHidden) {
-            formattedOverlays.push(overlayDetails);
-          }
-        }
-
+        const formattedOverlays = await getOverlaysByIds(db, overlayIds);
         dispatch(initiateOverlayList(formattedOverlays));
       } catch (e) {
         console.error(e);
@@ -401,23 +386,14 @@ const Controller = () => {
             console.log("updating selected item list from remote", event);
             const update = _update as DBItemListDetails;
             const itemList = update.items;
-            const overlaysIds = update.overlays;
+            const overlaysIds = update.overlays || [];
             if (cloud) {
               dispatch(
                 updateItemListFromRemote(formatItemList(itemList, cloud))
               );
             }
 
-            const formattedOverlays: OverlayInfo[] = [];
-
-            for (const overlayId of overlaysIds) {
-              const overlayDetails: DBOverlay | undefined = await db?.get(
-                `overlay-${overlayId}`
-              );
-              if (overlayDetails && !overlayDetails.isHidden) {
-                formattedOverlays.push(overlayDetails);
-              }
-            }
+            const formattedOverlays = await getOverlaysByIds(db!, overlaysIds);
             dispatch(updateOverlayListFromRemote(formattedOverlays));
           }
           if (_update._id === "allItems") {
