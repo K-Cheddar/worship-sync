@@ -17,7 +17,7 @@ const defaultParticipantInfo = {
 describe("DisplayParticipantOverlay", () => {
   describe("shouldFillContainer", () => {
     it("renders only one overlay (current) when shouldFillContainer is true", () => {
-      const { container } = render(
+      render(
         <div style={{ position: "relative", width: 400, height: 300 }}>
           <DisplayParticipantOverlay
             width={25}
@@ -27,14 +27,14 @@ describe("DisplayParticipantOverlay", () => {
           />
         </div>
       );
-      const overlayDivs = container.querySelectorAll(".absolute.overflow-hidden");
+      const overlayDivs = screen.getAllByTestId("shared-overlay");
       expect(overlayDivs.length).toBe(1);
       expect(screen.getByText("Test Name")).toBeInTheDocument();
       expect(screen.getByText("Test Title")).toBeInTheDocument();
     });
 
     it("renders current and prev overlay when shouldFillContainer is false", () => {
-      const { container } = render(
+      render(
         <div style={{ position: "relative", width: 400, height: 300 }}>
           <DisplayParticipantOverlay
             width={25}
@@ -44,7 +44,7 @@ describe("DisplayParticipantOverlay", () => {
           />
         </div>
       );
-      const overlayDivs = container.querySelectorAll(".absolute.overflow-hidden");
+      const overlayDivs = screen.getAllByTestId("shared-overlay");
       expect(overlayDivs.length).toBe(2);
     });
   });

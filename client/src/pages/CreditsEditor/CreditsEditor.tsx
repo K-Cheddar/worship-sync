@@ -478,7 +478,7 @@ const CreditsEditor = () => {
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="start"
-              className="bg-gray-800 border-gray-600 text-white min-w-[12rem] p-1.5"
+              className="bg-gray-800 border-gray-600 text-white min-w-48 p-1.5"
             >
               <DropdownMenuItem
                 onClick={() => setIsSettingsDrawerOpen(true)}
