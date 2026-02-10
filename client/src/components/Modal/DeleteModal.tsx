@@ -35,6 +35,7 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
       size="sm"
       showCloseButton={false}
       contentPadding="p-4"
+      zIndexLevel={2}
     >
       {imageUrl && (
         <div className="flex justify-center mb-4">
@@ -47,7 +48,7 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
           </div>
         </div>
       )}
-      <p className="text-xl mb-4 break-words">
+      <p className="text-xl mb-4 wrap-break-word">
         {message}{" "}
         {itemName && <span className="font-semibold">"{itemName}"</span>}?
       </p>

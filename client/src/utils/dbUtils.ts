@@ -114,6 +114,32 @@ export const deleteUnusedHeadings = async ({ db, allItems }: propsType) => {
   }
 };
 
+/**
+ * Returns a map of overlay id -> list of item list names that include that overlay.
+ */
+export const getOverlayUsageByList = async (
+  db: PouchDB.Database
+): Promise<Map<string, string[]>> => {
+  const usage = new Map<string, string[]>();
+  const allItemLists: DBItemLists | undefined = await db.get("ItemLists");
+  const itemLists = allItemLists?.itemLists || [];
+  for (const itemList of itemLists) {
+    try {
+      const details: DBItemListDetails = await db.get(itemList._id);
+      const overlayIds = details?.overlays || [];
+      const name = details?.name ?? itemList.name;
+      for (const id of overlayIds) {
+        const existing = usage.get(id) ?? [];
+        if (!existing.includes(name)) existing.push(name);
+        usage.set(id, existing);
+      }
+    } catch {
+      // skip missing or invalid list docs
+    }
+  }
+  return usage;
+};
+
 export const getOverlaysByIds = async (
   db: PouchDB.Database,
   overlayIds: string[]
@@ -395,4 +421,3 @@ export const migrateFreeFormItemsToFormattedSections = async (
     throw error;
   }
 };
-

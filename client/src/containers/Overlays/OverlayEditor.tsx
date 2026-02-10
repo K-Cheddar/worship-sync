@@ -36,8 +36,7 @@ const OverlayEditor = ({
   handleFormattingChange,
 }: OverlayEditorProps) => {
   const [isExpandedDrawerOpen, setIsExpandedDrawerOpen] = useState(false);
-  const isDisabled =
-    isOverlayLoading || !selectedOverlay.id || selectedOverlay.isHidden;
+  const isDisabled = isOverlayLoading || !selectedOverlay.id;
 
   const { windowWidth: desktopWidth, windowRef: desktopRef } = useWindowWidth();
   const { showToast } = useToast();
@@ -223,6 +222,7 @@ const OverlayEditor = ({
         <DisplayWindow
           showBorder
           width={isMobile ? 70 : 25}
+          displayType="stream"
           participantOverlayInfo={
             selectedOverlay.type === "participant"
               ? {
@@ -272,13 +272,12 @@ const OverlayEditor = ({
               }
               : undefined
           }
-          displayType="stream"
         />
       </div>
       <section
         className={cn(
           "scrollbar-variable flex flex-col gap-2 bg-gray-800 p-4 rounded-md items-center overflow-y-auto w-full",
-          (!selectedOverlay.id || selectedOverlay.isHidden) && "hidden"
+          !selectedOverlay.id && "hidden"
         )}
       >
         {selectedOverlay.type === "participant" && (

@@ -85,7 +85,7 @@ const Input = ({
             inputTextSize,
             inputWidth,
             hideSpinButtons &&
-              "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]"
+            "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]"
           )}
           type={type}
           value={value ?? ""}

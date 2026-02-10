@@ -10,6 +10,7 @@ type DisplayQRCodeOverlayProps = {
   qrCodeOverlayInfo?: OverlayInfo;
   prevQrCodeOverlayInfo?: OverlayInfo;
   shouldAnimate?: boolean;
+  shouldFillContainer?: boolean;
 };
 
 const DisplayQRCodeOverlay = forwardRef<
@@ -22,6 +23,7 @@ const DisplayQRCodeOverlay = forwardRef<
       qrCodeOverlayInfo = {},
       prevQrCodeOverlayInfo = {},
       shouldAnimate = false,
+      shouldFillContainer = false,
     },
     containerRef
   ) => {
@@ -162,16 +164,19 @@ const DisplayQRCodeOverlay = forwardRef<
           overlayInfo={qrCodeOverlayInfo}
           needsPadding={needsPadding}
           overlayType="qr-code"
+          shouldFillContainer={shouldFillContainer}
         />
-        <SharedOverlay
-          ref={prevQrCodeOverlayRef}
-          width={width}
-          styles={prevStyles}
-          overlayInfo={prevQrCodeOverlayInfo}
-          needsPadding={prevNeedsPadding}
-          isPrev={true}
-          overlayType="qr-code"
-        />
+        {!shouldFillContainer && (
+          <SharedOverlay
+            ref={prevQrCodeOverlayRef}
+            width={width}
+            styles={prevStyles}
+            overlayInfo={prevQrCodeOverlayInfo}
+            needsPadding={prevNeedsPadding}
+            isPrev={true}
+            overlayType="qr-code"
+          />
+        )}
       </>
     );
   }

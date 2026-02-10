@@ -17,6 +17,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import { cn } from "../../utils/cnHelper";
+import { overlayBorderColorMap } from "../../utils/itemTypeMaps";
 
 type OverlayProps = {
   overlay: OverlayInfo;
@@ -160,11 +161,17 @@ const Overlay = ({
 
   const overlayBaseClass = "flex items-center h-full text-wrap text-center";
 
+  const overlayType = overlay.type || "participant";
+  const borderColor =
+    overlayBorderColorMap.get(overlayType) || "border-l-gray-500";
+
   return (
     <li
-      className={`flex items-center rounded-lg w-full overflow-clip leading-3 ${
+      className={cn(
+        "flex items-center rounded-lg w-full overflow-clip leading-3 border-l-4",
+        borderColor,
         isSelected ? "bg-gray-950" : "bg-gray-800"
-      }`}
+      )}
       ref={(element) => {
         setNodeRef(element);
         overlayRef.current = element;

@@ -109,11 +109,41 @@ export const overlaysSlice = createSlice({
     addToInitialList: (state, action: PayloadAction<string[]>) => {
       state.initialList = [...state.initialList, ...action.payload];
     },
+    addExistingOverlayToList: (
+      state,
+      action: PayloadAction<{
+        overlay: OverlayInfo;
+        insertAfterId?: string;
+      }>
+    ) => {
+      const normalized: OverlayInfo = {
+        ...action.payload.overlay,
+        id: action.payload.overlay.id || generateRandomId(),
+        formatting: {
+          ...getDefaultFormatting(
+            action.payload.overlay.type || "participant"
+          ),
+          ...action.payload.overlay.formatting,
+        },
+      };
+      const insertAfterId = action.payload.insertAfterId;
+      const existingIndex =
+        insertAfterId !== undefined
+          ? state.list.findIndex((o) => o.id === insertAfterId)
+          : -1;
+      if (existingIndex !== -1) {
+        state.list.splice(existingIndex + 1, 0, normalized);
+      } else {
+        state.list.push(normalized);
+      }
+      state.hasPendingUpdate = true;
+    },
   },
 });
 
 export const {
   addOverlayToList,
+  addExistingOverlayToList,
   updateOverlayList: updateList,
   deleteOverlayFromList,
   updateOverlayInList,

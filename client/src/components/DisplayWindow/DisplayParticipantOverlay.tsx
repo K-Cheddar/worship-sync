@@ -10,6 +10,7 @@ type DisplayParticipantOverlayProps = {
   participantOverlayInfo?: OverlayInfo;
   prevParticipantOverlayInfo?: OverlayInfo;
   shouldAnimate?: boolean;
+  shouldFillContainer?: boolean;
 };
 
 const DisplayParticipantOverlay = forwardRef<
@@ -22,6 +23,7 @@ const DisplayParticipantOverlay = forwardRef<
       participantOverlayInfo = {},
       prevParticipantOverlayInfo = {},
       shouldAnimate = false,
+      shouldFillContainer = false,
     },
     containerRef
   ) => {
@@ -260,16 +262,19 @@ const DisplayParticipantOverlay = forwardRef<
           overlayInfo={participantOverlayInfo}
           needsPadding={needsPadding}
           overlayType="participant"
+          shouldFillContainer={shouldFillContainer}
         />
-        <SharedOverlay
-          ref={prevParticipantOverlayRef}
-          width={width}
-          styles={prevStyles}
-          overlayInfo={prevParticipantOverlayInfo}
-          needsPadding={prevNeedsPadding}
-          isPrev={true}
-          overlayType="participant"
-        />
+        {!shouldFillContainer && (
+          <SharedOverlay
+            ref={prevParticipantOverlayRef}
+            width={width}
+            styles={prevStyles}
+            overlayInfo={prevParticipantOverlayInfo}
+            needsPadding={prevNeedsPadding}
+            isPrev={true}
+            overlayType="participant"
+          />
+        )}
       </>
     );
   }

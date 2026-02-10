@@ -1,5 +1,5 @@
 import Button from "../../components/Button/Button";
-import { Plus, Check, Download, RefreshCw } from "lucide-react";
+import { Plus, Check, Download, RefreshCw, FolderOpen } from "lucide-react";
 
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -32,6 +32,7 @@ import {
   OverlayInfo,
   OverlayType,
 } from "../../types";
+import AddExistingOverlayDrawer from "./ExistingOverlaysDrawer";
 import OverlayTemplatesDrawer from "./OverlayTemplatesDrawer";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import {
@@ -88,6 +89,7 @@ const Overlays = () => {
   const [justAdded, setJustAdded] = useState(false);
   const [isStyleDrawerOpen, setIsStyleDrawerOpen] = useState(false);
   const [isTemplateDrawerOpen, setIsTemplateDrawerOpen] = useState(false);
+  const [isAddExistingOpen, setIsAddExistingOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [isGettingNames, setIsGettingNames] = useState(false);
   const [isApplyingFormattingToAll, setIsApplyingFormattingToAll] =
@@ -95,8 +97,15 @@ const Overlays = () => {
   useEffect(() => {
     if (isTemplateDrawerOpen) {
       setIsStyleDrawerOpen(false);
+      setIsAddExistingOpen(false);
     }
   }, [isTemplateDrawerOpen]);
+  useEffect(() => {
+    if (isAddExistingOpen) {
+      setIsStyleDrawerOpen(false);
+      setIsTemplateDrawerOpen(false);
+    }
+  }, [isAddExistingOpen]);
 
   useEffect(() => {
     if (!selectedOverlay.id) {
@@ -123,14 +132,12 @@ const Overlays = () => {
               continue;
             }
 
-            let updatedOverlayList = list
-              .map((overlay, index) => {
-                if (index === overlayIndex) {
-                  return update;
-                }
-                return overlay;
-              })
-              .filter((overlay) => !overlay.isHidden);
+            const updatedOverlayList = list.map((overlay, index) => {
+              if (index === overlayIndex) {
+                return update;
+              }
+              return overlay;
+            });
 
             dispatch(updateOverlayListFromRemote(updatedOverlayList));
           }
@@ -266,19 +273,23 @@ const Overlays = () => {
     });
   };
 
-  const handleDeleteOverlay = async (overlayId: string) => {
+  const handleDeleteOverlay = (overlayId: string) => {
     dispatch(deleteOverlayFromList(overlayId));
     if (selectedOverlay.id === overlayId) {
       dispatch(deleteOverlay(overlayId));
-    } else if (db) {
-      const overlayDoc: DBOverlay | undefined = await db.get(
-        `overlay-${overlayId}`
-      );
-      if (overlayDoc) {
-        overlayDoc.isHidden = true;
-        await db.put(overlayDoc);
-      }
     }
+  };
+
+  const handleAfterAddToOverlayList = (overlay: OverlayInfo) => {
+    dispatch(
+      selectOverlay({
+        ...overlay,
+        formatting: {
+          ...getDefaultFormatting(overlay.type || "participant"),
+          ...overlay.formatting,
+        },
+      })
+    );
   };
 
   const selectAndLoadOverlay = async (overlayId: string) => {
@@ -542,15 +553,25 @@ const Overlays = () => {
                     })}
                   </SortableContext>
                 </ul>
-                <Button
-                  className="text-sm w-full justify-center mt-2"
-                  svg={justAdded ? Check : Plus}
-                  color={justAdded ? "#84cc16" : "#22d3ee"}
-                  disabled={justAdded}
-                  onClick={createNewOverlay}
-                >
-                  {justAdded ? justAddedText : addButtonText}
-                </Button>
+                <div className="flex gap-2 mt-2">
+                  <Button
+                    className="text-sm flex-1 justify-center"
+                    svg={justAdded ? Check : Plus}
+                    color={justAdded ? "#84cc16" : "#22d3ee"}
+                    disabled={justAdded}
+                    onClick={createNewOverlay}
+                  >
+                    {justAdded ? justAddedText : addButtonText}
+                  </Button>
+                  <Button
+                    className="text-sm flex-1 justify-center"
+                    svg={FolderOpen}
+                    color="#a78bfa"
+                    onClick={() => setIsAddExistingOpen(true)}
+                  >
+                    Existing overlays
+                  </Button>
+                </div>
               </section>
               <OverlayEditor
                 selectedOverlay={selectedOverlay}
@@ -593,6 +614,15 @@ const Overlays = () => {
           onApplyFormatting={(overlay) => handleOverlayUpdate(overlay)}
           onApplyFormattingToAll={handleApplyFormattingToAll}
           isApplyingFormattingToAll={isApplyingFormattingToAll}
+        />
+        <AddExistingOverlayDrawer
+          isOpen={isAddExistingOpen}
+          onClose={() => setIsAddExistingOpen(false)}
+          db={db}
+          currentListIds={list.map((o) => o.id)}
+          selectedOverlayId={selectedOverlay.id || undefined}
+          onAddToOverlayList={handleAfterAddToOverlayList}
+          isMobile={isMobile}
         />
       </DndContext>
     </ErrorBoundary>
