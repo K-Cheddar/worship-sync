@@ -279,11 +279,6 @@ const CreditsEditor = () => {
     [setIsMobile]
   );
 
-  useEffect(() => {
-    // Scroll to top because body is overflowing (need to figure out how to prevent this)
-    window.scrollTo(0, 0);
-  }, []);
-
   const generateFromOverlays = useCallback(async () => {
     setIsGenerating(true);
     try {
