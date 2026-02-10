@@ -494,6 +494,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         return (
           <div
             className="bg-black"
+            data-testid="overlay-preview-wrapper"
             style={{
               position: "absolute",
               inset: 0,

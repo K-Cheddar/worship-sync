@@ -7,8 +7,8 @@ import SharedOverlay from "./SharedOverlay";
 
 type DisplayParticipantOverlayProps = {
   width: number;
-  participantOverlayInfo?: OverlayInfo;
-  prevParticipantOverlayInfo?: OverlayInfo;
+  participantOverlayInfo?: Partial<OverlayInfo>;
+  prevParticipantOverlayInfo?: Partial<OverlayInfo>;
   shouldAnimate?: boolean;
   shouldFillContainer?: boolean;
 };

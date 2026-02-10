@@ -15,7 +15,7 @@ import cn from "classnames";
 interface SharedOverlayProps {
   width: number;
   styles: OverlayFormatting;
-  overlayInfo: OverlayInfo | {};
+  overlayInfo: Partial<OverlayInfo>;
   needsPadding: boolean;
   isPrev?: boolean;
   overlayType: OverlayType;
@@ -172,9 +172,13 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
       return children.map((child: OverlayChild, index: number) => {
         const dataKey = currentMapping[index]?.key;
         const classNameSuffix = currentMapping[index]?.className;
-        const dataValue =
+        const rawValue =
           dataKey && dataKey in overlayInfo
             ? overlayInfo[dataKey as keyof typeof overlayInfo]
+            : null;
+        const dataValue =
+          typeof rawValue === "string" || typeof rawValue === "number"
+            ? rawValue
             : null;
 
         if (!dataValue) return null;

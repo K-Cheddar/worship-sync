@@ -103,7 +103,6 @@ const excludedActions: string[] = [
   creditsSlice.actions.forceUpdate.toString(),
   creditsSlice.actions.initiateCreditsHistory.toString(),
   creditsSlice.actions.deleteCreditsHistoryEntry.toString(),
-  creditsSlice.actions.updateCreditsHistoryEntry.toString(),
   itemListSlice.actions.initiateItemList.toString(),
   itemListSlice.actions.updateItemListFromRemote.toString(),
   itemListSlice.actions.setItemListIsLoading.toString(),

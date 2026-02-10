@@ -42,7 +42,7 @@ describe("DisplayWindow overlay preview mode", () => {
   });
 
   it("uses fill wrapper (inset 0, full size) when overlayPreviewMode is true", () => {
-    const { container } = render(
+    render(
       <DisplayWindow
         displayType="stream"
         overlayPreviewMode
@@ -54,12 +54,10 @@ describe("DisplayWindow overlay preview mode", () => {
         }}
       />
     );
-    const fillWrapper = container.querySelector(
-      '[style*="inset: 0px"], [style*="inset: 0"]'
-    );
+    const fillWrapper = screen.getByTestId("overlay-preview-wrapper");
     expect(fillWrapper).toBeInTheDocument();
-    expect((fillWrapper as HTMLElement)?.style?.width).toBe("100%");
-    expect((fillWrapper as HTMLElement)?.style?.height).toBe("100%");
+    expect((fillWrapper as HTMLElement).style.width).toBe("100%");
+    expect((fillWrapper as HTMLElement).style.height).toBe("100%");
   });
 
   it("does not render participant overlay when participantOverlayInfo is undefined in overlayPreviewMode", () => {
@@ -83,7 +81,7 @@ describe("DisplayWindow overlay preview mode", () => {
   });
 
   it("renders only the overlay type that has info in overlayPreviewMode", () => {
-    const { container } = render(
+    render(
       <DisplayWindow
         displayType="stream"
         overlayPreviewMode
@@ -95,10 +93,7 @@ describe("DisplayWindow overlay preview mode", () => {
         }}
       />
     );
-    expect(screen.getByText("Solo")).toBeInTheDocument();
-    const overlayWrappers = container.querySelectorAll(
-      '[style*="position: absolute"]'
-    );
-    expect(overlayWrappers.length).toBeGreaterThan(0);
+    const overlaysWithSoloText = screen.getAllByText("Solo");
+    expect(overlaysWithSoloText.length).toBe(1);
   });
 });
