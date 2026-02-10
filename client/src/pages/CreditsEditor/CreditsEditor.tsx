@@ -1,24 +1,20 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import Credits from "../../containers/Credits/Credits";
 import { default as CreditsEditorContainer } from "../../containers/Credits/CreditsEditor";
-import { ArrowLeft } from "lucide-react";
-import { ChevronsUpDown } from "lucide-react";
-import { RefreshCcw } from "lucide-react";
-import { Check } from "lucide-react";
+import { ArrowLeft, Check, ChevronsUpDown, History, RefreshCcw, Settings } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { DBCredits, DBCredit, DBItemListDetails, DocType, ItemLists } from "../../types";
-import { getCreditsByIds, getOverlaysByIds, putCreditDoc } from "../../utils/dbUtils";
+import { getAllCreditsHistory, getCreditsByIds, getOverlaysByIds, putCreditDoc } from "../../utils/dbUtils";
 import {
+  initiateCreditsHistory,
   initiateCreditsList,
   initiateCreditsScene,
   initiatePublishedCreditsList,
   initiateTransitionScene,
-  setCreditsScene,
   setIsInitialized as setCreditsIsInitialized,
   setIsLoading,
   setScheduleName,
-  setTransitionScene,
   updateCredit,
   updateCreditsListFromRemote,
   updateList,
@@ -28,8 +24,12 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import Button from "../../components/Button/Button";
 import cn from "classnames";
 import { onValue, ref } from "firebase/database";
-import PopOver from "../../components/PopOver/PopOver";
-import Input from "../../components/Input/Input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../components/ui/DropdownMenu";
 import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
 import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
@@ -39,9 +39,11 @@ import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
 import { capitalizeFirstLetter } from "../../utils/generalUtils";
 import { broadcastCreditsUpdate, CREDITS_EDITOR_PAGE_READY } from "../../store/store";
+import CreditHistoryDrawer from "../../containers/Credits/CreditHistoryDrawer";
+import CreditsSettingsDrawer from "../../containers/Credits/CreditsSettingsDrawer";
 
 const CreditsEditor = () => {
-  const { list, transitionScene, creditsScene, scheduleName, isInitialized: creditsInitialized } = useSelector(
+  const { list, scheduleName, isInitialized: creditsInitialized } = useSelector(
     (state) => state.undoable.present.credits
   );
   const hasDispatchedPageReady = useRef(false);
@@ -50,7 +52,7 @@ const CreditsEditor = () => {
     (state) => state.undoable.present.overlays
   );
 
-  const { db, dbProgress, setIsMobile, updater, pullFromRemote } =
+  const { db, dbProgress, isMobile = false, setIsMobile, updater, pullFromRemote } =
     useContext(ControllerInfoContext) ?? {};
   const { database, firebaseDb, user } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
@@ -58,6 +60,8 @@ const CreditsEditor = () => {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [justGenerated, setJustGenerated] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSettingsDrawerOpen, setIsSettingsDrawerOpen] = useState(false);
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -99,9 +103,13 @@ const CreditsEditor = () => {
         const creditIds = creditsDoc.creditIds ?? [];
         const credits = await getCreditsByIds(db, creditIds);
         dispatch(initiateCreditsList(credits));
+
+        const historyMap = await getAllCreditsHistory(db);
+        dispatch(initiateCreditsHistory(historyMap));
       } catch (error: unknown) {
         console.error(error);
         dispatch(initiateCreditsList([]));
+        dispatch(initiateCreditsHistory({}));
         if (error && typeof error === "object" && "name" in error && (error as { name: string }).name === "not_found") {
           await db.put({
             _id: "credits",
@@ -399,36 +407,31 @@ const CreditsEditor = () => {
     }
   }, [overlays, list, dispatch, scheduleName, db]);
 
-  const controls = (
+  const toolbarActions = (
     <>
-      <Input
-        label="Transition Scene"
-        className="credits-transition-input"
-        value={transitionScene}
-        data-ignore-undo="true"
-        onChange={(val) => dispatch(setTransitionScene(val as string))}
-      />
-      <Input
-        label="Credits Scene"
-        className="credits-transition-input"
-        value={creditsScene}
-        data-ignore-undo="true"
-        onChange={(val) => dispatch(setCreditsScene(val as string))}
-      />
-      <Input
-        label="Schedule Name"
-        className="credits-transition-input"
-        value={scheduleName}
-        data-ignore-undo="true"
-        onChange={(val) => dispatch(setScheduleName(val as string))}
-      />
+      <Button
+        variant="tertiary"
+        className="text-sm"
+        svg={Settings}
+        color="#818cf8"
+        onClick={() => setIsSettingsDrawerOpen(true)}
+      >
+        Settings
+      </Button>
+      <Button
+        variant="tertiary"
+        className="text-sm"
+        svg={History}
+        color="#f59e0b"
+        onClick={() => setIsHistoryDrawerOpen(true)}
+      >
+        History
+      </Button>
       <Button
         className="text-sm"
         data-testid="generate-credits-button"
         disabled={overlays.length === 0 || isGenerating}
-        onClick={() => {
-          generateFromOverlays();
-        }}
+        onClick={() => generateFromOverlays()}
         color={justGenerated ? "#84cc16" : "#22d3ee"}
         svg={justGenerated ? Check : RefreshCcw}
       >
@@ -460,11 +463,11 @@ const CreditsEditor = () => {
           <div className="border-l-2 border-gray-400 pl-4">
             <Undo />
           </div>
-          <div className="max-lg:hidden flex gap-8 items-center border-l-2 border-gray-400 pl-4">
-            {controls}
+          <div className="max-lg:hidden flex gap-2 items-center border-l-2 border-gray-400 pl-4">
+            {toolbarActions}
           </div>
-          <PopOver
-            TriggeringButton={
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <Button
                 className="lg:hidden"
                 variant="tertiary"
@@ -472,12 +475,43 @@ const CreditsEditor = () => {
               >
                 Tools
               </Button>
-            }
-          >
-            <div className="flex flex-col gap-4 items-center p-4">
-              {controls}
-            </div>
-          </PopOver>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              className="bg-gray-800 border-gray-600 text-white min-w-[12rem] p-1.5"
+            >
+              <DropdownMenuItem
+                onClick={() => setIsSettingsDrawerOpen(true)}
+                className="flex items-center gap-3 py-3 px-3 text-base focus:bg-gray-700 rounded-sm"
+              >
+                <Settings className="size-5 shrink-0 text-indigo-400" />
+                Settings
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setIsHistoryDrawerOpen(true)}
+                className="flex items-center gap-3 py-3 px-3 text-base focus:bg-gray-700 rounded-sm"
+              >
+                <History className="size-5 shrink-0 text-amber-400" />
+                History
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => generateFromOverlays()}
+                disabled={overlays.length === 0 || isGenerating}
+                className="flex items-center gap-3 py-3 px-3 text-base focus:bg-gray-700 disabled:opacity-50 rounded-sm"
+              >
+                {justGenerated ? (
+                  <Check className="size-5 shrink-0 text-cyan-400" />
+                ) : (
+                  <RefreshCcw className="size-5 shrink-0 text-cyan-400" />
+                )}
+                {isGenerating
+                  ? "Generating Credits..."
+                  : justGenerated
+                    ? "Generated Credits!"
+                    : "Generate Credits"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <div className="ml-auto">
             <UserSection />
           </div>
@@ -533,6 +567,18 @@ const CreditsEditor = () => {
           <Credits isPreview credits={list} />
         </section>
       </div>
+      <CreditsSettingsDrawer
+        isOpen={isSettingsDrawerOpen}
+        onClose={() => setIsSettingsDrawerOpen(false)}
+        size={isMobile ? "xl" : "md"}
+        position={isMobile ? "bottom" : "right"}
+      />
+      <CreditHistoryDrawer
+        isOpen={isHistoryDrawerOpen}
+        onClose={() => setIsHistoryDrawerOpen(false)}
+        size={isMobile ? "xl" : "lg"}
+        position={isMobile ? "bottom" : "right"}
+      />
     </div>
   );
 };

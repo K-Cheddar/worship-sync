@@ -115,6 +115,7 @@ export type DocType =
   | "preferences"
   | "credits"
   | "credit"
+  | "credit-history"
   | "services"
   | "media"
   | "unknown";
@@ -548,6 +549,23 @@ export type DBCredits = {
   docType?: DocType;
 };
 
+/** Per-heading history doc. _id = getCreditHistoryDocId(heading). */
+export const CREDIT_HISTORY_ID_PREFIX = "credit-history-";
+
+export function getCreditHistoryDocId(heading: string): string {
+  return CREDIT_HISTORY_ID_PREFIX + encodeURIComponent(heading);
+}
+
+export type DBCreditHistory = {
+  _id: string;
+  _rev?: string;
+  heading: string;
+  lines: string[];
+  createdAt?: string;
+  updatedAt?: string;
+  docType?: DocType;
+};
+
 /** Single credit document. _id = `credit-${id}`. */
 export type DBCredit = CreditsInfo & {
   _id: string;
@@ -651,6 +669,7 @@ export type allDocsType = {
       | DBPreferences
       | DBCredits
       | DBCredit
+      | DBCreditHistory
       | DBBibleChapter
       | DBItemList
       | DBServices;

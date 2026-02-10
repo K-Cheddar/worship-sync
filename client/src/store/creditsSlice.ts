@@ -2,6 +2,25 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { CreditsInfo } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
+/** Pure merge of visible credits' lines into a history map. Used by reducer and by Publish click handler. */
+export function mergePublishedCreditsIntoHistory(
+  creditsHistory: Record<string, string[]>,
+  visibleCredits: CreditsInfo[]
+): Record<string, string[]> {
+  const next = { ...creditsHistory };
+  for (const credit of visibleCredits) {
+    const key = credit.heading.trim();
+    if (!key) continue;
+    const lines = credit.text
+      .split(/\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const existing = next[key] ?? [];
+    next[key] = [...new Set([...existing, ...lines])];
+  }
+  return next;
+}
+
 const dummyList = [
   {
     id: "1ii2lhhaa5vngn4rnt1",
@@ -226,6 +245,8 @@ const dummyList = [
 type CreditsState = {
   list: CreditsInfo[];
   publishedList: CreditsInfo[];
+  /** Per-heading history of unique lines from published credits. */
+  creditsHistory: Record<string, string[]>;
   initialList: string[];
   isLoading: boolean;
   transitionScene: string;
@@ -238,6 +259,7 @@ type CreditsState = {
 const initialState: CreditsState = {
   list: [],
   publishedList: [],
+  creditsHistory: {},
   initialList: [],
   isLoading: true,
   transitionScene: "",
@@ -282,9 +304,12 @@ export const creditsSlice = createSlice({
       state.list = action.payload;
     },
     updatePublishedCreditsList: (state) => {
-      state.publishedList = state.list
-        .filter((credit) => !credit.hidden)
-        .map((credit) => credit);
+      const visible = state.list.filter((c) => !c.hidden);
+      state.publishedList = visible.map((credit) => credit);
+      state.creditsHistory = mergePublishedCreditsIntoHistory(
+        state.creditsHistory ?? {},
+        visible
+      );
     },
     initiateCreditsList: (state, action: PayloadAction<CreditsInfo[]>) => {
       if (action.payload.length === 0) {
@@ -360,6 +385,22 @@ export const creditsSlice = createSlice({
     setIsInitialized: (state, action: PayloadAction<boolean>) => {
       state.isInitialized = action.payload;
     },
+    initiateCreditsHistory: (
+      state,
+      action: PayloadAction<Record<string, string[]>>,
+    ) => {
+      state.creditsHistory = action.payload ?? {};
+    },
+    deleteCreditsHistoryEntry: (state, action: PayloadAction<string>) => {
+      delete state.creditsHistory[action.payload];
+    },
+    updateCreditsHistoryEntry: (
+      state,
+      action: PayloadAction<{ heading: string; lines: string[] }>,
+    ) => {
+      const { heading, lines } = action.payload;
+      state.creditsHistory[heading] = lines;
+    },
     forceUpdate: () => {},
   },
 });
@@ -376,6 +417,9 @@ export const {
   deleteCredit,
   updateCredit,
   initiateCreditsList,
+  initiateCreditsHistory,
+  deleteCreditsHistoryEntry,
+  updateCreditsHistoryEntry,
   initiatePublishedCreditsList,
   updateCreditsListFromRemote,
   updatePublishedCreditsListFromRemote,

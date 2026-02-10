@@ -6,6 +6,7 @@ import type { CreditsInfo } from "../types";
 type CreditsState = {
   list: CreditsInfo[];
   publishedList: CreditsInfo[];
+  creditsHistory: Record<string, string[]>;
   initialList: string[];
   isLoading: boolean;
   transitionScene: string;
@@ -76,6 +77,7 @@ describe("creditsSlice", () => {
             }),
           ],
           publishedList: [],
+          creditsHistory: {},
           initialList: [],
           isLoading: false,
           transitionScene: "",
@@ -89,6 +91,87 @@ describe("creditsSlice", () => {
       const state = store.getState().credits;
       expect(state.publishedList).toHaveLength(1);
       expect(state.publishedList[0].heading).toBe("A");
+    });
+
+    it("updatePublishedCreditsList merges unique lines into creditsHistory by heading", () => {
+      const store = createStore({
+        credits: {
+          list: [
+            createCreditsInfo({
+              id: "1",
+              heading: "Reading of the Word",
+              text: "Alice\nBob",
+              hidden: false,
+            }),
+            createCreditsInfo({
+              id: "2",
+              heading: "Reading of the Word",
+              text: "Bob\nCarol",
+              hidden: false,
+            }),
+          ],
+          publishedList: [],
+          creditsHistory: {},
+          initialList: [],
+          isLoading: false,
+          transitionScene: "",
+          creditsScene: "",
+          scheduleName: "",
+          selectedCreditId: "",
+          isInitialized: true,
+        },
+      });
+      store.dispatch(creditsSlice.actions.updatePublishedCreditsList());
+      const state = store.getState().credits;
+      expect(state.creditsHistory["Reading of the Word"]).toEqual([
+        "Alice",
+        "Bob",
+        "Carol",
+      ]);
+    });
+
+    it("initiateCreditsHistory sets creditsHistory", () => {
+      const store = createStore();
+      store.dispatch(
+        creditsSlice.actions.initiateCreditsHistory({
+          "Sermon": ["Pastor A", "Pastor B"],
+        }),
+      );
+      expect(store.getState().credits.creditsHistory).toEqual({
+        "Sermon": ["Pastor A", "Pastor B"],
+      });
+    });
+
+    it("deleteCreditsHistoryEntry removes heading from creditsHistory", () => {
+      const store = createStore({
+        credits: {
+          ...creditsSlice.getInitialState(),
+          creditsHistory: { "Sermon": ["A"], "Invocation": ["B"] },
+        },
+      });
+      store.dispatch(creditsSlice.actions.deleteCreditsHistoryEntry("Sermon"));
+      expect(store.getState().credits.creditsHistory).toEqual({
+        Invocation: ["B"],
+      });
+    });
+
+    it("updateCreditsHistoryEntry sets lines for heading", () => {
+      const store = createStore({
+        credits: {
+          ...creditsSlice.getInitialState(),
+          creditsHistory: { "Sermon": ["A"], "Invocation": ["B"] },
+        },
+      });
+      store.dispatch(
+        creditsSlice.actions.updateCreditsHistoryEntry({
+          heading: "Sermon",
+          lines: ["X", "Y", "Z"],
+        })
+      );
+      expect(store.getState().credits.creditsHistory).toEqual({
+        Sermon: ["X", "Y", "Z"],
+        Invocation: ["B"],
+      });
     });
 
     it("initiateCreditsList with payload sets list and preserves ids", () => {

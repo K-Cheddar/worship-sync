@@ -8,13 +8,16 @@ import {
 import {
   allDocsType,
   CreditsInfo,
+  CREDIT_HISTORY_ID_PREFIX,
   DBAllItems,
   DBCredit,
+  DBCreditHistory,
   DBItem,
   DBItemListDetails,
   DBItemLists,
   DBOverlay,
   ServiceItem,
+  getCreditHistoryDocId,
 } from "../types";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
@@ -169,6 +172,103 @@ export const getAllOverlayDocs = async (
         row.doc && (row.doc as { _id: string })._id !== "overlay-templates"
     )
     .map((row) => row.doc as DBOverlay);
+};
+
+/** Load all credit history docs and return a map of heading -> lines. */
+export const getAllCreditsHistory = async (
+  db: PouchDB.Database
+): Promise<Record<string, string[]>> => {
+  const result = await db.allDocs({
+    startkey: CREDIT_HISTORY_ID_PREFIX,
+    endkey: CREDIT_HISTORY_ID_PREFIX + "\uffff",
+    include_docs: true,
+  });
+  const map: Record<string, string[]> = {};
+  for (const row of result.rows) {
+    const doc = row.doc as DBCreditHistory | undefined;
+    if (!doc || !Array.isArray(doc.lines)) continue;
+    const heading = doc.heading ?? decodeURIComponent(doc._id.slice(CREDIT_HISTORY_ID_PREFIX.length));
+    map[heading] = doc.lines;
+  }
+  return map;
+};
+
+/** Persist credit history docs for the given headings. Call after dispatch(updatePublishedCreditsList()) so creditsHistory in state is updated. */
+export const putCreditHistoryDocs = async (
+  db: PouchDB.Database,
+  creditsHistory: Record<string, string[]>,
+  headings: string[]
+): Promise<void> => {
+  const now = new Date().toISOString();
+  for (const heading of headings) {
+    const lines = creditsHistory[heading];
+    if (!lines?.length) continue;
+    const id = getCreditHistoryDocId(heading);
+    let doc: DBCreditHistory;
+    try {
+      const existing = (await db.get(id)) as DBCreditHistory;
+      doc = {
+        ...existing,
+        heading,
+        lines,
+        updatedAt: now,
+      };
+    } catch {
+      doc = {
+        _id: id,
+        heading,
+        lines,
+        createdAt: now,
+        updatedAt: now,
+        docType: "credit-history",
+      };
+    }
+    await db.put(doc);
+  }
+};
+
+/** Persist a single credit history doc. Call when user edits a history entry in the drawer. */
+export const putCreditHistoryDoc = async (
+  db: PouchDB.Database,
+  heading: string,
+  lines: string[],
+): Promise<void> => {
+  const now = new Date().toISOString();
+  const id = getCreditHistoryDocId(heading);
+  let doc: DBCreditHistory;
+  try {
+    const existing = (await db.get(id)) as DBCreditHistory;
+    doc = {
+      ...existing,
+      heading,
+      lines,
+      updatedAt: now,
+    };
+  } catch {
+    doc = {
+      _id: id,
+      heading,
+      lines,
+      createdAt: now,
+      updatedAt: now,
+      docType: "credit-history",
+    };
+  }
+  await db.put(doc);
+};
+
+/** Remove a credit history doc by heading. Call when user deletes a history entry from the drawer. */
+export const removeCreditHistoryDoc = async (
+  db: PouchDB.Database,
+  heading: string
+): Promise<void> => {
+  const id = getCreditHistoryDocId(heading);
+  try {
+    const doc = await db.get(id);
+    await db.remove(doc);
+  } catch (e: unknown) {
+    if ((e as { status?: number }).status !== 404) throw e;
+  }
 };
 
 export const getCreditsByIds = async (

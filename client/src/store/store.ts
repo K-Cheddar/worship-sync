@@ -101,6 +101,9 @@ const excludedActions: string[] = [
   creditsSlice.actions.setIsLoading.toString(),
   creditsSlice.actions.selectCredit.toString(),
   creditsSlice.actions.forceUpdate.toString(),
+  creditsSlice.actions.initiateCreditsHistory.toString(),
+  creditsSlice.actions.deleteCreditsHistoryEntry.toString(),
+  creditsSlice.actions.updateCreditsHistoryEntry.toString(),
   itemListSlice.actions.initiateItemList.toString(),
   itemListSlice.actions.updateItemListFromRemote.toString(),
   itemListSlice.actions.setItemListIsLoading.toString(),
@@ -574,6 +577,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.credits !==
         (previousState as RootState).undoable.present.credits &&
       action.type !== "credits/initiateCreditsList" &&
+      action.type !== "credits/initiateCreditsHistory" &&
       action.type !== "credits/initiatePublishedCreditsList" &&
       action.type !== "credits/updateCreditsListFromRemote" &&
       action.type !== "credits/setHasPendingUpdate" &&
@@ -585,6 +589,8 @@ listenerMiddleware.startListening({
       action.type !== "credits/setIsInitialized" &&
       action.type !== "credits/updateCredit" &&
       action.type !== "credits/deleteCredit" &&
+      action.type !== "credits/deleteCreditsHistoryEntry" &&
+      action.type !== "credits/updateCreditsHistoryEntry" &&
       action.type !== "RESET"
     );
   },
@@ -642,6 +648,7 @@ listenerMiddleware.startListening({
     }
 
     if (!db) return;
+
     const now = new Date().toISOString();
     const creditIds = list.map((c) => c.id);
     const docsToBroadcast: DBCredits[] = [];
@@ -653,6 +660,7 @@ listenerMiddleware.startListening({
     await db.put(db_credits);
     docsToBroadcast.push(db_credits);
 
+    // Credit history docs (per heading) are written by components: on Publish and when deleting from the history drawer.
     safePostMessage({
       type: "update",
       data: {

@@ -313,6 +313,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
     return (
       <div
         ref={ref}
+        data-testid="shared-overlay"
         className={cn(getContainerClass())}
         style={{
           position: "absolute",

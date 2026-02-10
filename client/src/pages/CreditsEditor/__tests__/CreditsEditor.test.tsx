@@ -261,7 +261,10 @@ describe("CreditsEditor", () => {
   it("updates transition and credits scenes", async () => {
     renderWithProviders(<CreditsEditor />);
 
-    const transitionInput = screen.getByRole("textbox", {
+    const settingsButton = screen.getByRole("button", { name: /settings/i });
+    fireEvent.click(settingsButton);
+
+    const transitionInput = await screen.findByRole("textbox", {
       name: /transition scene:/i,
     });
     const creditsInput = screen.getByRole("textbox", {

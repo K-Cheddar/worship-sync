@@ -18,10 +18,8 @@ const defaultProps = {
 describe("SharedOverlay", () => {
   describe("shouldFillContainer", () => {
     it("applies fill container styles when shouldFillContainer is true", () => {
-      const { container } = render(
-        <SharedOverlay {...defaultProps} shouldFillContainer />
-      );
-      const overlayDiv = container.firstChild as HTMLElement;
+      render(<SharedOverlay {...defaultProps} shouldFillContainer />);
+      const overlayDiv = screen.getByTestId("shared-overlay");
       expect(overlayDiv).toBeInTheDocument();
       expect(overlayDiv.style.inset).toMatch(/^0(px)?$/);
       expect(overlayDiv.style.width).toBe("100%");
@@ -31,18 +29,16 @@ describe("SharedOverlay", () => {
     });
 
     it("does not apply fill container styles when shouldFillContainer is false", () => {
-      const { container } = render(
-        <SharedOverlay {...defaultProps} shouldFillContainer={false} />
-      );
-      const overlayDiv = container.firstChild as HTMLElement;
+      render(<SharedOverlay {...defaultProps} shouldFillContainer={false} />);
+      const overlayDiv = screen.getByTestId("shared-overlay");
       expect(overlayDiv.style.inset).toBe("");
       expect(overlayDiv.style.width).not.toBe("100%");
       expect(overlayDiv.style.minWidth).not.toBe("100%");
     });
 
     it("does not apply fill container styles when shouldFillContainer is omitted", () => {
-      const { container } = render(<SharedOverlay {...defaultProps} />);
-      const overlayDiv = container.firstChild as HTMLElement;
+      render(<SharedOverlay {...defaultProps} />);
+      const overlayDiv = screen.getByTestId("shared-overlay");
       expect(overlayDiv.style.inset).toBe("");
     });
 
