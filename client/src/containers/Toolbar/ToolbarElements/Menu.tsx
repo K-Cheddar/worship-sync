@@ -1,12 +1,23 @@
 import Menu from "../../../components/Menu/Menu";
 import Button from "../../../components/Button/Button";
-import { Menu as MenuIcon, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
+import {
+  Home,
+  Info,
+  Menu as MenuIcon,
+  Monitor,
+  Presentation,
+  ScrollText,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+} from "lucide-react";
 import { MenuItemType } from "../../../types";
 import { RedoButton, UndoButton } from "./Undo";
 import ChangelogModal from "../../../components/ChangelogModal/ChangelogModal";
 import AboutModal from "../../../components/AboutModal/AboutModal";
 import { useState, useEffect } from "react";
 import { useElectronWindows } from "../../../hooks/useElectronWindows";
+import { getDisplayLabel } from "../../../utils/displayUtils";
 
 const ToolbarMenu = ({
   isPhone,
@@ -18,7 +29,7 @@ const ToolbarMenu = ({
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
-  const { isElectron, openWindow } = useElectronWindows();
+  const { isElectron, displays, openWindow, setDisplayPreference } = useElectronWindows();
 
   useEffect(() => {
     // Base font size from index.css (92.5%)
@@ -48,50 +59,114 @@ const ToolbarMenu = ({
     setZoomLevel(100);
   };
 
+  const openMonitorOnDisplay = async (displayId: number) => {
+    try {
+      await setDisplayPreference("monitor", displayId);
+      await openWindow("monitor");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const openProjectorOnDisplay = async (displayId: number) => {
+    try {
+      await setDisplayPreference("projector", displayId);
+      await openWindow("projector");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const menuItems: MenuItemType[] = [
     {
-      text: "Open Stage Monitor",
-      onClick: async () => {
-        try {
-          if (isElectron) {
-            await openWindow("monitor");
-          } else {
-            window.open("#/monitor", "_monitor", "width=500,height=360");
-          }
-        } catch (err) {
-          console.error(err);
-        }
-      },
-    },
-    {
-      text: "Open Projector",
-      onClick: async () => {
-        try {
-          if (isElectron) {
-            await openWindow("projector");
-          } else {
-            window.open("#/projector", "_projector", "width=500,height=360");
-          }
-        } catch (err) {
-          console.error(err);
-        }
-      },
-    },
-    {
-      text: "Home",
+      element: (
+        <>
+          <Home className="size-4 shrink-0 text-gray-300" />
+          Home
+        </>
+      ),
       to: "/",
     },
     {
-      text: "Changelog",
+      text: "Open Stage Monitor",
+      element: (
+        <>
+          <Monitor className="size-4 shrink-0 text-gray-300" />
+          Open Stage Monitor
+        </>
+      ),
+      ...(isElectron && displays.length > 0
+        ? {
+          subItems: displays.map((display, index) => ({
+            text: getDisplayLabel(display, index),
+            onClick: () => openMonitorOnDisplay(display.id),
+          })),
+        }
+        : {
+          onClick: async () => {
+            try {
+              if (isElectron) {
+                await openWindow("monitor");
+              } else {
+                window.open("#/monitor", "_monitor", "width=500,height=360");
+              }
+            } catch (err) {
+              console.error(err);
+            }
+          },
+        }),
+    },
+    {
+      text: "Open Projector",
+      element: (
+        <>
+          <Presentation className="size-4 shrink-0 text-gray-300" />
+          Open Projector
+        </>
+      ),
+      ...(isElectron && displays.length > 0
+        ? {
+          subItems: displays.map((display, index) => ({
+            text: getDisplayLabel(display, index),
+            onClick: () => openProjectorOnDisplay(display.id),
+          })),
+        }
+        : {
+          onClick: async () => {
+            try {
+              if (isElectron) {
+                await openWindow("projector");
+              } else {
+                window.open("#/projector", "_projector", "width=500,height=360");
+              }
+            } catch (err) {
+              console.error(err);
+            }
+          },
+        }),
+    },
+
+    {
+      element: (
+        <>
+          <ScrollText className="size-4 shrink-0 text-gray-300" />
+          Changelog
+        </>
+      ),
       onClick: () => setIsChangelogOpen(true),
     },
     {
-      text: "About",
+      element: (
+        <>
+          <Info className="size-4 shrink-0 text-gray-300" />
+          About
+        </>
+      ),
       onClick: () => setIsAboutOpen(true),
     },
     {
       element: (
-        <div className="flex flex-col gap-2 w-full">
+        <div className="flex flex-col gap-2 w-full py-1.5 px-2">
           <div className="flex items-center justify-center gap-2">
             <span className="text-xs font-semibold min-w-12 text-center">
               {zoomLevel}%
@@ -126,24 +201,24 @@ const ToolbarMenu = ({
     },
     ...(isPhone && !isEditMode
       ? [
-          {
-            element: (
-              <div className="flex gap-2 w-full">
-                <UndoButton
-                  variant="secondary"
-                  color="black"
-                  className="w-full justify-center"
-                />
-                <RedoButton
-                  variant="secondary"
-                  color="black"
-                  className="w-full justify-center"
-                />
-              </div>
-            ),
-            preventClose: true,
-          },
-        ]
+        {
+          element: (
+            <div className="flex gap-2 w-full py-1.5 px-2">
+              <UndoButton
+                variant="secondary"
+                color="black"
+                className="w-full justify-center"
+              />
+              <RedoButton
+                variant="secondary"
+                color="black"
+                className="w-full justify-center"
+              />
+            </div>
+          ),
+          preventClose: true,
+        },
+      ]
       : []),
     // {
     //   text: isLoggedIn ? "Logout" : "Login",
@@ -161,7 +236,16 @@ const ToolbarMenu = ({
     <>
       <Menu
         menuItems={menuItems}
-        TriggeringButton={<Button variant="tertiary" svg={MenuIcon} />}
+        align="start"
+        TriggeringButton={
+          <Button
+            variant="tertiary"
+            className="w-fit p-1"
+            padding="p-1"
+            aria-label="Open menu"
+            svg={MenuIcon}
+          />
+        }
       />
       <ChangelogModal
         isOpen={isChangelogOpen}

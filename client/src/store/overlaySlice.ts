@@ -31,7 +31,6 @@ export const overlaySlice = createSlice({
         title: action.payload?.title || "",
         url: action.payload?.url || "",
         description: action.payload?.description || "",
-        isHidden: false,
         formatting:
           action.payload?.formatting ||
           getDefaultFormatting(action.payload?.type || "participant"),
@@ -48,10 +47,7 @@ export const overlaySlice = createSlice({
     },
     deleteOverlay: (state, action: PayloadAction<string>) => {
       if (state.selectedOverlay?.id === action.payload) {
-        state.selectedOverlay = {
-          ...state.selectedOverlay,
-          isHidden: true,
-        };
+        state.selectedOverlay = undefined;
       }
       state.hasPendingUpdate = true;
     },

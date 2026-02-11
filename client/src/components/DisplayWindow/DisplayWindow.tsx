@@ -64,6 +64,8 @@ type DisplayWindowProps = {
   disabled?: boolean;
   className?: string;
   showMonitorClockTimer?: boolean;
+  /** When true with displayType="stream", renders only overlay(s) filling the container (e.g. for preview). */
+  overlayPreviewMode?: boolean;
 };
 
 const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
@@ -99,33 +101,34 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       disabled = false,
       className,
       showMonitorClockTimer = false,
+      overlayPreviewMode = false,
     }: DisplayWindowProps,
     ref
   ) => {
     const fallbackRef = useRef<HTMLDivElement | null>(null);
     const elementRef = useRef<HTMLDivElement | null>(null);
-    
+
     // Handle both callback refs and object refs
     const setRef = (node: HTMLDivElement | null) => {
       elementRef.current = node;
       fallbackRef.current = node;
-      
+
       if (typeof ref === 'function') {
         ref(node);
       } else if (ref) {
         (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
       }
     };
-    
+
     const containerRef = setRef;
-    
+
     const [actualWidthPx, setActualWidthPx] = useState<number>(0);
     const [actualHeightPx, setActualHeightPx] = useState<number>(0);
 
     // Use ResizeObserver to track actual container width and height in pixels
     useEffect(() => {
       const element = elementRef.current || fallbackRef.current;
-      
+
       if (!element) {
         // Retry after a brief delay if element isn't available yet
         const timeoutId = setTimeout(() => {
@@ -170,10 +173,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     // Always use transform scaling. Until we've measured the container, render at scale 0.
     const widthScale = actualWidthPx > 0 ? actualWidthPx / REFERENCE_WIDTH : 0;
     const heightScale = actualHeightPx > 0 ? actualHeightPx / REFERENCE_HEIGHT : 0;
-    const scaleFactor = actualWidthPx > 0 && actualHeightPx > 0 
-      ? Math.min(widthScale, heightScale) 
+    const scaleFactor = actualWidthPx > 0 && actualHeightPx > 0
+      ? Math.min(widthScale, heightScale)
       : widthScale; // Fallback to width scale if height not measured yet
-    
+
     // Components should use reference width for calculations
     const effectiveWidth = (REFERENCE_WIDTH / window.innerWidth) * 100; // Convert px to vw for compatibility
 
@@ -296,12 +299,12 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                   style={
                     hasReducedSpace
                       ? {
-                          scale: `0.95 ${scaleY}`,
-                          width: "100%",
-                          height: `${heightPercent}%`,
-                          position: "absolute",
-                          top: `${topPercent}%`,
-                        }
+                        scale: `0.95 ${scaleY}`,
+                        width: "100%",
+                        height: `${heightPercent}%`,
+                        position: "absolute",
+                        top: `${topPercent}%`,
+                      }
                       : undefined
                   }
                 >
@@ -324,130 +327,185 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               );
             return null;
           })}
-        {prevBoxes.map((box, index) => {
-          if (isDisplay)
-            return (
-              <div
-                key={box.id}
-                style={
-                  hasReducedSpace
-                    ? {
+          {prevBoxes.map((box, index) => {
+            if (isDisplay)
+              return (
+                <div
+                  key={box.id}
+                  style={
+                    hasReducedSpace
+                      ? {
                         scale: `0.95 ${scaleY}`,
                         width: "100%",
                         height: `${heightPercent}%`,
                         position: "absolute",
                         top: `${topPercent}%`,
                       }
-                    : undefined
-                }
-              >
-                <DisplayBox
+                      : undefined
+                  }
+                >
+                  <DisplayBox
+                    box={box}
+                    width={effectiveWidth}
+                    showBackground={showBackground}
+                    index={index}
+                    shouldAnimate={shouldAnimate}
+                    prevBox={boxes[index]}
+                    time={time}
+                    timerInfo={prevTimerInfo}
+                    activeVideoUrl={activeVideoUrl}
+                    isWindowVideoLoaded={isWindowVideoLoaded}
+                    isPrev
+                    referenceWidth={REFERENCE_WIDTH}
+                    referenceHeight={REFERENCE_HEIGHT}
+                    scaleFactor={scaleFactor}
+                  />
+                </div>
+              );
+            if (isStream)
+              return (
+                <DisplayStreamText
+                  key={box.id}
                   box={box}
                   width={effectiveWidth}
-                  showBackground={showBackground}
-                  index={index}
-                  shouldAnimate={shouldAnimate}
-                  prevBox={boxes[index]}
                   time={time}
                   timerInfo={prevTimerInfo}
-                  activeVideoUrl={activeVideoUrl}
-                  isWindowVideoLoaded={isWindowVideoLoaded}
                   isPrev
+                  prevBox={boxes[index]}
                   referenceWidth={REFERENCE_WIDTH}
                   referenceHeight={REFERENCE_HEIGHT}
-                  scaleFactor={scaleFactor}
                 />
-              </div>
-            );
-          if (isStream)
+              );
+            return null;
+          })}
+
+          {isDisplay && isMonitor && (
+            <>
+              {effectiveShowClock && (
+                <DisplayClock
+                  width={effectiveWidth}
+                  time={time}
+                  fontSize={clockFontSize}
+                />
+              )}
+              {effectiveShowTimer && (
+                <DisplayTimer
+                  width={effectiveWidth}
+                  time={time}
+                  currentTimerInfo={timerInfo}
+                  fontSize={timerFontSize}
+                />
+              )}
+            </>
+          )}
+
+          {isStream && !overlayPreviewMode && (
+            <>
+              <DisplayStreamBible
+                width={effectiveWidth}
+                shouldAnimate={shouldAnimate}
+                bibleDisplayInfo={bibleDisplayInfo}
+                prevBibleDisplayInfo={prevBibleDisplayInfo}
+                ref={containerRef}
+              />
+
+              <DisplayStbOverlay
+                width={effectiveWidth}
+                shouldAnimate={shouldAnimate}
+                stbOverlayInfo={stbOverlayInfo}
+                prevStbOverlayInfo={prevStbOverlayInfo}
+                ref={containerRef}
+              />
+
+              <DisplayParticipantOverlay
+                width={effectiveWidth}
+                shouldAnimate={shouldAnimate}
+                participantOverlayInfo={participantOverlayInfo}
+                prevParticipantOverlayInfo={prevParticipantOverlayInfo}
+                ref={containerRef}
+              />
+
+              <DisplayQrCodeOverlay
+                width={effectiveWidth}
+                shouldAnimate={shouldAnimate}
+                qrCodeOverlayInfo={qrCodeOverlayInfo}
+                prevQrCodeOverlayInfo={prevQrCodeOverlayInfo}
+                ref={containerRef}
+              />
+
+              <DisplayImageOverlay
+                width={effectiveWidth}
+                shouldAnimate={shouldAnimate}
+                imageOverlayInfo={imageOverlayInfo}
+                prevImageOverlayInfo={prevImageOverlayInfo}
+                ref={containerRef}
+              />
+
+              <DisplayStreamFormattedText
+                width={effectiveWidth}
+                shouldAnimate={shouldAnimate}
+                formattedTextDisplayInfo={formattedTextDisplayInfo}
+                prevFormattedTextDisplayInfo={prevFormattedTextDisplayInfo}
+              />
+            </>
+          )}
+
+          {isStream && overlayPreviewMode && (() => {
+            const previewWidth = actualWidthPx > 0 ? (actualWidthPx / window.innerWidth) * 100 : effectiveWidth;
+            const previewProps = { width: previewWidth, shouldAnimate, ref: containerRef, shouldFillContainer: true };
             return (
-              <DisplayStreamText
-                key={box.id}
-                box={box}
-                width={effectiveWidth}
-                time={time}
-                timerInfo={prevTimerInfo}
-                isPrev
-                prevBox={boxes[index]}
-                referenceWidth={REFERENCE_WIDTH}
-                referenceHeight={REFERENCE_HEIGHT}
-              />
+              <>
+                {stbOverlayInfo != null && (
+                  <DisplayStbOverlay
+                    {...previewProps}
+                    stbOverlayInfo={stbOverlayInfo}
+                    prevStbOverlayInfo={prevStbOverlayInfo}
+                  />
+                )}
+                {participantOverlayInfo != null && (
+                  <DisplayParticipantOverlay
+                    {...previewProps}
+                    participantOverlayInfo={participantOverlayInfo}
+                    prevParticipantOverlayInfo={prevParticipantOverlayInfo}
+                  />
+                )}
+                {qrCodeOverlayInfo != null && (
+                  <DisplayQrCodeOverlay
+                    {...previewProps}
+                    qrCodeOverlayInfo={qrCodeOverlayInfo}
+                    prevQrCodeOverlayInfo={prevQrCodeOverlayInfo}
+                  />
+                )}
+                {imageOverlayInfo != null && (
+                  <DisplayImageOverlay
+                    {...previewProps}
+                    imageOverlayInfo={imageOverlayInfo}
+                    prevImageOverlayInfo={prevImageOverlayInfo}
+                  />
+                )}
+              </>
             );
-          return null;
-        })}
-
-        {isDisplay && isMonitor && (
-          <>
-            {effectiveShowClock && (
-              <DisplayClock
-                width={effectiveWidth}
-                time={time}
-                fontSize={clockFontSize}
-              />
-            )}
-            {effectiveShowTimer && (
-              <DisplayTimer
-                width={effectiveWidth}
-                time={time}
-                currentTimerInfo={timerInfo}
-                fontSize={timerFontSize}
-              />
-            )}
-          </>
-        )}
-
-        {isStream && (
-          <>
-            <DisplayStreamBible
-              width={effectiveWidth}
-              shouldAnimate={shouldAnimate}
-              bibleDisplayInfo={bibleDisplayInfo}
-              prevBibleDisplayInfo={prevBibleDisplayInfo}
-              ref={containerRef}
-            />
-
-            <DisplayStbOverlay
-              width={effectiveWidth}
-              shouldAnimate={shouldAnimate}
-              stbOverlayInfo={stbOverlayInfo}
-              prevStbOverlayInfo={prevStbOverlayInfo}
-              ref={containerRef}
-            />
-
-            <DisplayParticipantOverlay
-              width={effectiveWidth}
-              shouldAnimate={shouldAnimate}
-              participantOverlayInfo={participantOverlayInfo}
-              prevParticipantOverlayInfo={prevParticipantOverlayInfo}
-              ref={containerRef}
-            />
-
-            <DisplayQrCodeOverlay
-              width={effectiveWidth}
-              shouldAnimate={shouldAnimate}
-              qrCodeOverlayInfo={qrCodeOverlayInfo}
-              prevQrCodeOverlayInfo={prevQrCodeOverlayInfo}
-              ref={containerRef}
-            />
-
-            <DisplayImageOverlay
-              width={effectiveWidth}
-              shouldAnimate={shouldAnimate}
-              imageOverlayInfo={imageOverlayInfo}
-              prevImageOverlayInfo={prevImageOverlayInfo}
-              ref={containerRef}
-            />
-
-            <DisplayStreamFormattedText
-              width={effectiveWidth}
-              shouldAnimate={shouldAnimate}
-              formattedTextDisplayInfo={formattedTextDisplayInfo}
-              prevFormattedTextDisplayInfo={prevFormattedTextDisplayInfo}
-            />
-          </>
-        )}
+          })()}
         </>
       );
+
+      // When overlay preview mode, wrapper fills container so overlay can fill for preview
+      if (isStream && overlayPreviewMode) {
+        return (
+          <div
+            className="bg-black"
+            data-testid="overlay-preview-wrapper"
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+            }}
+          >
+            {innerContent}
+          </div>
+        );
+      }
 
       // Always wrap in scaled container using transform
       return (

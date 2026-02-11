@@ -159,9 +159,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
         with:
+          ref: v${{ needs.release.outputs.version }}
           fetch-depth: 0
           token: ${{ secrets.GH_RELEASE_PAT }}
 

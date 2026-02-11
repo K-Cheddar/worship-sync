@@ -10,16 +10,28 @@ import gsap from "gsap";
 import { CreditsInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
-import { useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
-import { deleteCredit, updateCredit } from "../../store/creditsSlice";
+import {
+  deleteCredit,
+  updateCredit,
+  updateCreditsHistoryEntry,
+} from "../../store/creditsSlice";
+import { broadcastCreditsUpdate } from "../../store/store";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import { putCreditDoc, putCreditHistoryDoc } from "../../utils/dbUtils";
 import Input from "../../components/Input/Input";
-import TextArea from "../../components/TextArea/TextArea";
+import type { DBCredits } from "../../types";
+import CreditHistoryTextArea from "./CreditHistoryTextArea";
+
+const PERSIST_DEBOUNCE_MS = 500;
 
 type CreditProps = CreditsInfo & {
   initialList: string[];
   selectCredit: () => void;
   selectedCreditId: string;
+  /** History lines for this credit's heading, used for suggestions. */
+  historyLines: string[];
 };
 
 const Credit = ({
@@ -30,11 +42,43 @@ const Credit = ({
   hidden,
   selectCredit,
   selectedCreditId,
+  historyLines,
 }: CreditProps) => {
   const dispatch = useDispatch();
+  const { db } = useContext(ControllerInfoContext) ?? {};
 
   const [isDeleting, setIsDeleting] = useState(false);
   const creditRef = useRef<HTMLLIElement | null>(null);
+  const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const persistCredit = useCallback(
+    async (payload: { heading: string; text: string; hidden?: boolean }) => {
+      if (!db) return;
+      const doc = await putCreditDoc(db, { id, ...payload });
+      if (doc) broadcastCreditsUpdate([doc]);
+    },
+    [db, id]
+  );
+
+  const updateField = useCallback(
+    (key: keyof Pick<CreditsInfo, "heading" | "text" | "hidden">, value: CreditsInfo[typeof key]) => {
+      const next = { heading, text, hidden, [key]: value };
+      dispatch(updateCredit({ id, ...next }));
+      if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
+      persistTimeoutRef.current = setTimeout(
+        () => persistCredit(next),
+        PERSIST_DEBOUNCE_MS
+      );
+    },
+    [dispatch, id, heading, text, hidden, persistCredit]
+  );
+
+  useEffect(
+    () => () => {
+      if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
+    },
+    []
+  );
 
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
@@ -86,17 +130,47 @@ const Credit = ({
     { scope: creditRef, dependencies: [isDeleting] }
   );
 
-  const deleteOverlayHandler = () => {
+  const deleteOverlayHandler = async () => {
     setIsDeleting(true);
-    setTimeout(() => {
+    setTimeout(async () => {
+      if (db) {
+        try {
+          const existingCredits: DBCredits = await db.get("credits");
+          const creditIds = existingCredits.creditIds.filter((x) => x !== id);
+          existingCredits.creditIds = creditIds;
+          existingCredits.updatedAt = new Date().toISOString();
+          await db.put(existingCredits);
+          broadcastCreditsUpdate([existingCredits]);
+        } catch (e) {
+          console.error("Failed to remove credit from list", e);
+        }
+      }
       dispatch(deleteCredit(id));
       setIsDeleting(false);
     }, 500);
   };
 
-  const toggleHidden = () => {
-    dispatch(updateCredit({ id, heading, text, hidden: !hidden }));
-  };
+  const toggleHidden = () => updateField("hidden", !hidden);
+
+  const handleRemoveHistoryLine = useCallback(
+    (line: string) => {
+      const trimmed = line.trim();
+      const newLines = historyLines.filter((l) => l.trim() !== trimmed);
+      if (JSON.stringify(newLines) === JSON.stringify(historyLines)) return;
+
+      dispatch(
+        updateCreditsHistoryEntry({
+          heading,
+          lines: newLines,
+        })
+      );
+
+      if (db) {
+        putCreditHistoryDoc(db, heading, newLines).catch(console.error);
+      }
+    },
+    [dispatch, db, heading, historyLines]
+  );
 
   // return <li className="h-[200px]">Lol Ok</li>;
 
@@ -131,26 +205,14 @@ const Credit = ({
           hideLabel
           placeholder="Heading"
           value={heading}
-          onChange={(val) => {
-            dispatch(
-              updateCredit({ id, heading: val as string, text, hidden })
-            );
-          }}
+          onChange={(val) => updateField("heading", val as string)}
           data-ignore-undo="true"
         />
-        <TextArea
-          label="Text"
+        <CreditHistoryTextArea
           value={text}
-          className="flex flex-col gap-1"
-          hideLabel
-          placeholder="Text"
-          autoResize
-          data-ignore-undo="true"
-          onChange={(val) => {
-            dispatch(
-              updateCredit({ id, heading, text: val as string, hidden })
-            );
-          }}
+          onChange={(val) => updateField("text", val)}
+          historyLines={historyLines}
+          onRemoveHistoryLine={handleRemoveHistoryLine}
         />
       </div>
       <Button

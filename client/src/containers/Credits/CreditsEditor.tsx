@@ -1,10 +1,8 @@
 import Button from "../../components/Button/Button";
-import { Plus } from "lucide-react";
-import { Save } from "lucide-react";
-import { Check } from "lucide-react";
+import { Plus, Save, Check } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { selectCredit, updateList } from "../../store/creditsSlice";
-import { useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import Credit from "./Credit";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import cn from "classnames";
@@ -16,15 +14,22 @@ import {
 } from "@dnd-kit/sortable";
 import {
   addCredit,
+  mergePublishedCreditsIntoHistory,
   updatePublishedCreditsList,
 } from "../../store/creditsSlice";
+import { broadcastCreditsUpdate } from "../../store/store";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import { putCreditHistoryDocs } from "../../utils/dbUtils";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
+import generateRandomId from "../../utils/generateRandomId";
+import type { DBCredit } from "../../types";
 
 const CreditsEditor = ({ className }: { className?: string }) => {
-  const { list, publishedList, initialList, isLoading, selectedCreditId } =
+  const { list, publishedList, initialList, isLoading, selectedCreditId, creditsHistory } =
     useSelector((state: RootState) => state.undoable.present.credits);
   const dispatch = useDispatch();
+  const { db } = useContext(ControllerInfoContext) ?? {};
 
   const [justAdded, setJustAdded] = useState(false);
   const [justPublished, setJustPublished] = useState(false);
@@ -87,7 +92,33 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     }
   }, [selectedCreditId, list]);
 
-  console.log("isLoading", isLoading);
+  const handlePublish = useCallback(() => {
+    setJustPublished(true);
+    const visible = list.filter((c) => !c.hidden);
+    const mergedHistory = mergePublishedCreditsIntoHistory(
+      creditsHistory,
+      visible
+    );
+    const uniqueHeadings = [
+      ...new Set(
+        visible
+          .map((c) => c.heading.trim())
+          .filter(Boolean)
+      ),
+    ];
+    const headingsToSave = uniqueHeadings.filter(
+      (h) =>
+        JSON.stringify(mergedHistory[h]) !==
+        JSON.stringify(creditsHistory[h])
+    );
+    dispatch(updatePublishedCreditsList());
+    if (db && headingsToSave.length > 0) {
+      putCreditHistoryDocs(db, mergedHistory, headingsToSave).catch(
+        console.error
+      );
+    }
+    setTimeout(() => setJustPublished(false), 5000);
+  }, [list, creditsHistory, db, dispatch]);
 
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
@@ -137,6 +168,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                       text={credit.text}
                       hidden={credit.hidden}
                       id={credit.id}
+                      historyLines={creditsHistory[credit.heading] ?? []}
                     />
                   );
                 })}
@@ -148,12 +180,22 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                 svg={justAdded ? Check : Plus}
                 color={justAdded ? "#84cc16" : "#22d3ee"}
                 disabled={justAdded}
-                onClick={() => {
+                onClick={async () => {
+                  if (!db) return;
                   setJustAdded(true);
-                  dispatch(addCredit());
-                  setTimeout(() => {
-                    setJustAdded(false);
-                  }, 500);
+                  const newId = generateRandomId();
+                  const newCredit: DBCredit = {
+                    _id: `credit-${newId}`,
+                    id: newId,
+                    heading: "",
+                    text: "",
+                    updatedAt: new Date().toISOString(),
+                    docType: "credit",
+                  };
+                  await db.put(newCredit);
+                  broadcastCreditsUpdate([newCredit]);
+                  dispatch(addCredit({ id: newId, heading: "", text: "" }));
+                  setTimeout(() => setJustAdded(false), 500);
                 }}
               >
                 {justAdded ? "Added!" : "Add Credit"}
@@ -164,13 +206,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                 color={justPublished ? "#84cc16" : "#0284c7"}
                 variant="cta"
                 disabled={justPublished}
-                onClick={() => {
-                  setJustPublished(true);
-                  dispatch(updatePublishedCreditsList());
-                  setTimeout(() => {
-                    setJustPublished(false);
-                  }, 5000);
-                }}
+                onClick={handlePublish}
               >
                 {justPublished
                   ? "Published Credits and Scenes!"

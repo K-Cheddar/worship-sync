@@ -7,12 +7,21 @@ import {
 } from "../store/allDocsSlice";
 import {
   allDocsType,
+  CreditsInfo,
+  CREDIT_HISTORY_ID_PREFIX,
   DBAllItems,
+  DBCredit,
+  DBCreditHistory,
   DBItem,
   DBItemListDetails,
   DBItemLists,
   DBOverlay,
+  DBOverlayHistory,
+  OverlayHistoryKey,
   ServiceItem,
+  getCreditHistoryDocId,
+  getOverlayHistoryDocId,
+  OVERLAY_HISTORY_ID_PREFIX,
 } from "../types";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
@@ -35,21 +44,21 @@ export const deleteUnusedBibleItems = async ({ db, allItems }: propsType) => {
     const listDetails: DBItemListDetails = await db.get(itemList._id);
     const listItems = listDetails?.items || [];
     bibleItemsInLists.push(
-      ...listItems.filter((item) => item.type === "bible"),
+      ...listItems.filter((item) => item.type === "bible")
     );
   }
 
   const bibleItemsToBeDeleted = bibleItems.filter(
     (bibleItem) =>
       !bibleItemsInLists.some(
-        (bibleItemInList) => bibleItemInList._id === bibleItem._id,
-      ),
+        (bibleItemInList) => bibleItemInList._id === bibleItem._id
+      )
   );
 
   if (bibleItemsToBeDeleted.length === 0) return; // nothing to delete
 
   const updatedItems = items.filter(
-    (item) => !bibleItemsToBeDeleted.includes(item),
+    (item) => !bibleItemsToBeDeleted.includes(item)
   );
 
   // Remove bible items from all items and delete them individually
@@ -80,21 +89,21 @@ export const deleteUnusedHeadings = async ({ db, allItems }: propsType) => {
     const listDetails: DBItemListDetails = await db.get(itemList._id);
     const listItems = listDetails?.items || [];
     headingsInLists.push(
-      ...listItems.filter((item) => item.type === "heading"),
+      ...listItems.filter((item) => item.type === "heading")
     );
   }
 
   const headingsToBeDeleted = headingItems.filter(
     (headingItem) =>
       !headingsInLists.some(
-        (headingInList) => headingInList._id === headingItem._id,
-      ),
+        (headingInList) => headingInList._id === headingItem._id
+      )
   );
 
   if (headingsToBeDeleted.length === 0) return;
 
   const updatedItems = items.filter(
-    (item) => !headingsToBeDeleted.includes(item),
+    (item) => !headingsToBeDeleted.includes(item)
   );
 
   await db.put({
@@ -112,24 +121,302 @@ export const deleteUnusedHeadings = async ({ db, allItems }: propsType) => {
   }
 };
 
-export const deleteUnusedOverlays = async (db: PouchDB.Database) => {
-  const allDocs: allDocsType = (await db.allDocs({
-    include_docs: true,
-  })) as allDocsType;
-  const allOverlays = allDocs.rows
-    .filter((row) => (row.doc as any)?._id?.startsWith("overlay-"))
-    .map((row) => row.doc as DBOverlay);
-
-  for (const overlay of allOverlays) {
-    const overlayDoc: DBOverlay | undefined = await db.get(overlay._id);
-    // was last updated more than 1 week ago
-    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const isOld =
-      overlayDoc.updatedAt && new Date(overlayDoc.updatedAt) < oneWeekAgo;
-
-    if (overlayDoc.isHidden && isOld) {
-      await db.remove(overlay);
+/**
+ * Returns a map of overlay id -> list of item list names that include that overlay.
+ */
+export const getOverlayUsageByList = async (
+  db: PouchDB.Database
+): Promise<Map<string, string[]>> => {
+  const usage = new Map<string, string[]>();
+  const allItemLists: DBItemLists | undefined = await db.get("ItemLists");
+  const itemLists = allItemLists?.itemLists || [];
+  for (const itemList of itemLists) {
+    try {
+      const details: DBItemListDetails = await db.get(itemList._id);
+      const overlayIds = details?.overlays || [];
+      const name = details?.name ?? itemList.name;
+      for (const id of overlayIds) {
+        const existing = usage.get(id) ?? [];
+        if (!existing.includes(name)) existing.push(name);
+        usage.set(id, existing);
+      }
+    } catch {
+      // skip missing or invalid list docs
     }
+  }
+  return usage;
+};
+
+export const getOverlaysByIds = async (
+  db: PouchDB.Database,
+  overlayIds: string[]
+): Promise<DBOverlay[]> => {
+  if (overlayIds.length === 0) return [];
+  const keys = overlayIds.map((id) => `overlay-${id}`);
+  const result = (await db.allDocs({
+    keys,
+    include_docs: true,
+  })) as { rows: { doc?: DBOverlay }[] };
+  return result.rows
+    .filter((row) => row.doc != null)
+    .map((row) => row.doc as DBOverlay);
+};
+
+export const getAllOverlayDocs = async (
+  db: PouchDB.Database
+): Promise<DBOverlay[]> => {
+  const result = (await db.allDocs({
+    include_docs: true,
+    startkey: "overlay-",
+    endkey: "overlay-\uffff",
+  })) as allDocsType;
+  return result.rows
+    .filter(
+      (row) =>
+        row.doc && (row.doc as { _id: string })._id !== "overlay-templates"
+    )
+    .map((row) => row.doc as DBOverlay);
+};
+
+/** Load all credit history docs and return a map of heading -> lines. */
+export const getAllCreditsHistory = async (
+  db: PouchDB.Database
+): Promise<Record<string, string[]>> => {
+  const result = await db.allDocs({
+    startkey: CREDIT_HISTORY_ID_PREFIX,
+    endkey: CREDIT_HISTORY_ID_PREFIX + "\uffff",
+    include_docs: true,
+  });
+  const map: Record<string, string[]> = {};
+  for (const row of result.rows) {
+    const doc = row.doc as DBCreditHistory | undefined;
+    if (!doc || !Array.isArray(doc.lines)) continue;
+    const heading = doc.heading ?? decodeURIComponent(doc._id.slice(CREDIT_HISTORY_ID_PREFIX.length));
+    map[heading] = doc.lines;
+  }
+  return map;
+};
+
+/** Persist credit history docs for the given headings. Call after dispatch(updatePublishedCreditsList()) so creditsHistory in state is updated. */
+export const putCreditHistoryDocs = async (
+  db: PouchDB.Database,
+  creditsHistory: Record<string, string[]>,
+  headings: string[]
+): Promise<void> => {
+  const now = new Date().toISOString();
+  for (const heading of headings) {
+    const lines = creditsHistory[heading];
+    if (!lines?.length) continue;
+    const id = getCreditHistoryDocId(heading);
+    let doc: DBCreditHistory;
+    try {
+      const existing = (await db.get(id)) as DBCreditHistory;
+      doc = {
+        ...existing,
+        heading,
+        lines,
+        updatedAt: now,
+      };
+    } catch {
+      doc = {
+        _id: id,
+        heading,
+        lines,
+        createdAt: now,
+        updatedAt: now,
+        docType: "credit-history",
+      };
+    }
+    await db.put(doc);
+  }
+};
+
+/** Persist a single credit history doc. Call when user edits a history entry in the drawer. */
+export const putCreditHistoryDoc = async (
+  db: PouchDB.Database,
+  heading: string,
+  lines: string[],
+): Promise<void> => {
+  const now = new Date().toISOString();
+  const id = getCreditHistoryDocId(heading);
+  let doc: DBCreditHistory;
+  try {
+    const existing = (await db.get(id)) as DBCreditHistory;
+    doc = {
+      ...existing,
+      heading,
+      lines,
+      updatedAt: now,
+    };
+  } catch {
+    doc = {
+      _id: id,
+      heading,
+      lines,
+      createdAt: now,
+      updatedAt: now,
+      docType: "credit-history",
+    };
+  }
+  await db.put(doc);
+};
+
+/** Remove a credit history doc by heading. Call when user deletes a history entry from the drawer. */
+export const removeCreditHistoryDoc = async (
+  db: PouchDB.Database,
+  heading: string
+): Promise<void> => {
+  const id = getCreditHistoryDocId(heading);
+  try {
+    const doc = await db.get(id);
+    await db.remove(doc);
+  } catch (e: unknown) {
+    if ((e as { status?: number }).status !== 404) throw e;
+  }
+};
+
+/** Load all overlay history docs and return a map of key -> values. */
+export const getAllOverlayHistory = async (
+  db: PouchDB.Database
+): Promise<Record<string, string[]>> => {
+  const result = await db.allDocs({
+    startkey: OVERLAY_HISTORY_ID_PREFIX,
+    endkey: OVERLAY_HISTORY_ID_PREFIX + "\uffff",
+    include_docs: true,
+  });
+  const map: Record<string, string[]> = {};
+  for (const row of result.rows) {
+    const doc = row.doc as DBOverlayHistory | undefined;
+    if (!doc || !Array.isArray(doc.values)) continue;
+    const key = doc.key ?? decodeURIComponent(doc._id.slice(OVERLAY_HISTORY_ID_PREFIX.length));
+    map[key] = doc.values;
+  }
+  return map;
+};
+
+/** Persist overlay history docs for the given keys. */
+export const putOverlayHistoryDocs = async (
+  db: PouchDB.Database,
+  overlayHistory: Record<string, string[]>,
+  keys: string[]
+): Promise<void> => {
+  const now = new Date().toISOString();
+  for (const key of keys) {
+    const values = overlayHistory[key];
+    if (!values?.length) continue;
+    const id = getOverlayHistoryDocId(key as OverlayHistoryKey);
+    let doc: DBOverlayHistory;
+    try {
+      const existing = (await db.get(id)) as DBOverlayHistory;
+      doc = {
+        ...existing,
+        key: key as OverlayHistoryKey,
+        values,
+        updatedAt: now,
+      };
+    } catch {
+      doc = {
+        _id: id,
+        key: key as OverlayHistoryKey,
+        values,
+        createdAt: now,
+        updatedAt: now,
+        docType: "overlay-history",
+      };
+    }
+    await db.put(doc);
+  }
+};
+
+/** Persist a single overlay history doc. */
+export const putOverlayHistoryDoc = async (
+  db: PouchDB.Database,
+  key: string,
+  values: string[]
+): Promise<void> => {
+  const now = new Date().toISOString();
+  const id = getOverlayHistoryDocId(key as OverlayHistoryKey);
+  let doc: DBOverlayHistory;
+  try {
+    const existing = (await db.get(id)) as DBOverlayHistory;
+    doc = {
+      ...existing,
+      key: key as OverlayHistoryKey,
+      values,
+      updatedAt: now,
+    };
+  } catch {
+    doc = {
+      _id: id,
+      key: key as OverlayHistoryKey,
+      values,
+      createdAt: now,
+      updatedAt: now,
+      docType: "overlay-history",
+    };
+  }
+  await db.put(doc);
+};
+
+/** Remove an overlay history doc by key. */
+export const removeOverlayHistoryDoc = async (
+  db: PouchDB.Database,
+  key: string
+): Promise<void> => {
+  const id = getOverlayHistoryDocId(key as OverlayHistoryKey);
+  try {
+    const doc = await db.get(id);
+    await db.remove(doc);
+  } catch (e: unknown) {
+    if ((e as { status?: number }).status !== 404) throw e;
+  }
+};
+
+export const getCreditsByIds = async (
+  db: PouchDB.Database,
+  creditIds: string[]
+): Promise<CreditsInfo[]> => {
+  if (creditIds.length === 0) return [];
+  const keys = creditIds.map((id) => `credit-${id}`);
+  const result = (await db.allDocs({
+    keys,
+    include_docs: true,
+  })) as { rows: { doc?: DBCredit }[] };
+  const byId = new Map<string, CreditsInfo>();
+  for (const row of result.rows) {
+    const doc = row.doc;
+    if (doc && doc.id != null) {
+      byId.set(doc.id, {
+        id: doc.id,
+        heading: doc.heading,
+        text: doc.text,
+        hidden: doc.hidden,
+      });
+    }
+  }
+  return creditIds
+    .map((id) => byId.get(id))
+    .filter((c): c is CreditsInfo => c != null);
+};
+
+/**
+ * Persist a single credit to the db (get-then-put; does not touch _rev). Returns the doc for broadcasting, or null on error.
+ */
+export const putCreditDoc = async (
+  db: PouchDB.Database,
+  credit: CreditsInfo
+): Promise<DBCredit | null> => {
+  try {
+    const existing: DBCredit = await db.get(`credit-${credit.id}`);
+    existing.heading = credit.heading;
+    existing.text = credit.text;
+    existing.hidden = credit.hidden;
+    existing.updatedAt = new Date().toISOString();
+    await db.put(existing);
+    return existing;
+  } catch (e) {
+    console.error("putCreditDoc failed", credit.id, e);
+    return null;
   }
 };
 
@@ -161,7 +448,7 @@ export const updateAllDocs = async (dispatch: Function) => {
 
 export const formatAllDocs = async (
   db: PouchDB.Database,
-  cloud: Cloudinary,
+  cloud: Cloudinary
 ) => {
   if (!db) return;
   try {
@@ -174,7 +461,7 @@ export const formatAllDocs = async (
         (row.doc as any)?.type === "song" ||
         (row.doc as any)?.type === "free" ||
         (row.doc as any)?.type === "timer" ||
-        (row.doc as any)?.type === "bible",
+        (row.doc as any)?.type === "bible"
     );
 
     for (const item of allItems) {
@@ -208,7 +495,7 @@ export const formatAllDocs = async (
 
 export const formatAllSongs = async (
   db: PouchDB.Database,
-  cloud: Cloudinary,
+  cloud: Cloudinary
 ) => {
   if (!db) return;
   try {
@@ -246,7 +533,7 @@ export const formatAllSongs = async (
 
 export const formatAllItems = async (
   db: PouchDB.Database,
-  cloud: Cloudinary,
+  cloud: Cloudinary
 ) => {
   if (!db) return;
   try {
@@ -277,7 +564,7 @@ export const formatAllItems = async (
  * This should be run once to migrate existing data.
  */
 export const migrateFreeFormItemsToFormattedSections = async (
-  db: PouchDB.Database,
+  db: PouchDB.Database
 ) => {
   if (!db) return;
   try {
@@ -308,7 +595,7 @@ export const migrateFreeFormItemsToFormattedSections = async (
         const selectedBox = 1;
         const formattedSections = getFormattedSections(
           fullItem.slides || [],
-          selectedBox,
+          selectedBox
         );
 
         // Update the item with formattedSections
@@ -327,7 +614,7 @@ export const migrateFreeFormItemsToFormattedSections = async (
     }
 
     console.log(
-      `Migration complete: ${migratedCount} items migrated, ${skippedCount} items skipped`,
+      `Migration complete: ${migratedCount} items migrated, ${skippedCount} items skipped`
     );
     return { migratedCount, skippedCount };
   } catch (error) {

@@ -14,6 +14,7 @@ import {
   setSearchValue,
   setChapters,
   setSearch,
+  setLoadingChapter,
 } from "../../store/bibleSlice";
 import { bibleVersions } from "../../utils/bibleVersions";
 import { getVerses as getVersesApi } from "../../api/getVerses";
@@ -52,6 +53,7 @@ const Bible = () => {
     verses,
     startVerse,
     endVerse,
+    isLoadingChapter,
     searchValues,
     search,
   } = useSelector((state: RootState) => state.bible);
@@ -86,45 +88,11 @@ const Bible = () => {
   }, [verses, endVerse, startVerse]);
 
   const [justAdded, setJustAdded] = useState(false);
-  const [isLoadingChapter, setIsLoadingChapter] = useState(false);
   const [fetchedChapters, setFetchedChapters] = useState<Set<string>>(
     new Set()
   );
 
   const createItemName = decodeURI(searchParams.get("name") || "");
-
-  const hasAppliedOpenAtParams = useRef(false);
-  // Open at location from URL params (e.g. from "Open Bible at location" on item page)
-  useEffect(() => {
-    if (hasAppliedOpenAtParams.current) return;
-    const paramBook = searchParams.get("book");
-    const paramChapter = searchParams.get("chapter");
-    const paramVersion = searchParams.get("version");
-    if (
-      !books?.length ||
-      paramBook == null ||
-      paramChapter == null ||
-      paramVersion == null
-    )
-      return;
-
-    const bookName = decodeURIComponent(paramBook);
-    const chapterName = decodeURIComponent(paramChapter);
-    const versionVal = decodeURIComponent(paramVersion);
-
-    const bookIndex = books.findIndex((b) => b.name === bookName);
-    if (bookIndex === -1) return;
-    const bookChapters = books[bookIndex]?.chapters;
-    const chapterIndex =
-      bookChapters?.findIndex((c) => c.name === chapterName) ?? -1;
-    if (chapterIndex === -1) return;
-
-    hasAppliedOpenAtParams.current = true;
-    dispatch(setBook(bookIndex));
-    dispatch(setChapters(bookChapters || []));
-    dispatch(setChapter(chapterIndex));
-    dispatch(setVersion(versionVal));
-  }, [books, dispatch, searchParams]);
 
   const {
     db,
@@ -150,92 +118,95 @@ const Bible = () => {
   useDebouncedEffect(
     () => {
       const getChapter = async () => {
-        const bookName = books[book]?.name || "";
-        const chapterName = books[book]?.chapters?.[chapter]?.name || "";
-        if (bibleDb && bookName && chapterName) {
-          const key = `${version}-${bookName}-${chapterName}`;
-          let chapterDoc: DBBibleChapter | null = null;
+        try {
+          const bookName = books[book]?.name || "";
+          const chapterName = books[book]?.chapters?.[chapter]?.name || "";
+          if (bibleDb && bookName && chapterName) {
+            const key = `${version}-${bookName}-${chapterName}`;
+            let chapterDoc: DBBibleChapter | null = null;
 
-          let newVerses: verseType[] = [];
-
-          try {
-            chapterDoc = (await bibleDb.get(key)) as DBBibleChapter;
-          } catch (error) {
-            await bibleDb.put({
-              _id: key,
-              verses: [],
-              book: bookName,
-              chapter: chapterName,
-              version,
-              lastUpdated: new Date().toISOString(),
-              isFromBibleGateway: false,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            });
-            console.error(error);
-          }
-
-          if (chapterDoc) {
-            const lastUpdated = new Date(chapterDoc.lastUpdated);
-            const oneYearAgo = new Date();
-            oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-            if (lastUpdated > oneYearAgo && chapterDoc.isFromBibleGateway) {
-              newVerses = chapterDoc.verses;
-            }
-          }
-
-          if (!newVerses.length) {
-            setIsLoadingChapter(true);
-
-            let data: chapterType | null = null;
+            let newVerses: verseType[] = [];
 
             try {
-              const chapterKey = `${bookName}-${chapterName}-${version}`;
-              if (!fetchedChapters.has(chapterKey)) {
-                setFetchedChapters((prev) => new Set(prev).add(chapterKey));
-                // Fetch from Bible Gateway if we don't have an updated version
-                data = await getVersesApi({
-                  book: bookName,
-                  chapter,
-                  version,
-                });
-                if (data?.verses?.length) {
-                  newVerses = data.verses;
-
-                  try {
-                    chapterDoc = (await bibleDb.get(key)) as DBBibleChapter;
-                    chapterDoc.verses = data.verses;
-                    chapterDoc.lastUpdated = new Date().toISOString();
-                    chapterDoc.isFromBibleGateway = true;
-                    chapterDoc.updatedAt = new Date().toISOString();
-                    await bibleDb.put(chapterDoc);
-                  } catch (error) {
-                    console.error(error);
-                  }
-                } else {
-                  if (chapterDoc?.verses.length) {
-                    newVerses = chapterDoc.verses;
-                  } else {
-                    newVerses = [];
-                  }
-                }
-              } else {
-                newVerses = chapterDoc?.verses || [];
-              }
+              chapterDoc = (await bibleDb.get(key)) as DBBibleChapter;
             } catch (error) {
-              newVerses = [];
+              await bibleDb.put({
+                _id: key,
+                verses: [],
+                book: bookName,
+                chapter: chapterName,
+                version,
+                lastUpdated: new Date().toISOString(),
+                isFromBibleGateway: false,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              });
               console.error(error);
             }
-          }
-          dispatch(setVerses(newVerses));
-          if (!searchValues.endVerse) {
-            dispatch(setEndVerse(newVerses.length - 1) || 0);
-          }
 
-          if (!searchValues.startVerse) {
-            dispatch(setStartVerse(0));
+            if (chapterDoc) {
+              const lastUpdated = new Date(chapterDoc.lastUpdated);
+              const oneYearAgo = new Date();
+              oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+              if (lastUpdated > oneYearAgo && chapterDoc.isFromBibleGateway) {
+                newVerses = chapterDoc.verses;
+              }
+            }
+
+            if (!newVerses.length) {
+              dispatch(setLoadingChapter(true));
+
+              let data: chapterType | null = null;
+
+              try {
+                const chapterKey = `${bookName}-${chapterName}-${version}`;
+                if (!fetchedChapters.has(chapterKey)) {
+                  setFetchedChapters((prev) => new Set(prev).add(chapterKey));
+                  // Fetch from Bible Gateway if we don't have an updated version
+                  data = await getVersesApi({
+                    book: bookName,
+                    chapter,
+                    version,
+                  });
+                  if (data?.verses?.length) {
+                    newVerses = data.verses;
+
+                    try {
+                      chapterDoc = (await bibleDb.get(key)) as DBBibleChapter;
+                      chapterDoc.verses = data.verses;
+                      chapterDoc.lastUpdated = new Date().toISOString();
+                      chapterDoc.isFromBibleGateway = true;
+                      chapterDoc.updatedAt = new Date().toISOString();
+                      await bibleDb.put(chapterDoc);
+                    } catch (error) {
+                      console.error(error);
+                    }
+                  } else {
+                    if (chapterDoc?.verses.length) {
+                      newVerses = chapterDoc.verses;
+                    } else {
+                      newVerses = [];
+                    }
+                  }
+                } else {
+                  newVerses = chapterDoc?.verses || [];
+                }
+              } catch (error) {
+                newVerses = [];
+                console.error(error);
+              }
+            }
+            dispatch(setVerses(newVerses));
+            if (!searchValues.endVerse) {
+              dispatch(setEndVerse(newVerses.length - 1) || 0);
+            }
+
+            if (!searchValues.startVerse) {
+              dispatch(setStartVerse(0));
+            }
           }
-          setIsLoadingChapter(false);
+        } finally {
+          dispatch(setLoadingChapter(false));
         }
       };
       getChapter();

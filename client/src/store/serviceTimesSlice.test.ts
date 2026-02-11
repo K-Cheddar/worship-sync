@@ -37,6 +37,7 @@ describe("serviceTimesSlice", () => {
             createServiceTime({ id: "s1", name: "Old" }),
             createServiceTime({ id: "s2", name: "Other" }),
           ],
+          isInitialized: true,
         },
       });
       store.dispatch(updateService({ id: "s1", changes: { name: "Updated" } }));
@@ -52,6 +53,7 @@ describe("serviceTimesSlice", () => {
             createServiceTime({ id: "s1", name: "A" }),
             createServiceTime({ id: "s2", name: "B" }),
           ],
+          isInitialized: true,
         },
       });
       store.dispatch(removeService("s1"));
@@ -86,6 +88,7 @@ describe("serviceTimesSlice", () => {
       const store = createStore({
         serviceTimes: {
           list: [createServiceTime({ id: "existing", name: "Existing" })],
+          isInitialized: true,
         },
       });
       store.dispatch(

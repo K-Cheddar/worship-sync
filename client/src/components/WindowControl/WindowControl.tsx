@@ -4,7 +4,8 @@ import RadioButton from "../RadioButton/RadioButton";
 import { useState, useEffect } from "react";
 import { Focus, LucideIcon } from "lucide-react";
 import cn from "classnames";
-import type { Display, WindowType } from "../../types/electron";
+import type { WindowType } from "../../types/electron";
+import { getDisplayLabel } from "../../utils/displayUtils";
 
 interface WindowControlProps {
   windowType: WindowType;
@@ -63,18 +64,6 @@ const WindowControl = ({
     await refreshWindowStates();
   };
 
-  const getDisplayName = (display: Display, index: number) => {
-    const resolution = `${display.bounds.width}×${display.bounds.height}`;
-    const type = display.internal ? "Built-in" : "External";
-    const displayNumber = index + 1;
-    
-    if (display.label) {
-      return `${display.label} (${resolution})`;
-    }
-    
-    return `Display ${displayNumber} - ${type} (${resolution})`;
-  };
-
   return (
     <div className={cn("flex flex-col gap-3 bg-gray-800 rounded-lg p-4", className)}>
       <div className="flex items-center gap-2 mb-2">
@@ -100,7 +89,7 @@ const WindowControl = ({
           {displays.map((display, index) => (
             <RadioButton
               key={display.id}
-              label={getDisplayName(display, index)}
+              label={getDisplayLabel(display, index)}
               value={selectedDisplay === display.id.toString()}
               onChange={() => handleDisplayChange(display.id.toString())}
             />

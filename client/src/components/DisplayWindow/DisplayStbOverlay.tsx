@@ -10,6 +10,7 @@ type DisplayStbOverlayProps = {
   stbOverlayInfo?: OverlayInfo;
   prevStbOverlayInfo?: OverlayInfo;
   shouldAnimate?: boolean;
+  shouldFillContainer?: boolean;
 };
 
 const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
@@ -19,6 +20,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       stbOverlayInfo = {},
       prevStbOverlayInfo = {},
       shouldAnimate = false,
+      shouldFillContainer = false,
     },
     containerRef
   ) => {
@@ -166,16 +168,19 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
           overlayInfo={stbOverlayInfo}
           needsPadding={needsPadding}
           overlayType="stick-to-bottom"
+          shouldFillContainer={shouldFillContainer}
         />
-        <SharedOverlay
-          ref={prevStbOverlayRef}
-          width={width}
-          styles={prevStyles}
-          overlayInfo={prevStbOverlayInfo}
-          needsPadding={prevNeedsPadding}
-          isPrev={true}
-          overlayType="stick-to-bottom"
-        />
+        {!shouldFillContainer && (
+          <SharedOverlay
+            ref={prevStbOverlayRef}
+            width={width}
+            styles={prevStyles}
+            overlayInfo={prevStbOverlayInfo}
+            needsPadding={prevNeedsPadding}
+            isPrev={true}
+            overlayType="stick-to-bottom"
+          />
+        )}
       </>
     );
   }

@@ -1,6 +1,13 @@
-import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
 import { bookType, chapterType, verseType } from "../types";
 import { bibleStructure } from "../utils/bibleStructure";
+import type { RootState } from "./store";
+
+export type OpenBibleAtLocationPayload = {
+  book: string;
+  chapter: string;
+  version: string;
+};
 
 type BibleState = {
   version: string;
@@ -11,6 +18,7 @@ type BibleState = {
   verses: verseType[];
   startVerse: number;
   endVerse: number;
+  isLoadingChapter: boolean;
   searchValues: {
     book: string;
     chapter: string;
@@ -29,6 +37,7 @@ const initialState: BibleState = {
   verses: bibleStructure.books[0].chapters[0].verses,
   startVerse: 0,
   endVerse: 0,
+  isLoadingChapter: false,
   searchValues: { book: "", chapter: "", startVerse: "", endVerse: "" },
   search: "",
 };
@@ -60,6 +69,9 @@ export const bibleSlice = createSlice({
     },
     setEndVerse: (state, action: PayloadAction<number>) => {
       state.endVerse = action.payload;
+    },
+    setLoadingChapter: (state, action: PayloadAction<boolean>) => {
+      state.isLoadingChapter = action.payload;
     },
     setSearch: (state, action: PayloadAction<string>) => {
       state.search = action.payload;
@@ -105,8 +117,33 @@ export const {
   setVerses,
   setStartVerse,
   setEndVerse,
+  setLoadingChapter,
   setSearchValue,
   setSearch,
 } = bibleSlice.actions;
+
+export const openBibleAtLocation = createAsyncThunk<
+  void,
+  OpenBibleAtLocationPayload,
+  { state: RootState }
+>(
+  "bible/openBibleAtLocation",
+  (payload, { getState, dispatch }) => {
+    const { book: bookName, chapter: chapterName, version: versionVal } =
+      payload;
+    const { books } = getState().bible;
+    const bookIndex = books.findIndex((b) => b.name === bookName);
+    if (bookIndex === -1) return;
+    const bookChapters = books[bookIndex]?.chapters;
+    const chapterIndex =
+      bookChapters?.findIndex((c) => c.name === chapterName) ?? -1;
+    if (chapterIndex === -1) return;
+    dispatch(bibleSlice.actions.setLoadingChapter(true));
+    dispatch(bibleSlice.actions.setBook(bookIndex));
+    dispatch(bibleSlice.actions.setChapters(bookChapters || []));
+    dispatch(bibleSlice.actions.setChapter(chapterIndex));
+    dispatch(bibleSlice.actions.setVersion(versionVal));
+  },
+);
 
 export default bibleSlice.reducer;

@@ -34,7 +34,7 @@ const ToastContainer: React.FC<ToastContainerProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 pointer-events-none z-[9999]">
+    <div className="absolute inset-0 pointer-events-none z-9999">
       {Object.entries(toastsByPosition).map(([position, positionToasts]) => (
         <div key={position} className={`toast-group toast-group-${position}`}>
           {positionToasts.map((toast) => {

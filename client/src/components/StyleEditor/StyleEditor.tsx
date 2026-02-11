@@ -720,32 +720,56 @@ const StyleEditor: React.FC<StyleEditorProps> = ({
       participantOverlayPosition: position,
     };
     const children = formatting.children || [];
+    const defaultBorderColor =
+      formatting.borderColor ?? formatting.borderLeftColor ?? formatting.borderRightColor ?? "#15803d";
+    const accentByPosition = {
+      left: {
+        width: formatting.borderLeftWidth ?? 5,
+        color: formatting.borderLeftColor ?? defaultBorderColor,
+      },
+      right: {
+        width: formatting.borderRightWidth ?? 5,
+        color: formatting.borderRightColor ?? defaultBorderColor,
+      },
+      center: {
+        width: formatting.borderBottomWidth ?? 2,
+        color: formatting.borderBottomColor ?? defaultBorderColor,
+      },
+    } as const;
+    const { width: accentWidth, color: accentColor } =
+      accentByPosition[participantPosition];
+    const updateChild = (c: OverlayChild, textAlign: "left" | "right" | "center") => ({
+      ...c,
+      textAlign,
+      width: 100,
+    });
     if (position === "left") {
       updates.left = 2;
       updates.right = 0;
-      updates.borderLeftWidth = 5;
+      updates.borderLeftWidth = accentWidth ?? 5;
+      updates.borderLeftColor = accentColor;
       updates.borderRightWidth = 0;
       updates.borderBottomWidth = 0;
       updates.textAlign = "left";
-      updates.children = children.map((c) => ({ ...c, textAlign: "left" as const }));
+      updates.children = children.map((c) => updateChild(c, "left"));
     } else if (position === "center") {
       updates.left = undefined;
       updates.right = undefined;
       updates.borderLeftWidth = 0;
-      updates.borderBottomWidth = 2;
-      updates.borderBottomColor = formatting.borderColor ?? formatting.borderLeftColor ?? "#15803d";
       updates.borderRightWidth = 0;
+      updates.borderBottomWidth = accentWidth ?? 2;
+      updates.borderBottomColor = accentColor;
       updates.textAlign = "center";
-      updates.children = children.map((c) => ({ ...c, textAlign: "center" as const }));
+      updates.children = children.map((c) => updateChild(c, "center"));
     } else {
       updates.left = undefined;
       updates.right = 2;
-      updates.borderRightWidth = 5;
-      updates.borderBottomWidth = 0;
-      updates.borderRightColor = formatting.borderColor ?? formatting.borderRightColor ?? "#15803d";
+      updates.borderRightWidth = accentWidth ?? 5;
+      updates.borderRightColor = accentColor;
       updates.borderLeftWidth = 0;
+      updates.borderBottomWidth = 0;
       updates.textAlign = "right";
-      updates.children = children.map((c) => ({ ...c, textAlign: "right" as const }));
+      updates.children = children.map((c) => updateChild(c, "right"));
     }
     onChange({ ...formatting, ...updates });
   };

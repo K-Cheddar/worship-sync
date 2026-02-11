@@ -2,6 +2,32 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { CreditsInfo } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
+const historySort = (a: string, b: string) =>
+  a.localeCompare(b, undefined, { sensitivity: "base" });
+
+function sortHistoryLines(lines: string[]): string[] {
+  return [...lines].sort(historySort);
+}
+
+/** Pure merge of visible credits' lines into a history map. Used by reducer and by Publish click handler. */
+export function mergePublishedCreditsIntoHistory(
+  creditsHistory: Record<string, string[]>,
+  visibleCredits: CreditsInfo[]
+): Record<string, string[]> {
+  const next = { ...creditsHistory };
+  for (const credit of visibleCredits) {
+    const key = credit.heading.trim();
+    if (!key) continue;
+    const lines = credit.text
+      .split(/\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const existing = next[key] ?? [];
+    next[key] = sortHistoryLines([...new Set([...existing, ...lines])]);
+  }
+  return next;
+}
+
 const dummyList = [
   {
     id: "1ii2lhhaa5vngn4rnt1",
@@ -226,6 +252,8 @@ const dummyList = [
 type CreditsState = {
   list: CreditsInfo[];
   publishedList: CreditsInfo[];
+  /** Per-heading history of unique lines from published credits. */
+  creditsHistory: Record<string, string[]>;
   initialList: string[];
   isLoading: boolean;
   transitionScene: string;
@@ -238,6 +266,7 @@ type CreditsState = {
 const initialState: CreditsState = {
   list: [],
   publishedList: [],
+  creditsHistory: {},
   initialList: [],
   isLoading: true,
   transitionScene: "",
@@ -251,12 +280,8 @@ export const creditsSlice = createSlice({
   name: "credits",
   initialState,
   reducers: {
-    addCredit: (state) => {
-      const newCredit = {
-        heading: "",
-        text: "",
-        id: generateRandomId(),
-      };
+    addCredit: (state, action: PayloadAction<CreditsInfo>) => {
+      const newCredit = action.payload;
       const selectedIndex = state.list.findIndex(
         (credit) => credit.id === state.selectedCreditId,
       );
@@ -286,9 +311,12 @@ export const creditsSlice = createSlice({
       state.list = action.payload;
     },
     updatePublishedCreditsList: (state) => {
-      state.publishedList = state.list
-        .filter((credit) => !credit.hidden)
-        .map((credit) => credit);
+      const visible = state.list.filter((c) => !c.hidden);
+      state.publishedList = visible.map((credit) => credit);
+      state.creditsHistory = mergePublishedCreditsIntoHistory(
+        state.creditsHistory ?? {},
+        visible
+      );
     },
     initiateCreditsList: (state, action: PayloadAction<CreditsInfo[]>) => {
       if (action.payload.length === 0) {
@@ -296,7 +324,7 @@ export const creditsSlice = createSlice({
       } else {
         state.list = action.payload.map((credit) => ({
           ...credit,
-          id: generateRandomId(),
+          id: credit.id || generateRandomId(),
         }));
       }
       state.initialList = state.list.map((credit) => credit.id);
@@ -364,6 +392,28 @@ export const creditsSlice = createSlice({
     setIsInitialized: (state, action: PayloadAction<boolean>) => {
       state.isInitialized = action.payload;
     },
+    initiateCreditsHistory: (
+      state,
+      action: PayloadAction<Record<string, string[]>>,
+    ) => {
+      const raw = action.payload ?? {};
+      state.creditsHistory = Object.fromEntries(
+        Object.entries(raw).map(([heading, lines]) => [
+          heading,
+          sortHistoryLines(lines),
+        ])
+      );
+    },
+    deleteCreditsHistoryEntry: (state, action: PayloadAction<string>) => {
+      delete state.creditsHistory[action.payload];
+    },
+    updateCreditsHistoryEntry: (
+      state,
+      action: PayloadAction<{ heading: string; lines: string[] }>,
+    ) => {
+      const { heading, lines } = action.payload;
+      state.creditsHistory[heading] = sortHistoryLines(lines);
+    },
     forceUpdate: () => {},
   },
 });
@@ -380,6 +430,9 @@ export const {
   deleteCredit,
   updateCredit,
   initiateCreditsList,
+  initiateCreditsHistory,
+  deleteCreditsHistoryEntry,
+  updateCreditsHistoryEntry,
   initiatePublishedCreditsList,
   updateCreditsListFromRemote,
   updatePublishedCreditsListFromRemote,

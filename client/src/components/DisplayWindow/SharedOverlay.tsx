@@ -15,15 +15,17 @@ import cn from "classnames";
 interface SharedOverlayProps {
   width: number;
   styles: OverlayFormatting;
-  overlayInfo: OverlayInfo | {};
+  overlayInfo: Partial<OverlayInfo>;
   needsPadding: boolean;
   isPrev?: boolean;
   overlayType: OverlayType;
+  /** When true, overlay fills its container (e.g. for preview outside display window). */
+  shouldFillContainer?: boolean;
 }
 
 const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
   (
-    { width, styles, overlayInfo, needsPadding, isPrev = false, overlayType },
+    { width, styles, overlayInfo, needsPadding, isPrev = false, overlayType, shouldFillContainer = false },
     ref
   ) => {
     // Shared styling utilities
@@ -170,9 +172,13 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
       return children.map((child: OverlayChild, index: number) => {
         const dataKey = currentMapping[index]?.key;
         const classNameSuffix = currentMapping[index]?.className;
-        const dataValue =
+        const rawValue =
           dataKey && dataKey in overlayInfo
             ? overlayInfo[dataKey as keyof typeof overlayInfo]
+            : null;
+        const dataValue =
+          typeof rawValue === "string" || typeof rawValue === "number"
+            ? rawValue
             : null;
 
         if (!dataValue) return null;
@@ -289,19 +295,29 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
       overlayType === "participant"
         ? (styles.participantOverlayPosition ?? "left")
         : null;
-    const positionOverrides: CSSProperties =
-      participantPosition === "center"
-        ? { left: "50%", right: undefined, transform: "translateX(-50%)" }
-        : participantPosition === "right"
-          ? {
-            left: undefined,
-            right: typeof styles.right === "number" ? `${styles.right}%` : "2%",
-          }
-          : {};
+
+    let positionOverrides: CSSProperties = {};
+    if (shouldFillContainer) {
+      positionOverrides = {
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        maxWidth: "none",
+        maxHeight: "none",
+        minWidth: "100%",
+        minHeight: "100%",
+      };
+    } else if (participantPosition === "center") {
+      positionOverrides = { left: "50%", right: undefined, transform: "translateX(-50%)" };
+    } else if (participantPosition === "right") {
+      const rightValue = typeof styles.right === "number" ? `${styles.right}%` : "2%";
+      positionOverrides = { left: undefined, right: rightValue };
+    }
 
     return (
       <div
         ref={ref}
+        data-testid="shared-overlay"
         className={cn(getContainerClass())}
         style={{
           position: "absolute",

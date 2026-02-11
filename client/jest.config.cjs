@@ -2,6 +2,7 @@ module.exports = {
   preset: "ts-jest",
   testEnvironment: "jsdom",
   moduleNameMapper: {
+    "^@/(.*)$": "<rootDir>/src/$1",
     "\\.(css|less|scss|sass)$": "identity-obj-proxy",
     "^.+[\\\\/]context[\\\\/]controllerInfo(\\.tsx)?$":
       "<rootDir>/src/__mocks__/context/controllerInfo.tsx",

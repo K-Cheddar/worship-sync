@@ -44,7 +44,7 @@ type sections =
 
 const Toolbar = ({ className }: { className: string }) => {
   const location = useLocation();
-  const { isEditMode, type } = useSelector(
+  const { isEditMode } = useSelector(
     (state) => state.undoable.present.item
   );
   const [section, setSection] = useState<sections>("settings");

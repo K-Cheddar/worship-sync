@@ -33,11 +33,10 @@ import FreeForms from "../../containers/FreeForms/FreeForms";
 import {
   DBAllItems,
   DBItemListDetails,
-  DBOverlay,
   DBPreferences,
   DBOverlayTemplates,
+  OVERLAY_HISTORY_ID_PREFIX,
   TemplatesByType,
-  OverlayInfo,
 } from "../../types";
 import {
   initiateItemList,
@@ -46,6 +45,7 @@ import {
   updateItemListFromRemote,
 } from "../../store/itemListSlice";
 import {
+  initiateOverlayHistory,
   initiateOverlayList,
   updateOverlayListFromRemote,
 } from "../../store/overlaysSlice";
@@ -57,7 +57,8 @@ import { sortNamesInList } from "../../utils/sort";
 import {
   deleteUnusedBibleItems,
   deleteUnusedHeadings,
-  deleteUnusedOverlays,
+  getAllOverlayHistory,
+  getOverlaysByIds,
   // formatAllSongs,
   // formatAllDocs,
   // formatAllItems,
@@ -196,9 +197,6 @@ const Controller = () => {
 
       // delete unused headings
       deleteUnusedHeadings({ db, allItems });
-
-      // delete unused overlays
-      deleteUnusedOverlays(db);
     };
     getAllItems();
   }, [dispatch, db]);
@@ -370,18 +368,10 @@ const Controller = () => {
           dispatch(initiateItemList(formatItemList(itemList, cloud)));
         }
 
-        const formattedOverlays: OverlayInfo[] = [];
-
-        for (const overlayId of overlayIds) {
-          const overlayDetails: DBOverlay | undefined = await db.get(
-            `overlay-${overlayId}`
-          );
-          if (overlayDetails && !overlayDetails.isHidden) {
-            formattedOverlays.push(overlayDetails);
-          }
-        }
-
+        const formattedOverlays = await getOverlaysByIds(db, overlayIds);
         dispatch(initiateOverlayList(formattedOverlays));
+        const overlayHistory = await getAllOverlayHistory(db);
+        dispatch(initiateOverlayHistory(overlayHistory));
       } catch (e) {
         console.error(e);
       }
@@ -394,30 +384,22 @@ const Controller = () => {
   const updateAllItemsAndListFromExternal = useCallback(
     async (event: CustomEventInit) => {
       try {
-        const updates = event.detail;
+        const updates = event.detail as { _id?: string; docType?: string }[] | undefined;
+        if (!Array.isArray(updates)) return;
+        let refetchOverlayHistory = false;
         for (const _update of updates) {
-          // check if the list we have selected was updated
           if (selectedList && _update._id === selectedList._id) {
             console.log("updating selected item list from remote", event);
             const update = _update as DBItemListDetails;
             const itemList = update.items;
-            const overlaysIds = update.overlays;
+            const overlaysIds = update.overlays || [];
             if (cloud) {
               dispatch(
                 updateItemListFromRemote(formatItemList(itemList, cloud))
               );
             }
 
-            const formattedOverlays: OverlayInfo[] = [];
-
-            for (const overlayId of overlaysIds) {
-              const overlayDetails: DBOverlay | undefined = await db?.get(
-                `overlay-${overlayId}`
-              );
-              if (overlayDetails && !overlayDetails.isHidden) {
-                formattedOverlays.push(overlayDetails);
-              }
-            }
+            const formattedOverlays = await getOverlaysByIds(db!, overlaysIds);
             dispatch(updateOverlayListFromRemote(formattedOverlays));
           }
           if (_update._id === "allItems") {
@@ -425,10 +407,20 @@ const Controller = () => {
             const update = _update as DBAllItems;
             dispatch(updateAllItemsListFromRemote(update.items));
           }
+          if (
+            _update.docType === "overlay-history" ||
+            (typeof _update._id === "string" && _update._id.startsWith(OVERLAY_HISTORY_ID_PREFIX))
+          ) {
+            refetchOverlayHistory = true;
+          }
         }
 
-        // keep all docs up to date
         updateAllDocs(dispatch);
+
+        if (refetchOverlayHistory && db) {
+          const overlayHistory = await getAllOverlayHistory(db);
+          dispatch(initiateOverlayHistory(overlayHistory));
+        }
       } catch (e) {
         console.error(e);
       }

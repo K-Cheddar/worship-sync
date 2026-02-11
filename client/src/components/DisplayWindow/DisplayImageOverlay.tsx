@@ -10,6 +10,7 @@ type DisplayImageOverlayProps = {
   imageOverlayInfo?: OverlayInfo;
   prevImageOverlayInfo?: OverlayInfo;
   shouldAnimate?: boolean;
+  shouldFillContainer?: boolean;
 };
 
 const DisplayImageOverlay = forwardRef<
@@ -22,6 +23,7 @@ const DisplayImageOverlay = forwardRef<
       imageOverlayInfo = {},
       prevImageOverlayInfo = {},
       shouldAnimate = false,
+      shouldFillContainer = false,
     },
     containerRef
   ) => {
@@ -143,16 +145,19 @@ const DisplayImageOverlay = forwardRef<
           overlayInfo={imageOverlayInfo}
           needsPadding={needsPadding}
           overlayType="image"
+          shouldFillContainer={shouldFillContainer}
         />
-        <SharedOverlay
-          ref={prevImageOverlayRef}
-          width={width}
-          styles={prevStyles}
-          overlayInfo={prevImageOverlayInfo}
-          needsPadding={prevNeedsPadding}
-          isPrev={true}
-          overlayType="image"
-        />
+        {!shouldFillContainer && (
+          <SharedOverlay
+            ref={prevImageOverlayRef}
+            width={width}
+            styles={prevStyles}
+            overlayInfo={prevImageOverlayInfo}
+            needsPadding={prevNeedsPadding}
+            isPrev={true}
+            overlayType="image"
+          />
+        )}
       </>
     );
   }

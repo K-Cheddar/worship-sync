@@ -1,10 +1,16 @@
 import { configureStore } from "@reduxjs/toolkit";
 import overlaysReducer, {
   addOverlayToList,
+  deleteOverlayHistoryEntry,
+  getOverlayHistoryKeysForType,
+  initiateOverlayHistory,
   initiateOverlayList,
+  mergeOverlayIntoHistory,
+  mergeOverlaysIntoHistory,
   updateList as updateOverlayList,
   deleteOverlayFromList,
   setHasPendingListUpdate,
+  updateOverlayHistoryEntry,
 } from "./overlaysSlice";
 import type { OverlayInfo } from "../types";
 import { createOverlay } from "../test/fixtures";
@@ -48,6 +54,7 @@ describe("overlaysSlice", () => {
           list: [createOverlay({ id: "o1", name: "O1" })],
           initialList: ["o1"],
           isInitialized: true,
+          overlayHistory: {},
         },
       });
       store.dispatch(initiateOverlayList([]));
@@ -71,6 +78,7 @@ describe("overlaysSlice", () => {
           hasPendingUpdate: false,
           initialList: [],
           isInitialized: false,
+          overlayHistory: {},
           list: [
             createOverlay({ id: "1", name: "First" }),
             createOverlay({ id: "2", name: "Second" }),
@@ -92,6 +100,7 @@ describe("overlaysSlice", () => {
       const store = createStore({
         overlays: {
           hasPendingUpdate: false,
+          overlayHistory: {},
           list: [
             createOverlay({ id: "1", name: "A" }),
             createOverlay({ id: "2", name: "B" }),
@@ -111,6 +120,125 @@ describe("overlaysSlice", () => {
       expect(store.getState().overlays.hasPendingUpdate).toBe(true);
       store.dispatch(setHasPendingListUpdate(false));
       expect(store.getState().overlays.hasPendingUpdate).toBe(false);
+    });
+  });
+
+  describe("overlay history", () => {
+    it("mergeOverlaysIntoHistory adds participant name, title, event", () => {
+      const prev: Record<string, string[]> = {};
+      const overlays: OverlayInfo[] = [
+        createOverlay({
+          id: "1",
+          type: "participant",
+          name: "Alice",
+          title: "Host",
+          event: "Sunday",
+        }),
+      ];
+      const next = mergeOverlaysIntoHistory(prev, overlays);
+      expect(next["participant.name"]).toEqual(["Alice"]);
+      expect(next["participant.title"]).toEqual(["Host"]);
+      expect(next["participant.event"]).toEqual(["Sunday"]);
+    });
+
+    it("mergeOverlaysIntoHistory dedupes and appends", () => {
+      const prev: Record<string, string[]> = {
+        "participant.name": ["Bob"],
+      };
+      const overlays: OverlayInfo[] = [
+        createOverlay({ id: "1", type: "participant", name: "Alice" }),
+        createOverlay({ id: "2", type: "participant", name: "Bob" }),
+      ];
+      const next = mergeOverlaysIntoHistory(prev, overlays);
+      expect(next["participant.name"]).toEqual(["Alice", "Bob"]);
+    });
+
+    it("mergeOverlaysIntoHistory ignores empty/whitespace values", () => {
+      const next = mergeOverlaysIntoHistory(
+        {},
+        [createOverlay({ id: "1", type: "participant", name: "  ", title: "" })]
+      );
+      expect(next["participant.name"]).toBeUndefined();
+      expect(next["participant.title"]).toBeUndefined();
+    });
+
+    it("initiateOverlayHistory sets overlayHistory", () => {
+      const store = createStore();
+      const history = { "participant.name": ["Alice", "Bob"] };
+      store.dispatch(initiateOverlayHistory(history));
+      expect(store.getState().overlays.overlayHistory).toEqual(history);
+    });
+
+    it("deleteOverlayHistoryEntry removes key", () => {
+      const store = createStore({
+        overlays: {
+          overlayHistory: { "participant.name": ["A"], "participant.title": ["Host"] },
+          list: [],
+          initialList: [],
+          hasPendingUpdate: false,
+          isInitialized: false,
+        },
+      });
+      store.dispatch(deleteOverlayHistoryEntry("participant.name"));
+      expect(store.getState().overlays.overlayHistory).toEqual({
+        "participant.title": ["Host"],
+      });
+    });
+
+    it("updateOverlayHistoryEntry sets values for key", () => {
+      const store = createStore();
+      store.dispatch(
+        updateOverlayHistoryEntry({
+          key: "participant.name",
+          values: ["Alice", "Bob"],
+        })
+      );
+      expect(store.getState().overlays.overlayHistory["participant.name"]).toEqual([
+        "Alice",
+        "Bob",
+      ]);
+    });
+
+    it("mergeOverlayIntoHistory merges single overlay into state", () => {
+      const store = createStore();
+      store.dispatch(
+        mergeOverlayIntoHistory(
+          createOverlay({
+            id: "1",
+            type: "stick-to-bottom",
+            heading: "Welcome",
+            subHeading: "Guest",
+          })
+        )
+      );
+      expect(store.getState().overlays.overlayHistory["stick-to-bottom.heading"]).toEqual([
+        "Welcome",
+      ]);
+      expect(store.getState().overlays.overlayHistory["stick-to-bottom.subHeading"]).toEqual([
+        "Guest",
+      ]);
+    });
+
+    it("getOverlayHistoryKeysForType returns keys for overlay type", () => {
+      expect(getOverlayHistoryKeysForType("participant")).toEqual([
+        "participant.name",
+        "participant.title",
+        "participant.event",
+      ]);
+      expect(getOverlayHistoryKeysForType("stick-to-bottom")).toEqual([
+        "stick-to-bottom.heading",
+        "stick-to-bottom.subHeading",
+      ]);
+      expect(getOverlayHistoryKeysForType("qr-code")).toEqual([
+        "qr-code.url",
+        "qr-code.description",
+      ]);
+      expect(getOverlayHistoryKeysForType("image")).toEqual(["image.name"]);
+      expect(getOverlayHistoryKeysForType(undefined)).toEqual([
+        "participant.name",
+        "participant.title",
+        "participant.event",
+      ]);
     });
   });
 });

@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
+import { createPortal } from "react-dom";
 import ToastContainer, { ToastData } from "../components/Toast/ToastContainer";
 import { ToastPosition, ToastVariant } from "../components/Toast/Toast";
 
@@ -61,10 +68,19 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
     []
   );
 
+  const toastPortal = useMemo(
+    () =>
+      createPortal(
+        <ToastContainer toasts={toasts} onRemove={removeToast} />,
+        document.body
+      ),
+    [toasts, removeToast]
+  );
+
   return (
     <ToastContext.Provider value={{ showToast, removeToast }}>
       {children}
-      <ToastContainer toasts={toasts} onRemove={removeToast} />
+      {toastPortal}
     </ToastContext.Provider>
   );
 };

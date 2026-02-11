@@ -1,29 +1,29 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Credits from "../../containers/Credits/Credits";
 import { default as CreditsEditorContainer } from "../../containers/Credits/CreditsEditor";
-import { ArrowLeft } from "lucide-react";
-import { ChevronsUpDown } from "lucide-react";
-import { RefreshCcw } from "lucide-react";
-import { Check } from "lucide-react";
+import { Check, History, Home, Menu as MenuIcon, RefreshCcw, Settings } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import {
+  CREDIT_HISTORY_ID_PREFIX,
   DBCredits,
+  DBCredit,
   DBItemListDetails,
-  DBOverlay,
+  DocType,
   ItemLists,
-  OverlayInfo,
 } from "../../types";
+import { getAllCreditsHistory, getAllOverlayHistory, getCreditsByIds, getOverlaysByIds, putCreditDoc } from "../../utils/dbUtils";
 import {
+  initiateCreditsHistory,
   initiateCreditsList,
   initiateCreditsScene,
   initiatePublishedCreditsList,
   initiateTransitionScene,
-  setCreditsScene,
   setIsInitialized as setCreditsIsInitialized,
   setIsLoading,
   setScheduleName,
-  setTransitionScene,
+  updateCredit,
   updateCreditsListFromRemote,
   updateList,
 } from "../../store/creditsSlice";
@@ -32,20 +32,22 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import Button from "../../components/Button/Button";
 import cn from "classnames";
 import { onValue, ref } from "firebase/database";
-import PopOver from "../../components/PopOver/PopOver";
-import Input from "../../components/Input/Input";
+import Menu from "../../components/Menu/Menu";
 import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
 import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
 import { setItemListIsLoading } from "../../store/itemListSlice";
-import { initiateOverlayList } from "../../store/overlaysSlice";
+import { initiateOverlayHistory, initiateOverlayList } from "../../store/overlaysSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
 import { capitalizeFirstLetter } from "../../utils/generalUtils";
-import { CREDITS_EDITOR_PAGE_READY } from "../../store/store";
+import { broadcastCreditsUpdate, CREDITS_EDITOR_PAGE_READY } from "../../store/store";
+import CreditHistoryDrawer from "../../containers/Credits/CreditHistoryDrawer";
+import CreditsSettingsDrawer from "../../containers/Credits/CreditsSettingsDrawer";
 
 const CreditsEditor = () => {
-  const { list, transitionScene, creditsScene, scheduleName, isInitialized: creditsInitialized } = useSelector(
+  const navigate = useNavigate();
+  const { list, scheduleName, isInitialized: creditsInitialized } = useSelector(
     (state) => state.undoable.present.credits
   );
   const hasDispatchedPageReady = useRef(false);
@@ -54,16 +56,16 @@ const CreditsEditor = () => {
     (state) => state.undoable.present.overlays
   );
 
-  const shownOverlays = overlays.filter((overlay) => !overlay.isHidden);
-
-  const { db, dbProgress, setIsMobile, updater, pullFromRemote } =
-    useContext(ControllerInfoContext) || {};
+  const { db, dbProgress, isMobile = false, setIsMobile, updater, pullFromRemote } =
+    useContext(ControllerInfoContext) ?? {};
   const { database, firebaseDb, user } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [justGenerated, setJustGenerated] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSettingsDrawerOpen, setIsSettingsDrawerOpen] = useState(false);
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -84,48 +86,51 @@ const CreditsEditor = () => {
           activeList._id
         );
         const overlaysIds = response?.overlays || [];
-
-        const formattedOverlays: OverlayInfo[] = [];
-
-        for (const overlayId of overlaysIds) {
-          const overlayDetails: DBOverlay | undefined = await db?.get(
-            `overlay-${overlayId}`
-          );
-          if (overlayDetails) {
-            formattedOverlays.push(overlayDetails);
-          }
-        }
-
+        const formattedOverlays = await getOverlaysByIds(db, overlaysIds);
         dispatch(initiateOverlayList(formattedOverlays));
       } catch (e) {
         console.error(e);
       }
       dispatch(setItemListIsLoading(false));
     };
-    if (shownOverlays.length === 0) {
+    if (overlays.length === 0) {
       getItemList();
     }
-  }, [shownOverlays.length, dispatch, db]);
+  }, [overlays.length, dispatch, db]);
+
+  useEffect(() => {
+    if (!db) return;
+    getAllOverlayHistory(db)
+      .then((history) => dispatch(initiateOverlayHistory(history)))
+      .catch(console.error);
+  }, [db, dispatch]);
 
   useEffect(() => {
     const getCredits = async () => {
       if (!db) return;
 
       try {
-        const response: DBCredits = await db.get("credits");
-        console.log("getting credits", response);
-        dispatch(initiateCreditsList(response.list));
-        dispatch(setIsLoading(false));
-      } catch (error: any) {
+        const creditsDoc = (await db.get("credits")) as DBCredits;
+        const creditIds = creditsDoc.creditIds ?? [];
+        const credits = await getCreditsByIds(db, creditIds);
+        dispatch(initiateCreditsList(credits));
+
+        const historyMap = await getAllCreditsHistory(db);
+        dispatch(initiateCreditsHistory(historyMap));
+      } catch (error: unknown) {
         console.error(error);
         dispatch(initiateCreditsList([]));
-        if (error.name === "not_found")
-          db.put({
+        dispatch(initiateCreditsHistory({}));
+        if (error && typeof error === "object" && "name" in error && (error as { name: string }).name === "not_found") {
+          await db.put({
             _id: "credits",
-            list: [],
+            creditIds: [],
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
+            docType: "credits",
           });
+        }
+      } finally {
         dispatch(setIsLoading(false));
       }
     };
@@ -142,16 +147,64 @@ const CreditsEditor = () => {
 
   const updateCreditsListFromExternal = useCallback(
     async (event: CustomEventInit) => {
+      if (!db) return;
       try {
-        const updates = event.detail;
-        for (const _update of updates) {
-          // check if the list we have selected was updated
-          if (_update._id === "credits") {
-            console.log("updating credits list from remote", event);
-            const creditsUpdate = _update as DBCredits;
-            dispatch(updateCreditsListFromRemote(creditsUpdate.list));
-          }
-        }
+        const updates = event.detail as { _id?: string; docType?: DocType }[] | undefined;
+        if (!Array.isArray(updates)) return;
+        const indexFromUpdates = updates.find(
+          (u): u is DBCredits => u.docType === "credits" || u._id === "credits"
+        );
+        if (!indexFromUpdates) return;
+
+        const creditIds = indexFromUpdates.creditIds ?? [];
+        if (!creditIds.length) return;
+
+        const creditsFromDb = await getCreditsByIds(db, creditIds);
+        const creditsFromUpdates = updates
+          .filter((d): d is DBCredit => d.docType === "credit")
+          .map((d) => ({
+            id: d.id,
+            heading: d.heading ?? "",
+            text: d.text ?? "",
+            hidden: d.hidden,
+          }));
+
+        const byIdFromUpdates = new Map(creditsFromUpdates.map((c) => [c.id, c]));
+        const credits = creditIds
+          .map((id) => byIdFromUpdates.get(id) ?? creditsFromDb.find((c) => c.id === id))
+          .filter((c): c is NonNullable<typeof c> => c != null);
+
+        if (!credits.length) return;
+
+        dispatch(updateCreditsListFromRemote(credits));
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [dispatch, db]
+  );
+
+  const updateCreditFromExternal = useCallback(
+    async (event: CustomEventInit) => {
+      try {
+        const updates = event.detail as (DBCredit | { docType?: DocType })[] | undefined;
+        if (!Array.isArray(updates)) return;
+
+        const creditDocs = updates.filter(
+          (u): u is DBCredit => u.docType === "credit"
+        );
+        if (!creditDocs.length) return;
+
+        creditDocs.forEach((doc) => {
+          dispatch(
+            updateCredit({
+              id: doc.id,
+              heading: doc.heading ?? "",
+              text: doc.text ?? "",
+              hidden: doc.hidden,
+            })
+          );
+        });
       } catch (e) {
         console.error(e);
       }
@@ -159,16 +212,44 @@ const CreditsEditor = () => {
     [dispatch]
   );
 
+  const updateHistoryFromExternal = useCallback(
+    async (event: CustomEventInit) => {
+      const updates = event.detail as { _id?: string; docType?: string }[] | undefined;
+      if (!db || !Array.isArray(updates)) return;
+      const hasCreditHistory = updates.some(
+        (d) =>
+          d.docType === "credit-history" ||
+          (typeof d._id === "string" && d._id.startsWith(CREDIT_HISTORY_ID_PREFIX))
+      );
+      try {
+        if (hasCreditHistory) {
+          const historyMap = await getAllCreditsHistory(db);
+          dispatch(initiateCreditsHistory(historyMap));
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [db, dispatch]
+  );
+
   useEffect(() => {
     if (!updater) return;
 
     updater.addEventListener("update", updateCreditsListFromExternal);
+    updater.addEventListener("update", updateCreditFromExternal);
+    updater.addEventListener("update", updateHistoryFromExternal);
 
-    return () =>
+    return () => {
       updater.removeEventListener("update", updateCreditsListFromExternal);
-  }, [updater, updateCreditsListFromExternal]);
+      updater.removeEventListener("update", updateCreditFromExternal);
+      updater.removeEventListener("update", updateHistoryFromExternal);
+    };
+  }, [updater, updateCreditsListFromExternal, updateCreditFromExternal, updateHistoryFromExternal]);
 
   useGlobalBroadcast(updateCreditsListFromExternal);
+  useGlobalBroadcast(updateCreditFromExternal);
+  useGlobalBroadcast(updateHistoryFromExternal);
   useSyncOnReconnect(pullFromRemote);
 
   useEffect(() => {
@@ -241,16 +322,11 @@ const CreditsEditor = () => {
     [setIsMobile]
   );
 
-  useEffect(() => {
-    // Scroll to top because body is overflowing (need to figure out how to prevent this)
-    window.scrollTo(0, 0);
-  }, []);
-
   const generateFromOverlays = useCallback(async () => {
     setIsGenerating(true);
     try {
       const eventNameMapping: { [key: string]: string } = {
-        "sabbath school": shownOverlays
+        "sabbath school": overlays
           .filter((overlay) =>
             overlay.event?.toLowerCase().includes("sabbath school")
           )
@@ -258,36 +334,36 @@ const CreditsEditor = () => {
           .join("\n")
           .trim(),
         welcome:
-          shownOverlays.find((overlay) =>
+          overlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("welcome")
           )?.name || "",
         "call to praise":
-          shownOverlays.find((overlay) =>
+          overlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("call to praise")
           )?.name || "",
         invocation:
-          shownOverlays.find((overlay) =>
+          overlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("invocation")
           )?.name || "",
         reading:
-          shownOverlays.find((overlay) =>
+          overlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("reading")
           )?.name || "",
         intercessor:
-          shownOverlays.find((overlay) =>
+          overlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("intercessor")
           )?.name || "",
         offertory:
-          shownOverlays.find((overlay) =>
+          overlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("offertory")
           )?.name || "",
-        special: shownOverlays
+        special: overlays
           .filter((overlay) => overlay.event?.toLowerCase().includes("special"))
           .map((overlay) => overlay.name)
           .join("\n")
           .trim(),
         sermon:
-          shownOverlays.find((overlay) =>
+          overlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("sermon")
           )?.name || "",
       };
@@ -346,6 +422,17 @@ const CreditsEditor = () => {
       });
 
       dispatch(updateList(updatedList));
+
+      // Persist all updated credits to the db immediately (shared putCreditDoc helper)
+      if (db) {
+        const docsToBroadcast = (
+          await Promise.all(updatedList.map((c) => putCreditDoc(db!, c)))
+        ).filter((doc): doc is NonNullable<typeof doc> => doc != null);
+        if (docsToBroadcast.length > 0) {
+          broadcastCreditsUpdate(docsToBroadcast);
+        }
+      }
+
       setJustGenerated(true);
       setTimeout(() => setJustGenerated(false), 2000);
     } catch (error) {
@@ -353,48 +440,53 @@ const CreditsEditor = () => {
     } finally {
       setIsGenerating(false);
     }
-  }, [shownOverlays, list, dispatch, scheduleName]);
+  }, [overlays, list, dispatch, scheduleName, db]);
 
-  const controls = (
-    <>
-      <Input
-        label="Transition Scene"
-        className="credits-transition-input"
-        value={transitionScene}
-        data-ignore-undo="true"
-        onChange={(val) => dispatch(setTransitionScene(val as string))}
-      />
-      <Input
-        label="Credits Scene"
-        className="credits-transition-input"
-        value={creditsScene}
-        data-ignore-undo="true"
-        onChange={(val) => dispatch(setCreditsScene(val as string))}
-      />
-      <Input
-        label="Schedule Name"
-        className="credits-transition-input"
-        value={scheduleName}
-        data-ignore-undo="true"
-        onChange={(val) => dispatch(setScheduleName(val as string))}
-      />
-      <Button
-        className="text-sm"
-        data-testid="generate-credits-button"
-        disabled={shownOverlays.length === 0 || isGenerating}
-        onClick={() => {
-          generateFromOverlays();
-        }}
-        color={justGenerated ? "#84cc16" : "#22d3ee"}
-        svg={justGenerated ? Check : RefreshCcw}
-      >
-        {isGenerating
-          ? "Generating Credits..."
-          : justGenerated
-            ? "Generated Credits!"
-            : "Generate Credits"}
-      </Button>
-    </>
+  const creditsMenuItems = [
+    {
+      element: (
+        <>
+          <Home className="size-4 shrink-0 text-gray-300" />
+          Home
+        </>
+      ),
+      onClick: () => navigate("/"),
+    },
+    {
+      element: (
+        <>
+          <Settings className="size-4 shrink-0 text-indigo-400" />
+          Settings
+        </>
+      ),
+      onClick: () => setIsSettingsDrawerOpen(true),
+    },
+    {
+      element: (
+        <>
+          <History className="size-4 shrink-0 text-amber-400" />
+          History
+        </>
+      ),
+      onClick: () => setIsHistoryDrawerOpen(true),
+    },
+  ];
+
+  const generateCreditsButton = (
+    <Button
+      className="text-xs px-2 py-1"
+      data-testid="generate-credits-button"
+      disabled={overlays.length === 0 || isGenerating}
+      onClick={() => generateFromOverlays()}
+      color={justGenerated ? "#84cc16" : "#22d3ee"}
+      svg={justGenerated ? Check : RefreshCcw}
+    >
+      {isGenerating
+        ? "Generating..."
+        : justGenerated
+          ? "Generated!"
+          : "Generate Credits"}
+    </Button>
   );
 
   return (
@@ -404,36 +496,25 @@ const CreditsEditor = () => {
     >
       <div className="min-h-0">
         <div className="bg-gray-800 w-full px-4 py-1 flex gap-2 items-center">
-          <Button
-            variant="tertiary"
-            className="w-fit"
-            padding="p-0"
-            component="link"
-            to="/"
-          >
-            <ArrowLeft />
-          </Button>
+          <Menu
+            menuItems={creditsMenuItems}
+            align="start"
+            TriggeringButton={
+              <Button
+                variant="tertiary"
+                className="w-fit p-1"
+                padding="p-1"
+                aria-label="Open menu"
+                svg={MenuIcon}
+              />
+            }
+          />
           <div className="border-l-2 border-gray-400 pl-4">
             <Undo />
           </div>
-          <div className="max-lg:hidden flex gap-8 items-center border-l-2 border-gray-400 pl-4">
-            {controls}
+          <div className="flex gap-2 items-center border-l-2 border-gray-400 pl-4">
+            {generateCreditsButton}
           </div>
-          <PopOver
-            TriggeringButton={
-              <Button
-                className="lg:hidden"
-                variant="tertiary"
-                svg={ChevronsUpDown}
-              >
-                Tools
-              </Button>
-            }
-          >
-            <div className="flex flex-col gap-4 items-center p-4">
-              {controls}
-            </div>
-          </PopOver>
           <div className="ml-auto">
             <UserSection />
           </div>
@@ -489,6 +570,18 @@ const CreditsEditor = () => {
           <Credits isPreview credits={list} />
         </section>
       </div>
+      <CreditsSettingsDrawer
+        isOpen={isSettingsDrawerOpen}
+        onClose={() => setIsSettingsDrawerOpen(false)}
+        size={isMobile ? "xl" : "md"}
+        position={isMobile ? "bottom" : "right"}
+      />
+      <CreditHistoryDrawer
+        isOpen={isHistoryDrawerOpen}
+        onClose={() => setIsHistoryDrawerOpen(false)}
+        size={isMobile ? "xl" : "lg"}
+        position={isMobile ? "bottom" : "right"}
+      />
     </div>
   );
 };

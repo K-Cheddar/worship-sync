@@ -34,6 +34,7 @@ import { ref, set, get } from "firebase/database";
 import {
   BibleDisplayInfo,
   DBAllItems,
+  DBCredit,
   DBCredits,
   DBItem,
   DBItemListDetails,
@@ -65,6 +66,11 @@ const safePostMessage = (message: any) => {
   }
 };
 
+/** Broadcast credit doc(s) to other tabs. Components that persist credits directly call this after db.put. */
+export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
+  safePostMessage({ type: "update", data: { docs, hostId: globalHostId } });
+}
+
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
 
@@ -85,6 +91,9 @@ const excludedActions: string[] = [
   overlaysSlice.actions.setHasPendingUpdate.toString(),
   overlaysSlice.actions.forceUpdate.toString(),
   overlaysSlice.actions.updateInitialList.toString(),
+  overlaysSlice.actions.initiateOverlayHistory.toString(),
+  overlaysSlice.actions.deleteOverlayHistoryEntry.toString(),
+  overlaysSlice.actions.mergeOverlayIntoHistory.toString(),
   creditsSlice.actions.initiateCreditsList.toString(),
   creditsSlice.actions.initiateTransitionScene.toString(),
   creditsSlice.actions.initiateCreditsScene.toString(),
@@ -95,6 +104,8 @@ const excludedActions: string[] = [
   creditsSlice.actions.setIsLoading.toString(),
   creditsSlice.actions.selectCredit.toString(),
   creditsSlice.actions.forceUpdate.toString(),
+  creditsSlice.actions.initiateCreditsHistory.toString(),
+  creditsSlice.actions.deleteCreditsHistoryEntry.toString(),
   itemListSlice.actions.initiateItemList.toString(),
   itemListSlice.actions.updateItemListFromRemote.toString(),
   itemListSlice.actions.setItemListIsLoading.toString(),
@@ -186,7 +197,7 @@ const undoableReducers = undoable(
       return !isExcluded;
     },
     limit: 100,
-  },
+  }
 );
 
 const listenerMiddleware = createListenerMiddleware();
@@ -258,11 +269,11 @@ listenerMiddleware.startListening({
     const item = state.undoable.present.item;
     if (item.type !== "timer" || !item.timerInfo) return;
     const exists = state.timers.timers.some(
-      (t) => t.id === item.timerInfo!.id || t.id === item._id,
+      (t) => t.id === item.timerInfo!.id || t.id === item._id
     );
     if (!exists) {
       listenerApi.dispatch(
-        addTimer({ ...item.timerInfo, hostId: globalHostId }),
+        addTimer({ ...item.timerInfo, hostId: globalHostId })
       );
     }
   },
@@ -285,6 +296,7 @@ listenerMiddleware.startListening({
       action.type !== "itemList/setHasPendingUpdate" &&
       action.type !== "itemList/setHighlightedItems" &&
       action.type !== "itemList/addToInitialItems" &&
+      action.type !== "itemList/setIsInitialized" &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
       action.type !== "RESET"
@@ -336,6 +348,7 @@ listenerMiddleware.startListening({
       action.type !== "itemLists/initiateItemLists" &&
       action.type !== "itemLists/updateItemListsFromRemote" &&
       action.type !== "itemLists/selectItemList" &&
+      action.type !== "itemLists/setIsInitialized" &&
       action.type !== "RESET"
     );
   },
@@ -380,6 +393,7 @@ listenerMiddleware.startListening({
       action.type !== "allItems/updateAllItemsListFromRemote" &&
       action.type !== "allItems/setSongSearchValue" &&
       action.type !== "allItems/setFreeFormSearchValue" &&
+      action.type !== "allItems/setIsInitialized" &&
       action.type !== "RESET"
     );
   },
@@ -476,29 +490,13 @@ listenerMiddleware.startListening({
     // update ItemList
     const { list } = state.undoable.present.overlays;
     const { selectedList } = state.undoable.present.itemLists;
-    const { selectedOverlay } = state.undoable.present.overlay;
 
     if (!db || !selectedList) return;
     const db_itemList: DBItemListDetails = await db.get(selectedList._id);
-    const currentList = db_itemList.overlays;
-    const itemsToUpdate = list.filter(
-      (overlay) =>
-        overlay.id !== selectedOverlay?.id && !currentList.includes(overlay.id),
-    );
 
     db_itemList.overlays = list.map((overlay) => overlay.id);
     db_itemList.updatedAt = new Date().toISOString();
     db.put(db_itemList);
-
-    // If overlay was removed and undo brought it back, update the individual overlay's isHidden property
-    for (const overlay of itemsToUpdate) {
-      const db_overlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
-      db.put({
-        ...db_overlay,
-        isHidden: false,
-        updatedAt: new Date().toISOString(),
-      });
-    }
 
     // Local machine updates
     safePostMessage({
@@ -547,7 +545,7 @@ listenerMiddleware.startListening({
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/timers",
+            "/v2/timers"
         );
 
         // Get current timers and merge with own timers
@@ -559,7 +557,7 @@ listenerMiddleware.startListening({
         const mergedTimers = mergeTimers(
           currentTimers,
           ownTimers,
-          globalHostId,
+          globalHostId
         );
 
         set(timersRef, cleanObject(mergedTimers));
@@ -581,6 +579,7 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.credits !==
         (previousState as RootState).undoable.present.credits &&
       action.type !== "credits/initiateCreditsList" &&
+      action.type !== "credits/initiateCreditsHistory" &&
       action.type !== "credits/initiatePublishedCreditsList" &&
       action.type !== "credits/updateCreditsListFromRemote" &&
       action.type !== "credits/setHasPendingUpdate" &&
@@ -589,6 +588,11 @@ listenerMiddleware.startListening({
       action.type !== "credits/initiateTransitionScene" &&
       action.type !== "credits/initiateCreditsScene" &&
       action.type !== "credits/selectCredit" &&
+      action.type !== "credits/setIsInitialized" &&
+      action.type !== "credits/updateCredit" &&
+      action.type !== "credits/deleteCredit" &&
+      action.type !== "credits/deleteCreditsHistoryEntry" &&
+      action.type !== "credits/updateCreditsHistoryEntry" &&
       action.type !== "RESET"
     );
   },
@@ -598,7 +602,6 @@ listenerMiddleware.startListening({
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
-    // update db with lists
     const { list, publishedList, transitionScene, creditsScene, scheduleName } =
       state.undoable.present.credits;
 
@@ -613,49 +616,57 @@ listenerMiddleware.startListening({
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/publishedList",
+            "/v2/credits/publishedList"
         ),
-        cleanObject(publishedList),
+        cleanObject(publishedList)
       );
       set(
         ref(
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/transitionScene",
+            "/v2/credits/transitionScene"
         ),
-        transitionScene,
+        transitionScene
       );
       set(
         ref(
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/creditsScene",
+            "/v2/credits/creditsScene"
         ),
-        creditsScene,
+        creditsScene
       );
       set(
         ref(
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/scheduleName",
+            "/v2/credits/scheduleName"
         ),
-        scheduleName,
+        scheduleName
       );
     }
 
     if (!db) return;
+
+    const now = new Date().toISOString();
+    const creditIds = list.map((c) => c.id);
+    const docsToBroadcast: DBCredits[] = [];
+
+    // List order changed (e.g. drag-and-drop). Update only the index; credit docs are managed by components.
     const db_credits: DBCredits = await db.get("credits");
-    db_credits.list = list;
-    db_credits.updatedAt = new Date().toISOString();
-    db.put(db_credits);
-    // Local machine updates
+    db_credits.creditIds = creditIds;
+    db_credits.updatedAt = now;
+    await db.put(db_credits);
+    docsToBroadcast.push(db_credits);
+
+    // Credit history docs (per heading) are written by components: on Publish and when deleting from the history drawer.
     safePostMessage({
       type: "update",
       data: {
-        docs: db_credits,
+        docs: docsToBroadcast,
         hostId: globalHostId,
       },
     });
@@ -674,6 +685,7 @@ listenerMiddleware.startListening({
         (previousState as RootState).media &&
       action.type !== "media/initiateMediaList" &&
       action.type !== "media/updateMediaListFromRemote" &&
+      action.type !== "media/setIsInitialized" &&
       action.type !== "RESET"
     );
   },
@@ -750,14 +762,14 @@ listenerMiddleware.startListening({
       // Sync the cache
       const electronAPI = window.electronAPI as unknown as {
         syncVideoCache: (
-          urls: string[],
+          urls: string[]
         ) => Promise<{ downloaded: number; cleaned: number }>;
       };
 
       if (urlArray.length > 0) {
         const result = await electronAPI.syncVideoCache(urlArray);
         console.log(
-          `Video cache sync after item update: ${result.downloaded} downloaded, ${result.cleaned} cleaned`,
+          `Video cache sync after item update: ${result.downloaded} downloaded, ${result.cleaned} cleaned`
         );
       } else {
         // No videos, just cleanup
@@ -801,6 +813,7 @@ listenerMiddleware.startListening({
       action.type !== "preferences/setTab" &&
       action.type !== "preferences/setScrollbarWidth" &&
       action.type !== "preferences/updatePreferencesFromRemote" &&
+      action.type !== "preferences/setIsInitialized" &&
       action.type !== "RESET"
     );
   },
@@ -819,11 +832,11 @@ listenerMiddleware.startListening({
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/monitorSettings",
+            "/v2/monitorSettings"
         ),
         cleanObject({
           ...monitorSettings,
-        }),
+        })
       );
     }
 
@@ -874,6 +887,7 @@ listenerMiddleware.startListening({
       action.type !== "overlayTemplates/setIsLoading" &&
       action.type !== "overlayTemplates/setHasPendingUpdate" &&
       action.type !== "overlayTemplates/forceUpdate" &&
+      action.type !== "overlayTemplates/setIsInitialized" &&
       !!(currentState as RootState).undoable.present.overlayTemplates
         ?.hasPendingUpdate &&
       action.type !== "RESET"
@@ -885,7 +899,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     listenerApi.dispatch(
-      overlayTemplatesSlice.actions.setHasPendingUpdate(false),
+      overlayTemplatesSlice.actions.setHasPendingUpdate(false)
     );
 
     // update overlay templates
@@ -1003,9 +1017,9 @@ listenerMiddleware.startListening({
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/services",
+            "/v2/services"
         ),
-        cleanObject(list),
+        cleanObject(list)
       );
     }
   },
@@ -1037,9 +1051,9 @@ listenerMiddleware.startListening({
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/services",
+            "/v2/services"
         ),
-        cleanObject(list),
+        cleanObject(list)
       );
     }
   },
@@ -1098,27 +1112,27 @@ listenerMiddleware.startListening({
     localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
     localStorage.setItem(
       "stream_bibleInfo",
-      JSON.stringify(streamInfo.bibleDisplayInfo),
+      JSON.stringify(streamInfo.bibleDisplayInfo)
     );
     localStorage.setItem(
       "stream_participantOverlayInfo",
-      JSON.stringify(streamInfo.participantOverlayInfo),
+      JSON.stringify(streamInfo.participantOverlayInfo)
     );
     localStorage.setItem(
       "stream_stbOverlayInfo",
-      JSON.stringify(streamInfo.stbOverlayInfo),
+      JSON.stringify(streamInfo.stbOverlayInfo)
     );
     localStorage.setItem(
       "stream_qrCodeOverlayInfo",
-      JSON.stringify(streamInfo.qrCodeOverlayInfo),
+      JSON.stringify(streamInfo.qrCodeOverlayInfo)
     );
     localStorage.setItem(
       "stream_imageOverlayInfo",
-      JSON.stringify(streamInfo.imageOverlayInfo),
+      JSON.stringify(streamInfo.imageOverlayInfo)
     );
     localStorage.setItem(
       "stream_formattedTextDisplayInfo",
-      JSON.stringify(streamInfo.formattedTextDisplayInfo),
+      JSON.stringify(streamInfo.formattedTextDisplayInfo)
     );
 
     set(
@@ -1126,9 +1140,9 @@ listenerMiddleware.startListening({
         globalFireDbInfo.db,
         "users/" +
           capitalizeFirstLetter(globalFireDbInfo.database) +
-          "/v2/presentation",
+          "/v2/presentation"
       ),
-      cleanObject(presentationUpdate),
+      cleanObject(presentationUpdate)
     );
   },
 });
@@ -1154,7 +1168,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateProjectorFromRemote(action.payload as Presentation),
+      updateProjectorFromRemote(action.payload as Presentation)
     );
   },
 });
@@ -1180,7 +1194,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateMonitorFromRemote(action.payload as Presentation),
+      updateMonitorFromRemote(action.payload as Presentation)
     );
   },
 });
@@ -1206,7 +1220,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateStreamFromRemote(action.payload as Presentation),
+      updateStreamFromRemote(action.payload as Presentation)
     );
   },
 });
@@ -1232,7 +1246,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo),
+      updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo)
     );
   },
 });
@@ -1258,7 +1272,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -1284,7 +1298,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateStbOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateStbOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -1310,7 +1324,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -1336,7 +1350,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateImageOverlayInfoFromRemote(action.payload as OverlayInfo),
+      updateImageOverlayInfoFromRemote(action.payload as OverlayInfo)
     );
   },
 });
@@ -1363,8 +1377,8 @@ listenerMiddleware.startListening({
 
     listenerApi.dispatch(
       updateFormattedTextDisplayInfoFromRemote(
-        action.payload as FormattedTextDisplayInfo,
-      ),
+        action.payload as FormattedTextDisplayInfo
+      )
     );
   },
 });
@@ -1409,7 +1423,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.item,
-        previousState.undoable.present.item,
+        previousState.undoable.present.item
       )
     ) {
       listenerApi.dispatch(itemSlice.actions.forceUpdate());
@@ -1418,7 +1432,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.overlay,
-        previousState.undoable.present.overlay,
+        previousState.undoable.present.overlay
       )
     ) {
       listenerApi.dispatch(overlaySlice.actions.forceUpdate());
@@ -1427,7 +1441,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.overlays,
-        previousState.undoable.present.overlays,
+        previousState.undoable.present.overlays
       )
     ) {
       listenerApi.dispatch(overlaysSlice.actions.forceUpdate());
@@ -1436,7 +1450,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.itemList,
-        previousState.undoable.present.itemList,
+        previousState.undoable.present.itemList
       )
     ) {
       listenerApi.dispatch(itemListSlice.actions.forceUpdate());
@@ -1445,7 +1459,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.itemLists,
-        previousState.undoable.present.itemLists,
+        previousState.undoable.present.itemLists
       )
     ) {
       listenerApi.dispatch(itemListsSlice.actions.forceUpdate());
@@ -1454,7 +1468,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.preferences,
-        previousState.undoable.present.preferences,
+        previousState.undoable.present.preferences
       )
     ) {
       listenerApi.dispatch(preferencesSlice.actions.forceUpdate());
@@ -1463,7 +1477,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.credits,
-        previousState.undoable.present.credits,
+        previousState.undoable.present.credits
       )
     ) {
       listenerApi.dispatch(creditsSlice.actions.forceUpdate());
@@ -1472,7 +1486,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.overlayTemplates,
-        previousState.undoable.present.overlayTemplates,
+        previousState.undoable.present.overlayTemplates
       )
     ) {
       listenerApi.dispatch(overlayTemplatesSlice.actions.forceUpdate());
@@ -1549,7 +1563,7 @@ listenerMiddleware.startListening({
           console.log("✅ Initialization complete - Starting undo history");
           listenerApi.dispatch(ActionCreators.clearHistory());
         },
-        { timeout: 10000 },
+        { timeout: 10000 }
       );
     }
   },
