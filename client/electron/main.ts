@@ -6,6 +6,8 @@ import {
   protocol,
   session,
   dialog,
+  Menu,
+  type WebContents,
 } from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -83,6 +85,22 @@ const getIconPath = (): string | undefined => {
   return undefined;
 };
 
+/** Attach cut, copy, paste, select all context menu to a window's webContents. */
+function setupContextMenu(webContents: WebContents): void {
+  webContents.on("context-menu", (_event, _params) => {
+    const win = BrowserWindow.fromWebContents(webContents);
+    if (!win || win.isDestroyed()) return;
+    const menu = Menu.buildFromTemplate([
+      { role: "cut", label: "Cut" },
+      { role: "copy", label: "Copy" },
+      { role: "paste", label: "Paste" },
+      { type: "separator" },
+      { role: "selectAll", label: "Select All" },
+    ]);
+    menu.popup({ window: win });
+  });
+}
+
 // Allow self-signed certificates in development
 if (isDev) {
   app.commandLine.appendSwitch("ignore-certificate-errors");
@@ -139,6 +157,7 @@ const createProjectorWindow = () => {
   });
 
   setDisplayWindow("projector", newWindow);
+  setupContextMenu(newWindow.webContents);
 
   setupReadyToShow(newWindow, "projector", windowStateManager);
 
@@ -170,6 +189,7 @@ const createMonitorWindow = () => {
   });
 
   setDisplayWindow("monitor", newWindow);
+  setupContextMenu(newWindow.webContents);
 
   setupReadyToShow(newWindow, "monitor", windowStateManager);
 
@@ -204,6 +224,8 @@ const createWindow = () => {
   // Maximize the window before showing
   mainWindow.maximize();
   mainWindow.show();
+
+  setupContextMenu(mainWindow.webContents);
 
   // Load the app
   if (isDev) {
