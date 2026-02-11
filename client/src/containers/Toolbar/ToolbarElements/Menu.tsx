@@ -11,6 +11,7 @@ import {
   ZoomOut,
   RotateCcw,
 } from "lucide-react";
+import Icon from "../../../components/Icon/Icon";
 import { MenuItemType } from "../../../types";
 import { RedoButton, UndoButton } from "./Undo";
 import ChangelogModal from "../../../components/ChangelogModal/ChangelogModal";
@@ -80,20 +81,20 @@ const ToolbarMenu = ({
   const menuItems: MenuItemType[] = [
     {
       element: (
-        <>
-          <Home className="size-4 shrink-0 text-gray-300" />
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={Home} color="#d1d5dc" />
           Home
-        </>
+        </div>
       ),
       to: "/",
     },
     {
       text: "Open Stage Monitor",
       element: (
-        <>
-          <Monitor className="size-4 shrink-0 text-gray-300" />
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={Monitor} color="#d1d5dc" />
           Open Stage Monitor
-        </>
+        </div>
       ),
       ...(isElectron && displays.length > 0
         ? {
@@ -119,10 +120,10 @@ const ToolbarMenu = ({
     {
       text: "Open Projector",
       element: (
-        <>
-          <Presentation className="size-4 shrink-0 text-gray-300" />
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={Presentation} color="#d1d5dc" />
           Open Projector
-        </>
+        </div>
       ),
       ...(isElectron && displays.length > 0
         ? {
@@ -148,19 +149,19 @@ const ToolbarMenu = ({
 
     {
       element: (
-        <>
-          <ScrollText className="size-4 shrink-0 text-gray-300" />
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={ScrollText} color="#d1d5dc" />
           Changelog
-        </>
+        </div>
       ),
       onClick: () => setIsChangelogOpen(true),
     },
     {
       element: (
-        <>
-          <Info className="size-4 shrink-0 text-gray-300" />
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={Info} color="#d1d5dc" />
           About
-        </>
+        </div>
       ),
       onClick: () => setIsAboutOpen(true),
     },
