@@ -12,13 +12,17 @@ import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
-import { deleteCredit, updateCredit } from "../../store/creditsSlice";
+import {
+  deleteCredit,
+  updateCredit,
+  updateCreditsHistoryEntry,
+} from "../../store/creditsSlice";
 import { broadcastCreditsUpdate } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { putCreditDoc } from "../../utils/dbUtils";
+import { putCreditDoc, putCreditHistoryDoc } from "../../utils/dbUtils";
 import Input from "../../components/Input/Input";
-import TextArea from "../../components/TextArea/TextArea";
 import type { DBCredits } from "../../types";
+import CreditHistoryTextArea from "./CreditHistoryTextArea";
 
 const PERSIST_DEBOUNCE_MS = 500;
 
@@ -26,6 +30,8 @@ type CreditProps = CreditsInfo & {
   initialList: string[];
   selectCredit: () => void;
   selectedCreditId: string;
+  /** History lines for this credit's heading, used for suggestions. */
+  historyLines: string[];
 };
 
 const Credit = ({
@@ -36,6 +42,7 @@ const Credit = ({
   hidden,
   selectCredit,
   selectedCreditId,
+  historyLines,
 }: CreditProps) => {
   const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) ?? {};
@@ -145,6 +152,26 @@ const Credit = ({
 
   const toggleHidden = () => updateField("hidden", !hidden);
 
+  const handleRemoveHistoryLine = useCallback(
+    (line: string) => {
+      const trimmed = line.trim();
+      const newLines = historyLines.filter((l) => l.trim() !== trimmed);
+      if (JSON.stringify(newLines) === JSON.stringify(historyLines)) return;
+
+      dispatch(
+        updateCreditsHistoryEntry({
+          heading,
+          lines: newLines,
+        })
+      );
+
+      if (db) {
+        putCreditHistoryDoc(db, heading, newLines).catch(console.error);
+      }
+    },
+    [dispatch, db, heading, historyLines]
+  );
+
   // return <li className="h-[200px]">Lol Ok</li>;
 
   return (
@@ -181,15 +208,11 @@ const Credit = ({
           onChange={(val) => updateField("heading", val as string)}
           data-ignore-undo="true"
         />
-        <TextArea
-          label="Text"
+        <CreditHistoryTextArea
           value={text}
-          className="flex flex-col gap-1"
-          hideLabel
-          placeholder="Text"
-          autoResize
-          data-ignore-undo="true"
-          onChange={(val) => updateField("text", val as string)}
+          onChange={(val) => updateField("text", val)}
+          historyLines={historyLines}
+          onRemoveHistoryLine={handleRemoveHistoryLine}
         />
       </div>
       <Button

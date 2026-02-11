@@ -88,7 +88,11 @@ const Select = ({
         >
           {options.map((option) => (
             <SelectItem key={option.value} value={option.value}>
-              {option.label}
+              {option.className ? (
+                <span className={option.className}>{option.label}</span>
+              ) : (
+                option.label
+              )}
             </SelectItem>
           ))}
         </SelectContent>

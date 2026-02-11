@@ -16,8 +16,12 @@ import {
   DBItemListDetails,
   DBItemLists,
   DBOverlay,
+  DBOverlayHistory,
+  OverlayHistoryKey,
   ServiceItem,
   getCreditHistoryDocId,
+  getOverlayHistoryDocId,
+  OVERLAY_HISTORY_ID_PREFIX,
 } from "../types";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
@@ -263,6 +267,103 @@ export const removeCreditHistoryDoc = async (
   heading: string
 ): Promise<void> => {
   const id = getCreditHistoryDocId(heading);
+  try {
+    const doc = await db.get(id);
+    await db.remove(doc);
+  } catch (e: unknown) {
+    if ((e as { status?: number }).status !== 404) throw e;
+  }
+};
+
+/** Load all overlay history docs and return a map of key -> values. */
+export const getAllOverlayHistory = async (
+  db: PouchDB.Database
+): Promise<Record<string, string[]>> => {
+  const result = await db.allDocs({
+    startkey: OVERLAY_HISTORY_ID_PREFIX,
+    endkey: OVERLAY_HISTORY_ID_PREFIX + "\uffff",
+    include_docs: true,
+  });
+  const map: Record<string, string[]> = {};
+  for (const row of result.rows) {
+    const doc = row.doc as DBOverlayHistory | undefined;
+    if (!doc || !Array.isArray(doc.values)) continue;
+    const key = doc.key ?? decodeURIComponent(doc._id.slice(OVERLAY_HISTORY_ID_PREFIX.length));
+    map[key] = doc.values;
+  }
+  return map;
+};
+
+/** Persist overlay history docs for the given keys. */
+export const putOverlayHistoryDocs = async (
+  db: PouchDB.Database,
+  overlayHistory: Record<string, string[]>,
+  keys: string[]
+): Promise<void> => {
+  const now = new Date().toISOString();
+  for (const key of keys) {
+    const values = overlayHistory[key];
+    if (!values?.length) continue;
+    const id = getOverlayHistoryDocId(key as OverlayHistoryKey);
+    let doc: DBOverlayHistory;
+    try {
+      const existing = (await db.get(id)) as DBOverlayHistory;
+      doc = {
+        ...existing,
+        key: key as OverlayHistoryKey,
+        values,
+        updatedAt: now,
+      };
+    } catch {
+      doc = {
+        _id: id,
+        key: key as OverlayHistoryKey,
+        values,
+        createdAt: now,
+        updatedAt: now,
+        docType: "overlay-history",
+      };
+    }
+    await db.put(doc);
+  }
+};
+
+/** Persist a single overlay history doc. */
+export const putOverlayHistoryDoc = async (
+  db: PouchDB.Database,
+  key: string,
+  values: string[]
+): Promise<void> => {
+  const now = new Date().toISOString();
+  const id = getOverlayHistoryDocId(key as OverlayHistoryKey);
+  let doc: DBOverlayHistory;
+  try {
+    const existing = (await db.get(id)) as DBOverlayHistory;
+    doc = {
+      ...existing,
+      key: key as OverlayHistoryKey,
+      values,
+      updatedAt: now,
+    };
+  } catch {
+    doc = {
+      _id: id,
+      key: key as OverlayHistoryKey,
+      values,
+      createdAt: now,
+      updatedAt: now,
+      docType: "overlay-history",
+    };
+  }
+  await db.put(doc);
+};
+
+/** Remove an overlay history doc by key. */
+export const removeOverlayHistoryDoc = async (
+  db: PouchDB.Database,
+  key: string
+): Promise<void> => {
+  const id = getOverlayHistoryDocId(key as OverlayHistoryKey);
   try {
     const doc = await db.get(id);
     await db.remove(doc);

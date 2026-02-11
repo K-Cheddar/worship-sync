@@ -333,7 +333,7 @@ app.whenReady().then(() => {
         ...details.responseHeaders,
         "Content-Security-Policy": [
           "default-src 'self'; " +
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app; " +
             "style-src 'self' 'unsafe-inline' data:; " +
             "font-src 'self' data:; " +
             "img-src 'self' data: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com; " +
@@ -347,7 +347,7 @@ app.whenReady().then(() => {
             "https://securetoken.googleapis.com https://www.googleapis.com " +
             "https://apis.google.com https://www.google.com " +
             "https://*.ingest.us.sentry.io https://*.ingest.euro.sentry.io; " +
-            "frame-src 'self' https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com https://apis.google.com; " +
+            "frame-src 'self' https://*.firebaseio.com https://*.firebasedatabase.app https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com https://apis.google.com; " +
             "worker-src 'self' blob:; " +
             "child-src 'self' blob:; " +
             "object-src 'none'; " +

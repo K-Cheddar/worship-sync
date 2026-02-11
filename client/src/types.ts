@@ -1,6 +1,8 @@
 export type Option = {
   label: string;
   value: string;
+  /** Optional Tailwind classes for styling this option's label (e.g. text color). */
+  className?: string;
 };
 
 export type ServiceItem = {
@@ -35,6 +37,8 @@ export type MenuItemType = {
   preventClose?: boolean;
   /** Submenu items (e.g. display list). Renders as DropdownMenuSub when present. */
   subItems?: MenuSubItemType[];
+  variant?: "default" | "destructive";
+  disabled?: boolean;
 };
 
 export type Box = {
@@ -116,6 +120,7 @@ export type DocType =
   | "credits"
   | "credit"
   | "credit-history"
+  | "overlay-history"
   | "services"
   | "media"
   | "unknown";
@@ -399,6 +404,34 @@ export type DBOverlay = OverlayInfo & {
   docType?: DocType;
 };
 
+/** Keys for overlay history buckets: overlayType.field. Used for suggestions. */
+export type OverlayHistoryKey =
+  | "participant.name"
+  | "participant.title"
+  | "participant.event"
+  | "stick-to-bottom.heading"
+  | "stick-to-bottom.subHeading"
+  | "qr-code.url"
+  | "qr-code.description"
+  | "image.name";
+
+/** Per-key history doc for overlay fields. _id = getOverlayHistoryDocId(key). */
+export const OVERLAY_HISTORY_ID_PREFIX = "overlay-history-";
+
+export function getOverlayHistoryDocId(key: OverlayHistoryKey): string {
+  return OVERLAY_HISTORY_ID_PREFIX + encodeURIComponent(key);
+}
+
+export type DBOverlayHistory = {
+  _id: string;
+  _rev?: string;
+  key: OverlayHistoryKey;
+  values: string[];
+  createdAt?: string;
+  updatedAt?: string;
+  docType?: DocType;
+};
+
 export type CreditsInfo = {
   text: string;
   heading: string;
@@ -670,6 +703,7 @@ export type allDocsType = {
       | DBCredits
       | DBCredit
       | DBCreditHistory
+      | DBOverlayHistory
       | DBBibleChapter
       | DBItemList
       | DBServices;

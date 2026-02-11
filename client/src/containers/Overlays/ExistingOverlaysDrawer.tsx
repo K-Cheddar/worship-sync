@@ -3,6 +3,7 @@ import Drawer from "../../components/Drawer";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import Modal from "../../components/Modal/Modal";
 import { Plus, Trash2, Search, MoreVertical, X } from "lucide-react";
+import Menu from "../../components/Menu/Menu";
 import { getAllOverlayDocs, getOverlayUsageByList } from "../../utils/dbUtils";
 import { DBOverlay, OverlayInfo, OverlayType } from "../../types";
 import { getDefaultFormatting } from "../../utils/overlayUtils";
@@ -15,12 +16,6 @@ import {
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import DeleteModal from "../../components/Modal/DeleteModal";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../../components/ui/DropdownMenu";
 import {
   Select as RadixSelect,
   SelectContent,
@@ -610,8 +605,16 @@ const AddExistingOverlayDrawer = ({
                 })}
               </SelectContent>
             </RadixSelect>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+            <Menu
+              menuItems={[
+                {
+                  text: `Delete all unused (${unusedCount})`,
+                  variant: "destructive",
+                  disabled: unusedCount === 0,
+                  onClick: () => setShowDeleteAllUnusedModal(true),
+                },
+              ]}
+              TriggeringButton={
                 <Button
                   variant="tertiary"
                   className="text-xs"
@@ -619,20 +622,8 @@ const AddExistingOverlayDrawer = ({
                   padding="px-2 py-1"
                   aria-label="More actions"
                 />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                className="bg-gray-800 text-white border-gray-600"
-                align="end"
-              >
-                <DropdownMenuItem
-                  variant="destructive"
-                  disabled={unusedCount === 0}
-                  onClick={() => setShowDeleteAllUnusedModal(true)}
-                >
-                  Delete all unused ({unusedCount})
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              }
+            />
           </div>
         </div>
 

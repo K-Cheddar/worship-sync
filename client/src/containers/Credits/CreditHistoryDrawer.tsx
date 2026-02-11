@@ -10,19 +10,15 @@ import Button from "../../components/Button/Button";
 import DeleteModal from "../../components/Modal/DeleteModal";
 import Input from "../../components/Input/Input";
 import TextArea from "../../components/TextArea/TextArea";
-import { Pencil, Plus, Save, Search, Trash2, X } from "lucide-react";
+import { Pencil, Save, Search, Trash2, X } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
 import {
-  addCredit,
   deleteCreditsHistoryEntry,
   updateCreditsHistoryEntry,
 } from "../../store/creditsSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { putCreditHistoryDoc, removeCreditHistoryDoc } from "../../utils/dbUtils";
-import generateRandomId from "../../utils/generateRandomId";
-import { broadcastCreditsUpdate } from "../../store/store";
-import type { DBCredit } from "../../types";
 import { cn } from "../../utils/cnHelper";
 
 type CreditHistoryDrawerProps = {
@@ -72,9 +68,9 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
       const newLines =
         draft !== undefined
           ? draft
-              .split(/\n/)
-              .map((s) => s.trim())
-              .filter(Boolean)
+            .split(/\n/)
+            .map((s) => s.trim())
+            .filter(Boolean)
           : currentLines;
       if (JSON.stringify(newLines) !== JSON.stringify(currentLines)) {
         dispatch(updateCreditsHistoryEntry({ heading, lines: newLines }));
@@ -92,33 +88,6 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
     [dispatch, db, editingDrafts, creditsHistory]
   );
 
-  const handleCopyToCredits = async (heading: string, lines: string[]) => {
-    const newId = generateRandomId();
-    const text = lines.join("\n");
-    if (db) {
-      const newCredit: DBCredit = {
-        _id: `credit-${newId}`,
-        id: newId,
-        heading,
-        text,
-        hidden: false,
-        updatedAt: new Date().toISOString(),
-        docType: "credit",
-      };
-      await db.put(newCredit);
-      broadcastCreditsUpdate([newCredit]);
-    }
-    dispatch(
-      addCredit({
-        id: newId,
-        heading,
-        text,
-        hidden: false,
-      })
-    );
-    onClose();
-  };
-
   return (
     <>
       <Drawer
@@ -129,6 +98,7 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
         size={size}
         contentClassName="overflow-auto flex-1 min-h-0 flex flex-col text-white"
       >
+        <p className="text-sm text-gray-400 pb-2">Suggestions are based on the history of published credits.</p>
         <div className="flex flex-col gap-2 p-2 shrink-0 border-b border-gray-700">
           <Input
             label="Search"
@@ -155,9 +125,9 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
               const effectiveLines =
                 editingDrafts[heading] !== undefined
                   ? draftText
-                      .split(/\n/)
-                      .map((s) => s.trim())
-                      .filter(Boolean)
+                    .split(/\n/)
+                    .map((s) => s.trim())
+                    .filter(Boolean)
                   : lines;
               const lineCount = effectiveLines.length;
               const rowBg = index % 2 === 0 ? "bg-gray-800" : "bg-gray-600";
@@ -190,7 +160,7 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
                           typeof eOrVal === "string"
                             ? eOrVal
                             : (eOrVal as FormEvent<HTMLTextAreaElement>)
-                                .currentTarget.value;
+                              .currentTarget.value;
                         setEditingDrafts((prev) => ({
                           ...prev,
                           [heading]: s,
@@ -240,32 +210,18 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
                       </>
                     ) : (
                       <>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="tertiary"
-                            className="text-xs"
-                            svg={Pencil}
-                            padding="px-2 py-1"
-                            color="#eab308"
-                            onClick={() => {
-                              setEditingHeading(heading);
-                            }}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            variant="tertiary"
-                            className="text-xs"
-                            svg={Plus}
-                            padding="px-2 py-1"
-                            color="#22d3ee"
-                            onClick={() =>
-                              handleCopyToCredits(heading, effectiveLines)
-                            }
-                          >
-                            Copy to credits
-                          </Button>
-                        </div>
+                        <Button
+                          variant="tertiary"
+                          className="text-xs"
+                          svg={Pencil}
+                          padding="px-2 py-1"
+                          color="#eab308"
+                          onClick={() => {
+                            setEditingHeading(heading);
+                          }}
+                        >
+                          Edit
+                        </Button>
                         <Button
                           variant="tertiary"
                           className="text-xs shrink-0"

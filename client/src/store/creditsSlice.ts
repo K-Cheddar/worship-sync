@@ -2,6 +2,13 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { CreditsInfo } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 
+const historySort = (a: string, b: string) =>
+  a.localeCompare(b, undefined, { sensitivity: "base" });
+
+function sortHistoryLines(lines: string[]): string[] {
+  return [...lines].sort(historySort);
+}
+
 /** Pure merge of visible credits' lines into a history map. Used by reducer and by Publish click handler. */
 export function mergePublishedCreditsIntoHistory(
   creditsHistory: Record<string, string[]>,
@@ -16,7 +23,7 @@ export function mergePublishedCreditsIntoHistory(
       .map((s) => s.trim())
       .filter(Boolean);
     const existing = next[key] ?? [];
-    next[key] = [...new Set([...existing, ...lines])];
+    next[key] = sortHistoryLines([...new Set([...existing, ...lines])]);
   }
   return next;
 }
@@ -389,7 +396,13 @@ export const creditsSlice = createSlice({
       state,
       action: PayloadAction<Record<string, string[]>>,
     ) => {
-      state.creditsHistory = action.payload ?? {};
+      const raw = action.payload ?? {};
+      state.creditsHistory = Object.fromEntries(
+        Object.entries(raw).map(([heading, lines]) => [
+          heading,
+          sortHistoryLines(lines),
+        ])
+      );
     },
     deleteCreditsHistoryEntry: (state, action: PayloadAction<string>) => {
       delete state.creditsHistory[action.payload];
@@ -399,7 +412,7 @@ export const creditsSlice = createSlice({
       action: PayloadAction<{ heading: string; lines: string[] }>,
     ) => {
       const { heading, lines } = action.payload;
-      state.creditsHistory[heading] = lines;
+      state.creditsHistory[heading] = sortHistoryLines(lines);
     },
     forceUpdate: () => {},
   },

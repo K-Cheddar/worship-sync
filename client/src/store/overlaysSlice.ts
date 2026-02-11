@@ -1,13 +1,64 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { OverlayInfo } from "../types";
+import { OverlayHistoryKey, OverlayInfo } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 import { getDefaultFormatting } from "../utils/overlayUtils";
+
+/** Map of overlay type + field to list of unique values for history/suggestions. Keys are OverlayHistoryKey. */
+export type OverlayHistoryState = Record<string, string[]>;
+
+const OVERLAY_HISTORY_ENTRIES: { type: OverlayInfo["type"]; key: OverlayHistoryKey; getValue: (o: OverlayInfo) => string | undefined }[] = [
+  { type: "participant", key: "participant.name", getValue: (o) => o.name?.trim() },
+  { type: "participant", key: "participant.title", getValue: (o) => o.title?.trim() },
+  { type: "participant", key: "participant.event", getValue: (o) => o.event?.trim() },
+  { type: "stick-to-bottom", key: "stick-to-bottom.heading", getValue: (o) => o.heading?.trim() },
+  { type: "stick-to-bottom", key: "stick-to-bottom.subHeading", getValue: (o) => o.subHeading?.trim() },
+  { type: "qr-code", key: "qr-code.url", getValue: (o) => o.url?.trim() },
+  { type: "qr-code", key: "qr-code.description", getValue: (o) => o.description?.trim() },
+  { type: "image", key: "image.name", getValue: (o) => o.name?.trim() },
+];
+
+/** Keys to persist for an overlay type when merging into history. */
+export function getOverlayHistoryKeysForType(
+  type: OverlayInfo["type"]
+): OverlayHistoryKey[] {
+  const t = type ?? "participant";
+  return OVERLAY_HISTORY_ENTRIES.filter((e) => e.type === t).map((e) => e.key);
+}
+
+const historySort = (a: string, b: string) =>
+  a.localeCompare(b, undefined, { sensitivity: "base" });
+
+function sortHistoryValues(values: string[]): string[] {
+  return [...values].sort(historySort);
+}
+
+/** Pure merge of overlay(s) field values into history. Used when user switches away or when persisting. */
+export function mergeOverlaysIntoHistory(
+  overlayHistory: OverlayHistoryState,
+  overlays: OverlayInfo[]
+): OverlayHistoryState {
+  const next = { ...overlayHistory };
+  for (const overlay of overlays) {
+    const t = overlay.type || "participant";
+    for (const { type, key, getValue } of OVERLAY_HISTORY_ENTRIES) {
+      if (type !== t) continue;
+      const val = getValue(overlay);
+      if (!val) continue;
+      const existing = next[key] ?? [];
+      if (existing.includes(val)) continue;
+      next[key] = sortHistoryValues([...existing, val]);
+    }
+  }
+  return next;
+}
 
 type OverlaysState = {
   list: OverlayInfo[];
   hasPendingUpdate: boolean;
   initialList: string[];
   isInitialized: boolean;
+  /** Per-field history for overlay suggestions. */
+  overlayHistory: OverlayHistoryState;
 };
 
 const initialState: OverlaysState = {
@@ -15,6 +66,7 @@ const initialState: OverlaysState = {
   list: [],
   initialList: [],
   isInitialized: false,
+  overlayHistory: {},
 };
 
 export const overlaysSlice = createSlice({
@@ -138,6 +190,32 @@ export const overlaysSlice = createSlice({
       }
       state.hasPendingUpdate = true;
     },
+    initiateOverlayHistory: (
+      state,
+      action: PayloadAction<OverlayHistoryState>
+    ) => {
+      const raw = action.payload ?? {};
+      state.overlayHistory = Object.fromEntries(
+        Object.entries(raw).map(([k, values]) => [k, sortHistoryValues(values)])
+      );
+    },
+    deleteOverlayHistoryEntry: (state, action: PayloadAction<string>) => {
+      delete state.overlayHistory[action.payload];
+    },
+    updateOverlayHistoryEntry: (
+      state,
+      action: PayloadAction<{ key: string; values: string[] }>
+    ) => {
+      const { key, values } = action.payload;
+      state.overlayHistory[key] = sortHistoryValues(values);
+    },
+    /** Merge a single overlay into history (e.g. when user switches away and there are changes). */
+    mergeOverlayIntoHistory: (state, action: PayloadAction<OverlayInfo>) => {
+      state.overlayHistory = mergeOverlaysIntoHistory(
+        state.overlayHistory,
+        [action.payload]
+      );
+    },
   },
 });
 
@@ -154,6 +232,10 @@ export const {
   updateInitialList,
   addToInitialList,
   forceUpdate,
+  initiateOverlayHistory,
+  deleteOverlayHistoryEntry,
+  updateOverlayHistoryEntry,
+  mergeOverlayIntoHistory,
 } = overlaysSlice.actions;
 
 export default overlaysSlice.reducer;

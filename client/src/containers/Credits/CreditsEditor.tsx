@@ -106,9 +106,14 @@ const CreditsEditor = ({ className }: { className?: string }) => {
           .filter(Boolean)
       ),
     ];
+    const headingsToSave = uniqueHeadings.filter(
+      (h) =>
+        JSON.stringify(mergedHistory[h]) !==
+        JSON.stringify(creditsHistory[h])
+    );
     dispatch(updatePublishedCreditsList());
-    if (db) {
-      putCreditHistoryDocs(db, mergedHistory, uniqueHeadings).catch(
+    if (db && headingsToSave.length > 0) {
+      putCreditHistoryDocs(db, mergedHistory, headingsToSave).catch(
         console.error
       );
     }
@@ -163,6 +168,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                       text={credit.text}
                       hidden={credit.hidden}
                       id={credit.id}
+                      historyLines={creditsHistory[credit.heading] ?? []}
                     />
                   );
                 })}

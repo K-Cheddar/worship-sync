@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
 import { BrowserRouter } from "react-router-dom";
 import CreditsEditor from "../CreditsEditor";
@@ -259,10 +260,15 @@ describe("CreditsEditor", () => {
   });
 
   it("updates transition and credits scenes", async () => {
+    const user = userEvent.setup();
     renderWithProviders(<CreditsEditor />);
 
-    const settingsButton = screen.getByRole("button", { name: /settings/i });
-    fireEvent.click(settingsButton);
+    const menuButton = screen.getByRole("button", { name: /open menu/i });
+    await user.click(menuButton);
+    const settingsItem = await screen.findByRole("menuitem", {
+      name: /settings/i,
+    });
+    await user.click(settingsItem);
 
     const transitionInput = await screen.findByRole("textbox", {
       name: /transition scene:/i,

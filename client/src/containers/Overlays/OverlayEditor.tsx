@@ -1,17 +1,25 @@
 import Button from "../../components/Button/Button";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
+import HistorySuggestField from "../../components/HistorySuggestField";
 import Input from "../../components/Input/Input";
-import { OverlayInfo } from "../../types";
+import { OverlayInfo, Option } from "../../types";
 import { SquarePen, Sparkles, Maximize2 } from "lucide-react";
-import TextArea from "../../components/TextArea/TextArea";
 import Drawer from "../../components/Drawer";
 import StyleEditor from "../../components/StyleEditor";
 import cn from "classnames";
-import { useState } from "react";
+import { useCallback, useContext, useState } from "react";
 import Select from "../../components/Select/Select";
-import { OverlayType } from "../../types";
-import { useWindowWidth } from "../../hooks";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import { OverlayHistoryKey, OverlayType } from "../../types";
+import { putOverlayHistoryDoc } from "../../utils/dbUtils";
+import { useWindowWidth, useDispatch, useSelector } from "../../hooks";
+import { updateOverlayHistoryEntry } from "../../store/overlaysSlice";
 import { useToast } from "../../context/toastContext";
+import {
+  overlayBorderColorMap,
+  overlayTypeLabelMap,
+} from "../../utils/itemTypeMaps";
+import { RootState } from "../../store/store";
 
 type OverlayEditorProps = {
   selectedOverlay: OverlayInfo;
@@ -35,11 +43,43 @@ const OverlayEditor = ({
   handleOverlayUpdate,
   handleFormattingChange,
 }: OverlayEditorProps) => {
+  const dispatch = useDispatch();
+  const { db } = useContext(ControllerInfoContext) ?? {};
   const [isExpandedDrawerOpen, setIsExpandedDrawerOpen] = useState(false);
   const isDisabled = isOverlayLoading || !selectedOverlay.id;
 
+  const overlayHistory = useSelector(
+    (state: RootState) => state.undoable.present.overlays.overlayHistory
+  );
   const { windowWidth: desktopWidth, windowRef: desktopRef } = useWindowWidth();
   const { showToast } = useToast();
+
+  const historyValues = (key: string) => overlayHistory[key] ?? [];
+
+  const removeFromHistory = useCallback(
+    (key: OverlayHistoryKey) => (value: string) => {
+      const current = overlayHistory[key] ?? [];
+      const newValues = current.filter((v) => v.trim() !== value.trim());
+      if (JSON.stringify(newValues) === JSON.stringify(current)) return;
+      dispatch(updateOverlayHistoryEntry({ key, values: newValues }));
+      if (db) putOverlayHistoryDoc(db, key, newValues).catch(console.error);
+    },
+    [dispatch, overlayHistory, db]
+  );
+
+  const overlayTypeOptions: Option[] = [
+    "participant",
+    "stick-to-bottom",
+    "qr-code",
+    "image",
+  ].map((type) => ({
+    value: type,
+    label: overlayTypeLabelMap.get(type) ?? type,
+    className: cn(
+      "flex items-center gap-2 pl-2 border-l-4",
+      overlayBorderColorMap.get(type) ?? "border-l-gray-400"
+    ),
+  }));
 
   const commonInputProps = {
     className: "text-sm flex gap-2 items-center w-full",
@@ -56,113 +96,129 @@ const OverlayEditor = ({
       <div className="space-y-3">
         {selectedOverlay.type === "participant" && (
           <>
-            <Input
+            <HistorySuggestField
               label="Name"
               value={selectedOverlay.name || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  name: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, name: val })
               }
+              historyValues={historyValues("participant.name")}
+              onRemoveHistoryValue={removeFromHistory("participant.name")}
+              multiline={false}
               className="text-sm flex gap-2 items-center w-full"
               labelClassName="w-20"
+              disabled={isDisabled}
+              data-ignore-undo="true"
             />
-            <Input
+            <HistorySuggestField
               label="Title"
               value={selectedOverlay.title || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  title: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, title: val })
               }
+              historyValues={historyValues("participant.title")}
+              onRemoveHistoryValue={removeFromHistory("participant.title")}
+              multiline={false}
               className="text-sm flex gap-2 items-center w-full"
               labelClassName="w-20"
+              disabled={isDisabled}
+              data-ignore-undo="true"
             />
-            <Input
+            <HistorySuggestField
               label="Event"
               value={selectedOverlay.event || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  event: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, event: val })
               }
+              historyValues={historyValues("participant.event")}
+              onRemoveHistoryValue={removeFromHistory("participant.event")}
+              multiline={false}
               className="text-sm flex gap-2 items-center w-full"
               labelClassName="w-20"
+              disabled={isDisabled}
+              data-ignore-undo="true"
             />
           </>
         )}
         {selectedOverlay.type === "stick-to-bottom" && (
           <>
-            <Input
+            <HistorySuggestField
               label="Heading"
               value={selectedOverlay.heading || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  heading: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, heading: val })
               }
+              historyValues={historyValues("stick-to-bottom.heading")}
+              onRemoveHistoryValue={removeFromHistory("stick-to-bottom.heading")}
+              multiline={false}
               className="text-sm flex gap-2 items-center w-full"
               labelClassName="w-20"
+              disabled={isDisabled}
+              data-ignore-undo="true"
             />
-            <Input
+            <HistorySuggestField
               label="Subheading"
               value={selectedOverlay.subHeading || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  subHeading: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, subHeading: val })
               }
+              historyValues={historyValues("stick-to-bottom.subHeading")}
+              onRemoveHistoryValue={removeFromHistory("stick-to-bottom.subHeading")}
+              multiline={false}
               className="text-sm flex gap-2 items-center w-full"
               labelClassName="w-20"
+              disabled={isDisabled}
+              data-ignore-undo="true"
             />
           </>
         )}
         {selectedOverlay.type === "qr-code" && (
           <>
-            <Input
+            <HistorySuggestField
               label="URL"
               value={selectedOverlay.url || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  url: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, url: val })
               }
+              historyValues={historyValues("qr-code.url")}
+              onRemoveHistoryValue={removeFromHistory("qr-code.url")}
+              multiline={false}
               className="text-sm flex gap-2 items-center w-full"
               labelClassName="w-20"
+              disabled={isDisabled}
+              data-ignore-undo="true"
             />
-            <TextArea
+            <HistorySuggestField
               label="Description"
               value={selectedOverlay.description || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  description: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, description: val })
               }
+              historyValues={historyValues("qr-code.description")}
+              onRemoveHistoryValue={removeFromHistory("qr-code.description")}
+              multiline
               className="text-sm flex gap-2 items-center w-full"
               labelClassName="w-20"
+              disabled={isDisabled}
+              data-ignore-undo="true"
             />
           </>
         )}
         {selectedOverlay.type === "image" && (
           <>
-            <Input
+            <HistorySuggestField
               label="Name"
               value={selectedOverlay.name || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  name: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, name: val })
               }
+              historyValues={historyValues("image.name")}
+              onRemoveHistoryValue={removeFromHistory("image.name")}
+              multiline={false}
               className="text-sm flex gap-2 items-center w-full"
               labelClassName="w-20"
+              disabled={isDisabled}
+              data-ignore-undo="true"
             />
             <Input
               label="Image URL"
@@ -276,111 +332,111 @@ const OverlayEditor = ({
       </div>
       <section
         className={cn(
-          "scrollbar-variable flex flex-col gap-2 bg-gray-800 p-4 rounded-md items-center overflow-y-auto w-full",
+          "scrollbar-variable flex flex-col gap-2 bg-gray-800 p-4 rounded-md items-stretch overflow-y-auto w-full min-w-0",
           !selectedOverlay.id && "hidden"
         )}
       >
         {selectedOverlay.type === "participant" && (
           <>
-            <Input
+            <HistorySuggestField
               {...commonInputProps}
               label="Name"
               value={selectedOverlay.name || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  name: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, name: val })
               }
+              historyValues={historyValues("participant.name")}
+              onRemoveHistoryValue={removeFromHistory("participant.name")}
+              multiline={false}
             />
-            <Input
+            <HistorySuggestField
               {...commonInputProps}
               label="Title"
               value={selectedOverlay.title || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  title: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, title: val })
               }
+              historyValues={historyValues("participant.title")}
+              onRemoveHistoryValue={removeFromHistory("participant.title")}
+              multiline={false}
             />
-            <Input
+            <HistorySuggestField
               {...commonInputProps}
               label="Event"
               value={selectedOverlay.event || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  event: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, event: val })
               }
+              historyValues={historyValues("participant.event")}
+              onRemoveHistoryValue={removeFromHistory("participant.event")}
+              multiline={false}
             />
           </>
         )}
         {selectedOverlay.type === "stick-to-bottom" && (
           <>
-            <Input
+            <HistorySuggestField
               {...commonInputProps}
               label="Heading"
               value={selectedOverlay.heading || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  heading: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, heading: val })
               }
+              historyValues={historyValues("stick-to-bottom.heading")}
+              onRemoveHistoryValue={removeFromHistory("stick-to-bottom.heading")}
+              multiline={false}
             />
-            <Input
+            <HistorySuggestField
               {...commonInputProps}
               label="Subheading"
               value={selectedOverlay.subHeading || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  subHeading: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, subHeading: val })
               }
+              historyValues={historyValues("stick-to-bottom.subHeading")}
+              onRemoveHistoryValue={removeFromHistory("stick-to-bottom.subHeading")}
+              multiline={false}
             />
           </>
         )}
         {selectedOverlay.type === "qr-code" && (
           <>
-            <Input
+            <HistorySuggestField
               {...commonInputProps}
               label="URL"
               value={selectedOverlay.url || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  url: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, url: val })
               }
+              historyValues={historyValues("qr-code.url")}
+              onRemoveHistoryValue={removeFromHistory("qr-code.url")}
+              multiline={false}
             />
-            <TextArea
+            <HistorySuggestField
               {...commonInputProps}
               label="Info"
               value={selectedOverlay.description || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  description: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, description: val })
               }
+              historyValues={historyValues("qr-code.description")}
+              onRemoveHistoryValue={removeFromHistory("qr-code.description")}
+              multiline={false}
             />
           </>
         )}
         {selectedOverlay.type === "image" && (
           <>
-            <Input
+            <HistorySuggestField
               {...commonInputProps}
               label="Name"
               value={selectedOverlay.name || ""}
               onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  name: val as string,
-                })
+                handleOverlayUpdate({ ...selectedOverlay, name: val })
               }
+              historyValues={historyValues("image.name")}
+              onRemoveHistoryValue={removeFromHistory("image.name")}
+              multiline={false}
             />
             <Input
               {...commonInputProps}
@@ -411,12 +467,7 @@ const OverlayEditor = ({
         />
         <Select
           label="Type"
-          options={[
-            { label: "Participant", value: "participant" },
-            { label: "Stick to Bottom", value: "stick-to-bottom" },
-            { label: "QR Code", value: "qr-code" },
-            { label: "Image", value: "image" },
-          ]}
+          options={overlayTypeOptions}
           value={selectedOverlay.type || "participant"}
           onChange={(value) =>
             handleOverlayUpdate({
