@@ -1,7 +1,7 @@
 {
   "name": "worship-sync",
   "productName": "WorshipSync",
-  "version": "1.35.2",
+  "version": "1.36.0",
   "private": true,
   "dependencies": {
     "@cloudinary/react": "^1.14.3",

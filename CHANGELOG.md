@@ -1,3 +1,27 @@
+# [1.36.0](https://github.com/K-Cheddar/worship-sync/compare/v1.35.2...v1.36.0) (2026-02-11)
+
+
+### Bug Fixes
+
+* Correct scrolling behavior ([99685ef](https://github.com/K-Cheddar/worship-sync/commit/99685ef5405f0d52c32127ce20441fa474cd4eb8))
+* Fixed credits editor sometimes being too large ([9cfcd7c](https://github.com/K-Cheddar/worship-sync/commit/9cfcd7c48b88b9846ff3348c92d71755770c68b7))
+* Improve display management ([cf4cbe2](https://github.com/K-Cheddar/worship-sync/commit/cf4cbe2eb1358fb6110c53ae67477a8275d80e7a))
+* Open Chapter on bible items works more consistently ([9697c89](https://github.com/K-Cheddar/worship-sync/commit/9697c89850293f432ac8edeba3e2855a0d4211f5))
+
+
+### Features
+
+* Add context menu to Desktop ([90d3687](https://github.com/K-Cheddar/worship-sync/commit/90d368720910e8a737776a3efd26b24257d1a693))
+* Added overlay manager ([3c070e7](https://github.com/K-Cheddar/worship-sync/commit/3c070e718ddf3a9f026bd29487113a14cb2774c4))
+* Adding credits history manager ([b632396](https://github.com/K-Cheddar/worship-sync/commit/b632396b1eac32efd7ccb464c1bd8d47e1725a91))
+* Apply an overlay template to all ([06b98e9](https://github.com/K-Cheddar/worship-sync/commit/06b98e9b73e37891719e3c591d9200fa75d04fae))
+* Credits and Overlays now have history-based suggestions ([b6408be](https://github.com/K-Cheddar/worship-sync/commit/b6408bef689a2b0296ac7a275914e2d4b085415e))
+
+
+### Performance Improvements
+
+* Separate credits into their own documents ([84112ca](https://github.com/K-Cheddar/worship-sync/commit/84112ca41aeb9cbf12d6a532a6aaa675f3c0b521))
+
 ## [1.35.2](https://github.com/K-Cheddar/worship-sync/compare/v1.35.1...v1.35.2) (2026-02-07)
 
 
