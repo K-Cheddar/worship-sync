@@ -514,7 +514,23 @@ app.use(
   }),
 );
 
+// SPA fallback: serve index.html only for document/navigation requests.
+// Never serve index.html for asset paths (e.g. /assets/*.css, *.js) so the browser
+// never receives HTML as a stylesheet/script (fixes PWA showing HTML without CSS after deploy).
 app.get("*", (req, res) => {
+  const pathname = req.path || req.url.split("?")[0];
+  // Never serve index.html for assets, SW, or manifest (avoids HTML as script/stylesheet/manifest).
+  if (
+    pathname === "/service-worker.js" ||
+    pathname === "/manifest.json" ||
+    pathname === "/manifest.webmanifest" ||
+    pathname.startsWith("/assets/") ||
+    /\.[a-z0-9]+$/i.test(pathname)
+  ) {
+    res.status(404).end();
+    return;
+  }
+
   res.setHeader("Cache-Control", "no-store");
   res.sendFile(path.join(dirname, "/client/dist", "index.html"));
 });

@@ -384,10 +384,11 @@ const Controller = () => {
   const updateAllItemsAndListFromExternal = useCallback(
     async (event: CustomEventInit) => {
       try {
-        const updates = event.detail as { _id?: string; docType?: string }[] | undefined;
+        const updates = event.detail;
         if (!Array.isArray(updates)) return;
         let refetchOverlayHistory = false;
         for (const _update of updates) {
+          // check if the list we have selected was updated
           if (selectedList && _update._id === selectedList._id) {
             console.log("updating selected item list from remote", event);
             const update = _update as DBItemListDetails;
@@ -408,13 +409,14 @@ const Controller = () => {
             dispatch(updateAllItemsListFromRemote(update.items));
           }
           if (
-            _update.docType === "overlay-history" ||
-            (typeof _update._id === "string" && _update._id.startsWith(OVERLAY_HISTORY_ID_PREFIX))
+            _update.docType === "overlay-history"
+
           ) {
             refetchOverlayHistory = true;
           }
         }
 
+        // keep all docs up to date
         updateAllDocs(dispatch);
 
         if (refetchOverlayHistory && db) {
