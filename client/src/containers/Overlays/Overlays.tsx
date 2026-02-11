@@ -567,8 +567,8 @@ const Overlays = () => {
           <OverlayHistoryDrawer
             isOpen={isOverlayHistoryDrawerOpen}
             onClose={() => setIsOverlayHistoryDrawerOpen(false)}
-            size="lg"
-            position="right"
+            size={isMobile ? "xl" : "lg"}
+            position={isMobile ? "bottom" : "right"}
           />
           {!isLoading && list.length === 0 && (
             <p className="text-sm px-2">

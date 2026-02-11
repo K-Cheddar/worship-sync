@@ -35,7 +35,6 @@ import {
   DBItemListDetails,
   DBPreferences,
   DBOverlayTemplates,
-  OVERLAY_HISTORY_ID_PREFIX,
   TemplatesByType,
 } from "../../types";
 import {
@@ -420,6 +419,7 @@ const Controller = () => {
         updateAllDocs(dispatch);
 
         if (refetchOverlayHistory && db) {
+          console.log("refetching overlay history");
           const overlayHistory = await getAllOverlayHistory(db);
           dispatch(initiateOverlayHistory(overlayHistory));
         }

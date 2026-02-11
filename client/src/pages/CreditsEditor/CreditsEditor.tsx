@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import Credits from "../../containers/Credits/Credits";
 import { default as CreditsEditorContainer } from "../../containers/Credits/CreditsEditor";
 import { Check, History, Home, Menu as MenuIcon, RefreshCcw, Settings } from "lucide-react";
+import Icon from "../../components/Icon/Icon";
 import { useDispatch, useSelector } from "../../hooks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import {
@@ -13,7 +14,7 @@ import {
   DocType,
   ItemLists,
 } from "../../types";
-import { getAllCreditsHistory, getAllOverlayHistory, getCreditsByIds, getOverlaysByIds, putCreditDoc } from "../../utils/dbUtils";
+import { getAllCreditsHistory, getCreditsByIds, getOverlaysByIds, putCreditDoc } from "../../utils/dbUtils";
 import {
   initiateCreditsHistory,
   initiateCreditsList,
@@ -37,7 +38,7 @@ import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
 import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
 import { setItemListIsLoading } from "../../store/itemListSlice";
-import { initiateOverlayHistory, initiateOverlayList } from "../../store/overlaysSlice";
+import { initiateOverlayList } from "../../store/overlaysSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
 import { capitalizeFirstLetter } from "../../utils/generalUtils";
@@ -98,12 +99,6 @@ const CreditsEditor = () => {
     }
   }, [overlays.length, dispatch, db]);
 
-  useEffect(() => {
-    if (!db) return;
-    getAllOverlayHistory(db)
-      .then((history) => dispatch(initiateOverlayHistory(history)))
-      .catch(console.error);
-  }, [db, dispatch]);
 
   useEffect(() => {
     const getCredits = async () => {
@@ -445,26 +440,26 @@ const CreditsEditor = () => {
   const creditsMenuItems = [
     {
       element: (
-        <>
-          <Home className="size-4 shrink-0 text-gray-300" />
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={Home} color="#d1d5dc" />
           Home
-        </>
+        </div>
       ),
       onClick: () => navigate("/"),
     },
     {
       element: (
-        <>
-          <Settings className="size-4 shrink-0 text-indigo-400" />
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={Settings} color="#d1d5dc" />
           Settings
-        </>
+        </div>
       ),
       onClick: () => setIsSettingsDrawerOpen(true),
     },
     {
       element: (
         <>
-          <History className="size-4 shrink-0 text-amber-400" />
+          <Icon svg={History} color="#d1d5dc" />
           History
         </>
       ),
