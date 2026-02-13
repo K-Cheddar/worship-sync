@@ -1,3 +1,11 @@
+## [1.36.3](https://github.com/K-Cheddar/worship-sync/compare/v1.36.2...v1.36.3) (2026-02-13)
+
+
+### Bug Fixes
+
+* Improve history sync ([278b73a](https://github.com/K-Cheddar/worship-sync/commit/278b73a31b110c1a137fe2d680ad6fa1fff0e366))
+* Improve overlay history stability ([c682628](https://github.com/K-Cheddar/worship-sync/commit/c682628d716b058187429e2afc120c6ff7e35212))
+
 ## [1.36.2](https://github.com/K-Cheddar/worship-sync/compare/v1.36.1...v1.36.2) (2026-02-11)
 
 
