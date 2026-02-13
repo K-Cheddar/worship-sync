@@ -44,8 +44,8 @@ import {
   updateItemListFromRemote,
 } from "../../store/itemListSlice";
 import {
-  initiateOverlayHistory,
   initiateOverlayList,
+  mergeOverlayHistoryFromDb,
   updateOverlayListFromRemote,
 } from "../../store/overlaysSlice";
 import { formatItemList } from "../../utils/formatItemList";
@@ -370,7 +370,7 @@ const Controller = () => {
         const formattedOverlays = await getOverlaysByIds(db, overlayIds);
         dispatch(initiateOverlayList(formattedOverlays));
         const overlayHistory = await getAllOverlayHistory(db);
-        dispatch(initiateOverlayHistory(overlayHistory));
+        dispatch(mergeOverlayHistoryFromDb(overlayHistory));
       } catch (e) {
         console.error(e);
       }
@@ -419,9 +419,8 @@ const Controller = () => {
         updateAllDocs(dispatch);
 
         if (refetchOverlayHistory && db) {
-          console.log("refetching overlay history");
           const overlayHistory = await getAllOverlayHistory(db);
-          dispatch(initiateOverlayHistory(overlayHistory));
+          dispatch(mergeOverlayHistoryFromDb(overlayHistory));
         }
       } catch (e) {
         console.error(e);

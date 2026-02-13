@@ -190,14 +190,23 @@ export const overlaysSlice = createSlice({
       }
       state.hasPendingUpdate = true;
     },
-    initiateOverlayHistory: (
+    /** Merge fetched overlay history from DB into current state. Union of values per key so refetch never drops in-memory updates (avoids race with putOverlayHistoryDocs). */
+    mergeOverlayHistoryFromDb: (
       state,
       action: PayloadAction<OverlayHistoryState>
     ) => {
       const raw = action.payload ?? {};
-      state.overlayHistory = Object.fromEntries(
-        Object.entries(raw).map(([k, values]) => [k, sortHistoryValues(values)])
-      );
+      const next = { ...state.overlayHistory };
+      for (const [k, values] of Object.entries(raw)) {
+        if (!Array.isArray(values)) continue;
+        const existing = next[k] ?? [];
+        const combined = existing.length === 0 ? values : [...existing];
+        for (const v of values) {
+          if (!combined.includes(v)) combined.push(v);
+        }
+        next[k] = sortHistoryValues(combined);
+      }
+      state.overlayHistory = next;
     },
     deleteOverlayHistoryEntry: (state, action: PayloadAction<string>) => {
       delete state.overlayHistory[action.payload];
@@ -232,7 +241,7 @@ export const {
   updateInitialList,
   addToInitialList,
   forceUpdate,
-  initiateOverlayHistory,
+  mergeOverlayHistoryFromDb,
   deleteOverlayHistoryEntry,
   updateOverlayHistoryEntry,
   mergeOverlayIntoHistory,

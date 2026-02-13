@@ -3,7 +3,7 @@ import overlaysReducer, {
   addOverlayToList,
   deleteOverlayHistoryEntry,
   getOverlayHistoryKeysForType,
-  initiateOverlayHistory,
+  mergeOverlayHistoryFromDb,
   initiateOverlayList,
   mergeOverlayIntoHistory,
   mergeOverlaysIntoHistory,
@@ -162,10 +162,10 @@ describe("overlaysSlice", () => {
       expect(next["participant.title"]).toBeUndefined();
     });
 
-    it("initiateOverlayHistory sets overlayHistory", () => {
+    it("mergeOverlayHistoryFromDb sets overlayHistory when state is empty", () => {
       const store = createStore();
       const history = { "participant.name": ["Alice", "Bob"] };
-      store.dispatch(initiateOverlayHistory(history));
+      store.dispatch(mergeOverlayHistoryFromDb(history));
       expect(store.getState().overlays.overlayHistory).toEqual(history);
     });
 
