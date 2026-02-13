@@ -91,7 +91,6 @@ const excludedActions: string[] = [
   overlaysSlice.actions.setHasPendingUpdate.toString(),
   overlaysSlice.actions.forceUpdate.toString(),
   overlaysSlice.actions.updateInitialList.toString(),
-  overlaysSlice.actions.initiateOverlayHistory.toString(),
   overlaysSlice.actions.mergeOverlayHistoryFromDb.toString(),
   overlaysSlice.actions.deleteOverlayHistoryEntry.toString(),
   overlaysSlice.actions.mergeOverlayIntoHistory.toString(),
@@ -471,6 +470,10 @@ listenerMiddleware.startListening({
       action.type !== "overlays/setHasPendingUpdate" &&
       action.type !== "overlays/updateInitialList" &&
       action.type !== "overlays/addToInitialList" &&
+      action.type !== "overlays/mergeOverlayHistoryFromDb" &&
+      action.type !== "overlays/deleteOverlayHistoryEntry" &&
+      action.type !== "overlays/updateOverlayHistoryEntry" &&
+      action.type !== "overlays/mergeOverlayIntoHistory" &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
       action.type !== "RESET"
