@@ -92,6 +92,7 @@ const excludedActions: string[] = [
   overlaysSlice.actions.forceUpdate.toString(),
   overlaysSlice.actions.updateInitialList.toString(),
   overlaysSlice.actions.initiateOverlayHistory.toString(),
+  overlaysSlice.actions.mergeOverlayHistoryFromDb.toString(),
   overlaysSlice.actions.deleteOverlayHistoryEntry.toString(),
   overlaysSlice.actions.mergeOverlayIntoHistory.toString(),
   creditsSlice.actions.initiateCreditsList.toString(),

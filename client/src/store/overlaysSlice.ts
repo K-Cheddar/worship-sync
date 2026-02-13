@@ -199,6 +199,18 @@ export const overlaysSlice = createSlice({
         Object.entries(raw).map(([k, values]) => [k, sortHistoryValues(values)])
       );
     },
+    /** Merge fetched overlay history from DB into current state. Keeps existing keys when fetch returns empty or partial. */
+    mergeOverlayHistoryFromDb: (
+      state,
+      action: PayloadAction<OverlayHistoryState>
+    ) => {
+      const raw = action.payload ?? {};
+      const next = { ...state.overlayHistory };
+      for (const [k, values] of Object.entries(raw)) {
+        if (Array.isArray(values)) next[k] = sortHistoryValues(values);
+      }
+      state.overlayHistory = next;
+    },
     deleteOverlayHistoryEntry: (state, action: PayloadAction<string>) => {
       delete state.overlayHistory[action.payload];
     },
@@ -233,6 +245,7 @@ export const {
   addToInitialList,
   forceUpdate,
   initiateOverlayHistory,
+  mergeOverlayHistoryFromDb,
   deleteOverlayHistoryEntry,
   updateOverlayHistoryEntry,
   mergeOverlayIntoHistory,
