@@ -1,3 +1,10 @@
+## [1.36.4](https://github.com/K-Cheddar/worship-sync/compare/v1.36.3...v1.36.4) (2026-02-14)
+
+
+### Bug Fixes
+
+* Fix desktop build ([ac08268](https://github.com/K-Cheddar/worship-sync/commit/ac082686f11adcacd5d105f669d120b54e6c4687))
+
 ## [1.36.3](https://github.com/K-Cheddar/worship-sync/compare/v1.36.2...v1.36.3) (2026-02-13)
 
 
