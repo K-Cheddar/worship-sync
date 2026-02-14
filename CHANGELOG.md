@@ -1,3 +1,17 @@
+## [1.36.2](https://github.com/K-Cheddar/worship-sync/compare/v1.36.1...v1.36.2) (2026-02-11)
+
+
+### Bug Fixes
+
+* Improve menu size and overlay history manager on mobile ([028ff07](https://github.com/K-Cheddar/worship-sync/commit/028ff0704b922c37b768577950021f4df414c6ea))
+
+## [1.36.1](https://github.com/K-Cheddar/worship-sync/compare/v1.36.0...v1.36.1) (2026-02-11)
+
+
+### Bug Fixes
+
+* Fix browser install updates ([d2a8095](https://github.com/K-Cheddar/worship-sync/commit/d2a8095c99c661d8f750b223496a9595177ad8bb))
+
 # [1.36.0](https://github.com/K-Cheddar/worship-sync/compare/v1.35.2...v1.36.0) (2026-02-11)
 
 
