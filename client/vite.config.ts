@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     root: ".",
+    base: "/",
     build: {
       sourcemap: true,
       outDir: "dist",
