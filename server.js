@@ -493,44 +493,43 @@ setupExpressErrorHandler(app);
 
 const HASHED_FILENAME = /-[A-Za-z0-9]{8,}\.(js|css|png|jpg|jpeg|svg|woff2?)$/;
 
-app.use(
-  express.static(path.join(dirname, "/client/dist"), {
-    setHeaders(res, filePath) {
-      const name = path.basename(filePath);
+const dist = path.join(dirname, "client/dist");
 
-      if (filePath.endsWith("index.html")) {
-        res.setHeader("Cache-Control", "no-store");
-      } else if (filePath.endsWith("service-worker.js")) {
-        // Must be revalidated, but still cacheable
-        res.setHeader("Cache-Control", "no-cache");
-      } else if (HASHED_FILENAME.test(name)) {
-        // Fingerprinted assets: safe to cache forever
-        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-      } else {
-        // Non-hashed assets: safe revalidation
-        res.setHeader("Cache-Control", "no-cache");
-      }
-    },
-  }),
-);
+app.use(express.static(dist, {
+  setHeaders(res, filePath) {
+    const name = path.basename(filePath);
 
-// SPA fallback: serve index.html only for document/navigation requests.
-// Never serve index.html for asset paths (e.g. /assets/*.css, *.js) so the browser
-// never receives HTML as a stylesheet/script (fixes PWA showing HTML without CSS after deploy).
+    if (filePath.endsWith("index.html")) {
+      res.setHeader("Cache-Control", "no-store");
+    } else if (filePath.endsWith("service-worker.js")) {
+      res.setHeader("Cache-Control", "no-cache");
+    } else if (HASHED_FILENAME.test(name)) {
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    } else {
+      res.setHeader("Cache-Control", "no-cache");
+    }
+  }
+}));
+
 app.get("*", (req, res) => {
-  const pathname = req.path || req.url.split("?")[0];
-  // Never serve index.html for assets, SW, or manifest (avoids HTML as script/stylesheet/manifest).
+  const pathname = req.path;
+
+  // Don’t serve index.html for these
   if (
     pathname === "/service-worker.js" ||
     pathname === "/manifest.json" ||
-    pathname === "/manifest.webmanifest" ||
-    pathname.startsWith("/assets/") ||
-    /\.[a-z0-9]+$/i.test(pathname)
+    pathname === "/manifest.webmanifest"
   ) {
     res.status(404).end();
     return;
   }
 
-  res.setHeader("Cache-Control", "no-store");
-  res.sendFile(path.join(dirname, "/client/dist", "index.html"));
+  // If it looks like a file, let express.static handle it
+  if (/\.[a-z0-9]+$/i.test(pathname)) {
+    res.status(404).end();
+    return;
+  }
+
+  // Otherwise serve SPA index
+  res.sendFile(path.join(dist, "index.html"));
 });
