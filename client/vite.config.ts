@@ -7,9 +7,11 @@ import fs from "fs";
 
 export default defineConfig(({ mode }) => {
   const isDev = mode === "development";
-
+  const isElectron = mode === "electron";
+  
   return {
     root: ".",
+    base: isElectron ? "./" : "/",
     build: {
       sourcemap: true,
       outDir: "dist",
