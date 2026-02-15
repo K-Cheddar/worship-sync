@@ -54,11 +54,11 @@ export interface ElectronAPI {
   getDisplays: () => Promise<Display[]>;
   getWindowStates: () => Promise<WindowStatesInfo>;
   
-  // Video cache
-  downloadVideo: (url: string) => Promise<string | null>;
-  getLocalVideoPath: (url: string) => Promise<string | null>;
-  cleanupUnusedVideos: (usedUrls: string[]) => Promise<void>;
-  syncVideoCache: (videoUrls: string[]) => Promise<{ downloaded: number; cleaned: number }>;
+  // Media cache
+  downloadMedia: (url: string) => Promise<string | null>;
+  getLocalMediaPath: (url: string) => Promise<string | null>;
+  cleanupUnusedMedia: (usedUrls: string[]) => Promise<void>;
+  syncMediaCache: (mediaUrls: string[]) => Promise<{ downloaded: number; cleaned: number }>;
   
   // Route persistence
   saveLastRoute: (route: string) => Promise<boolean>;

@@ -72,7 +72,37 @@ export function register(config?: Config) {
   }
 }
 
-const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const SW_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const VERSION_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Polls /api/version and triggers an immediate SW update check when the
+ * server version changes (i.e. a new deploy happened). Much faster than
+ * waiting for the periodic SW check interval.
+ */
+function startVersionPolling(registration: ServiceWorkerRegistration) {
+  let knownVersion: string | null = null;
+
+  const check = async () => {
+    try {
+      const res = await fetch("/api/version", { cache: "no-store" });
+      if (!res.ok) return;
+      const { version } = await res.json();
+      if (knownVersion === null) {
+        knownVersion = version;
+      } else if (version !== knownVersion) {
+        knownVersion = version;
+        // Server version changed — trigger immediate SW update check
+        registration.update();
+      }
+    } catch {
+      // Network error — skip this cycle
+    }
+  };
+
+  check();
+  setInterval(check, VERSION_POLL_INTERVAL_MS);
+}
 
 function registerValidSW(
   swUrl: string,
@@ -80,11 +110,12 @@ function registerValidSW(
   isLocalhostEnv?: boolean,
 ) {
   navigator.serviceWorker
-    .register(swUrl)
+    .register(swUrl, { updateViaCache: "none" })
     .then((registration) => {
       // Periodically check for new service worker while app is open (skip on localhost)
       if (!isLocalhostEnv) {
-        setInterval(() => registration.update(), UPDATE_CHECK_INTERVAL_MS);
+        setInterval(() => registration.update(), SW_CHECK_INTERVAL_MS);
+        startVersionPolling(registration);
       }
       registration.onupdatefound = () => {
         const installingWorker = registration.installing;
@@ -152,7 +183,7 @@ function checkValidServiceWorker(swUrl: string, config?: Config) {
 
 /**
  * Trigger an immediate service worker update check (instead of waiting for the
- * hourly interval). If a new version is found, the SW installs and the app's
+ * periodic interval). If a new version is found, the SW installs and the app's
  * onUpdate callback in main.tsx will reload the page. Call this when the user
  * explicitly asks to get the latest version (e.g. "Get latest version" button).
  */

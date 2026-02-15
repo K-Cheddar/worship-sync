@@ -9,6 +9,7 @@ import undoable, { ActionCreators } from "redux-undo";
 import {
   presentationSlice,
   updateBibleDisplayInfoFromRemote,
+  updateMonitor,
   updateMonitorFromRemote,
   updateParticipantOverlayInfoFromRemote,
   updateProjectorFromRemote,
@@ -55,7 +56,7 @@ import { timersSlice, addTimer, updateTimerFromRemote } from "./timersSlice";
 import { overlayTemplatesSlice } from "./overlayTemplatesSlice";
 import serviceTimesSlice from "./serviceTimesSlice";
 import { mergeTimers } from "../utils/timerUtils";
-import { extractAllVideoUrlsFromOutlines } from "../utils/videoCacheUtils";
+import { extractAllMediaUrlsFromOutlines } from "../utils/mediaCacheUtils";
 import _ from "lodash";
 import { capitalizeFirstLetter } from "../utils/generalUtils";
 
@@ -197,7 +198,7 @@ const undoableReducers = undoable(
       return !isExcluded;
     },
     limit: 100,
-  }
+  },
 );
 
 const listenerMiddleware = createListenerMiddleware();
@@ -269,11 +270,11 @@ listenerMiddleware.startListening({
     const item = state.undoable.present.item;
     if (item.type !== "timer" || !item.timerInfo) return;
     const exists = state.timers.timers.some(
-      (t) => t.id === item.timerInfo!.id || t.id === item._id
+      (t) => t.id === item.timerInfo!.id || t.id === item._id,
     );
     if (!exists) {
       listenerApi.dispatch(
-        addTimer({ ...item.timerInfo, hostId: globalHostId })
+        addTimer({ ...item.timerInfo, hostId: globalHostId }),
       );
     }
   },
@@ -549,7 +550,7 @@ listenerMiddleware.startListening({
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/timers"
+            "/v2/timers",
         );
 
         // Get current timers and merge with own timers
@@ -561,7 +562,7 @@ listenerMiddleware.startListening({
         const mergedTimers = mergeTimers(
           currentTimers,
           ownTimers,
-          globalHostId
+          globalHostId,
         );
 
         set(timersRef, cleanObject(mergedTimers));
@@ -569,6 +570,53 @@ listenerMiddleware.startListening({
       // Reset flag after writing (to localStorage and/or Firebase) so effect doesn't keep re-running (e.g. for Demo)
       listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
     }
+  },
+});
+
+// When a timer expires and the monitor is showing that timer, switch to the item's wrap-up slide (slides[1])
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    if (action.type !== "timers/tickTimers") return false;
+    const curr = currentState as RootState;
+    const prev = previousState as RootState;
+    const { monitorInfo } = curr.presentation;
+    if (monitorInfo.type !== "timer" || !monitorInfo.slide) return false;
+    const itemId = monitorInfo.itemId ?? monitorInfo.timerId;
+    if (!itemId) return false;
+    const currTimer = curr.timers.timers.find((t) => t.id === monitorInfo.timerId);
+    const prevTimer = prev.timers.timers.find((t) => t.id === monitorInfo.timerId);
+    if (!currTimer || currTimer.remainingTime !== 0 || currTimer.status !== "stopped") return false;
+    const justExpired = !prevTimer || prevTimer.remainingTime > 0 || prevTimer.status === "running";
+    const isTimerSlide = monitorInfo.slide?.boxes?.[1]?.words?.includes?.("{{timer}}");
+    return justExpired && !!isTimerSlide;
+  },
+  effect: async (action, listenerApi) => {
+    const state = listenerApi.getState() as RootState;
+    const { monitorInfo } = state.presentation;
+    const itemId = monitorInfo.itemId ?? monitorInfo.timerId;
+    if (!itemId) return;
+    const currentItem = state.undoable.present.item;
+    let item: DBItem | null = null;
+    if (currentItem._id === itemId && currentItem.slides?.length > 1) {
+      item = currentItem as unknown as DBItem;
+    } else if (db) {
+      try {
+        item = (await db.get(itemId)) as DBItem;
+      } catch {
+        return;
+      }
+    }
+    if (!item?.slides?.length || item.slides.length < 2) return;
+    const wrapUpSlide = item.slides[1];
+    listenerApi.dispatch(
+      updateMonitor({
+        slide: wrapUpSlide,
+        name: monitorInfo.name,
+        type: monitorInfo.type,
+        timerId: monitorInfo.timerId,
+        itemId: monitorInfo.itemId,
+      })
+    );
   },
 });
 
@@ -620,36 +668,36 @@ listenerMiddleware.startListening({
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/publishedList"
+            "/v2/credits/publishedList",
         ),
-        cleanObject(publishedList)
+        cleanObject(publishedList),
       );
       set(
         ref(
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/transitionScene"
+            "/v2/credits/transitionScene",
         ),
-        transitionScene
+        transitionScene,
       );
       set(
         ref(
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/creditsScene"
+            "/v2/credits/creditsScene",
         ),
-        creditsScene
+        creditsScene,
       );
       set(
         ref(
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/scheduleName"
+            "/v2/credits/scheduleName",
         ),
-        scheduleName
+        scheduleName,
       );
     }
 
@@ -730,12 +778,16 @@ listenerMiddleware.startListening({
     // Only sync in Electron
     if (!window.electronAPI) return;
 
-    // Check if a video is being set
+    // Check if a video or image background is being set
     const payload = action.payload as {
       background: string;
       mediaInfo?: { type: string };
     };
-    if (payload?.mediaInfo?.type !== "video") return;
+    const isMedia =
+      payload?.mediaInfo?.type === "video" ||
+      payload?.mediaInfo?.type === "image" ||
+      payload?.background?.startsWith("http");
+    if (!isMedia) return;
 
     // Debounce sync - wait 2 seconds after video is set
     listenerApi.cancelActiveListeners();
@@ -747,16 +799,16 @@ listenerMiddleware.startListening({
       const state = listenerApi.getState() as RootState;
       const currentItem = state.undoable.present.item;
 
-      // Extract video URLs from the current item in Redux state
-      const { extractVideoUrlsFromItem } =
-        await import("../utils/videoCacheUtils");
-      const itemVideoUrls = extractVideoUrlsFromItem(currentItem);
+      // Extract media URLs from the current item in Redux state
+      const { extractMediaUrlsFromItem } =
+        await import("../utils/mediaCacheUtils");
+      const itemVideoUrls = extractMediaUrlsFromItem(currentItem);
 
-      // Also get all other video URLs from database (for cleanup)
+      // Also get all other media URLs from database (for cleanup)
       if (!db) return;
-      const allVideoUrls = await extractAllVideoUrlsFromOutlines(db);
+      const allVideoUrls = await extractAllMediaUrlsFromOutlines(db);
 
-      // Combine: current item videos + all other videos from database
+      // Combine: current item media + all other media from database
       const combinedUrls = new Set([
         ...itemVideoUrls,
         ...Array.from(allVideoUrls),
@@ -765,22 +817,21 @@ listenerMiddleware.startListening({
 
       // Sync the cache
       const electronAPI = window.electronAPI as unknown as {
-        syncVideoCache: (
-          urls: string[]
+        syncMediaCache: (
+          urls: string[],
         ) => Promise<{ downloaded: number; cleaned: number }>;
       };
 
       if (urlArray.length > 0) {
-        const result = await electronAPI.syncVideoCache(urlArray);
+        const result = await electronAPI.syncMediaCache(urlArray);
         console.log(
-          `Video cache sync after item update: ${result.downloaded} downloaded, ${result.cleaned} cleaned`
+          `Media cache sync after item update: ${result.downloaded} downloaded, ${result.cleaned} cleaned`,
         );
       } else {
-        // No videos, just cleanup
-        await electronAPI.syncVideoCache([]);
+        await electronAPI.syncMediaCache([]);
       }
     } catch (error) {
-      console.error("Error syncing video cache after item update:", error);
+      console.error("Error syncing media cache after item update:", error);
     }
   },
 });
@@ -836,11 +887,11 @@ listenerMiddleware.startListening({
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/monitorSettings"
+            "/v2/monitorSettings",
         ),
         cleanObject({
           ...monitorSettings,
-        })
+        }),
       );
     }
 
@@ -903,7 +954,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     listenerApi.dispatch(
-      overlayTemplatesSlice.actions.setHasPendingUpdate(false)
+      overlayTemplatesSlice.actions.setHasPendingUpdate(false),
     );
 
     // update overlay templates
@@ -1021,9 +1072,9 @@ listenerMiddleware.startListening({
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/services"
+            "/v2/services",
         ),
-        cleanObject(list)
+        cleanObject(list),
       );
     }
   },
@@ -1055,9 +1106,9 @@ listenerMiddleware.startListening({
           globalFireDbInfo.db,
           "users/" +
             capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/services"
+            "/v2/services",
         ),
-        cleanObject(list)
+        cleanObject(list),
       );
     }
   },
@@ -1116,27 +1167,27 @@ listenerMiddleware.startListening({
     localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
     localStorage.setItem(
       "stream_bibleInfo",
-      JSON.stringify(streamInfo.bibleDisplayInfo)
+      JSON.stringify(streamInfo.bibleDisplayInfo),
     );
     localStorage.setItem(
       "stream_participantOverlayInfo",
-      JSON.stringify(streamInfo.participantOverlayInfo)
+      JSON.stringify(streamInfo.participantOverlayInfo),
     );
     localStorage.setItem(
       "stream_stbOverlayInfo",
-      JSON.stringify(streamInfo.stbOverlayInfo)
+      JSON.stringify(streamInfo.stbOverlayInfo),
     );
     localStorage.setItem(
       "stream_qrCodeOverlayInfo",
-      JSON.stringify(streamInfo.qrCodeOverlayInfo)
+      JSON.stringify(streamInfo.qrCodeOverlayInfo),
     );
     localStorage.setItem(
       "stream_imageOverlayInfo",
-      JSON.stringify(streamInfo.imageOverlayInfo)
+      JSON.stringify(streamInfo.imageOverlayInfo),
     );
     localStorage.setItem(
       "stream_formattedTextDisplayInfo",
-      JSON.stringify(streamInfo.formattedTextDisplayInfo)
+      JSON.stringify(streamInfo.formattedTextDisplayInfo),
     );
 
     set(
@@ -1144,9 +1195,9 @@ listenerMiddleware.startListening({
         globalFireDbInfo.db,
         "users/" +
           capitalizeFirstLetter(globalFireDbInfo.database) +
-          "/v2/presentation"
+          "/v2/presentation",
       ),
-      cleanObject(presentationUpdate)
+      cleanObject(presentationUpdate),
     );
   },
 });
@@ -1172,7 +1223,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateProjectorFromRemote(action.payload as Presentation)
+      updateProjectorFromRemote(action.payload as Presentation),
     );
   },
 });
@@ -1198,7 +1249,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateMonitorFromRemote(action.payload as Presentation)
+      updateMonitorFromRemote(action.payload as Presentation),
     );
   },
 });
@@ -1224,7 +1275,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateStreamFromRemote(action.payload as Presentation)
+      updateStreamFromRemote(action.payload as Presentation),
     );
   },
 });
@@ -1250,7 +1301,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo)
+      updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo),
     );
   },
 });
@@ -1276,7 +1327,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo)
+      updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo),
     );
   },
 });
@@ -1302,7 +1353,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateStbOverlayInfoFromRemote(action.payload as OverlayInfo)
+      updateStbOverlayInfoFromRemote(action.payload as OverlayInfo),
     );
   },
 });
@@ -1328,7 +1379,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo)
+      updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo),
     );
   },
 });
@@ -1354,7 +1405,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     listenerApi.dispatch(
-      updateImageOverlayInfoFromRemote(action.payload as OverlayInfo)
+      updateImageOverlayInfoFromRemote(action.payload as OverlayInfo),
     );
   },
 });
@@ -1381,8 +1432,8 @@ listenerMiddleware.startListening({
 
     listenerApi.dispatch(
       updateFormattedTextDisplayInfoFromRemote(
-        action.payload as FormattedTextDisplayInfo
-      )
+        action.payload as FormattedTextDisplayInfo,
+      ),
     );
   },
 });
@@ -1427,7 +1478,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.item,
-        previousState.undoable.present.item
+        previousState.undoable.present.item,
       )
     ) {
       listenerApi.dispatch(itemSlice.actions.forceUpdate());
@@ -1436,7 +1487,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.overlay,
-        previousState.undoable.present.overlay
+        previousState.undoable.present.overlay,
       )
     ) {
       listenerApi.dispatch(overlaySlice.actions.forceUpdate());
@@ -1445,7 +1496,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.overlays,
-        previousState.undoable.present.overlays
+        previousState.undoable.present.overlays,
       )
     ) {
       listenerApi.dispatch(overlaysSlice.actions.forceUpdate());
@@ -1454,7 +1505,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.itemList,
-        previousState.undoable.present.itemList
+        previousState.undoable.present.itemList,
       )
     ) {
       listenerApi.dispatch(itemListSlice.actions.forceUpdate());
@@ -1463,7 +1514,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.itemLists,
-        previousState.undoable.present.itemLists
+        previousState.undoable.present.itemLists,
       )
     ) {
       listenerApi.dispatch(itemListsSlice.actions.forceUpdate());
@@ -1472,7 +1523,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.preferences,
-        previousState.undoable.present.preferences
+        previousState.undoable.present.preferences,
       )
     ) {
       listenerApi.dispatch(preferencesSlice.actions.forceUpdate());
@@ -1481,7 +1532,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.credits,
-        previousState.undoable.present.credits
+        previousState.undoable.present.credits,
       )
     ) {
       listenerApi.dispatch(creditsSlice.actions.forceUpdate());
@@ -1490,7 +1541,7 @@ listenerMiddleware.startListening({
     if (
       !_.isEqual(
         currentState.undoable.present.overlayTemplates,
-        previousState.undoable.present.overlayTemplates
+        previousState.undoable.present.overlayTemplates,
       )
     ) {
       listenerApi.dispatch(overlayTemplatesSlice.actions.forceUpdate());
@@ -1567,7 +1618,7 @@ listenerMiddleware.startListening({
           console.log("✅ Initialization complete - Starting undo history");
           listenerApi.dispatch(ActionCreators.clearHistory());
         },
-        { timeout: 10000 }
+        { timeout: 10000 },
       );
     }
   },

@@ -20,9 +20,11 @@ const HLSPlayer = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [actualSrc, setActualSrc] = useState<string | undefined>(undefined); // Start as undefined to prevent loading until we check cache
   const [isCheckingCache, setIsCheckingCache] = useState<boolean>(true);
+  const cacheCheckIdRef = useRef(0);
 
   // Check for local cached video in Electron
   useEffect(() => {
+    const checkId = ++cacheCheckIdRef.current;
     const checkLocalVideo = async () => {
       setIsCheckingCache(true);
       
@@ -33,16 +35,19 @@ const HLSPlayer = ({
       
       if (window.electronAPI && src) {
         try {
-          const localPath = await (window.electronAPI as unknown as { getLocalVideoPath: (url: string) => Promise<string | null> }).getLocalVideoPath(src);
+          const localPath = await (window.electronAPI as unknown as { getLocalMediaPath: (url: string) => Promise<string | null> }).getLocalMediaPath(src);
+          if (checkId !== cacheCheckIdRef.current) return; // src changed while awaiting — discard stale result
           if (localPath) {
             setActualSrc(localPath);
             setIsCheckingCache(false);
             return;
           }
         } catch (error) {
+          if (checkId !== cacheCheckIdRef.current) return;
           console.warn("Error getting local video path:", error);
         }
       }
+      if (checkId !== cacheCheckIdRef.current) return;
       // No cached version, use original URL
       setActualSrc(src);
       setIsCheckingCache(false);
@@ -97,7 +102,7 @@ const HLSPlayer = ({
       }
       
       // Fallback to original URL if cached video fails
-      if (src && src !== videoSrc && videoSrc.startsWith("video-cache://")) {
+      if (src && src !== videoSrc && videoSrc.startsWith("media-cache://")) {
         console.log(`[HLSPlayer] Falling back to original URL: ${src}`);
         setActualSrc(src);
       }
@@ -179,8 +184,8 @@ const HLSPlayer = ({
     
     if (!videoRef.current || !actualSrc) return;
     
-    // 1. Cached MP4s (video-cache://)
-    if (actualSrc.startsWith("video-cache://")) {
+    // 1. Cached MP4s (media-cache://)
+    if (actualSrc.startsWith("media-cache://")) {
       return playNative(videoRef.current, actualSrc);
     }
     
@@ -198,7 +203,7 @@ const HLSPlayer = ({
   const videoSrc = isCheckingCache ? undefined : (actualSrc || undefined);
   
   // Use preload="auto" for cached videos (instant playback), "metadata" for remote videos
-  const preloadValue = actualSrc?.startsWith("video-cache://") ? "auto" : "metadata";
+  const preloadValue = actualSrc?.startsWith("media-cache://") ? "auto" : "metadata";
   
   return (
     <video

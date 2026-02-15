@@ -2,6 +2,7 @@ import { Box } from "../../types";
 import { ChevronsDown, ChevronsUp } from "lucide-react";
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 import { Position, ResizableDelta, Rnd } from "react-rnd";
 import cn from "classnames";
 import { ResizeDirection } from "re-resizable";
@@ -66,9 +67,10 @@ const DisplayEditor = ({
       isWindowVideoLoaded,
     [isVideoBg, videoUrl, activeVideoUrl, isWindowVideoLoaded]
   );
-  const background = isVideoBg
+  const rawBackground = isVideoBg
     ? box.mediaInfo?.placeholderImage
     : box.background;
+  const background = useCachedMediaUrl(rawBackground);
   let textAreaFocusTimeout: NodeJS.Timeout | null = null;
 
 

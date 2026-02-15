@@ -77,6 +77,9 @@ export const setupReadyToShow = (
 export const focusWindow = (window: BrowserWindow | null): boolean => {
   if (!window || window.isDestroyed()) return false;
 
+  // Re-assert fullscreen before focusing to prevent Windows shell UI from staying visible.
+  window.setFullScreen(false);
+  window.setFullScreen(true);
   window.setAlwaysOnTop(true);
   window.show();
   window.focus();

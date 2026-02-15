@@ -2,10 +2,10 @@ import {
   extractVideoUrlsFromBox,
   extractVideoUrlsFromSlide,
   extractVideoUrlsFromItem,
-} from "./videoCacheUtils";
+} from "./mediaCacheUtils";
 import type { Box, ItemSlideType, DBItem, MediaType } from "../types";
 
-describe("videoCacheUtils", () => {
+describe("mediaCacheUtils", () => {
   describe("extractVideoUrlsFromBox", () => {
     it("returns empty array when box has no video mediaInfo", () => {
       const box: Box = {

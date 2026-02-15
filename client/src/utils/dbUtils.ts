@@ -173,7 +173,9 @@ export const getAllOverlayDocs = async (
   return result.rows
     .filter(
       (row) =>
-        row.doc && (row.doc as { _id: string })._id !== "overlay-templates"
+        row.doc &&
+        (row.doc as { _id: string })._id !== "overlay-templates" &&
+        !(row.doc as { _id: string })._id.startsWith("overlay-history-")
     )
     .map((row) => row.doc as DBOverlay);
 };
