@@ -3,6 +3,7 @@ import {
   combineReducers,
   configureStore,
   createListenerMiddleware,
+  isAnyOf,
   Reducer,
 } from "@reduxjs/toolkit";
 import undoable, { ActionCreators } from "redux-undo";
@@ -19,7 +20,11 @@ import {
   updateStreamFromRemote,
   updateFormattedTextDisplayInfoFromRemote,
 } from "./presentationSlice";
-import { itemSlice } from "./itemSlice";
+import {
+  itemSlice,
+  updateSlideBackground,
+  updateAllSlideBackgrounds,
+} from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { itemListSlice } from "./itemListSlice";
@@ -54,7 +59,9 @@ import { allDocsSlice, upsertItemInAllDocs } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
 import { timersSlice, addTimer, updateTimerFromRemote } from "./timersSlice";
 import { overlayTemplatesSlice } from "./overlayTemplatesSlice";
-import serviceTimesSlice from "./serviceTimesSlice";
+import serviceTimesSliceReducer, {
+  serviceTimesSlice,
+} from "./serviceTimesSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { extractAllMediaUrlsFromOutlines } from "../utils/mediaCacheUtils";
 import _ from "lodash";
@@ -87,6 +94,7 @@ const excludedActions: string[] = [
   itemSlice.actions.forceUpdate.toString(),
   itemSlice.actions.setSelectedSlide.toString(),
   itemSlice.actions.setSelectedBox.toString(),
+  itemSlice.actions.setActiveItem.toString(),
   overlaysSlice.actions.initiateOverlayList.toString(),
   overlaysSlice.actions.updateOverlayListFromRemote.toString(),
   overlaysSlice.actions.setHasPendingUpdate.toString(),
@@ -175,7 +183,7 @@ const undoableReducers = undoable(
     itemLists: itemListsSlice.reducer,
     preferences: preferencesSlice.reducer,
     overlayTemplates: overlayTemplatesSlice.reducer,
-    serviceTimes: serviceTimesSlice,
+    serviceTimes: serviceTimesSliceReducer,
   }),
   {
     groupBy: (action) => {
@@ -208,15 +216,18 @@ const listenerMiddleware = createListenerMiddleware();
 // handle item updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const excluded = isAnyOf(
+      itemSlice.actions.setSelectedSlide,
+      itemSlice.actions.setSelectedBox,
+      itemSlice.actions.setIsEditMode,
+      itemSlice.actions.setItemIsLoading,
+      itemSlice.actions.setSectionLoading,
+      itemSlice.actions.setHasPendingUpdate,
+    );
     return (
       (currentState as RootState).undoable.present.item !==
         (previousState as RootState).undoable.present.item &&
-      action.type !== "item/setSelectedSlide" &&
-      action.type !== "item/setSelectedBox" &&
-      action.type !== "item/setIsEditMode" &&
-      action.type !== "item/setItemIsLoading" &&
-      action.type !== "item/setSectionLoading" &&
-      action.type !== "item/setHasPendingUpdate" &&
+      !excluded(action) &&
       !!(currentState as RootState).undoable.present.item.hasPendingUpdate &&
       action.type !== "RESET"
     );
@@ -224,7 +235,7 @@ listenerMiddleware.startListening({
 
   effect: async (action, listenerApi) => {
     let state = listenerApi.getState() as RootState;
-    if (action.type === "item/setActiveItem") {
+    if (itemSlice.actions.setActiveItem.match(action)) {
       state = listenerApi.getOriginalState() as RootState;
     } else {
       listenerApi.cancelActiveListeners();
@@ -269,11 +280,12 @@ listenerMiddleware.startListening({
 // We only run on full-refresh actions, NOT on upsertItemInAllDocs: the latter comes from our own thunks and
 // the active item is already that doc, so setActiveItem would be redundant and could contribute to loops.
 listenerMiddleware.startListening({
-  predicate: (action) =>
-    action.type === "allDocs/updateAllSongDocs" ||
-    action.type === "allDocs/updateAllFreeFormDocs" ||
-    action.type === "allDocs/updateAllTimerDocs" ||
-    action.type === "allDocs/updateAllBibleDocs",
+  predicate: isAnyOf(
+    allDocsSlice.actions.updateAllSongDocs,
+    allDocsSlice.actions.updateAllFreeFormDocs,
+    allDocsSlice.actions.updateAllTimerDocs,
+    allDocsSlice.actions.updateAllBibleDocs,
+  ),
   effect: (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     const currentItem = state.undoable.present.item;
@@ -296,8 +308,7 @@ listenerMiddleware.startListening({
 
 // When opening a timer item, ensure its timer is in the timers slice (for Demo and when timer was created elsewhere)
 listenerMiddleware.startListening({
-  predicate: (action) => action.type === "item/setActiveItem",
-
+  actionCreator: itemSlice.actions.setActiveItem,
   effect: (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     const item = state.undoable.present.item;
@@ -320,17 +331,19 @@ listenerMiddleware.startListening({
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
 
+    const excluded = isAnyOf(
+      itemListSlice.actions.initiateItemList,
+      itemListSlice.actions.setItemListIsLoading,
+      itemListSlice.actions.setActiveItemInList,
+      itemListSlice.actions.updateItemListFromRemote,
+      itemListSlice.actions.setHasPendingUpdate,
+      itemListSlice.actions.addToInitialItems,
+      itemListSlice.actions.setIsInitialized,
+    );
     return (
       (currentState as RootState).undoable.present.itemList !==
         (previousState as RootState).undoable.present.itemList &&
-      action.type !== "itemList/initiateItemList" &&
-      action.type !== "itemList/setItemListIsLoading" &&
-      action.type !== "itemList/setActiveItemInList" &&
-      action.type !== "itemList/updateItemListFromRemote" &&
-      action.type !== "itemList/setHasPendingUpdate" &&
-      action.type !== "itemList/setHighlightedItems" &&
-      action.type !== "itemList/addToInitialItems" &&
-      action.type !== "itemList/setIsInitialized" &&
+      !excluded(action) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
       action.type !== "RESET"
@@ -339,7 +352,7 @@ listenerMiddleware.startListening({
 
   effect: async (action, listenerApi) => {
     let state = listenerApi.getState() as RootState;
-    if (action.type === "itemLists/selectItemList") {
+    if (itemListsSlice.actions.selectItemList.match(action)) {
       state = listenerApi.getOriginalState() as RootState;
     } else {
       listenerApi.cancelActiveListeners();
@@ -375,14 +388,17 @@ listenerMiddleware.startListening({
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
 
+    const excluded = isAnyOf(
+      itemListsSlice.actions.setInitialItemList,
+      itemListsSlice.actions.initiateItemLists,
+      itemListsSlice.actions.updateItemListsFromRemote,
+      itemListsSlice.actions.selectItemList,
+      itemListsSlice.actions.setIsInitialized,
+    );
     return (
       (currentState as RootState).undoable.present.itemLists !==
         (previousState as RootState).undoable.present.itemLists &&
-      action.type !== "itemLists/setInitialItemList" &&
-      action.type !== "itemLists/initiateItemLists" &&
-      action.type !== "itemLists/updateItemListsFromRemote" &&
-      action.type !== "itemLists/selectItemList" &&
-      action.type !== "itemLists/setIsInitialized" &&
+      !excluded(action) &&
       action.type !== "RESET"
     );
   },
@@ -420,14 +436,17 @@ listenerMiddleware.startListening({
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
 
+    const excluded = isAnyOf(
+      allItemsSlice.actions.initiateAllItemsList,
+      allItemsSlice.actions.updateAllItemsListFromRemote,
+      allItemsSlice.actions.setSongSearchValue,
+      allItemsSlice.actions.setFreeFormSearchValue,
+      allItemsSlice.actions.setIsInitialized,
+    );
     return (
       (currentState as RootState).allItems !==
         (previousState as RootState).allItems &&
-      action.type !== "allItems/initiateAllItemsList" &&
-      action.type !== "allItems/updateAllItemsListFromRemote" &&
-      action.type !== "allItems/setSongSearchValue" &&
-      action.type !== "allItems/setFreeFormSearchValue" &&
-      action.type !== "allItems/setIsInitialized" &&
+      !excluded(action) &&
       action.type !== "RESET"
     );
   },
@@ -459,11 +478,14 @@ listenerMiddleware.startListening({
 // handle updating overlay
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const excluded = isAnyOf(
+      overlaySlice.actions.setHasPendingUpdate,
+      overlaySlice.actions.setIsOverlayLoading,
+    );
     return (
       (currentState as RootState).undoable.present.overlay !==
         (previousState as RootState).undoable.present.overlay &&
-      action.type !== "overlay/setHasPendingUpdate" &&
-      action.type !== "overlay/setIsOverlayLoading" &&
+      !excluded(action) &&
       action.type !== "RESET" &&
       !!(currentState as RootState).undoable.present.overlay.hasPendingUpdate
     );
@@ -471,7 +493,7 @@ listenerMiddleware.startListening({
 
   effect: async (action, listenerApi) => {
     let state = listenerApi.getState() as RootState;
-    if (action.type === "overlay/selectOverlay") {
+    if (overlaySlice.actions.selectOverlay.match(action)) {
       state = listenerApi.getOriginalState() as RootState;
     } else {
       listenerApi.cancelActiveListeners();
@@ -496,18 +518,21 @@ listenerMiddleware.startListening({
 // handle updating overlays
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const excluded = isAnyOf(
+      overlaysSlice.actions.initiateOverlayList,
+      overlaysSlice.actions.updateOverlayListFromRemote,
+      overlaysSlice.actions.setHasPendingUpdate,
+      overlaysSlice.actions.updateInitialList,
+      overlaysSlice.actions.addToInitialList,
+      overlaysSlice.actions.mergeOverlayHistoryFromDb,
+      overlaysSlice.actions.deleteOverlayHistoryEntry,
+      overlaysSlice.actions.updateOverlayHistoryEntry,
+      overlaysSlice.actions.mergeOverlayIntoHistory,
+    );
     return (
       (currentState as RootState).undoable.present.overlays !==
         (previousState as RootState).undoable.present.overlays &&
-      action.type !== "overlays/initiateOverlayList" &&
-      action.type !== "overlays/updateOverlayListFromRemote" &&
-      action.type !== "overlays/setHasPendingUpdate" &&
-      action.type !== "overlays/updateInitialList" &&
-      action.type !== "overlays/addToInitialList" &&
-      action.type !== "overlays/mergeOverlayHistoryFromDb" &&
-      action.type !== "overlays/deleteOverlayHistoryEntry" &&
-      action.type !== "overlays/updateOverlayHistoryEntry" &&
-      action.type !== "overlays/mergeOverlayIntoHistory" &&
+      !excluded(action) &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
       action.type !== "RESET"
@@ -516,7 +541,7 @@ listenerMiddleware.startListening({
 
   effect: async (action, listenerApi) => {
     let state = listenerApi.getState() as RootState;
-    if (action.type === "itemLists/selectItemList") {
+    if (itemListsSlice.actions.selectItemList.match(action)) {
       state = listenerApi.getOriginalState() as RootState;
     } else {
       listenerApi.cancelActiveListeners();
@@ -550,14 +575,16 @@ listenerMiddleware.startListening({
 // handle updating timers
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const excluded = isAnyOf(
+      timersSlice.actions.updateTimerFromRemote,
+      timersSlice.actions.syncTimersFromRemote,
+      timersSlice.actions.setShouldUpdateTimers,
+      timersSlice.actions.tickTimers,
+    );
     return (
       (currentState as RootState).timers !==
         (previousState as RootState).timers &&
-      action.type !== "timers/updateTimerFromRemote" &&
-      action.type !== "timers/syncTimersFromRemote" &&
-      action.type !== "timers/setIntervalId" &&
-      action.type !== "timers/setShouldUpdateTimers" &&
-      action.type !== "timers/tickTimers" &&
+      !excluded(action) &&
       action.type !== "RESET"
     );
   },
@@ -609,7 +636,7 @@ listenerMiddleware.startListening({
 // When a timer expires and the monitor is showing that timer, switch to the item's wrap-up slide (slides[1])
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    if (action.type !== "timers/tickTimers") return false;
+    if (!timersSlice.actions.tickTimers.match(action)) return false;
     const curr = currentState as RootState;
     const prev = previousState as RootState;
     const { monitorInfo } = curr.presentation;
@@ -673,24 +700,26 @@ listenerMiddleware.startListening({
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
 
+    const excluded = isAnyOf(
+      creditsSlice.actions.initiateCreditsList,
+      creditsSlice.actions.initiateCreditsHistory,
+      creditsSlice.actions.initiatePublishedCreditsList,
+      creditsSlice.actions.updateCreditsListFromRemote,
+      creditsSlice.actions.updateInitialList,
+      creditsSlice.actions.setIsLoading,
+      creditsSlice.actions.initiateTransitionScene,
+      creditsSlice.actions.initiateCreditsScene,
+      creditsSlice.actions.selectCredit,
+      creditsSlice.actions.setIsInitialized,
+      creditsSlice.actions.updateCredit,
+      creditsSlice.actions.deleteCredit,
+      creditsSlice.actions.deleteCreditsHistoryEntry,
+      creditsSlice.actions.updateCreditsHistoryEntry,
+    );
     return (
       (currentState as RootState).undoable.present.credits !==
         (previousState as RootState).undoable.present.credits &&
-      action.type !== "credits/initiateCreditsList" &&
-      action.type !== "credits/initiateCreditsHistory" &&
-      action.type !== "credits/initiatePublishedCreditsList" &&
-      action.type !== "credits/updateCreditsListFromRemote" &&
-      action.type !== "credits/setHasPendingUpdate" &&
-      action.type !== "credits/updateInitialList" &&
-      action.type !== "credits/setIsLoading" &&
-      action.type !== "credits/initiateTransitionScene" &&
-      action.type !== "credits/initiateCreditsScene" &&
-      action.type !== "credits/selectCredit" &&
-      action.type !== "credits/setIsInitialized" &&
-      action.type !== "credits/updateCredit" &&
-      action.type !== "credits/deleteCredit" &&
-      action.type !== "credits/deleteCreditsHistoryEntry" &&
-      action.type !== "credits/updateCreditsHistoryEntry" &&
+      !excluded(action) &&
       action.type !== "RESET"
     );
   },
@@ -704,8 +733,7 @@ listenerMiddleware.startListening({
       state.undoable.present.credits;
 
     if (
-      action.type ===
-        creditsSlice.actions.updatePublishedCreditsList.toString() &&
+      creditsSlice.actions.updatePublishedCreditsList.match(action) &&
       globalFireDbInfo.db &&
       globalFireDbInfo.database
     ) {
@@ -778,12 +806,15 @@ listenerMiddleware.startListening({
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
 
+    const excluded = isAnyOf(
+      mediaItemsSlice.actions.initiateMediaList,
+      mediaItemsSlice.actions.updateMediaListFromRemote,
+      mediaItemsSlice.actions.setIsInitialized,
+    );
     return (
       (currentState as RootState).media !==
         (previousState as RootState).media &&
-      action.type !== "media/initiateMediaList" &&
-      action.type !== "media/updateMediaListFromRemote" &&
-      action.type !== "media/setIsInitialized" &&
+      !excluded(action) &&
       action.type !== "RESET"
     );
   },
@@ -812,14 +843,12 @@ listenerMiddleware.startListening({
   },
 });
 
-// handle video cache sync when videos are set on items
+// handle media cache sync when media is set on items
 listenerMiddleware.startListening({
-  predicate: (action) => {
-    return (
-      action.type === "item/updateSlideBackground" ||
-      action.type === "item/updateAllSlideBackgrounds"
-    );
-  },
+  predicate: isAnyOf(
+    updateSlideBackground.fulfilled,
+    updateAllSlideBackgrounds.fulfilled,
+  ),
   effect: async (action, listenerApi) => {
     // Only sync in Electron
     if (!window.electronAPI) return;
@@ -840,7 +869,7 @@ listenerMiddleware.startListening({
     await listenerApi.delay(2000);
 
     try {
-      // Get current state to extract video URLs from Redux state (not database)
+      // Get current state to extract media URLs from Redux state (not database)
       // This ensures we get the latest video even if database save is still pending
       const state = listenerApi.getState() as RootState;
       const currentItem = state.undoable.present.item;
@@ -889,32 +918,35 @@ listenerMiddleware.startListening({
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
 
+    const excluded = isAnyOf(
+      preferencesSlice.actions.initiatePreferences,
+      preferencesSlice.actions.initiateMonitorSettings,
+      preferencesSlice.actions.initiateQuickLinks,
+      preferencesSlice.actions.increaseSlides,
+      preferencesSlice.actions.increaseSlidesMobile,
+      preferencesSlice.actions.decreaseSlides,
+      preferencesSlice.actions.decreaseSlidesMobile,
+      preferencesSlice.actions.setSlides,
+      preferencesSlice.actions.setSlidesMobile,
+      preferencesSlice.actions.increaseFormattedLyrics,
+      preferencesSlice.actions.decreaseFormattedLyrics,
+      preferencesSlice.actions.setFormattedLyrics,
+      preferencesSlice.actions.setMediaItems,
+      preferencesSlice.actions.setShouldShowItemEditor,
+      preferencesSlice.actions.setIsMediaExpanded,
+      preferencesSlice.actions.setShouldShowStreamFormat,
+      preferencesSlice.actions.setIsLoading,
+      preferencesSlice.actions.setSelectedPreference,
+      preferencesSlice.actions.setSelectedQuickLink,
+      preferencesSlice.actions.setTab,
+      preferencesSlice.actions.setScrollbarWidth,
+      preferencesSlice.actions.updatePreferencesFromRemote,
+      preferencesSlice.actions.setIsInitialized,
+    );
     return (
       (currentState as RootState).undoable.present.preferences !==
         (previousState as RootState).undoable.present.preferences &&
-      action.type !== "preferences/initiatePreferences" &&
-      action.type !== "preferences/initiateMonitorSettings" &&
-      action.type !== "preferences/initiateQuickLinks" &&
-      action.type !== "preferences/increaseSlides" &&
-      action.type !== "preferences/increaseSlidesMobile" &&
-      action.type !== "preferences/decreaseSlides" &&
-      action.type !== "preferences/decreaseSlidesMobile" &&
-      action.type !== "preferences/setSlides" &&
-      action.type !== "preferences/setSlidesMobile" &&
-      action.type !== "preferences/increaseFormattedLyrics" &&
-      action.type !== "preferences/decreaseFormattedLyrics" &&
-      action.type !== "preferences/setFormattedLyrics" &&
-      action.type !== "preferences/setMediaItems" &&
-      action.type !== "preferences/setShouldShowItemEditor" &&
-      action.type !== "preferences/setIsMediaExpanded" &&
-      action.type !== "preferences/setShouldShowStreamFormat" &&
-      action.type !== "preferences/setIsLoading" &&
-      action.type !== "preferences/setSelectedPreference" &&
-      action.type !== "preferences/setSelectedQuickLink" &&
-      action.type !== "preferences/setTab" &&
-      action.type !== "preferences/setScrollbarWidth" &&
-      action.type !== "preferences/updatePreferencesFromRemote" &&
-      action.type !== "preferences/setIsInitialized" &&
+      !excluded(action) &&
       action.type !== "RESET"
     );
   },
@@ -980,15 +1012,18 @@ listenerMiddleware.startListening({
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
 
+    const excluded = isAnyOf(
+      overlayTemplatesSlice.actions.initiateTemplates,
+      overlayTemplatesSlice.actions.updateTemplatesFromRemote,
+      overlayTemplatesSlice.actions.setIsLoading,
+      overlayTemplatesSlice.actions.setHasPendingUpdate,
+      overlayTemplatesSlice.actions.forceUpdate,
+      overlayTemplatesSlice.actions.setIsInitialized,
+    );
     return (
       (currentState as RootState).undoable.present.overlayTemplates !==
         (previousState as RootState).undoable.present.overlayTemplates &&
-      action.type !== "overlayTemplates/initiateTemplates" &&
-      action.type !== "overlayTemplates/updateTemplatesFromRemote" &&
-      action.type !== "overlayTemplates/setIsLoading" &&
-      action.type !== "overlayTemplates/setHasPendingUpdate" &&
-      action.type !== "overlayTemplates/forceUpdate" &&
-      action.type !== "overlayTemplates/setIsInitialized" &&
+      !excluded(action) &&
       !!(currentState as RootState).undoable.present.overlayTemplates
         ?.hasPendingUpdate &&
       action.type !== "RESET"
@@ -1039,12 +1074,15 @@ listenerMiddleware.startListening({
 // handle updating service times
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const excluded = isAnyOf(
+      serviceTimesSlice.actions.initiateServices,
+      serviceTimesSlice.actions.updateServicesFromRemote,
+      serviceTimesSlice.actions.setIsInitialized,
+    );
     return (
       (currentState as RootState).undoable.present.serviceTimes !==
         (previousState as RootState).undoable.present.serviceTimes &&
-      action.type !== "serviceTimes/initiateServices" &&
-      action.type !== "serviceTimes/updateServicesFromRemote" &&
-      action.type !== "serviceTimes/setIsInitialized" &&
+      !excluded(action) &&
       action.type !== "RESET"
     );
   },
@@ -1128,9 +1166,7 @@ listenerMiddleware.startListening({
 
 // Ensure firebase has updated services on load
 listenerMiddleware.startListening({
-  predicate: (action, currentState, previousState) => {
-    return action.type === "serviceTimes/initiateServices";
-  },
+  actionCreator: serviceTimesSlice.actions.initiateServices,
 
   effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
@@ -1163,22 +1199,25 @@ listenerMiddleware.startListening({
 // handle updating presentation
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    const excluded = isAnyOf(
+      presentationSlice.actions.toggleProjectorTransmitting,
+      presentationSlice.actions.toggleMonitorTransmitting,
+      presentationSlice.actions.toggleStreamTransmitting,
+      presentationSlice.actions.setTransmitToAll,
+      presentationSlice.actions.updateProjectorFromRemote,
+      presentationSlice.actions.updateMonitorFromRemote,
+      presentationSlice.actions.updateStreamFromRemote,
+      presentationSlice.actions.updateParticipantOverlayInfoFromRemote,
+      presentationSlice.actions.updateStbOverlayInfoFromRemote,
+      presentationSlice.actions.updateBibleDisplayInfoFromRemote,
+      presentationSlice.actions.updateQrCodeOverlayInfoFromRemote,
+      presentationSlice.actions.updateImageOverlayInfoFromRemote,
+      presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote,
+    );
     return (
       (currentState as RootState).presentation !==
         (previousState as RootState).presentation &&
-      action.type !== "presentation/toggleProjectorTransmitting" &&
-      action.type !== "presentation/toggleMonitorTransmitting" &&
-      action.type !== "presentation/toggleStreamTransmitting" &&
-      action.type !== "presentation/setTransmitToAll" &&
-      action.type !== "presentation/updateProjectorFromRemote" &&
-      action.type !== "presentation/updateMonitorFromRemote" &&
-      action.type !== "presentation/updateStreamFromRemote" &&
-      action.type !== "presentation/updateParticipantOverlayInfoFromRemote" &&
-      action.type !== "presentation/updateStbOverlayInfoFromRemote" &&
-      action.type !== "presentation/updateBibleDisplayInfoFromRemote" &&
-      action.type !== "presentation/updateQrCodeOverlayInfoFromRemote" &&
-      action.type !== "presentation/updateImageOverlayInfoFromRemote" &&
-      action.type !== "presentation/updateFormattedTextDisplayInfoFromRemote" &&
+      !excluded(action) &&
       action.type !== "RESET"
     );
   },
