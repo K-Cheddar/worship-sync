@@ -1,7 +1,7 @@
 {
   "name": "worship-sync-server",
   "private": true,
-  "version": "1.36.6",
+  "version": "1.37.0",
   "scripts": {
     "start": "node server.js",
     "heroku-postbuild": "cd client && npm ci && npm run build",

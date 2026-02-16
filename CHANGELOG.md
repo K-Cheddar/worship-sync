@@ -1,3 +1,15 @@
+# [1.37.0](https://github.com/K-Cheddar/worship-sync/compare/v1.36.6...v1.37.0) (2026-02-16)
+
+
+### Bug Fixes
+
+* Correct display handling and existing overlay management ([6a36289](https://github.com/K-Cheddar/worship-sync/commit/6a362893061f4ac8a1352fe674f55c14f6a222f2))
+
+
+### Features
+
+* Keep active item up to date ([337c9d2](https://github.com/K-Cheddar/worship-sync/commit/337c9d261f32b59f7b964afe616831e8e54b919c))
+
 ## [1.36.6](https://github.com/K-Cheddar/worship-sync/compare/v1.36.5...v1.36.6) (2026-02-14)
 
 
