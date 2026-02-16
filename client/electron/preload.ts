@@ -55,11 +55,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("update-error", listener);
   },
 
-  // Video cache
-  downloadVideo: (url: string) => ipcRenderer.invoke("download-video", url),
-  getLocalVideoPath: (url: string) => ipcRenderer.invoke("get-local-video-path", url),
-  cleanupUnusedVideos: (usedUrls: string[]) => ipcRenderer.invoke("cleanup-unused-videos", usedUrls),
-  syncVideoCache: (videoUrls: string[]) => ipcRenderer.invoke("sync-video-cache", videoUrls),
+  // Media cache
+  downloadMedia: (url: string) => ipcRenderer.invoke("download-media", url),
+  getLocalMediaPath: (url: string) => ipcRenderer.invoke("get-local-media-path", url),
+  cleanupUnusedMedia: (usedUrls: string[]) => ipcRenderer.invoke("cleanup-unused-media", usedUrls),
+  syncMediaCache: (mediaUrls: string[]) => ipcRenderer.invoke("sync-media-cache", mediaUrls),
   
   // Route persistence
   saveLastRoute: (route: string) => ipcRenderer.invoke("save-last-route", route),

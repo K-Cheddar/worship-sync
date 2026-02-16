@@ -3,9 +3,9 @@ import {
   Plus,
   Minus,
   Maximize2,
-  Type,
+  ALargeSmall,
   SunMedium,
-  TextQuote,
+  Baseline,
   Timer,
   BookOpen,
   AlignLeft,
@@ -38,7 +38,6 @@ import RadioButton from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
 import { formatFree } from "../../../utils/overflow";
 import { GlobalInfoContext } from "../../../context/globalInfo";
-import { ControllerInfoContext } from "../../../context/controllerInfo";
 
 const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
@@ -55,7 +54,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const [isItalic, setIsItalic] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { hostId } = useContext(GlobalInfoContext) || {};
-  const { isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const item = useSelector((state) => state.undoable.present.item);
   const { slides, selectedSlide, selectedBox, timerInfo, type } = item;
@@ -152,7 +150,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         updatedProperties: { fontColor: val },
         item,
         shouldApplyToAll: true,
-        isMobile,
       });
       updateItem(updatedItem);
     }, 250);
@@ -196,7 +193,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       item,
       shouldFormatItem: true,
       shouldApplyToAll: true,
-      isMobile,
     });
     updateItem(updatedItem);
   };
@@ -238,7 +234,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const controls = (
     <>
       <div className="flex gap-1 items-center flex-wrap justify-center">
-        <Icon svg={Type} className="border-b border-black" />
+        <Icon svg={ALargeSmall} className="border-b border-black" />
         <Button
           svg={Minus}
           variant="tertiary"
@@ -265,7 +261,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
             <Button
               variant="tertiary"
               className="border-b-2"
-              svg={TextQuote}
+              svg={Baseline}
               style={{ borderColor: fontColor }}
             />
           }
@@ -427,7 +423,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onChange={(val) => _updateKeepAspectRatio(val)}
         />
       )}
-      <Button svg={Type} iconSize="lg" className="invisible" />
+      <Button svg={ALargeSmall} iconSize="lg" className="invisible" />
     </>
   );
 

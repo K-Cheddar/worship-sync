@@ -68,8 +68,8 @@ import Preferences from "./Preferences";
 import QuickLinks from "./QuickLinks";
 import MonitorSettings from "./MonitorSettings";
 import MonitorControls from "./MonitorControls";
-import { useVideoCache } from "../../hooks/useVideoCache";
-import { extractVideoUrlsFromItem, extractAllVideoUrlsFromOutlines } from "../../utils/videoCacheUtils";
+import { useMediaCache } from "../../hooks/useMediaCache";
+import { extractMediaUrlsFromItem, extractAllMediaUrlsFromOutlines } from "../../utils/mediaCacheUtils";
 import {
   initiateMonitorSettings,
   initiatePreferences,
@@ -265,14 +265,14 @@ const Controller = () => {
 
   // Get item state to watch for changes
   const item = useSelector((state: RootState) => state.undoable.present.item);
-  const { syncVideoCache, preloadOutlineVideos } = useVideoCache();
+  const { syncMediaCache, preloadOutlineMedia } = useMediaCache();
   const itemSyncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const previousVideoUrlsRef = useRef<Set<string>>(new Set());
 
   // Extract video URLs from current item (memoized to avoid recalculation)
   const currentVideoUrls = useMemo(() => {
     if (!item._id) return new Set<string>();
-    const urls = extractVideoUrlsFromItem(item);
+    const urls = extractMediaUrlsFromItem(item);
     return new Set(urls);
   }, [item]);
 
@@ -281,77 +281,71 @@ const Controller = () => {
     if (!db || !window.electronAPI || !activeList?._id) return;
 
     // Preload videos from the active outline in the background
-    preloadOutlineVideos(activeList._id).catch((error) => {
-      console.warn("Error preloading active outline videos:", error);
+    preloadOutlineMedia(activeList._id).catch((error) => {
+      console.warn("Error preloading active outline media:", error);
     });
-  }, [activeList?._id, db, preloadOutlineVideos]);
+  }, [activeList?._id, db, preloadOutlineMedia]);
 
-  // Sync video cache when database is ready (only in Electron)
+  // Sync media cache when database is ready (only in Electron)
   useEffect(() => {
     if (!db || !window.electronAPI) return;
 
-    const syncVideos = async () => {
+    const syncMedia = async () => {
       try {
-        const videoUrls = await extractAllVideoUrlsFromOutlines(db);
-        const urlArray = Array.from(videoUrls);
+        const mediaUrls = await extractAllMediaUrlsFromOutlines(db);
+        const urlArray = Array.from(mediaUrls);
 
         const electronAPI = window.electronAPI as unknown as {
-          syncVideoCache: (urls: string[]) => Promise<{ downloaded: number; cleaned: number }>
+          syncMediaCache: (urls: string[]) => Promise<{ downloaded: number; cleaned: number }>
         };
 
         if (urlArray.length > 0) {
-          const result = await electronAPI.syncVideoCache(urlArray);
+          const result = await electronAPI.syncMediaCache(urlArray);
           console.log(
-            `Video cache sync: ${result.downloaded} downloaded, ${result.cleaned} cleaned`
+            `Media cache sync: ${result.downloaded} downloaded, ${result.cleaned} cleaned`
           );
         } else {
-          // No videos, just cleanup
-          await electronAPI.syncVideoCache([]);
+          await electronAPI.syncMediaCache([]);
         }
       } catch (error) {
-        console.error("Error syncing video cache:", error);
+        console.error("Error syncing media cache:", error);
       }
     };
 
     // Delay sync slightly to ensure database is fully loaded
-    const timeoutId = setTimeout(syncVideos, 2000);
+    const timeoutId = setTimeout(syncMedia, 2000);
     return () => clearTimeout(timeoutId);
   }, [db]);
 
-  // Sync video cache when item video URLs change (debounced, only in Electron)
+  // Sync media cache when item media URLs change (debounced, only in Electron)
   useEffect(() => {
     if (!db || !window.electronAPI || !item._id) return;
 
-    // Check if video URLs actually changed
     const urlsChanged =
       currentVideoUrls.size !== previousVideoUrlsRef.current.size ||
       Array.from(currentVideoUrls).some((url) => !previousVideoUrlsRef.current.has(url)) ||
       Array.from(previousVideoUrlsRef.current).some((url) => !currentVideoUrls.has(url));
 
     if (urlsChanged) {
-      // Update ref for next comparison
       previousVideoUrlsRef.current = new Set(currentVideoUrls);
 
-      // Clear existing timeout
       if (itemSyncTimeoutRef.current) {
         clearTimeout(itemSyncTimeoutRef.current);
       }
 
-      // Debounce sync - wait 2 seconds after last change (longer than media list since items save with delay)
       itemSyncTimeoutRef.current = setTimeout(() => {
-        syncVideoCache().catch((error: unknown) => {
-          console.warn("Error syncing video cache after item change:", error);
+        syncMediaCache().catch((error: unknown) => {
+          console.warn("Error syncing media cache after item change:", error);
         });
       }, 2000);
     }
 
-    // Cleanup timeout on unmount
     return () => {
       if (itemSyncTimeoutRef.current) {
         clearTimeout(itemSyncTimeoutRef.current);
       }
     };
-  }, [currentVideoUrls, item._id, db, syncVideoCache]);
+  }, [currentVideoUrls, item._id, db, syncMediaCache]);
 
   useEffect(() => {
     const getItemList = async () => {

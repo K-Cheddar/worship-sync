@@ -248,6 +248,8 @@ export type Presentation = {
   stbOverlayInfo?: OverlayInfo;
   bibleDisplayInfo?: BibleDisplayInfo;
   timerId?: string;
+  /** Item _id so we can look up slides (e.g. wrap-up slide when timer expires) */
+  itemId?: string;
   qrCodeOverlayInfo?: OverlayInfo;
   imageOverlayInfo?: OverlayInfo;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;

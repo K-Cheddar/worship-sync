@@ -257,6 +257,7 @@ const ItemSlides = () => {
             type,
             name,
             timerId: timerInfo?.id,
+            itemId: _id,
           })
         );
       }
@@ -271,6 +272,7 @@ const ItemSlides = () => {
       timerInfo?.id,
       getBibleInfo,
       slides,
+      _id,
     ]
   );
 

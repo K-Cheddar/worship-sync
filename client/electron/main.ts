@@ -32,7 +32,7 @@ import {
   setDisplayWindow,
   hasDisplayWindow,
 } from "./displayWindowStore";
-import { VideoCacheManager } from "./videoCache";
+import { MediaCacheManager } from "./mediaCache";
 
 const { autoUpdater } = updaterPkg;
 
@@ -110,7 +110,7 @@ if (isDev) {
 // Register custom protocol scheme as privileged (must be done before app is ready)
 protocol.registerSchemesAsPrivileged([
   {
-    scheme: "video-cache",
+    scheme: "media-cache",
     privileges: {
       standard: true,
       secure: true,
@@ -129,7 +129,7 @@ if (!app.isPackaged) {
 
 let mainWindow: BrowserWindow | null = null;
 let windowStateManager: WindowStateManager;
-let videoCacheManager: VideoCacheManager;
+let mediaCacheManager: MediaCacheManager;
 let isUploadInProgress = false;
 let isAppClosing = false;
 
@@ -358,9 +358,9 @@ app.whenReady().then(() => {
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app; " +
             "style-src 'self' 'unsafe-inline' data:; " +
             "font-src 'self' data:; " +
-            "img-src 'self' data: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com; " +
-            "media-src 'self' blob: video-cache:; " +
-            "connect-src 'self' blob: video-cache: " +
+            "img-src 'self' data: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com; " +
+            "media-src 'self' blob: media-cache:; " +
+            "connect-src 'self' blob: media-cache: " +
             devConnectSrc +
             "https://*.worshipsync.net " +
             "https://*.firebaseio.com wss://*.firebaseio.com " +
@@ -379,14 +379,46 @@ app.whenReady().then(() => {
     });
   });
 
-  // Register protocol handler for video-cache:// to serve files from filesystem
-  const cacheDir = join(app.getPath("userData"), "video-cache");
+  // Register protocol handler for media-cache:// to serve files from filesystem
+  const cacheDir = join(app.getPath("userData"), "media-cache");
 
-  protocol.handle("video-cache", async (request) => {
+  const getMediaMimeType = (filename: string): string => {
+    const ext = filename.split(".").pop()?.toLowerCase();
+    switch (ext) {
+      // Video
+      case "webm":
+        return "video/webm";
+      case "mov":
+        return "video/quicktime";
+      case "avi":
+        return "video/x-msvideo";
+      case "mkv":
+        return "video/x-matroska";
+      // Image
+      case "jpg":
+      case "jpeg":
+        return "image/jpeg";
+      case "png":
+        return "image/png";
+      case "gif":
+        return "image/gif";
+      case "webp":
+        return "image/webp";
+      case "svg":
+        return "image/svg+xml";
+      case "avif":
+        return "image/avif";
+      case "mp4":
+      default:
+        return "video/mp4";
+    }
+  };
+
+  protocol.handle("media-cache", async (request) => {
     try {
       const url = new URL(request.url);
-      // For video-cache:// URLs, filename can be in hostname (video-cache://filename.mp4)
-      // or pathname (video-cache:///filename.mp4)
+      // For media-cache:// URLs, filename can be in hostname (media-cache://filename.mp4)
+      // or pathname (media-cache:///filename.mp4)
       // Extract from pathname first, then hostname, or parse from the full URL as fallback
       let filename = url.pathname.replace(/^\//, "").replace(/\/$/, "");
       if (!filename) {
@@ -395,7 +427,7 @@ app.whenReady().then(() => {
       // If still empty, try to extract from the URL string directly
       if (!filename) {
         const urlMatch = request.url.match(
-          new RegExp("video-cache:///?([^/?#]+)")
+          new RegExp("media-cache:///?([^/?#]+)")
         );
         if (urlMatch) {
           filename = urlMatch[1];
@@ -406,6 +438,12 @@ app.whenReady().then(() => {
       if (!existsSync(filePath)) {
         return new Response("Not Found", { status: 404 });
       }
+
+      // Use stored content-type when available (handles extension-less image URLs),
+      // otherwise fall back to extension-based detection.
+      const contentType =
+        mediaCacheManager?.getContentTypeForFile(filename) ||
+        getMediaMimeType(filename);
 
       const stat = statSync(filePath);
       const fileSize = stat.size;
@@ -472,7 +510,7 @@ app.whenReady().then(() => {
         return new Response(webStream, {
           status: 206,
           headers: {
-            "Content-Type": "video/mp4",
+            "Content-Type": contentType,
             "Content-Length": chunkSize.toString(),
             "Content-Range": `bytes ${start}-${end}/${fileSize}`,
             "Accept-Ranges": "bytes",
@@ -531,7 +569,7 @@ app.whenReady().then(() => {
       return new Response(webStream, {
         status: 200,
         headers: {
-          "Content-Type": "video/mp4",
+          "Content-Type": contentType,
           "Content-Length": fileSize.toString(),
           "Accept-Ranges": "bytes",
         },
@@ -543,7 +581,7 @@ app.whenReady().then(() => {
   });
 
   windowStateManager = new WindowStateManager();
-  videoCacheManager = new VideoCacheManager();
+  mediaCacheManager = new MediaCacheManager();
   createWindow();
 
   // Configure auto-updater and check before boot (only in production)
@@ -774,10 +812,9 @@ const moveWindowToDisplay = (
     height: targetDisplay.bounds.height,
   });
 
-  // Ensure it's fullscreen (in case it was somehow not)
-  if (!window.isFullScreen()) {
-    window.setFullScreen(true);
-  }
+  // Re-assert fullscreen after moving displays to avoid Windows shell UI artifacts.
+  window.setFullScreen(false);
+  window.setFullScreen(true);
 
   windowStateManager.saveWindowState(windowType, window);
   return true;
@@ -812,24 +849,24 @@ ipcMain.handle("get-window-states", () => {
   };
 });
 
-// Video cache IPC handlers
-ipcMain.handle("download-video", async (_event, url: string) => {
-  if (!videoCacheManager) {
+// Media cache IPC handlers
+ipcMain.handle("download-media", async (_event, url: string) => {
+  if (!mediaCacheManager) {
     return null;
   }
   try {
-    return await videoCacheManager.downloadVideo(url);
+    return await mediaCacheManager.downloadMedia(url);
   } catch (error) {
     console.error("Error downloading video:", error);
     return null;
   }
 });
 
-ipcMain.handle("get-local-video-path", (_event, url: string) => {
-  if (!videoCacheManager) {
+ipcMain.handle("get-local-media-path", (_event, url: string) => {
+  if (!mediaCacheManager) {
     return null;
   }
-  const localPath = videoCacheManager.getLocalPath(url);
+  const localPath = mediaCacheManager.getLocalPath(url);
   if (!localPath) {
     return null;
   }
@@ -839,45 +876,56 @@ ipcMain.handle("get-local-video-path", (_event, url: string) => {
     return localPath;
   }
 
-  // Convert file path to video-cache:// protocol URL
+  // Convert file path to media-cache:// protocol URL
   // Extract just the filename from the path
   const filename = localPath.split(/[/\\]/).pop();
   if (filename) {
-    return `video-cache://${filename}`;
+    return `media-cache://${filename}`;
   }
 
   return null;
 });
 
-ipcMain.handle("cleanup-unused-videos", async (_event, usedUrls: string[]) => {
-  if (!videoCacheManager) {
+ipcMain.handle("cleanup-unused-media", async (_event, usedUrls: string[]) => {
+  if (!mediaCacheManager) {
     return;
   }
   try {
-    await videoCacheManager.cleanupUnusedVideos(new Set(usedUrls));
+    // Normalize URLs to cache keys for consistent matching
+    const normalizedUrls = new Set<string>();
+    for (const url of usedUrls) {
+      const cacheKey = mediaCacheManager.getCacheKey(url);
+      if (cacheKey) normalizedUrls.add(cacheKey);
+    }
+    await mediaCacheManager.cleanupUnusedMedia(normalizedUrls);
   } catch (error) {
     console.error("Error cleaning up videos:", error);
   }
 });
 
-ipcMain.handle("sync-video-cache", async (_event, videoUrls: string[]) => {
-  if (!videoCacheManager) {
+ipcMain.handle("sync-media-cache", async (_event, videoUrls: string[]) => {
+  if (!mediaCacheManager) {
     return { downloaded: 0, cleaned: 0 };
   }
   try {
-    const usedUrls = new Set(videoUrls);
+    // Normalize URLs to cache keys so cleanup matches the same keys used by downloadMedia
+    const usedUrls = new Set<string>();
+    for (const url of videoUrls) {
+      const cacheKey = mediaCacheManager.getCacheKey(url);
+      if (cacheKey) usedUrls.add(cacheKey);
+    }
     let downloaded = 0;
 
     // Download all videos
     for (const url of videoUrls) {
-      const localPath = videoCacheManager.getLocalPath(url);
+      const localPath = mediaCacheManager.getLocalPath(url);
       if (!localPath) {
         try {
-          const downloadedPath = await videoCacheManager.downloadVideo(url);
+          const downloadedPath = await mediaCacheManager.downloadMedia(url);
           if (downloadedPath) {
             downloaded++;
           }
-          // If downloadVideo returns null (e.g., 404), it's handled gracefully
+          // If downloadMedia returns null (e.g., 404), it's handled gracefully
         } catch (error) {
           // Log but continue - some videos might not be downloadable
           console.warn(`Could not download video ${url}:`, error);
@@ -886,9 +934,9 @@ ipcMain.handle("sync-video-cache", async (_event, videoUrls: string[]) => {
     }
 
     // Clean up unused videos
-    const beforeCleanup = videoCacheManager.getAllCachedUrls().length;
-    await videoCacheManager.cleanupUnusedVideos(usedUrls);
-    const afterCleanup = videoCacheManager.getAllCachedUrls().length;
+    const beforeCleanup = mediaCacheManager.getAllCachedUrls().length;
+    await mediaCacheManager.cleanupUnusedMedia(usedUrls);
+    const afterCleanup = mediaCacheManager.getAllCachedUrls().length;
     const cleaned = beforeCleanup - afterCleanup;
 
     return { downloaded, cleaned };

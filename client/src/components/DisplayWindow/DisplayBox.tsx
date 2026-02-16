@@ -7,6 +7,7 @@ import TimerDisplay from "./TimerDisplay";
 import VerseDisplay from "./VerseDisplay";
 import NowDisplay from "./NowDisplay";
 import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "../../constants";
+import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 
 type DisplayBoxProps = {
   prevBox?: Box;
@@ -57,7 +58,8 @@ const DisplayBox = ({
   const background = box.background;
   const shouldShowBackground = showBackground && background;
   const videoPlaceholderImage = box.mediaInfo?.placeholderImage;
-  const image = isVideoBg ? videoPlaceholderImage : background;
+  const rawImage = isVideoBg ? videoPlaceholderImage : background;
+  const image = useCachedMediaUrl(rawImage);
   const targetCurrentImgOpacity = shouldImageBeHidden ? 0 : 1;
 
   useGSAP(
