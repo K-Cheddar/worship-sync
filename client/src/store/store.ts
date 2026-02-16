@@ -50,7 +50,7 @@ import {
   Presentation,
   TimerInfo,
 } from "../types";
-import { allDocsSlice } from "./allDocsSlice";
+import { allDocsSlice, upsertItemInAllDocs } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
 import { timersSlice, addTimer, updateTimerFromRemote } from "./timersSlice";
 import { overlayTemplatesSlice } from "./overlayTemplatesSlice";
@@ -144,9 +144,11 @@ const excludedActions: string[] = [
   overlaySlice.actions.selectOverlay.toString(),
   timersSlice.actions.syncTimersFromRemote.toString(),
   timersSlice.actions.setShouldUpdateTimers.toString(),
+  allDocsSlice.actions.updateAllBibleDocs.toString(),
   allDocsSlice.actions.updateAllFreeFormDocs.toString(),
   allDocsSlice.actions.updateAllSongDocs.toString(),
   allDocsSlice.actions.updateAllTimerDocs.toString(),
+  allDocsSlice.actions.upsertItemInAllDocs.toString(),
   allItemsSlice.actions.initiateAllItemsList.toString(),
   overlayTemplatesSlice.actions.initiateTemplates.toString(),
   overlayTemplatesSlice.actions.updateTemplatesFromRemote.toString(),
@@ -226,7 +228,7 @@ listenerMiddleware.startListening({
       state = listenerApi.getOriginalState() as RootState;
     } else {
       listenerApi.cancelActiveListeners();
-      await listenerApi.delay(2500);
+      await listenerApi.delay(1500);
     }
 
     listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
@@ -250,6 +252,8 @@ listenerMiddleware.startListening({
     };
     db.put(db_item);
 
+    listenerApi.dispatch(upsertItemInAllDocs(db_item));
+
     // Local machine updates
     safePostMessage({
       type: "update",
@@ -258,6 +262,35 @@ listenerMiddleware.startListening({
         hostId: globalHostId,
       },
     });
+  },
+});
+
+// When allDocs is fully refreshed (e.g. after remote sync), sync the active item so the UI shows the latest.
+// We only run on full-refresh actions, NOT on upsertItemInAllDocs: the latter comes from our own thunks and
+// the active item is already that doc, so setActiveItem would be redundant and could contribute to loops.
+listenerMiddleware.startListening({
+  predicate: (action) =>
+    action.type === "allDocs/updateAllSongDocs" ||
+    action.type === "allDocs/updateAllFreeFormDocs" ||
+    action.type === "allDocs/updateAllTimerDocs" ||
+    action.type === "allDocs/updateAllBibleDocs",
+  effect: (action, listenerApi) => {
+    const state = listenerApi.getState() as RootState;
+    const currentItem = state.undoable.present.item;
+    const { _id: activeId, listId } = currentItem;
+    if (!activeId) return;
+
+    const { allSongDocs, allFreeFormDocs, allTimerDocs, allBibleDocs } =
+      state.allDocs;
+    const doc =
+      allSongDocs.find((d) => d._id === activeId) ??
+      allFreeFormDocs.find((d) => d._id === activeId) ??
+      allTimerDocs.find((d) => d._id === activeId) ??
+      allBibleDocs.find((d) => d._id === activeId);
+
+    if (doc) {
+      listenerApi.dispatch(itemSlice.actions.setActiveItem({ ...doc, listId }));
+    }
   },
 });
 
@@ -583,11 +616,24 @@ listenerMiddleware.startListening({
     if (monitorInfo.type !== "timer" || !monitorInfo.slide) return false;
     const itemId = monitorInfo.itemId ?? monitorInfo.timerId;
     if (!itemId) return false;
-    const currTimer = curr.timers.timers.find((t) => t.id === monitorInfo.timerId);
-    const prevTimer = prev.timers.timers.find((t) => t.id === monitorInfo.timerId);
-    if (!currTimer || currTimer.remainingTime !== 0 || currTimer.status !== "stopped") return false;
-    const justExpired = !prevTimer || prevTimer.remainingTime > 0 || prevTimer.status === "running";
-    const isTimerSlide = monitorInfo.slide?.boxes?.[1]?.words?.includes?.("{{timer}}");
+    const currTimer = curr.timers.timers.find(
+      (t) => t.id === monitorInfo.timerId,
+    );
+    const prevTimer = prev.timers.timers.find(
+      (t) => t.id === monitorInfo.timerId,
+    );
+    if (
+      !currTimer ||
+      currTimer.remainingTime !== 0 ||
+      currTimer.status !== "stopped"
+    )
+      return false;
+    const justExpired =
+      !prevTimer ||
+      prevTimer.remainingTime > 0 ||
+      prevTimer.status === "running";
+    const isTimerSlide =
+      monitorInfo.slide?.boxes?.[1]?.words?.includes?.("{{timer}}");
     return justExpired && !!isTimerSlide;
   },
   effect: async (action, listenerApi) => {
@@ -615,7 +661,7 @@ listenerMiddleware.startListening({
         type: monitorInfo.type,
         timerId: monitorInfo.timerId,
         itemId: monitorInfo.itemId,
-      })
+      }),
     );
   },
 });

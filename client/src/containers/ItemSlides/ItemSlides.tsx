@@ -272,6 +272,7 @@ const ItemSlides = () => {
       timerInfo?.id,
       getBibleInfo,
       slides,
+      _id,
     ]
   );
 

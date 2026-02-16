@@ -61,7 +61,8 @@ export const itemSlice = createSlice({
       state.shouldSkipTitle = action.payload.shouldSkipTitle || false;
       state.arrangements = action.payload.arrangements || [];
       state.slides = action.payload.slides || [];
-      state.formattedSections = action.payload.formattedSections || state.formattedSections;
+      state.formattedSections =
+        action.payload.formattedSections || state.formattedSections;
       state.bibleInfo = action.payload.bibleInfo || {
         book: "",
         chapter: "",
@@ -102,7 +103,10 @@ export const itemSlice = createSlice({
       state.bibleInfo = action.payload;
       state.hasPendingUpdate = true;
     },
-    _updateFormattedSections: (state, action: PayloadAction<FormattedSection[]>) => {
+    _updateFormattedSections: (
+      state,
+      action: PayloadAction<FormattedSection[]>,
+    ) => {
       state.formattedSections = [...action.payload];
       state.hasPendingUpdate = true;
     },
@@ -183,14 +187,14 @@ export const setName = createAsyncThunk(
       state,
       dispatch,
     });
-  }
+  },
 );
 
 export const setSelectedArrangement = createAsyncThunk(
   "item/setSelectedArrangement",
   async (args: { selectedArrangement: number }, { dispatch }) => {
     dispatch(_setSelectedArrangement(args.selectedArrangement));
-  }
+  },
 );
 
 export const updateBoxes = createAsyncThunk(
@@ -220,7 +224,7 @@ export const updateBoxes = createAsyncThunk(
     });
 
     dispatch(_updateSlides(slides));
-  }
+  },
 );
 
 export const updateArrangements = createAsyncThunk(
@@ -230,7 +234,7 @@ export const updateArrangements = createAsyncThunk(
       arrangements: Arrangment[];
       selectedArrangement?: number;
     },
-    { dispatch, getState }
+    { dispatch, getState },
   ) => {
     const { selectedArrangement: currentArrangement } =
       getState().undoable.present.item;
@@ -241,17 +245,17 @@ export const updateArrangements = createAsyncThunk(
     }
     dispatch(
       _updateSlides(
-        arrangements[selectedArrangement ?? currentArrangement].slides
-      )
+        arrangements[selectedArrangement ?? currentArrangement].slides,
+      ),
     );
-  }
+  },
 );
 
 export const updateAllSlideBackgrounds = createAsyncThunk(
   "item/updateAllSlideBackgrounds",
   async (
     args: { background: string; mediaInfo?: MediaType },
-    { dispatch, getState }
+    { dispatch, getState },
   ) => {
     const state = getState();
     const item = state.undoable.present.item;
@@ -303,14 +307,14 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
       state,
       dispatch,
     });
-  }
+  },
 );
 
 export const updateSlideBackground = createAsyncThunk(
   "item/updateSlideBackground",
   async (
     args: { background: string; mediaInfo?: MediaType },
-    { dispatch, getState }
+    { dispatch, getState },
   ) => {
     const state = getState();
     const item = state.undoable.present.item;
@@ -375,7 +379,7 @@ export const updateSlideBackground = createAsyncThunk(
         dispatch,
       });
     }
-  }
+  },
 );
 
 export const addSlide = createAsyncThunk(
@@ -384,7 +388,7 @@ export const addSlide = createAsyncThunk(
     const item = getState().undoable.present.item;
     const newSlides = [...item.slides, args.slide];
     dispatch(updateSlides({ slides: newSlides }));
-  }
+  },
 );
 
 export const removeSlide = createAsyncThunk(
@@ -393,27 +397,27 @@ export const removeSlide = createAsyncThunk(
     const item = getState().undoable.present.item;
     const newSlides = item.slides.filter((_, index) => index !== args.index);
     dispatch(updateSlides({ slides: newSlides }));
-  }
+  },
 );
 
 export const updateSlides = createAsyncThunk(
   "item/updateSlides",
   async (
     args: { slides: ItemSlideType[]; formattedSections?: FormattedSection[] },
-    { dispatch }
+    { dispatch },
   ) => {
     dispatch(_updateSlides(args.slides));
     if (args.formattedSections) {
       dispatch(_updateFormattedSections(args.formattedSections));
     }
-  }
+  },
 );
 
 export const updateBibleInfo = createAsyncThunk(
   "item/updateBibleInfo",
   async (args: { bibleInfo: BibleInfo }, { dispatch }) => {
     dispatch(_updateBibleInfo(args.bibleInfo));
-  }
+  },
 );
 
 export const {
