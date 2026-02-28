@@ -301,7 +301,20 @@ listenerMiddleware.startListening({
       allBibleDocs.find((d) => d._id === activeId);
 
     if (doc) {
-      listenerApi.dispatch(itemSlice.actions.setActiveItem({ ...doc, listId }));
+      // Preserve UI state when syncing active item from remote (DB docs don't carry slide/box selection).
+      const arrIndex = Math.min(currentItem.selectedArrangement ?? doc.selectedArrangement ?? 0, Math.max(0, (doc.arrangements?.length ?? 1) - 1));
+      const slideCount = doc.type === "song" && doc.arrangements?.length
+        ? (doc.arrangements[arrIndex]?.slides?.length ?? doc.slides?.length ?? 0)
+        : (doc.slides?.length ?? 0);
+      listenerApi.dispatch(
+        itemSlice.actions.setActiveItem({
+          ...doc,
+          listId,
+          selectedSlide: Math.min(currentItem.selectedSlide ?? 0, Math.max(0, slideCount - 1)),
+          selectedBox: currentItem.selectedBox ?? 1,
+          selectedArrangement: arrIndex,
+        })
+      );
     }
   },
 });
