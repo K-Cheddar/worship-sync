@@ -1,3 +1,10 @@
+## [1.37.1](https://github.com/K-Cheddar/worship-sync/compare/v1.37.0...v1.37.1) (2026-02-28)
+
+
+### Bug Fixes
+
+* Maintain selected slide when receiving remote updates ([11f5bec](https://github.com/K-Cheddar/worship-sync/commit/11f5bec8251e98ea7360d3efe2a14fc714ec1767))
+
 # [1.37.0](https://github.com/K-Cheddar/worship-sync/compare/v1.36.6...v1.37.0) (2026-02-16)
 
 
