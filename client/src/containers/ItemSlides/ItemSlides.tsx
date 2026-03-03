@@ -95,8 +95,12 @@ const ItemSlides = () => {
     return isLoading ? [] : _slides;
   }, [isLoading, __slides, arrangement?.slides]);
 
-  const { slidesPerRow, slidesPerRowMobile, shouldShowStreamFormat } =
-    useSelector((state: RootState) => state.undoable.present.preferences);
+  const {
+    slidesPerRow,
+    slidesPerRowMobile,
+    shouldShowStreamFormat,
+    monitorSettings: { showNextSlide: monitorShowNextSlide },
+  } = useSelector((state: RootState) => state.undoable.present.preferences);
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
@@ -251,13 +255,45 @@ const ItemSlides = () => {
       }
 
       if (shouldSendTo.monitor) {
+        let transitionDirection: "next" | "prev" | "jump";
+        if (index === selectedSlide + 1) transitionDirection = "next";
+        else if (index === selectedSlide - 1) transitionDirection = "prev";
+        else transitionDirection = "jump";
+        const canShowNextSlide =
+          (type === "song" || type === "bible" || type === "free") &&
+          monitorShowNextSlide &&
+          index + 1 < slides.length &&
+          (slide?.boxes ?? []).every(
+            (box, i) => i === 0 || box.height <= 55
+          );
+        const nextSlideSlide = canShowNextSlide ? slides[index + 1] : null;
+        const nextSlideForMonitor = nextSlideSlide
+          ? {
+            ...nextSlideSlide,
+            boxes: nextSlideSlide.monitorNextBandBoxes ?? nextSlideSlide.boxes,
+          }
+          : undefined;
+        // Only use band-formatted boxes when using next-slide layout; single-slide uses DisplayBox at 1080p
+        const slideForMonitor = {
+          ...slide,
+          boxes:
+            nextSlideForMonitor != null
+              ? slide.monitorCurrentBandBoxes ?? slide.boxes
+              : slide.boxes,
+        };
         dispatch(
           updateMonitor({
-            slide,
+            slide: slideForMonitor,
             type,
             name,
             timerId: timerInfo?.id,
             itemId: _id,
+            nextSlide: nextSlideForMonitor,
+            transitionDirection,
+            bibleInfoBox:
+              type === "bible" && nextSlideForMonitor
+                ? slide.boxes?.[2] ?? null
+                : undefined,
           })
         );
       }
@@ -267,12 +303,14 @@ const ItemSlides = () => {
       shouldSendTo.stream,
       shouldSendTo.projector,
       shouldSendTo.monitor,
+      monitorShowNextSlide,
       type,
       name,
       timerInfo?.id,
       getBibleInfo,
       slides,
       _id,
+      selectedSlide,
     ]
   );
 
@@ -510,6 +548,8 @@ const ItemSlides = () => {
   };
 
   // if (!arrangement && !hasSlides && type !== "free") return null;
+
+  console.log({ itemSlides: debouncedSlides })
 
   return (
     <ErrorBoundary>

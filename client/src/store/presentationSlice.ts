@@ -29,10 +29,22 @@ const initialState: PresentationState = {
     slide: null,
     displayType: "projector",
   },
-  prevMonitorInfo: { type: "", name: "", slide: null, displayType: "monitor" },
+  prevMonitorInfo: {
+    type: "",
+    name: "",
+    slide: null,
+    nextSlide: null,
+    displayType: "monitor",
+  },
   prevStreamInfo: { type: "", name: "", slide: null, displayType: "stream" },
   projectorInfo: { type: "", name: "", slide: null, displayType: "projector" },
-  monitorInfo: { type: "", name: "", slide: null, displayType: "monitor" },
+  monitorInfo: {
+    type: "",
+    name: "",
+    slide: null,
+    nextSlide: null,
+    displayType: "monitor",
+  },
   streamInfo: {
     type: "",
     name: "",
@@ -80,6 +92,7 @@ export const presentationSlice = createSlice({
         state.prevMonitorInfo.time = state.monitorInfo.time;
         state.prevMonitorInfo.timerId = state.monitorInfo.timerId;
         state.prevMonitorInfo.itemId = state.monitorInfo.itemId;
+        state.prevMonitorInfo.nextSlide = state.monitorInfo.nextSlide ?? null;
 
         state.monitorInfo.slide = action.payload.slide;
         state.monitorInfo.name = action.payload.name;
@@ -87,6 +100,10 @@ export const presentationSlice = createSlice({
         state.monitorInfo.timerId = action.payload.timerId;
         state.monitorInfo.itemId = action.payload.itemId;
         state.monitorInfo.time = Date.now();
+        state.monitorInfo.nextSlide =
+          action.payload.nextSlide !== undefined
+            ? action.payload.nextSlide
+            : null;
       }
       if (state.isStreamTransmitting) {
         // set previous info for cross animation
@@ -429,6 +446,7 @@ export const presentationSlice = createSlice({
       state.prevMonitorInfo.time = state.monitorInfo.time;
       state.prevMonitorInfo.timerId = state.monitorInfo.timerId;
       state.prevMonitorInfo.itemId = state.monitorInfo.itemId;
+      state.prevMonitorInfo.nextSlide = state.monitorInfo.nextSlide ?? null;
 
       state.monitorInfo = {
         ...initialState.monitorInfo,
@@ -600,6 +618,8 @@ export const presentationSlice = createSlice({
         state.prevMonitorInfo.time = state.monitorInfo.time;
         state.prevMonitorInfo.timerId = state.monitorInfo.timerId;
         state.prevMonitorInfo.itemId = state.monitorInfo.itemId;
+        state.prevMonitorInfo.nextSlide = state.monitorInfo.nextSlide ?? null;
+        state.prevMonitorInfo.bibleInfoBox = state.monitorInfo.bibleInfoBox;
 
         state.monitorInfo.slide = action.payload.slide;
         state.monitorInfo.name = action.payload.name;
@@ -607,6 +627,13 @@ export const presentationSlice = createSlice({
         state.monitorInfo.timerId = action.payload.timerId;
         state.monitorInfo.itemId = action.payload.itemId;
         state.monitorInfo.time = Date.now();
+        state.monitorInfo.nextSlide =
+          action.payload.nextSlide !== undefined
+            ? action.payload.nextSlide
+            : null;
+        state.monitorInfo.transitionDirection =
+          action.payload.transitionDirection;
+        state.monitorInfo.bibleInfoBox = action.payload.bibleInfoBox;
       }
     },
     updateMonitorFromRemote: (state, action: PayloadAction<Presentation>) => {
@@ -617,6 +644,8 @@ export const presentationSlice = createSlice({
       state.prevMonitorInfo.time = state.monitorInfo.time;
       state.prevMonitorInfo.timerId = state.monitorInfo.timerId;
       state.prevMonitorInfo.itemId = state.monitorInfo.itemId;
+      state.prevMonitorInfo.nextSlide = state.monitorInfo.nextSlide ?? null;
+      state.prevMonitorInfo.bibleInfoBox = state.monitorInfo.bibleInfoBox;
 
       state.monitorInfo.slide = action.payload.slide;
       state.monitorInfo.name = action.payload.name;
@@ -624,6 +653,13 @@ export const presentationSlice = createSlice({
       state.monitorInfo.time = action.payload.time;
       state.monitorInfo.timerId = action.payload.timerId;
       state.monitorInfo.itemId = action.payload.itemId;
+      state.monitorInfo.nextSlide =
+        action.payload.nextSlide !== undefined
+          ? action.payload.nextSlide
+          : null;
+      state.monitorInfo.transitionDirection =
+        action.payload.transitionDirection;
+      state.monitorInfo.bibleInfoBox = action.payload.bibleInfoBox;
     },
     updateStream: (
       state,

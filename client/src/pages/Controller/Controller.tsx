@@ -58,6 +58,7 @@ import {
   deleteUnusedHeadings,
   getAllOverlayHistory,
   getOverlaysByIds,
+  migrateFontSizesToDefaults,
   // formatAllSongs,
   // formatAllDocs,
   // formatAllItems,
@@ -89,6 +90,7 @@ import { useSyncOnReconnect } from "../../hooks";
 import cn from "classnames";
 import { CONTROLLER_PAGE_READY, RootState } from "../../store/store";
 import { useSyncRemoteTimers } from "../../hooks";
+import { migrateFontSizesToPixels } from "../../utils/dbUtils";
 
 // Here for future to implement resizable
 
@@ -201,19 +203,19 @@ const Controller = () => {
   }, [dispatch, db]);
 
   // Leaving this in case we need to reformat all songs in the db
-  // useEffect(() => {
-  // if (!db || !cloud) return;
-  // formatAllSongs(db, cloud);
-  // }, [db, cloud]);
+  useEffect(() => {
+    if (!db || !cloud) return;
+    // formatAllSongs(db, cloud);
+    // migrateFontSizesToDefaults(db);
+    // migrateFontSizesToPixels(db);
+  }, [db, cloud]);
 
   useEffect(() => {
     if (!db) return;
-    console.log("getting preferences", { access });
     const getPreferences = async () => {
       try {
         const preferences: DBPreferences | undefined =
           await db.get("preferences");
-        console.log("preferences", preferences);
         dispatch(
           initiatePreferences({
             preferences: preferences.preferences,

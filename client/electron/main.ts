@@ -359,8 +359,8 @@ app.whenReady().then(() => {
             "style-src 'self' 'unsafe-inline' data:; " +
             "font-src 'self' data:; " +
             "img-src 'self' data: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com; " +
-            "media-src 'self' blob: media-cache:; " +
-            "connect-src 'self' blob: media-cache: " +
+            "media-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com; " +
+            "connect-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com " +
             devConnectSrc +
             "https://*.worshipsync.net " +
             "https://*.firebaseio.com wss://*.firebaseio.com " +

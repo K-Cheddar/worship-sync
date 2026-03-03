@@ -7,9 +7,10 @@ import {
   setMonitorClockFontSize,
   setMonitorShowTimer,
   setMonitorShowClock,
+  setMonitorShowNextSlide,
   setMonitorTimerId,
+  setMonitorTimerFontSize,
 } from "../store/preferencesSlice";
-import { setMonitorTimerFontSize } from "../store/preferencesSlice";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 import { capitalizeFirstLetter } from "../utils/generalUtils";
 
@@ -36,6 +37,9 @@ const Monitor = () => {
           // Support both old (defaultMonitor*) and new (monitorSettings) formats
           dispatch(setMonitorShowClock(data.showClock));
           dispatch(setMonitorShowTimer(data.showTimer));
+          if (data.showNextSlide !== undefined) {
+            dispatch(setMonitorShowNextSlide(data.showNextSlide));
+          }
           dispatch(setMonitorClockFontSize(data.clockFontSize));
           dispatch(setMonitorTimerFontSize(data.timerFontSize));
           dispatch(setMonitorTimerId(data.timerId || null));

@@ -79,10 +79,10 @@ const ItemSlide = ({
   const sectionStyle =
     isInDraggedSection && !isDragging
       ? {
-          transform: CSS.Transform.toString(transform),
-          transition,
-          opacity: 0.5,
-        }
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: 0.5,
+      }
       : undefined;
 
   const contextMenuItems = [
@@ -188,18 +188,18 @@ const ItemSlide = ({
             formattedTextDisplayInfo={
               itemType === "free"
                 ? {
-                    text: slide.boxes[1]?.words?.trim() || "",
-                    backgroundColor:
-                      slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
-                    textColor:
-                      slide.formattedTextDisplayInfo?.textColor || "#ffffff",
-                    fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
-                    paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
-                    paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
-                    isBold: slide.formattedTextDisplayInfo?.isBold || false,
-                    isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
-                    align: slide.formattedTextDisplayInfo?.align || "left",
-                  }
+                  text: slide.boxes[1]?.words?.trim() || "",
+                  backgroundColor:
+                    slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
+                  textColor:
+                    slide.formattedTextDisplayInfo?.textColor || "#ffffff",
+                  fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
+                  paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
+                  paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
+                  isBold: slide.formattedTextDisplayInfo?.isBold || false,
+                  isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
+                  align: slide.formattedTextDisplayInfo?.align || "left",
+                }
                 : undefined
             }
           />

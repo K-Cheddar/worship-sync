@@ -9,7 +9,7 @@ import { ResizeDirection } from "re-resizable";
 import Button from "../Button/Button";
 import { useToast } from "../../context/toastContext";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "../../constants";
+import { REFERENCE_WIDTH, REFERENCE_HEIGHT, DEFAULT_FONT_PX } from "../../constants";
 
 type DraggableData = {
   node: HTMLElement;
@@ -256,11 +256,8 @@ const DisplayEditor = ({
     [updateBoxSize, updateBoxXY]
   );
 
-  const bFontSize = box.fontSize;
   const words = box.words || "";
-
-  // Convert fontSize to pixels using the font size multiplier
-  const fontSizeInPx = bFontSize ? bFontSize * FONT_SIZE_MULTIPLIER : FONT_SIZE_MULTIPLIER;
+  const fontSizeInPx = box.fontSize ?? DEFAULT_FONT_PX;
 
   const tSS = fontSizeInPx / 32; // text shadow size in px
   const fOS = fontSizeInPx / 128; // font outline size in px

@@ -3,31 +3,93 @@ import Input from "../../../components/Input/Input";
 
 import { Maximize2 } from "lucide-react";
 
-import textFull from "../../../assets/images/textbox_full.png";
-import textMid from "../../../assets/images/textbox_mid.png";
-import textLeftHalf from "../../../assets/images/textbox_leftHalf.png";
-import textRightHalf from "../../../assets/images/textbox_rightHalf.png";
-import textMatch from "../../../assets/images/textbox_match.png";
-import textLowerThird from "../../../assets/images/textbox_lowerThird.png";
-import textUpperThird from "../../../assets/images/textbox_upperThird.png";
-import textMidThird from "../../../assets/images/textbox_midThird.png";
-
 import { ItemState } from "../../../types";
-import { useSelector } from "../../../hooks";
-import { useEffect, useMemo, useState } from "react";
+import { useDispatch, useSelector } from "../../../hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RadioButton from "../../../components/RadioButton/RadioButton";
 import PopOver from "../../../components/PopOver/PopOver";
 import { updateBoxProperties } from "../../../utils/formatter";
+import { setItemFormatting } from "../../../store/itemSlice";
+
+const FORMAT_DEBOUNCE_MS = 500;
+
+/** Keep the user's value for the changed field; adjust the partner only if needed to stay in bounds. */
+const constrainBoxAfterFieldChange = (
+  dims: { x: number; y: number; width: number; height: number },
+  field: "x" | "y" | "width" | "height",
+  value: number
+) => {
+  const next = { ...dims, [field]: Math.max(0, Math.min(100, value)) };
+  if (field === "height") {
+    if (next.y + next.height > 100) next.y = Math.max(0, 100 - next.height);
+  } else if (field === "y") {
+    if (next.y + next.height > 100) next.height = Math.max(0, 100 - next.y);
+  } else if (field === "width") {
+    if (next.x + next.width > 100) next.x = Math.max(0, 100 - next.width);
+  } else if (field === "x") {
+    if (next.x + next.width > 100) next.width = Math.max(0, 100 - next.x);
+  }
+  return next;
+};
+
+/** Ensure box is in bounds by adjusting position (x, y) to fit size; size is not overwritten. */
+const sanitizeBoxToBounds = (dims: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}) => {
+  const w = Math.max(0, Math.min(100, dims.width));
+  const h = Math.max(0, Math.min(100, dims.height));
+  const x = Math.max(0, Math.min(100 - w, dims.x));
+  const y = Math.max(0, Math.min(100 - h, dims.y));
+  return { x, y, width: w, height: h };
+};
+
+/** Mini CSS preview of a box preset (percent 0–100). */
+const PresetIcon = ({
+  width,
+  height,
+  x,
+  y,
+  label,
+}: {
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  label?: string;
+}) => (
+  <div
+    className="w-8 aspect-video border border-current/60 overflow-hidden bg-black/5 relative box-border shrink-0"
+    aria-hidden
+  >
+    <div
+      className="absolute bg-current/50"
+      style={{
+        left: `${x}%`,
+        top: `${y}%`,
+        width: `${width}%`,
+        height: `${height}%`,
+      }}
+    />
+    {label && (
+      <span className="absolute inset-0 flex items-center justify-center text-[7px] font-bold uppercase text-white pointer-events-none">
+        {label}
+      </span>
+    )}
+  </div>
+);
 
 const BoxEditor = ({
   updateItem,
-  isMobile,
   className,
 }: {
   updateItem: (item: ItemState) => void;
   isMobile: boolean;
   className?: string;
 }) => {
+  const dispatch = useDispatch();
   const item = useSelector((state) => state.undoable.present.item);
   const { selectedSlide, selectedBox, slides } = item;
 
@@ -43,29 +105,115 @@ const BoxEditor = ({
     item.type === "free" ? false : true
   );
 
+  const [dimensions, setDimensions] = useState(() => ({
+    x: currentBox.x ?? 0,
+    y: currentBox.y ?? 0,
+    width: currentBox.width ?? 0,
+    height: currentBox.height ?? 0,
+  }));
+
+  const formatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isEditingRef = useRef(false);
+  const pendingDimensionsRef = useRef({
+    x: currentBox.x ?? 0,
+    y: currentBox.y ?? 0,
+    width: currentBox.width ?? 0,
+    height: currentBox.height ?? 0,
+  });
+
   useEffect(() => {
     setShouldApplyToAll(item.type === "free" ? false : true);
   }, [item.type]);
 
-  const updateBoxSize = ({
-    width,
-    height,
-    x,
-    y,
-  }: {
-    width: number;
-    height: number;
-    x: number;
-    y: number;
-  }) => {
-    const updatedItem = updateBoxProperties({
-      updatedProperties: { width, height, x, y },
-      item,
-      shouldFormatItem: true,
-      shouldApplyToAll: shouldApplyToAll,
-    });
-    updateItem(updatedItem);
-  };
+  useEffect(() => {
+    if (!isEditingRef.current) {
+      const next = sanitizeBoxToBounds({
+        x: currentBox.x ?? 0,
+        y: currentBox.y ?? 0,
+        width: currentBox.width ?? 0,
+        height: currentBox.height ?? 0,
+      });
+      setDimensions(next);
+      pendingDimensionsRef.current = next;
+    }
+  }, [currentBox.x, currentBox.y, currentBox.width, currentBox.height, selectedBox, selectedSlide]);
+
+  const updateBoxSize = useCallback(
+    ({
+      width,
+      height,
+      x,
+      y,
+    }: {
+      width: number;
+      height: number;
+      x: number;
+      y: number;
+    }) => {
+      const updatedItem = updateBoxProperties({
+        updatedProperties: { width, height, x, y },
+        item,
+        shouldFormatItem: true,
+        shouldApplyToAll: shouldApplyToAll,
+      });
+      updateItem(updatedItem);
+    },
+    [item, shouldApplyToAll, updateItem]
+  );
+
+  const runWithFormatting = useCallback(
+    (fn: () => void) => {
+      dispatch(setItemFormatting(true));
+      setTimeout(() => {
+        try {
+          fn();
+        } finally {
+          dispatch(setItemFormatting(false));
+        }
+      }, 0);
+    },
+    [dispatch]
+  );
+
+  const flushDebouncedFormat = useCallback(() => {
+    if (formatTimeoutRef.current) {
+      clearTimeout(formatTimeoutRef.current);
+      formatTimeoutRef.current = null;
+    }
+    isEditingRef.current = false;
+    const d = sanitizeBoxToBounds(pendingDimensionsRef.current);
+    runWithFormatting(() =>
+      updateBoxSize({
+        width: d.width,
+        height: d.height,
+        x: d.x,
+        y: d.y,
+      })
+    );
+  }, [runWithFormatting, updateBoxSize]);
+
+  useEffect(() => {
+    return () => {
+      if (formatTimeoutRef.current) clearTimeout(formatTimeoutRef.current);
+    };
+  }, []);
+
+  const applyPreset = useCallback(
+    (dims: { width: number; height: number; x: number; y: number }) => {
+      if (formatTimeoutRef.current) {
+        clearTimeout(formatTimeoutRef.current);
+        formatTimeoutRef.current = null;
+      }
+      isEditingRef.current = false;
+      runWithFormatting(() => updateBoxSize(sanitizeBoxToBounds(dims)));
+    },
+    [runWithFormatting, updateBoxSize]
+  );
+
+  const scheduleFormat = useCallback(() => {
+    if (formatTimeoutRef.current) clearTimeout(formatTimeoutRef.current);
+    formatTimeoutRef.current = setTimeout(flushDebouncedFormat, FORMAT_DEBOUNCE_MS);
+  }, [flushDebouncedFormat]);
 
   const handleInputChange = (
     field: "x" | "y" | "width" | "height",
@@ -77,13 +225,11 @@ const BoxEditor = ({
       if (numValue < 0) numValue = 0;
     }
     if (!isNaN(numValue)) {
-      updateBoxSize({
-        width: currentBox.width || 0,
-        height: currentBox.height || 0,
-        x: currentBox.x || 0,
-        y: currentBox.y || 0,
-        [field]: numValue,
-      });
+      const newDims = constrainBoxAfterFieldChange(dimensions, field, numValue);
+      setDimensions(newDims);
+      pendingDimensionsRef.current = newDims;
+      isEditingRef.current = true;
+      scheduleFormat();
     }
   };
 
@@ -92,7 +238,7 @@ const BoxEditor = ({
       <div className="flex flex-wrap gap-2 items-center max-lg:justify-center">
         <Input
           type="number"
-          value={currentBox.x || 0}
+          value={dimensions.x}
           onChange={(value) => handleInputChange("x", value.toString())}
           label="X"
           labelClassName="mr-2 max-lg:mb-2"
@@ -104,7 +250,7 @@ const BoxEditor = ({
         />
         <Input
           type="number"
-          value={currentBox.y || 0}
+          value={dimensions.y}
           onChange={(value) => handleInputChange("y", value.toString())}
           label="Y"
           labelClassName="mr-2 max-lg:mb-2"
@@ -116,7 +262,7 @@ const BoxEditor = ({
         />
         <Input
           type="number"
-          value={currentBox.width}
+          value={dimensions.width}
           onChange={(value) => handleInputChange("width", value.toString())}
           label="Width"
           labelClassName="mr-2 max-lg:mb-2"
@@ -128,7 +274,7 @@ const BoxEditor = ({
         />
         <Input
           type="number"
-          value={currentBox.height}
+          value={dimensions.height}
           onChange={(value) => handleInputChange("height", value.toString())}
           label="Height"
           labelClassName="mr-2 max-lg:mb-2"
@@ -141,117 +287,131 @@ const BoxEditor = ({
       </div>
       <div className="flex flex-wrap gap-2 items-center justify-center max-lg:pt-2">
         <Button
-          image={textFull}
           variant="tertiary"
           className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
-            updateBoxSize({
+            applyPreset({
               width: 100,
               height: 100,
               x: 0,
               y: 0,
             })
           }
-        />
+        >
+          <PresetIcon width={100} height={100} x={0} y={0} />
+        </Button>
         <Button
-          image={textMid}
           variant="tertiary"
           className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
-            updateBoxSize({
+            applyPreset({
               width: 100,
-              height: 64,
+              height: 55,
               x: 0,
-              y: 18,
+              y: 20,
             })
           }
-        />
+        >
+          <PresetIcon width={100} height={55} x={0} y={18} />
+        </Button>
         <Button
-          image={textLeftHalf}
           variant="tertiary"
           className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
-            updateBoxSize({
+            applyPreset({
               width: 50,
               height: 100,
               x: 0,
               y: 0,
             })
           }
-        />
+        >
+          <PresetIcon width={50} height={100} x={0} y={0} />
+        </Button>
         <Button
-          image={textRightHalf}
           variant="tertiary"
           className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
-            updateBoxSize({
+            applyPreset({
               width: 50,
               height: 100,
               x: 50,
               y: 0,
             })
           }
-        />
+        >
+          <PresetIcon width={50} height={100} x={50} y={0} />
+        </Button>
         <Button
-          image={textLowerThird}
           variant="tertiary"
           className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
-            updateBoxSize({
+            applyPreset({
               width: 100,
               height: 35,
               x: 0,
               y: 65,
             })
           }
-        />
+        >
+          <PresetIcon width={100} height={35} x={0} y={65} />
+        </Button>
         <Button
-          image={textMidThird}
           variant="tertiary"
           className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
-            updateBoxSize({
+            applyPreset({
               width: 100,
               height: 35,
               x: 0,
               y: 35,
             })
           }
-        />
+        >
+          <PresetIcon width={100} height={35} x={0} y={35} />
+        </Button>
         <Button
-          image={textUpperThird}
           variant="tertiary"
           className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
-            updateBoxSize({
+            applyPreset({
               width: 100,
               height: 35,
               x: 0,
               y: 0,
             })
           }
-        />
+        >
+          <PresetIcon width={100} height={35} x={0} y={0} />
+        </Button>
         <Button
-          image={textMatch}
           variant="tertiary"
           className="w-10 max-lg:w-18"
           padding="p-0"
           onClick={() =>
-            updateBoxSize({
-              width: currentBox.width,
-              height: currentBox.height,
-              x: currentBox.x || 0,
-              y: currentBox.y || 0,
+            applyPreset({
+              width: currentBox.width ?? 0,
+              height: currentBox.height ?? 0,
+              x: currentBox.x ?? 0,
+              y: currentBox.y ?? 0,
             })
           }
-        />
+        >
+          <PresetIcon
+            width={currentBox.width ?? 0}
+            height={currentBox.height ?? 0}
+            x={currentBox.x ?? 0}
+            y={currentBox.y ?? 0}
+            label="MATCH"
+          />
+        </Button>
       </div>
       <div className="flex gap-2 items-center justify-center max-lg:pt-2">
         <RadioButton

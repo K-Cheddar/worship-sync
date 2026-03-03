@@ -5,12 +5,13 @@ import {
   FormattedTextDisplayInfo,
   MediaType,
 } from "../types";
+import { DEFAULT_FONT_PX } from "../constants";
 import generateRandomId from "./generateRandomId";
 
 export const defaultFormattedTextDisplayInfo: FormattedTextDisplayInfo = {
   backgroundColor: "#eb8934",
   textColor: "#ffffff",
-  fontSize: 1.5,
+  fontSize: 50,
   paddingX: 2,
   paddingY: 1,
   align: "left",
@@ -74,7 +75,7 @@ export const createBox = ({
     sideMargin: sideMargin ?? 0,
     x: x ?? 0,
     y: y ?? 0,
-    fontSize: fontSize ?? 2.5,
+    fontSize: fontSize ?? DEFAULT_FONT_PX,
     id: generateRandomId(),
     background: background ?? "",
     fontColor: fontColor ?? "rgba(255, 255, 255, 1)",
@@ -109,6 +110,7 @@ type CreateNewSlideType = {
   isItalic?: boolean;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
   mediaInfo?: MediaType;
+  textBoxHeight?: number;
 };
 
 export const createNewSlide = ({
@@ -129,6 +131,7 @@ export const createNewSlide = ({
   isItalic,
   formattedTextDisplayInfo,
   mediaInfo,
+  textBoxHeight,
 }: CreateNewSlideType) => {
   const defaultBox = createBox({});
 
@@ -167,7 +170,7 @@ export const createNewSlide = ({
       createBox({
         ...box,
         fontColor: fontColor || "#fde047",
-        fontSize: 2,
+        fontSize: 90,
         height: 20,
         width: 100,
         words: words[2],
@@ -178,7 +181,7 @@ export const createNewSlide = ({
         isBold: isBold ?? false,
         isItalic: isItalic ?? false,
         mediaInfo,
-      })
+      }),
     );
   } else if (newBoxes.length) {
     boxes = [...newBoxes];
@@ -190,7 +193,7 @@ export const createNewSlide = ({
       createBox({
         ...box,
         height: 23,
-        fontSize: 2.1,
+        fontSize: 90,
         fontColor: fontColor || "rgba(255, 251, 43, 1)",
         transparent: true,
         topMargin: 1,
@@ -199,37 +202,38 @@ export const createNewSlide = ({
         isBold: isBold ?? false,
         isItalic: isItalic ?? false,
         mediaInfo,
-      })
+      }),
     );
     boxes.push(
       createBox({
         ...box,
         height: 77,
         y: 23,
-        fontSize: textFontSize || 1.9,
+        fontSize: textFontSize ?? 90,
         align: "left",
         transparent: true,
         topMargin: 1,
         sideMargin: 2.5,
         words: words ? words[1] : " ",
         mediaInfo,
-      })
+      }),
     );
   } else if (!boxes.length) {
     boxes.push(
       createBox({
         ...box,
-      })
+      }),
     );
     boxes.push(
       createBox({
         ...box,
+        ...(textBoxHeight !== undefined && { height: textBoxHeight, y: 20 }),
         background: "",
         transparent: true,
         topMargin: 3,
         sideMargin: 4,
         words: words[1] || " ",
-      })
+      }),
     );
   }
 

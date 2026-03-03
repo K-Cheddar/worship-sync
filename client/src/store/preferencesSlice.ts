@@ -95,8 +95,9 @@ const initialState: PreferencesState = {
   monitorSettings: {
     showClock: true,
     showTimer: true,
-    clockFontSize: 15,
-    timerFontSize: 15,
+    showNextSlide: false,
+    clockFontSize: 75,
+    timerFontSize: 75,
     timerId: null,
   },
   slidesPerRow: 4,
@@ -463,16 +464,19 @@ export const preferencesSlice = createSlice({
     ) => {
       state.monitorSettings = {
         showClock:
-          action.payload.showClock || initialState.monitorSettings.showClock,
+          action.payload.showClock ?? initialState.monitorSettings.showClock,
         showTimer:
-          action.payload.showTimer || initialState.monitorSettings.showTimer,
+          action.payload.showTimer ?? initialState.monitorSettings.showTimer,
+        showNextSlide:
+          action.payload.showNextSlide ??
+          initialState.monitorSettings.showNextSlide,
         clockFontSize:
-          action.payload.clockFontSize ||
+          action.payload.clockFontSize ??
           initialState.monitorSettings.clockFontSize,
         timerFontSize:
-          action.payload.timerFontSize ||
+          action.payload.timerFontSize ??
           initialState.monitorSettings.timerFontSize,
-        timerId: action.payload.timerId || initialState.monitorSettings.timerId,
+        timerId: action.payload.timerId ?? initialState.monitorSettings.timerId,
       };
     },
 
@@ -484,18 +488,21 @@ export const preferencesSlice = createSlice({
     },
     setMonitorClockFontSize: (state, action: PayloadAction<number>) => {
       state.monitorSettings.clockFontSize = Math.min(
-        Math.max(action.payload, 12),
-        30,
+        Math.max(action.payload, 75),
+        115,
       );
     },
     setMonitorTimerFontSize: (state, action: PayloadAction<number>) => {
       state.monitorSettings.timerFontSize = Math.min(
-        Math.max(action.payload, 12),
-        30,
+        Math.max(action.payload, 75),
+        115,
       );
     },
     setMonitorTimerId: (state, action: PayloadAction<string | null>) => {
       state.monitorSettings.timerId = action.payload;
+    },
+    setMonitorShowNextSlide: (state, action: PayloadAction<boolean>) => {
+      state.monitorSettings.showNextSlide = action.payload;
     },
     forceUpdate: () => {},
   },
@@ -546,6 +553,7 @@ export const {
   setMonitorClockFontSize,
   setMonitorTimerFontSize,
   setMonitorTimerId,
+  setMonitorShowNextSlide,
   updatePreferencesFromRemote,
   forceUpdate,
   setIsInitialized,

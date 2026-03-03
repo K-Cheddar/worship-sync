@@ -63,6 +63,8 @@ export type Box = {
   topMargin?: number;
   sideMargin?: number;
   slideIndex?: number;
+  /** Monitor band only: max font size in px from formatter; view uses this when set. */
+  monitorFontSizePx?: number;
 };
 
 export type SlideType =
@@ -91,6 +93,10 @@ export type ItemSlideType = {
   name: string;
   id: string;
   boxes: Box[];
+  /** Pre-calculated boxes for monitor "current" band (50% height). Set when slide is formatted. */
+  monitorCurrentBandBoxes?: Box[];
+  /** Pre-calculated boxes for monitor "next" band (30% height). Set when slide is formatted. */
+  monitorNextBandBoxes?: Box[];
   overflow?: OverflowMode;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
 };
@@ -207,6 +213,7 @@ export type ItemState = ItemProperties & {
   isEditMode?: boolean;
   isLoading?: boolean;
   isSectionLoading?: boolean;
+  isItemFormatting?: boolean;
   hasPendingUpdate?: boolean;
 };
 
@@ -242,6 +249,10 @@ export type Presentation = {
   type: string;
   name: string;
   slide: ItemSlideType | null;
+  /** When monitor "display next slide" is on, the slide after the current one */
+  nextSlide?: ItemSlideType | null;
+  /** How we navigated: 'next' = adjacent forward (slide up), 'prev' = adjacent back (slide down), 'jump' = non-adjacent (fade) */
+  transitionDirection?: "next" | "prev" | "jump";
   time?: number;
   displayType?: DisplayType;
   participantOverlayInfo?: OverlayInfo;
@@ -250,6 +261,8 @@ export type Presentation = {
   timerId?: string;
   /** Item _id so we can look up slides (e.g. wrap-up slide when timer expires) */
   itemId?: string;
+  /** Bible only, next-slide layout: box at index 2 (reference) shown in clock/timer band */
+  bibleInfoBox?: Box | null;
   qrCodeOverlayInfo?: OverlayInfo;
   imageOverlayInfo?: OverlayInfo;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
@@ -512,6 +525,7 @@ export type PreferencesType = {
 export type MonitorSettingsType = {
   showClock: boolean;
   showTimer: boolean;
+  showNextSlide: boolean;
   clockFontSize: number;
   timerFontSize: number;
   timerId: string | null;

@@ -89,6 +89,7 @@ const WindowControl = ({
           {displays.map((display, index) => (
             <RadioButton
               key={display.id}
+              name={`${windowType}-display`}
               label={getDisplayLabel(display, index)}
               value={selectedDisplay === display.id.toString()}
               onChange={() => handleDisplayChange(display.id.toString())}

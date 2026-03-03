@@ -88,11 +88,11 @@ let currentGroupId = 0;
 const excludedActions: string[] = [
   itemSlice.actions.setItemIsLoading.toString(),
   itemSlice.actions.setSectionLoading.toString(),
+  itemSlice.actions.setItemFormatting.toString(),
   itemSlice.actions.setSelectedSlide.toString(),
   itemSlice.actions.setIsEditMode.toString(),
   itemSlice.actions.setHasPendingUpdate.toString(),
   itemSlice.actions.forceUpdate.toString(),
-  itemSlice.actions.setSelectedSlide.toString(),
   itemSlice.actions.setSelectedBox.toString(),
   itemSlice.actions.setActiveItem.toString(),
   overlaysSlice.actions.initiateOverlayList.toString(),
@@ -223,6 +223,7 @@ listenerMiddleware.startListening({
       itemSlice.actions.setItemIsLoading,
       itemSlice.actions.setSectionLoading,
       itemSlice.actions.setHasPendingUpdate,
+      itemSlice.actions.setItemFormatting,
     );
     return (
       (currentState as RootState).undoable.present.item !==
@@ -302,18 +303,27 @@ listenerMiddleware.startListening({
 
     if (doc) {
       // Preserve UI state when syncing active item from remote (DB docs don't carry slide/box selection).
-      const arrIndex = Math.min(currentItem.selectedArrangement ?? doc.selectedArrangement ?? 0, Math.max(0, (doc.arrangements?.length ?? 1) - 1));
-      const slideCount = doc.type === "song" && doc.arrangements?.length
-        ? (doc.arrangements[arrIndex]?.slides?.length ?? doc.slides?.length ?? 0)
-        : (doc.slides?.length ?? 0);
+      const arrIndex = Math.min(
+        currentItem.selectedArrangement ?? doc.selectedArrangement ?? 0,
+        Math.max(0, (doc.arrangements?.length ?? 1) - 1),
+      );
+      const slideCount =
+        doc.type === "song" && doc.arrangements?.length
+          ? (doc.arrangements[arrIndex]?.slides?.length ??
+            doc.slides?.length ??
+            0)
+          : (doc.slides?.length ?? 0);
       listenerApi.dispatch(
         itemSlice.actions.setActiveItem({
           ...doc,
           listId,
-          selectedSlide: Math.min(currentItem.selectedSlide ?? 0, Math.max(0, slideCount - 1)),
+          selectedSlide: Math.min(
+            currentItem.selectedSlide ?? 0,
+            Math.max(0, slideCount - 1),
+          ),
           selectedBox: currentItem.selectedBox ?? 1,
           selectedArrangement: arrIndex,
-        })
+        }),
       );
     }
   },

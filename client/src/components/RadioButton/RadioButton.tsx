@@ -13,6 +13,7 @@ type RadioButtonProps = {
   labelClassName?: string;
   disabled?: boolean;
   id?: string;
+  name?: string;
 };
 
 const RadioButton = ({
@@ -24,6 +25,7 @@ const RadioButton = ({
   labelClassName = "",
   disabled = false,
   id: idProp,
+  name,
 }: RadioButtonProps) => {
   const generatedId = useId();
   const id = idProp || generatedId;
@@ -43,6 +45,7 @@ const RadioButton = ({
       <div className="h-4 w-4 flex items-center gap-1">
         <input
           type="radio"
+          name={name}
           checked={value}
           onChange={(e) => onChange(e.target.checked)}
           className={cn(
@@ -55,7 +58,7 @@ const RadioButton = ({
         <Icon
           svg={value ? CircleCheck : Circle}
           color={value ? "#67e8f9" : "#e5e7eb"}
-          className={cn("absolute right-0")}
+          className={cn("absolute right-0 pointer-events-none")}
         />
       </div>
     </div>

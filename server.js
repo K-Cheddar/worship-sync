@@ -452,6 +452,7 @@ app.get("/api/getDbSession", async (req, res) => {
         "worshipsync.net",
         ".worshipsync.net",
         "www.worshipsync.net",
+        "db.worshipsync.net",
       ];
       cookieNames.forEach((name) => {
         domainsToClear.forEach((domain) => {
@@ -495,21 +496,23 @@ const HASHED_FILENAME = /-[A-Za-z0-9]{8,}\.(js|css|png|jpg|jpeg|svg|woff2?)$/;
 
 const dist = path.join(dirname, "client/dist");
 
-app.use(express.static(dist, {
-  setHeaders(res, filePath) {
-    const name = path.basename(filePath);
+app.use(
+  express.static(dist, {
+    setHeaders(res, filePath) {
+      const name = path.basename(filePath);
 
-    if (filePath.endsWith("index.html")) {
-      res.setHeader("Cache-Control", "no-store");
-    } else if (filePath.endsWith("service-worker.js")) {
-      res.setHeader("Cache-Control", "no-cache");
-    } else if (HASHED_FILENAME.test(name)) {
-      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    } else {
-      res.setHeader("Cache-Control", "no-cache");
-    }
-  }
-}));
+      if (filePath.endsWith("index.html")) {
+        res.setHeader("Cache-Control", "no-store");
+      } else if (filePath.endsWith("service-worker.js")) {
+        res.setHeader("Cache-Control", "no-cache");
+      } else if (HASHED_FILENAME.test(name)) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      } else {
+        res.setHeader("Cache-Control", "no-cache");
+      }
+    },
+  }),
+);
 
 app.get("*", (req, res) => {
   const pathname = req.path;

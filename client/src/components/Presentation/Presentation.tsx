@@ -80,6 +80,9 @@ const Presentation = ({
             <DisplayWindow
               boxes={info.slide?.boxes || []}
               prevBoxes={prevInfo.slide?.boxes || []}
+              nextBoxes={info.nextSlide?.boxes ?? []}
+              prevNextBoxes={prevInfo.nextSlide?.boxes ?? []}
+              bibleInfoBox={info.bibleInfoBox}
               width={isMobile ? 32 : 14}
               showBorder={showBorder}
               displayType={info.displayType}
@@ -102,6 +105,7 @@ const Presentation = ({
               shouldAnimate
               shouldPlayVideo
               showMonitorClockTimer={showMonitorClockTimer}
+              transitionDirection={info.transitionDirection}
             />
           </div>
           {filteredQuickLinks.length > 0 && (

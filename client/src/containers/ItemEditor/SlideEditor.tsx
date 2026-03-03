@@ -393,7 +393,26 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         selectedArrangement,
       });
 
-      dispatch(updateArrangements({ arrangements: formattedItem.arrangements }));
+      // Preserve drag/resize from DisplayEditor: apply only layout (x, y, width, height), keep formatted words from formatSong
+      const arrangementsWithBox = formattedItem.arrangements.map((arr, arrIdx) => {
+        if (arrIdx !== selectedArrangement) return arr;
+        return {
+          ...arr,
+          slides: arr.slides.map((slide, slideIdx) => {
+            if (slideIdx !== selectedSlide) return slide;
+            return {
+              ...slide,
+              boxes: slide.boxes.map((b, boxIdx) =>
+                boxIdx === index
+                  ? { ...b, x: box.x, y: box.y, width: box.width, height: box.height }
+                  : b
+              ),
+            };
+          }),
+        };
+      });
+
+      dispatch(updateArrangements({ arrangements: arrangementsWithBox }));
     }
   };
 

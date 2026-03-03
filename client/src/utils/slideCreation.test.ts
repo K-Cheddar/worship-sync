@@ -16,7 +16,7 @@ describe("slideCreation", () => {
       expect(box.words).toBe(" ");
       expect(box.width).toBe(100);
       expect(box.height).toBe(100);
-      expect(box.fontSize).toBe(2.5);
+      expect(box.fontSize).toBe(45);
       expect(box.brightness).toBe(100);
       expect(box.align).toBe("center");
       expect(box.id).toBe("fixed-id");

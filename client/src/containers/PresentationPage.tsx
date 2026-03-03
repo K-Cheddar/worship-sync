@@ -57,6 +57,9 @@ const Presentation = ({
     <DisplayWindow
       boxes={displayInfo.slide?.boxes || []}
       prevBoxes={prevDisplayInfo.slide?.boxes || []}
+      nextBoxes={displayInfo.nextSlide?.boxes ?? []}
+      prevNextBoxes={prevDisplayInfo.nextSlide?.boxes ?? []}
+      bibleInfoBox={displayInfo.bibleInfoBox}
       displayType={displayInfo.displayType}
       timerInfo={timerInfo}
       prevTimerInfo={prevTimerInfo}
@@ -64,6 +67,7 @@ const Presentation = ({
       shouldPlayVideo
       width={100}
       showMonitorClockTimer
+      transitionDirection={displayInfo.transitionDirection}
     />
   ) : (
     <div className="h-dvh w-dvw flex flex-col items-center justify-center bg-black gap-10">
