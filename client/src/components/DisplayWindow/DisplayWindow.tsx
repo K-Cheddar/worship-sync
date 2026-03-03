@@ -1,4 +1,10 @@
-import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  forwardRef,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   BibleDisplayInfo,
   Box,
@@ -18,8 +24,7 @@ import DisplayStreamText from "./DisplayStreamText";
 import DisplayImageOverlay from "./DisplayImageOverlay";
 import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
 import HLSPlayer from "./HLSVideoPlayer";
-import DisplayClock from "./DisplayClock";
-import DisplayTimer from "./DisplayTimer";
+import MonitorView from "./MonitorView";
 import { useSelector } from "../../hooks";
 import { REFERENCE_WIDTH, REFERENCE_HEIGHT } from "../../constants";
 
@@ -66,6 +71,13 @@ type DisplayWindowProps = {
   showMonitorClockTimer?: boolean;
   /** When true with displayType="stream", renders only overlay(s) filling the container (e.g. for preview). */
   overlayPreviewMode?: boolean;
+  /** For monitor with "display next slide": boxes for the next slide. */
+  nextBoxes?: Box[];
+  prevNextBoxes?: Box[];
+  /** Bible next-slide layout: box at index 2 (reference) shown in clock/timer band. */
+  bibleInfoBox?: Box | null;
+  /** Monitor slide transition: 'next' = slide up, 'prev' = slide down, 'jump' = fade */
+  transitionDirection?: "next" | "prev" | "jump";
 };
 
 const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
@@ -102,6 +114,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       className,
       showMonitorClockTimer = false,
       overlayPreviewMode = false,
+      nextBoxes = [],
+      prevNextBoxes = [],
+      bibleInfoBox,
+      transitionDirection,
     }: DisplayWindowProps,
     ref
   ) => {
@@ -206,32 +222,18 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const [isWindowVideoLoaded, setIsWindowVideoLoaded] = useState(false);
 
     const {
-      monitorSettings: { showClock, showTimer, clockFontSize, timerFontSize },
+      monitorSettings: {
+        showClock,
+        showTimer,
+        showNextSlide,
+        clockFontSize,
+        timerFontSize,
+      },
     } = useSelector((state) => state.undoable.present.preferences);
 
     // Only show clock and timer when showMonitorClockTimer is true
     const effectiveShowClock = showMonitorClockTimer ? showClock : false;
     const effectiveShowTimer = showMonitorClockTimer ? showTimer : false;
-
-    const hasReducedSpace = isMonitor && (effectiveShowClock || effectiveShowTimer);
-
-    // Calculate scale, height, and top based on the higher font size
-    // At max font size (25): scaleY = 0.9, height = 90%, top = -5%
-    // At min font size (15): scaleY = 0.95, height = 95%, top = -2.5%
-    const maxFontSize = 25;
-    const minFontSize = 15;
-    const higherFontSize = Math.max(
-      effectiveShowClock ? clockFontSize : 0,
-      effectiveShowTimer ? timerFontSize : 0
-    );
-    // Normalize font size to range [0, 1] where 0 = min (15) and 1 = max (25)
-    const normalizedRatio =
-      (higherFontSize - minFontSize) / (maxFontSize - minFontSize);
-
-    // Linear interpolation between min and max values
-    const scaleY = 0.95 - normalizedRatio * 0.05; // 0.95 at min, 0.9 at max
-    const heightPercent = 95 - normalizedRatio * 5; // 95% at min, 90% at max
-    const topPercent = -2.5 - normalizedRatio * 2.5; // -2.5% at min, -5% at max
 
     // Keep the video element mounted and update src only when the URL changes
     useEffect(() => {
@@ -248,6 +250,48 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     // Render all content - wrap in scaled container when using transform
     const renderContent = () => {
+      if (isMonitor) {
+        return (
+          <div
+            style={{
+              width: `${REFERENCE_WIDTH}px`,
+              height: `${REFERENCE_HEIGHT}px`,
+              transform: `translate(-50%, -50%) scale(${scaleFactor})`,
+              transformOrigin: "center center",
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+            }}
+          >
+            <MonitorView
+              boxes={boxes}
+              prevBoxes={prevBoxes}
+              nextBoxes={nextBoxes}
+              prevNextBoxes={prevNextBoxes}
+              bibleInfoBox={bibleInfoBox}
+              showNextSlide={showNextSlide && (nextBoxes?.length ?? 0) > 0}
+              showBackground={showBackground}
+              shouldAnimate={shouldAnimate}
+              effectiveWidth={effectiveWidth}
+              time={time}
+              timerInfo={timerInfo}
+              prevTimerInfo={prevTimerInfo}
+              activeVideoUrl={activeVideoUrl}
+              isWindowVideoLoaded={isWindowVideoLoaded}
+              videoBox={videoBox}
+              scaleFactor={scaleFactor}
+              effectiveShowClock={effectiveShowClock}
+              effectiveShowTimer={effectiveShowTimer}
+              clockFontSize={clockFontSize}
+              timerFontSize={timerFontSize}
+              onVideoLoaded={() => setIsWindowVideoLoaded(true)}
+              onVideoError={() => setIsWindowVideoLoaded(false)}
+              transitionDirection={transitionDirection}
+            />
+          </div>
+        );
+      }
+
       const innerContent = (
         <>
           {showBackground && shouldPlayVideo && activeVideoUrl && (
@@ -258,57 +302,47 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               videoBox={videoBox}
             />
           )}
-          {boxes.map((box, index) => {
-            if (isEditor)
-              return (
-                <DisplayEditor
-                  key={box.id}
-                  box={box}
-                  width={effectiveWidth}
-                  onChange={onChange}
-                  index={index}
-                  selectBox={selectBox}
-                  isSelected={selectedBox === index}
-                  isBoxLocked={isBoxLocked?.[index] ?? true}
-                  disabled={disabled}
-                  referenceWidth={REFERENCE_WIDTH}
-                  referenceHeight={REFERENCE_HEIGHT}
-                  scaleFactor={scaleFactor}
-                  activeVideoUrl={activeVideoUrl}
-                  isWindowVideoLoaded={isWindowVideoLoaded}
-                />
-              );
-            if (isStream)
-              return (
-                <DisplayStreamText
-                  key={box.id}
-                  box={box}
-                  prevBox={prevBoxes[index]}
-                  width={effectiveWidth}
-                  time={time}
-                  timerInfo={timerInfo}
-                  referenceWidth={REFERENCE_WIDTH}
-                  referenceHeight={REFERENCE_HEIGHT}
-                />
-              );
 
-            if (isDisplay)
-              return (
-                <div
-                  key={box.id}
-                  style={
-                    hasReducedSpace
-                      ? {
-                        scale: `0.95 ${scaleY}`,
-                        width: "100%",
-                        height: `${heightPercent}%`,
-                        position: "absolute",
-                        top: `${topPercent}%`,
-                      }
-                      : undefined
-                  }
-                >
+
+          <>
+            {boxes.map((box, index) => {
+              if (isEditor)
+                return (
+                  <DisplayEditor
+                    key={box.id}
+                    box={box}
+                    width={effectiveWidth}
+                    onChange={onChange}
+                    index={index}
+                    selectBox={selectBox}
+                    isSelected={selectedBox === index}
+                    isBoxLocked={isBoxLocked?.[index] ?? true}
+                    disabled={disabled}
+                    referenceWidth={REFERENCE_WIDTH}
+                    referenceHeight={REFERENCE_HEIGHT}
+                    scaleFactor={scaleFactor}
+                    activeVideoUrl={activeVideoUrl}
+                    isWindowVideoLoaded={isWindowVideoLoaded}
+                  />
+                );
+              if (isStream)
+                return (
+                  <DisplayStreamText
+                    key={box.id}
+                    box={box}
+                    prevBox={prevBoxes[index]}
+                    width={effectiveWidth}
+                    time={time}
+                    timerInfo={timerInfo}
+                    referenceWidth={REFERENCE_WIDTH}
+                    referenceHeight={REFERENCE_HEIGHT}
+                  />
+                );
+
+              if (isDisplay)
+                return (
                   <DisplayBox
+                    key={box.id}
                     box={box}
                     width={effectiveWidth}
                     showBackground={showBackground}
@@ -323,28 +357,14 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     referenceHeight={REFERENCE_HEIGHT}
                     scaleFactor={scaleFactor}
                   />
-                </div>
-              );
-            return null;
-          })}
-          {prevBoxes.map((box, index) => {
-            if (isDisplay)
-              return (
-                <div
-                  key={box.id}
-                  style={
-                    hasReducedSpace
-                      ? {
-                        scale: `0.95 ${scaleY}`,
-                        width: "100%",
-                        height: `${heightPercent}%`,
-                        position: "absolute",
-                        top: `${topPercent}%`,
-                      }
-                      : undefined
-                  }
-                >
+                );
+              return null;
+            })}
+            {prevBoxes.map((box, index) => {
+              if (isDisplay)
+                return (
                   <DisplayBox
+                    key={box.id}
                     box={box}
                     width={effectiveWidth}
                     showBackground={showBackground}
@@ -360,44 +380,24 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     referenceHeight={REFERENCE_HEIGHT}
                     scaleFactor={scaleFactor}
                   />
-                </div>
-              );
-            if (isStream)
-              return (
-                <DisplayStreamText
-                  key={box.id}
-                  box={box}
-                  width={effectiveWidth}
-                  time={time}
-                  timerInfo={prevTimerInfo}
-                  isPrev
-                  prevBox={boxes[index]}
-                  referenceWidth={REFERENCE_WIDTH}
-                  referenceHeight={REFERENCE_HEIGHT}
-                />
-              );
-            return null;
-          })}
-
-          {isDisplay && isMonitor && (
-            <>
-              {effectiveShowClock && (
-                <DisplayClock
-                  width={effectiveWidth}
-                  time={time}
-                  fontSize={clockFontSize}
-                />
-              )}
-              {effectiveShowTimer && (
-                <DisplayTimer
-                  width={effectiveWidth}
-                  time={time}
-                  currentTimerInfo={timerInfo}
-                  fontSize={timerFontSize}
-                />
-              )}
-            </>
-          )}
+                );
+              if (isStream)
+                return (
+                  <DisplayStreamText
+                    key={box.id}
+                    box={box}
+                    width={effectiveWidth}
+                    time={time}
+                    timerInfo={prevTimerInfo}
+                    isPrev
+                    prevBox={boxes[index]}
+                    referenceWidth={REFERENCE_WIDTH}
+                    referenceHeight={REFERENCE_HEIGHT}
+                  />
+                );
+              return null;
+            })}
+          </>
 
           {isStream && !overlayPreviewMode && (
             <>

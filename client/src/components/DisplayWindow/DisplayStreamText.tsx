@@ -3,7 +3,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useRef } from "react";
 import TimerDisplay from "./TimerDisplay";
-import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "../../constants";
+import { REFERENCE_WIDTH, REFERENCE_HEIGHT } from "../../constants";
 
 type DisplayStreamTextProps = {
   prevBox?: Box;
@@ -69,12 +69,9 @@ const DisplayStreamText = ({
     { scope: boxRef, dependencies: [box, time] }
   );
 
-  const bFontSize = 1.1;
   const bWords = box.words || "";
   const words = bWords.replace(/(\n)+/g, "\n").trim();
-  
-  // Convert fontSize to pixels using the font size multiplier
-  const fontSizeInPx = bFontSize ? bFontSize * FONT_SIZE_MULTIPLIER : FONT_SIZE_MULTIPLIER;
+  const fontSizeInPx = 50;
   
   // Text shadow and outline sizes in pixels (will scale with transform)
   const REFERENCE_WIDTH_VW = (REFERENCE_WIDTH / window.innerWidth) * 100;

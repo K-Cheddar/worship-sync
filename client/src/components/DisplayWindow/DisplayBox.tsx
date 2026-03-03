@@ -1,12 +1,16 @@
+import { useMemo, useRef } from "react";
 import { Box, TimerInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { useMemo, useRef } from "react";
 import cn from "classnames";
 import TimerDisplay from "./TimerDisplay";
 import VerseDisplay from "./VerseDisplay";
 import NowDisplay from "./NowDisplay";
-import { REFERENCE_WIDTH, REFERENCE_HEIGHT, FONT_SIZE_MULTIPLIER } from "../../constants";
+import {
+  REFERENCE_WIDTH,
+  REFERENCE_HEIGHT,
+  DEFAULT_FONT_PX,
+} from "../../constants";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 
 type DisplayBoxProps = {
@@ -21,9 +25,9 @@ type DisplayBoxProps = {
   timerInfo?: TimerInfo;
   activeVideoUrl?: string;
   isWindowVideoLoaded?: boolean;
-  referenceWidth?: number; // Reference width for pixel calculations (1920px)
-  referenceHeight?: number; // Reference height for pixel calculations (1080px)
-  scaleFactor?: number; // Scale factor for adjusting stroke based on display size
+  referenceWidth?: number;
+  referenceHeight?: number;
+  scaleFactor?: number;
 };
 
 const DisplayBox = ({
@@ -75,33 +79,19 @@ const DisplayBox = ({
       const textDuration = skipTextAnimation ? 0 : 0.35;
       const backgroundDuration = skipBackgroundAnimation ? 0 : 0.5;
 
-      // if ((prevBox && prevBox.words !== box.words)) {
-      //   targets.push('.display-box-text')
-      // }
-      // if ((prevBox && prevBox.background !== box.background)) {
-      //   targets.push('.display-box-background')
-      // }
-
       boxTimeline.current = gsap.timeline();
 
       if (isPrev) {
         boxTimeline.current.addLabel("fadeOut");
         if (!skipBackgroundAnimation && shouldShowBackground) {
-          boxTimeline.current.set(".display-box-background", {
-            opacity: 1,
-          });
+          boxTimeline.current.set(".display-box-background", { opacity: 1 });
         }
         boxTimeline.current.fromTo(
           ".display-box-text",
           { opacity: 1 },
-          {
-            opacity: 0,
-            duration: textDuration,
-            ease: "power1.inOut",
-          },
+          { opacity: 0, duration: textDuration, ease: "power1.inOut" },
           "fadeOut"
         );
-
         if (shouldShowBackground) {
           boxTimeline.current.to(
             ".display-box-background",
@@ -117,14 +107,9 @@ const DisplayBox = ({
         boxTimeline.current.fromTo(
           ".display-box-text",
           { opacity: 0 },
-          {
-            opacity: 1,
-            duration: textDuration,
-            ease: "power1.inOut",
-          },
+          { opacity: 1, duration: textDuration, ease: "power1.inOut" },
           "fadeIn"
         );
-
         if (shouldShowBackground) {
           boxTimeline.current.to(
             ".display-box-background",
@@ -143,18 +128,11 @@ const DisplayBox = ({
 
   const bWords = box.words || "";
   const words = bWords;
-  const bFontSize = box.fontSize;
+  const fontSizeInPx = box.fontSize ?? DEFAULT_FONT_PX;
 
+  const tSS = fontSizeInPx / 32;
+  const fOS = fontSizeInPx / 128;
 
-  
-  // Convert fontSize to pixels using the font size multiplier
-  const fontSizeInPx = bFontSize ? bFontSize * FONT_SIZE_MULTIPLIER : FONT_SIZE_MULTIPLIER;
-  
-  // Text shadow and outline sizes in pixels (will scale with transform)
-  const tSS = fontSizeInPx / 32 // text shadow size in px
-  const fOS = fontSizeInPx / 128 // font outline size in px
-  
-  // Calculate box dimensions in pixels first, then margins from actual box size
   const boxWidthPx = (referenceWidth * box.width) / 100;
   const boxHeightPx = (referenceHeight * box.height) / 100;
   const sideMarginPx = box.sideMargin ? (boxWidthPx * box.sideMargin) / 100 : 0;
@@ -181,15 +159,10 @@ const DisplayBox = ({
     if (words.includes("{{timer}}")) {
       return <TimerDisplay timerInfo={timerInfo} words={words} />;
     }
-
-    if (words.includes("\u200B")) {
-      return <VerseDisplay words={words} />;
-    }
-
+    if (words.includes("\u200B")) return <VerseDisplay words={words} />;
     if (words.includes("\u200C")) {
       return <NowDisplay words={words} timerInfo={timerInfo} />;
     }
-
     return words;
   };
 
@@ -225,13 +198,13 @@ const DisplayBox = ({
         />
       )}
       <p
-        className="display-box-text h-full w-full bg-transparent whitespace-pre-line absolute"
+        className="display-box-text h-full w-full bg-transparent whitespace-pre-line absolute overflow-hidden"
         style={textStyles}
       >
         {renderContent()}
       </p>
     </div>
   );
-};
+}
 
 export default DisplayBox;

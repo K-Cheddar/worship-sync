@@ -8,6 +8,7 @@ import {
 } from "../store/allDocsSlice";
 import {
   allDocsType,
+  Box,
   CreditsInfo,
   CREDIT_HISTORY_ID_PREFIX,
   DBAllItems,
@@ -18,6 +19,7 @@ import {
   DBItemLists,
   DBOverlay,
   DBOverlayHistory,
+  ItemSlideType,
   OverlayHistoryKey,
   ServiceItem,
   getCreditHistoryDocId,
@@ -631,6 +633,199 @@ export const migrateFreeFormItemsToFormattedSections = async (
     return { migratedCount, skippedCount };
   } catch (error) {
     console.error("Failed to migrate free form items", error);
+    throw error;
+  }
+};
+
+/** Old scale to new: stored value was (fontSize * 200/4.5) px; new stored value is fontSize in px = old * 4.5 */
+const FONT_SIZE_MIGRATION_FACTOR = 4.5;
+
+function migrateBoxFontSize(box: { fontSize?: number }): { fontSize?: number } {
+  if (box.fontSize == null) return box;
+  return {
+    ...box,
+    fontSize: Math.round(box.fontSize * FONT_SIZE_MIGRATION_FACTOR),
+  };
+}
+
+function migrateSlideFontSizes(slide: ItemSlideType): ItemSlideType {
+  return {
+    ...slide,
+    boxes: slide.boxes?.map(
+      (b) => migrateBoxFontSize(b) as ItemSlideType["boxes"][0],
+    ),
+    monitorCurrentBandBoxes: slide.monitorCurrentBandBoxes?.map(
+      (b) => migrateBoxFontSize(b) as ItemSlideType["boxes"][0],
+    ),
+    monitorNextBandBoxes: slide.monitorNextBandBoxes?.map(
+      (b) => migrateBoxFontSize(b) as ItemSlideType["boxes"][0],
+    ),
+  };
+}
+
+/**
+ * Migration: convert item box font sizes from multiplier scale to stored pixels.
+ * Old: fontSize * (200/4.5) = display px. New: fontSize is stored as px (old * 4.5).
+ * Run once per database to convert existing items to pixel-stored font sizes.
+ */
+export const migrateFontSizesToPixels = async (
+  db: PouchDB.Database,
+): Promise<{ migratedCount: number; errorCount: number }> => {
+  if (!db) return { migratedCount: 0, errorCount: 0 };
+  try {
+    const allDocs: allDocsType = (await db.allDocs({
+      include_docs: true,
+    })) as allDocsType;
+    const itemRows = allDocs.rows.filter(
+      (row) =>
+        (row.doc as { type?: string })?.type === "song" ||
+        (row.doc as { type?: string })?.type === "free" ||
+        (row.doc as { type?: string })?.type === "timer" ||
+        (row.doc as { type?: string })?.type === "bible",
+    );
+    let migratedCount = 0;
+    let errorCount = 0;
+    for (const row of itemRows) {
+      const doc = row.doc as DBItem;
+      if (!doc) continue;
+      try {
+        const updated: DBItem = {
+          ...doc,
+          slides: (doc.slides ?? []).map(migrateSlideFontSizes),
+          arrangements: (doc.arrangements ?? []).map((arr) => ({
+            ...arr,
+            slides: (arr.slides ?? []).map(migrateSlideFontSizes),
+          })),
+          updatedAt: new Date().toISOString(),
+        };
+        await db.put(updated);
+        migratedCount++;
+      } catch (e) {
+        console.error("migrateFontSizesToPixels item failed", doc?._id, e);
+        errorCount++;
+      }
+    }
+    console.log(
+      `migrateFontSizesToPixels: ${migratedCount} items updated, ${errorCount} errors`,
+    );
+    return { migratedCount, errorCount };
+  } catch (error) {
+    console.error("migrateFontSizesToPixels failed", error);
+    throw error;
+  }
+};
+
+const FONT_SONG_FIRST_SLIDE = 180;
+const FONT_SONG_REST = 108;
+const FONT_BIBLE_FIRST_SLIDE = 180;
+const FONT_BIBLE_BOX1 = 108;
+const FONT_BIBLE_BOX2 = 90;
+const FONT_FREE_ALL = 108;
+const FONT_TIMER_ALL = 180;
+
+function setBoxFontSize(box: Box, px: number): Box {
+  return { ...box, fontSize: px };
+}
+
+function migrateSlideFontSizesToDefaults(
+  slide: ItemSlideType,
+  itemType: string,
+  slideIndex: number,
+): ItemSlideType {
+  const boxes = slide.boxes ?? [];
+  if (itemType === "song") {
+    const px = slideIndex === 0 ? FONT_SONG_FIRST_SLIDE : FONT_SONG_REST;
+    return {
+      ...slide,
+      boxes: boxes.map((b) => setBoxFontSize(b, px)),
+    };
+  }
+  if (itemType === "bible") {
+    if (slideIndex === 0) {
+      return {
+        ...slide,
+        boxes: boxes.map((b) => setBoxFontSize(b, FONT_BIBLE_FIRST_SLIDE)),
+      };
+    }
+    const newBoxes = boxes.map((b, i) => {
+      if (i === 1) return setBoxFontSize(b, FONT_BIBLE_BOX1);
+      if (i === 2) return setBoxFontSize(b, FONT_BIBLE_BOX2);
+      return b;
+    });
+    return { ...slide, boxes: newBoxes };
+  }
+  if (itemType === "free") {
+    return {
+      ...slide,
+      boxes: boxes.map((b) => setBoxFontSize(b, FONT_FREE_ALL)),
+    };
+  }
+  if (itemType === "timer") {
+    return {
+      ...slide,
+      boxes: boxes.map((b) => setBoxFontSize(b, FONT_TIMER_ALL)),
+    };
+  }
+  return slide;
+}
+
+/**
+ * Migration: set font sizes to default values by item type.
+ * Songs: 1st slide 180px, rest 100px. Bible: 1st slide 180px; rest boxes[1]=100, boxes[2]=90.
+ * Free form: all boxes 100px. Timers: all boxes 180px.
+ * Processes in batches of 40; pauses 3s after each batch. Logs each document updated.
+ */
+export const migrateFontSizesToDefaults = async (
+  db: PouchDB.Database,
+): Promise<{ migratedCount: number; errorCount: number }> => {
+  if (!db) return { migratedCount: 0, errorCount: 0 };
+  try {
+    const allDocs: allDocsType = (await db.allDocs({
+      include_docs: true,
+    })) as allDocsType;
+    const itemRows = allDocs.rows.filter(
+      (row) =>
+        (row.doc as { type?: string })?.type === "song" ||
+        (row.doc as { type?: string })?.type === "free" ||
+        (row.doc as { type?: string })?.type === "timer" ||
+        (row.doc as { type?: string })?.type === "bible",
+    );
+    let migratedCount = 0;
+    let errorCount = 0;
+    for (const row of itemRows) {
+      const doc = row.doc as DBItem;
+      if (!doc) continue;
+      const itemType = doc.type;
+      try {
+        const updated: DBItem = {
+          ...doc,
+          slides: (doc.slides ?? []).map((slide, i) =>
+            migrateSlideFontSizesToDefaults(slide, itemType, i),
+          ),
+          arrangements: (doc.arrangements ?? []).map((arr) => ({
+            ...arr,
+            slides: (arr.slides ?? []).map((slide, i) =>
+              migrateSlideFontSizesToDefaults(slide, itemType, i),
+            ),
+          })),
+          updatedAt: new Date().toISOString(),
+        };
+        await db.put(updated);
+        migratedCount++;
+        console.log(
+          `migrateFontSizesToDefaults: updated ${doc._id} (${itemType}) "${doc.name}"`,
+        );
+      } catch (e) {
+        console.error("migrateFontSizesToDefaults item failed", doc?._id, e);
+        errorCount++;
+      }
+    }
+    console.log(
+      `migrateFontSizesToDefaults: ${migratedCount} documents updated, ${errorCount} errors`,
+    );
+    return { migratedCount, errorCount };
+  } catch (error) {
+    console.error("migrateFontSizesToDefaults failed", error);
     throw error;
   }
 };

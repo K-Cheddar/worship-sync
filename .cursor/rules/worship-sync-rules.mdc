@@ -1,10 +1,13 @@
 ---
 description: 
-globs: 
 alwaysApply: true
 ---
+
 Use tailwind
 
 Write DRY code
 
 Use resuable components
+avoid nested ternaries
+
+Prefer es6 syntax for functions
