@@ -14,7 +14,7 @@ import { useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import { backoff } from "../utils/generalUtils";
 import { getApiBasePath } from "../utils/environment";
-import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
+import { MAX_INITIAL_SESSION_RETRIES, MAX_REPLICATION_AUTH_RETRIES } from "../constants";
 
 export type ConnectionStatus = {
   status: "connecting" | "retrying" | "failed" | "connected";
@@ -108,7 +108,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
-  const syncBatchSizeRef = useRef(50);
+  const syncBatchSizeRef = useRef(10);
   const remoteDbRef = useRef<PouchDB.Database | null>(null);
   const syncRetryRef = useRef(0);
   const replicateRetryRef = useRef(0);
@@ -181,7 +181,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         })
         .on("error", async (error: any) => {
           if (error.status === 413) {
-            syncBatchSizeRef.current = Math.max(10, syncBatchSizeRef.current - 20);
+            syncBatchSizeRef.current = Math.max(10, syncBatchSizeRef.current - 5);
             console.warn(
               "Sync push 413 (Content Too Large), retrying with smaller batch_size:",
               syncBatchSizeRef.current
@@ -190,11 +190,13 @@ const ControllerInfoProvider = ({ children }: any) => {
             return;
           }
           if (error.status === 401 || error.status === 403) {
+            setConnectionStatus({ status: "retrying", retryCount: syncRetryRef.current + 1 });
             setHasCouchSession(false);
             const success = await getCouchSession();
             if (!success) {
               syncRetryRef.current++;
-              if (syncRetryRef.current > 3) {
+              if (syncRetryRef.current > MAX_REPLICATION_AUTH_RETRIES) {
+                setConnectionStatus({ status: "failed", retryCount: syncRetryRef.current });
                 return;
               }
               await backoff(syncRetryRef.current);
@@ -236,11 +238,13 @@ const ControllerInfoProvider = ({ children }: any) => {
         })
         .on("error", async (error: any) => {
           if (error.status === 401 || error.status === 403) {
+            setConnectionStatus({ status: "retrying", retryCount: bibleSyncRetryRef.current + 1 });
             setHasCouchSession(false);
             const success = await getCouchSession();
             if (!success) {
               bibleSyncRetryRef.current++;
-              if (bibleSyncRetryRef.current > 3) {
+            if (bibleSyncRetryRef.current > MAX_REPLICATION_AUTH_RETRIES) {
+                setConnectionStatus({ status: "failed", retryCount: bibleSyncRetryRef.current });
                 return;
               }
               await backoff(bibleSyncRetryRef.current);
@@ -371,18 +375,28 @@ const ControllerInfoProvider = ({ children }: any) => {
               setHasCouchSession(false);
               replicateRef.current?.cancel();
 
-              const success = await getCouchSession();
-              console.log("error", error);
-              if (!success) {
-                replicateRetryRef.current++;
-                if (replicateRetryRef.current > 3) {
-                  window.location.reload();
-                  return;
-                }
-                await backoff(replicateRetryRef.current);
-              } else {
-                replicateRetryRef.current = 0;
+              replicateRetryRef.current++;
+              if (replicateRetryRef.current > MAX_REPLICATION_AUTH_RETRIES) {
+                setConnectionStatus({
+                  status: "failed",
+                  retryCount: replicateRetryRef.current,
+                });
+                return;
               }
+
+              setConnectionStatus({
+                status: "retrying",
+                retryCount: replicateRetryRef.current,
+              });
+              const success = await getCouchSession();
+              if (!success) {
+                setConnectionStatus({
+                  status: "failed",
+                  retryCount: replicateRetryRef.current,
+                });
+                return;
+              }
+              // Do not reset replicateRetryRef here; allow cap to stop the loop
             }
           })
           .on("complete", () => {
@@ -453,22 +467,31 @@ const ControllerInfoProvider = ({ children }: any) => {
         })
         .on("error", async (error: any) => {
           if (error.status === 401 || error.status === 403) {
-            console.log("error", error);
+            setHasCouchSession(false);
             bibleReplicateRef.current?.cancel();
 
+            bibleReplicateRetryRef.current++;
+            if (bibleReplicateRetryRef.current > MAX_REPLICATION_AUTH_RETRIES) {
+              setConnectionStatus({
+                status: "failed",
+                retryCount: bibleReplicateRetryRef.current,
+              });
+              return;
+            }
+
+            setConnectionStatus({
+              status: "retrying",
+              retryCount: bibleReplicateRetryRef.current,
+            });
             const success = await getCouchSession();
             if (!success) {
-              bibleReplicateRetryRef.current++;
-              if (bibleReplicateRetryRef.current > 3) {
-                window.location.reload();
-                return;
-              }
-              await backoff(bibleReplicateRetryRef.current);
-              setupBibleDb();
-            } else {
-              bibleReplicateRetryRef.current = 0;
-              setupBibleDb();
+              setConnectionStatus({
+                status: "failed",
+                retryCount: bibleReplicateRetryRef.current,
+              });
+              return;
             }
+            // Do not reset bibleReplicateRetryRef here; allow cap to stop the loop
           }
         })
         .on("complete", () => {

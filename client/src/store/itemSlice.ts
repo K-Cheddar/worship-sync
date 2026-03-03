@@ -38,6 +38,7 @@ const initialState: ItemState = {
   timerInfo: undefined,
   isLoading: true,
   isSectionLoading: false,
+  isItemFormatting: false,
   hasPendingUpdate: false,
   shouldSendTo: {
     projector: true,
@@ -128,6 +129,9 @@ export const itemSlice = createSlice({
     },
     setSelectedBox: (state, action: PayloadAction<number>) => {
       state.selectedBox = action.payload;
+    },
+    setItemFormatting: (state, action: PayloadAction<boolean>) => {
+      state.isItemFormatting = action.payload;
     },
     setShouldSendTo: (state, action: PayloadAction<Partial<ShouldSendTo>>) => {
       state.shouldSendTo = {
@@ -429,6 +433,7 @@ export const {
   setActiveItem,
   setItemIsLoading,
   setSectionLoading,
+  setItemFormatting,
   _updateSlides,
   _updateBibleInfo,
   _updateFormattedSections,

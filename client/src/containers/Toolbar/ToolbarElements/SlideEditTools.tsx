@@ -24,6 +24,7 @@ import {
   updateBibleFontMode,
 } from "../../../utils/formatter";
 import {
+  setItemFormatting,
   updateArrangements,
   updateBibleInfo,
   updateSlides,
@@ -38,11 +39,19 @@ import RadioButton from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
 import { formatFree } from "../../../utils/overflow";
 import { GlobalInfoContext } from "../../../context/globalInfo";
+import { DEFAULT_FONT_PX } from "../../../constants";
+
+const MIN_FONT_PX = 25;
+const MAX_FONT_PX = 500;
+
+function clampFontSize(n: number): number {
+  return Math.round(Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, n)));
+}
 
 const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
   const dispatch = useDispatch();
-  const [fontSize, setFontSize] = useState(24);
+  const [fontSize, setFontSize] = useState<number | string>(DEFAULT_FONT_PX);
   const [brightness, setBrightness] = useState(50);
   const [shouldKeepAspectRatio, setShouldKeepAspectRatio] = useState(false);
   const [fontColor, setFontColor] = useState("#ffffff");
@@ -53,6 +62,8 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const [isBold, setIsBold] = useState(false);
   const [isItalic, setIsItalic] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const fontSizeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const fontSizeInputRef = useRef<string | number>("");
   const { hostId } = useContext(GlobalInfoContext) || {};
 
   const item = useSelector((state) => state.undoable.present.item);
@@ -64,8 +75,9 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const slide = slides[selectedSlide];
 
   useEffect(() => {
-    const fSize = (slide?.boxes?.[selectedBox]?.fontSize || 2.5) * 10;
+    const fSize = slide?.boxes?.[selectedBox]?.fontSize ?? DEFAULT_FONT_PX;
     setFontSize(fSize);
+    fontSizeInputRef.current = fSize;
     setBrightness(slide?.boxes?.[0]?.brightness || 100);
     setShouldKeepAspectRatio(slide?.boxes?.[0]?.shouldKeepAspectRatio || false);
     setFontColor(slide?.boxes?.[selectedBox]?.fontColor || "#ffffff");
@@ -90,23 +102,78 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     [dispatch]
   );
 
-  const _updateFontSize = (val: number) => {
-    const _val = Math.round(Math.max(Math.min(val, 150), 1));
-    setFontSize(_val);
+  const runWithFormatting = useCallback(
+    (fn: () => void) => {
+      dispatch(setItemFormatting(true));
+      setTimeout(() => {
+        try {
+          fn();
+        } finally {
+          dispatch(setItemFormatting(false));
+        }
+      }, 0);
+    },
+    [dispatch]
+  );
 
-    // Debounce updateFontSize
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    timeoutRef.current = setTimeout(() => {
-      const fSize = _val / 10;
-      const updatedItem = updateBoxProperties({
-        updatedProperties: { fontSize: fSize },
-        item,
-        shouldFormatItem: true,
+  const applyFontSize = useCallback(
+    (val: number) => {
+      const clamped = clampFontSize(val);
+      setFontSize(clamped);
+      fontSizeInputRef.current = clamped;
+      runWithFormatting(() => {
+        const updatedItem = updateBoxProperties({
+          updatedProperties: { fontSize: clamped },
+          item,
+          shouldFormatItem: true,
+        });
+        updateItem(updatedItem);
       });
-      updateItem(updatedItem);
-    }, 250);
+    },
+    [item, runWithFormatting, updateItem]
+  );
+
+  const _updateFontSize = (val: number) => {
+    const clamped = clampFontSize(val);
+    setFontSize(clamped);
+    fontSizeInputRef.current = clamped;
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => applyFontSize(clamped), 250);
+  };
+
+  const commitFontSizeFromInput = useCallback(() => {
+    const inputVal = fontSizeInputRef.current;
+    const raw =
+      typeof inputVal === "string"
+        ? parseInt(inputVal.trim(), 10)
+        : inputVal;
+    const fallback =
+      slide?.boxes?.[selectedBox]?.fontSize ?? DEFAULT_FONT_PX;
+    const val =
+      Number.isNaN(raw) ||
+      inputVal === "" ||
+      (typeof inputVal === "string" && inputVal.trim() === "")
+        ? fallback
+        : raw;
+    const clamped = clampFontSize(val);
+    setFontSize(clamped);
+    fontSizeInputRef.current = clamped;
+    applyFontSize(clamped);
+  }, [slide, selectedBox, applyFontSize]);
+
+  const handleFontSizeBlur = () => {
+    if (fontSizeDebounceRef.current) {
+      clearTimeout(fontSizeDebounceRef.current);
+      fontSizeDebounceRef.current = null;
+    }
+    commitFontSizeFromInput();
+  };
+
+  const handleFontSizeChange = (val: string) => {
+    setFontSize(val);
+    fontSizeInputRef.current = val;
+    if (fontSizeDebounceRef.current) clearTimeout(fontSizeDebounceRef.current);
+    fontSizeDebounceRef.current = setTimeout(commitFontSizeFromInput, 1000);
   };
 
   const _updateBrightness = (val: number) => {
@@ -177,35 +244,41 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const _updateIsBold = () => {
     setIsBold(!isBold);
-    const updatedItem = updateBoxProperties({
-      updatedProperties: { isBold: !isBold },
-      item,
-      shouldFormatItem: true,
-      shouldApplyToAll: true,
+    runWithFormatting(() => {
+      const updatedItem = updateBoxProperties({
+        updatedProperties: { isBold: !isBold },
+        item,
+        shouldFormatItem: true,
+        shouldApplyToAll: true,
+      });
+      updateItem(updatedItem);
     });
-    updateItem(updatedItem);
   };
 
   const _updateIsItalic = () => {
     setIsItalic(!isItalic);
-    const updatedItem = updateBoxProperties({
-      updatedProperties: { isItalic: !isItalic },
-      item,
-      shouldFormatItem: true,
-      shouldApplyToAll: true,
+    runWithFormatting(() => {
+      const updatedItem = updateBoxProperties({
+        updatedProperties: { isItalic: !isItalic },
+        item,
+        shouldFormatItem: true,
+        shouldApplyToAll: true,
+      });
+      updateItem(updatedItem);
     });
-    updateItem(updatedItem);
   };
 
   const _updateAlignment = (align: "left" | "center" | "right") => {
     setAlignment(align);
-    const updatedItem = updateBoxProperties({
-      updatedProperties: { align },
-      item,
-      shouldApplyToAll: true,
-      shouldFormatItem: true,
+    runWithFormatting(() => {
+      const updatedItem = updateBoxProperties({
+        updatedProperties: { align },
+        item,
+        shouldApplyToAll: true,
+        shouldFormatItem: true,
+      });
+      updateItem(updatedItem);
     });
-    updateItem(updatedItem);
   };
 
   // Cleanup timeout on unmount
@@ -238,13 +311,23 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         <Button
           svg={Minus}
           variant="tertiary"
-          onClick={() => _updateFontSize(fontSize - 1)}
+          onClick={() => {
+            const num =
+              typeof fontSize === "number"
+                ? fontSize
+                : parseInt(String(fontSize), 10) || DEFAULT_FONT_PX;
+            _updateFontSize(num - 1);
+          }}
         />
         <Input
           label="Font Size"
-          type="number"
-          value={fontSize}
-          onChange={(val) => _updateFontSize(val as number)}
+          type="text"
+          inputMode="numeric"
+          value={
+            typeof fontSize === "string" ? fontSize : String(fontSize)
+          }
+          onChange={(val) => handleFontSizeChange(val as string)}
+          onBlur={handleFontSizeBlur}
           className="w-10 max-md:w-12"
           inputTextSize="text-xs"
           hideLabel
@@ -253,7 +336,13 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         <Button
           svg={Plus}
           variant="tertiary"
-          onClick={() => _updateFontSize(fontSize + 1)}
+          onClick={() => {
+            const num =
+              typeof fontSize === "number"
+                ? fontSize
+                : parseInt(String(fontSize), 10) || DEFAULT_FONT_PX;
+            _updateFontSize(num + 1);
+          }}
         />
 
         <PopOver
@@ -334,13 +423,15 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               label="Fit"
               value={slide.overflow === "fit"}
               onChange={() => {
-                const updatedItem = formatFree({
-                  ...item,
-                  slides: slides.map((s, index) =>
-                    index === selectedSlide ? { ...s, overflow: "fit" } : s
-                  ),
+                runWithFormatting(() => {
+                  const updatedItem = formatFree({
+                    ...item,
+                    slides: slides.map((s, index) =>
+                      index === selectedSlide ? { ...s, overflow: "fit" } : s
+                    ),
+                  });
+                  updateItem(updatedItem);
                 });
-                updateItem(updatedItem);
               }}
             />
             <RadioButton
@@ -348,15 +439,17 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               label="Separate"
               value={slide.overflow === "separate"}
               onChange={() => {
-                const updatedItem = formatFree({
-                  ...item,
-                  slides: slides.map((s, index) =>
-                    index === selectedSlide
-                      ? { ...s, overflow: "separate" }
-                      : s
-                  ),
+                runWithFormatting(() => {
+                  const updatedItem = formatFree({
+                    ...item,
+                    slides: slides.map((s, index) =>
+                      index === selectedSlide
+                        ? { ...s, overflow: "separate" }
+                        : s
+                    ),
+                  });
+                  updateItem(updatedItem);
                 });
-                updateItem(updatedItem);
               }}
             />
           </>

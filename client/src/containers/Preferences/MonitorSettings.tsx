@@ -6,6 +6,7 @@ import { useSelector } from "../../hooks";
 import {
   setMonitorShowClock,
   setMonitorShowTimer,
+  setMonitorShowNextSlide,
   setMonitorClockFontSize,
   setMonitorTimerFontSize,
 } from "../../store/preferencesSlice";
@@ -22,6 +23,7 @@ const MonitorSettings = () => {
     monitorSettings: {
       showClock: monitorShowClock,
       showTimer: monitorShowTimer,
+      showNextSlide: monitorShowNextSlide,
       clockFontSize: monitorClockFontSize,
       timerFontSize: monitorTimerFontSize,
     },
@@ -52,6 +54,11 @@ const MonitorSettings = () => {
       value: monitorShowTimer,
       setValue: setMonitorShowTimer,
     },
+    {
+      label: "Display next slide",
+      value: monitorShowNextSlide,
+      setValue: setMonitorShowNextSlide,
+    },
   ];
 
   const fontSizeSettings = [
@@ -60,16 +67,16 @@ const MonitorSettings = () => {
       value: localClockFontSize,
       setValue: setMonitorClockFontSize,
       setLocalValue: setLocalClockFontSize,
-      max: 25,
-      min: 15,
+      max: 115,
+      min: 75,
     },
     {
       label: "Timer Font Size",
       value: localTimerFontSize,
       setValue: setMonitorTimerFontSize,
       setLocalValue: setLocalTimerFontSize,
-      max: 25,
-      min: 15,
+      max: 115,
+      min: 75,
     },
   ];
 

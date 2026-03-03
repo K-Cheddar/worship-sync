@@ -10,7 +10,7 @@ const minimalBox: Box = {
   words: "text",
   width: 100,
   height: 100,
-  fontSize: 2.5,
+  fontSize: 45,
   brightness: 100,
   topMargin: 0,
   sideMargin: 0,

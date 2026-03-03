@@ -1,3 +1,4 @@
+import { DEFAULT_FONT_PX, DEFAULT_TITLE_FONT_PX } from "../constants";
 import {
   Arrangment,
   FormattedLyrics,
@@ -96,7 +97,8 @@ export const createNewSong = async ({
       slides: [
         createNewSlide({
           type: "Title",
-          fontSize: 4.5,
+          fontSize: DEFAULT_TITLE_FONT_PX,
+          textBoxHeight: 55,
           words: ["", name],
           background,
           mediaInfo,
@@ -104,7 +106,8 @@ export const createNewSong = async ({
         }),
         createNewSlide({
           type: "Blank",
-          fontSize: 2.5,
+          fontSize: DEFAULT_FONT_PX,
+          textBoxHeight: 55,
           words: [""],
           background,
           mediaInfo,
@@ -456,7 +459,7 @@ export const createNewFreeForm = async ({
       createNewSlide({
         type: "Section",
         name: "Section 1",
-        fontSize: 2.5,
+        fontSize: DEFAULT_FONT_PX,
         words: ["", text || name],
         background,
         mediaInfo,
@@ -518,7 +521,7 @@ export const createNewTimer = async ({
   // Create first slide with timer
   const timerSlide = createNewSlide({
     type: "Section",
-    fontSize: 4.5,
+    fontSize: DEFAULT_TITLE_FONT_PX,
     words: ["", "{{timer}}"],
     background,
     mediaInfo,
@@ -529,7 +532,7 @@ export const createNewTimer = async ({
   // Use Zero Width Non-Joiner (\u200C) to mark "now" for special styling
   const wrapUpSlide = createNewSlide({
     type: "Section",
-    fontSize: 4.5,
+    fontSize: DEFAULT_TITLE_FONT_PX,
     words: ["", "Please wrap up \u200Cnow\u200C"],
     background,
     mediaInfo,
