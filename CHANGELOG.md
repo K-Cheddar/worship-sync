@@ -1,3 +1,10 @@
+# [1.38.0](https://github.com/K-Cheddar/worship-sync/compare/v1.37.1...v1.38.0) (2026-03-03)
+
+
+### Features
+
+* Adding lookahead for monitor display ([2f8244a](https://github.com/K-Cheddar/worship-sync/commit/2f8244aedd874a1e9f50a27228a352065a3c4b9c))
+
 ## [1.37.1](https://github.com/K-Cheddar/worship-sync/compare/v1.37.0...v1.37.1) (2026-02-28)
 
 
