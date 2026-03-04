@@ -2,7 +2,6 @@ import { Box, ItemSlideType } from "../types";
 import {
   DEFAULT_FONT_PX,
   MONITOR_BAND_CURRENT_PX,
-  MONITOR_BAND_NEXT_PX,
   REFERENCE_HEIGHT,
 } from "../constants";
 import { getMaxLines, getNumLines } from "./textMeasurement";
@@ -100,11 +99,8 @@ export function formatBoxesForMonitorBand(
   });
 }
 
-/** Use the smaller band height so both bands get the same font size. */
-const MONITOR_BAND_HEIGHT_PX = Math.min(
-  MONITOR_BAND_CURRENT_PX,
-  MONITOR_BAND_NEXT_PX,
-);
+// Use the larger band - its okay if the next band is cut off
+const MONITOR_BAND_HEIGHT_PX = MONITOR_BAND_CURRENT_PX;
 
 function applyFixedFontToBoxes(boxes: Box[], fontPx: number): Box[] {
   return boxes.map((box) => ({
