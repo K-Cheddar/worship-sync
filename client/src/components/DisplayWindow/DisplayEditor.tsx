@@ -260,7 +260,6 @@ const DisplayEditor = ({
   const fontSizeInPx = box.fontSize ?? DEFAULT_FONT_PX;
 
   const tSS = fontSizeInPx / 32; // text shadow size in px
-  const fOS = fontSizeInPx / 128; // font outline size in px
 
   // Calculate box dimensions in pixels first
   const boxWidthPx = (referenceWidth * box.width) / 100;
@@ -279,7 +278,6 @@ const DisplayEditor = ({
   const textBoxHeight = `${boxHeightPx - topMarginPx * 2}px`;
   const textStyles = {
     textShadow: `${tSS}px ${tSS}px ${tSS}px #000, ${tSS}px ${tSS}px ${tSS}px #000`,
-    WebkitTextStroke: `${fOS}px #000`,
     textAlign: box.align || "center",
     lineHeight: 1.25,
     fontSize: `${fontSizeInPx}px`,

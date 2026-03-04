@@ -549,8 +549,6 @@ const ItemSlides = () => {
 
   // if (!arrangement && !hasSlides && type !== "free") return null;
 
-  console.log({ itemSlides: debouncedSlides })
-
   return (
     <ErrorBoundary>
       <DndContext

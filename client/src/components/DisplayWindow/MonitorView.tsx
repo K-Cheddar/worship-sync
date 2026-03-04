@@ -22,15 +22,8 @@ function renderBand(
 ) {
   return (
     <div
-      style={{
-        width: REFERENCE_WIDTH,
-        height: bandHeightPx,
-        overflow: "hidden",
-        flexShrink: 0,
-        display: "flex",
-        justifyContent: "center",
-        ...(alignBottom && { alignItems: "flex-end" }),
-      }}
+      className="flex justify-center overflow-hidden shrink-0"
+      style={{ height: bandHeightPx, ...(alignBottom && { alignItems: "flex-end" }) }}
     >
       <div
         className="w-full h-full relative"
@@ -207,8 +200,7 @@ const MonitorView = ({
         )}
 
         <div
-          className="shrink-0 bg-gray-600"
-          style={{ width: REFERENCE_WIDTH, height: 8 }}
+          className="shrink-0 bg-gray-600 h-2 w-full"
           aria-hidden
         />
 
@@ -235,32 +227,18 @@ const MonitorView = ({
   return (
     <div
       key="monitor-single-slide-layout"
-      className="bg-black"
+      className="bg-black w-full flex flex-col"
       style={{
-        width: REFERENCE_WIDTH,
         height: REFERENCE_HEIGHT,
-        display: "flex",
-        flexDirection: "column",
       }}
     >
       <div
-        style={{
-          width: REFERENCE_WIDTH,
-          height: contentHeightPx,
-          overflow: "hidden",
-          flexShrink: 0,
-          display: "flex",
-          justifyContent: "center",
-        }}
+        className="w-full flex justify-center overflow-hidden"
+        style={{ height: contentHeightPx }}
       >
         <div
-          style={{
-            position: "relative",
-            width: REFERENCE_WIDTH,
-            height: REFERENCE_HEIGHT,
-            transform: `scale(${singleSlideScale})`,
-            transformOrigin: "top center",
-          }}
+          className="relative w-full h-full"
+          style={{ transform: `scale(${singleSlideScale})`, transformOrigin: "top center" }}
         >
           {showBackground && activeVideoUrl && videoBox && (
             <HLSPlayer

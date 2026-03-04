@@ -205,6 +205,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isEditor = displayType === "editor";
     const isDisplay = !isStream && !isEditor;
     const isMonitor = displayType === "monitor";
+    const isSlide = displayType === "slide";
 
     // Determine the active background video (if any) from boxes
     const { videoBox, desiredVideoUrl } = useMemo(() => {
@@ -356,6 +357,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     referenceWidth={REFERENCE_WIDTH}
                     referenceHeight={REFERENCE_HEIGHT}
                     scaleFactor={scaleFactor}
+                    brightness={isSlide && index === 0 ? 30 : undefined}
+                    isSimpleFont={isSlide}
                   />
                 );
               return null;

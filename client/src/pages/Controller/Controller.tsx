@@ -58,7 +58,6 @@ import {
   deleteUnusedHeadings,
   getAllOverlayHistory,
   getOverlaysByIds,
-  migrateFontSizesToDefaults,
   // formatAllSongs,
   // formatAllDocs,
   // formatAllItems,
@@ -68,7 +67,6 @@ import Timers from "../../containers/Timers/Timers";
 import Preferences from "./Preferences";
 import QuickLinks from "./QuickLinks";
 import MonitorSettings from "./MonitorSettings";
-import MonitorControls from "./MonitorControls";
 import { useMediaCache } from "../../hooks/useMediaCache";
 import { extractMediaUrlsFromItem, extractAllMediaUrlsFromOutlines } from "../../utils/mediaCacheUtils";
 import {
@@ -90,7 +88,6 @@ import { useSyncOnReconnect } from "../../hooks";
 import cn from "classnames";
 import { CONTROLLER_PAGE_READY, RootState } from "../../store/store";
 import { useSyncRemoteTimers } from "../../hooks";
-import { migrateFontSizesToPixels } from "../../utils/dbUtils";
 
 // Here for future to implement resizable
 
@@ -205,9 +202,7 @@ const Controller = () => {
   // Leaving this in case we need to reformat all songs in the db
   useEffect(() => {
     if (!db || !cloud) return;
-    // formatAllSongs(db, cloud);
-    // migrateFontSizesToDefaults(db);
-    // migrateFontSizesToPixels(db);
+    // formatAllDocs(db, cloud);
   }, [db, cloud]);
 
   useEffect(() => {
@@ -600,7 +595,6 @@ const Controller = () => {
               <Route path="preferences" element={<Preferences />} />
               <Route path="quick-links" element={<QuickLinks />} />
               <Route path="monitor-settings" element={<MonitorSettings />} />
-              <Route path="monitor-controls" element={<MonitorControls />} />
             </Routes>
           </div>
 

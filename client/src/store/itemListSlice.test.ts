@@ -16,6 +16,7 @@ type ItemListState = {
   list: ServiceItem[];
   isLoading: boolean;
   selectedItemListId: string;
+  insertPointIndex: number;
   hasPendingUpdate: boolean;
   initialItems: string[];
   isInitialized: boolean;
@@ -65,10 +66,25 @@ describe("itemListSlice", () => {
       expect(state.hasPendingUpdate).toBe(true);
     });
 
-    it("setActiveItemInList updates selectedItemListId", () => {
-      const store = createStore();
-      store.dispatch(setActiveItemInList("selected-id"));
-      expect(store.getState().itemList.selectedItemListId).toBe("selected-id");
+    it("setActiveItemInList updates selectedItemListId and insertPointIndex", () => {
+      const store = createStore({
+        itemList: {
+          list: [
+            createServiceItem({ name: "A", _id: "a", listId: "l1" }),
+            createServiceItem({ name: "B", _id: "b", listId: "l2" }),
+          ],
+          isLoading: false,
+          selectedItemListId: "",
+          insertPointIndex: -1,
+          hasPendingUpdate: false,
+          initialItems: [],
+          isInitialized: true,
+        },
+      });
+      store.dispatch(setActiveItemInList("l2"));
+      const state = store.getState().itemList;
+      expect(state.selectedItemListId).toBe("l2");
+      expect(state.insertPointIndex).toBe(1);
     });
 
     it("removeItemFromList removes by listId", () => {
@@ -80,6 +96,7 @@ describe("itemListSlice", () => {
           ],
           isLoading: false,
           selectedItemListId: "l1",
+          insertPointIndex: 0,
           hasPendingUpdate: false,
           initialItems: ["l1", "l2"],
           isInitialized: true,
@@ -89,6 +106,7 @@ describe("itemListSlice", () => {
       const state = store.getState().itemList;
       expect(state.list).toHaveLength(1);
       expect(state.list[0].listId).toBe("l2");
+      expect(state.insertPointIndex).toBe(-1);
     });
 
     it("removeItemFromListById removes by _id", () => {
@@ -100,6 +118,7 @@ describe("itemListSlice", () => {
           ],
           isLoading: false,
           selectedItemListId: "",
+          insertPointIndex: -1,
           hasPendingUpdate: false,
           initialItems: [],
           isInitialized: true,
@@ -111,7 +130,7 @@ describe("itemListSlice", () => {
       expect(state.list[0]._id).toBe("id-b");
     });
 
-    it("addItemToItemList inserts after selected and sets selected", () => {
+    it("addItemToItemList inserts after selected and sets selected and insertPoint", () => {
       const store = createStore({
         itemList: {
           list: [
@@ -120,6 +139,7 @@ describe("itemListSlice", () => {
           ],
           isLoading: false,
           selectedItemListId: "l1",
+          insertPointIndex: 0,
           hasPendingUpdate: false,
           initialItems: [],
           isInitialized: true,
@@ -131,6 +151,7 @@ describe("itemListSlice", () => {
       expect(state.list).toHaveLength(3);
       expect(state.list[1].name).toBe("New");
       expect(state.selectedItemListId).toBe("fixed-list-id");
+      expect(state.insertPointIndex).toBe(1);
     });
 
     it("addItemToItemList adds existing song to outline", () => {
@@ -141,6 +162,7 @@ describe("itemListSlice", () => {
           ],
           isLoading: false,
           selectedItemListId: "l0",
+          insertPointIndex: 0,
           hasPendingUpdate: false,
           initialItems: [],
           isInitialized: true,
@@ -165,6 +187,7 @@ describe("itemListSlice", () => {
           list: [createServiceItem({ name: "Song", _id: "s1", listId: "l1" })],
           isLoading: false,
           selectedItemListId: "l1",
+          insertPointIndex: 0,
           hasPendingUpdate: false,
           initialItems: [],
           isInitialized: true,
@@ -188,6 +211,7 @@ describe("itemListSlice", () => {
           list: [createServiceItem({ name: "Song", _id: "s1", listId: "l1" })],
           isLoading: false,
           selectedItemListId: "l1",
+          insertPointIndex: 0,
           hasPendingUpdate: false,
           initialItems: [],
           isInitialized: true,
@@ -230,6 +254,7 @@ describe("itemListSlice", () => {
           ],
           isLoading: false,
           selectedItemListId: "l2",
+          insertPointIndex: 1,
           hasPendingUpdate: false,
           initialItems: ["l1", "l2", "l3"],
           isInitialized: true,
@@ -267,6 +292,7 @@ describe("itemListSlice", () => {
           ],
           isLoading: false,
           selectedItemListId: "l2",
+          insertPointIndex: 1,
           hasPendingUpdate: false,
           initialItems: [],
           isInitialized: true,

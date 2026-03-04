@@ -72,21 +72,19 @@ const DisplayStreamText = ({
   const bWords = box.words || "";
   const words = bWords.replace(/(\n)+/g, "\n").trim();
   const fontSizeInPx = 50;
-  
+
   // Text shadow and outline sizes in pixels (will scale with transform)
   const REFERENCE_WIDTH_VW = (REFERENCE_WIDTH / window.innerWidth) * 100;
   const useReferenceWidth = width >= REFERENCE_WIDTH_VW * 0.5;
   const tSS = fontSizeInPx / (useReferenceWidth ? 32 : 10); // text shadow size in px
-  const _fOS = fontSizeInPx / (useReferenceWidth ? 32 : 114); // font outline size in px
-  const fOS = _fOS / 2;
-  
+
   // Convert all percentage values to pixels based on reference dimensions
   const boxWidthPx = (referenceWidth * 70) / 100; // 70% of reference width
   const marginLeftPx = (referenceWidth * 15) / 100; // 15% of reference width
   const marginRightPx = (referenceWidth * 15) / 100; // 15% of reference width
   const marginBottomPx = (referenceHeight * 7.5) / 100; // 7.5% of reference height
   const boxTopPx = (referenceHeight * 92.5) / 100; // 92.5% of reference height
-  
+
   const boxWidth = `${boxWidthPx}px`;
   const boxHeight = "fit-content";
   const marginLeft = `${marginLeftPx}px`;
@@ -97,7 +95,6 @@ const DisplayStreamText = ({
   const boxLeft = "unset";
   const textStyles = {
     textShadow: `${tSS}px ${tSS}px ${tSS}px #000, ${tSS}px ${tSS}px ${tSS}px #000`,
-    WebkitTextStroke: `${fOS}px #000`,
     textAlign: box.align || "center",
     lineHeight: 1.25,
   };

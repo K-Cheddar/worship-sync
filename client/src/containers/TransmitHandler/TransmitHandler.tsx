@@ -81,7 +81,7 @@ const TransmitHandler = () => {
         data-is-media-expanded={isMediaExpanded}
       >
         <section
-          className="flex flex-col gap-2 w-full  rounded-lg mx-auto h-full p-2"
+          className="flex flex-col gap-2 w-full mx-auto h-full p-2"
         >
           <div className="w-full flex justify-center items-center gap-4">
             <Button

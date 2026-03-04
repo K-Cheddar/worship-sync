@@ -263,6 +263,9 @@ const Overlays = () => {
       ...selectedOverlay,
       formatting: formatting,
     }));
+    for (const overlay of overlaysOfType) {
+      dispatch(updateOverlayInList({ id: overlay.id, formatting }));
+    }
     if (db) {
       for (const overlay of overlaysOfType) {
         try {
