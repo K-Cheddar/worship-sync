@@ -38,6 +38,7 @@ const ServiceItems = () => {
     isLoading,
     initialItems,
     selectedItemListId,
+    insertPointIndex,
   } = useSelector((state) => state.undoable.present.itemList);
   const prevItemsLengthRef = useRef(serviceItems.length);
 
@@ -386,7 +387,9 @@ const ServiceItems = () => {
                       }
                       key={item.listId}
                       item={item}
+                      index={index}
                       selectedItemListId={selectedItemListId}
+                      insertPointIndex={insertPointIndex}
                       selectedListIds={selectedListIds}
                       initialItems={initialItems}
                       location={location}

@@ -108,7 +108,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
-  const syncBatchSizeRef = useRef(10);
+  const syncBatchSizeRef = useRef(50);
   const remoteDbRef = useRef<PouchDB.Database | null>(null);
   const syncRetryRef = useRef(0);
   const replicateRetryRef = useRef(0);
@@ -243,7 +243,7 @@ const ControllerInfoProvider = ({ children }: any) => {
             const success = await getCouchSession();
             if (!success) {
               bibleSyncRetryRef.current++;
-            if (bibleSyncRetryRef.current > MAX_REPLICATION_AUTH_RETRIES) {
+              if (bibleSyncRetryRef.current > MAX_REPLICATION_AUTH_RETRIES) {
                 setConnectionStatus({ status: "failed", retryCount: bibleSyncRetryRef.current });
                 return;
               }

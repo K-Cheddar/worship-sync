@@ -51,7 +51,7 @@ const types: ItemTypesType[] = [
   {
     type: "free",
     selected: false,
-    label: "Free Form",
+    label: "Custom Item",
     access: ["full"],
   },
   {

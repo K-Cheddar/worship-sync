@@ -34,7 +34,6 @@ const ToolbarMenu = ({
   const {
     isElectron,
     displays,
-    windowStates,
     openWindow,
     focusWindow,
     moveWindowToDisplay,
@@ -90,21 +89,15 @@ const ToolbarMenu = ({
         return;
       }
 
-      const isWindowOpen =
-        windowType === "projector"
-          ? windowStates?.projectorOpen
-          : windowStates?.monitorOpen;
-
-      if (isWindowOpen) {
-        // Match WindowControl behavior: move open window directly to selected display.
-        await moveWindowToDisplay(windowType, displayId);
-        // Ensure moved window is brought to front.
+      // Try to move existing window to the selected display first (does not rely on
+      // possibly stale windowStates). If window is not open, moveWindowToDisplay returns false.
+      const moved = await moveWindowToDisplay(windowType, displayId);
+      if (moved) {
         await focusWindow(windowType);
-      } else {
-        // Persist display selection, then open the window on that display.
-        await setDisplayPreference(windowType, displayId);
-        await openWindow(windowType);
+        return;
       }
+      await setDisplayPreference(windowType, displayId);
+      await openWindow(windowType);
     } catch (err) {
       console.error(err);
     }

@@ -82,7 +82,7 @@ const Preferences = () => {
       setBrightness: setDefaultBibleBackgroundBrightness,
     },
     {
-      label: "Free Form Defaults",
+      label: "Custom Item Defaults",
       preference: "defaultFreeFormBackground",
       background: defaultFreeFormBackground,
       brightness: defaultFreeFormBackgroundBrightness,
@@ -162,7 +162,7 @@ const Preferences = () => {
       options: ["fit", "separate", "multiple"],
     },
     {
-      label: "Free Form Overflow Mode",
+      label: "Custom Item Overflow Mode",
       value: defaultFreeFormFontMode,
       property: "defaultFreeFormFontMode",
       options: ["fit", "separate"],

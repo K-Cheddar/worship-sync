@@ -26,7 +26,7 @@ const buttons: ButtonType[] = [
   },
   {
     type: "free",
-    title: "Free Form Items",
+    title: "Custom Items",
     section: "free",
     access: ["full"],
   },

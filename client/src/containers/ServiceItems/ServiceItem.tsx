@@ -18,7 +18,9 @@ import cn from "classnames";
 type ServiceItemsProps = {
   isActive: boolean;
   timerValue?: number;
+  index: number;
   selectedItemListId: string | undefined;
+  insertPointIndex: number;
   selectedListIds: Set<string>;
   location: Location;
   item: ServiceItemType;
@@ -30,7 +32,9 @@ const ServiceItem = ({
   isActive,
   timerValue,
   item,
+  index,
   selectedItemListId,
+  insertPointIndex,
   selectedListIds,
   location,
   initialItems,
@@ -48,6 +52,8 @@ const ServiceItem = ({
   const isSelected =
     selectedListIds.has(item.listId) ||
     (selectedListIds.size === 0 && item.listId === selectedItemListId);
+
+  const isInsertPoint = index === insertPointIndex;
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -162,7 +168,8 @@ const ServiceItem = ({
       title={item.name}
       className={cn(
         "border-b-2 border-r-4 overflow-hidden",
-        isSelected ? "border-l-cyan-500" : "border-transparent"
+        isSelected ? "border-l-cyan-500" : "border-transparent",
+        isInsertPoint ? "border-b-white" : "border-b-transparent"
       )}
       isSelected={isSelected && location.pathname.includes("item")}
       to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(
