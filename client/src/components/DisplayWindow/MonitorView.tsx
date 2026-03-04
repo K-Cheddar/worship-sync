@@ -142,7 +142,7 @@ const MonitorView = ({
 
   const clockTimerBand = (
     <div
-      className="flex items-center gap-1 w-full"
+      className="flex items-center gap-1 w-full z-10 bg-black relative bottom-[8px]"
       style={{
         height: MONITOR_BAND_CLOCK_TIMER_PX,
       }}
@@ -204,12 +204,24 @@ const MonitorView = ({
           aria-hidden
         />
 
-        {renderBand(
-          MONITOR_BAND_NEXT_PX,
-          renderNextBand(),
-          false,
-          0.75
-        )}
+        <div
+          className="relative shrink-0 w-full"
+          style={{ height: MONITOR_BAND_NEXT_PX }}
+        >
+          {renderBand(
+            MONITOR_BAND_NEXT_PX,
+            renderNextBand(),
+            false,
+            0.75
+          )}
+          <div
+            className="absolute bottom-[-4px] left-0 right-0 pointer-events-none"
+            style={{
+              height: 64,
+              background: "linear-gradient(to bottom, transparent, #000)",
+            }}
+          />
+        </div>
 
         {clockTimerBand}
       </div>
@@ -227,7 +239,7 @@ const MonitorView = ({
   return (
     <div
       key="monitor-single-slide-layout"
-      className="bg-black w-full flex flex-col"
+      className="bg-black w-full flex flex-col px-4"
       style={{
         height: REFERENCE_HEIGHT,
       }}

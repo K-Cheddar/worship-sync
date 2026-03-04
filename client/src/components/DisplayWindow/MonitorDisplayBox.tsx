@@ -46,7 +46,7 @@ const MonitorDisplayBox = ({
 
       boxTimeline.current?.clear();
 
-      const textDuration = 0.35;
+      const textDuration = 0.5;
 
       boxTimeline.current = gsap.timeline();
 
