@@ -158,6 +158,7 @@ const createProjectorWindow = () => {
 
   setDisplayWindow("projector", newWindow);
   setupContextMenu(newWindow.webContents);
+  notifyWindowStateChanged();
 
   setupReadyToShow(newWindow, "projector", windowStateManager);
 
@@ -190,6 +191,7 @@ const createMonitorWindow = () => {
 
   setDisplayWindow("monitor", newWindow);
   setupContextMenu(newWindow.webContents);
+  notifyWindowStateChanged();
 
   setupReadyToShow(newWindow, "monitor", windowStateManager);
 
@@ -804,16 +806,19 @@ const moveWindowToDisplay = (
 
   if (!targetDisplay) return false;
 
-  // Move window to display and make it fullscreen
-  window.setBounds({
+  const bounds = {
     x: targetDisplay.bounds.x,
     y: targetDisplay.bounds.y,
     width: targetDisplay.bounds.width,
     height: targetDisplay.bounds.height,
-  });
+  };
 
-  // Re-assert fullscreen after moving displays to avoid Windows shell UI artifacts.
+  // Exit fullscreen first; setBounds is ignored while fullscreen so the window
+  // would not move. Then set bounds and re-enter fullscreen on the target display.
   window.setFullScreen(false);
+  window.setBounds(bounds);
+  // Second setBounds can help on Windows when displays have different scale factors.
+  window.setBounds(bounds);
   window.setFullScreen(true);
 
   windowStateManager.saveWindowState(windowType, window);

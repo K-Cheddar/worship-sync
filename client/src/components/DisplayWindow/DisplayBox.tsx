@@ -28,6 +28,8 @@ type DisplayBoxProps = {
   referenceWidth?: number;
   referenceHeight?: number;
   scaleFactor?: number;
+  brightness?: number;
+  isSimpleFont?: boolean;
 };
 
 const DisplayBox = ({
@@ -44,7 +46,8 @@ const DisplayBox = ({
   isWindowVideoLoaded,
   referenceWidth = REFERENCE_WIDTH,
   referenceHeight = REFERENCE_HEIGHT,
-  scaleFactor = 1,
+  brightness,
+  isSimpleFont,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline | null>(null);
@@ -131,7 +134,6 @@ const DisplayBox = ({
   const fontSizeInPx = box.fontSize ?? DEFAULT_FONT_PX;
 
   const tSS = fontSizeInPx / 32;
-  const fOS = fontSizeInPx / 128;
 
   const boxWidthPx = (referenceWidth * box.width) / 100;
   const boxHeightPx = (referenceHeight * box.height) / 100;
@@ -147,8 +149,9 @@ const DisplayBox = ({
   const boxTop = `${(referenceHeight * (box.y || 0)) / 100}px`;
   const boxLeft = `${(referenceWidth * (box.x || 0)) / 100}px`;
   const textStyles = {
-    textShadow: `${tSS}px ${tSS}px ${tSS}px #000, ${tSS}px ${tSS}px ${tSS}px #000`,
-    WebkitTextStroke: `${fOS}px #000`,
+    ...(isSimpleFont ? {} : {
+      textShadow: `${tSS}px ${tSS}px ${tSS}px #000, ${tSS}px ${tSS}px ${tSS}px #000`
+    }),
     textAlign: box.align || "center",
     lineHeight: 1.25,
     fontWeight: box.isBold ? "bold" : "normal",
@@ -166,6 +169,8 @@ const DisplayBox = ({
     return words;
   };
 
+  const brightnessValue = brightness ?? box.brightness;
+
   return (
     <div
       key={box.id}
@@ -181,7 +186,7 @@ const DisplayBox = ({
         marginLeft,
         marginRight,
         color: box.fontColor,
-        filter: `brightness(${box.brightness}%)`,
+        filter: `brightness(${brightnessValue}%)`,
         top: boxTop,
         left: boxLeft,
       }}

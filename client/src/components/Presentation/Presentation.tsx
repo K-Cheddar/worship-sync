@@ -60,7 +60,7 @@ const Presentation = ({
 
   return (
     <div className="flex flex-col gap-2">
-      <section className="border border-gray-600 rounded-lg overflow-hidden relative bg-gray-800">
+      <section className="border border-gray-600 rounded-sm overflow-hidden relative bg-gray-800">
         <div className="flex gap-2">
           <div className="flex flex-col">
             <h2 className="bg-gray-900 text-center font-semibold text-sm flex items-center gap-2 px-2 py-1 justify-around">
@@ -109,17 +109,17 @@ const Presentation = ({
             />
           </div>
           {filteredQuickLinks.length > 0 && (
-              <ul className="grid grid-cols-2 gap-2 py-2 w-full pr-2">
-                {filteredQuickLinks.map((link) => (
-                  <QuickLink
-                    timers={timers}
-                    displayType={info.displayType}
-                    isMobile={isMobile}
-                    {...link}
-                    key={link.id}
-                  />
-                ))}
-              </ul>
+            <ul className="grid grid-cols-2 gap-2 py-2 w-full pr-2">
+              {filteredQuickLinks.map((link) => (
+                <QuickLink
+                  timers={timers}
+                  displayType={info.displayType}
+                  isMobile={isMobile}
+                  {...link}
+                  key={link.id}
+                />
+              ))}
+            </ul>
           )}
         </div>
       </section>

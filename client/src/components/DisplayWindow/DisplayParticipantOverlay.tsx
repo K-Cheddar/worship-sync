@@ -50,6 +50,10 @@ const DisplayParticipantOverlay = forwardRef<
     const isCenter = position === "center";
     const offScreenXPercent = position === "right" ? 105 : -105;
 
+    const prevPosition = prevStyles.participantOverlayPosition ?? "left";
+    const prevIsCenter = prevPosition === "center";
+    const prevOffScreenXPercent = prevPosition === "right" ? 105 : -105;
+
     // Get participant data for children
     const participantData = [
       participantOverlayInfo.name,
@@ -222,14 +226,14 @@ const DisplayParticipantOverlay = forwardRef<
           prevOverlayTimeline.current = gsap
             .timeline()
             .to(prevParticipantOverlayRef.current, {
-              ...(isCenter
+              ...(prevIsCenter
                 ? { opacity: 0 }
-                : { xPercent: offScreenXPercent, opacity: 0 }),
+                : { xPercent: prevOffScreenXPercent, opacity: 0 }),
               duration: 1.5,
               ease: "power1.out",
               onUpdate: () => {
                 if (prevParticipantOverlayRef.current) {
-                  if (!isCenter) {
+                  if (!prevIsCenter) {
                     containerXPercent.current = gsap.getProperty(
                       prevParticipantOverlayRef.current,
                       "xPercent"
