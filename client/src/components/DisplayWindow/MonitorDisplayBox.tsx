@@ -46,7 +46,8 @@ const MonitorDisplayBox = ({
 
       boxTimeline.current?.clear();
 
-      const textDuration = 0.5;
+      const fadeDuration = 0.35;
+      const slideDuration = 0.65;
 
       boxTimeline.current = gsap.timeline();
 
@@ -60,7 +61,7 @@ const MonitorDisplayBox = ({
             { opacity: 1 },
             {
               opacity: 0,
-              duration: textDuration,
+              duration: fadeDuration,
               ease: "power1.inOut",
             }
           );
@@ -70,7 +71,7 @@ const MonitorDisplayBox = ({
             { opacity: 0 },
             {
               opacity: 1,
-              duration: textDuration,
+              duration: fadeDuration,
               ease: "power1.inOut",
             }
           );
@@ -90,7 +91,7 @@ const MonitorDisplayBox = ({
             { yPercent: 0 },
             {
               yPercent: 100,
-              duration: textDuration,
+              duration: slideDuration,
               ease: "power1.inOut",
             }
           );
@@ -100,7 +101,7 @@ const MonitorDisplayBox = ({
             { yPercent: -100 },
             {
               yPercent: 0,
-              duration: textDuration,
+              duration: slideDuration,
               ease: "power1.inOut",
             }
           );
@@ -117,7 +118,7 @@ const MonitorDisplayBox = ({
           { yPercent: 0 },
           {
             yPercent: -100,
-            duration: textDuration,
+            duration: slideDuration,
             ease: "power1.inOut",
           }
         );
@@ -127,7 +128,7 @@ const MonitorDisplayBox = ({
           { yPercent: 100 },
           {
             yPercent: 0,
-            duration: textDuration,
+            duration: slideDuration,
             ease: "power1.inOut",
           }
         );
