@@ -1,3 +1,10 @@
+## [1.38.3](https://github.com/K-Cheddar/worship-sync/compare/v1.38.2...v1.38.3) (2026-03-06)
+
+
+### Bug Fixes
+
+* Slightly slow down slide animation for lookahead ([c43d4ea](https://github.com/K-Cheddar/worship-sync/commit/c43d4eaa7cdd3946e863bb1f997c518f15dab2be))
+
 ## [1.38.2](https://github.com/K-Cheddar/worship-sync/compare/v1.38.1...v1.38.2) (2026-03-04)
 
 
