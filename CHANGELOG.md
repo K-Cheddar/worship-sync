@@ -1,3 +1,10 @@
+## [1.38.4](https://github.com/K-Cheddar/worship-sync/compare/v1.38.3...v1.38.4) (2026-03-06)
+
+
+### Bug Fixes
+
+* Improve stream animation ([7d19174](https://github.com/K-Cheddar/worship-sync/commit/7d19174a47d222348a0585afe6193f9ffd167160))
+
 ## [1.38.3](https://github.com/K-Cheddar/worship-sync/compare/v1.38.2...v1.38.3) (2026-03-06)
 
 
