@@ -1,4 +1,4 @@
-import { forwardRef, MutableRefObject, useRef } from "react";
+import { forwardRef, useRef } from "react";
 import { BibleDisplayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -10,6 +10,8 @@ type DisplayStreamBibleProps = {
   prevBibleDisplayInfo?: BibleDisplayInfo;
   shouldAnimate?: boolean;
 };
+
+const DURATION = 0.35;
 
 const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
   (
@@ -28,49 +30,18 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
 
     useGSAP(
       () => {
-        if (
-          !bibleRef.current ||
-          !(containerRef as MutableRefObject<HTMLDivElement>)?.current ||
-          !shouldAnimate
-        )
-          return;
+        if (!bibleRef.current || !shouldAnimate) return;
 
         bibleTimeline.current?.clear();
-
-        const innerElements = [".bible-info-title", ".bible-info-text"];
-        const targets = [bibleRef.current, ...innerElements];
-
-        if (prevBibleDisplayInfo?.title?.trim()) {
-          bibleTimeline.current = gsap.timeline().fromTo(
-            targets,
-            {
-              opacity: 0,
-              yPercent: 0,
-            },
-            { opacity: 1, duration: 0.35, ease: "power1.inOut" }
-          );
-        } else {
-          bibleTimeline.current = gsap.timeline();
-
-          // Only animate if there is bible info
-          if (
-            bibleDisplayInfo?.title?.trim() ||
-            bibleDisplayInfo?.text?.trim()
-          ) {
-            bibleTimeline.current.fromTo(
-              targets,
-              { yPercent: 120, opacity: 0 },
-              {
-                yPercent: 0,
-                opacity: 1,
-                duration: 1.5,
-                ease: "power1.inOut",
-              }
-            );
-          }
-        }
+        const el = bibleRef.current;
+        gsap.set(el, { opacity: 0 });
+        bibleTimeline.current = gsap.timeline().fromTo(
+          el,
+          { opacity: 0 },
+          { opacity: 1, duration: DURATION, ease: "power1.inOut" }
+        );
       },
-      { scope: bibleRef, dependencies: [bibleDisplayInfo] }
+      { scope: bibleRef, dependencies: [bibleDisplayInfo, shouldAnimate] }
     );
 
     useGSAP(
@@ -78,36 +49,13 @@ const DisplayStreamBible = forwardRef<HTMLDivElement, DisplayStreamBibleProps>(
         if (!prevBibleRef.current || !shouldAnimate) return;
 
         prevBibleTimeline.current?.clear();
-
-        const innerElements = [
-          ".prev-bible-info-title",
-          ".prev-bible-info-text",
-        ];
-        const targets = [prevBibleRef.current, ...innerElements];
-
-        if (bibleDisplayInfo?.title) {
-          prevBibleTimeline.current = gsap.timeline().fromTo(
-            targets,
-            {
-              opacity: 1,
-              yPercent: 0,
-            },
-            { opacity: 0, duration: 0.35, ease: "power1.inOut" }
-          );
-        } else {
-          prevBibleTimeline.current = gsap.timeline().fromTo(
-            targets,
-            { yPercent: 0, opacity: 1 },
-            {
-              yPercent: 120,
-              opacity: 0,
-              duration: 1.5,
-              ease: "power1.inOut",
-            }
-          );
-        }
+        prevBibleTimeline.current = gsap.timeline().fromTo(
+          prevBibleRef.current,
+          { opacity: 1 },
+          { opacity: 0, duration: DURATION, ease: "power1.inOut" }
+        );
       },
-      { scope: prevBibleRef, dependencies: [prevBibleDisplayInfo] }
+      { scope: prevBibleRef, dependencies: [prevBibleDisplayInfo, shouldAnimate] }
     );
 
     const renderContent = (text: string) => {

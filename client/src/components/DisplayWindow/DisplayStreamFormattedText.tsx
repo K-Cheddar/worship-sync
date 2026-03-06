@@ -44,20 +44,17 @@ const DisplayStreamFormattedText = ({
       if (!formattedTextRef.current || !shouldAnimate) return;
 
       formattedTextTimeline.current?.clear();
-
-      if (formattedTextDisplayInfo?.text?.trim()) {
-        formattedTextTimeline.current = gsap.timeline().fromTo(
-          formattedTextRef.current,
-          {
-            opacity: 0,
-          },
-          { opacity: 1, duration: 0.35, ease: "power1.inOut" }
-        );
-      }
+      const el = formattedTextRef.current;
+      gsap.set(el, { opacity: 0 });
+      formattedTextTimeline.current = gsap.timeline().fromTo(
+        el,
+        { opacity: 0 },
+        { opacity: 1, duration: 0.35, ease: "power1.inOut" }
+      );
     },
     {
       scope: formattedTextRef,
-      dependencies: [formattedTextDisplayInfo, isPrev],
+      dependencies: [formattedTextDisplayInfo, shouldAnimate],
     }
   );
 
@@ -70,16 +67,14 @@ const DisplayStreamFormattedText = ({
       if (prevFormattedTextDisplayInfo?.text?.trim()) {
         prevFormattedTextTimeline.current = gsap.timeline().fromTo(
           prevFormattedTextRef.current,
-          {
-            opacity: 1,
-          },
+          { opacity: 1 },
           { opacity: 0, duration: 0.35, ease: "power1.inOut" }
         );
       }
     },
     {
       scope: prevFormattedTextRef,
-      dependencies: [prevFormattedTextDisplayInfo],
+      dependencies: [prevFormattedTextDisplayInfo, shouldAnimate],
     }
   );
 
@@ -96,7 +91,9 @@ const DisplayStreamFormattedText = ({
       <div
         ref={formattedTextRef}
         className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%] whitespace-pre-line"
-        style={generateFormattedTextStyles(width, formattedTextDisplayInfo)}
+        style={{
+          ...generateFormattedTextStyles(width, formattedTextDisplayInfo),
+        }}
       >
         {formattedTextDisplayInfo?.text && (
           <p className="formatted-text-text">

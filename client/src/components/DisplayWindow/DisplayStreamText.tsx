@@ -14,6 +14,7 @@ type DisplayStreamTextProps = {
   timerInfo?: TimerInfo;
   referenceWidth?: number; // Reference width for pixel calculations (1920px)
   referenceHeight?: number; // Reference height for pixel calculations (1080px)
+  shouldAnimate?: boolean;
 };
 
 const DisplayStreamText = ({
@@ -25,13 +26,14 @@ const DisplayStreamText = ({
   timerInfo,
   referenceWidth = REFERENCE_WIDTH,
   referenceHeight = REFERENCE_HEIGHT,
+  shouldAnimate = false,
 }: DisplayStreamTextProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline>(null);
 
   useGSAP(
     () => {
-      if (!boxRef.current) return;
+      if (!boxRef.current || !shouldAnimate) return;
 
       boxTimeline.current?.clear();
 
