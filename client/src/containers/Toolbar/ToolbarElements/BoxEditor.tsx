@@ -314,7 +314,7 @@ const BoxEditor = ({
             })
           }
         >
-          <PresetIcon width={100} height={55} x={0} y={18} />
+          <PresetIcon width={100} height={55} x={0} y={20} />
         </Button>
         <Button
           variant="tertiary"
