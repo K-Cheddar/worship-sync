@@ -333,6 +333,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     box={box}
                     prevBox={prevBoxes[index]}
                     width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
                     time={time}
                     timerInfo={timerInfo}
                     referenceWidth={REFERENCE_WIDTH}
@@ -390,6 +391,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     key={box.id}
                     box={box}
                     width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
                     time={time}
                     timerInfo={prevTimerInfo}
                     isPrev
