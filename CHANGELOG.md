@@ -1,3 +1,10 @@
+## [1.38.5](https://github.com/K-Cheddar/worship-sync/compare/v1.38.4...v1.38.5) (2026-03-07)
+
+
+### Bug Fixes
+
+* custom items showing incorrectly on stream ([9eeb3a2](https://github.com/K-Cheddar/worship-sync/commit/9eeb3a2f48af4b56a22b4a5e0ddc8d9c56f1dba9))
+
 ## [1.38.4](https://github.com/K-Cheddar/worship-sync/compare/v1.38.3...v1.38.4) (2026-03-06)
 
 
