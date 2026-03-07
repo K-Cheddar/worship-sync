@@ -39,9 +39,12 @@ const DisplayStreamFormattedText = ({
   const formattedTextTimeline = useRef<GSAPTimeline | null>(null);
   const prevFormattedTextTimeline = useRef<GSAPTimeline | null>(null);
 
+  const formattedTextText = formattedTextDisplayInfo?.text?.trim() || "";
+  const prevFormattedTextText = prevFormattedTextDisplayInfo?.text?.trim() || "";
+
   useGSAP(
     () => {
-      if (!formattedTextRef.current || !shouldAnimate) return;
+      if (!formattedTextRef.current || !shouldAnimate || !formattedTextText) return;
 
       formattedTextTimeline.current?.clear();
       const el = formattedTextRef.current;
@@ -60,7 +63,7 @@ const DisplayStreamFormattedText = ({
 
   useGSAP(
     () => {
-      if (!prevFormattedTextRef.current || !shouldAnimate) return;
+      if (!prevFormattedTextRef.current || !shouldAnimate || !prevFormattedTextText) return;
 
       prevFormattedTextTimeline.current?.clear();
 
@@ -86,33 +89,37 @@ const DisplayStreamFormattedText = ({
     return text;
   };
 
+
+
   return (
     <>
-      <div
-        ref={formattedTextRef}
-        className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%] whitespace-pre-line"
-        style={{
-          ...generateFormattedTextStyles(width, formattedTextDisplayInfo),
-        }}
-      >
-        {formattedTextDisplayInfo?.text && (
+      {formattedTextText && (
+        <div
+          ref={formattedTextRef}
+          className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%] whitespace-pre-line"
+          style={{
+            ...generateFormattedTextStyles(width, formattedTextDisplayInfo),
+          }}
+        >
           <p className="formatted-text-text">
-            {renderContent(formattedTextDisplayInfo.text.trim())}
+            {renderContent(formattedTextText)}
           </p>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div
-        ref={prevFormattedTextRef}
-        className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%] whitespace-pre-line"
-        style={generateFormattedTextStyles(width, prevFormattedTextDisplayInfo)}
-      >
-        {prevFormattedTextDisplayInfo?.text && (
+      {prevFormattedTextText && (
+        <div
+          ref={prevFormattedTextRef}
+          className="w-fit absolute flex flex-col mx-auto left-0 right-0 max-w-[65%] bottom-[5%] rounded-[2%/8%] whitespace-pre-line"
+          style={{
+            ...generateFormattedTextStyles(width, prevFormattedTextDisplayInfo),
+          }}
+        >
           <p className="prev-formatted-text-text">
-            {renderContent(prevFormattedTextDisplayInfo.text.trim())}
+            {renderContent(prevFormattedTextText)}
           </p>
-        )}
-      </div>
+        </div>
+      )}
     </>
   );
 };
