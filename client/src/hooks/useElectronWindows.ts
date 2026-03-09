@@ -4,7 +4,9 @@ import type { Display, WindowStatesInfo, WindowType } from "../types/electron";
 export const useElectronWindows = () => {
   const [isElectron, setIsElectron] = useState(false);
   const [displays, setDisplays] = useState<Display[]>([]);
-  const [windowStates, setWindowStates] = useState<WindowStatesInfo | null>(null);
+  const [windowStates, setWindowStates] = useState<WindowStatesInfo | null>(
+    null,
+  );
 
   useEffect(() => {
     const checkElectron = async () => {
@@ -60,7 +62,7 @@ export const useElectronWindows = () => {
       }
       return false;
     },
-    [refreshWindowStates]
+    [refreshWindowStates],
   );
 
   const closeWindow = useCallback(
@@ -72,55 +74,59 @@ export const useElectronWindows = () => {
       }
       return false;
     },
-    [refreshWindowStates]
+    [refreshWindowStates],
   );
 
-  const focusWindow = useCallback(
-    async (windowType: WindowType) => {
-      if (window.electronAPI) {
-        return await window.electronAPI.focusWindow(windowType);
-      }
-      return false;
-    },
-    []
-  );
+  const focusWindow = useCallback(async (windowType: WindowType) => {
+    if (window.electronAPI) {
+      return await window.electronAPI.focusWindow(windowType);
+    }
+    return false;
+  }, []);
 
   const toggleWindowFullscreen = useCallback(
     async (windowType: WindowType) => {
       if (window.electronAPI) {
-        const result = await window.electronAPI.toggleWindowFullscreen(windowType);
+        const result =
+          await window.electronAPI.toggleWindowFullscreen(windowType);
         // Wait longer for fullscreen transition and event to complete
-        await new Promise(resolve => setTimeout(resolve, 400));
+        await new Promise((resolve) => setTimeout(resolve, 400));
         await refreshWindowStates();
         return result;
       }
       return false;
     },
-    [refreshWindowStates]
+    [refreshWindowStates],
   );
 
   const moveWindowToDisplay = useCallback(
     async (windowType: WindowType, displayId: number) => {
       if (window.electronAPI) {
-        const result = await window.electronAPI.moveWindowToDisplay(windowType, displayId);
+        const result = await window.electronAPI.moveWindowToDisplay(
+          windowType,
+          displayId,
+        );
         await refreshWindowStates();
         return result;
       }
       return false;
     },
-    [refreshWindowStates]
+    [refreshWindowStates],
   );
 
   const setDisplayPreference = useCallback(
     async (windowType: WindowType, displayId: number) => {
       if (window.electronAPI) {
-        const result = await window.electronAPI.setDisplayPreference(windowType, displayId);
+        const result = await window.electronAPI.setDisplayPreference(
+          windowType,
+          displayId,
+        );
         await refreshWindowStates();
         return result;
       }
       return false;
     },
-    [refreshWindowStates]
+    [refreshWindowStates],
   );
 
   return {

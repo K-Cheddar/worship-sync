@@ -61,12 +61,28 @@ const HistorySuggestField = ({
   const effectiveHideLabel = hideLabel ?? (multiline ? true : false);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const blurCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number | null>(null);
   const [isFocused, setIsFocused] = useState(false);
   const allowCloseRef = useRef(false);
 
   const showDropdown = suggestions.length > 0 && isFocused;
+
+  const scheduleBlurClose = useCallback(() => {
+    if (blurCloseTimeoutRef.current) clearTimeout(blurCloseTimeoutRef.current);
+    blurCloseTimeoutRef.current = setTimeout(() => {
+      blurCloseTimeoutRef.current = null;
+      setIsFocused(false);
+    }, 150);
+  }, []);
+
+  const cancelBlurClose = useCallback(() => {
+    if (blurCloseTimeoutRef.current) {
+      clearTimeout(blurCloseTimeoutRef.current);
+      blurCloseTimeoutRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!showDropdown) {
@@ -79,6 +95,13 @@ const HistorySuggestField = ({
     }, 150);
     return () => clearTimeout(id);
   }, [showDropdown]);
+
+  useEffect(
+    () => () => {
+      if (blurCloseTimeoutRef.current) clearTimeout(blurCloseTimeoutRef.current);
+    },
+    []
+  );
 
   const updateSuggestions = useCallback(
     (nextValue: string) => {
@@ -127,6 +150,7 @@ const HistorySuggestField = ({
 
   const applySuggestion = useCallback(
     (suggestion: string) => {
+      cancelBlurClose();
       if (multiline) {
         const currentValue = textAreaRef.current?.value ?? value;
         const caret = textAreaRef.current?.selectionStart ?? currentValue.length;
@@ -139,8 +163,9 @@ const HistorySuggestField = ({
       }
       setSuggestions([]);
       setActiveSuggestionIndex(null);
+      setIsFocused(false);
     },
-    [multiline, onChange, value]
+    [cancelBlurClose, multiline, onChange, value]
   );
 
   const handleKeyDown = useCallback(
@@ -230,10 +255,11 @@ const HistorySuggestField = ({
               autoResize={autoResize}
               onKeyDown={handleKeyDown}
               onFocus={() => {
+                cancelBlurClose();
                 setIsFocused(true);
                 updateSuggestions(value);
               }}
-              onBlur={() => setIsFocused(false)}
+              onBlur={scheduleBlurClose}
               onClick={() => updateSuggestions(value)}
               onSelect={() => updateSuggestions(value)}
             />
@@ -247,10 +273,11 @@ const HistorySuggestField = ({
               }
               onKeyDown={handleKeyDown}
               onFocus={() => {
+                cancelBlurClose();
                 setIsFocused(true);
                 updateSuggestions(value);
               }}
-              onBlur={() => setIsFocused(false)}
+              onBlur={scheduleBlurClose}
               onClick={() => updateSuggestions(value)}
               onSelect={() => updateSuggestions(value)}
             />

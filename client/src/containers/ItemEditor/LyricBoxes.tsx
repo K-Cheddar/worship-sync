@@ -1,15 +1,14 @@
-import { useState } from "react";
-import { Trash2 } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
-import TextArea from "../../components/TextArea/TextArea";
 import { useSelector } from "../../hooks";
 import { sectionTypes, itemSectionBgColorMap } from "../../utils/slideColorMap";
 import { FormattedLyrics as FormattedLyricsType } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { RootState } from "../../store/store";
 import cn from "classnames";
+import LyrcisBox from "./LyrcisBox";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -47,6 +46,10 @@ const LyricBoxes = ({
   );
 
   const [newSectionType, setNewSectionType] = useState("Verse");
+  const availableSectionsKey = useMemo(
+    () => availableSections.map(({ value }) => value).join("|"),
+    [availableSections]
+  );
 
   const addSection = () => {
     reformatLyrics([
@@ -61,7 +64,7 @@ const LyricBoxes = ({
     ]);
   };
 
-  const changeSectionType = (name: string, index: number) => {
+  const handleChangeSectionType = useCallback((name: string, index: number) => {
     const copiedFormattedLyrics = [...formattedLyrics];
     const lyric = { ...copiedFormattedLyrics[index] };
 
@@ -76,7 +79,15 @@ const LyricBoxes = ({
     copiedFormattedLyrics.splice(newIndex, 0, lyric);
 
     reformatLyrics(copiedFormattedLyrics);
-  };
+  }, [formattedLyrics, reformatLyrics]);
+
+  const handleWordsChange = useCallback((index: number, value: string) => {
+    const copiedFormattedLyrics = [...formattedLyrics];
+    const lyric = { ...copiedFormattedLyrics[index] };
+    lyric.words = value;
+    copiedFormattedLyrics[index] = lyric;
+    setFormattedLyrics(copiedFormattedLyrics);
+  }, [formattedLyrics, setFormattedLyrics]);
 
   return (
     <ul
@@ -86,61 +97,20 @@ const LyricBoxes = ({
         "max-h-[calc(100%-clamp(2.5rem,2.5vw,3.5rem))]"
       )}
     >
-      {formattedLyrics.map(({ id, type, name, words }, index) => (
-        <li 
-          key={id} 
-          className={cn(
-            "text-sm border-4 rounded-lg",
-            selectedSectionIndex === index ? "border-cyan-500" : "border-transparent"
-          )}
-        >
-          <div
-            className={cn(
-              "flex font-semibold text-sm rounded-t-md px-1 py-0.5",
-              itemSectionBgColorMap.get(type)
-            )}
-          >
-            <Select
-              onChange={(val) => changeSectionType(val, index)}
-              value={name}
-              options={availableSections}
-              backgroundColor="bg-black/40"
-              textColor="text-white"
-              chevronColor="text-white"
-              contentBackgroundColor="bg-gray-800"
-              contentTextColor="text-white"
-              className="min-w-[50%] max-w-full"
-            />
-            <Button
-              className="ml-auto"
-              variant="tertiary"
-              svg={Trash2}
-              onClick={() => {
-                onFormattedLyricsDelete(index);
-              }}
-            />
-          </div>
-          <div
-            onClick={() => onSectionSelect && onSectionSelect(index)}
-            className={cn( "cursor-pointer")}
-          >
-            <TextArea
-              hideLabel
-              className="lg:h-[30vh]"
-              data-ignore-undo="true"
-              value={words}
-              autoResize={isMobile}
-              onChange={(val) => {
-                const copiedFormattedLyrics = [...formattedLyrics];
-                const lyric = { ...copiedFormattedLyrics[index] };
-                lyric.words = val as string;
-                copiedFormattedLyrics[index] = lyric;
-                setFormattedLyrics(copiedFormattedLyrics);
-              }}
-              onFocus={() => onSectionSelect && onSectionSelect(index)}
-            />
-          </div>
-        </li>
+      {formattedLyrics.map((lyric, index) => (
+        <LyrcisBox
+          key={lyric.id}
+          lyric={lyric}
+          index={index}
+          selected={selectedSectionIndex === index}
+          availableSections={availableSections}
+          availableSectionsKey={availableSectionsKey}
+          isMobile={isMobile}
+          onChangeSectionType={handleChangeSectionType}
+          onDelete={onFormattedLyricsDelete}
+          onSelect={onSectionSelect || undefined}
+          onWordsChange={handleWordsChange}
+        />
       ))}
       <li className="flex flex-col px-2">
         <Select

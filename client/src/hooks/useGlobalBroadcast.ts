@@ -1,9 +1,10 @@
 import { useEffect, useRef } from "react";
 import { globalBroadcastRef } from "../context/controllerInfo";
+import { globalHostId } from "../context/globalInfo";
 
 export const useGlobalBroadcast = (
   callback: (data: any) => void,
-  delay: number = 300
+  delay: number = 300,
 ) => {
   const callbackRef = useRef(callback);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -17,19 +18,21 @@ export const useGlobalBroadcast = (
     if (!globalBroadcastRef) return;
 
     const handleMessage = (msg: MessageEvent) => {
-      if (msg.data.type === "update") {
-        // Clear existing timeout
-        if (timeoutRef.current) {
-          clearTimeout(timeoutRef.current);
-        }
+      if (msg.data?.type !== "update") return;
+      // Ignore our own messages (BroadcastChannel delivers to sender too)
+      if (msg.data?.data?.hostId === globalHostId) return;
 
-        // Set new timeout for debounced callback
-        timeoutRef.current = setTimeout(() => {
-          console.log("Updating from local machine", msg.data);
-
-          callbackRef.current({ detail: [msg.data.data.docs] });
-        }, delay);
+      // Clear existing timeout
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
       }
+
+      // Set new timeout for debounced callback
+      timeoutRef.current = setTimeout(() => {
+        console.log("Updating from local machine", msg.data);
+
+        callbackRef.current({ detail: [msg.data.data.docs] });
+      }, delay);
     };
 
     globalBroadcastRef.addEventListener("message", handleMessage);

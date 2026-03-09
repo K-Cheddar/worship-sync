@@ -437,7 +437,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, []); // Empty dependency array means this only runs once on mount
 
-  const login = async ({
+  const login = useCallback(async ({
     username,
     password,
   }: {
@@ -478,9 +478,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       console.error("Login error:", e);
       setLoginState("error");
     }
-  };
+  }, [dispatch, navigate, setLoginState, setUser, setDatabase, setUploadPreset, setAccess]);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     localStorage.setItem("loggedIn", "false");
     localStorage.setItem("user", "Demo");
     localStorage.setItem("database", "demo");
@@ -498,25 +498,41 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setLoginState("demo");
     setFirebaseDb(undefined);
     globalFireDbInfo.db = undefined;
-  };
+  }, [dispatch, navigate, setUser, setDatabase, setUploadPreset, setAccess, setLoginState, setFirebaseDb]);
+
+  const value = useMemo(
+    () => ({
+      loginState,
+      user,
+      database,
+      uploadPreset,
+      login,
+      setLoginState,
+      logout,
+      firebaseDb,
+      hostId,
+      activeInstances,
+      access,
+      refreshPresentationListeners,
+    }),
+    [
+      loginState,
+      user,
+      database,
+      uploadPreset,
+      login,
+      setLoginState,
+      logout,
+      firebaseDb,
+      hostId,
+      activeInstances,
+      access,
+      refreshPresentationListeners,
+    ]
+  );
 
   return (
-    <GlobalInfoContext.Provider
-      value={{
-        loginState,
-        user,
-        database,
-        uploadPreset,
-        login,
-        setLoginState,
-        logout,
-        firebaseDb,
-        hostId,
-        activeInstances,
-        access,
-        refreshPresentationListeners,
-      }}
-    >
+    <GlobalInfoContext.Provider value={value}>
       {children}
     </GlobalInfoContext.Provider>
   );

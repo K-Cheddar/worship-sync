@@ -4,6 +4,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { defaultImageOverlayStyles } from "./defaultOverlayStyles";
 import SharedOverlay from "./SharedOverlay";
+import { checkMediaType } from "../../utils/generalUtils";
 
 type DisplayImageOverlayProps = {
   width: number;
@@ -32,14 +33,19 @@ const DisplayImageOverlay = forwardRef<
     const overlayTimeline = useRef<GSAPTimeline | null>(null);
     const prevOverlayTimeline = useRef<GSAPTimeline | null>(null);
     const currentOpacity = useRef(1);
+    const prevImageOverlayUrl = (prevImageOverlayInfo as Partial<OverlayInfo>)
+      ?.imageUrl;
+    const isPrevOverlayVideo = Boolean(
+      prevImageOverlayUrl && checkMediaType(prevImageOverlayUrl) === "video"
+    );
 
     useGSAP(
       () => {
         // Handle both callback refs and object refs
-        const containerElement = typeof containerRef === 'function' 
+        const containerElement = typeof containerRef === 'function'
           ? null
           : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
-        
+
         if (
           !imageOverlayRef.current ||
           (typeof containerRef !== 'function' && !containerElement) ||
@@ -62,9 +68,9 @@ const DisplayImageOverlay = forwardRef<
               onUpdate: () => {
                 currentOpacity.current = imageOverlayRef.current
                   ? (gsap.getProperty(
-                      imageOverlayRef.current,
-                      "opacity"
-                    ) as number)
+                    imageOverlayRef.current,
+                    "opacity"
+                  ) as number)
                   : 1;
               },
             })
@@ -76,9 +82,9 @@ const DisplayImageOverlay = forwardRef<
               onUpdate: () => {
                 currentOpacity.current = imageOverlayRef.current
                   ? (gsap.getProperty(
-                      imageOverlayRef.current,
-                      "opacity"
-                    ) as number)
+                    imageOverlayRef.current,
+                    "opacity"
+                  ) as number)
                   : 1;
               },
             });
@@ -93,10 +99,10 @@ const DisplayImageOverlay = forwardRef<
     useGSAP(
       () => {
         // Handle both callback refs and object refs
-        const containerElement = typeof containerRef === 'function' 
+        const containerElement = typeof containerRef === 'function'
           ? null
           : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
-        
+
         if (
           !prevImageOverlayRef.current ||
           !shouldAnimate ||
@@ -108,7 +114,8 @@ const DisplayImageOverlay = forwardRef<
         prevOverlayTimeline.current = gsap
           .timeline()
           .set(prevImageOverlayRef.current, {
-            opacity: currentOpacity.current,
+            // Prevent a brief flash when interrupting an active video overlay.
+            opacity: isPrevOverlayVideo ? 0 : currentOpacity.current,
           });
 
         if (prevImageOverlayInfo.imageUrl) {

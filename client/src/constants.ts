@@ -27,7 +27,7 @@ export const MONITOR_BAND_NEXT_PX =
 
 // Font size: stored as pixels. Default when box.fontSize is unset (legacy ~44px).
 export const DEFAULT_FONT_PX = 108;
-export const DEFAULT_TITLE_FONT_PX = 180;
+export const DEFAULT_TITLE_FONT_PX = 150;
 
 // ============================================================================
 // Time Picker Constants

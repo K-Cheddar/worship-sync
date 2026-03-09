@@ -10,6 +10,7 @@ import { QRCode } from "react-qr-code";
 import { getFontSize, getBorderWidth, getMargin } from "./utils";
 import { checkMediaType, getImageFromVideoUrl } from "../../utils/generalUtils";
 import HLSPlayer from "./HLSVideoPlayer";
+import { useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import cn from "classnames";
 
 interface SharedOverlayProps {
@@ -28,6 +29,15 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
     { width, styles, overlayInfo, needsPadding, isPrev = false, overlayType, shouldFillContainer = false },
     ref
   ) => {
+    const overlayImageUrl =
+      "imageUrl" in overlayInfo ? overlayInfo.imageUrl : undefined;
+    const isOverlayVideo = overlayImageUrl
+      ? checkMediaType(overlayImageUrl) === "video"
+      : false;
+    const resolvedOverlayVideoUrl = useCachedVideoUrl(
+      isOverlayVideo ? overlayImageUrl : undefined
+    );
+
     // Shared styling utilities
     const getSharedStyles = (
       child: OverlayChild,
@@ -143,7 +153,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
       }
 
       if (overlayType === "image") {
-        return renderImageChildren(children);
+        return renderImageChildren();
       }
 
       // Generic rendering for participant and stb overlays
@@ -246,27 +256,24 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
       });
     };
 
-    const renderImageChildren = (children: OverlayChild[]) => {
-      if (!("imageUrl" in overlayInfo) || !overlayInfo.imageUrl) return null;
-
-      const isVideo = checkMediaType(overlayInfo.imageUrl) === "video";
-      const isPrevVideo =
-        isPrev && checkMediaType(overlayInfo.imageUrl) === "video";
+    const renderImageChildren = () => {
+      if (!overlayImageUrl) return null;
 
       return (
         <div className="overlay-image-content">
-          {isVideo ? (
+          {isOverlayVideo && resolvedOverlayVideoUrl ? (
             <HLSPlayer
-              src={overlayInfo.imageUrl}
+              src={resolvedOverlayVideoUrl}
+              originalSrc={overlayImageUrl}
               className="max-w-full max-h-full w-full h-full object-contain"
             />
           ) : (
             <img
               className="max-w-full max-h-full object-contain"
               src={
-                isPrevVideo
-                  ? getImageFromVideoUrl(overlayInfo.imageUrl)
-                  : overlayInfo.imageUrl
+                isOverlayVideo
+                  ? getImageFromVideoUrl(overlayImageUrl)
+                  : overlayImageUrl
               }
               alt={overlayInfo.name || "Overlay image"}
             />

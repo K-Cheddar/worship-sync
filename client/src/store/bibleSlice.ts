@@ -139,6 +139,11 @@ export const openBibleAtLocation = createAsyncThunk<
       bookChapters?.findIndex((c) => c.name === chapterName) ?? -1;
     if (chapterIndex === -1) return;
     dispatch(bibleSlice.actions.setLoadingChapter(true));
+    dispatch(bibleSlice.actions.setSearch(""));
+    dispatch(bibleSlice.actions.setSearchValue({ type: "book", value: "" }));
+    dispatch(bibleSlice.actions.setSearchValue({ type: "chapter", value: "" }));
+    dispatch(bibleSlice.actions.setSearchValue({ type: "startVerse", value: "" }));
+    dispatch(bibleSlice.actions.setSearchValue({ type: "endVerse", value: "" }));
     dispatch(bibleSlice.actions.setBook(bookIndex));
     dispatch(bibleSlice.actions.setChapters(bookChapters || []));
     dispatch(bibleSlice.actions.setChapter(chapterIndex));

@@ -26,6 +26,7 @@ import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
 import HLSPlayer from "./HLSVideoPlayer";
 import MonitorView from "./MonitorView";
 import { useSelector } from "../../hooks";
+import { useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import { REFERENCE_WIDTH, REFERENCE_HEIGHT } from "../../constants";
 
 type DisplayWindowProps = {
@@ -206,6 +207,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isDisplay = !isStream && !isEditor;
     const isMonitor = displayType === "monitor";
     const isSlide = displayType === "slide";
+    const slideHasWords = useMemo(
+      () => boxes.some((box) => Boolean(box.words?.trim())),
+      [boxes]
+    );
 
     // Determine the active background video (if any) from boxes
     const { videoBox, desiredVideoUrl } = useMemo(() => {
@@ -221,6 +226,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       undefined
     );
     const [isWindowVideoLoaded, setIsWindowVideoLoaded] = useState(false);
+    const resolvedVideoUrl = useCachedVideoUrl(activeVideoUrl);
 
     const {
       monitorSettings: {
@@ -248,6 +254,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         setIsWindowVideoLoaded(false);
       }
     }, [desiredVideoUrl, activeVideoUrl]);
+
+    // Hide placeholder immediately when using a locally-cached video
+    useEffect(() => {
+      if (resolvedVideoUrl?.startsWith("media-cache://")) {
+        setIsWindowVideoLoaded(true);
+      }
+    }, [resolvedVideoUrl]);
 
     // Render all content - wrap in scaled container when using transform
     const renderContent = () => {
@@ -278,6 +291,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               timerInfo={timerInfo}
               prevTimerInfo={prevTimerInfo}
               activeVideoUrl={activeVideoUrl}
+              resolvedVideoUrl={resolvedVideoUrl}
               isWindowVideoLoaded={isWindowVideoLoaded}
               videoBox={videoBox}
               scaleFactor={scaleFactor}
@@ -295,14 +309,18 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
       const innerContent = (
         <>
-          {showBackground && shouldPlayVideo && activeVideoUrl && (
-            <HLSPlayer
-              src={activeVideoUrl}
-              onLoadedData={() => setIsWindowVideoLoaded(true)}
-              onError={() => setIsWindowVideoLoaded(false)}
-              videoBox={videoBox}
-            />
-          )}
+          {showBackground &&
+            shouldPlayVideo &&
+            activeVideoUrl &&
+            resolvedVideoUrl && (
+              <HLSPlayer
+                src={resolvedVideoUrl}
+                originalSrc={activeVideoUrl}
+                onLoadedData={() => setIsWindowVideoLoaded(true)}
+                onError={() => setIsWindowVideoLoaded(false)}
+                videoBox={videoBox}
+              />
+            )}
 
 
           <>
@@ -358,7 +376,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     referenceWidth={REFERENCE_WIDTH}
                     referenceHeight={REFERENCE_HEIGHT}
                     scaleFactor={scaleFactor}
-                    brightness={isSlide && index === 0 ? 30 : undefined}
+                    brightness={
+                      isSlide && index === 0 && slideHasWords
+                        ? 30
+                        : undefined
+                    }
                     isSimpleFont={isSlide}
                   />
                 );

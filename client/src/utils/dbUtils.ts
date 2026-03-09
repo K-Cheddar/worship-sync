@@ -17,6 +17,7 @@ import {
   DBItem,
   DBItemListDetails,
   DBItemLists,
+  DocType,
   DBOverlay,
   DBOverlayHistory,
   ItemSlideType,
@@ -25,6 +26,8 @@ import {
   getCreditHistoryDocId,
   getOverlayHistoryDocId,
   OVERLAY_HISTORY_ID_PREFIX,
+  DBDoc,
+  DBMedia,
 } from "../types";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
@@ -826,6 +829,92 @@ export const migrateFontSizesToDefaults = async (
     return { migratedCount, errorCount };
   } catch (error) {
     console.error("migrateFontSizesToDefaults failed", error);
+    throw error;
+  }
+};
+
+const ITEM_TYPES = ["song", "free", "bible", "timer", "image"] as const;
+
+function inferDocType(
+  doc: PouchDB.Core.IdMeta & Record<string, unknown>,
+): DocType {
+  const id = doc._id;
+  if (id === "allItems") return "allItems";
+  if (id === "ItemLists") return "itemLists";
+  if (id === "credits") return "credits";
+  if (id === "media") return "media";
+  if (id === "preferences") return "preferences";
+  if (id === "overlay-templates") return "overlayTemplates";
+  if (id === "services") return "services";
+  if (typeof id === "string" && id.startsWith(OVERLAY_HISTORY_ID_PREFIX))
+    return "overlay-history";
+  if (typeof id === "string" && id.startsWith(CREDIT_HISTORY_ID_PREFIX))
+    return "credit-history";
+  if (typeof id === "string" && id.startsWith("credit-")) return "credit";
+  if (typeof id === "string" && id.startsWith("overlay-")) return "overlay";
+  const type = doc.type as string | undefined;
+  if (type === "heading") return "heading";
+  if (type && ITEM_TYPES.includes(type as (typeof ITEM_TYPES)[number]))
+    return "item";
+  if (
+    Array.isArray((doc as DBItemListDetails).items) &&
+    Array.isArray((doc as DBItemListDetails).overlays) &&
+    id !== "ItemLists"
+  ) {
+    return "itemListDetails";
+  }
+  return "unknown";
+}
+
+/**
+ * Migration: set docType on every document that is missing it or has a wrong value.
+ * Run once per database. Call from console or a one-off UI: migrateDocTypes(db).
+ */
+export const migrateDocTypes = async (
+  db: PouchDB.Database,
+): Promise<{
+  updatedCount: number;
+  errorCount: number;
+  skippedCount: number;
+}> => {
+  if (!db) return { updatedCount: 0, errorCount: 0, skippedCount: 0 };
+  try {
+    const result = (await db.allDocs({ include_docs: true })) as allDocsType;
+    let updatedCount = 0;
+    let errorCount = 0;
+    let skippedCount = 0;
+    for (const row of result.rows) {
+      const doc = row.doc as DBDoc | undefined;
+      if (!doc || doc._id.startsWith("_design/")) {
+        skippedCount++;
+        continue;
+      }
+      const inferred: DocType = inferDocType(doc);
+      const current = doc.docType as DocType | undefined;
+      if (current === inferred) {
+        skippedCount++;
+        continue;
+      }
+      try {
+        const updated: DBDoc = {
+          ...doc,
+          docType: inferred,
+          updatedAt: new Date().toISOString(),
+        };
+        await db.put(updated);
+        updatedCount++;
+        console.log(`migrateDocTypes: set docType="${inferred}" on ${doc._id}`);
+      } catch (e) {
+        console.error(`migrateDocTypes failed for ${doc._id}`, e);
+        errorCount++;
+      }
+    }
+    console.log(
+      `migrateDocTypes: ${updatedCount} updated, ${skippedCount} skipped, ${errorCount} errors`,
+    );
+    return { updatedCount, errorCount, skippedCount };
+  } catch (error) {
+    console.error("migrateDocTypes failed", error);
     throw error;
   }
 };

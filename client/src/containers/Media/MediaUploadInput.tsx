@@ -17,7 +17,7 @@ import { UploadStatusDisplay } from "./components/UploadStatusDisplay";
 import { ProgressPopup } from "./components/ProgressPopup";
 
 const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
-  ({ onImageComplete, onVideoComplete, showButton = true, uploadPreset = "bpqu4ma5", cloudName = "portable-media" }, ref) => {
+  ({ onImageComplete, onVideoComplete, showButton = true, uploadPreset = "bpqu4ma5", cloudName = "portable-media", onUploadActiveChange }, ref) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isMinimized, setIsMinimized] = useState(false);
     const [isMinimizedToButton, setIsMinimizedToButton] = useState(false);
@@ -234,6 +234,10 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
     const isUploading = uploadStatus === "uploading" || uploadStatus === "processing";
     const showProgressPopup = (isUploading || uploadStatus === "ready" || uploadStatus === "error") && isMinimized && !isMinimizedToButton;
+
+    useEffect(() => {
+      onUploadActiveChange?.(isUploading);
+    }, [isUploading, onUploadActiveChange]);
 
     useEffect(() => {
       if (isUploading) {

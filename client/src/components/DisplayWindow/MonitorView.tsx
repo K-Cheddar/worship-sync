@@ -50,6 +50,7 @@ type MonitorViewProps = {
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
   activeVideoUrl?: string;
+  resolvedVideoUrl?: string;
   isWindowVideoLoaded?: boolean;
   videoBox?: Box;
   scaleFactor: number;
@@ -77,6 +78,7 @@ const MonitorView = ({
   timerInfo,
   prevTimerInfo,
   activeVideoUrl,
+  resolvedVideoUrl,
   isWindowVideoLoaded,
   videoBox,
   scaleFactor,
@@ -137,8 +139,6 @@ const MonitorView = ({
       ))}
     </>
   );
-
-
 
   const clockTimerBand = (
     <div
@@ -252,9 +252,10 @@ const MonitorView = ({
           className="relative w-full h-full"
           style={{ transform: `scale(${singleSlideScale})`, transformOrigin: "top center" }}
         >
-          {showBackground && activeVideoUrl && videoBox && (
+          {showBackground && activeVideoUrl && resolvedVideoUrl && videoBox && (
             <HLSPlayer
-              src={activeVideoUrl}
+              src={resolvedVideoUrl}
+              originalSrc={activeVideoUrl}
               onLoadedData={onVideoLoaded}
               onError={onVideoError}
               videoBox={videoBox}

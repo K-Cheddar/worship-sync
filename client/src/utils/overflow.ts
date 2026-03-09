@@ -403,7 +403,9 @@ export const formatLyrics = (item: ItemState) => {
   ];
   const songOrder = arrangements[selectedArrangement].songOrder;
   const formattedLyrics = arrangements[selectedArrangement].formattedLyrics;
-  const fontSizePx = slide ? (slide.boxes[1].fontSize ?? DEFAULT_FONT_PX) : DEFAULT_FONT_PX;
+  const fontSizePx = slide
+    ? (slide.boxes[1].fontSize ?? DEFAULT_FONT_PX)
+    : DEFAULT_FONT_PX;
 
   for (let i = 0; i < songOrder.length; ++i) {
     const lyrics =

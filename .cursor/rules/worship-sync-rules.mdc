@@ -11,3 +11,5 @@ Use resuable components
 avoid nested ternaries
 
 Prefer es6 syntax for functions
+
+Ensure code is optimized for performance and clarity

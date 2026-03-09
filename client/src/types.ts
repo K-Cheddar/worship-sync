@@ -658,7 +658,7 @@ export type MediaType = {
 export type DBMedia = {
   _id: string;
   _rev: string;
-  backgrounds: MediaType[];
+  list: MediaType[];
   createdAt?: string;
   updatedAt?: string;
   docType?: DocType;
@@ -701,28 +701,30 @@ export type DBServices = {
   docType?: DocType;
 };
 
+export type DBDoc =
+  | DBMedia
+  | DBItemLists
+  | DBItemListDetails
+  | DBAllItems
+  | DBItem
+  | DBMedia
+  | DBOverlay
+  | DBPreferences
+  | DBCredits
+  | DBCredit
+  | DBCreditHistory
+  | DBOverlayHistory
+  | DBBibleChapter
+  | DBItemList
+  | DBServices;
+
 export type allDocsType = {
   offset: number;
   total_rows: number;
   rows: {
     id: string;
     key: string;
-    doc:
-      | DBMedia
-      | DBItemLists
-      | DBItemListDetails
-      | DBAllItems
-      | DBItem
-      | DBMedia
-      | DBOverlay
-      | DBPreferences
-      | DBCredits
-      | DBCredit
-      | DBCreditHistory
-      | DBOverlayHistory
-      | DBBibleChapter
-      | DBItemList
-      | DBServices;
+    doc: DBDoc;
   }[];
 };
 

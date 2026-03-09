@@ -13,7 +13,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -58,9 +57,6 @@ import {
   deleteUnusedHeadings,
   getAllOverlayHistory,
   getOverlaysByIds,
-  // formatAllSongs,
-  // formatAllDocs,
-  // formatAllItems,
   updateAllDocs,
 } from "../../utils/dbUtils";
 import Timers from "../../containers/Timers/Timers";
@@ -68,7 +64,7 @@ import Preferences from "./Preferences";
 import QuickLinks from "./QuickLinks";
 import MonitorSettings from "./MonitorSettings";
 import { useMediaCache } from "../../hooks/useMediaCache";
-import { extractMediaUrlsFromItem, extractAllMediaUrlsFromOutlines } from "../../utils/mediaCacheUtils";
+import { getMediaUrlsFromMediaDoc } from "../../utils/mediaCacheUtils";
 import {
   initiateMonitorSettings,
   initiatePreferences,
@@ -114,22 +110,6 @@ enable={{ ...resizableDirections }}
 const Controller = () => {
   const dispatch = useDispatch();
   const location = useLocation();
-  const { isEditMode } = useSelector(
-    (state: RootState) => state.undoable.present.item
-  );
-  const { selectedList, activeList } = useSelector(
-    (state) => state.undoable.present.itemLists
-  );
-
-  const { scrollbarWidth } = useSelector(
-    (state) => state.undoable.present.preferences
-  );
-
-  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
-  const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
-
-  const leftPanelRef = useRef<HTMLDivElement | null>(null);
-  const rightPanelRef = useRef<HTMLDivElement | null>(null);
 
   const { db, cloud, updater, setIsMobile, setIsPhone, dbProgress, connectionStatus, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
@@ -137,6 +117,15 @@ const Controller = () => {
   const { user, database, access, firebaseDb, hostId, refreshPresentationListeners } =
     useContext(GlobalInfoContext) || {};
 
+  const { isEditMode } = useSelector(
+    (state: RootState) => state.undoable.present.item
+  );
+  const { selectedList, activeList } = useSelector(
+    (state) => state.undoable.present.itemLists
+  );
+  const { scrollbarWidth } = useSelector(
+    (state) => state.undoable.present.preferences
+  );
   const allControllerSlicesInitialized = useSelector((state: RootState) =>
     state.allItems.isInitialized &&
     state.undoable.present.preferences.isInitialized &&
@@ -146,7 +135,107 @@ const Controller = () => {
     state.media.isInitialized &&
     (state.undoable.present.overlayTemplates as { isInitialized: boolean }).isInitialized
   );
+
+  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
+
+  const leftPanelRef = useRef<HTMLDivElement | null>(null);
+  const rightPanelRef = useRef<HTMLDivElement | null>(null);
   const hasDispatchedControllerPageReady = useRef(false);
+
+  const { preloadOutlineMedia } = useMediaCache();
+
+  const updateAllItemsAndListFromExternal = useCallback(
+    async (event: CustomEventInit) => {
+      try {
+        const updates = event.detail;
+        if (!Array.isArray(updates)) return;
+        let refetchOverlayHistory = false;
+        for (const _update of updates) {
+          if (selectedList && _update._id === selectedList._id) {
+            console.log("updating selected item list from remote", event);
+            const update = _update as DBItemListDetails;
+            const itemList = update.items;
+            const overlaysIds = update.overlays || [];
+            if (cloud) {
+              dispatch(
+                updateItemListFromRemote(formatItemList(itemList, cloud))
+              );
+            }
+
+            const formattedOverlays = await getOverlaysByIds(db!, overlaysIds);
+            dispatch(updateOverlayListFromRemote(formattedOverlays));
+          }
+          if (_update._id === "allItems") {
+            console.log("updating all items from remote", event);
+            const update = _update as DBAllItems;
+            dispatch(updateAllItemsListFromRemote(update.items));
+          }
+          if (_update.docType === "overlay-history") {
+            refetchOverlayHistory = true;
+          }
+        }
+
+        updateAllDocs(dispatch);
+
+        if (refetchOverlayHistory && db) {
+          const overlayHistory = await getAllOverlayHistory(db);
+          dispatch(mergeOverlayHistoryFromDb(overlayHistory));
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [dispatch, cloud, selectedList, db]
+  );
+
+  useGlobalBroadcast(updateAllItemsAndListFromExternal);
+
+  const updatePreferencesFromExternal = useCallback(
+    async (event: CustomEventInit) => {
+      try {
+        const updates = event.detail;
+        for (const _update of updates) {
+          if (_update._id === "preferences") {
+            console.log("updating preferences from remote");
+            const update = _update as DBPreferences;
+            dispatch(updatePreferencesFromRemote(update));
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [dispatch]
+  );
+
+  useGlobalBroadcast(updatePreferencesFromExternal);
+
+  useSyncRemoteTimers(firebaseDb, database, user, hostId);
+  useSyncOnReconnect(pullFromRemote);
+
+  const controllerRef = useCallback(
+    (node: HTMLDivElement) => {
+      if (node) {
+        const resizeObserver = new ResizeObserver((entries) => {
+          const width = entries[0].borderBoxSize[0].inlineSize;
+          if (width < 576) {
+            setIsPhone?.(true);
+          } else {
+            setIsPhone?.(false);
+          }
+          if (width < 1024) {
+            setIsMobile?.(true);
+          } else {
+            setIsMobile?.(false);
+          }
+        });
+
+        resizeObserver.observe(node);
+      }
+    },
+    [setIsMobile, setIsPhone]
+  );
 
   useEffect(() => {
     return () => {
@@ -260,20 +349,6 @@ const Controller = () => {
     }
   }, [allControllerSlicesInitialized, dispatch]);
 
-  // Get item state to watch for changes
-  const item = useSelector((state: RootState) => state.undoable.present.item);
-  const { syncMediaCache, preloadOutlineMedia } = useMediaCache();
-  const itemSyncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const previousVideoUrlsRef = useRef<Set<string>>(new Set());
-
-  // Extract video URLs from current item (memoized to avoid recalculation)
-  const currentVideoUrls = useMemo(() => {
-    if (!item._id) return new Set<string>();
-    const urls = extractMediaUrlsFromItem(item);
-    return new Set(urls);
-  }, [item]);
-
-  // Preload videos from active outline when it changes (Strategy A: Proactive Outline Preloading)
   useEffect(() => {
     if (!db || !window.electronAPI || !activeList?._id) return;
 
@@ -289,7 +364,7 @@ const Controller = () => {
 
     const syncMedia = async () => {
       try {
-        const mediaUrls = await extractAllMediaUrlsFromOutlines(db);
+        const mediaUrls = await getMediaUrlsFromMediaDoc(db);
         const urlArray = Array.from(mediaUrls);
 
         const electronAPI = window.electronAPI as unknown as {
@@ -313,36 +388,6 @@ const Controller = () => {
     const timeoutId = setTimeout(syncMedia, 2000);
     return () => clearTimeout(timeoutId);
   }, [db]);
-
-  // Sync media cache when item media URLs change (debounced, only in Electron)
-  useEffect(() => {
-    if (!db || !window.electronAPI || !item._id) return;
-
-    const urlsChanged =
-      currentVideoUrls.size !== previousVideoUrlsRef.current.size ||
-      Array.from(currentVideoUrls).some((url) => !previousVideoUrlsRef.current.has(url)) ||
-      Array.from(previousVideoUrlsRef.current).some((url) => !currentVideoUrls.has(url));
-
-    if (urlsChanged) {
-      previousVideoUrlsRef.current = new Set(currentVideoUrls);
-
-      if (itemSyncTimeoutRef.current) {
-        clearTimeout(itemSyncTimeoutRef.current);
-      }
-
-      itemSyncTimeoutRef.current = setTimeout(() => {
-        syncMediaCache().catch((error: unknown) => {
-          console.warn("Error syncing media cache after item change:", error);
-        });
-      }, 2000);
-    }
-
-    return () => {
-      if (itemSyncTimeoutRef.current) {
-        clearTimeout(itemSyncTimeoutRef.current);
-      }
-    };
-  }, [currentVideoUrls, item._id, db, syncMediaCache]);
 
   useEffect(() => {
     const getItemList = async () => {
@@ -371,55 +416,6 @@ const Controller = () => {
     getItemList();
   }, [dispatch, db, selectedList, cloud]);
 
-  const updateAllItemsAndListFromExternal = useCallback(
-    async (event: CustomEventInit) => {
-      try {
-        const updates = event.detail;
-        if (!Array.isArray(updates)) return;
-        let refetchOverlayHistory = false;
-        for (const _update of updates) {
-          // check if the list we have selected was updated
-          if (selectedList && _update._id === selectedList._id) {
-            console.log("updating selected item list from remote", event);
-            const update = _update as DBItemListDetails;
-            const itemList = update.items;
-            const overlaysIds = update.overlays || [];
-            if (cloud) {
-              dispatch(
-                updateItemListFromRemote(formatItemList(itemList, cloud))
-              );
-            }
-
-            const formattedOverlays = await getOverlaysByIds(db!, overlaysIds);
-            dispatch(updateOverlayListFromRemote(formattedOverlays));
-          }
-          if (_update._id === "allItems") {
-            console.log("updating all items from remote", event);
-            const update = _update as DBAllItems;
-            dispatch(updateAllItemsListFromRemote(update.items));
-          }
-          if (
-            _update.docType === "overlay-history"
-
-          ) {
-            refetchOverlayHistory = true;
-          }
-        }
-
-        // keep all docs up to date
-        updateAllDocs(dispatch);
-
-        if (refetchOverlayHistory && db) {
-          const overlayHistory = await getAllOverlayHistory(db);
-          dispatch(mergeOverlayHistoryFromDb(overlayHistory));
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    [dispatch, cloud, selectedList, db]
-  );
-
   useEffect(() => {
     if (!updater) return;
 
@@ -429,26 +425,6 @@ const Controller = () => {
       updater.removeEventListener("update", updateAllItemsAndListFromExternal);
   }, [updater, updateAllItemsAndListFromExternal]);
 
-  useGlobalBroadcast(updateAllItemsAndListFromExternal);
-
-  const updatePreferencesFromExternal = useCallback(
-    async (event: CustomEventInit) => {
-      try {
-        const updates = event.detail;
-        for (const _update of updates) {
-          if (_update._id === "preferences") {
-            console.log("updating preferences from remote");
-            const update = _update as DBPreferences;
-            dispatch(updatePreferencesFromRemote(update));
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    [dispatch]
-  );
-
   useEffect(() => {
     if (!updater) return;
 
@@ -457,34 +433,6 @@ const Controller = () => {
     return () =>
       updater.removeEventListener("update", updatePreferencesFromExternal);
   }, [updater, updatePreferencesFromExternal]);
-
-  useGlobalBroadcast(updatePreferencesFromExternal);
-
-  useSyncRemoteTimers(firebaseDb, database, user, hostId);
-  useSyncOnReconnect(pullFromRemote);
-
-  const controllerRef = useCallback(
-    (node: HTMLDivElement) => {
-      if (node) {
-        const resizeObserver = new ResizeObserver((entries) => {
-          const width = entries[0].borderBoxSize[0].inlineSize;
-          if (width < 576) {
-            setIsPhone?.(true);
-          } else {
-            setIsPhone?.(false);
-          }
-          if (width < 1024) {
-            setIsMobile?.(true);
-          } else {
-            setIsMobile?.(false);
-          }
-        });
-
-        resizeObserver.observe(node);
-      }
-    },
-    [setIsMobile, setIsPhone]
-  );
 
   const handleElementClick = (element: any) => {
     if (!leftPanelRef.current?.contains(element.target) && isLeftPanelOpen) {

@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -108,7 +109,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
-  const syncBatchSizeRef = useRef(50);
+  const syncBatchSizeRef = useRef(40);
   const remoteDbRef = useRef<PouchDB.Database | null>(null);
   const syncRetryRef = useRef(0);
   const replicateRetryRef = useRef(0);
@@ -526,7 +527,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     getCouchSession,
   ]);
 
-  const _logout = async () => {
+  const _logout = useCallback(async () => {
     setLoginState?.("loading");
     await syncRef.current?.cancel();
     await bibleSyncRef.current?.cancel();
@@ -552,9 +553,9 @@ const ControllerInfoProvider = ({ children }: any) => {
     } else {
       logout?.();
     }
-  };
+  }, [db, logout, setLoginState]);
 
-  const _login = async ({
+  const _login = useCallback(async ({
     username,
     password,
   }: {
@@ -591,7 +592,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     } else {
       login?.({ username, password });
     }
-  };
+  }, [db, login, dispatch]);
 
   useEffect(() => {
     return () => {
@@ -607,25 +608,39 @@ const ControllerInfoProvider = ({ children }: any) => {
     };
   }, []);
 
+  const value = useMemo(
+    () => ({
+      db,
+      cloud,
+      updater: updater.current,
+      bibleDb,
+      bibleDbProgress,
+      logout: _logout,
+      isMobile,
+      setIsMobile,
+      isPhone,
+      setIsPhone,
+      dbProgress,
+      connectionStatus,
+      login: _login,
+      pullFromRemote,
+    }),
+    [
+      db,
+      bibleDb,
+      bibleDbProgress,
+      dbProgress,
+      isMobile,
+      isPhone,
+      connectionStatus,
+      _logout,
+      _login,
+      pullFromRemote,
+    ]
+  );
+
   return (
-    <ControllerInfoContext.Provider
-      value={{
-        db,
-        cloud,
-        updater: updater.current,
-        bibleDb,
-        bibleDbProgress,
-        logout: _logout,
-        isMobile,
-        setIsMobile,
-        isPhone,
-        setIsPhone,
-        dbProgress,
-        connectionStatus,
-        login: _login,
-        pullFromRemote,
-      }}
-    >
+    <ControllerInfoContext.Provider value={value}>
       {children}
     </ControllerInfoContext.Provider>
   );
