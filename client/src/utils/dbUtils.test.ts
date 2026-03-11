@@ -36,6 +36,8 @@ const createDb = (): MockDb => ({
   remove: jest.fn(),
 });
 
+const createNotFoundError = () => Object.assign(new Error("Not found"), { status: 404 });
+
 describe("dbUtils", () => {
   afterEach(() => {
     jest.restoreAllMocks();
@@ -126,7 +128,7 @@ describe("dbUtils", () => {
       if (id === getCreditHistoryDocId("Existing")) {
         return { _id: id, _rev: "1-a", heading: "Existing", lines: ["old"] };
       }
-      throw { status: 404 };
+      throw createNotFoundError();
     });
 
     await putCreditHistoryDocs(

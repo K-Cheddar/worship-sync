@@ -186,6 +186,7 @@ const HLSPlayer = ({
   return (
     <video
       ref={videoRef}
+      data-testid="hls-video-player"
       preload={preloadValue}
       className={
         className || "absolute inset-0 w-full h-full object-cover z-0"

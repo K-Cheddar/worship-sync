@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import DisplayWindow from "../DisplayWindow";
 import type { Box } from "../../../types";
 
@@ -185,8 +185,6 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("display-box")).toBeInTheDocument();
     expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
 
-    await waitFor(() =>
-      expect(screen.getByTestId("window-hls-player")).toBeInTheDocument(),
-    );
+    expect(await screen.findByTestId("window-hls-player")).toBeInTheDocument();
   });
 });

@@ -19,7 +19,6 @@ import DisplayWindow from "../DisplayWindow/DisplayWindow";
 import { useMemo } from "react";
 
 type QuickLinkProps = QuickLinkType & {
-  isMobile?: boolean;
   timers: TimerInfo[];
 };
 
@@ -28,7 +27,6 @@ const QuickLink = ({
   presentationInfo,
   displayType,
   action,
-  isMobile,
   timers,
 }: QuickLinkProps) => {
   const dispatch = useDispatch();

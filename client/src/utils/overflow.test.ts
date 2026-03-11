@@ -1,3 +1,7 @@
+import { formatSection, getFormattedSections } from "./overflow";
+import { formatBible, formatFree, formatLyrics, formatSong } from "./overflow";
+import { getNumLines } from "./textMeasurement";
+
 jest.mock("./textMeasurement", () => ({
   getMaxLines: jest.fn(() => ({ maxLines: 2, lineHeight: 1 })),
   getNumLines: jest.fn(() => 1),
@@ -24,10 +28,6 @@ jest.mock("./generateRandomId", () => ({
     return `generated-${generatedId}`;
   }),
 }));
-
-import { formatSection, getFormattedSections } from "./overflow";
-import { formatBible, formatFree, formatLyrics, formatSong } from "./overflow";
-import { getNumLines } from "./textMeasurement";
 
 describe("overflow utilities", () => {
   beforeEach(() => {

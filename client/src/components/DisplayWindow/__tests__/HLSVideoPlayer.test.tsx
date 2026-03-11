@@ -97,7 +97,7 @@ describe("HLSVideoPlayer", () => {
       />,
     );
 
-    const video = document.querySelector("video") as HTMLVideoElement;
+    const video = screen.getByTestId("hls-video-player");
     fireEvent.error(video);
 
     expect(console.log).toHaveBeenCalledWith(
@@ -128,7 +128,7 @@ describe("HLSVideoPlayer", () => {
     (HTMLMediaElement.prototype.canPlayType as jest.Mock).mockReturnValue("probably");
 
     render(<HLSPlayer src="https://stream.example.com/live.m3u8" />);
-    const video = document.querySelector("video") as HTMLVideoElement;
+    const video = screen.getByTestId("hls-video-player");
 
     fireEvent.loadedMetadata(video);
     fireEvent.ended(video);
@@ -139,7 +139,7 @@ describe("HLSVideoPlayer", () => {
 
   it("sets preload to auto for media-cache sources", () => {
     render(<HLSPlayer src="media-cache://clip.mp4" />);
-    const video = document.querySelector("video") as HTMLVideoElement;
+    const video = screen.getByTestId("hls-video-player");
     expect(video.getAttribute("preload")).toBe("auto");
   });
 });

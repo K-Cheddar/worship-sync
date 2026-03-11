@@ -27,7 +27,7 @@ const QuickLinkSelection = ({
 }: QuickLinkSelectionProps) => {
   const dispatch = useDispatch();
   const { showToast, removeToast } = useToast();
-  const { type, selectedSlide, slides, name, timerInfo } = useSelector(
+  const { _id, type, selectedSlide, slides, name, timerInfo } = useSelector(
     (state) => state.undoable.present.item
   );
   const { selectedOverlay } = useSelector(
@@ -125,6 +125,7 @@ const QuickLinkSelection = ({
         slide: slides[selectedSlide],
         type: "slide",
         timerId: timerInfo?.id,
+        itemId: _id,
         bibleDisplayInfo: {
           title,
           text,

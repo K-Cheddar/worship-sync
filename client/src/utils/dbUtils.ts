@@ -27,7 +27,6 @@ import {
   getOverlayHistoryDocId,
   OVERLAY_HISTORY_ID_PREFIX,
   DBDoc,
-  DBMedia,
 } from "../types";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";

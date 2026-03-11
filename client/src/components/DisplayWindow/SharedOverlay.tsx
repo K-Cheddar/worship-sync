@@ -222,6 +222,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
           return (
             <div
               key={index}
+              data-testid="overlay-qr-code"
               className="overlay-qr-code-info-url"
               style={{
                 ...getSharedStyles(child),

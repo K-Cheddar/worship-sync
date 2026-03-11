@@ -116,7 +116,7 @@ describe("SharedOverlay", () => {
     );
 
     expect(screen.getByText("Scan this code")).toBeInTheDocument();
-    expect(document.querySelector("svg")).not.toBeNull();
+    expect(screen.getByTestId("overlay-qr-code")).toBeInTheDocument();
   });
 
   it("checks cached video path for image overlay video urls", () => {
