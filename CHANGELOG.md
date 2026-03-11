@@ -1,3 +1,10 @@
+## [1.38.6](https://github.com/K-Cheddar/worship-sync/compare/v1.38.5...v1.38.6) (2026-03-11)
+
+
+### Bug Fixes
+
+* Improve media playback ([2115331](https://github.com/K-Cheddar/worship-sync/commit/2115331bd38793f368d7b97eb543feadd7672336))
+
 ## [1.38.5](https://github.com/K-Cheddar/worship-sync/compare/v1.38.4...v1.38.5) (2026-03-07)
 
 
