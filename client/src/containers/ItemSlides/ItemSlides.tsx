@@ -53,6 +53,7 @@ import { useLocation } from "react-router-dom";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { cn } from "../../utils/cnHelper";
 import { updateTimer } from "../../store/timersSlice";
+import { DEFAULT_FONT_PX } from "../../constants";
 
 type SizeConfig = {
   borderWidth: string;
@@ -426,7 +427,7 @@ const ItemSlides = () => {
     const newSectionNum = maxSection + 1;
     const slide = createNewSlide({
       type: "Section",
-      fontSize: 2.5,
+      fontSize: DEFAULT_FONT_PX,
       words: [""],
       name: `Section ${newSectionNum}`,
       overflow: "separate",

@@ -20,11 +20,7 @@ import {
   updateStreamFromRemote,
   updateFormattedTextDisplayInfoFromRemote,
 } from "./presentationSlice";
-import {
-  itemSlice,
-  updateSlideBackground,
-  updateAllSlideBackgrounds,
-} from "./itemSlice";
+import { itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { itemListSlice } from "./itemListSlice";
@@ -63,7 +59,7 @@ import serviceTimesSliceReducer, {
   serviceTimesSlice,
 } from "./serviceTimesSlice";
 import { mergeTimers } from "../utils/timerUtils";
-import { extractAllMediaUrlsFromOutlines } from "../utils/mediaCacheUtils";
+import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import _ from "lodash";
 import { capitalizeFirstLetter } from "../utils/generalUtils";
 
@@ -850,86 +846,70 @@ listenerMiddleware.startListening({
     const { list } = (listenerApi.getState() as RootState).media;
 
     if (!db) return;
-    const db_backgrounds: DBMedia = await db.get("images");
-    db_backgrounds.backgrounds = [...list];
-    db_backgrounds.updatedAt = new Date().toISOString();
-    db.put(db_backgrounds);
+    const db_media: DBMedia = await db.get("media");
+    db_media.list = [...list];
+    db_media.updatedAt = new Date().toISOString();
+    db.put(db_media);
 
     // Local machine updates
     safePostMessage({
       type: "update",
       data: {
-        docs: db_backgrounds,
+        docs: db_media,
         hostId: globalHostId,
       },
     });
+
+    // Sync media cache to match the saved media list (Electron only)
+    if (window.electronAPI) {
+      try {
+        const urlArray = extractMediaUrlsFromBackgrounds(list);
+        const electronAPI = window.electronAPI as unknown as {
+          syncMediaCache: (
+            urls: string[],
+          ) => Promise<{ downloaded: number; cleaned: number }>;
+        };
+        if (urlArray.length > 0) {
+          await electronAPI.syncMediaCache(urlArray);
+        } else {
+          await electronAPI.syncMediaCache([]);
+        }
+      } catch (error) {
+        console.error(
+          "Error syncing media cache after media list save:",
+          error,
+        );
+      }
+    }
   },
 });
 
-// handle media cache sync when media is set on items
+// Sync media cache when media list is updated from remote (media doc)
 listenerMiddleware.startListening({
-  predicate: isAnyOf(
-    updateSlideBackground.fulfilled,
-    updateAllSlideBackgrounds.fulfilled,
-  ),
+  predicate: mediaItemsSlice.actions.updateMediaListFromRemote.match,
   effect: async (action, listenerApi) => {
-    // Only sync in Electron
-    if (!window.electronAPI) return;
+    if (!window.electronAPI || !action.payload) return;
 
-    // Check if a video or image background is being set
-    const payload = action.payload as {
-      background: string;
-      mediaInfo?: { type: string };
-    };
-    const isMedia =
-      payload?.mediaInfo?.type === "video" ||
-      payload?.mediaInfo?.type === "image" ||
-      payload?.background?.startsWith("http");
-    if (!isMedia) return;
-
-    // Debounce sync - wait 2 seconds after video is set
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(2000);
 
     try {
-      // Get current state to extract media URLs from Redux state (not database)
-      // This ensures we get the latest video even if database save is still pending
-      const state = listenerApi.getState() as RootState;
-      const currentItem = state.undoable.present.item;
-
-      // Extract media URLs from the current item in Redux state
-      const { extractMediaUrlsFromItem } =
-        await import("../utils/mediaCacheUtils");
-      const itemVideoUrls = extractMediaUrlsFromItem(currentItem);
-
-      // Also get all other media URLs from database (for cleanup)
-      if (!db) return;
-      const allVideoUrls = await extractAllMediaUrlsFromOutlines(db);
-
-      // Combine: current item media + all other media from database
-      const combinedUrls = new Set([
-        ...itemVideoUrls,
-        ...Array.from(allVideoUrls),
-      ]);
-      const urlArray = Array.from(combinedUrls);
-
-      // Sync the cache
+      const urlArray = extractMediaUrlsFromBackgrounds(action.payload);
       const electronAPI = window.electronAPI as unknown as {
         syncMediaCache: (
           urls: string[],
         ) => Promise<{ downloaded: number; cleaned: number }>;
       };
-
       if (urlArray.length > 0) {
-        const result = await electronAPI.syncMediaCache(urlArray);
-        console.log(
-          `Media cache sync after item update: ${result.downloaded} downloaded, ${result.cleaned} cleaned`,
-        );
+        await electronAPI.syncMediaCache(urlArray);
       } else {
         await electronAPI.syncMediaCache([]);
       }
     } catch (error) {
-      console.error("Error syncing media cache after item update:", error);
+      console.error(
+        "Error syncing media cache after remote media list update:",
+        error,
+      );
     }
   },
 });
@@ -1372,7 +1352,7 @@ listenerMiddleware.startListening({
       !!(
         (info.time &&
           state.streamInfo.time &&
-          info.time > state.streamInfo.time) ||
+          info.time >= state.streamInfo.time) ||
         (info.time && !state.streamInfo.time)
       )
     );

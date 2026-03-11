@@ -1,16 +1,11 @@
 import { useCallback } from "react";
 import { useContext } from "react";
-import {
-  extractAllMediaUrlsFromOutlines,
-  extractMediaUrlsFromItem,
-  getExistingItemsForServiceItems,
-} from "../utils/mediaCacheUtils";
+import { getMediaUrlsFromMediaDoc } from "../utils/mediaCacheUtils";
 import { ControllerInfoContext } from "../context/controllerInfo";
-import type { DBItemListDetails } from "../types";
 
 /**
- * Hook to sync media cache with videos and images used in outlines.
- * Call this when outlines change or on app startup.
+ * Hook to sync media cache with the media list (media doc).
+ * Call when the media list changes or on app startup.
  */
 export const useMediaCache = () => {
   const { db } = useContext(ControllerInfoContext) || {};
@@ -21,7 +16,7 @@ export const useMediaCache = () => {
     }
 
     try {
-      const mediaUrls = await extractAllMediaUrlsFromOutlines(db);
+      const mediaUrls = await getMediaUrlsFromMediaDoc(db);
       const urlArray = Array.from(mediaUrls);
 
       if (urlArray.length === 0) {
@@ -37,38 +32,11 @@ export const useMediaCache = () => {
   }, [db]);
 
   /**
-   * Preload media from a specific outline.
-   * Used for proactive preloading of active outline.
+   * Ensure media cache is in sync with the media list (e.g. when switching outline).
    */
-  const preloadOutlineMedia = useCallback(async (outlineId: string) => {
-    if (!db || !window.electronAPI) {
-      return;
-    }
-
-    try {
-      const outlineDetails = await db.get(outlineId) as DBItemListDetails;
-      const itemDocs = await getExistingItemsForServiceItems(
-        db,
-        outlineDetails?.items || []
-      );
-
-      const mediaUrls = new Set<string>();
-      for (const item of itemDocs) {
-        const urls = extractMediaUrlsFromItem(item);
-        urls.forEach((url) => mediaUrls.add(url));
-      }
-
-      const urlArray = Array.from(mediaUrls);
-      if (urlArray.length === 0) {
-        return;
-      }
-
-      await (window.electronAPI as unknown as { syncMediaCache: (urls: string[]) => Promise<{ downloaded: number; cleaned: number }> }).syncMediaCache(urlArray);
-
-    } catch (error) {
-      console.error("Error preloading outline media:", error);
-    }
-  }, [db]);
+  const preloadOutlineMedia = useCallback(async (_outlineId: string) => {
+    await syncMediaCache();
+  }, [syncMediaCache]);
 
   /**
    * Get the local path for a media URL if it's cached

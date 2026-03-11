@@ -250,6 +250,8 @@ type FormatBibleFromScratchType = {
   background: string;
   mediaInfo?: MediaType;
   brightness?: number;
+  /** When true, keeps existing box layout (e.g. when changing version). */
+  preserveLayout?: boolean;
 };
 
 export const formatBibleFromScratch = ({
@@ -262,6 +264,7 @@ export const formatBibleFromScratch = ({
   background,
   mediaInfo,
   brightness,
+  preserveLayout,
 }: FormatBibleFromScratchType): ItemState =>
   formatBible({
     item,
@@ -273,11 +276,11 @@ export const formatBibleFromScratch = ({
     background,
     mediaInfo,
     brightness,
-    isNew: true,
+    isNew: !preserveLayout,
   });
 
 export const getBibleVerseRange = (
-  bibleInfo: BibleInfo | undefined
+  bibleInfo: BibleInfo | undefined,
 ): { startVerse: number; endVerse: number } => {
   if (!bibleInfo?.verses?.length) return { startVerse: 0, endVerse: 0 };
   return {
@@ -290,7 +293,7 @@ export const getBibleItemName = (
   book: string,
   chapter: string,
   verses: verseType[],
-  version: string
+  version: string,
 ): string => {
   if (!verses?.length) return `${book} ${chapter} ${version.toUpperCase()}`;
   const startName = verses[0].name;
@@ -301,7 +304,7 @@ export const getBibleItemName = (
 };
 
 export const buildBibleOpenAtSearchParams = (
-  bibleInfo: BibleInfo | undefined
+  bibleInfo: BibleInfo | undefined,
 ): URLSearchParams | null => {
   if (!bibleInfo?.book || !bibleInfo?.chapter || !bibleInfo?.version)
     return null;
@@ -326,18 +329,32 @@ export const formatBibleItemForVersion = ({
   if (!bibleInfo?.book || !bibleInfo?.chapter) return null;
   const { startVerse, endVerse } = getBibleVerseRange(bibleInfo);
   const versesToUse = newVerses.filter(
-    (v) => v.index >= startVerse && v.index <= endVerse
+    (v) => v.index >= startVerse && v.index <= endVerse,
   );
   const verses = versesToUse.length ? versesToUse : newVerses;
   const newName = getBibleItemName(
     bibleInfo.book,
     bibleInfo.chapter,
     verses,
-    newVersion
+    newVersion,
   );
   const firstBox = item.slides?.[0]?.boxes?.[0];
+  const existingSlides = item.slides ?? [];
+  const slidesToUse =
+    existingSlides.length > 0
+      ? existingSlides.map((slide, i) =>
+          i === 0 && slide.boxes?.[1]
+            ? {
+                ...slide,
+                boxes: slide.boxes.map((b, j) =>
+                  j === 1 ? { ...b, words: newName } : b
+                ),
+              }
+            : slide
+        )
+      : [];
   return formatBibleFromScratch({
-    item: { ...item, name: newName, slides: [] },
+    item: { ...item, name: newName, slides: slidesToUse },
     book: bibleInfo.book,
     chapter: bibleInfo.chapter,
     version: newVersion,
@@ -346,6 +363,7 @@ export const formatBibleItemForVersion = ({
     background: firstBox?.background ?? item.background ?? "",
     mediaInfo: firstBox?.mediaInfo,
     brightness: firstBox?.brightness,
+    preserveLayout: slidesToUse.length > 0,
   });
 };
 
@@ -575,24 +593,6 @@ export const createNewTimer = async ({
   const item = await createNewItemInDb({ item: newItem, db });
 
   return item;
-};
-
-type RetriveImagesProps = {
-  backgrounds: MediaType[];
-};
-export const retrieveImages = ({
-  backgrounds,
-}: RetriveImagesProps): MediaType[] => {
-  const images: MediaType[] = [];
-  for (let i = 0; i < backgrounds.length; i++) {
-    const element = backgrounds[i];
-
-    images.push({
-      ...element,
-      id: generateRandomId(),
-    });
-  }
-  return images;
 };
 
 type MakeUniqueType = {

@@ -75,8 +75,20 @@ const ServiceItems = () => {
     return hidden;
   }, [serviceItems, collapsedHeadingListIds]);
 
-  const activeTimers = useSelector((state) => state.timers.timers).filter(
-    (timer) => timer.status !== "stopped" && timer.remainingTime > 0
+  const timers = useSelector((state) => state.timers.timers);
+  const timerIdsInList = useMemo(
+    () => new Set(serviceItems.map((item) => item._id)),
+    [serviceItems]
+  );
+  const activeTimers = useMemo(
+    () =>
+      timers.filter(
+        (timer) =>
+          timerIdsInList.has(timer.id) &&
+          timer.status !== "stopped" &&
+          timer.remainingTime > 0
+      ),
+    [timers, timerIdsInList]
   );
 
   const { setNodeRef } = useDroppable({

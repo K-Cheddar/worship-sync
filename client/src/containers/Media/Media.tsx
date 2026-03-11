@@ -27,7 +27,6 @@ import {
   updateMediaListFromRemote,
   addItemToMediaList,
 } from "../../store/mediaSlice";
-import { retrieveImages } from "../../utils/itemUtil";
 import { mediaInfoType } from "./cloudinaryTypes";
 import MediaUploadInput, { MediaUploadInputRef } from "./MediaUploadInput";
 import MediaTypeBadge from "./MediaTypeBadge";
@@ -94,6 +93,7 @@ const Media = () => {
   const [uploadProgress, setUploadProgress] = useState<{ isUploading: boolean; progress: number }>({ isUploading: false, progress: 0 });
   const mediaUploadInputRef = useRef<MediaUploadInputRef>(null);
   const mediaListRef = useRef<HTMLUListElement>(null);
+  const uploadPollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Filter media items based on search term
   const filteredList = list.filter((item) =>
@@ -130,20 +130,25 @@ const Media = () => {
   useEffect(() => {
     const getAllItems = async () => {
       if (!db || !cloud) return;
-      const response: DBMedia | undefined = await db?.get("images");
-      const backgrounds = response?.backgrounds || [];
-      const images = retrieveImages({ backgrounds });
-      dispatch(initiateMediaList(images));
+      const response: DBMedia | undefined = await db?.get("media");
+      dispatch(initiateMediaList(response?.list || []));
       setIsMediaLoading(false);
     };
     getAllItems();
   }, [dispatch, db, cloud]);
 
-  // Poll upload status to show progress on Add button
-  useEffect(() => {
-    if (!mediaUploadInputRef.current) return;
-
-    const interval = setInterval(() => {
+  // Poll upload status only while an upload is in progress; start/stop via MediaUploadInput callback
+  const handleUploadActiveChange = useCallback((active: boolean) => {
+    if (!active) {
+      if (uploadPollingIntervalRef.current) {
+        clearInterval(uploadPollingIntervalRef.current);
+        uploadPollingIntervalRef.current = null;
+      }
+      setUploadProgress({ isUploading: false, progress: 0 });
+      return;
+    }
+    if (uploadPollingIntervalRef.current) return;
+    uploadPollingIntervalRef.current = setInterval(() => {
       const status = mediaUploadInputRef.current?.getUploadStatus();
       if (status) {
         setUploadProgress({
@@ -151,9 +156,7 @@ const Media = () => {
           progress: status.progress,
         });
       }
-    }, 500); // Poll every 500ms
-
-    return () => clearInterval(interval);
+    }, 500);
   }, []);
 
   const updateMediaListFromExternal = useCallback(
@@ -161,13 +164,10 @@ const Media = () => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
-          if (_update._id === "images") {
+          if (_update._id === "media") {
             console.log("updating media list from remote");
             const update = _update as DBMedia;
-            const images = retrieveImages({
-              backgrounds: update.backgrounds,
-            });
-            dispatch(updateMediaListFromRemote(images));
+            dispatch(updateMediaListFromRemote(update.list));
           }
         }
 
@@ -485,6 +485,7 @@ const Media = () => {
         showButton={false}
         uploadPreset="bpqu4ma5"
         cloudName="portable-media"
+        onUploadActiveChange={handleUploadActiveChange}
       />
       {!isMediaLoading && isMediaExpanded && (
         <div className="px-4 py-2 bg-gray-900 mx-2 flex items-center gap-2">

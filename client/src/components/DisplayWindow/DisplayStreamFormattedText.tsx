@@ -89,8 +89,6 @@ const DisplayStreamFormattedText = ({
     return text;
   };
 
-
-
   return (
     <>
       {formattedTextText && (

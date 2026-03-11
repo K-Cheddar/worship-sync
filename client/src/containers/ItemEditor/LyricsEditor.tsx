@@ -4,7 +4,7 @@ import { ZoomIn } from "lucide-react";
 import { ZoomOut } from "lucide-react";
 
 import Button from "../../components/Button/Button";
-import { useContext, useEffect, useMemo, useState, useCallback, useDeferredValue } from "react";
+import { useContext, useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { setIsEditMode, updateArrangements } from "../../store/itemSlice";
 
 import {
@@ -16,7 +16,7 @@ import TextArea from "../../components/TextArea/TextArea";
 import LyricBoxes from "./LyricBoxes";
 import SongSections from "./SongSections";
 import SectionPreview from "./SectionPreview";
-import { FormattedLyrics as FormattedLyricsType, SongOrder } from "../../types";
+import { FormattedLyrics as FormattedLyricsType, ItemSlideType, SongOrder } from "../../types";
 import { sectionTypes } from "../../utils/slideColorMap";
 import Arrangement from "./Arrangement";
 import { updateFormattedSections } from "../../utils/itemUtil";
@@ -30,6 +30,7 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import Modal from "../../components/Modal/Modal";
 import { createNewSlide, createBox } from "../../utils/slideCreation";
 import cn from "classnames";
+import { DEFAULT_FONT_PX } from "../../constants";
 
 const LyricsEditor = () => {
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -38,10 +39,17 @@ const LyricsEditor = () => {
   const [localArrangements, setLocalArrangements] = useState([...arrangements]);
   const [localSelectedArrangement, setLocalSelectedArrangement] =
     useState(selectedArrangement);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+  const [previewTick, setPreviewTick] = useState(0);
+  const [previewSlides, setPreviewSlides] = useState<ItemSlideType[]>([]);
   const dispatch = useDispatch();
+  const previewInputRef = useRef({
+    selectedSectionIndex: null as number | null,
+    localFormattedLyrics: [] as FormattedLyricsType[],
+    localArrangements: [] as typeof localArrangements,
+    localSelectedArrangement: 0,
+  });
 
   const localFormattedLyrics = useMemo(
     () => localArrangements[localSelectedArrangement]?.formattedLyrics || [],
@@ -102,13 +110,12 @@ const LyricsEditor = () => {
     setIsPreviewMinimized(false);
   }, [selectedSectionIndex]);
 
-  // Detect changes by comparing current state with original
-  useEffect(() => {
-    const hasChanges =
+  const hasPendingChanges = useCallback(() => {
+    return (
       JSON.stringify(localArrangements) !== JSON.stringify(arrangements) ||
       localSelectedArrangement !== selectedArrangement ||
-      unformattedLyrics.trim() !== "";
-    setHasUnsavedChanges(hasChanges);
+      unformattedLyrics.trim() !== ""
+    );
   }, [
     localArrangements,
     arrangements,
@@ -120,7 +127,7 @@ const LyricsEditor = () => {
   // Handle beforeunload event for page navigation/reload
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (hasUnsavedChanges) {
+      if (hasPendingChanges()) {
         e.preventDefault();
         e.returnValue =
           "You have unsaved changes. Are you sure you want to leave?";
@@ -130,7 +137,7 @@ const LyricsEditor = () => {
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [hasUnsavedChanges]);
+  }, [hasPendingChanges]);
 
   const updateSongOrder = (_songOrder: SongOrder[]) => {
     setLocalArrangements((_lArrangements) => {
@@ -203,25 +210,57 @@ const LyricsEditor = () => {
     setLocalArrangements(updatedLocalArrangements);
   };
 
-  // Use deferred value for preview to prevent blocking text input
-  const deferredSelectedSectionIndex = useDeferredValue(selectedSectionIndex);
-  const deferredLocalFormattedLyrics = useDeferredValue(localFormattedLyrics);
-  const deferredLocalArrangements = useDeferredValue(localArrangements);
-  const deferredLocalSelectedArrangement = useDeferredValue(localSelectedArrangement);
+  // Debounce preview regeneration to avoid expensive formatting on every keystroke
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setPreviewTick((value) => value + 1);
+    }, 350);
+    return () => clearTimeout(timeout);
+  }, [
+    selectedSectionIndex,
+    localFormattedLyrics,
+    localArrangements,
+    localSelectedArrangement,
+  ]);
 
-  // Generate preview slides for the selected section (using deferred values for smooth editing)
-  const previewSlides = useMemo(() => {
-    if (deferredSelectedSectionIndex === null || isMobile) return [];
-    
-    const selectedSection = deferredLocalFormattedLyrics[deferredSelectedSectionIndex];
-    if (!selectedSection || !selectedSection.words.trim()) return [];
+  useEffect(() => {
+    previewInputRef.current = {
+      selectedSectionIndex,
+      localFormattedLyrics,
+      localArrangements,
+      localSelectedArrangement,
+    };
+  }, [selectedSectionIndex, localFormattedLyrics, localArrangements, localSelectedArrangement]);
 
-    // Get slide template from existing arrangement slides or create defaults
-    const arrangement = deferredLocalArrangements[deferredLocalSelectedArrangement];
+  // Regenerate preview only on debounced ticks
+  useEffect(() => {
+    if (isMobile) {
+      setPreviewSlides([]);
+      return;
+    }
+
+    const {
+      selectedSectionIndex: activeSectionIndex,
+      localFormattedLyrics: activeFormattedLyrics,
+      localArrangements: activeArrangements,
+      localSelectedArrangement: activeArrangementIndex,
+    } = previewInputRef.current;
+
+    if (activeSectionIndex === null) {
+      setPreviewSlides([]);
+      return;
+    }
+
+    const selectedSection = activeFormattedLyrics[activeSectionIndex];
+    if (!selectedSection || !selectedSection.words.trim()) {
+      setPreviewSlides([]);
+      return;
+    }
+
+    const arrangement = activeArrangements[activeArrangementIndex];
     let templateSlides = arrangement?.slides || [];
     let templateSlide = templateSlides[1] || templateSlides[0];
-    
-    // If no template slides exist, create a default one
+
     if (!templateSlide) {
       templateSlide = createNewSlide({
         type: "Verse",
@@ -238,7 +277,7 @@ const LyricsEditor = () => {
             words: "",
             height: 100,
             width: 100,
-            fontSize: 2.5,
+            fontSize: DEFAULT_FONT_PX,
             fontColor: "rgba(255, 255, 255, 1)",
             transparent: true,
             topMargin: 3,
@@ -251,24 +290,25 @@ const LyricsEditor = () => {
 
     const sectionType = selectedSection.type as any;
     const sectionName = selectedSection.name;
-    const fontSize = templateSlide.boxes[1]?.fontSize || 2.5;
+    const fontSizePx = templateSlide.boxes[1]?.fontSize || DEFAULT_FONT_PX;
 
     try {
-      return formatSection({
+      const nextPreviewSlides = formatSection({
         text: selectedSection.words,
         type: sectionType,
         name: sectionName,
         slides: templateSlides,
         newSlides: [],
-        fontSize,
+        fontSizePx,
         selectedSlide: templateSlide,
         selectedBox: 1,
       });
+      setPreviewSlides(nextPreviewSlides);
     } catch (error) {
       console.error("Error generating preview slides:", error);
-      return [];
+      setPreviewSlides([]);
     }
-  }, [deferredSelectedSectionIndex, deferredLocalFormattedLyrics, deferredLocalArrangements, deferredLocalSelectedArrangement, isMobile]);
+  }, [previewTick, isMobile]);
 
   // Handle confirmation modal actions
   const handleConfirmAction = useCallback(() => {
@@ -285,7 +325,7 @@ const LyricsEditor = () => {
   }, []);
 
   const handleCloseWithConfirmation = useCallback(() => {
-    if (hasUnsavedChanges) {
+    if (hasPendingChanges()) {
       setPendingAction(() => () => {
         setLocalArrangements(arrangements);
         dispatch(setIsEditMode(false));
@@ -295,7 +335,7 @@ const LyricsEditor = () => {
       setLocalArrangements(arrangements);
       dispatch(setIsEditMode(false));
     }
-  }, [hasUnsavedChanges, arrangements, dispatch]);
+  }, [hasPendingChanges, arrangements, dispatch]);
 
   if (!isEditMode) {
     return null;
@@ -325,7 +365,6 @@ const LyricsEditor = () => {
       })
     );
 
-    setHasUnsavedChanges(false);
   };
 
   const createSections = () => {

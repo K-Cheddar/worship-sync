@@ -23,6 +23,8 @@ export type MediaUploadInputProps = {
   showButton?: boolean;
   uploadPreset?: string;
   cloudName?: string;
+  /** Called when upload starts (true) or ends (false). Use to start/stop external progress polling. */
+  onUploadActiveChange?: (active: boolean) => void;
 };
 
 export type MediaUploadInputRef = {

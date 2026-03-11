@@ -4,4 +4,11 @@ import { useSyncRemoteTimers } from "./useSyncRemoteTimers";
 import { useSyncOnReconnect } from "./useSyncOnReconnect";
 import { useMediaSelection } from "./useMediaSelection";
 
-export { useDispatch, useSelector, useWindowWidth, useSyncRemoteTimers, useSyncOnReconnect, useMediaSelection };
+export {
+  useDispatch,
+  useSelector,
+  useWindowWidth,
+  useSyncRemoteTimers,
+  useSyncOnReconnect,
+  useMediaSelection,
+};

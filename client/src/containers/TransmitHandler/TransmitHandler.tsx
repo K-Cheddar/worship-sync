@@ -1,6 +1,8 @@
 import {
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
 } from "react";
 import Toggle from "../../components/Toggle/Toggle";
@@ -64,12 +66,48 @@ const TransmitHandler = () => {
     );
   }, [isMonitorTransmitting, isProjectorTransmitting, isStreamTransmitting]);
 
-  const handleSetTransmitting = () => {
-    setIsTransmitting(!isTransmitting);
-    dispatch(setTransmitToAll(!isTransmitting));
-  };
+  const handleSetTransmitting = useCallback(() => {
+    setIsTransmitting((prev) => {
+      dispatch(setTransmitToAll(!prev));
+      return !prev;
+    });
+  }, [dispatch]);
 
-  const allQuickLinks = [...defaultQuickLinks, ...quickLinks];
+  const handleClearAll = useCallback(() => {
+    dispatch(clearAll());
+  }, [dispatch]);
+
+  const toggleProjector = useCallback(() => {
+    dispatch(toggleProjectorTransmitting());
+  }, [dispatch]);
+
+  const toggleMonitor = useCallback(() => {
+    dispatch(toggleMonitorTransmitting());
+  }, [dispatch]);
+
+  const toggleStream = useCallback(() => {
+    dispatch(toggleStreamTransmitting());
+  }, [dispatch]);
+
+  const allQuickLinks = useMemo(
+    () => [...defaultQuickLinks, ...quickLinks],
+    [defaultQuickLinks, quickLinks]
+  );
+
+  const projectorQuickLinks = useMemo(
+    () => allQuickLinks.filter((link) => link.displayType === "projector"),
+    [allQuickLinks]
+  );
+
+  const monitorQuickLinks = useMemo(
+    () => allQuickLinks.filter((link) => link.displayType === "monitor"),
+    [allQuickLinks]
+  );
+
+  const streamQuickLinks = useMemo(
+    () => allQuickLinks.filter((link) => link.displayType === "stream"),
+    [allQuickLinks]
+  );
 
   return (
     <ErrorBoundary>
@@ -85,7 +123,7 @@ const TransmitHandler = () => {
         >
           <div className="w-full flex justify-center items-center gap-4">
             <Button
-              onClick={() => dispatch(clearAll())}
+              onClick={handleClearAll}
               className="text-sm"
               padding="py-1 px-2"
               svg={MonitorX}
@@ -110,12 +148,8 @@ const TransmitHandler = () => {
               prevTimerInfo={prevProjectorTimer}
               info={projectorInfo}
               isTransmitting={isProjectorTransmitting}
-              toggleIsTransmitting={() =>
-                dispatch(toggleProjectorTransmitting())
-              }
-              quickLinks={allQuickLinks
-                .filter((link) => link.displayType === "projector")
-              }
+              toggleIsTransmitting={toggleProjector}
+              quickLinks={projectorQuickLinks}
               isMobile={isMobile}
             />
             <Presentation
@@ -126,10 +160,8 @@ const TransmitHandler = () => {
               prevTimerInfo={prevMonitorTimer}
               info={monitorInfo}
               isTransmitting={isMonitorTransmitting}
-              toggleIsTransmitting={() => dispatch(toggleMonitorTransmitting())}
-              quickLinks={allQuickLinks
-                .filter((link) => link.displayType === "monitor")
-              }
+              toggleIsTransmitting={toggleMonitor}
+              quickLinks={monitorQuickLinks}
               isMobile={isMobile}
               showMonitorClockTimer
             />
@@ -141,10 +173,8 @@ const TransmitHandler = () => {
               prevTimerInfo={prevStreamTimer}
               info={streamInfo}
               isTransmitting={isStreamTransmitting}
-              toggleIsTransmitting={() => dispatch(toggleStreamTransmitting())}
-              quickLinks={allQuickLinks
-                .filter((link) => link.displayType === "stream")
-              }
+              toggleIsTransmitting={toggleStream}
+              quickLinks={streamQuickLinks}
               isMobile={isMobile}
             />
           </div>

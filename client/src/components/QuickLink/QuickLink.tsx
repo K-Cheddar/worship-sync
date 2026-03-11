@@ -12,13 +12,13 @@ import {
   updateImageOverlayInfo,
   updateQrCodeOverlayInfo,
 } from "../../store/presentationSlice";
+import { setMonitorTimerId } from "../../store/preferencesSlice";
 import { QuickLinkType, TimerInfo } from "../../types";
 import Button from "../Button/Button";
 import DisplayWindow from "../DisplayWindow/DisplayWindow";
 import { useMemo } from "react";
 
 type QuickLinkProps = QuickLinkType & {
-  isMobile?: boolean;
   timers: TimerInfo[];
 };
 
@@ -27,7 +27,6 @@ const QuickLink = ({
   presentationInfo,
   displayType,
   action,
-  isMobile,
   timers,
 }: QuickLinkProps) => {
   const dispatch = useDispatch();
@@ -46,6 +45,9 @@ const QuickLink = ({
         dispatch(updateProjector(presentationInfo));
       } else if (displayType === "monitor") {
         dispatch(updateMonitor(presentationInfo));
+        if (presentationInfo.type === "slide") {
+          dispatch(setMonitorTimerId(presentationInfo.timerId || null));
+        }
       } else if (displayType === "stream") {
         if (presentationInfo.slide) {
           dispatch(updateStream(presentationInfo));
@@ -98,7 +100,7 @@ const QuickLink = ({
             timerInfo={timerInfo}
           />
         )}
-        <p 
+        <p
           className="text-center font-semibold whitespace-break-spaces w-full overflow-clip text-ellipsis max-h-10"
           style={{ fontSize: 'clamp(0.5rem, 0.6vw, 0.7rem)' }}
         >
