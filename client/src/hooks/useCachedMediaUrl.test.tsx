@@ -1,6 +1,16 @@
 import React, { useEffect } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
-import { useCachedMediaUrl, useCachedVideoUrl } from "./useCachedMediaUrl";
+import { Provider } from "react-redux";
+import { configureStore } from "@reduxjs/toolkit";
+import mediaCacheMapReducer from "../store/mediaCacheMapSlice";
+
+const { useCachedMediaUrl, useCachedVideoUrl } = jest.requireActual(
+  "./useCachedMediaUrl",
+) as typeof import("./useCachedMediaUrl");
+
+const store = configureStore({
+  reducer: { mediaCacheMap: mediaCacheMapReducer },
+});
 
 type HookMode = "media" | "video";
 
@@ -24,6 +34,9 @@ const HookProbe = ({
   return <div data-testid="value">{value ?? "undefined"}</div>;
 };
 
+const renderWithProvider = (ui: React.ReactElement) =>
+  render(<Provider store={store}>{ui}</Provider>);
+
 describe("useCachedMediaUrl hooks", () => {
   afterEach(() => {
     delete (window as { electronAPI?: unknown }).electronAPI;
@@ -32,7 +45,9 @@ describe("useCachedMediaUrl hooks", () => {
 
   it("returns original url when electron api is unavailable", () => {
     const onValue = jest.fn();
-    render(<HookProbe url="https://cdn.example.com/image.jpg" mode="media" onValue={onValue} />);
+    renderWithProvider(
+      <HookProbe url="https://cdn.example.com/image.jpg" mode="media" onValue={onValue} />,
+    );
 
     expect(screen.getByTestId("value")).toHaveTextContent(
       "https://cdn.example.com/image.jpg",
@@ -45,7 +60,9 @@ describe("useCachedMediaUrl hooks", () => {
     };
     const onValue = jest.fn();
 
-    render(<HookProbe url="https://cdn.example.com/image.jpg" mode="media" onValue={onValue} />);
+    renderWithProvider(
+      <HookProbe url="https://cdn.example.com/image.jpg" mode="media" onValue={onValue} />,
+    );
 
     await waitFor(() =>
       expect(screen.getByTestId("value")).toHaveTextContent("/cache/image.jpg"),
@@ -74,12 +91,14 @@ describe("useCachedMediaUrl hooks", () => {
     (window as { electronAPI?: unknown }).electronAPI = { getLocalMediaPath };
 
     const onValue = jest.fn();
-    const { rerender } = render(
+    const { rerender } = renderWithProvider(
       <HookProbe url="https://cdn.example.com/one.jpg" mode="media" onValue={onValue} />,
     );
 
     rerender(
-      <HookProbe url="https://cdn.example.com/two.jpg" mode="media" onValue={onValue} />,
+      <Provider store={store}>
+        <HookProbe url="https://cdn.example.com/two.jpg" mode="media" onValue={onValue} />
+      </Provider>,
     );
 
     resolveFirst("/cache/one.jpg");
@@ -103,7 +122,9 @@ describe("useCachedMediaUrl hooks", () => {
     };
 
     const onValue = jest.fn();
-    render(<HookProbe url="https://cdn.example.com/clip.mp4" mode="video" onValue={onValue} />);
+    renderWithProvider(
+      <HookProbe url="https://cdn.example.com/clip.mp4" mode="video" onValue={onValue} />,
+    );
 
     expect(screen.getByTestId("value")).toHaveTextContent("undefined");
     resolvePath("/cache/clip.mp4");

@@ -2,6 +2,14 @@ import { TextEncoder, TextDecoder } from "util";
 import "@testing-library/jest-dom";
 import { mockResizeObserver, MockIntersectionObserver } from "./test/mocks";
 
+// Avoid "could not find react-redux context" in tests that render components using
+// useCachedMediaUrl/useCachedVideoUrl without a Redux Provider. Tests that need the
+// real hook (e.g. useCachedMediaUrl.test.tsx) must call jest.unmock() before importing.
+jest.mock("./hooks/useCachedMediaUrl", () => ({
+  useCachedMediaUrl: (url: unknown) => url,
+  useCachedVideoUrl: (url: unknown) => url,
+}));
+
 // Polyfill TextEncoder/TextDecoder for Jest (required by react-router-dom in Node)
 Object.assign(global, { TextEncoder, TextDecoder });
 
