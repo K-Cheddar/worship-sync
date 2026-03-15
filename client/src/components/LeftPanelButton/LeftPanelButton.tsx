@@ -82,7 +82,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
             <img src={resolvedImage ?? image} className="w-14 max-w-[30%]" alt={title} />
           )}
           {isActive && (
-            <span className="bg-gray-950 text-white font-semibold rounded-lg px-2 py-1 text-xs">
+            <span className="bg-gray-950 text-white font-semibold rounded-lg px-2 py-1 text-xs tabular-nums">
               {formatTime(timerValue || 0, false, true)}
             </span>
           )}

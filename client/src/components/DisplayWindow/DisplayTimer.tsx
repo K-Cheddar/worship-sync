@@ -49,7 +49,7 @@ const DisplayTimer = ({
     return null;
   return (
     <span
-      className="whitespace-nowrap"
+      className="whitespace-nowrap tabular-nums"
       style={{
         fontSize: `${fontSize}px`,
         color: timer?.color || "#ffffff",
