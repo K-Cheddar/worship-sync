@@ -53,6 +53,7 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { updateOverlay } from "../../store/overlaySlice";
 import { ActionCreators } from "redux-undo";
 import MediaModal from "./MediaModal";
+import CachedMediaImage from "../../components/CachedMediaImage/CachedMediaImage";
 
 
 const sizeMap: Map<number, string> = new Map([
@@ -707,7 +708,7 @@ const Media = () => {
                         isMediaExpanded && "border-b border-gray-500"
                       )}
                     >
-                      <img
+                      <CachedMediaImage
                         className="max-w-full max-h-full"
                         alt={id}
                         src={thumbnail}

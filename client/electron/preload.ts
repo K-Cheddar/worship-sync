@@ -84,6 +84,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Media cache
   downloadMedia: (url: string) => ipcRenderer.invoke("download-media", url),
+  getMediaCacheMap: () =>
+    ipcRenderer.invoke("get-media-cache-map") as Promise<Record<string, string>>,
   getLocalMediaPath: (url: string) =>
     ipcRenderer.invoke("get-local-media-path", url),
   cleanupUnusedMedia: (usedUrls: string[]) =>

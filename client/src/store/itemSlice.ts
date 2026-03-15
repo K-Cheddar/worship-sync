@@ -10,6 +10,10 @@ import {
   ShouldSendTo,
 } from "../types";
 import { createAsyncThunk } from "../hooks/reduxHooks";
+import {
+  getIndexFromSelectionHint,
+  getSelectionHint,
+} from "../utils/selectionHint";
 import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
 import { updateItemInList } from "../utils/itemUtil";
@@ -45,6 +49,7 @@ const initialState: ItemState = {
     monitor: true,
     stream: true,
   },
+  restoreFocusToBox: null,
 };
 
 export const itemSlice = createSlice({
@@ -77,6 +82,7 @@ export const itemSlice = createSlice({
         monitor: true,
         stream: true,
       };
+      state.restoreFocusToBox = null;
     },
     setIsEditMode: (state, action: PayloadAction<boolean>) => {
       state.isEditMode = action.payload;
@@ -139,6 +145,12 @@ export const itemSlice = createSlice({
         ...action.payload,
       };
       state.hasPendingUpdate = true;
+    },
+    setRestoreFocusToBox: (
+      state,
+      action: PayloadAction<number | null | undefined>
+    ) => {
+      state.restoreFocusToBox = action.payload ?? null;
     },
   },
 });
@@ -240,9 +252,14 @@ export const updateArrangements = createAsyncThunk(
     },
     { dispatch, getState },
   ) => {
-    const { selectedArrangement: currentArrangement } =
-      getState().undoable.present.item;
+    const item = getState().undoable.present.item;
+    const { selectedArrangement: currentArrangement } = item;
     const { selectedArrangement, arrangements } = args;
+    const newSlides =
+      arrangements[selectedArrangement ?? currentArrangement]?.slides ?? [];
+    const oldSlides =
+      item.arrangements[currentArrangement]?.slides ?? [];
+
     dispatch(_updateArrangements(arrangements));
     if (selectedArrangement !== undefined) {
       dispatch(_setSelectedArrangement(selectedArrangement));
@@ -252,6 +269,22 @@ export const updateArrangements = createAsyncThunk(
         arrangements[selectedArrangement ?? currentArrangement].slides,
       ),
     );
+
+    if (
+      item.type === "song" &&
+      oldSlides.length !== newSlides.length
+    ) {
+      const hint = getSelectionHint(oldSlides, item.selectedSlide);
+      const maxSlideIndex = Math.max(0, newSlides.length - 2);
+      const newIndex = hint
+        ? Math.min(
+            getIndexFromSelectionHint(newSlides, hint),
+            maxSlideIndex
+          )
+        : Math.min(item.selectedSlide, maxSlideIndex);
+      dispatch(setSelectedSlide(newIndex));
+      dispatch(setRestoreFocusToBox(item.selectedBox));
+    }
   },
 );
 
@@ -408,11 +441,31 @@ export const updateSlides = createAsyncThunk(
   "item/updateSlides",
   async (
     args: { slides: ItemSlideType[]; formattedSections?: FormattedSection[] },
-    { dispatch },
+    { dispatch, getState },
   ) => {
+    const item = getState().undoable.present.item;
+    const oldSlides = item.slides;
+    const newSlides = args.slides;
+
     dispatch(_updateSlides(args.slides));
     if (args.formattedSections) {
       dispatch(_updateFormattedSections(args.formattedSections));
+    }
+
+    if (
+      item.type !== "song" &&
+      oldSlides.length !== newSlides.length
+    ) {
+      const hint = getSelectionHint(oldSlides, item.selectedSlide);
+      const maxSlideIndex = Math.max(0, newSlides.length - 1);
+      const newIndex = hint
+        ? Math.min(
+            getIndexFromSelectionHint(newSlides, hint),
+            maxSlideIndex
+          )
+        : Math.min(item.selectedSlide, maxSlideIndex);
+      dispatch(setSelectedSlide(newIndex));
+      dispatch(setRestoreFocusToBox(item.selectedBox));
     }
   },
 );
@@ -426,6 +479,7 @@ export const updateBibleInfo = createAsyncThunk(
 
 export const {
   setSelectedSlide,
+  setRestoreFocusToBox,
   _setSelectedArrangement,
   setIsEditMode,
   _setName,

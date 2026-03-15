@@ -201,7 +201,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         pollingTimeoutsRef.current = [];
         setStatusMessage("Cancelling upload...");
       }
-      
+
       setSelectedFiles([]);
       setError("");
       setUploadStatus("idle");
@@ -402,7 +402,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
             <div className="pt-4 border-t border-gray-700">
               <p className="text-xs text-gray-400">
-                Select one or more images or videos to upload. 
+                Select one or more images or videos to upload.
                 Processing may take a few minutes depending on file size.
               </p>
             </div>

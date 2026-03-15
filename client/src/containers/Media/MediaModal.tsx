@@ -36,6 +36,8 @@ import { updateOverlay } from "../../store/overlaySlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { MediaUploadInputRef } from "./MediaUploadInput";
 import MediaTypeBadge from "./MediaTypeBadge";
+import { useCachedMediaUrl, useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
+import CachedMediaImage from "../../components/CachedMediaImage/CachedMediaImage";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -128,6 +130,13 @@ const MediaModal = ({
     filteredList,
     enableRangeSelection: false, // Modal doesn't need range selection
   });
+
+  const resolvedPreviewImageUrl = useCachedMediaUrl(
+    modalPreviewMedia?.type === "image" ? modalPreviewMedia.background : undefined
+  );
+  const resolvedPreviewVideoUrl = useCachedVideoUrl(
+    modalPreviewMedia?.type === "video" ? modalPreviewMedia.background : undefined
+  );
 
   // Calculate grid columns based on available space
   const calculateGridColumns = (containerWidth: number) => {
@@ -356,7 +365,7 @@ const MediaModal = ({
                 />
               </div>
               <img
-                src={modalPreviewMedia.background}
+                src={resolvedPreviewImageUrl ?? modalPreviewMedia.background}
                 alt={modalPreviewMedia.name}
                 className="w-full h-full object-contain transition-transform duration-300 ease-in-out"
                 style={{
@@ -405,14 +414,14 @@ const MediaModal = ({
                 <div className="aspect-video flex items-center justify-center overflow-hidden bg-gray-800 rounded-md flex-1 max-h-full max-w-full">
                   {modalPreviewMedia.type === "video" ? (
                     <video
-                      src={modalPreviewMedia.background}
+                      src={resolvedPreviewVideoUrl ?? modalPreviewMedia.background}
                       className="max-h-full max-w-full w-full h-full object-contain"
                       controls
                       autoPlay
                     />
                   ) : (
                     <img
-                      src={modalPreviewMedia.background}
+                      src={resolvedPreviewImageUrl ?? modalPreviewMedia.background}
                       alt={modalPreviewMedia.name}
                       className="max-w-full max-h-full w-full h-full object-contain"
                     />
@@ -590,7 +599,7 @@ const MediaModal = ({
                         }}
                       >
                         <div className="aspect-video flex items-center justify-center w-full flex-1 overflow-hidden border-b border-gray-500 relative">
-                          <img
+                          <CachedMediaImage
                             className="max-w-full max-h-full"
                             alt={id}
                             src={thumbnail}

@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { useSelector } from "react-redux";
+import type { RootState } from "../store/store";
 
 const resolveMediaUrl = async (url: string): Promise<string> => {
   if (!window.electronAPI) return url;
@@ -16,14 +18,12 @@ const resolveMediaUrl = async (url: string): Promise<string> => {
 
 /**
  * Returns a locally-cached URL for the given media URL when running in Electron,
- * or the original URL otherwise.
- *
- * Returns the raw URL immediately while resolving — suitable for images where
- * showing the remote URL briefly is acceptable.
+ * or the original URL otherwise. Uses the Redux cache map for instant resolution when available.
  */
 export const useCachedMediaUrl = (
   url: string | undefined,
 ): string | undefined => {
+  const mediaCacheMap = useSelector((state: RootState) => state.mediaCacheMap.map);
   const [resolved, setResolved] = useState<string | undefined>(url);
   const checkIdRef = useRef(0);
 
@@ -32,26 +32,28 @@ export const useCachedMediaUrl = (
       setResolved(url);
       return;
     }
+    if (mediaCacheMap[url]) return;
 
     const checkId = ++checkIdRef.current;
-
     resolveMediaUrl(url).then((result) => {
       if (checkId !== checkIdRef.current) return;
       setResolved(result);
     });
-  }, [url]);
+  }, [url, mediaCacheMap]);
 
-  return resolved;
+  const syncCached = url && mediaCacheMap[url];
+  return syncCached ?? resolved;
 };
 
 /**
  * Like useCachedMediaUrl, but returns undefined until cache resolution completes.
  * Use for videos where loading the wrong (remote) URL before the cache check
- * finishes is undesirable.
+ * finishes is undesirable. Uses the Redux cache map for instant resolution when available.
  */
 export const useCachedVideoUrl = (
   url: string | undefined,
 ): string | undefined => {
+  const mediaCacheMap = useSelector((state: RootState) => state.mediaCacheMap.map);
   const [state, setState] = useState<{
     resolved: string | undefined;
     forUrl: string | undefined;
@@ -67,6 +69,7 @@ export const useCachedVideoUrl = (
       setState({ resolved: url, forUrl: url });
       return;
     }
+    if (mediaCacheMap[url]) return;
 
     const checkId = ++checkIdRef.current;
     setState({ resolved: undefined, forUrl: url });
@@ -75,10 +78,10 @@ export const useCachedVideoUrl = (
       if (checkId !== checkIdRef.current) return;
       setState({ resolved: result, forUrl: url });
     });
-  }, [url]);
+  }, [url, mediaCacheMap]);
 
-  // Stale guard: if url changed but the effect hasn't updated state yet,
-  // return undefined instead of the previous video's resolved URL.
+  const syncCached = url && mediaCacheMap[url];
+  if (syncCached) return syncCached;
   if (state.forUrl !== url) return undefined;
   return state.resolved;
 };

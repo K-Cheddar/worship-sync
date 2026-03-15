@@ -80,6 +80,7 @@ interface ElectronAPI {
   
   // Media cache
   downloadMedia: (url: string) => Promise<string | null>;
+  getMediaCacheMap: () => Promise<Record<string, string>>;
   getLocalMediaPath: (url: string) => Promise<string | null>;
   cleanupUnusedMedia: (usedUrls: string[]) => Promise<void>;
   syncMediaCache: (mediaUrls: string[]) => Promise<{ downloaded: number; cleaned: number }>;

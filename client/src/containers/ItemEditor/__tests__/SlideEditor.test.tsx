@@ -12,12 +12,22 @@ const mockUpdateSlides = jest.fn((payload: any) => ({
   type: "item/updateSlides",
   payload,
 }));
+const mockUpdateBoxes = jest.fn((payload: any) => ({
+  type: "item/updateBoxes",
+  payload,
+}));
+const mockUpdateArrangements = jest.fn((payload: any) => ({
+  type: "item/updateArrangements",
+  payload,
+}));
 const mockSetShouldShowItemEditor = jest.fn((value: boolean) => ({
   type: "preferences/setShouldShowItemEditor",
   payload: value,
 }));
 
 const mockFormatFree = jest.fn((item: any) => item);
+const mockFormatBible = jest.fn((item: any) => item);
+const mockFormatSong = jest.fn((item: any) => item);
 
 jest.mock("../../../hooks", () => ({
   useDispatch: () => mockDispatch,
@@ -35,13 +45,10 @@ jest.mock("../../../store/itemSlice", () => ({
     payload: value,
   })),
   setIsEditMode: (value: boolean) => mockSetIsEditMode(value),
-  updateArrangements: jest.fn((payload: any) => ({
-    type: "item/updateArrangements",
-    payload,
-  })),
+  updateArrangements: (payload: any) => mockUpdateArrangements(payload),
   updateSlides: (payload: any) => mockUpdateSlides(payload),
   setName: jest.fn((payload: any) => ({ type: "item/setName", payload })),
-  updateBoxes: jest.fn((payload: any) => ({ type: "item/updateBoxes", payload })),
+  updateBoxes: (payload: any) => mockUpdateBoxes(payload),
 }));
 
 jest.mock("../../../store/preferencesSlice", () => ({
@@ -49,9 +56,9 @@ jest.mock("../../../store/preferencesSlice", () => ({
 }));
 
 jest.mock("../../../utils/overflow", () => ({
-  formatBible: jest.fn((item: any) => item),
+  formatBible: (item: any) => mockFormatBible(item),
   formatFree: (item: any) => mockFormatFree(item),
-  formatSong: jest.fn((item: any) => item),
+  formatSong: (item: any) => mockFormatSong(item),
 }));
 
 jest.mock("../../../components/ErrorBoundary/ErrorBoundary", () => ({
@@ -59,11 +66,18 @@ jest.mock("../../../components/ErrorBoundary/ErrorBoundary", () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+const displayWindowCapture: { onChange: ((info: any) => void) | null } = {
+  onChange: null,
+};
+
 jest.mock("../../../components/DisplayWindow/DisplayWindow", () => ({
   __esModule: true,
-  default: ({ disabled }: { disabled?: boolean }) => (
-    <div data-testid="display-window" data-disabled={disabled ? "true" : "false"} />
-  ),
+  default: (props: { disabled?: boolean; onChange?: (info: any) => void }) => {
+    if (props.onChange) displayWindowCapture.onChange = props.onChange;
+    return (
+      <div data-testid="display-window" data-disabled={props.disabled ? "true" : "false"} />
+    );
+  },
 }));
 
 jest.mock("../../../components/SectionTextEditor/SectionTextEditor", () => ({
@@ -168,9 +182,43 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
   };
 };
 
+const makeOnChangePayload = (overrides: Partial<{
+  index: number;
+  value: string;
+  box: Record<string, unknown>;
+  cursorPosition: number;
+  lastKeyPressed: string | null;
+}> = {}) => {
+  const box = {
+    width: 100,
+    height: 100,
+    words: "text",
+    x: 0,
+    y: 0,
+    excludeFromOverflow: false,
+    ...overrides.box,
+  };
+  return {
+    index: 1,
+    value: "Hello",
+    box,
+    cursorPosition: 5,
+    lastKeyPressed: null as string | null,
+    ...overrides,
+  };
+};
+
+const invokeDisplayOnChange = (payload: ReturnType<typeof makeOnChangePayload>) => {
+  if (!displayWindowCapture.onChange) throw new Error("DisplayWindow onChange was not captured");
+  act(() => {
+    displayWindowCapture.onChange!(payload);
+  });
+};
+
 describe("SlideEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    displayWindowCapture.onChange = null;
     mockState = makeBaseState();
   });
 
@@ -269,5 +317,966 @@ describe("SlideEditor", () => {
     });
 
     jest.useRealTimers();
+  });
+
+  describe("onChange (display editor)", () => {
+    it("dispatches updateBoxes when type is timer", () => {
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "timer",
+              slides: [
+                {
+                  id: "t1",
+                  type: "Media",
+                  name: "Timer",
+                  boxes: [
+                    { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                    { width: 100, height: 100, words: "00:00", x: 0, y: 0 },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "01:00",
+          box: { width: 100, height: 100, words: "01:00", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockUpdateBoxes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          boxes: expect.arrayContaining([
+            expect.objectContaining({ words: "01:00" }),
+          ]),
+        })
+      );
+    });
+
+    it("dispatches formatBible and updateSlides when type is bible and value changes", () => {
+      const slides = [
+        {
+          id: "b1",
+          type: "Media",
+          name: "Verse 1",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "First", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockFormatBible.mockReturnValue({
+        ...mockState.undoable.present.item,
+        slides: [{ ...slides[0], boxes: expect.any(Array) }],
+      });
+
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "bible",
+              slides,
+              bibleInfo: { fontMode: "separate" },
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "Updated verse",
+          box: { width: 100, height: 100, words: "Updated verse", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockFormatBible).toHaveBeenCalled();
+      expect(mockUpdateSlides).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slides: expect.any(Array),
+        })
+      );
+    });
+
+    it("dispatches updateSlides with one fewer slide when bible and Backspace with empty value", () => {
+      const slides = [
+        {
+          id: "b1",
+          type: "Media",
+          name: "Verse 1",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "b2",
+          type: "Media",
+          name: "Verse 2",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "Second", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "bible",
+              selectedSlide: 0,
+              slides,
+              bibleInfo: { fontMode: "separate" },
+            },
+          },
+        },
+      });
+      mockFormatBible.mockImplementation((opts: any) => ({
+        ...opts.item,
+        slides: opts.item.slides,
+      }));
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "",
+          lastKeyPressed: "Backspace",
+          box: { width: 100, height: 100, words: "", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockFormatBible).toHaveBeenCalledWith(
+        expect.objectContaining({
+          item: expect.objectContaining({
+            slides: expect.arrayContaining([
+              expect.objectContaining({ name: "Verse 2" }),
+            ]),
+          }),
+        })
+      );
+      const updateSlidesPayload = mockUpdateSlides.mock.calls[0]?.[0];
+      expect(updateSlidesPayload.slides).toHaveLength(1);
+    });
+
+    it("dispatches updateSlides when type is free and Backspace with empty value (delete slide)", () => {
+      const slides = [
+        {
+          id: "s1",
+          type: "Media",
+          name: "Section 1A",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "Hi", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "s2",
+          type: "Media",
+          name: "Section 1B",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "There", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "free",
+              selectedSlide: 0,
+              slides,
+              formattedSections: [
+                { sectionNum: 1, words: "Hi\nThere", slideSpan: 2 },
+              ],
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "",
+          lastKeyPressed: "Backspace",
+          box: { width: 100, height: 100, words: "", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockUpdateSlides).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slides: expect.any(Array),
+        })
+      );
+      expect(mockUpdateSlides.mock.calls[0][0].slides).toHaveLength(1);
+    });
+
+    it("dispatches formatFree and updateSlides when type is free and value changes", () => {
+      mockFormatFree.mockImplementation((item: any) => ({
+        ...item,
+        slides: item.slides,
+        formattedSections: item.formattedSections,
+      }));
+
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "free",
+              selectedSlide: 0,
+              slides: [
+                {
+                  id: "s1",
+                  type: "Media",
+                  name: "Section 1A",
+                  boxes: [
+                    { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                    { width: 100, height: 100, words: "Hello", x: 0, y: 0 },
+                  ],
+                },
+              ],
+              formattedSections: [{ sectionNum: 1, words: "Hello", slideSpan: 1 }],
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "New text",
+          box: { width: 100, height: 100, words: "New text", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockFormatFree).toHaveBeenCalled();
+      expect(mockUpdateSlides).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slides: expect.any(Array),
+          formattedSections: expect.any(Array),
+        })
+      );
+    });
+
+    it("dispatches updateBoxes for song when on title slide (selectedSlide 0)", () => {
+      const slides = [
+        {
+          id: "title",
+          type: "Media",
+          name: "Title",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "Song Title", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "v1",
+          type: "Media",
+          name: "Verse 1",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            {
+              width: 100,
+              height: 100,
+              words: "Verse",
+              x: 0,
+              y: 0,
+              slideIndex: 0,
+            },
+          ],
+        },
+      ];
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "song",
+              selectedSlide: 0,
+              selectedArrangement: 0,
+              arrangements: [
+                {
+                  name: "Default",
+                  slides,
+                  formattedLyrics: [
+                    { name: "Verse 1", words: "Verse", slideSpan: 1 },
+                  ],
+                  songOrder: [{ name: "Verse 1" }],
+                },
+              ],
+              slides,
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "New Title",
+          box: { width: 100, height: 100, words: "New Title", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockUpdateBoxes).toHaveBeenCalled();
+      expect(mockUpdateArrangements).not.toHaveBeenCalled();
+    });
+
+    it("dispatches updateArrangements for song when on overflow slide and value changes", () => {
+      const slides = [
+        {
+          id: "title",
+          type: "Media",
+          name: "Title",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "Title", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "v1",
+          type: "Media",
+          name: "Verse 1",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            {
+              width: 100,
+              height: 100,
+              words: "Line one",
+              x: 0,
+              y: 0,
+              slideIndex: 0,
+            },
+          ],
+        },
+        {
+          id: "blank",
+          type: "Media",
+          name: "Blank",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockFormatSong.mockImplementation((item: any) => item);
+
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "song",
+              selectedSlide: 1,
+              selectedArrangement: 0,
+              arrangements: [
+                {
+                  name: "Default",
+                  slides,
+                  formattedLyrics: [
+                    { name: "Verse 1", words: "Line one", slideSpan: 1 },
+                  ],
+                  songOrder: [{ name: "Verse 1" }],
+                },
+              ],
+              slides,
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "Line one updated",
+          box: {
+            width: 100,
+            height: 100,
+            words: "Line one updated",
+            x: 0,
+            y: 0,
+            slideIndex: 0,
+          },
+        })
+      );
+
+      expect(mockFormatSong).toHaveBeenCalled();
+      expect(mockUpdateArrangements).toHaveBeenCalledWith(
+        expect.objectContaining({
+          arrangements: expect.any(Array),
+        })
+      );
+    });
+
+    it("dispatches updateArrangements with fewer slides when song and Backspace with empty value", () => {
+      const slides = [
+        {
+          id: "title",
+          type: "Media",
+          name: "Title",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "Title", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "v1",
+          type: "Media",
+          name: "Verse 1",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            {
+              width: 100,
+              height: 100,
+              words: "",
+              x: 0,
+              y: 0,
+              slideIndex: 0,
+            },
+          ],
+        },
+        {
+          id: "blank",
+          type: "Media",
+          name: "Blank",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockFormatSong.mockImplementation((item: any) => ({
+        ...item,
+        arrangements: item.arrangements.map((arr: any, i: number) =>
+          i === 0 ? { ...arr, slides: arr.slides.slice(0, -1) } : arr
+        ),
+      }));
+
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "song",
+              selectedSlide: 1,
+              selectedArrangement: 0,
+              arrangements: [
+                {
+                  name: "Default",
+                  slides,
+                  formattedLyrics: [
+                    { name: "Verse 1", words: "", slideSpan: 1 },
+                  ],
+                  songOrder: [{ name: "Verse 1" }],
+                },
+              ],
+              slides,
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "",
+          lastKeyPressed: "Backspace",
+          box: { width: 100, height: 100, words: "", x: 0, y: 0, slideIndex: 0 },
+        })
+      );
+
+      expect(mockFormatSong).toHaveBeenCalled();
+      expect(mockUpdateArrangements).toHaveBeenCalledWith(
+        expect.objectContaining({
+          arrangements: expect.any(Array),
+        })
+      );
+    });
+
+    it("does not dispatch for song when on last slide", () => {
+      const slides = [
+        {
+          id: "title",
+          type: "Media",
+          name: "Title",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "T", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "blank",
+          type: "Media",
+          name: "Blank",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "song",
+              selectedSlide: 1,
+              selectedArrangement: 0,
+              arrangements: [
+                {
+                  name: "Default",
+                  slides,
+                  formattedLyrics: [],
+                  songOrder: [],
+                },
+              ],
+              slides,
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "x",
+          box: { width: 100, height: 100, words: "x", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockUpdateBoxes).not.toHaveBeenCalled();
+      expect(mockUpdateArrangements).not.toHaveBeenCalled();
+    });
+
+    it("does not dispatch for song when arrangement has no slides", () => {
+      const slides = [
+        {
+          id: "title",
+          type: "Media",
+          name: "Title",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "T", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "v1",
+          type: "Media",
+          name: "Verse 1",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "V", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "song",
+              selectedSlide: 0,
+              selectedArrangement: 0,
+              arrangements: [
+                {
+                  name: "Default",
+                  slides: undefined as any,
+                  formattedLyrics: [],
+                  songOrder: [],
+                },
+              ],
+              slides,
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "x",
+          box: { width: 100, height: 100, words: "x", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockUpdateBoxes).not.toHaveBeenCalled();
+      expect(mockUpdateArrangements).not.toHaveBeenCalled();
+    });
+
+    it("dispatches updateBoxes for song when box has excludeFromOverflow", () => {
+      const slides = [
+        {
+          id: "title",
+          type: "Media",
+          name: "Title",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "T", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "v1",
+          type: "Media",
+          name: "Verse 1",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            {
+              width: 100,
+              height: 100,
+              words: "Verse",
+              x: 0,
+              y: 0,
+              slideIndex: 0,
+              excludeFromOverflow: true,
+            },
+          ],
+        },
+        {
+          id: "blank",
+          type: "Media",
+          name: "Blank",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "song",
+              selectedSlide: 1,
+              selectedArrangement: 0,
+              arrangements: [
+                {
+                  name: "Default",
+                  slides,
+                  formattedLyrics: [{ name: "Verse 1", words: "Verse", slideSpan: 1 }],
+                  songOrder: [{ name: "Verse 1" }],
+                },
+              ],
+              slides,
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "Updated",
+          box: {
+            width: 100,
+            height: 100,
+            words: "Updated",
+            x: 0,
+            y: 0,
+            excludeFromOverflow: true,
+          },
+        })
+      );
+
+      expect(mockUpdateBoxes).toHaveBeenCalled();
+      expect(mockUpdateArrangements).not.toHaveBeenCalled();
+    });
+
+    it("dispatches updateBoxes for song when no formatted lyric matches current slide", () => {
+      const slides = [
+        {
+          id: "title",
+          type: "Media",
+          name: "Title",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "T", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "v1",
+          type: "Media",
+          name: "Verse 1",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            {
+              width: 100,
+              height: 100,
+              words: "Text",
+              x: 0,
+              y: 0,
+              slideIndex: 0,
+            },
+          ],
+        },
+        {
+          id: "blank",
+          type: "Media",
+          name: "Blank",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "song",
+              selectedSlide: 1,
+              selectedArrangement: 0,
+              arrangements: [
+                {
+                  name: "Default",
+                  slides,
+                  formattedLyrics: [
+                    { name: "Chorus", words: "Chorus", slideSpan: 1 },
+                  ],
+                  songOrder: [{ name: "Chorus" }],
+                },
+              ],
+              slides,
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "New",
+          box: {
+            width: 100,
+            height: 100,
+            words: "New",
+            x: 0,
+            y: 0,
+            slideIndex: 0,
+          },
+        })
+      );
+
+      expect(mockUpdateBoxes).toHaveBeenCalled();
+      expect(mockUpdateArrangements).not.toHaveBeenCalled();
+    });
+
+    it("dispatches formatFree and updateSlides when free section slide not found in section (fallback)", () => {
+      mockFormatFree.mockImplementation((item: any) => ({
+        ...item,
+        slides: item.slides,
+        formattedSections: item.formattedSections || [],
+      }));
+
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "free",
+              selectedSlide: 0,
+              slides: [
+                {
+                  id: "s1",
+                  type: "Media",
+                  name: "Section 2A",
+                  boxes: [
+                    { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                    { width: 100, height: 100, words: "Only", x: 0, y: 0 },
+                  ],
+                },
+              ],
+              formattedSections: [{ sectionNum: 2, words: "Only", slideSpan: 1 }],
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "Updated",
+          box: { width: 100, height: 100, words: "Updated", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockFormatFree).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slides: expect.any(Array),
+        })
+      );
+      expect(mockUpdateSlides).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slides: expect.any(Array),
+        })
+      );
+    });
+
+    it("dispatches formatFree with combined section words when free has multiple slides in section", () => {
+      mockFormatFree.mockImplementation((item: any) => ({
+        ...item,
+        slides: item.slides,
+        formattedSections: item.formattedSections,
+      }));
+
+      const slides = [
+        {
+          id: "s1",
+          type: "Media",
+          name: "Section 1A",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "First", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "s2",
+          type: "Media",
+          name: "Section 1B",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "Second", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "free",
+              selectedSlide: 0,
+              slides,
+              formattedSections: [
+                { sectionNum: 1, words: "First\nSecond", slideSpan: 2 },
+              ],
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "First updated",
+          box: { width: 100, height: 100, words: "First updated", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockFormatFree).toHaveBeenCalled();
+      const formatFreeArg = mockFormatFree.mock.calls[0][0];
+      expect(formatFreeArg.formattedSections).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sectionNum: 1,
+            words: "First updated\nSecond",
+          }),
+        ])
+      );
+      expect(mockUpdateSlides).toHaveBeenCalled();
+    });
+
+    it("dispatches updateSlides when type is free and Delete with empty value (delete slide)", () => {
+      const slides = [
+        {
+          id: "s1",
+          type: "Media",
+          name: "Section 1A",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "Hi", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "s2",
+          type: "Media",
+          name: "Section 1B",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "There", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "free",
+              selectedSlide: 0,
+              slides,
+              formattedSections: [
+                { sectionNum: 1, words: "Hi\nThere", slideSpan: 2 },
+              ],
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "",
+          lastKeyPressed: "Delete",
+          box: { width: 100, height: 100, words: "", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockUpdateSlides).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slides: expect.any(Array),
+        })
+      );
+      expect(mockUpdateSlides.mock.calls[0][0].slides).toHaveLength(1);
+    });
+
+    it("does not dispatch when canEdit is false (access read)", () => {
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "free",
+              slides: [
+                {
+                  id: "s1",
+                  type: "Media",
+                  name: "Section 1A",
+                  boxes: [
+                    { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                    { width: 100, height: 100, words: "Hello", x: 0, y: 0 },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="view" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "Hacked",
+          box: { width: 100, height: 100, words: "Hacked", x: 0, y: 0 },
+        })
+      );
+
+      expect(mockUpdateSlides).not.toHaveBeenCalled();
+      expect(mockUpdateBoxes).not.toHaveBeenCalled();
+      expect(mockUpdateArrangements).not.toHaveBeenCalled();
+      expect(mockFormatFree).not.toHaveBeenCalled();
+    });
   });
 });

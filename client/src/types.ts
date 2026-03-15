@@ -215,6 +215,8 @@ export type ItemState = ItemProperties & {
   isSectionLoading?: boolean;
   isItemFormatting?: boolean;
   hasPendingUpdate?: boolean;
+  /** When set, SlideEditor should focus this box index then clear. Used after format when slide count changes. */
+  restoreFocusToBox?: number | null;
 };
 
 export type Arrangment = {
