@@ -10,12 +10,13 @@ type CachedMediaImageProps = React.ImgHTMLAttributes<HTMLImageElement> & {
  * Use wherever a media-library or cacheable URL is displayed.
  */
 const CachedMediaImage = forwardRef<HTMLImageElement, CachedMediaImageProps>(
-  ({ src, ...imgProps }, ref) => {
+  ({ src, alt = "", ...imgProps }, ref) => {
     const resolvedSrc = useCachedMediaUrl(src);
     if (!src) return null;
     return (
       <img
         ref={ref}
+        alt={alt}
         {...imgProps}
         src={resolvedSrc ?? src}
       />
