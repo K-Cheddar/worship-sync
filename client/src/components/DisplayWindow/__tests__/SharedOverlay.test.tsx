@@ -6,7 +6,7 @@ import {
   defaultQrCodeOverlayStyles,
 } from "../defaultOverlayStyles";
 import { checkMediaType, getImageFromVideoUrl } from "../../../utils/generalUtils";
-import { useCachedVideoUrl } from "../../../hooks/useCachedMediaUrl";
+import { useCachedMediaUrl, useCachedVideoUrl } from "../../../hooks/useCachedMediaUrl";
 
 jest.mock("../../../utils/generalUtils", () => ({
   checkMediaType: jest.fn(() => "image"),
@@ -14,6 +14,7 @@ jest.mock("../../../utils/generalUtils", () => ({
 }));
 
 jest.mock("../../../hooks/useCachedMediaUrl", () => ({
+  useCachedMediaUrl: jest.fn((url?: string) => url),
   useCachedVideoUrl: jest.fn((url?: string) => url),
 }));
 
@@ -38,6 +39,7 @@ describe("SharedOverlay", () => {
     jest.spyOn(console, "log").mockImplementation(() => {});
     (checkMediaType as jest.Mock).mockImplementation(() => "image");
     (getImageFromVideoUrl as jest.Mock).mockImplementation((url: string) => url);
+    (useCachedMediaUrl as jest.Mock).mockImplementation((url?: string) => url);
     (useCachedVideoUrl as jest.Mock).mockImplementation((url?: string) => url);
   });
 

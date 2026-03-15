@@ -23,7 +23,9 @@ const resolveMediaUrl = async (url: string): Promise<string> => {
 export const useCachedMediaUrl = (
   url: string | undefined,
 ): string | undefined => {
-  const mediaCacheMap = useSelector((state: RootState) => state.mediaCacheMap.map);
+  const mediaCacheMap = useSelector(
+    (state: RootState) => state.mediaCacheMap?.map ?? {},
+  );
   const [resolved, setResolved] = useState<string | undefined>(url);
   const checkIdRef = useRef(0);
 
@@ -53,7 +55,9 @@ export const useCachedMediaUrl = (
 export const useCachedVideoUrl = (
   url: string | undefined,
 ): string | undefined => {
-  const mediaCacheMap = useSelector((state: RootState) => state.mediaCacheMap.map);
+  const mediaCacheMap = useSelector(
+    (state: RootState) => state.mediaCacheMap?.map ?? {},
+  );
   const [state, setState] = useState<{
     resolved: string | undefined;
     forUrl: string | undefined;
