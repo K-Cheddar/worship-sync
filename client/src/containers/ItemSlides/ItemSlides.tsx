@@ -407,12 +407,22 @@ const ItemSlides = () => {
   }, [isMobile, dispatch]);
 
   useEffect(() => {
-    const slideElement = document.getElementById(`item-slide-${selectedSlide}`);
     const parentElement = document.getElementById("item-slides-container");
-    if (slideElement && parentElement) {
-      keepElementInView({ child: slideElement, parent: parentElement });
-    }
-  }, [selectedSlide, isMobile]);
+    if (!parentElement) return;
+    const runScroll = () => {
+      const slideElement = document.getElementById(`item-slide-${selectedSlide}`);
+      if (slideElement && parentElement) {
+        keepElementInView({
+          child: slideElement,
+          parent: parentElement,
+          shouldScrollToCenter: true,
+        });
+      }
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(runScroll);
+    });
+  }, [selectedSlide, isMobile, debouncedSlides.length]);
 
   const addSlide = () => {
     // Find the highest section number among existing slides

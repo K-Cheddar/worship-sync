@@ -354,4 +354,27 @@ export class MediaCacheManager {
   getAllCachedUrls(): string[] {
     return Array.from(this.cacheIndex.keys());
   }
+
+  /**
+   * Return a map of URL -> media-cache:// URL for all cached entries.
+   * Includes cache key and, for Mux, the HLS URL form so the renderer can look up by either.
+   */
+  getMediaCacheMap(): Record<string, string> {
+    const map: Record<string, string> = {};
+    for (const [cacheKey, entry] of this.cacheIndex) {
+      if (!fs.existsSync(entry.localPath)) continue;
+      const filename = entry.localPath.split(/[/\\]/).pop();
+      if (!filename) continue;
+      const mediaCacheUrl = `media-cache://${filename}`;
+      map[cacheKey] = mediaCacheUrl;
+      if (this.isMuxUrl(cacheKey)) {
+        const playbackIdMatch = cacheKey.match(/stream\.mux\.com\/([a-zA-Z0-9]+)/);
+        if (playbackIdMatch) {
+          const playbackId = playbackIdMatch[1];
+          map[`https://stream.mux.com/${playbackId}/master.m3u8`] = mediaCacheUrl;
+        }
+      }
+    }
+    return map;
+  }
 }

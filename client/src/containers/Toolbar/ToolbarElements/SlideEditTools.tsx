@@ -13,6 +13,7 @@ import {
   AlignRight,
   Bold,
   Italic,
+  Eraser,
 } from "lucide-react";
 import Input from "../../../components/Input/Input";
 import { useEffect, useState, useCallback, useRef, useContext } from "react";
@@ -37,7 +38,7 @@ import { HexColorPicker, HexColorInput } from "react-colorful";
 import { updateTimerColor } from "../../../store/timersSlice";
 import RadioButton from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
-import { formatFree } from "../../../utils/overflow";
+import { formatFree, formatSong } from "../../../utils/overflow";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { DEFAULT_FONT_PX } from "../../../constants";
 
@@ -61,6 +62,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   );
   const [isBold, setIsBold] = useState(false);
   const [isItalic, setIsItalic] = useState(false);
+  const [isCleaningNewlines, setIsCleaningNewlines] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const fontSizeDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const fontSizeInputRef = useRef<string | number>("");
@@ -151,8 +153,8 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       slide?.boxes?.[selectedBox]?.fontSize ?? DEFAULT_FONT_PX;
     const val =
       Number.isNaN(raw) ||
-      inputVal === "" ||
-      (typeof inputVal === "string" && inputVal.trim() === "")
+        inputVal === "" ||
+        (typeof inputVal === "string" && inputVal.trim() === "")
         ? fallback
         : raw;
     const clamped = clampFontSize(val);
@@ -296,6 +298,38 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       item,
     });
     updateItem(updatedItem);
+  };
+
+  const removeExtraNewlines = (text: string): string =>
+    text.trim().replace(/\n{2,}/g, "\n");
+
+  const handleRemoveExtraNewlines = () => {
+    const arrangement = item.arrangements[item.selectedArrangement];
+    if (!arrangement?.formattedLyrics?.length) return;
+
+    setIsCleaningNewlines(true);
+    const updatedFormattedLyrics = arrangement.formattedLyrics.map((section) =>
+      typeof section.words === "string"
+        ? { ...section, words: removeExtraNewlines(section.words) }
+        : section
+    );
+    const updatedArrangements = item.arrangements.map((arr, i) =>
+      i === item.selectedArrangement
+        ? { ...arr, formattedLyrics: updatedFormattedLyrics }
+        : arr
+    );
+    const itemWithCleanedLyrics: ItemState = {
+      ...item,
+      arrangements: updatedArrangements,
+    };
+    const formattedItem = formatSong(itemWithCleanedLyrics);
+    runWithFormatting(() => {
+      try {
+        updateItem(formattedItem);
+      } finally {
+        setIsCleaningNewlines(false);
+      }
+    });
   };
 
   if (!location.pathname.includes("controller/item") || !slide) {
@@ -515,6 +549,18 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           value={shouldKeepAspectRatio}
           onChange={(val) => _updateKeepAspectRatio(val)}
         />
+      )}
+      {type === "song" && (
+        <Button
+          svg={Eraser}
+          variant="tertiary"
+          onClick={handleRemoveExtraNewlines}
+          title="Remove extra newlines from all slides"
+          isLoading={isCleaningNewlines}
+          disabled={isCleaningNewlines}
+        >
+          Clean Newlines
+        </Button>
       )}
       <Button svg={ALargeSmall} iconSize="lg" className="invisible" />
     </>

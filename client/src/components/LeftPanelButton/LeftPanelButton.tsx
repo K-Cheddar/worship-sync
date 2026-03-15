@@ -4,6 +4,7 @@ import { forwardRef, FunctionComponent } from "react";
 import cn from "classnames";
 import { borderColorMap, iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { formatTime } from "../DisplayWindow/TimerDisplay";
+import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 
 type LeftPanelButtonProps = {
   isSelected: boolean;
@@ -45,6 +46,8 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
     },
     ref
   ) => {
+    const resolvedImage = useCachedMediaUrl(image);
+
     return (
       <li
         id={displayId}
@@ -76,10 +79,10 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           onClick={onClick}
         >
           {image && !isActive && (
-            <img src={image} className="w-14 max-w-[30%]" alt={title} />
+            <img src={resolvedImage ?? image} className="w-14 max-w-[30%]" alt={title} />
           )}
           {isActive && (
-            <span className="bg-gray-950 text-white font-semibold rounded-lg px-2 py-1 text-xs">
+            <span className="bg-gray-950 text-white font-semibold rounded-lg px-2 py-1 text-xs tabular-nums">
               {formatTime(timerValue || 0, false, true)}
             </span>
           )}

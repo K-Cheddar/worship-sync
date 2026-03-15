@@ -10,7 +10,7 @@ import { QRCode } from "react-qr-code";
 import { getFontSize, getBorderWidth, getMargin } from "./utils";
 import { checkMediaType, getImageFromVideoUrl } from "../../utils/generalUtils";
 import HLSPlayer from "./HLSVideoPlayer";
-import { useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
+import { useCachedMediaUrl, useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import cn from "classnames";
 
 interface SharedOverlayProps {
@@ -36,6 +36,9 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
       : false;
     const resolvedOverlayVideoUrl = useCachedVideoUrl(
       isOverlayVideo ? overlayImageUrl : undefined
+    );
+    const resolvedOverlayImageUrl = useCachedMediaUrl(
+      isOverlayVideo ? undefined : overlayImageUrl
     );
 
     // Shared styling utilities
@@ -274,7 +277,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
               src={
                 isOverlayVideo
                   ? getImageFromVideoUrl(overlayImageUrl)
-                  : overlayImageUrl
+                  : (resolvedOverlayImageUrl ?? overlayImageUrl)
               }
               alt={overlayInfo.name || "Overlay image"}
             />

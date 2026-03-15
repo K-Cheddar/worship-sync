@@ -68,8 +68,9 @@ const TransmitHandler = () => {
 
   const handleSetTransmitting = useCallback(() => {
     setIsTransmitting((prev) => {
-      dispatch(setTransmitToAll(!prev));
-      return !prev;
+      const next = !prev;
+      queueMicrotask(() => dispatch(setTransmitToAll(next)));
+      return next;
     });
   }, [dispatch]);
 

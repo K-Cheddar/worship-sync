@@ -43,7 +43,7 @@ const StreamInfo = ({ upcomingService }: Props) => {
   return (
     <div className="fixed inset-0 pointer-events-none background-transparent">
       <div
-        className={`absolute ${positionClasses} transform px-[1%] py-[0.5%] rounded-[5%_/_10%] font-semibold select-none flex flex-col items-center justify-center`}
+        className={`absolute ${positionClasses} transform px-[1%] py-[0.5%] rounded-[5%/10%] font-semibold select-none flex flex-col items-center justify-center`}
         style={{
           color: upcomingService?.color || undefined,
           backgroundColor: upcomingService?.background || undefined,
@@ -54,7 +54,10 @@ const StreamInfo = ({ upcomingService }: Props) => {
             {upcomingService?.name} begins in
           </div>
         )}
-        <div className="leading-none" style={{ fontSize: `${timeFontSize}vw` }}>
+        <div
+          className="leading-none tabular-nums"
+          style={{ fontSize: `${timeFontSize}vw` }}
+        >
           {timer.timerType === "countdown" && timer.status === "stopped"
             ? timer.countdownTime || "00:00"
             : formatTime(timer.remainingTime || 0, timer.showMinutesOnly)}

@@ -1,6 +1,7 @@
 import React from "react";
 import Modal from "./Modal";
 import Button from "../Button/Button";
+import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 
 interface DeleteModalProps {
   isOpen: boolean;
@@ -27,6 +28,8 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
   cancelText = "Cancel",
   imageUrl,
 }) => {
+  const resolvedImageUrl = useCachedMediaUrl(imageUrl);
+
   return (
     <Modal
       isOpen={isOpen}
@@ -41,7 +44,7 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
         <div className="flex justify-center mb-4">
           <div className="w-32 h-20 border-2 border-gray-600 rounded overflow-hidden">
             <img
-              src={imageUrl}
+              src={resolvedImageUrl ?? imageUrl}
               alt={itemName || "Media preview"}
               className="w-full h-full object-cover"
             />

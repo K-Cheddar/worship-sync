@@ -27,10 +27,15 @@ import {
   setIsEditMode,
   updateArrangements,
   updateSlides,
+  setRestoreFocusToBox,
 } from "../../store/itemSlice";
 import BibleItemActions from "./BibleItemActions";
 import { setName, updateBoxes } from "../../store/itemSlice";
 import { formatBible, formatFree, formatSong } from "../../utils/overflow";
+import {
+  getIndexFromSelectionHint,
+  getSelectionHint,
+} from "../../utils/selectionHint";
 import { Box, ItemSlideType } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
@@ -41,6 +46,10 @@ import SectionTextEditor from "../../components/SectionTextEditor/SectionTextEdi
 import SlideBoxes from "../../components/SlideBoxes/SlideBoxes";
 import LoadingOverlay from "../../components/LoadingOverlay/LoadingOverlay";
 import TimerControls from "../../components/TimerControls/TimerControls";
+
+/** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
+const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
+  slideName.startsWith(lyricName) && !/^\d/.test(slideName.slice(lyricName.length));
 
 const SlideEditor = ({ access }: { access?: AccessType }) => {
   const dispatch = useDispatch();
@@ -56,6 +65,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     slides: __slides,
     isLoading,
     isSectionLoading,
+    restoreFocusToBox,
   } = item;
   const showLoadingOverlay = isLoading || isSectionLoading;
 
@@ -134,9 +144,9 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   }, [name]);
 
   useEffect(() => {
-    Object.entries(cursorPositions).forEach(([index, position]) => {
+    Object.entries(cursorPositions).forEach(([boxIdx, position]) => {
       const textBoxElement = document.getElementById(
-        `display-editor-box-${index}`
+        `display-editor-box-${boxIdx}`
       ) as HTMLTextAreaElement;
       if (textBoxElement && typeof position === "number") {
         textBoxElement.selectionEnd = position;
@@ -146,7 +156,24 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         });
       }
     });
-  }, [cursorPositions]);
+    if (restoreFocusToBox != null) {
+      const boxIdx = restoreFocusToBox;
+      dispatch(setRestoreFocusToBox(null));
+      requestAnimationFrame(() => {
+        const el = document.getElementById(
+          `display-editor-box-${boxIdx}`
+        ) as HTMLTextAreaElement | null;
+        if (el) {
+          el.focus();
+          const pos = cursorPositions[boxIdx];
+          if (typeof pos === "number") {
+            el.selectionStart = pos;
+            el.selectionEnd = pos;
+          }
+        }
+      });
+    }
+  }, [cursorPositions, selectedSlide, restoreFocusToBox, dispatch]);
 
   const saveName = () => {
     setIsEditingName(false);
@@ -334,7 +361,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
       // Find the formatted lyric that matches this slide
       const lyricIndex = formattedLyrics.findIndex((lyric) =>
-        currentSlide.name.startsWith(lyric.name)
+        slideNameMatchesLyric(currentSlide.name, lyric.name)
       );
 
       if (lyricIndex === -1) {
@@ -372,7 +399,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         newWords = newWords.trim();
       }
 
-      if (newWords === "") return;
+      if (newWords === "" && !shouldDeleteCurrentSlide) return;
 
       // Update the formatted lyrics and reformat
       const updatedArrangements = item.arrangements.map((arr, idx) => {
@@ -393,13 +420,26 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         selectedArrangement,
       });
 
+      if (shouldDeleteCurrentSlide) {
+        dispatch(updateArrangements({ arrangements: formattedItem.arrangements }));
+        return;
+      }
+
+      // Resolve which slide in the new arrangement is the same logical slide (for layout preservation only; thunk handles selection + focus)
+      const newSlides = formattedItem.arrangements[selectedArrangement]?.slides ?? [];
+      const hint = getSelectionHint(arrangementSlides, selectedSlide);
+      const maxSlideIndex = Math.max(0, newSlides.length - 2);
+      const newSelectedIndex = hint
+        ? Math.min(getIndexFromSelectionHint(newSlides, hint), maxSlideIndex)
+        : Math.min(selectedSlide, maxSlideIndex);
+
       // Preserve drag/resize from DisplayEditor: apply only layout (x, y, width, height), keep formatted words from formatSong
       const arrangementsWithBox = formattedItem.arrangements.map((arr, arrIdx) => {
         if (arrIdx !== selectedArrangement) return arr;
         return {
           ...arr,
           slides: arr.slides.map((slide, slideIdx) => {
-            if (slideIdx !== selectedSlide) return slide;
+            if (slideIdx !== newSelectedIndex) return slide;
             return {
               ...slide,
               boxes: slide.boxes.map((b, boxIdx) =>
@@ -457,7 +497,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         const formattedLyrics =
           item.arrangements[item.selectedArrangement]?.formattedLyrics || [];
         const _index = formattedLyrics.findIndex((e) =>
-          slide.name.startsWith(e.name)
+          slideNameMatchesLyric(slide.name, e.name)
         );
 
         if (_index === -1) return slide.boxes[boxIndex]?.words || "";
@@ -506,7 +546,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       const formattedLyrics =
         item.arrangements[item.selectedArrangement]?.formattedLyrics || [];
       const lyricIndex = formattedLyrics.findIndex((lyric) =>
-        currentSlide.name.startsWith(lyric.name)
+        slideNameMatchesLyric(currentSlide.name, lyric.name)
       );
       let name = "Editing section text";
       if (lyricIndex !== -1) {
@@ -599,7 +639,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             const formattedLyrics =
               item.arrangements[item.selectedArrangement]?.formattedLyrics || [];
             const _index = formattedLyrics.findIndex((e) =>
-              currentSlide.name.startsWith(e.name)
+              slideNameMatchesLyric(currentSlide.name, e.name)
             );
 
             if (_index === -1) {

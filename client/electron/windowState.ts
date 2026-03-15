@@ -18,9 +18,15 @@ export interface WindowState {
   wasOpen?: boolean; // Track if window was open when app closed
 }
 
+export interface MainWindowState {
+  bounds?: SavedDisplayBounds;
+  isMaximized?: boolean;
+}
+
 export interface WindowStates {
   projector: WindowState;
   monitor: WindowState;
+  main?: MainWindowState;
 }
 
 // Default window states
@@ -160,5 +166,44 @@ export class WindowStateManager {
       ? { x: b.x, y: b.y, width: b.width, height: b.height }
       : undefined;
     this.saveStates();
+  }
+
+  getMainWindowState(): MainWindowState | undefined {
+    return this.states.main;
+  }
+
+  saveMainWindowState(window: BrowserWindow): void {
+    const bounds = window.getBounds();
+    this.states.main = {
+      bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      isMaximized: window.isMaximized(),
+    };
+    this.saveStates();
+  }
+
+  /**
+   * Returns bounds for the main window: restored from state if valid on current displays,
+   * otherwise undefined (caller should use defaults).
+   */
+  getMainWindowBounds(): SavedDisplayBounds | undefined {
+    const main = this.states.main?.bounds;
+    if (!main || main.width <= 0 || main.height <= 0) return undefined;
+
+    const displays = screen.getAllDisplays();
+    const displayContainingCenter = screen.getDisplayMatching({
+      x: main.x + main.width / 2,
+      y: main.y + main.height / 2,
+      width: 1,
+      height: 1,
+    });
+    const onCurrentDisplay = displays.some((d) => d.id === displayContainingCenter.id);
+    if (onCurrentDisplay) return main;
+
+    const primary = screen.getPrimaryDisplay().bounds;
+    return { ...main, x: primary.x, y: primary.y };
+  }
+
+  wasMainWindowMaximized(): boolean {
+    return this.states.main?.isMaximized ?? false;
   }
 }

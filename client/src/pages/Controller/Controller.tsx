@@ -48,6 +48,7 @@ import {
   updateOverlayListFromRemote,
 } from "../../store/overlaysSlice";
 import { formatItemList } from "../../utils/formatItemList";
+import { setMediaCacheMap } from "../../store/mediaCacheMapSlice";
 import Button from "../../components/Button/Button";
 import Spinner from "../../components/Spinner/Spinner";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -368,7 +369,8 @@ const Controller = () => {
         const urlArray = Array.from(mediaUrls);
 
         const electronAPI = window.electronAPI as unknown as {
-          syncMediaCache: (urls: string[]) => Promise<{ downloaded: number; cleaned: number }>
+          syncMediaCache: (urls: string[]) => Promise<{ downloaded: number; cleaned: number }>;
+          getMediaCacheMap: () => Promise<Record<string, string>>;
         };
 
         if (urlArray.length > 0) {
@@ -379,6 +381,8 @@ const Controller = () => {
         } else {
           await electronAPI.syncMediaCache([]);
         }
+        const map = await electronAPI.getMediaCacheMap();
+        dispatch(setMediaCacheMap(map));
       } catch (error) {
         console.error("Error syncing media cache:", error);
       }
@@ -387,7 +391,7 @@ const Controller = () => {
     // Delay sync slightly to ensure database is fully loaded
     const timeoutId = setTimeout(syncMedia, 2000);
     return () => clearTimeout(timeoutId);
-  }, [db]);
+  }, [db, dispatch]);
 
   useEffect(() => {
     const getItemList = async () => {

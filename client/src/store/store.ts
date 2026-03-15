@@ -29,6 +29,7 @@ import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
 import { mediaItemsSlice } from "./mediaSlice";
+import mediaCacheMapReducer, { setMediaCacheMap } from "./mediaCacheMapSlice";
 import { overlaySlice } from "./overlaySlice";
 import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
 import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
@@ -868,12 +869,15 @@ listenerMiddleware.startListening({
           syncMediaCache: (
             urls: string[],
           ) => Promise<{ downloaded: number; cleaned: number }>;
+          getMediaCacheMap: () => Promise<Record<string, string>>;
         };
         if (urlArray.length > 0) {
           await electronAPI.syncMediaCache(urlArray);
         } else {
           await electronAPI.syncMediaCache([]);
         }
+        const map = await electronAPI.getMediaCacheMap();
+        listenerApi.dispatch(setMediaCacheMap(map));
       } catch (error) {
         console.error(
           "Error syncing media cache after media list save:",
@@ -899,12 +903,15 @@ listenerMiddleware.startListening({
         syncMediaCache: (
           urls: string[],
         ) => Promise<{ downloaded: number; cleaned: number }>;
+        getMediaCacheMap: () => Promise<Record<string, string>>;
       };
       if (urlArray.length > 0) {
         await electronAPI.syncMediaCache(urlArray);
       } else {
         await electronAPI.syncMediaCache([]);
       }
+      const map = await electronAPI.getMediaCacheMap();
+      listenerApi.dispatch(setMediaCacheMap(map));
     } catch (error) {
       console.error(
         "Error syncing media cache after remote media list update:",
@@ -1730,6 +1737,7 @@ const combinedReducers = combineReducers({
   allDocs: allDocsSlice.reducer,
   timers: timersSlice.reducer,
   media: mediaItemsSlice.reducer,
+  mediaCacheMap: mediaCacheMapReducer,
   overlayTemplates: overlayTemplatesSlice.reducer,
 });
 

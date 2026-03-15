@@ -1,5 +1,6 @@
 import {
   app,
+  net,
   BrowserWindow,
   ipcMain,
   screen,
@@ -10,14 +11,9 @@ import {
   type WebContents,
 } from "electron";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-  existsSync,
-  createReadStream,
-  statSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { Readable } from "node:stream";
 import updaterPkg from "electron-updater";
 
 import { WindowStateManager, type WindowType } from "./windowState";
@@ -206,12 +202,18 @@ const createMonitorWindow = () => {
 };
 
 const createWindow = () => {
-  // Create the browser window
   const iconPath = getIconPath();
+  const savedBounds = windowStateManager.getMainWindowBounds();
+  const wasMaximized = windowStateManager.wasMainWindowMaximized();
+  const width = savedBounds?.width ?? 1200;
+  const height = savedBounds?.height ?? 800;
+  const x = savedBounds?.x;
+  const y = savedBounds?.y;
 
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width,
+    height,
+    ...(typeof x === "number" && typeof y === "number" && { x, y }),
     show: false,
     webPreferences: {
       preload: join(__dirname, "../preload/preload.mjs"),
@@ -219,12 +221,13 @@ const createWindow = () => {
       contextIsolation: true,
       sandbox: false,
     },
-    autoHideMenuBar: !isDev, // Hide menu bar in production
-    ...(iconPath && { icon: iconPath }), // Only set icon if found
+    autoHideMenuBar: !isDev,
+    ...(iconPath && { icon: iconPath }),
   });
 
-  // Maximize the window before showing
-  mainWindow.maximize();
+  if (wasMaximized) {
+    mainWindow.maximize();
+  }
   mainWindow.show();
 
   setupContextMenu(mainWindow.webContents);
@@ -251,7 +254,7 @@ const createWindow = () => {
       "did-fail-load",
       (event, errorCode, errorDescription) => {
         console.error("Failed to load:", errorCode, errorDescription);
-      }
+      },
     );
   }
 
@@ -289,7 +292,9 @@ const createWindow = () => {
         // User chose to close anyway
         isUploadInProgress = false;
         isAppClosing = true;
-        // Save window states before closing (preserve wasOpen: true)
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          windowStateManager.saveMainWindowState(mainWindow);
+        }
         const projWin = getDisplayWindow("projector") as BrowserWindow | null;
         const monWin = getDisplayWindow("monitor") as BrowserWindow | null;
         if (projWin && !projWin.isDestroyed()) {
@@ -317,7 +322,9 @@ const createWindow = () => {
     } else {
       // No upload in progress, close normally
       isAppClosing = true;
-      // Save window states before closing (preserve wasOpen: true)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        windowStateManager.saveMainWindowState(mainWindow);
+      }
       const projWin = getDisplayWindow("projector") as BrowserWindow | null;
       const monWin = getDisplayWindow("monitor") as BrowserWindow | null;
       if (projWin && !projWin.isDestroyed()) {
@@ -362,7 +369,7 @@ app.whenReady().then(() => {
             "font-src 'self' data:; " +
             "img-src 'self' data: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com; " +
             "media-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com; " +
-            "connect-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com " +
+            "connect-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com https://*.cloudinary.com " +
             devConnectSrc +
             "https://*.worshipsync.net " +
             "https://*.firebaseio.com wss://*.firebaseio.com " +
@@ -387,7 +394,6 @@ app.whenReady().then(() => {
   const getMediaMimeType = (filename: string): string => {
     const ext = filename.split(".").pop()?.toLowerCase();
     switch (ext) {
-      // Video
       case "webm":
         return "video/webm";
       case "mov":
@@ -396,7 +402,6 @@ app.whenReady().then(() => {
         return "video/x-msvideo";
       case "mkv":
         return "video/x-matroska";
-      // Image
       case "jpg":
       case "jpeg":
         return "image/jpeg";
@@ -416,165 +421,100 @@ app.whenReady().then(() => {
     }
   };
 
+  const getMediaCacheFilename = (requestUrl: string): string | null => {
+    const url = new URL(requestUrl);
+    const pathPart = url.pathname.replace(/^\//, "").replace(/\/$/, "");
+    const filename =
+      pathPart ||
+      url.hostname ||
+      requestUrl.match(/media-cache:\/\/\/?([^/?#]+)/)?.[1] ||
+      "";
+    if (!filename || filename.includes("/") || filename.includes("\\"))
+      return null;
+    return filename;
+  };
+
+  const getRangeHeader = (
+    headers: Headers | Record<string, string>,
+  ): string | undefined => {
+    const h = headers as Headers;
+    if (h.get) return h.get("range") ?? h.get("Range") ?? undefined;
+    const r = headers as Record<string, string>;
+    return r["range"] ?? r["Range"];
+  };
+
+  /** Parse Range header (e.g. "bytes=0-1023") to { start, end } (end inclusive). Returns null if invalid. */
+  const parseRange = (
+    rangeHeader: string,
+    fileSize: number,
+  ): { start: number; end: number } | null => {
+    const match = rangeHeader.trim().match(/^bytes=(\d*)-(\d*)$/);
+    if (!match) return null;
+    const [, startStr, endStr] = match;
+    const start =
+      startStr === ""
+        ? fileSize - Math.min(Number(endStr) || 0, fileSize)
+        : parseInt(startStr, 10);
+    let end =
+      endStr === "" ? fileSize - 1 : parseInt(endStr, 10);
+    if (Number.isNaN(start) || Number.isNaN(end) || start > end || start < 0)
+      return null;
+    end = Math.min(end, fileSize - 1);
+    return { start, end };
+  };
+
+  const notFound = () => new Response("Not Found", { status: 404 });
+
   protocol.handle("media-cache", async (request) => {
     try {
-      const url = new URL(request.url);
-      // For media-cache:// URLs, filename can be in hostname (media-cache://filename.mp4)
-      // or pathname (media-cache:///filename.mp4)
-      // Extract from pathname first, then hostname, or parse from the full URL as fallback
-      let filename = url.pathname.replace(/^\//, "").replace(/\/$/, "");
-      if (!filename) {
-        filename = url.hostname || "";
-      }
-      // If still empty, try to extract from the URL string directly
-      if (!filename) {
-        const urlMatch = request.url.match(
-          new RegExp("media-cache:///?([^/?#]+)")
-        );
-        if (urlMatch) {
-          filename = urlMatch[1];
-        }
-      }
+      const filename = getMediaCacheFilename(request.url);
+      if (!filename) return notFound();
+
       const filePath = join(cacheDir, filename);
+      if (!existsSync(filePath)) return notFound();
+      const stat = statSync(filePath);
+      if (stat.isDirectory()) return notFound();
+      const fileSize = stat.size;
 
-      if (!existsSync(filePath)) {
-        return new Response("Not Found", { status: 404 });
-      }
-
-      // Use stored content-type when available (handles extension-less image URLs),
-      // otherwise fall back to extension-based detection.
       const contentType =
         mediaCacheManager?.getContentTypeForFile(filename) ||
         getMediaMimeType(filename);
+      const rangeHeader = getRangeHeader(
+        request.headers as Headers | Record<string, string>,
+      );
+      const range = rangeHeader ? parseRange(rangeHeader, fileSize) : null;
 
-      const stat = statSync(filePath);
-      const fileSize = stat.size;
+      const responseHeaders = new Headers();
+      responseHeaders.set("Content-Type", contentType);
+      responseHeaders.set("Accept-Ranges", "bytes");
 
-      // Electron quirk: request.headers is a plain object, not a Headers instance
-      const rangeHeader =
-        (request.headers as any)["range"] || (request.headers as any)["Range"];
-
-      if (rangeHeader) {
-        const [startStr, endStr] = rangeHeader.replace(/bytes=/, "").split("-");
-        const start = parseInt(startStr, 10);
-        const end = endStr ? parseInt(endStr, 10) : fileSize - 1;
-        const chunkSize = end - start + 1;
-
+      if (range) {
+        const { start, end } = range;
+        const contentLength = end - start + 1;
+        responseHeaders.set(
+          "Content-Range",
+          `bytes ${start}-${end}/${fileSize}`,
+        );
+        responseHeaders.set("Content-Length", String(contentLength));
         const nodeStream = createReadStream(filePath, { start, end });
-
-        // Convert Node stream → Web ReadableStream
-        const webStream = new ReadableStream({
-          start(controller) {
-            let isClosed = false;
-
-            const safeClose = () => {
-              if (!isClosed) {
-                isClosed = true;
-                try {
-                  controller.close();
-                } catch (err) {
-                  // Controller already closed, ignore
-                }
-              }
-            };
-
-            const safeError = (err: Error) => {
-              if (!isClosed) {
-                isClosed = true;
-                try {
-                  controller.error(err);
-                } catch (error) {
-                  // Controller already closed, ignore
-                }
-              }
-            };
-
-            nodeStream.on("data", (chunk) => {
-              if (!isClosed) {
-                try {
-                  controller.enqueue(chunk);
-                } catch (err) {
-                  // Controller closed during enqueue, stop reading
-                  nodeStream.destroy();
-                  safeClose();
-                }
-              }
-            });
-
-            nodeStream.on("end", safeClose);
-            nodeStream.on("error", safeError);
-          },
-          cancel() {
-            nodeStream.destroy();
-          },
-        });
-
+        const webStream = Readable.toWeb(nodeStream) as ReadableStream;
         return new Response(webStream, {
           status: 206,
-          headers: {
-            "Content-Type": contentType,
-            "Content-Length": chunkSize.toString(),
-            "Content-Range": `bytes ${start}-${end}/${fileSize}`,
-            "Accept-Ranges": "bytes",
-          },
+          statusText: "Partial Content",
+          headers: responseHeaders,
         });
       }
 
-      // No range → full file
-      const nodeStream = createReadStream(filePath);
-      const webStream = new ReadableStream({
-        start(controller) {
-          let isClosed = false;
+      const localFileUrl = pathToFileURL(filePath).toString();
+      const fetchResponse = await net.fetch(localFileUrl);
+      const fullHeaders = new Headers(fetchResponse.headers);
+      fullHeaders.set("Content-Type", contentType);
+      fullHeaders.set("Accept-Ranges", "bytes");
 
-          const safeClose = () => {
-            if (!isClosed) {
-              isClosed = true;
-              try {
-                controller.close();
-              } catch (err) {
-                // Controller already closed, ignore
-              }
-            }
-          };
-
-          const safeError = (err: Error) => {
-            if (!isClosed) {
-              isClosed = true;
-              try {
-                controller.error(err);
-              } catch (error) {
-                // Controller already closed, ignore
-              }
-            }
-          };
-
-          nodeStream.on("data", (chunk) => {
-            if (!isClosed) {
-              try {
-                controller.enqueue(chunk);
-              } catch (err) {
-                // Controller closed during enqueue, stop reading
-                nodeStream.destroy();
-                safeClose();
-              }
-            }
-          });
-
-          nodeStream.on("end", safeClose);
-          nodeStream.on("error", safeError);
-        },
-        cancel() {
-          nodeStream.destroy();
-        },
-      });
-
-      return new Response(webStream, {
+      return new Response(fetchResponse.body, {
         status: 200,
-        headers: {
-          "Content-Type": contentType,
-          "Content-Length": fileSize.toString(),
-          "Accept-Ranges": "bytes",
-        },
+        statusText: "OK",
+        headers: fullHeaders,
       });
     } catch (err) {
       console.error("Protocol error:", err);
@@ -605,11 +545,11 @@ app.whenReady().then(() => {
           autoUpdater.checkForUpdates().catch((error) => {
             console.error(
               "[Auto-Updater] Error during scheduled check:",
-              error
+              error,
             );
           });
         },
-        60 * 60 * 1000
+        60 * 60 * 1000,
       );
     });
 
@@ -637,7 +577,7 @@ app.whenReady().then(() => {
     autoUpdater.on("update-downloaded", (info) => {
       console.log(
         "[Auto-Updater] Update downloaded, will install on app quit",
-        info.version
+        info.version,
       );
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("update-downloaded", {
@@ -656,7 +596,7 @@ app.whenReady().then(() => {
             total: progress.total,
           });
         }
-      }
+      },
     );
 
     autoUpdater.on("error", (error) => {
@@ -797,7 +737,7 @@ const getWindowByType = (windowType: WindowType): BrowserWindow | null => {
 const moveWindowToDisplay = (
   window: BrowserWindow | null,
   windowType: WindowType,
-  displayId: number
+  displayId: number,
 ): boolean => {
   if (!window || window.isDestroyed()) return false;
 
@@ -831,7 +771,7 @@ ipcMain.handle(
   (_event, windowType: WindowType, displayId: number) => {
     const window = getWindowByType(windowType);
     return moveWindowToDisplay(window, windowType, displayId);
-  }
+  },
 );
 
 ipcMain.handle(
@@ -839,7 +779,7 @@ ipcMain.handle(
   (_event, windowType: WindowType, displayId: number) => {
     windowStateManager.setDisplayPreference(windowType, displayId);
     return true;
-  }
+  },
 );
 
 ipcMain.handle("get-window-states", () => {
@@ -865,6 +805,11 @@ ipcMain.handle("download-media", async (_event, url: string) => {
     console.error("Error downloading video:", error);
     return null;
   }
+});
+
+ipcMain.handle("get-media-cache-map", () => {
+  if (!mediaCacheManager) return {};
+  return mediaCacheManager.getMediaCacheMap();
 });
 
 ipcMain.handle("get-local-media-path", (_event, url: string) => {
