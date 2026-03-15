@@ -1,3 +1,11 @@
+## [1.38.7](https://github.com/K-Cheddar/worship-sync/compare/v1.38.6...v1.38.7) (2026-03-15)
+
+
+### Bug Fixes
+
+* Improve timer position consistency ([702f139](https://github.com/K-Cheddar/worship-sync/commit/702f139ff6858712b7bb856cac3a626647adb901))
+* Improve video playback and responsiveness when editing slides ([1cccbc3](https://github.com/K-Cheddar/worship-sync/commit/1cccbc35031774cc95b6ad3f1be8bc4e99b81386))
+
 ## [1.38.6](https://github.com/K-Cheddar/worship-sync/compare/v1.38.5...v1.38.6) (2026-03-11)
 
 
