@@ -15,8 +15,16 @@ import Undo from "./ToolbarElements/Undo";
 import UserSection from "./ToolbarElements/UserSection";
 import ToolbarButton from "./ToolbarElements/ToolbarButton";
 import { useDispatch, useSelector } from "../../hooks";
-import { useContext, useEffect, useMemo, useState, useCallback } from "react";
+import {
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+} from "react";
 import Button from "../../components/Button/Button";
+import Drawer from "../../components/Drawer/Drawer";
+import QuickLinksPage from "../../pages/Controller/QuickLinks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import cn from "classnames";
 import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
@@ -41,8 +49,17 @@ type sections =
   | "item-tools"
   | "box-tools";
 
-const Toolbar = ({ className }: { className: string }) => {
+export type ToolbarVariant = "default" | "overlay";
+
+const Toolbar = ({
+  className,
+  variant = "default",
+}: {
+  className: string;
+  variant?: ToolbarVariant;
+}) => {
   const location = useLocation();
+  const [quickLinksDrawerOpen, setQuickLinksDrawerOpen] = useState(false);
   const { isEditMode } = useSelector(
     (state) => state.undoable.present.item
   );
@@ -92,7 +109,11 @@ const Toolbar = ({ className }: { className: string }) => {
     <ErrorBoundary>
       <div className={className}>
         <div className="px-2 py-1 flex gap-1 border-r-2 border-gray-500 items-center">
-          <Menu isPhone={isPhone} isEditMode={isEditMode} />
+          <Menu
+            isPhone={isPhone}
+            isEditMode={isEditMode}
+            variant={variant}
+          />
           {!isEditMode && !isPhone && <Undo />}
         </div>
         <div
@@ -154,46 +175,59 @@ const Toolbar = ({ className }: { className: string }) => {
             )}
           >
             <Outlines className={cn(section !== "settings" && "hidden")} />
+            {variant !== "overlay" && (
+              <Button
+                className={cn(
+                  section !== "settings" && "hidden",
+                  location.pathname.includes("preferences") &&
+                    !location.pathname.includes("quick-links") &&
+                    "outline-2 outline-white",
+                )}
+                variant="tertiary"
+                svg={Settings}
+                component="link"
+                to="/controller/preferences"
+              >
+                Preferences
+              </Button>
+            )}
             <Button
               className={cn(
                 section !== "settings" && "hidden",
-                location.pathname.includes("preferences") &&
-                !location.pathname.includes("quick-links") &&
-                "outline-2 outline-white"
-              )}
-              variant="tertiary"
-              svg={Settings}
-              component="link"
-              to="/controller/preferences"
-            >
-              Preferences
-            </Button>
-            <Button
-              className={cn(
-                section !== "settings" && "hidden",
-                location.pathname.includes("quick-links") &&
-                "outline-2 outline-white"
+                (variant === "overlay"
+                  ? quickLinksDrawerOpen
+                  : location.pathname.includes("quick-links")) &&
+                  "outline-2 outline-white",
               )}
               variant="tertiary"
               svg={RectangleEllipsis}
-              component="link"
-              to="/controller/quick-links"
+              component={variant === "overlay" ? "button" : "link"}
+              to={
+                variant === "overlay" ? undefined : "/controller/quick-links"
+              }
+              onClick={
+                variant === "overlay"
+                  ? () => setQuickLinksDrawerOpen(true)
+                  : undefined
+              }
             >
               Quick Links
             </Button>
-            <Button
-              className={cn(
-                section !== "settings" && "hidden",
-                location.pathname.includes("monitor-settings") &&
-                "outline-2 outline-white"
-              )}
-              variant="tertiary"
-              svg={Monitor}
-              component="link"
-              to="/controller/monitor-settings"
-            >
-              Monitor Settings
-            </Button>
+            {variant !== "overlay" && (
+              <Button
+                className={cn(
+                  section !== "settings" && "hidden",
+                  location.pathname.includes("monitor-settings") &&
+                    "outline-2 outline-white",
+                )}
+                variant="tertiary"
+                svg={Monitor}
+                component="link"
+                to="/controller/monitor-settings"
+              >
+                Monitor Settings
+              </Button>
+            )}
             <SlideEditTools
               className={cn(section !== "slide-tools" && "hidden")}
             />
@@ -214,6 +248,18 @@ const Toolbar = ({ className }: { className: string }) => {
           <UserSection />
         </div>
       </div>
+      {variant === "overlay" && (
+        <Drawer
+          isOpen={quickLinksDrawerOpen}
+          onClose={() => setQuickLinksDrawerOpen(false)}
+          title="Quick Links"
+          position="right"
+          size="lg"
+          contentClassName="min-h-0 flex flex-col"
+        >
+          <QuickLinksPage streamOnly />
+        </Drawer>
+      )}
     </ErrorBoundary>
   );
 };

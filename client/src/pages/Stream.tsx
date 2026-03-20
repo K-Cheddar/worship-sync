@@ -3,7 +3,7 @@ import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
 import { useEffect } from "react";
 
 const Stream = () => {
-  const { streamInfo, prevStreamInfo } = useSelector(
+  const { streamInfo, prevStreamInfo, streamItemContentBlocked } = useSelector(
     (state) => state.presentation
   );
 
@@ -46,6 +46,7 @@ const Stream = () => {
       width={100}
       timerInfo={streamTimer}
       prevTimerInfo={prevStreamTimer}
+      streamItemContentBlocked={streamItemContentBlocked}
     />
   );
 };

@@ -75,14 +75,15 @@ export class MediaCacheManager {
     this.saveCacheIndex();
   }
 
-  /** Safely remove a file, ignoring errors */
-  private cleanupFile(filePath: string): void {
+  /** Safely remove a file, ignoring errors. Returns true when the file is gone. */
+  private cleanupFile(filePath: string): boolean {
     try {
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
+      if (!fs.existsSync(filePath)) return true;
+      fs.unlinkSync(filePath);
+      return !fs.existsSync(filePath);
     } catch (error) {
       console.warn("Error removing file:", error);
+      return !fs.existsSync(filePath);
     }
   }
 
@@ -320,8 +321,13 @@ export class MediaCacheManager {
 
     for (const [url, entry] of this.cacheIndex.entries()) {
       if (!usedUrls.has(url)) {
-        urlsToRemove.push(url);
-        this.cleanupFile(entry.localPath);
+        if (this.cleanupFile(entry.localPath)) {
+          urlsToRemove.push(url);
+        } else {
+          console.warn(
+            `[Media Cache] Retaining cache entry for file still in use: ${entry.localPath}`
+          );
+        }
       }
     }
 

@@ -65,9 +65,17 @@ const sizeMap: Map<number, string> = new Map([
   [2, "grid-cols-2"],
 ]);
 
-const Media = () => {
+type MediaProps = {
+  /** Stacked with TransmitHandler: collapsed bar at bottom; expanded fills column above hidden transmit. */
+  variant?: "default" | "panel";
+  pageMode?: "default" | "overlayController";
+};
+
+const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const dispatch = useDispatch();
   const location = useLocation();
+  const isPanelVariant = variant === "panel";
+  const isOverlayControllerPage = pageMode === "overlayController";
 
   const { list } = useSelector((state: RootState) => state.media);
   const { isLoading } = useSelector(
@@ -434,8 +442,19 @@ const Media = () => {
   return (
     <ErrorBoundary>
       <div
-        className={`mx-2 bg-gray-900 rounded-t-md flex items-center text-sm relative z-10 transition-all  mt-2 px-2 ${isMediaExpanded ? " py-1" : "rounded-b-md py-0.5"
-          }`}
+        className={cn(
+          isPanelVariant && "flex flex-col min-h-0 w-full",
+          isPanelVariant &&
+            (isMediaExpanded ? "flex-1" : "shrink-0 mt-auto"),
+          !isPanelVariant && "contents"
+        )}
+      >
+      <div
+        className={cn(
+          "mx-2 bg-gray-900 flex items-center text-sm relative z-10 transition-all px-2",
+          isMediaExpanded ? "py-1 rounded-t-md" : "rounded-b-md py-0.5",
+          "rounded-t-md mt-2"
+        )}
       >
         <h2 className="font-semibold">Media</h2>
         <div className="flex-1 flex items-center justify-center">
@@ -512,7 +531,12 @@ const Media = () => {
         </div>
       )}
       {isMediaLoading && isMediaExpanded && (
-        <h3 className="text-center font-lg pt-4 bg-gray-800 mx-2 h-full">
+        <h3
+          className={cn(
+            "text-center font-lg pt-4 bg-gray-800 mx-2",
+            isPanelVariant ? "flex-1 min-h-0" : "h-full"
+          )}
+        >
           Loading media...
         </h3>
       )}
@@ -520,7 +544,8 @@ const Media = () => {
         <ul
           ref={mediaListRef}
           className={cn(
-            "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-x-2 gap-y-1 z-10 rounded-b-md",
+            "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-x-2 gap-y-1 z-10 rounded-b-md min-h-0",
+            isPanelVariant && "flex-1",
             sizeMap.get(mediaItemsPerRow)
           )}
           style={{
@@ -583,7 +608,8 @@ const Media = () => {
                     },
                   ]
                   : []),
-                ...(location.pathname.includes("overlays") &&
+                ...((location.pathname.includes("overlays") ||
+                  isOverlayControllerPage) &&
                   selectedOverlay?.type === "image"
                   ? [
                     {
@@ -735,7 +761,12 @@ const Media = () => {
         </ul>
       )}
       {!isMediaLoading && isMediaExpanded && searchTerm && filteredList.length === 0 && (
-        <div className="text-center py-8 bg-gray-800 mx-2 px-2">
+        <div
+          className={cn(
+            "text-center py-8 bg-gray-800 mx-2 px-2",
+            isPanelVariant && "flex-1 min-h-0"
+          )}
+        >
           <p className="text-gray-400">
             No media found matching "{searchTerm}"
           </p>
@@ -785,6 +816,7 @@ const Media = () => {
         mediaUploadInputRef={mediaUploadInputRef}
         uploadProgress={uploadProgress}
       />
+      </div>
     </ErrorBoundary>
   );
 };

@@ -220,6 +220,8 @@ const createWindow = () => {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
+      // Allow preview videos to continue even when this window is not focused.
+      backgroundThrottling: false,
     },
     autoHideMenuBar: !isDev,
     ...(iconPath && { icon: iconPath }),

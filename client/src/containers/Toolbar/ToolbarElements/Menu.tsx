@@ -1,10 +1,13 @@
 import Menu from "../../../components/Menu/Menu";
 import Button from "../../../components/Button/Button";
+import { useNavigate } from "react-router-dom";
 import {
+  ArrowLeft,
   Home,
   Info,
   Menu as MenuIcon,
   Monitor,
+  SquarePen,
   Presentation,
   ScrollText,
   ZoomIn,
@@ -24,13 +27,16 @@ import type { WindowType } from "../../../types/electron";
 const ToolbarMenu = ({
   isPhone,
   isEditMode,
+  variant = "default",
 }: {
   isPhone?: boolean;
   isEditMode?: boolean;
+  variant?: "default" | "overlay";
 }) => {
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
+  const navigate = useNavigate();
   const {
     isElectron,
     displays,
@@ -66,6 +72,20 @@ const ToolbarMenu = ({
 
   const handleReset = () => {
     setZoomLevel(100);
+  };
+
+  const handleBack = () => {
+    const historyIndex =
+      typeof window.history.state?.idx === "number"
+        ? window.history.state.idx
+        : undefined;
+
+    if ((historyIndex ?? 0) > 0 || window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+
+    navigate("/");
   };
 
   const openWindowOnLastUsedDisplay = async (windowType: WindowType) => {
@@ -118,48 +138,71 @@ const ToolbarMenu = ({
     {
       element: (
         <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={ArrowLeft} color="#d1d5dc" />
+          Back
+        </div>
+      ),
+      onClick: handleBack,
+    },
+    {
+      element: (
+        <div className="flex items-center gap-2 max-md:min-h-12">
           <Icon svg={Home} color="#d1d5dc" />
           Home
         </div>
       ),
       to: "/",
     },
-    {
-      text: "Open Stage Monitor",
-      element: (
-        <div className="flex items-center gap-2 max-md:min-h-12">
-          <Icon svg={Monitor} color="#d1d5dc" />
-          Open Stage Monitor
-        </div>
-      ),
-      ...(isElectron && displays.length > 0
-        ? {
-          subItems: buildDisplaySubItems("monitor"),
-        }
-        : {
-          onClick: async () => {
-            await openWindowOnLastUsedDisplay("monitor");
-          },
-        }),
-    },
-    {
-      text: "Open Projector",
-      element: (
-        <div className="flex items-center gap-2 max-md:min-h-12">
-          <Icon svg={Presentation} color="#d1d5dc" />
-          Open Projector
-        </div>
-      ),
-      ...(isElectron && displays.length > 0
-        ? {
-          subItems: buildDisplaySubItems("projector"),
-        }
-        : {
-          onClick: async () => {
-            await openWindowOnLastUsedDisplay("projector");
-          },
-        }),
-    },
+    ...(variant === "overlay"
+      ? [
+        {
+          element: (
+            <div className="flex items-center gap-2 max-md:min-h-12">
+              <Icon svg={SquarePen} color="#d1d5dc" />
+              Credits Editor
+            </div>
+          ),
+          to: "/credits-editor",
+        },
+      ]
+      : [
+        {
+          text: "Open Stage Monitor",
+          element: (
+            <div className="flex items-center gap-2 max-md:min-h-12">
+              <Icon svg={Monitor} color="#d1d5dc" />
+              Open Stage Monitor
+            </div>
+          ),
+          ...(isElectron && displays.length > 0
+            ? {
+              subItems: buildDisplaySubItems("monitor"),
+            }
+            : {
+              onClick: async () => {
+                await openWindowOnLastUsedDisplay("monitor");
+              },
+            }),
+        },
+        {
+          text: "Open Projector",
+          element: (
+            <div className="flex items-center gap-2 max-md:min-h-12">
+              <Icon svg={Presentation} color="#d1d5dc" />
+              Open Projector
+            </div>
+          ),
+          ...(isElectron && displays.length > 0
+            ? {
+              subItems: buildDisplaySubItems("projector"),
+            }
+            : {
+              onClick: async () => {
+                await openWindowOnLastUsedDisplay("projector");
+              },
+            }),
+        },
+      ]),
 
     {
       element: (

@@ -9,6 +9,7 @@ import {
 import { useToast } from "../../context/toastContext";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useMemo } from "react";
+import { getDefaultFormatting } from "../../utils/overlayUtils";
 
 interface QuickLinkSelectionProps {
   linkType: "slide" | "overlay";
@@ -58,6 +59,11 @@ const QuickLinkSelection = ({
   // Get overlay info for preview
   const overlayInfo = useMemo(() => {
     if (linkType === "overlay" && selectedOverlay) {
+      const formatting = {
+        ...getDefaultFormatting(selectedOverlay.type || "participant"),
+        ...selectedOverlay.formatting,
+      };
+
       return {
         participantOverlayInfo:
           selectedOverlay.type === "participant"
@@ -65,6 +71,7 @@ const QuickLinkSelection = ({
               id: selectedOverlay.id,
               type: selectedOverlay.type,
               duration: selectedOverlay.duration,
+              formatting,
               name: selectedOverlay.name,
               event: selectedOverlay.event,
               title: selectedOverlay.title,
@@ -76,8 +83,9 @@ const QuickLinkSelection = ({
               id: selectedOverlay.id,
               type: selectedOverlay.type,
               duration: selectedOverlay.duration,
+              formatting,
+              heading: selectedOverlay.heading,
               subHeading: selectedOverlay.subHeading,
-              title: selectedOverlay.title,
             }
             : undefined,
         qrCodeOverlayInfo:
@@ -86,6 +94,7 @@ const QuickLinkSelection = ({
               id: selectedOverlay.id,
               type: selectedOverlay.type,
               duration: selectedOverlay.duration,
+              formatting,
               url: selectedOverlay.url,
               description: selectedOverlay.description,
             }
@@ -96,6 +105,7 @@ const QuickLinkSelection = ({
               id: selectedOverlay.id,
               type: selectedOverlay.type,
               duration: selectedOverlay.duration,
+              formatting,
               imageUrl: selectedOverlay.imageUrl,
             }
             : undefined,
@@ -149,6 +159,10 @@ const QuickLinkSelection = ({
       id: selectedOverlay.id,
       type: selectedOverlay.type,
       duration: selectedOverlay.duration,
+      formatting: {
+        ...getDefaultFormatting(selectedOverlay.type || "participant"),
+        ...selectedOverlay.formatting,
+      },
     };
 
     if (selectedOverlay.type === "participant") {
@@ -168,8 +182,8 @@ const QuickLinkSelection = ({
         ...presentationInfo,
         stbOverlayInfo: {
           ...info,
+          heading: selectedOverlay.heading,
           subHeading: selectedOverlay.subHeading,
-          title: selectedOverlay.title,
         },
       };
     }

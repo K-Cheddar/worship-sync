@@ -179,7 +179,7 @@ describe("QuickLink", () => {
     expect(mockUpdateImageOverlayInfo).not.toHaveBeenCalled();
   });
 
-  it("dispatches stream clear payload when presentation has no slide", () => {
+  it("does not clear the stream item when an overlay quick link has no slide", () => {
     const presentationInfo = {
       type: "participant",
       name: "No slide",
@@ -196,11 +196,7 @@ describe("QuickLink", () => {
       />
     );
     fireEvent.click(screen.getByRole("button"));
-    expect(mockUpdateStream).toHaveBeenCalledWith({
-      slide: null,
-      type: "clear",
-      name: "",
-    });
+    expect(mockUpdateStream).not.toHaveBeenCalled();
     expect(mockUpdateParticipantOverlayInfo).toHaveBeenCalledWith(
       presentationInfo.participantOverlayInfo
     );

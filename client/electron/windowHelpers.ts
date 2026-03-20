@@ -28,6 +28,8 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
+      // Keep playback smooth even when the controller window has focus.
+      backgroundThrottling: false,
     },
     autoHideMenuBar: true,
     frame: false,

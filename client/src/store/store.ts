@@ -9,6 +9,7 @@ import {
 import undoable, { ActionCreators } from "redux-undo";
 import {
   presentationSlice,
+  setStreamItemContentBlockedFromRemote,
   updateBibleDisplayInfoFromRemote,
   updateMonitor,
   updateMonitorFromRemote,
@@ -78,6 +79,74 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
+
+/** Push current presentation (projector/monitor/stream) to Firebase + localStorage. */
+export const writePresentationSnapshotToFirebase = (state: RootState) => {
+  if (!globalFireDbInfo.db || !globalFireDbInfo.database) return;
+  const { projectorInfo, monitorInfo, streamInfo, streamItemContentBlocked } =
+    state.presentation;
+  const presentationUpdate = {
+    projectorInfo,
+    monitorInfo,
+    streamInfo: {
+      displayType: streamInfo.displayType,
+      time: streamInfo.time,
+      slide: streamInfo.slide,
+      timerId: streamInfo.timerId,
+      name: streamInfo.name,
+      type: streamInfo.type,
+    },
+    stream_itemContentBlocked: streamItemContentBlocked,
+    stream_bibleInfo: streamInfo.bibleDisplayInfo,
+    stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
+    stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
+    stream_qrCodeOverlayInfo: streamInfo.qrCodeOverlayInfo,
+    stream_imageOverlayInfo: streamInfo.imageOverlayInfo,
+    stream_formattedTextDisplayInfo: streamInfo.formattedTextDisplayInfo,
+  };
+
+  localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
+  localStorage.setItem("monitorInfo", JSON.stringify(monitorInfo));
+  localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
+  localStorage.setItem(
+    "stream_bibleInfo",
+    JSON.stringify(streamInfo.bibleDisplayInfo),
+  );
+  localStorage.setItem(
+    "stream_participantOverlayInfo",
+    JSON.stringify(streamInfo.participantOverlayInfo),
+  );
+  localStorage.setItem(
+    "stream_stbOverlayInfo",
+    JSON.stringify(streamInfo.stbOverlayInfo),
+  );
+  localStorage.setItem(
+    "stream_qrCodeOverlayInfo",
+    JSON.stringify(streamInfo.qrCodeOverlayInfo),
+  );
+  localStorage.setItem(
+    "stream_imageOverlayInfo",
+    JSON.stringify(streamInfo.imageOverlayInfo),
+  );
+  localStorage.setItem(
+    "stream_formattedTextDisplayInfo",
+    JSON.stringify(streamInfo.formattedTextDisplayInfo),
+  );
+  localStorage.setItem(
+    "stream_itemContentBlocked",
+    JSON.stringify(streamItemContentBlocked),
+  );
+
+  set(
+    ref(
+      globalFireDbInfo.db,
+      "users/" +
+        capitalizeFirstLetter(globalFireDbInfo.database) +
+        "/v2/presentation",
+    ),
+    cleanObject(presentationUpdate),
+  );
+};
 
 let lastActionTime = 0;
 let currentGroupId = 0;
@@ -1223,6 +1292,7 @@ listenerMiddleware.startListening({
       presentationSlice.actions.updateQrCodeOverlayInfoFromRemote,
       presentationSlice.actions.updateImageOverlayInfoFromRemote,
       presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote,
+      presentationSlice.actions.setStreamItemContentBlockedFromRemote,
     );
     return (
       (currentState as RootState).presentation !==
@@ -1236,64 +1306,38 @@ listenerMiddleware.startListening({
     if (!globalFireDbInfo.db) return;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    writePresentationSnapshotToFirebase(listenerApi.getState() as RootState);
+  },
+});
 
-    const { projectorInfo, monitorInfo, streamInfo } = (
-      listenerApi.getState() as RootState
-    ).presentation;
-    const presentationUpdate = {
-      projectorInfo,
-      monitorInfo,
-      streamInfo: {
-        displayType: streamInfo.displayType,
-        time: streamInfo.time,
-        slide: streamInfo.slide,
-        timerId: streamInfo.timerId,
-      },
-      stream_bibleInfo: streamInfo.bibleDisplayInfo,
-      stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
-      stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
-      stream_qrCodeOverlayInfo: streamInfo.qrCodeOverlayInfo,
-      stream_imageOverlayInfo: streamInfo.imageOverlayInfo,
-      stream_formattedTextDisplayInfo: streamInfo.formattedTextDisplayInfo,
-    };
+// Stream transmit toggle is excluded from the predicate above, so remotes never see
+// stream-on until the next slide/overlay change. Push full snapshot when stream goes live.
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    if (!presentationSlice.actions.toggleStreamTransmitting.match(action))
+      return false;
+    const curr = (currentState as RootState).presentation;
+    const prev = (previousState as RootState).presentation;
+    return curr.isStreamTransmitting && !prev.isStreamTransmitting;
+  },
+  effect: async (_action, listenerApi) => {
+    if (!globalFireDbInfo.db) return;
+    await listenerApi.delay(15);
+    writePresentationSnapshotToFirebase(listenerApi.getState() as RootState);
+  },
+});
 
-    localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
-    localStorage.setItem("monitorInfo", JSON.stringify(monitorInfo));
-    localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
-    localStorage.setItem(
-      "stream_bibleInfo",
-      JSON.stringify(streamInfo.bibleDisplayInfo),
-    );
-    localStorage.setItem(
-      "stream_participantOverlayInfo",
-      JSON.stringify(streamInfo.participantOverlayInfo),
-    );
-    localStorage.setItem(
-      "stream_stbOverlayInfo",
-      JSON.stringify(streamInfo.stbOverlayInfo),
-    );
-    localStorage.setItem(
-      "stream_qrCodeOverlayInfo",
-      JSON.stringify(streamInfo.qrCodeOverlayInfo),
-    );
-    localStorage.setItem(
-      "stream_imageOverlayInfo",
-      JSON.stringify(streamInfo.imageOverlayInfo),
-    );
-    localStorage.setItem(
-      "stream_formattedTextDisplayInfo",
-      JSON.stringify(streamInfo.formattedTextDisplayInfo),
-    );
-
-    set(
-      ref(
-        globalFireDbInfo.db,
-        "users/" +
-          capitalizeFirstLetter(globalFireDbInfo.database) +
-          "/v2/presentation",
-      ),
-      cleanObject(presentationUpdate),
-    );
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    if (!presentationSlice.actions.setTransmitToAll.match(action)) return false;
+    const curr = (currentState as RootState).presentation;
+    const prev = (previousState as RootState).presentation;
+    return curr.isStreamTransmitting && !prev.isStreamTransmitting;
+  },
+  effect: async (_action, listenerApi) => {
+    if (!globalFireDbInfo.db) return;
+    await listenerApi.delay(15);
+    writePresentationSnapshotToFirebase(listenerApi.getState() as RootState);
   },
 });
 
@@ -1349,7 +1393,7 @@ listenerMiddleware.startListening({
   },
 });
 
-// handle updating from remote stream
+// handle updating from remote stream (strict > so we skip our own Firebase echo and avoid prev/current both having current slide)
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const state = (previousState as RootState).presentation;
@@ -1359,7 +1403,7 @@ listenerMiddleware.startListening({
       !!(
         (info.time &&
           state.streamInfo.time &&
-          info.time >= state.streamInfo.time) ||
+          info.time > state.streamInfo.time) ||
         (info.time && !state.streamInfo.time)
       )
     );
@@ -1529,6 +1573,19 @@ listenerMiddleware.startListening({
       updateFormattedTextDisplayInfoFromRemote(
         action.payload as FormattedTextDisplayInfo,
       ),
+    );
+  },
+});
+
+// handle updating from remote stream item content blocked
+listenerMiddleware.startListening({
+  predicate: (action) =>
+    action.type === "debouncedUpdateStreamItemContentBlocked",
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+    listenerApi.dispatch(
+      setStreamItemContentBlockedFromRemote(action.payload as boolean),
     );
   },
 });

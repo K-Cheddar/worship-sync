@@ -75,6 +75,7 @@ const Welcome = () => {
           <h3 className="text-lg border-b-4 border-black">Editors</h3>
           <section className="flex gap-4 flex-wrap justify-center">
             <HomeButton to="/controller">Main Controller</HomeButton>
+            <HomeButton to="/overlay-controller">Overlay Controller</HomeButton>
             <HomeButton to="/credits-editor">Credits Editor</HomeButton>
             <HomeButton to="/info-controller">Info Controller</HomeButton>
           </section>

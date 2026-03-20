@@ -2,7 +2,15 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Credits from "../../containers/Credits/Credits";
 import { default as CreditsEditorContainer } from "../../containers/Credits/CreditsEditor";
-import { Check, History, Home, Menu as MenuIcon, RefreshCcw, Settings } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  History,
+  Home,
+  Menu as MenuIcon,
+  RefreshCcw,
+  Settings,
+} from "lucide-react";
 import Icon from "../../components/Icon/Icon";
 import { useDispatch, useSelector } from "../../hooks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -437,7 +445,30 @@ const CreditsEditor = () => {
     }
   }, [overlays, list, dispatch, scheduleName, db]);
 
+  const handleBack = useCallback(() => {
+    const historyIndex =
+      typeof window.history.state?.idx === "number"
+        ? window.history.state.idx
+        : undefined;
+
+    if ((historyIndex ?? 0) > 0 || window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+
+    navigate("/");
+  }, [navigate]);
+
   const creditsMenuItems = [
+    {
+      element: (
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={ArrowLeft} color="#d1d5dc" />
+          Back
+        </div>
+      ),
+      onClick: handleBack,
+    },
     {
       element: (
         <div className="flex items-center gap-2 max-md:min-h-12">

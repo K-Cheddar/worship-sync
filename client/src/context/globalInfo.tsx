@@ -100,7 +100,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const hasRehydratedTimersRef = useRef(false);
   const location = useLocation();
   const isOnController = useMemo(() => {
-    return location.pathname.startsWith("/controller");
+    const path = location.pathname;
+    return (
+      path.startsWith("/controller") || path.startsWith("/overlay-controller")
+    );
   }, [location.pathname]);
 
   const hostId = useMemo(() => globalHostId, []);
@@ -115,6 +118,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_qrCodeOverlayInfo: Unsubscribe | undefined;
     stream_imageOverlayInfo: Unsubscribe | undefined;
     stream_formattedTextDisplayInfo: Unsubscribe | undefined;
+    stream_itemContentBlocked: Unsubscribe | undefined;
     timerInfo: Unsubscribe | undefined;
   }>({
     projectorInfo: undefined,
@@ -126,6 +130,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_qrCodeOverlayInfo: undefined,
     stream_imageOverlayInfo: undefined,
     stream_formattedTextDisplayInfo: undefined,
+    stream_itemContentBlocked: undefined,
     timerInfo: undefined,
   });
 
@@ -178,6 +183,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           info: data.stream_formattedTextDisplayInfo,
           updateAction: "debouncedUpdateFormattedTextDisplayInfo",
         },
+        stream_itemContentBlocked: {
+          info: data.stream_itemContentBlocked,
+          updateAction: "debouncedUpdateStreamItemContentBlocked",
+        },
         timerInfo: {
           info: data.timerInfo,
           updateAction: "debouncedUpdateTimerInfo",
@@ -190,8 +199,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         const obj = updateInfo[_key];
         const { info, updateAction } = obj as updateInfoChildType;
 
-        if (!info) continue; // nothing to update here.
-        dispatch({ type: updateAction, payload: info });
+        const isBlockedKey = _key === "stream_itemContentBlocked";
+        if (isBlockedKey ? info === undefined : !info) continue;
+        dispatch({ type: updateAction, payload: isBlockedKey ? Boolean(info) : info });
       }
     },
     [dispatch]
@@ -299,10 +309,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         );
 
         onValueRef.current[_key] = onValue(updateRef, (snapshot) => {
+          if (!snapshot.exists()) return;
           const data = snapshot.val();
-          if (data) {
-            updateFromRemote({ [key]: data });
-          }
+          updateFromRemote({ [key]: data });
         });
       }
     }

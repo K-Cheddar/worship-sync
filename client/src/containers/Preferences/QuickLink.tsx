@@ -27,6 +27,8 @@ type QuickLinkProps = QuickLinkType & {
   setSelectedQuickLink: () => void;
   timers: TimerInfo[];
   index: number;
+  /** Overlay stream-only drawer: display type is always stream. */
+  hideDisplayTypeSelect?: boolean;
 };
 
 const QuickLink = ({
@@ -43,6 +45,7 @@ const QuickLink = ({
   linkType: _linkType,
   timers,
   id,
+  hideDisplayTypeSelect = false,
 }: QuickLinkProps) => {
   const { showToast } = useToast();
 
@@ -123,29 +126,31 @@ const QuickLink = ({
       )}
       id={`quick-link-${id}`}
     >
-      <Select
-        className="flex flex-col"
-        selectClassName="bg-gray-900"
-        textColor="text-white"
-        label="Display Type"
-        disabled={!canDelete}
-        options={[
-          {
-            label: "Projector",
-            value: "projector",
-          },
-          {
-            label: "Monitor",
-            value: "monitor",
-          },
-          {
-            label: "Stream",
-            value: "stream",
-          },
-        ]}
-        value={displayType || "projector"}
-        onChange={(val) => updateQuickLink("displayType", val as DisplayType)}
-      />
+      {!hideDisplayTypeSelect && (
+        <Select
+          className="flex flex-col"
+          selectClassName="bg-gray-900"
+          textColor="text-white"
+          label="Display Type"
+          disabled={!canDelete}
+          options={[
+            {
+              label: "Projector",
+              value: "projector",
+            },
+            {
+              label: "Monitor",
+              value: "monitor",
+            },
+            {
+              label: "Stream",
+              value: "stream",
+            },
+          ]}
+          value={displayType || "projector"}
+          onChange={(val) => updateQuickLink("displayType", val as DisplayType)}
+        />
+      )}
       <Input
         label="Label"
         type="text"
