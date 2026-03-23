@@ -1027,6 +1027,7 @@ describe("presentationSlice", () => {
       expect(s.bibleDisplayInfo?.title).toBe("Jn 3");
       expect(s.participantOverlayInfo?.name).toBe("Host");
       expect(s.stbOverlayInfo?.heading).toBe("H");
+      expect(s.type).toBe("bible");
     });
 
     it("updateFormattedTextDisplayInfo preserves overlays whether overlay-only is on or off", () => {
@@ -1070,6 +1071,7 @@ describe("presentationSlice", () => {
         blockedOff.getState().presentation.streamInfo.participantOverlayInfo
           ?.name,
       ).toBe("Host");
+      expect(blockedOff.getState().presentation.streamInfo.type).toBe("free");
     });
 
     it("updateFormattedTextDisplayInfo clears the stream slide and refreshes streamInfo time", () => {
@@ -1291,6 +1293,37 @@ describe("presentationSlice", () => {
       expect(store.getState().presentation.streamInfo.name).toBe("Free Remote");
     });
 
+    it("updateStreamFromRemote preserves bible text for bible snapshots", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            bibleDisplayInfo: { title: "Jn 3", text: "For God", time: 100 },
+            type: "bible",
+            time: 100,
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateStreamFromRemote(
+          createPresentation({
+            type: "bible",
+            name: "Bible Remote",
+            slide: null,
+            time: 100,
+            displayType: "stream",
+          }),
+        ),
+      );
+
+      expect(store.getState().presentation.streamInfo.bibleDisplayInfo?.title).toBe(
+        "Jn 3",
+      );
+      expect(store.getState().presentation.streamInfo.type).toBe("bible");
+    });
+
     it("updateStreamFromRemote keeps overlays for stream slides when overlay-only is on", () => {
       const store = createStore({
         presentation: {
@@ -1320,6 +1353,69 @@ describe("presentationSlice", () => {
       expect(state.slide?.id).toBe("song-2");
       expect(state.bibleDisplayInfo?.title).toBe("");
       expect(state.participantOverlayInfo?.name).toBe("Host");
+    });
+
+    it("updateParticipantOverlayInfo preserves the outgoing overlay in prevStreamInfo for exit animation", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          isStreamTransmitting: true,
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            qrCodeOverlayInfo: {
+              id: "q1",
+              description: "Scan me",
+              url: "https://example.com",
+              time: 1,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateParticipantOverlayInfo({
+          id: "p1",
+          name: "Alex",
+        }),
+      );
+
+      const state = store.getState().presentation;
+      expect(state.prevStreamInfo.qrCodeOverlayInfo?.description).toBe(
+        "Scan me",
+      );
+      expect(state.streamInfo.qrCodeOverlayInfo?.description).toBe("");
+      expect(state.streamInfo.participantOverlayInfo?.name).toBe("Alex");
+    });
+
+    it("updateImageOverlayInfoFromRemote preserves the outgoing overlay in prevStreamInfo for exit animation", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            participantOverlayInfo: {
+              id: "p1",
+              name: "Host",
+              time: 1,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateImageOverlayInfoFromRemote({
+          id: "img-1",
+          imageUrl: "https://img.example/hero.jpg",
+          time: 10,
+        }),
+      );
+
+      const state = store.getState().presentation;
+      expect(state.prevStreamInfo.participantOverlayInfo?.name).toBe("Host");
+      expect(state.streamInfo.participantOverlayInfo?.name).toBe("");
+      expect(state.streamInfo.imageOverlayInfo?.imageUrl).toBe(
+        "https://img.example/hero.jpg",
+      );
     });
 
     it("clearMonitor and clearStream keep previous values and reset active payloads", () => {

@@ -140,6 +140,25 @@ const clearAllStreamOverlays = (si: Presentation, t: number) => {
   si.imageOverlayInfo = emptyImageOverlay(t);
 };
 
+const preserveClearedStreamOverlaysForTransition = (
+  state: PresentationState,
+  keep: "participant" | "stb" | "qr" | "image",
+) => {
+  const { streamInfo, prevStreamInfo } = state;
+  if (keep !== "participant") {
+    prevStreamInfo.participantOverlayInfo = streamInfo.participantOverlayInfo;
+  }
+  if (keep !== "stb") {
+    prevStreamInfo.stbOverlayInfo = streamInfo.stbOverlayInfo;
+  }
+  if (keep !== "qr") {
+    prevStreamInfo.qrCodeOverlayInfo = streamInfo.qrCodeOverlayInfo;
+  }
+  if (keep !== "image") {
+    prevStreamInfo.imageOverlayInfo = streamInfo.imageOverlayInfo;
+  }
+};
+
 const clearStreamNonSlideItemData = (si: Presentation, t: number) => {
   si.bibleDisplayInfo = { title: "", text: "", time: t };
   si.formattedTextDisplayInfo = { text: "", time: t };
@@ -262,6 +281,7 @@ export const presentationSlice = createSlice({
         time: t,
       };
       if (action.payload.name || action.payload.title || action.payload.event) {
+        preserveClearedStreamOverlaysForTransition(state, "participant");
         clearStreamOverlaysExcept(state.streamInfo, "participant", t);
       }
     },
@@ -271,6 +291,7 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.streamInfo.stbOverlayInfo = { ...action.payload, time: t };
       if (action.payload.heading || action.payload.subHeading) {
+        preserveClearedStreamOverlaysForTransition(state, "stb");
         clearStreamOverlaysExcept(state.streamInfo, "stb", t);
       }
     },
@@ -281,6 +302,7 @@ export const presentationSlice = createSlice({
         state.streamInfo.qrCodeOverlayInfo;
       state.streamInfo.qrCodeOverlayInfo = { ...action.payload, time: t };
       if (action.payload.url || action.payload.description) {
+        preserveClearedStreamOverlaysForTransition(state, "qr");
         clearStreamOverlaysExcept(state.streamInfo, "qr", t);
       }
     },
@@ -290,6 +312,7 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
       state.streamInfo.imageOverlayInfo = { ...action.payload, time: t };
       if (action.payload.imageUrl) {
+        preserveClearedStreamOverlaysForTransition(state, "image");
         clearStreamOverlaysExcept(state.streamInfo, "image", t);
       }
     },
@@ -304,6 +327,7 @@ export const presentationSlice = createSlice({
         time: t,
       };
       if (!action.payload.imageUrl) return;
+      preserveClearedStreamOverlaysForTransition(state, "image");
       clearStreamOverlaysExcept(state.streamInfo, "image", t);
     },
     updateParticipantOverlayInfoFromRemote: (
@@ -322,6 +346,7 @@ export const presentationSlice = createSlice({
       ) {
         return;
       }
+      preserveClearedStreamOverlaysForTransition(state, "participant");
       clearStreamOverlaysExcept(state.streamInfo, "participant", t);
     },
     updateStbOverlayInfoFromRemote: (
@@ -335,6 +360,7 @@ export const presentationSlice = createSlice({
         time: t,
       };
       if (!(action.payload.heading || action.payload.subHeading)) return;
+      preserveClearedStreamOverlaysForTransition(state, "stb");
       clearStreamOverlaysExcept(state.streamInfo, "stb", t);
     },
     updateQrCodeOverlayInfoFromRemote: (
@@ -349,6 +375,7 @@ export const presentationSlice = createSlice({
         time: t,
       };
       if (!(action.payload.url || action.payload.description)) return;
+      preserveClearedStreamOverlaysForTransition(state, "qr");
       clearStreamOverlaysExcept(state.streamInfo, "qr", t);
     },
     updateBibleDisplayInfo: (
@@ -359,6 +386,7 @@ export const presentationSlice = createSlice({
       const t = Date.now();
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
       state.streamInfo.bibleDisplayInfo = { ...action.payload, time: t };
+      state.streamInfo.type = "bible";
       state.streamInfo.slide = null;
       state.streamInfo.time = t;
     },
@@ -369,6 +397,7 @@ export const presentationSlice = createSlice({
       // set previous info for cross animation
       state.prevStreamInfo.bibleDisplayInfo = state.streamInfo.bibleDisplayInfo;
       state.streamInfo.bibleDisplayInfo = { ...action.payload };
+      state.streamInfo.type = "bible";
     },
     updateFormattedTextDisplayInfo: (
       state,
@@ -382,6 +411,7 @@ export const presentationSlice = createSlice({
         ...action.payload,
         time: t,
       };
+      state.streamInfo.type = "free";
       state.streamInfo.slide = null;
       state.streamInfo.time = t;
     },
@@ -395,6 +425,7 @@ export const presentationSlice = createSlice({
         ...action.payload,
         time: action.payload.time,
       };
+      state.streamInfo.type = "free";
     },
     clearProjector: (state) => {
       // set previous info for fading out
