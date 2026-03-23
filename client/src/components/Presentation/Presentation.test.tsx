@@ -109,8 +109,8 @@ describe("Presentation", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
-      expect(screen.getByRole("switch", { name: "Live:" })).toBeInTheDocument();
     });
+    expect(screen.getByRole("switch", { name: "Live:" })).toBeInTheDocument();
   });
 
   it("keeps Clear labeled before Live when space is limited", async () => {
@@ -130,8 +130,8 @@ describe("Presentation", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
-      expect(screen.queryByRole("switch", { name: "Live:" })).not.toBeInTheDocument();
     });
+    expect(screen.queryByRole("switch", { name: "Live:" })).not.toBeInTheDocument();
   });
 
   it("hides both labels when the header is too narrow", async () => {
@@ -151,7 +151,7 @@ describe("Presentation", () => {
 
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Clear" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("switch", { name: "Live:" })).not.toBeInTheDocument();
     });
+    expect(screen.queryByRole("switch", { name: "Live:" })).not.toBeInTheDocument();
   });
 });
