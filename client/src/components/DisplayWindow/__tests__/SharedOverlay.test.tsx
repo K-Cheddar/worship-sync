@@ -4,6 +4,7 @@ import {
   defaultImageOverlayStyles,
   defaultParticipantOverlayStyles,
   defaultQrCodeOverlayStyles,
+  defaultStbOverlayStyles,
 } from "../defaultOverlayStyles";
 import { checkMediaType, getImageFromVideoUrl } from "../../../utils/generalUtils";
 import { useCachedMediaUrl, useCachedVideoUrl } from "../../../hooks/useCachedMediaUrl";
@@ -119,6 +120,29 @@ describe("SharedOverlay", () => {
 
     expect(screen.getByText("Scan this code")).toBeInTheDocument();
     expect(screen.getByTestId("overlay-qr-code")).toBeInTheDocument();
+  });
+
+  it("preserves STB text whitespace when rendering the previous overlay", () => {
+    render(
+      <SharedOverlay
+        width={25}
+        styles={defaultStbOverlayStyles}
+        overlayInfo={{
+          id: "stb1",
+          type: "stick-to-bottom",
+          heading: "Line 1\nLine 2",
+        }}
+        needsPadding
+        isPrev
+        overlayType="stick-to-bottom"
+      />,
+    );
+
+    expect(
+      document.querySelector(".prev-overlay-stick-to-bottom-info-heading"),
+    ).toHaveStyle({
+      whiteSpace: "pre-line",
+    });
   });
 
   it("checks cached video path for image overlay video urls", () => {
