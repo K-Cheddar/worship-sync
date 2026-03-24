@@ -30,6 +30,34 @@ describe("itemSlice", () => {
       expect(state.type).toBe("song");
     });
 
+    it("preserves free slides as provided when loading the active item", () => {
+      const store = createStore();
+      store.dispatch(
+        itemSlice.actions.setActiveItem({
+          name: "Legacy Custom",
+          _id: "free-1",
+          type: "free",
+          slides: [
+            {
+              type: "Section",
+              name: "Section 1",
+              id: "slide-1",
+              boxes: [{ id: "bg" }, { id: "text" }],
+            },
+          ] as any,
+        }),
+      );
+
+      const state = store.getState().item;
+      expect(state.slides).toEqual([
+        expect.objectContaining({
+          id: "slide-1",
+          name: "Section 1",
+          boxes: [{ id: "bg" }, { id: "text" }],
+        }),
+      ]);
+    });
+
     it("setSelectedSlide updates selectedSlide", () => {
       const store = createStore();
       store.dispatch(itemSlice.actions.setSelectedSlide(3));

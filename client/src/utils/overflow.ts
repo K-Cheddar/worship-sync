@@ -191,6 +191,17 @@ export const getFormattedSections = (
     .sort((a, b) => a.sectionNum - b.sectionNum);
 };
 
+export const ensureSlidesHaveMonitorBandFormatting = (
+  slides: ItemSlideType[],
+): ItemSlideType[] => {
+  if (slides.length === 0) return slides;
+
+  const slidesWithBandBox = slides.filter((slide) => Boolean(slide.boxes?.[1]));
+  if (slidesWithBandBox.length === 0) return slides;
+
+  return addMonitorFormattedToSlides(slides);
+};
+
 export const formatFree = (item: ItemState) => {
   const { selectedSlide, selectedBox } = item;
   const slides = item.slides;
@@ -221,7 +232,10 @@ export const formatFree = (item: ItemState) => {
     console.error(
       `Section ${currentSectionNum} not found in formattedSections`,
     );
-    return { ...item, slides: item.slides };
+    return {
+      ...item,
+      slides: ensureSlidesHaveMonitorBandFormatting(item.slides),
+    };
   }
 
   const sectionWords = currentSection.words;
@@ -375,7 +389,7 @@ export const formatFree = (item: ItemState) => {
 
   return {
     ...item,
-    slides: updatedSlides,
+    slides: ensureSlidesHaveMonitorBandFormatting(updatedSlides),
     formattedSections: updatedFormattedSections,
   };
 };

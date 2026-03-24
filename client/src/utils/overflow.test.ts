@@ -16,8 +16,19 @@ jest.mock("./slideCreation", () => ({
 }));
 
 jest.mock("./monitorSlideFormatter", () => ({
-  addMonitorFormattedToSlide: jest.fn((slide) => ({ ...slide, monitorFormatted: true })),
-  addMonitorFormattedToSlides: jest.fn((slides) => slides),
+  addMonitorFormattedToSlide: jest.fn((slide) => ({
+    ...slide,
+    monitorFormatted: true,
+    monitorCurrentBandBoxes: [{ id: "current-0", words: slide.boxes?.[1]?.words }],
+    monitorNextBandBoxes: [{ id: "next-0", words: slide.boxes?.[1]?.words }],
+  })),
+  addMonitorFormattedToSlides: jest.fn((slides) =>
+    slides.map((slide: any, index: number) => ({
+      ...slide,
+      monitorCurrentBandBoxes: [{ id: `current-${index}`, words: slide.boxes?.[1]?.words }],
+      monitorNextBandBoxes: [{ id: `next-${index}`, words: slide.boxes?.[1]?.words }],
+    })),
+  ),
 }));
 
 let generatedId = 0;
@@ -124,7 +135,17 @@ describe("overflow utilities", () => {
 
     const result = formatFree(item);
 
-    expect(result.slides).toEqual(item.slides);
+    expect(result.slides).toEqual([
+      expect.objectContaining({
+        name: "Section 3",
+        monitorCurrentBandBoxes: [
+          expect.objectContaining({ id: "current-0" }),
+        ],
+        monitorNextBandBoxes: [
+          expect.objectContaining({ id: "next-0" }),
+        ],
+      }),
+    ]);
     expect(errorSpy).toHaveBeenCalled();
   });
 
@@ -163,6 +184,12 @@ describe("overflow utilities", () => {
     expect(result.slides).toHaveLength(1);
     expect(result.slides[0].name).toBe("Section 1");
     expect(result.slides[0].boxes[1].words).toBe("new words");
+    expect(result.slides[0].monitorCurrentBandBoxes).toEqual([
+      expect.objectContaining({ id: "current-0", words: "new words" }),
+    ]);
+    expect(result.slides[0].monitorNextBandBoxes).toEqual([
+      expect.objectContaining({ id: "next-0", words: "new words" }),
+    ]);
     expect(result.formattedSections?.[0]?.slideSpan).toBe(1);
   });
 
