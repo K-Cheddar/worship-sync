@@ -32,7 +32,7 @@ import { createItemFromProps, createNewBible } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
-import { setCreateItem } from "../../store/createItemSlice";
+import { resetCreateItem } from "../../store/createItemSlice";
 import { RootState } from "../../store/store";
 import useDebouncedEffect from "../../hooks/useDebouncedEffect";
 import Spinner from "../../components/Spinner/Spinner";
@@ -247,7 +247,7 @@ const Bible = () => {
     dispatch(addItemToItemList(itemForList));
     dispatch(addItemToAllItemsList(itemForList));
     dispatch(setActiveItem(item));
-    dispatch(setCreateItem({ name: "", type: "", text: "" }));
+    dispatch(resetCreateItem());
     setJustAdded(true);
 
     setTimeout(() => setJustAdded(false), 2000);

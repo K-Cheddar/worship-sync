@@ -1,4 +1,4 @@
-import { useContext, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import RadioButton from "../../components/RadioButton/RadioButton";
 import { FileQuestion, Plus, Check } from "lucide-react";
 import Button from "../../components/Button/Button";
@@ -7,9 +7,13 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import Icon from "../../components/Icon/Icon";
 import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import TextArea from "../../components/TextArea/TextArea";
-import { setCreateItem } from "../../store/createItemSlice";
-import { useDispatch } from "../../hooks";
-import { useSelector } from "react-redux";
+import {
+  CreateItemState,
+  initialCreateItemState,
+  resetCreateItem,
+  setCreateItem,
+} from "../../store/createItemSlice";
+import { useDispatch, useSelector } from "../../hooks";
 import {
   createNewFreeForm,
   createNewSong,
@@ -30,7 +34,6 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
 type ItemTypesType = {
   type: ItemType;
-  selected: boolean;
   label: string;
   access?: AccessType[];
 };
@@ -38,36 +41,37 @@ type ItemTypesType = {
 const types: ItemTypesType[] = [
   {
     type: "song",
-    selected: true,
     label: "Song",
     access: ["full", "music"],
   },
   {
     type: "bible",
-    selected: false,
     label: "Bible",
     access: ["full"],
   },
   {
     type: "free",
-    selected: false,
     label: "Custom Item",
     access: ["full"],
   },
   {
     type: "timer",
-    selected: false,
     label: "Timer",
     access: ["full"],
   },
 ];
 
+const buildCreateItemOverrideState = (
+  name: string,
+  type: ItemType
+): CreateItemState => ({
+  ...initialCreateItemState,
+  name,
+  type,
+});
+
 const CreateItem = () => {
-  const {
-    name: savedName,
-    type: savedType,
-    text: savedText,
-  } = useSelector((state: RootState) => state.createItem);
+  const createItemDraft = useSelector((state: RootState) => state.createItem);
   const { list } = useSelector((state: RootState) => state.allItems);
 
   const {
@@ -83,24 +87,7 @@ const CreateItem = () => {
   } = useSelector((state: RootState) => state.undoable.present.preferences);
   const { hostId, access } = useContext(GlobalInfoContext) || {};
 
-  const [searchParams] = useSearchParams();
-  const initialType = decodeURI(
-    searchParams.get("type") || savedType || "song"
-  );
-  const initialName = decodeURI(searchParams.get("name") || savedName || "");
-  const [text, setText] = useState<string>(savedText);
-  const [selectedType, setSelectedType] = useState<string>(initialType);
-  const [itemTypes, setItemTypes] = useState<ItemTypesType[]>(
-    types
-      .filter((type) => access && type.access?.includes(access))
-      .map((type) => ({ ...type, selected: type.type === initialType }))
-  );
-  const [itemName, setItemName] = useState<string>(initialName);
-  const [hours, setHours] = useState<number>(0);
-  const [minutes, setMinutes] = useState<number>(1);
-  const [seconds, setSeconds] = useState<number>(0);
-  const [time, setTime] = useState<string>("00:00");
-  const [timerType, setTimerType] = useState<"countdown" | "timer">("timer");
+  const [searchParams, setSearchParams] = useSearchParams();
   const [justAdded, setJustAdded] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
 
@@ -108,6 +95,53 @@ const CreateItem = () => {
 
   const navigate = useNavigate();
   const dispatch = useDispatch();
+
+  const {
+    name: itemName,
+    type: selectedType,
+    text,
+    hours,
+    minutes,
+    seconds,
+    time,
+    timerType,
+  } = createItemDraft;
+
+  const itemTypes = useMemo(
+    () =>
+      types.filter((itemType) => access && itemType.access?.includes(access)),
+    [access]
+  );
+
+  const selectedTypeLabel =
+    itemTypes.find((itemType) => itemType.type === selectedType)?.label ||
+    "Item";
+
+  useEffect(() => {
+    const overrideType = searchParams.get("type");
+    const overrideName = searchParams.get("name");
+
+    if (!overrideType || !overrideName) return;
+
+    const isValidType = types.some((itemType) => itemType.type === overrideType);
+    if (!isValidType) return;
+
+    dispatch(
+      setCreateItem(
+        buildCreateItemOverrideState(overrideName, overrideType as ItemType)
+      )
+    );
+    setSearchParams({}, { replace: true });
+  }, [dispatch, searchParams, setSearchParams]);
+
+  const updateCreateItemDraft = (updates: Partial<CreateItemState>) => {
+    dispatch(
+      setCreateItem({
+        ...createItemDraft,
+        ...updates,
+      })
+    );
+  };
 
   const existingItem: ServiceItem | undefined = useMemo(() => {
     if (selectedType !== "bible") {
@@ -165,7 +199,10 @@ const CreateItem = () => {
         brightness: defaultSongBackgroundBrightness,
       });
 
+      setJustCreated(true);
+      dispatch(resetCreateItem());
       dispatchNewItem(newItem);
+      return;
     }
 
     if (selectedType === "free") {
@@ -180,18 +217,16 @@ const CreateItem = () => {
         overflow: defaultFreeFormFontMode,
       });
 
+      setJustCreated(true);
+      dispatch(resetCreateItem());
       dispatchNewItem(newItem);
+      return;
     }
 
     if (selectedType === "bible") {
-      dispatch(
-        setCreateItem({
-          name: itemName,
-          type: selectedType,
-          text,
-        })
-      );
+      dispatch(setCreateItem(createItemDraft));
       navigate(`/controller/bible?name=${encodeURI(itemName)}`);
+      return;
     }
 
     if (selectedType === "timer") {
@@ -209,16 +244,14 @@ const CreateItem = () => {
         brightness: defaultTimerBackgroundBrightness,
       });
 
+      setJustCreated(true);
+      dispatch(resetCreateItem());
       dispatchNewItem(newItem);
       if (newItem.timerInfo) {
         dispatch(addTimer(newItem.timerInfo));
       }
+      return;
     }
-
-    setItemName("");
-    setText("");
-    setJustCreated(true);
-    setTimeout(() => setJustCreated(false), 2000);
   };
 
   const addItem = () => {
@@ -238,7 +271,7 @@ const CreateItem = () => {
           </h3>
           <Input
             value={itemName}
-            onChange={(val) => setItemName(val as string)}
+            onChange={(val) => updateCreateItemDraft({ name: val as string })}
             label="Item Name"
             className="text-base"
             data-ignore-undo="true"
@@ -267,18 +300,10 @@ const CreateItem = () => {
               />
               <RadioButton
                 label={itemType.label}
-                value={itemType.selected}
+                value={selectedType === itemType.type}
                 textSize="text-base"
                 className="w-24"
-                onChange={() => {
-                  setSelectedType(itemType.type);
-                  setItemTypes((prev) =>
-                    prev.map((item) => ({
-                      ...item,
-                      selected: item.type === itemType.type,
-                    }))
-                  );
-                }}
+                onChange={() => updateCreateItemDraft({ type: itemType.type })}
               />
             </li>
           ))}
@@ -289,7 +314,7 @@ const CreateItem = () => {
             className="w-full h-72 mt-2 flex flex-col"
             label="Paste Text Here"
             value={text}
-            onChange={(val) => setText(val as string)}
+            onChange={(val) => updateCreateItemDraft({ text: val as string })}
             data-ignore-undo="true"
           />
         )}
@@ -301,14 +326,16 @@ const CreateItem = () => {
                 label="Timer"
                 value={timerType === "timer"}
                 textSize="text-base"
-                onChange={() => setTimerType("timer")}
+                onChange={() => updateCreateItemDraft({ timerType: "timer" })}
                 data-ignore-undo="true"
               />
               <RadioButton
                 label="Countdown"
                 value={timerType === "countdown"}
                 textSize="text-base"
-                onChange={() => setTimerType("countdown")}
+                onChange={() =>
+                  updateCreateItemDraft({ timerType: "countdown" })
+                }
                 data-ignore-undo="true"
               />
             </div>
@@ -318,7 +345,9 @@ const CreateItem = () => {
                   type="time"
                   label="Countdown To"
                   value={time}
-                  onChange={(val) => setTime(val as string)}
+                  onChange={(val) =>
+                    updateCreateItemDraft({ time: val as string })
+                  }
                   data-ignore-undo="true"
                 />
               </div>
@@ -330,7 +359,9 @@ const CreateItem = () => {
                   type="number"
                   min={0}
                   value={hours}
-                  onChange={(val) => setHours(Number(val) || 0)}
+                  onChange={(val) =>
+                    updateCreateItemDraft({ hours: Number(val) || 0 })
+                  }
                   data-ignore-undo="true"
                 />
                 <Input
@@ -339,7 +370,9 @@ const CreateItem = () => {
                   min={0}
                   max={59}
                   value={minutes}
-                  onChange={(val) => setMinutes(Number(val) || 0)}
+                  onChange={(val) =>
+                    updateCreateItemDraft({ minutes: Number(val) || 0 })
+                  }
                   data-ignore-undo="true"
                 />
                 <Input
@@ -348,7 +381,9 @@ const CreateItem = () => {
                   min={0}
                   max={59}
                   value={seconds}
-                  onChange={(val) => setSeconds(Number(val) || 0)}
+                  onChange={(val) =>
+                    updateCreateItemDraft({ seconds: Number(val) || 0 })
+                  }
                   data-ignore-undo="true"
                 />
               </div>
@@ -366,7 +401,7 @@ const CreateItem = () => {
         >
           {justCreated
             ? "Created!"
-            : `Create ${itemTypes.find((item) => item.selected)?.label}`}
+            : `Create ${selectedTypeLabel}`}
         </Button>
       </div>
     </ErrorBoundary>
