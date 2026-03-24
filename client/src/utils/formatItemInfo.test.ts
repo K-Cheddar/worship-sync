@@ -6,6 +6,12 @@ jest.mock("./generateRandomId", () => ({
   default: () => "fixed-id",
 }));
 
+jest.mock("./overflow", () => ({
+  __esModule: true,
+  formatSong: (item: unknown) => item,
+  getFormattedSections: jest.fn(() => []),
+}));
+
 const mockToURL = jest.fn(() => "https://cloudinary.com/box.jpg");
 const mockCloud = {
   image: jest.fn(() => ({ toURL: mockToURL })),
@@ -100,5 +106,44 @@ describe("formatItemInfo", () => {
     const result = formatItemInfo(item, mockCloud);
     expect(result.formattedSections).toBeDefined();
     expect(Array.isArray(result.formattedSections)).toBe(true);
+  });
+
+  it("fills in missing lyric ids without replacing existing ones", () => {
+    const item = {
+      name: "Song",
+      type: "song",
+      _id: "song-1",
+      selectedArrangement: 0,
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+      arrangements: [
+        {
+          name: "Master",
+          id: "arr-1",
+          songOrder: [{ id: "order-1", name: "Verse 1" }],
+          slides: [],
+          formattedLyrics: [
+            {
+              id: "existing-id",
+              type: "Verse",
+              name: "Verse 1",
+              words: "First verse",
+              slideSpan: 1,
+            },
+            {
+              type: "Verse",
+              name: "Verse 2",
+              words: "Second verse",
+              slideSpan: 1,
+            },
+          ],
+        },
+      ],
+      slides: [],
+    } as unknown as DBItem;
+
+    const result = formatItemInfo(item, mockCloud);
+
+    expect(result.arrangements[0].formattedLyrics[0].id).toBe("existing-id");
+    expect(result.arrangements[0].formattedLyrics[1].id).toBe("fixed-id");
   });
 });

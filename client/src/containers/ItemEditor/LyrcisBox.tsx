@@ -11,12 +11,13 @@ export type LyrcisBoxProps = {
   lyric: FormattedLyricsType;
   index: number;
   selected: boolean;
+  justMoved: boolean;
   availableSections: { value: string; label: string }[];
   availableSectionsKey: string;
   isMobile: boolean;
   onChangeSectionType: (name: string, index: number) => void;
   onDelete: (index: number) => void;
-  onSelect?: (index: number) => void;
+  onSelect?: (sectionId: string) => void;
   onWordsChange: (index: number, value: string) => void;
 };
 
@@ -24,6 +25,7 @@ const LyrcisBox = memo(({
   lyric,
   index,
   selected,
+  justMoved,
   availableSections,
   isMobile,
   onChangeSectionType,
@@ -33,9 +35,11 @@ const LyrcisBox = memo(({
 }: LyrcisBoxProps) => {
   return (
     <li
+      id={lyric.id ? `lyric-box-${lyric.id}` : undefined}
       className={cn(
         "text-sm border-4 rounded-lg",
-        selected ? "border-cyan-500" : "border-transparent"
+        selected ? "border-cyan-500" : "border-transparent",
+        justMoved && "section-track-move"
       )}
     >
       <div
@@ -65,7 +69,7 @@ const LyrcisBox = memo(({
         />
       </div>
       <div
-        onClick={() => onSelect && onSelect(index)}
+        onClick={() => lyric.id && onSelect && onSelect(lyric.id)}
         className={cn("cursor-pointer")}
       >
         <TextArea
@@ -75,7 +79,7 @@ const LyrcisBox = memo(({
           value={lyric.words}
           autoResize={isMobile}
           onChange={(val) => onWordsChange(index, val as string)}
-          onFocus={() => onSelect && onSelect(index)}
+          onFocus={() => lyric.id && onSelect && onSelect(lyric.id)}
         />
       </div>
     </li>
@@ -85,6 +89,7 @@ const LyrcisBox = memo(({
     prev.lyric === next.lyric &&
     prev.index === next.index &&
     prev.selected === next.selected &&
+    prev.justMoved === next.justMoved &&
     prev.isMobile === next.isMobile &&
     prev.availableSectionsKey === next.availableSectionsKey
   );
