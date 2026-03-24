@@ -30,6 +30,36 @@ describe("itemSlice", () => {
       expect(state.type).toBe("song");
     });
 
+    it("setActiveItem resets transient item flags", () => {
+      const store = createStore({
+        item: {
+          ...itemSlice.getInitialState(),
+          name: "Previous Item",
+          _id: "previous-item",
+          isLoading: true,
+          isSectionLoading: true,
+          isItemFormatting: true,
+          hasPendingUpdate: true,
+          restoreFocusToBox: 3,
+        },
+      });
+
+      store.dispatch(
+        itemSlice.actions.setActiveItem({
+          name: "New Song",
+          _id: "item-123",
+          type: "song",
+        }),
+      );
+
+      const state = store.getState().item;
+      expect(state.isLoading).toBe(false);
+      expect(state.isSectionLoading).toBe(false);
+      expect(state.isItemFormatting).toBe(false);
+      expect(state.hasPendingUpdate).toBe(false);
+      expect(state.restoreFocusToBox).toBeNull();
+    });
+
     it("preserves free slides as provided when loading the active item", () => {
       const store = createStore();
       store.dispatch(

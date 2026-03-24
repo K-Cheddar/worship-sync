@@ -80,6 +80,15 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
 
+const sanitizeTransientItemState = (item: RootState["undoable"]["present"]["item"]) => ({
+  ...item,
+  isLoading: false,
+  isSectionLoading: false,
+  isItemFormatting: false,
+  hasPendingUpdate: false,
+  restoreFocusToBox: null,
+});
+
 /** Push current presentation (projector/monitor/stream) to Firebase + localStorage. */
 export const writePresentationSnapshotToFirebase = (state: RootState) => {
   if (!globalFireDbInfo.db || !globalFireDbInfo.database) return;
@@ -161,6 +170,7 @@ const excludedActions: string[] = [
   itemSlice.actions.forceUpdate.toString(),
   itemSlice.actions.setSelectedBox.toString(),
   itemSlice.actions.setActiveItem.toString(),
+  itemSlice.actions.clearTransientState.toString(),
   overlaysSlice.actions.initiateOverlayList.toString(),
   overlaysSlice.actions.updateOverlayListFromRemote.toString(),
   overlaysSlice.actions.setHasPendingUpdate.toString(),
@@ -273,6 +283,7 @@ const undoableReducers = undoable(
 
       return !isExcluded;
     },
+    syncFilter: true,
     limit: 100,
   },
 );
@@ -290,6 +301,7 @@ listenerMiddleware.startListening({
       itemSlice.actions.setSectionLoading,
       itemSlice.actions.setHasPendingUpdate,
       itemSlice.actions.setItemFormatting,
+      itemSlice.actions.clearTransientState,
     );
     return (
       (currentState as RootState).undoable.present.item !==
@@ -1626,11 +1638,13 @@ listenerMiddleware.startListening({
     const currentState = listenerApi.getState() as RootState;
     const previousState = listenerApi.getOriginalState() as RootState;
 
+    listenerApi.dispatch(itemSlice.actions.clearTransientState());
+
     // Only force update for slices that actually changed during undo/redo
     if (
       !_.isEqual(
-        currentState.undoable.present.item,
-        previousState.undoable.present.item,
+        sanitizeTransientItemState(currentState.undoable.present.item),
+        sanitizeTransientItemState(previousState.undoable.present.item),
       )
     ) {
       listenerApi.dispatch(itemSlice.actions.forceUpdate());

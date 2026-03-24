@@ -24,6 +24,7 @@ import {
 } from "react-colorful";
 import cn from "classnames";
 import Icon from "../../../components/Icon/Icon";
+import { FONT_SIZE_BUTTON_STEP } from "../../../constants";
 
 type fieldType =
   | "paddingX"
@@ -141,7 +142,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           onClick={() =>
             handleChange(
               "fontSize",
-              (formattedTextState.fontSize - 1).toString()
+              (formattedTextState.fontSize - FONT_SIZE_BUTTON_STEP).toString()
             )
           }
         />
@@ -161,7 +162,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           onClick={() =>
             handleChange(
               "fontSize",
-              (formattedTextState.fontSize + 1).toString()
+              (formattedTextState.fontSize + FONT_SIZE_BUTTON_STEP).toString()
             )
           }
         />
