@@ -7,7 +7,7 @@ import {
   setActiveItemInList,
 } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
@@ -29,9 +29,14 @@ import generateRandomId from "../../utils/generateRandomId";
 import HeadingItem from "./HeadingItem";
 import { ServiceItem as ServiceItemType } from "../../types";
 
+/** Matches LeftPanelButton link target (`/controller/${to}`) so keyboard nav is not relative to bible/songs/etc. */
+const getControllerItemPath = (item: Pick<ServiceItemType, "_id" | "listId">) =>
+  `/controller/item/${window.btoa(encodeURI(item._id))}/${window.btoa(
+    encodeURI(item.listId)
+  )}`;
+
 const ServiceItems = () => {
   const dispatch = useDispatch();
-  const location = useLocation();
   const navigate = useNavigate();
   const {
     list: serviceItems,
@@ -161,23 +166,56 @@ const ServiceItems = () => {
     }
   };
 
+  const findNextNonHeadingIndex = (fromIndex: number) => {
+    for (let i = fromIndex + 1; i < serviceItems.length; i++) {
+      if (serviceItems[i].type !== "heading") return i;
+    }
+    return -1;
+  };
+
+  const findPrevNonHeadingIndex = (fromIndex: number) => {
+    for (let i = fromIndex - 1; i >= 0; i--) {
+      if (serviceItems[i].type !== "heading") return i;
+    }
+    return -1;
+  };
+
+  const findNextHeadingIndex = (fromIndex: number) => {
+    for (let i = fromIndex + 1; i < serviceItems.length; i++) {
+      if (serviceItems[i].type === "heading") return i;
+    }
+    return -1;
+  };
+
+  const findPrevHeadingIndex = (fromIndex: number) => {
+    for (let i = fromIndex - 1; i >= 0; i--) {
+      if (serviceItems[i].type === "heading") return i;
+    }
+    return -1;
+  };
+
   const handleItemListKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
       const currentIndex = serviceItems.findIndex(
         (item) => item.listId === selectedItemListId
       );
-      const nextIndex = Math.min(
-        currentIndex + 1,
-        serviceItems.length - 1
-      );
-      const nextItem = serviceItems[nextIndex];
-      if (nextItem) {
-        navigate(
-          `item/${window.btoa(encodeURI(nextItem._id))}/${window.btoa(
-            encodeURI(nextItem.listId)
-          )}`
-        );
+      if (currentIndex === -1) return;
+      const nextIndex = findNextNonHeadingIndex(currentIndex);
+      if (nextIndex >= 0) {
+        const nextItem = serviceItems[nextIndex];
+        setSelectedListIds(new Set([nextItem.listId]));
+        setAnchorListId(nextItem.listId);
+        dispatch(setActiveItemInList(nextItem.listId));
+        navigate(getControllerItemPath(nextItem));
+        return;
+      }
+      const nextHeadingIdx = findNextHeadingIndex(currentIndex);
+      if (nextHeadingIdx >= 0) {
+        const hid = serviceItems[nextHeadingIdx].listId;
+        setSelectedListIds(new Set([hid]));
+        setAnchorListId(hid);
+        dispatch(setActiveItemInList(hid));
       }
     }
     if (e.key === "ArrowUp") {
@@ -185,14 +223,22 @@ const ServiceItems = () => {
       const currentIndex = serviceItems.findIndex(
         (item) => item.listId === selectedItemListId
       );
-      const prevIndex = Math.max(currentIndex - 1, 0);
-      const prevItem = serviceItems[prevIndex];
-      if (prevItem) {
-        navigate(
-          `item/${window.btoa(encodeURI(prevItem._id))}/${window.btoa(
-            encodeURI(prevItem.listId)
-          )}`
-        );
+      if (currentIndex === -1) return;
+      const prevIndex = findPrevNonHeadingIndex(currentIndex);
+      if (prevIndex >= 0) {
+        const prevItem = serviceItems[prevIndex];
+        setSelectedListIds(new Set([prevItem.listId]));
+        setAnchorListId(prevItem.listId);
+        dispatch(setActiveItemInList(prevItem.listId));
+        navigate(getControllerItemPath(prevItem));
+        return;
+      }
+      const prevHeadingIdx = findPrevHeadingIndex(currentIndex);
+      if (prevHeadingIdx >= 0) {
+        const hid = serviceItems[prevHeadingIdx].listId;
+        setSelectedListIds(new Set([hid]));
+        setAnchorListId(hid);
+        dispatch(setActiveItemInList(hid));
       }
     }
   };
@@ -376,6 +422,10 @@ const ServiceItems = () => {
                       <HeadingItem
                         key={item.listId}
                         item={item}
+                        index={index}
+                        selectedItemListId={selectedItemListId}
+                        insertPointIndex={insertPointIndex}
+                        selectedListIds={selectedListIds}
                         isCollapsed={collapsedHeadingListIds.has(item.listId)}
                         onToggleCollapse={() =>
                           handleToggleHeadingCollapse(item.listId)
@@ -384,6 +434,7 @@ const ServiceItems = () => {
                           handleSaveHeadingName(item, newName)
                         }
                         onDelete={() => handleDeleteHeading(item.listId)}
+                        onItemClick={handleItemClick}
                       />
                     );
                   }
@@ -404,7 +455,6 @@ const ServiceItems = () => {
                       insertPointIndex={insertPointIndex}
                       selectedListIds={selectedListIds}
                       initialItems={initialItems}
-                      location={location}
                       onItemClick={handleItemClick}
                     />
                   );

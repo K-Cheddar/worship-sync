@@ -157,6 +157,38 @@ describe("itemListSlice", () => {
       expect(state.insertPointIndex).toBe(1);
     });
 
+    it("addItemToItemList inserts directly under a selected heading", () => {
+      const store = createStore({
+        itemList: {
+          list: [
+            createServiceItem({
+              name: "Section",
+              _id: "h1",
+              listId: "lid-h",
+              type: "heading",
+            }),
+            createServiceItem({ name: "Song", _id: "s1", listId: "l1" }),
+          ],
+          isLoading: false,
+          selectedItemListId: "lid-h",
+          insertPointIndex: 0,
+          hasPendingUpdate: false,
+          initialItems: [],
+          isInitialized: true,
+        },
+      });
+      const newItem = {
+        ...createServiceItem({ name: "New", _id: "new" }),
+        listId: undefined,
+      } as unknown as ServiceItem;
+      store.dispatch(addItemToItemList(newItem));
+      const state = store.getState().itemList;
+      expect(state.list).toHaveLength(3);
+      expect(state.list[0].type).toBe("heading");
+      expect(state.list[1].name).toBe("New");
+      expect(state.list[2].name).toBe("Song");
+    });
+
     it("addItemToItemList preserves a provided listId", () => {
       const store = createStore({
         itemList: {

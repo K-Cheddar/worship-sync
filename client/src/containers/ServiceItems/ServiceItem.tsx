@@ -8,12 +8,12 @@ import {
   removeItemFromList,
 } from "../../store/itemListSlice";
 import gsap from "gsap";
-import { Location } from "react-router-dom";
 import { ServiceItem as ServiceItemType } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import { useGSAP } from "@gsap/react";
 import cn from "classnames";
+import { getOutlineRowSelectionState } from "../../utils/outlineRowSelection";
 
 type ServiceItemsProps = {
   isActive: boolean;
@@ -22,7 +22,6 @@ type ServiceItemsProps = {
   selectedItemListId: string | undefined;
   insertPointIndex: number;
   selectedListIds: Set<string>;
-  location: Location;
   item: ServiceItemType;
   initialItems: string[];
   onItemClick: (listId: string, e: React.MouseEvent) => void;
@@ -36,7 +35,6 @@ const ServiceItem = ({
   selectedItemListId,
   insertPointIndex,
   selectedListIds,
-  location,
   initialItems,
   onItemClick,
 }: ServiceItemsProps) => {
@@ -49,11 +47,13 @@ const ServiceItem = ({
   const previousItem = useRef<ServiceItemType | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const isSelected =
-    selectedListIds.has(item.listId) ||
-    (selectedListIds.size === 0 && item.listId === selectedItemListId);
-
-  const isInsertPoint = index === insertPointIndex;
+  const { isSelected, isInsertPoint } = getOutlineRowSelectionState(
+    item.listId,
+    index,
+    selectedListIds,
+    selectedItemListId,
+    insertPointIndex
+  );
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -171,7 +171,7 @@ const ServiceItem = ({
         isSelected ? "border-l-cyan-500" : "border-transparent",
         isInsertPoint ? "border-b-white" : "border-b-transparent"
       )}
-      isSelected={isSelected && location.pathname.includes("item")}
+      isSelected={isSelected}
       to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(
         encodeURI(item.listId)
       )}`}
