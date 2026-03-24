@@ -106,7 +106,7 @@ const CreateItem = () => {
 
   const { db } = useContext(ControllerInfoContext) || {};
 
-  const naviagte = useNavigate();
+  const navigate = useNavigate();
   const dispatch = useDispatch();
 
   const existingItem: ServiceItem | undefined = useMemo(() => {
@@ -120,6 +120,14 @@ const CreateItem = () => {
     return undefined;
   }, [itemName, list, selectedType]);
 
+  const goToItem = (itemId: string, listId: string) => {
+    navigate(
+      `/controller/item/${window.btoa(encodeURI(itemId))}/${window.btoa(
+        encodeURI(listId)
+      )}`
+    );
+  };
+
   const dispatchNewItem = (item: ItemState) => {
     const listItem = {
       name: item.name,
@@ -131,6 +139,7 @@ const CreateItem = () => {
     dispatch(setActiveItem(item));
     dispatch(addItemToItemList(listItem));
     dispatch(addItemToAllItemsList(listItem));
+    goToItem(item._id, listItem.listId);
   };
 
   const createItem = async () => {
@@ -182,7 +191,7 @@ const CreateItem = () => {
           text,
         })
       );
-      naviagte(`/controller/bible?name=${encodeURI(itemName)}`);
+      navigate(`/controller/bible?name=${encodeURI(itemName)}`);
     }
 
     if (selectedType === "timer") {

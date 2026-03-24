@@ -98,8 +98,12 @@ describe("overflow utilities", () => {
     expect(result).toHaveLength(2);
     expect(result[0].boxes[1].words).toBe("Line 1\nLine 2\n");
     expect(result[1].boxes[1].words).toBe("Line 3");
-    expect(result[0].monitorFormatted).toBe(true);
-    expect(result[1].monitorFormatted).toBe(true);
+    expect((result[0] as { monitorFormatted?: boolean }).monitorFormatted).toBe(
+      true,
+    );
+    expect((result[1] as { monitorFormatted?: boolean }).monitorFormatted).toBe(
+      true,
+    );
   });
 
   it("returns original slides when free-form section metadata is missing", () => {
@@ -159,7 +163,7 @@ describe("overflow utilities", () => {
     expect(result.slides).toHaveLength(1);
     expect(result.slides[0].name).toBe("Section 1");
     expect(result.slides[0].boxes[1].words).toBe("new words");
-    expect(result.formattedSections[0].slideSpan).toBe(1);
+    expect(result.formattedSections?.[0]?.slideSpan).toBe(1);
   });
 
   it("formats lyrics into title, body slides, and trailing blank", () => {
@@ -280,7 +284,7 @@ describe("overflow utilities", () => {
       version: "nkjv",
       verses: [],
     });
-    expect(noVerses.bibleInfo.book).toBe("John");
+    expect(noVerses.bibleInfo?.book).toBe("John");
     expect(noVerses.slides.length).toBe(2);
 
     (getNumLines as jest.Mock).mockReturnValue(1);
@@ -290,9 +294,9 @@ describe("overflow utilities", () => {
       book: "John",
       chapter: "3",
       version: "nkjv",
-      verses: [{ name: "16", text: "For God so loved the world" }],
+      verses: [{ index: 15, name: "16", text: "For God so loved the world" }],
     });
     expect(withVerses.slides.length).toBeGreaterThan(2);
-    expect(withVerses.bibleInfo.verses[0].name).toBe("16");
+    expect(withVerses.bibleInfo?.verses[0]?.name).toBe("16");
   });
 });

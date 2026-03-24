@@ -92,6 +92,7 @@ describe("itemSlice", () => {
               id: "arr-1",
               formattedLyrics: [
                 {
+                  id: "fl-orig",
                   type: "Verse",
                   name: "Verse 1",
                   words: "Original line",
@@ -110,6 +111,7 @@ describe("itemSlice", () => {
           id: "arr-1",
           formattedLyrics: [
             {
+              id: "fl-edit",
               type: "Verse",
               name: "Verse 1",
               words: "Edited line",

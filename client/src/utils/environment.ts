@@ -3,19 +3,6 @@
  * Determines if the app is running in Electron or web browser
  */
 
-// Type definitions for Electron API exposed via preload
-declare global {
-  interface Window {
-    electronAPI?: {
-      getAppVersion: () => Promise<string>;
-      getPlatform: () => Promise<string>;
-      isElectron: () => Promise<boolean>;
-      isDev: () => Promise<boolean>;
-    };
-    __ELECTRON__?: boolean;
-  }
-}
-
 /**
  * Check if the app is running in Electron
  */

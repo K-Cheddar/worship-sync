@@ -21,7 +21,8 @@ jest.mock("gsap", () => ({
   __esModule: true,
   default: {
     timeline: jest.fn(() => timelineMock),
-    getProperty: (...args: any[]) => gsapGetPropertyMock(...args),
+    getProperty: (...args: any[]) =>
+      gsapGetPropertyMock.apply(undefined, args) as number,
   },
 }));
 
