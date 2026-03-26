@@ -1,3 +1,22 @@
+# [1.39.0](https://github.com/K-Cheddar/worship-sync/compare/v1.38.7...v1.39.0) (2026-03-26)
+
+
+### Bug Fixes
+
+* Fix view next slide on custom items ([5f72e20](https://github.com/K-Cheddar/worship-sync/commit/5f72e20ea3fc374f3c8da895ce2103e9dd0e77d8))
+* improve stb transition ([86f0e1f](https://github.com/K-Cheddar/worship-sync/commit/86f0e1f589e8d2db9d32f96528b8d2df57c3ff5d))
+* Improve undo for overlays ([029743a](https://github.com/K-Cheddar/worship-sync/commit/029743a868715e6f00b10c49ad2a595bc6058a2e))
+* Improve undo functionality when selecting items in an outline ([87ff77a](https://github.com/K-Cheddar/worship-sync/commit/87ff77a3f5a673498df94baa68cb0fe72795f9a8))
+* Make it easier to follow when we change section names in lyrics editor ([d33cdd0](https://github.com/K-Cheddar/worship-sync/commit/d33cdd08ad84a5f7acd5749eb600ce247211915d))
+
+
+### Features
+
+* Add box presets for bible ([3e36c57](https://github.com/K-Cheddar/worship-sync/commit/3e36c57b7dc363f5f84f99f10a542d64b266ae1b))
+* Added Overlay Controller ([95188d2](https://github.com/K-Cheddar/worship-sync/commit/95188d282b5bbe47be6f01877a5cc74f23a25f95))
+* allow selecting headings in the outline ([6816389](https://github.com/K-Cheddar/worship-sync/commit/6816389f7a47b11dd9cc136445cd43e9411487a2))
+* Keep create item state if you leave and come back ([07b182a](https://github.com/K-Cheddar/worship-sync/commit/07b182a818f26c1a9e93da56453f509386281de1))
+
 ## [1.38.7](https://github.com/K-Cheddar/worship-sync/compare/v1.38.6...v1.38.7) (2026-03-15)
 
 
