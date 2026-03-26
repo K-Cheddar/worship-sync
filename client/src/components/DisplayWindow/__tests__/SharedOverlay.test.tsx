@@ -139,7 +139,11 @@ describe("SharedOverlay", () => {
     );
 
     expect(
-      document.querySelector(".prev-overlay-stick-to-bottom-info-heading"),
+      screen.getByText((_content, element) =>
+        element?.classList.contains(
+          "prev-overlay-stick-to-bottom-info-heading",
+        ) ?? false,
+      ),
     ).toHaveStyle({
       whiteSpace: "pre-line",
     });

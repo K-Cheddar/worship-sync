@@ -1,5 +1,5 @@
 import { configureStore } from "@reduxjs/toolkit";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import Item from "./Item";
@@ -79,11 +79,7 @@ describe("Controller Item page", () => {
       </Provider>,
     );
 
-    await waitFor(() =>
-      expect(
-        screen.getByText("Item Not Found"),
-      ).toBeInTheDocument(),
-    );
+    expect(await screen.findByText("Item Not Found")).toBeInTheDocument();
 
     expect(dbGet).toHaveBeenCalledWith("item-123");
     expect(store.getState().undoable.present.item.isLoading).toBe(false);

@@ -160,7 +160,7 @@ describe("CreateItem", () => {
 
   it("persists the song draft when leaving and returning", () => {
     const store = createTestStore();
-    const firstRender = renderCreateItem({ store });
+    const view = renderCreateItem({ store });
 
     fireEvent.change(screen.getByLabelText("Item Name:"), {
       target: { value: "Amazing Grace" },
@@ -169,7 +169,7 @@ describe("CreateItem", () => {
       target: { value: "Verse 1" },
     });
 
-    firstRender.unmount();
+    view.unmount();
     renderCreateItem({ store });
 
     expect(screen.getByLabelText("Item Name:")).toHaveValue("Amazing Grace");
@@ -178,7 +178,7 @@ describe("CreateItem", () => {
 
   it("persists timer values when leaving and returning", () => {
     const store = createTestStore();
-    const firstRender = renderCreateItem({ store });
+    const view = renderCreateItem({ store });
 
     fireEvent.click(screen.getAllByLabelText("Timer:")[0]);
     fireEvent.change(screen.getByLabelText("Hours:"), {
@@ -195,7 +195,7 @@ describe("CreateItem", () => {
       target: { value: "09:30" },
     });
 
-    firstRender.unmount();
+    view.unmount();
     renderCreateItem({ store });
 
     expect(screen.getByLabelText("Countdown:")).toBeChecked();
@@ -295,7 +295,7 @@ describe("CreateItem", () => {
 
   it("keeps the draft when navigating to Bible and back without creating", async () => {
     const store = createTestStore();
-    const firstRender = renderCreateItem({ store });
+    const view = renderCreateItem({ store });
 
     fireEvent.click(screen.getByLabelText("Bible:"));
     fireEvent.change(screen.getByLabelText("Item Name:"), {
@@ -311,7 +311,7 @@ describe("CreateItem", () => {
     expect(store.getState().createItem.name).toBe("John Reading");
     expect(store.getState().createItem.type).toBe("bible");
 
-    firstRender.unmount();
+    view.unmount();
     renderCreateItem({ store });
 
     expect(screen.getByLabelText("Item Name:")).toHaveValue("John Reading");
