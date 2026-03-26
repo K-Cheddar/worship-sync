@@ -54,6 +54,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { cn } from "../../utils/cnHelper";
 import { updateTimer } from "../../store/timersSlice";
 import { DEFAULT_FONT_PX } from "../../constants";
+import { ensureSlidesHaveMonitorBandFormatting } from "../../utils/overflow";
 
 type SizeConfig = {
   borderWidth: string;
@@ -108,6 +109,14 @@ const ItemSlides = () => {
 
   const canEdit = access === "full" || (access === "music" && type === "song");
   const isMusic = useMemo(() => access === "music", [access]);
+  const shouldPrepareFreeMonitorSlides =
+    type === "free" && shouldSendTo.monitor && monitorShowNextSlide;
+
+  const monitorReadySlides = useMemo(() => {
+    return shouldPrepareFreeMonitorSlides
+      ? ensureSlidesHaveMonitorBandFormatting(slides)
+      : slides;
+  }, [slides, shouldPrepareFreeMonitorSlides]);
 
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
   const size = type === "timer" ? Math.min(_size, 3) : _size;
@@ -260,6 +269,7 @@ const ItemSlides = () => {
         if (index === selectedSlide + 1) transitionDirection = "next";
         else if (index === selectedSlide - 1) transitionDirection = "prev";
         else transitionDirection = "jump";
+        const monitorSlide = monitorReadySlides[index] ?? slide;
         const canShowNextSlide =
           (type === "song" || type === "bible" || type === "free") &&
           monitorShowNextSlide &&
@@ -267,7 +277,9 @@ const ItemSlides = () => {
           (slide?.boxes ?? []).every(
             (box, i) => i === 0 || box.height <= 55
           );
-        const nextSlideSlide = canShowNextSlide ? slides[index + 1] : null;
+        const nextSlideSlide = canShowNextSlide
+          ? monitorReadySlides[index + 1] ?? slides[index + 1]
+          : null;
         const nextSlideForMonitor = nextSlideSlide
           ? {
             ...nextSlideSlide,
@@ -276,11 +288,11 @@ const ItemSlides = () => {
           : undefined;
         // Only use band-formatted boxes when using next-slide layout; single-slide uses DisplayBox at 1080p
         const slideForMonitor = {
-          ...slide,
+          ...monitorSlide,
           boxes:
             nextSlideForMonitor != null
-              ? slide.monitorCurrentBandBoxes ?? slide.boxes
-              : slide.boxes,
+              ? monitorSlide.monitorCurrentBandBoxes ?? monitorSlide.boxes
+              : monitorSlide.boxes,
         };
         dispatch(
           updateMonitor({
@@ -312,6 +324,7 @@ const ItemSlides = () => {
       slides,
       _id,
       selectedSlide,
+      monitorReadySlides,
     ]
   );
 

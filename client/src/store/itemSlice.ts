@@ -52,6 +52,14 @@ const initialState: ItemState = {
   restoreFocusToBox: null,
 };
 
+const resetTransientItemState = (state: ItemState) => {
+  state.isLoading = false;
+  state.isSectionLoading = false;
+  state.isItemFormatting = false;
+  state.hasPendingUpdate = false;
+  state.restoreFocusToBox = null;
+};
+
 export const itemSlice = createSlice({
   name: "item",
   initialState,
@@ -82,7 +90,7 @@ export const itemSlice = createSlice({
         monitor: true,
         stream: true,
       };
-      state.restoreFocusToBox = null;
+      resetTransientItemState(state);
     },
     setIsEditMode: (state, action: PayloadAction<boolean>) => {
       state.isEditMode = action.payload;
@@ -151,6 +159,9 @@ export const itemSlice = createSlice({
       action: PayloadAction<number | null | undefined>
     ) => {
       state.restoreFocusToBox = action.payload ?? null;
+    },
+    clearTransientState: (state) => {
+      resetTransientItemState(state);
     },
   },
 });
@@ -484,6 +495,7 @@ export const {
   setIsEditMode,
   _setName,
   _updateArrangements,
+  clearTransientState,
   setActiveItem,
   setItemIsLoading,
   setSectionLoading,

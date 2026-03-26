@@ -16,8 +16,19 @@ jest.mock("./slideCreation", () => ({
 }));
 
 jest.mock("./monitorSlideFormatter", () => ({
-  addMonitorFormattedToSlide: jest.fn((slide) => ({ ...slide, monitorFormatted: true })),
-  addMonitorFormattedToSlides: jest.fn((slides) => slides),
+  addMonitorFormattedToSlide: jest.fn((slide) => ({
+    ...slide,
+    monitorFormatted: true,
+    monitorCurrentBandBoxes: [{ id: "current-0", words: slide.boxes?.[1]?.words }],
+    monitorNextBandBoxes: [{ id: "next-0", words: slide.boxes?.[1]?.words }],
+  })),
+  addMonitorFormattedToSlides: jest.fn((slides) =>
+    slides.map((slide: any, index: number) => ({
+      ...slide,
+      monitorCurrentBandBoxes: [{ id: `current-${index}`, words: slide.boxes?.[1]?.words }],
+      monitorNextBandBoxes: [{ id: `next-${index}`, words: slide.boxes?.[1]?.words }],
+    })),
+  ),
 }));
 
 let generatedId = 0;
@@ -98,8 +109,12 @@ describe("overflow utilities", () => {
     expect(result).toHaveLength(2);
     expect(result[0].boxes[1].words).toBe("Line 1\nLine 2\n");
     expect(result[1].boxes[1].words).toBe("Line 3");
-    expect(result[0].monitorFormatted).toBe(true);
-    expect(result[1].monitorFormatted).toBe(true);
+    expect((result[0] as { monitorFormatted?: boolean }).monitorFormatted).toBe(
+      true,
+    );
+    expect((result[1] as { monitorFormatted?: boolean }).monitorFormatted).toBe(
+      true,
+    );
   });
 
   it("returns original slides when free-form section metadata is missing", () => {
@@ -120,7 +135,17 @@ describe("overflow utilities", () => {
 
     const result = formatFree(item);
 
-    expect(result.slides).toEqual(item.slides);
+    expect(result.slides).toEqual([
+      expect.objectContaining({
+        name: "Section 3",
+        monitorCurrentBandBoxes: [
+          expect.objectContaining({ id: "current-0" }),
+        ],
+        monitorNextBandBoxes: [
+          expect.objectContaining({ id: "next-0" }),
+        ],
+      }),
+    ]);
     expect(errorSpy).toHaveBeenCalled();
   });
 
@@ -159,7 +184,13 @@ describe("overflow utilities", () => {
     expect(result.slides).toHaveLength(1);
     expect(result.slides[0].name).toBe("Section 1");
     expect(result.slides[0].boxes[1].words).toBe("new words");
-    expect(result.formattedSections[0].slideSpan).toBe(1);
+    expect(result.slides[0].monitorCurrentBandBoxes).toEqual([
+      expect.objectContaining({ id: "current-0", words: "new words" }),
+    ]);
+    expect(result.slides[0].monitorNextBandBoxes).toEqual([
+      expect.objectContaining({ id: "next-0", words: "new words" }),
+    ]);
+    expect(result.formattedSections?.[0]?.slideSpan).toBe(1);
   });
 
   it("formats lyrics into title, body slides, and trailing blank", () => {
@@ -280,7 +311,7 @@ describe("overflow utilities", () => {
       version: "nkjv",
       verses: [],
     });
-    expect(noVerses.bibleInfo.book).toBe("John");
+    expect(noVerses.bibleInfo?.book).toBe("John");
     expect(noVerses.slides.length).toBe(2);
 
     (getNumLines as jest.Mock).mockReturnValue(1);
@@ -290,9 +321,9 @@ describe("overflow utilities", () => {
       book: "John",
       chapter: "3",
       version: "nkjv",
-      verses: [{ name: "16", text: "For God so loved the world" }],
+      verses: [{ index: 15, name: "16", text: "For God so loved the world" }],
     });
     expect(withVerses.slides.length).toBeGreaterThan(2);
-    expect(withVerses.bibleInfo.verses[0].name).toBe("16");
+    expect(withVerses.bibleInfo?.verses[0]?.name).toBe("16");
   });
 });

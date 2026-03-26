@@ -122,6 +122,9 @@ jest.mock("./pages/Home", () => () => (
 jest.mock("./pages/Controller/Controller", () => () => (
   <div data-testid="controller-page">Controller Page</div>
 ));
+jest.mock("./pages/OverlayController/OverlayController", () => () => (
+  <div data-testid="overlay-controller-page">Overlay Controller Page</div>
+));
 jest.mock("./pages/Projector", () => () => (
   <div data-testid="projector-page">Projector Page</div>
 ));

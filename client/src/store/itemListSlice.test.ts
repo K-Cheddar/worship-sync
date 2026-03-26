@@ -145,13 +145,73 @@ describe("itemListSlice", () => {
           isInitialized: true,
         },
       });
-      const newItem = createServiceItem({ name: "New", _id: "new" });
+      const newItem = {
+        ...createServiceItem({ name: "New", _id: "new" }),
+        listId: undefined,
+      } as unknown as ServiceItem;
       store.dispatch(addItemToItemList(newItem));
       const state = store.getState().itemList;
       expect(state.list).toHaveLength(3);
       expect(state.list[1].name).toBe("New");
       expect(state.selectedItemListId).toBe("fixed-list-id");
       expect(state.insertPointIndex).toBe(1);
+    });
+
+    it("addItemToItemList inserts directly under a selected heading", () => {
+      const store = createStore({
+        itemList: {
+          list: [
+            createServiceItem({
+              name: "Section",
+              _id: "h1",
+              listId: "lid-h",
+              type: "heading",
+            }),
+            createServiceItem({ name: "Song", _id: "s1", listId: "l1" }),
+          ],
+          isLoading: false,
+          selectedItemListId: "lid-h",
+          insertPointIndex: 0,
+          hasPendingUpdate: false,
+          initialItems: [],
+          isInitialized: true,
+        },
+      });
+      const newItem = {
+        ...createServiceItem({ name: "New", _id: "new" }),
+        listId: undefined,
+      } as unknown as ServiceItem;
+      store.dispatch(addItemToItemList(newItem));
+      const state = store.getState().itemList;
+      expect(state.list).toHaveLength(3);
+      expect(state.list[0].type).toBe("heading");
+      expect(state.list[1].name).toBe("New");
+      expect(state.list[2].name).toBe("Song");
+    });
+
+    it("addItemToItemList preserves a provided listId", () => {
+      const store = createStore({
+        itemList: {
+          list: [
+            createServiceItem({ name: "A", _id: "a", listId: "l1" }),
+          ],
+          isLoading: false,
+          selectedItemListId: "l1",
+          insertPointIndex: 0,
+          hasPendingUpdate: false,
+          initialItems: [],
+          isInitialized: true,
+        },
+      });
+      const newItem = createServiceItem({
+        name: "New",
+        _id: "new",
+        listId: "preserved-list-id",
+      });
+      store.dispatch(addItemToItemList(newItem));
+      const state = store.getState().itemList;
+      expect(state.list[1].listId).toBe("preserved-list-id");
+      expect(state.selectedItemListId).toBe("preserved-list-id");
     });
 
     it("addItemToItemList adds existing song to outline", () => {

@@ -43,12 +43,18 @@ const LyricsEditor = () => {
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [previewTick, setPreviewTick] = useState(0);
   const [previewSlides, setPreviewSlides] = useState<ItemSlideType[]>([]);
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+  const [recentlyMovedSectionId, setRecentlyMovedSectionId] = useState<string | null>(null);
   const dispatch = useDispatch();
   const previewInputRef = useRef({
-    selectedSectionIndex: null as number | null,
+    selectedSectionId: null as string | null,
     localFormattedLyrics: [] as FormattedLyricsType[],
     localArrangements: [] as typeof localArrangements,
     localSelectedArrangement: 0,
+  });
+  const selectedSectionPositionRef = useRef({
+    id: null as string | null,
+    index: null as number | null,
   });
 
   const localFormattedLyrics = useMemo(
@@ -67,8 +73,22 @@ const LyricsEditor = () => {
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
 
   const [showLeftSection, setShowLeftSection] = useState(!isMobile);
-  const [selectedSectionIndex, setSelectedSectionIndex] = useState<number | null>(null);
   const [isPreviewMinimized, setIsPreviewMinimized] = useState(false);
+  const selectedSectionIndex = useMemo(() => {
+    if (!selectedSectionId) {
+      return null;
+    }
+
+    const index = localFormattedLyrics.findIndex(({ id }) => id === selectedSectionId);
+    return index === -1 ? null : index;
+  }, [localFormattedLyrics, selectedSectionId]);
+  const selectedSection = useMemo(() => {
+    if (selectedSectionIndex === null) {
+      return null;
+    }
+
+    return localFormattedLyrics[selectedSectionIndex] || null;
+  }, [localFormattedLyrics, selectedSectionIndex]);
 
   useEffect(() => {
     if (item.type !== "song") {
@@ -84,7 +104,8 @@ const LyricsEditor = () => {
     setLocalArrangements(arrangements);
     setLocalSelectedArrangement(selectedArrangement);
     // Reset selection when arrangement changes to allow auto-selection of first section
-    setSelectedSectionIndex(null);
+    setSelectedSectionId(null);
+    setRecentlyMovedSectionId(null);
   }, [arrangements, selectedArrangement]);
 
   useEffect(() => {
@@ -95,20 +116,45 @@ const LyricsEditor = () => {
 
   // Auto-select first section when formatted lyrics are available
   useEffect(() => {
-    if (localFormattedLyrics.length > 0 && selectedSectionIndex === null && !isMobile) {
-      setSelectedSectionIndex(0);
-    } else if (localFormattedLyrics.length === 0) {
-      setSelectedSectionIndex(null);
-    } else if (selectedSectionIndex !== null && selectedSectionIndex >= localFormattedLyrics.length) {
+    if (localFormattedLyrics.length === 0) {
+      setSelectedSectionId(null);
+    } else if (selectedSectionId && selectedSectionIndex === null) {
       // If selected section was deleted, select the first one or null
-      setSelectedSectionIndex(localFormattedLyrics.length > 0 ? 0 : null);
+      setSelectedSectionId(localFormattedLyrics[0].id || null);
+    } else if (selectedSectionId === null && !isMobile) {
+      setSelectedSectionId(localFormattedLyrics[0].id || null);
     }
-  }, [localFormattedLyrics.length, isMobile, selectedSectionIndex]);
+  }, [localFormattedLyrics, isMobile, selectedSectionId, selectedSectionIndex]);
 
   // Reset preview minimized state when section changes
   useEffect(() => {
     setIsPreviewMinimized(false);
-  }, [selectedSectionIndex]);
+  }, [selectedSectionId]);
+
+  useEffect(() => {
+    const previousSelection = selectedSectionPositionRef.current;
+
+    if (
+      selectedSectionId &&
+      previousSelection.id === selectedSectionId &&
+      previousSelection.index !== null &&
+      selectedSectionIndex !== null &&
+      previousSelection.index !== selectedSectionIndex
+    ) {
+      setRecentlyMovedSectionId(selectedSectionId);
+    }
+
+    selectedSectionPositionRef.current = {
+      id: selectedSectionId,
+      index: selectedSectionIndex,
+    };
+  }, [selectedSectionId, selectedSectionIndex]);
+
+  useEffect(() => {
+    if (recentlyMovedSectionId && recentlyMovedSectionId !== selectedSectionId) {
+      setRecentlyMovedSectionId(null);
+    }
+  }, [recentlyMovedSectionId, selectedSectionId]);
 
   const hasPendingChanges = useCallback(() => {
     return (
@@ -217,7 +263,7 @@ const LyricsEditor = () => {
     }, 350);
     return () => clearTimeout(timeout);
   }, [
-    selectedSectionIndex,
+    selectedSectionId,
     localFormattedLyrics,
     localArrangements,
     localSelectedArrangement,
@@ -225,12 +271,12 @@ const LyricsEditor = () => {
 
   useEffect(() => {
     previewInputRef.current = {
-      selectedSectionIndex,
+      selectedSectionId,
       localFormattedLyrics,
       localArrangements,
       localSelectedArrangement,
     };
-  }, [selectedSectionIndex, localFormattedLyrics, localArrangements, localSelectedArrangement]);
+  }, [selectedSectionId, localFormattedLyrics, localArrangements, localSelectedArrangement]);
 
   // Regenerate preview only on debounced ticks
   useEffect(() => {
@@ -240,18 +286,20 @@ const LyricsEditor = () => {
     }
 
     const {
-      selectedSectionIndex: activeSectionIndex,
+      selectedSectionId: activeSectionId,
       localFormattedLyrics: activeFormattedLyrics,
       localArrangements: activeArrangements,
       localSelectedArrangement: activeArrangementIndex,
     } = previewInputRef.current;
 
-    if (activeSectionIndex === null) {
+    if (activeSectionId === null) {
       setPreviewSlides([]);
       return;
     }
 
-    const selectedSection = activeFormattedLyrics[activeSectionIndex];
+    const selectedSection = activeFormattedLyrics.find(
+      ({ id }) => id === activeSectionId
+    );
     if (!selectedSection || !selectedSection.words.trim()) {
       setPreviewSlides([]);
       return;
@@ -461,13 +509,19 @@ const LyricsEditor = () => {
                   availableSections={availableSections}
                   onFormattedLyricsDelete={onFormattedLyricsDelete}
                   isMobile={isMobile || false}
-                  selectedSectionIndex={selectedSectionIndex}
-                  onSectionSelect={setSelectedSectionIndex}
+                  selectedSectionId={selectedSectionId}
+                  recentlyMovedSectionId={recentlyMovedSectionId}
+                  onMovedSectionTracked={(sectionId) =>
+                    setRecentlyMovedSectionId((currentId) =>
+                      currentId === sectionId ? null : currentId
+                    )
+                  }
+                  onSectionSelect={setSelectedSectionId}
                 />
               </div>
               {!isMobile && selectedSectionIndex !== null && (
                 <SectionPreview
-                  selectedSection={localFormattedLyrics[selectedSectionIndex] || null}
+                  selectedSection={selectedSection}
                   previewSlides={previewSlides}
                   isMinimized={isPreviewMinimized}
                   onMinimizeToggle={setIsPreviewMinimized}

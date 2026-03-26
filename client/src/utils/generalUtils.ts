@@ -229,6 +229,7 @@ export const keepElementInView = ({
         top: Math.max(0, targetScrollTop),
         behavior: "smooth",
       });
+      return true;
     } else if (isBelowViewport) {
       // Child is below viewport - scroll down
       const distanceBelow = (childRect.bottom + leadingDistance) - parentRect.bottom;
@@ -238,9 +239,13 @@ export const keepElementInView = ({
         top: Math.min(maxScroll, targetScrollTop),
         behavior: "smooth",
       });
+      return true;
     }
+
+    return false;
   } catch (error) {
     console.error(error);
+    return false;
   }
 };
 

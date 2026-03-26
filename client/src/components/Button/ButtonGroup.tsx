@@ -60,11 +60,12 @@ const ButtonGroup: React.FC<ButtonGroupProps> = ({
             ? horizontalRadiusClasses
             : verticalRadiusClasses;
 
-        return cloneElement(child as React.ReactElement, {
+        const element = child as React.ReactElement<{ className?: string }>;
+        return cloneElement(element, {
           className: cn(
             baseItemClasses,
             radiusClasses,
-            (child as React.ReactElement).props.className
+            element.props.className
           ),
         });
       })}

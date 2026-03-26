@@ -9,6 +9,7 @@ import {
 import undoable, { ActionCreators } from "redux-undo";
 import {
   presentationSlice,
+  setStreamItemContentBlockedFromRemote,
   updateBibleDisplayInfoFromRemote,
   updateMonitor,
   updateMonitorFromRemote,
@@ -79,6 +80,131 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
 
+const sanitizeTransientItemState = (item: RootState["undoable"]["present"]["item"]) => ({
+  ...item,
+  isLoading: false,
+  isSectionLoading: false,
+  isItemFormatting: false,
+  hasPendingUpdate: false,
+  restoreFocusToBox: null,
+});
+
+const getChangedOverlayIds = (
+  currentList: OverlayInfo[],
+  previousList: OverlayInfo[],
+) => {
+  const currentMap = new Map(currentList.map((overlay) => [overlay.id, overlay]));
+  const previousMap = new Map(
+    previousList.map((overlay) => [overlay.id, overlay]),
+  );
+  const ids = new Set([...currentMap.keys(), ...previousMap.keys()]);
+
+  return Array.from(ids).filter((id) => {
+    return !_.isEqual(currentMap.get(id), previousMap.get(id));
+  });
+};
+
+const getOverlaySelectionForUndoRedo = (
+  currentState: RootState,
+  previousState: RootState,
+): OverlayInfo | null | undefined => {
+  const currentList = currentState.undoable.present.overlays.list;
+  const previousList = previousState.undoable.present.overlays.list;
+  const changedIds = getChangedOverlayIds(currentList, previousList);
+
+  if (changedIds.length === 0) return undefined;
+
+  const currentSelectedId =
+    currentState.undoable.present.overlay.selectedOverlay?.id;
+  const previousSelectedId =
+    previousState.undoable.present.overlay.selectedOverlay?.id;
+
+  let targetId: string | undefined;
+
+  if (changedIds.length === 1) {
+    targetId = changedIds[0];
+  } else if (currentSelectedId && changedIds.includes(currentSelectedId)) {
+    targetId = currentSelectedId;
+  } else if (previousSelectedId && changedIds.includes(previousSelectedId)) {
+    targetId = previousSelectedId;
+  } else {
+    targetId =
+      changedIds.find((id) => currentList.some((overlay) => overlay.id === id)) ||
+      changedIds[0];
+  }
+
+  const targetOverlay = currentList.find((overlay) => overlay.id === targetId);
+  return targetOverlay || null;
+};
+
+/** Push current presentation (projector/monitor/stream) to Firebase + localStorage. */
+export const writePresentationSnapshotToFirebase = (state: RootState) => {
+  if (!globalFireDbInfo.db || !globalFireDbInfo.database) return;
+  const { projectorInfo, monitorInfo, streamInfo, streamItemContentBlocked } =
+    state.presentation;
+  const presentationUpdate = {
+    projectorInfo,
+    monitorInfo,
+    streamInfo: {
+      displayType: streamInfo.displayType,
+      time: streamInfo.time,
+      slide: streamInfo.slide,
+      timerId: streamInfo.timerId,
+      name: streamInfo.name,
+      type: streamInfo.type,
+    },
+    stream_itemContentBlocked: streamItemContentBlocked,
+    stream_bibleInfo: streamInfo.bibleDisplayInfo,
+    stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
+    stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
+    stream_qrCodeOverlayInfo: streamInfo.qrCodeOverlayInfo,
+    stream_imageOverlayInfo: streamInfo.imageOverlayInfo,
+    stream_formattedTextDisplayInfo: streamInfo.formattedTextDisplayInfo,
+  };
+
+  localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
+  localStorage.setItem("monitorInfo", JSON.stringify(monitorInfo));
+  localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
+  localStorage.setItem(
+    "stream_bibleInfo",
+    JSON.stringify(streamInfo.bibleDisplayInfo),
+  );
+  localStorage.setItem(
+    "stream_participantOverlayInfo",
+    JSON.stringify(streamInfo.participantOverlayInfo),
+  );
+  localStorage.setItem(
+    "stream_stbOverlayInfo",
+    JSON.stringify(streamInfo.stbOverlayInfo),
+  );
+  localStorage.setItem(
+    "stream_qrCodeOverlayInfo",
+    JSON.stringify(streamInfo.qrCodeOverlayInfo),
+  );
+  localStorage.setItem(
+    "stream_imageOverlayInfo",
+    JSON.stringify(streamInfo.imageOverlayInfo),
+  );
+  localStorage.setItem(
+    "stream_formattedTextDisplayInfo",
+    JSON.stringify(streamInfo.formattedTextDisplayInfo),
+  );
+  localStorage.setItem(
+    "stream_itemContentBlocked",
+    JSON.stringify(streamItemContentBlocked),
+  );
+
+  set(
+    ref(
+      globalFireDbInfo.db,
+      "users/" +
+        capitalizeFirstLetter(globalFireDbInfo.database) +
+        "/v2/presentation",
+    ),
+    cleanObject(presentationUpdate),
+  );
+};
+
 let lastActionTime = 0;
 let currentGroupId = 0;
 
@@ -92,6 +218,7 @@ const excludedActions: string[] = [
   itemSlice.actions.forceUpdate.toString(),
   itemSlice.actions.setSelectedBox.toString(),
   itemSlice.actions.setActiveItem.toString(),
+  itemSlice.actions.clearTransientState.toString(),
   overlaysSlice.actions.initiateOverlayList.toString(),
   overlaysSlice.actions.updateOverlayListFromRemote.toString(),
   overlaysSlice.actions.setHasPendingUpdate.toString(),
@@ -204,6 +331,7 @@ const undoableReducers = undoable(
 
       return !isExcluded;
     },
+    syncFilter: true,
     limit: 100,
   },
 );
@@ -221,6 +349,7 @@ listenerMiddleware.startListening({
       itemSlice.actions.setSectionLoading,
       itemSlice.actions.setHasPendingUpdate,
       itemSlice.actions.setItemFormatting,
+      itemSlice.actions.clearTransientState,
     );
     return (
       (currentState as RootState).undoable.present.item !==
@@ -1223,6 +1352,7 @@ listenerMiddleware.startListening({
       presentationSlice.actions.updateQrCodeOverlayInfoFromRemote,
       presentationSlice.actions.updateImageOverlayInfoFromRemote,
       presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote,
+      presentationSlice.actions.setStreamItemContentBlockedFromRemote,
     );
     return (
       (currentState as RootState).presentation !==
@@ -1236,64 +1366,38 @@ listenerMiddleware.startListening({
     if (!globalFireDbInfo.db) return;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    writePresentationSnapshotToFirebase(listenerApi.getState() as RootState);
+  },
+});
 
-    const { projectorInfo, monitorInfo, streamInfo } = (
-      listenerApi.getState() as RootState
-    ).presentation;
-    const presentationUpdate = {
-      projectorInfo,
-      monitorInfo,
-      streamInfo: {
-        displayType: streamInfo.displayType,
-        time: streamInfo.time,
-        slide: streamInfo.slide,
-        timerId: streamInfo.timerId,
-      },
-      stream_bibleInfo: streamInfo.bibleDisplayInfo,
-      stream_participantOverlayInfo: streamInfo.participantOverlayInfo,
-      stream_stbOverlayInfo: streamInfo.stbOverlayInfo,
-      stream_qrCodeOverlayInfo: streamInfo.qrCodeOverlayInfo,
-      stream_imageOverlayInfo: streamInfo.imageOverlayInfo,
-      stream_formattedTextDisplayInfo: streamInfo.formattedTextDisplayInfo,
-    };
+// Stream transmit toggle is excluded from the predicate above, so remotes never see
+// stream-on until the next slide/overlay change. Push full snapshot when stream goes live.
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    if (!presentationSlice.actions.toggleStreamTransmitting.match(action))
+      return false;
+    const curr = (currentState as RootState).presentation;
+    const prev = (previousState as RootState).presentation;
+    return curr.isStreamTransmitting && !prev.isStreamTransmitting;
+  },
+  effect: async (_action, listenerApi) => {
+    if (!globalFireDbInfo.db) return;
+    await listenerApi.delay(15);
+    writePresentationSnapshotToFirebase(listenerApi.getState() as RootState);
+  },
+});
 
-    localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
-    localStorage.setItem("monitorInfo", JSON.stringify(monitorInfo));
-    localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
-    localStorage.setItem(
-      "stream_bibleInfo",
-      JSON.stringify(streamInfo.bibleDisplayInfo),
-    );
-    localStorage.setItem(
-      "stream_participantOverlayInfo",
-      JSON.stringify(streamInfo.participantOverlayInfo),
-    );
-    localStorage.setItem(
-      "stream_stbOverlayInfo",
-      JSON.stringify(streamInfo.stbOverlayInfo),
-    );
-    localStorage.setItem(
-      "stream_qrCodeOverlayInfo",
-      JSON.stringify(streamInfo.qrCodeOverlayInfo),
-    );
-    localStorage.setItem(
-      "stream_imageOverlayInfo",
-      JSON.stringify(streamInfo.imageOverlayInfo),
-    );
-    localStorage.setItem(
-      "stream_formattedTextDisplayInfo",
-      JSON.stringify(streamInfo.formattedTextDisplayInfo),
-    );
-
-    set(
-      ref(
-        globalFireDbInfo.db,
-        "users/" +
-          capitalizeFirstLetter(globalFireDbInfo.database) +
-          "/v2/presentation",
-      ),
-      cleanObject(presentationUpdate),
-    );
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    if (!presentationSlice.actions.setTransmitToAll.match(action)) return false;
+    const curr = (currentState as RootState).presentation;
+    const prev = (previousState as RootState).presentation;
+    return curr.isStreamTransmitting && !prev.isStreamTransmitting;
+  },
+  effect: async (_action, listenerApi) => {
+    if (!globalFireDbInfo.db) return;
+    await listenerApi.delay(15);
+    writePresentationSnapshotToFirebase(listenerApi.getState() as RootState);
   },
 });
 
@@ -1349,7 +1453,7 @@ listenerMiddleware.startListening({
   },
 });
 
-// handle updating from remote stream
+// handle updating from remote stream (strict > so we skip our own Firebase echo and avoid prev/current both having current slide)
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const state = (previousState as RootState).presentation;
@@ -1359,7 +1463,7 @@ listenerMiddleware.startListening({
       !!(
         (info.time &&
           state.streamInfo.time &&
-          info.time >= state.streamInfo.time) ||
+          info.time > state.streamInfo.time) ||
         (info.time && !state.streamInfo.time)
       )
     );
@@ -1533,6 +1637,19 @@ listenerMiddleware.startListening({
   },
 });
 
+// handle updating from remote stream item content blocked
+listenerMiddleware.startListening({
+  predicate: (action) =>
+    action.type === "debouncedUpdateStreamItemContentBlocked",
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+    listenerApi.dispatch(
+      setStreamItemContentBlockedFromRemote(action.payload as boolean),
+    );
+  },
+});
+
 // handle updating from remote timer info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
@@ -1568,12 +1685,33 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     const currentState = listenerApi.getState() as RootState;
     const previousState = listenerApi.getOriginalState() as RootState;
+    const reconciledOverlaySelection = getOverlaySelectionForUndoRedo(
+      currentState,
+      previousState,
+    );
+
+    listenerApi.dispatch(itemSlice.actions.clearTransientState());
+
+    if (reconciledOverlaySelection !== undefined) {
+      const currentSelectedOverlay =
+        currentState.undoable.present.overlay.selectedOverlay;
+
+      if (reconciledOverlaySelection === null) {
+        if (currentSelectedOverlay) {
+          listenerApi.dispatch(overlaySlice.actions.selectOverlay(undefined));
+        }
+      } else if (!_.isEqual(currentSelectedOverlay, reconciledOverlaySelection)) {
+        listenerApi.dispatch(
+          overlaySlice.actions.selectOverlay(reconciledOverlaySelection),
+        );
+      }
+    }
 
     // Only force update for slices that actually changed during undo/redo
     if (
       !_.isEqual(
-        currentState.undoable.present.item,
-        previousState.undoable.present.item,
+        sanitizeTransientItemState(currentState.undoable.present.item),
+        sanitizeTransientItemState(previousState.undoable.present.item),
       )
     ) {
       listenerApi.dispatch(itemSlice.actions.forceUpdate());

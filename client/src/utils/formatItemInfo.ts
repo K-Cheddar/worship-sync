@@ -30,11 +30,9 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
     updatedArrangements = item.arrangements.map((arrangement, arrIndex) => {
       let { formattedLyrics, slides, songOrder } = { ...arrangement };
 
-      if (!formattedLyrics[0]?.id) {
-        formattedLyrics = formattedLyrics.map((el) => {
-          return { ...el, id: generateRandomId() };
-        });
-      }
+      formattedLyrics = formattedLyrics.map((el) => {
+        return { ...el, id: el.id || generateRandomId() };
+      });
 
       slides = slides.map((el) => {
         return {

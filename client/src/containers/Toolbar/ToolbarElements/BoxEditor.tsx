@@ -322,6 +322,36 @@ const BoxEditor = ({
           padding="p-0"
           onClick={() =>
             applyPreset({
+              width: 100,
+              height: 90,
+              x: 0,
+              y: 10,
+            })
+          }
+        >
+          <PresetIcon width={100} height={90} x={0} y={10} />
+        </Button>
+        <Button
+          variant="tertiary"
+          className="w-10 max-lg:w-18"
+          padding="p-0"
+          onClick={() =>
+            applyPreset({
+              width: 100,
+              height: 20,
+              x: 0,
+              y: 0,
+            })
+          }
+        >
+          <PresetIcon width={100} height={20} x={0} y={0} />
+        </Button>
+        <Button
+          variant="tertiary"
+          className="w-10 max-lg:w-18"
+          padding="p-0"
+          onClick={() =>
+            applyPreset({
               width: 50,
               height: 100,
               x: 0,

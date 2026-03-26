@@ -29,6 +29,92 @@ import { useSelector } from "../../hooks";
 import { useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import { REFERENCE_WIDTH, REFERENCE_HEIGHT } from "../../constants";
 
+const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
+  stb: 3000,
+  qr: 5000,
+  image: 5000,
+} as const;
+
+const STREAM_PREV_OVERLAY_EXIT_MS = 1500;
+
+const hasParticipantOverlayData = (overlay?: OverlayInfo) =>
+  Boolean(overlay?.name || overlay?.title || overlay?.event);
+
+const hasStbOverlayData = (overlay?: OverlayInfo) =>
+  Boolean(overlay?.heading || overlay?.subHeading);
+
+const hasQrOverlayData = (overlay?: OverlayInfo) =>
+  Boolean(overlay?.url || overlay?.description);
+
+const hasImageOverlayData = (overlay?: OverlayInfo) => Boolean(overlay?.imageUrl);
+
+const getParticipantOverlayTotalVisibleMs = (overlay?: OverlayInfo) => {
+  const lineCount = [overlay?.name, overlay?.title, overlay?.event].filter(
+    (value): value is string => Boolean(value),
+  ).length;
+
+  if (lineCount === 0) return null;
+
+  const isCenter = overlay?.formatting?.participantOverlayPosition === "center";
+  const enterDurationMs = 2500;
+  const innerStartMs = isCenter ? 500 : 250;
+  const innerDurationMs = 2500;
+  const staggerMs = 500;
+  const lastInnerEndMs =
+    innerStartMs + innerDurationMs + Math.max(0, lineCount - 1) * staggerMs;
+
+  return Math.max(enterDurationMs, lastInnerEndMs) + 2500;
+};
+
+const getOverlayVisibleUntilMs = ({
+  hasData,
+  time,
+  duration,
+  totalVisibleMs,
+}: {
+  hasData: boolean;
+  time?: number;
+  duration?: number;
+  totalVisibleMs: number | null;
+}) => {
+  if (!hasData || totalVisibleMs == null) return null;
+  if (time == null) return Number.POSITIVE_INFINITY;
+  const durationMs = Math.max(0, duration ?? 0) * 1000;
+  return time + durationMs + totalVisibleMs;
+};
+
+const getPrevOverlayVisibleUntilMs = ({
+  prevHasData,
+  prevTime,
+  prevDuration,
+  prevTotalVisibleMs,
+  currentHasData,
+  currentTime,
+}: {
+  prevHasData: boolean;
+  prevTime?: number;
+  prevDuration?: number;
+  prevTotalVisibleMs: number | null;
+  currentHasData: boolean;
+  currentTime?: number;
+}) => {
+  if (!prevHasData || currentHasData || currentTime == null) return null;
+  const prevVisibleUntilMs = getOverlayVisibleUntilMs({
+    hasData: prevHasData,
+    time: prevTime,
+    duration: prevDuration,
+    totalVisibleMs: prevTotalVisibleMs,
+  });
+  if (
+    prevVisibleUntilMs != null &&
+    Number.isFinite(prevVisibleUntilMs) &&
+    currentTime >= prevVisibleUntilMs
+  ) {
+    return null;
+  }
+  return currentTime + STREAM_PREV_OVERLAY_EXIT_MS;
+};
+
 type DisplayWindowProps = {
   prevBoxes?: Box[];
   boxes?: Box[];
@@ -79,6 +165,8 @@ type DisplayWindowProps = {
   bibleInfoBox?: Box | null;
   /** Monitor slide transition: 'next' = slide up, 'prev' = slide down, 'jump' = fade */
   transitionDirection?: "next" | "prev" | "jump";
+  /** When true, stream item content is faded out; overlays still show. Synced for multi-device. */
+  streamItemContentBlocked?: boolean;
 };
 
 const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
@@ -119,6 +207,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       prevNextBoxes = [],
       bibleInfoBox,
       transitionDirection,
+      streamItemContentBlocked = false,
     }: DisplayWindowProps,
     ref
   ) => {
@@ -207,6 +296,131 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isDisplay = !isStream && !isEditor;
     const isMonitor = displayType === "monitor";
     const isSlide = displayType === "slide";
+    const [streamOverlayNowMs, setStreamOverlayNowMs] = useState(() => Date.now());
+
+    const hasStreamItemData = useMemo(() => {
+      const hasBoxes = (boxes?.length ?? 0) > 0;
+      const hasBible =
+        !!(bibleDisplayInfo?.title?.trim() || bibleDisplayInfo?.text?.trim());
+      const hasFormatted = !!(formattedTextDisplayInfo?.text?.trim());
+      return hasBoxes || hasBible || hasFormatted;
+    }, [boxes?.length, bibleDisplayInfo?.title, bibleDisplayInfo?.text, formattedTextDisplayInfo?.text]);
+
+    const streamOverlayHideUntilMs = useMemo(() => {
+      const visibleUntilValues = [
+        getOverlayVisibleUntilMs({
+          hasData: hasParticipantOverlayData(participantOverlayInfo),
+          time: participantOverlayInfo?.time,
+          duration: participantOverlayInfo?.duration,
+          totalVisibleMs: getParticipantOverlayTotalVisibleMs(participantOverlayInfo),
+        }),
+        getOverlayVisibleUntilMs({
+          hasData: hasStbOverlayData(stbOverlayInfo),
+          time: stbOverlayInfo?.time,
+          duration: stbOverlayInfo?.duration,
+          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
+        }),
+        getOverlayVisibleUntilMs({
+          hasData: hasQrOverlayData(qrCodeOverlayInfo),
+          time: qrCodeOverlayInfo?.time,
+          duration: qrCodeOverlayInfo?.duration,
+          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
+        }),
+        getOverlayVisibleUntilMs({
+          hasData: hasImageOverlayData(imageOverlayInfo),
+          time: imageOverlayInfo?.time,
+          duration: imageOverlayInfo?.duration,
+          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
+        }),
+        getPrevOverlayVisibleUntilMs({
+          prevHasData: hasParticipantOverlayData(prevParticipantOverlayInfo),
+          prevTime: prevParticipantOverlayInfo?.time,
+          prevDuration: prevParticipantOverlayInfo?.duration,
+          prevTotalVisibleMs: getParticipantOverlayTotalVisibleMs(
+            prevParticipantOverlayInfo,
+          ),
+          currentHasData: hasParticipantOverlayData(participantOverlayInfo),
+          currentTime: participantOverlayInfo?.time,
+        }),
+        getPrevOverlayVisibleUntilMs({
+          prevHasData: hasStbOverlayData(prevStbOverlayInfo),
+          prevTime: prevStbOverlayInfo?.time,
+          prevDuration: prevStbOverlayInfo?.duration,
+          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
+          currentHasData: hasStbOverlayData(stbOverlayInfo),
+          currentTime: stbOverlayInfo?.time,
+        }),
+        getPrevOverlayVisibleUntilMs({
+          prevHasData: hasQrOverlayData(prevQrCodeOverlayInfo),
+          prevTime: prevQrCodeOverlayInfo?.time,
+          prevDuration: prevQrCodeOverlayInfo?.duration,
+          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
+          currentHasData: hasQrOverlayData(qrCodeOverlayInfo),
+          currentTime: qrCodeOverlayInfo?.time,
+        }),
+        getPrevOverlayVisibleUntilMs({
+          prevHasData: hasImageOverlayData(prevImageOverlayInfo),
+          prevTime: prevImageOverlayInfo?.time,
+          prevDuration: prevImageOverlayInfo?.duration,
+          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
+          currentHasData: hasImageOverlayData(imageOverlayInfo),
+          currentTime: imageOverlayInfo?.time,
+        }),
+      ].filter((value): value is number => value != null);
+
+      if (visibleUntilValues.length === 0) return null;
+      if (visibleUntilValues.some((value) => !Number.isFinite(value))) {
+        return Number.POSITIVE_INFINITY;
+      }
+
+      return Math.max(...visibleUntilValues);
+    }, [
+      imageOverlayInfo,
+      participantOverlayInfo,
+      prevImageOverlayInfo,
+      prevParticipantOverlayInfo,
+      prevQrCodeOverlayInfo,
+      prevStbOverlayInfo,
+      qrCodeOverlayInfo,
+      stbOverlayInfo,
+    ]);
+
+    const hasActiveStreamOverlay =
+      streamOverlayHideUntilMs != null &&
+      (streamOverlayHideUntilMs === Number.POSITIVE_INFINITY ||
+        streamOverlayNowMs < streamOverlayHideUntilMs);
+
+    useEffect(() => {
+      if (!isStream || overlayPreviewMode) return;
+      const nowMs = Date.now();
+      setStreamOverlayNowMs(nowMs);
+
+      if (
+        streamOverlayHideUntilMs == null ||
+        !Number.isFinite(streamOverlayHideUntilMs) ||
+        streamOverlayHideUntilMs <= nowMs
+      ) {
+        return;
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        setStreamOverlayNowMs(Date.now());
+      }, Math.max(0, streamOverlayHideUntilMs - nowMs) + 20);
+
+      return () => window.clearTimeout(timeoutId);
+    }, [
+      isStream,
+      overlayPreviewMode,
+      streamOverlayHideUntilMs,
+    ]);
+
+    // Item content is shown only when we have item data, the operator hasn't manually hidden it,
+    // and no active stream overlay is temporarily overriding the item layer.
+    const showStreamItemContent =
+      hasStreamItemData &&
+      !streamItemContentBlocked &&
+      !hasActiveStreamOverlay;
+
     const slideHasWords = useMemo(
       () => boxes.some((box) => Boolean(box.words?.trim())),
       [boxes]
@@ -344,21 +558,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     isWindowVideoLoaded={isWindowVideoLoaded}
                   />
                 );
-              if (isStream)
-                return (
-                  <DisplayStreamText
-                    key={box.id}
-                    box={box}
-                    prevBox={prevBoxes[index]}
-                    width={effectiveWidth}
-                    shouldAnimate={shouldAnimate}
-                    time={time}
-                    timerInfo={timerInfo}
-                    referenceWidth={REFERENCE_WIDTH}
-                    referenceHeight={REFERENCE_HEIGHT}
-                  />
-                );
-
               if (isDisplay)
                 return (
                   <DisplayBox
@@ -407,8 +606,35 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     scaleFactor={scaleFactor}
                   />
                 );
-              if (isStream)
-                return (
+              return null;
+            })}
+          </>
+
+          {isStream && !overlayPreviewMode && (
+            <>
+              {/* Layer 1: stream item (text/bible/formatted). Hidden when overlay-only ON; fades back when turned OFF. */}
+              <div
+                data-testid="stream-item-layer"
+                className="absolute inset-0 transition-opacity duration-500 ease-out"
+                style={{
+                  opacity: showStreamItemContent ? 1 : 0,
+                  pointerEvents: showStreamItemContent ? "auto" : "none",
+                }}
+              >
+                {boxes.map((box, index) => (
+                  <DisplayStreamText
+                    key={box.id}
+                    box={box}
+                    prevBox={prevBoxes[index]}
+                    width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
+                    time={time}
+                    timerInfo={timerInfo}
+                    referenceWidth={REFERENCE_WIDTH}
+                    referenceHeight={REFERENCE_HEIGHT}
+                  />
+                ))}
+                {prevBoxes.map((box, index) => (
                   <DisplayStreamText
                     key={box.id}
                     box={box}
@@ -421,21 +647,23 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     referenceWidth={REFERENCE_WIDTH}
                     referenceHeight={REFERENCE_HEIGHT}
                   />
-                );
-              return null;
-            })}
-          </>
+                ))}
+                <DisplayStreamBible
+                  width={effectiveWidth}
+                  shouldAnimate={shouldAnimate}
+                  bibleDisplayInfo={bibleDisplayInfo}
+                  prevBibleDisplayInfo={prevBibleDisplayInfo}
+                  ref={containerRef}
+                />
+                <DisplayStreamFormattedText
+                  width={effectiveWidth}
+                  shouldAnimate={shouldAnimate}
+                  formattedTextDisplayInfo={formattedTextDisplayInfo}
+                  prevFormattedTextDisplayInfo={prevFormattedTextDisplayInfo}
+                />
+              </div>
 
-          {isStream && !overlayPreviewMode && (
-            <>
-              <DisplayStreamBible
-                width={effectiveWidth}
-                shouldAnimate={shouldAnimate}
-                bibleDisplayInfo={bibleDisplayInfo}
-                prevBibleDisplayInfo={prevBibleDisplayInfo}
-                ref={containerRef}
-              />
-
+              {/* Layer 2: stream overlays. Active overlays temporarily override the item layer without destroying it. */}
               <DisplayStbOverlay
                 width={effectiveWidth}
                 shouldAnimate={shouldAnimate}
@@ -466,13 +694,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 imageOverlayInfo={imageOverlayInfo}
                 prevImageOverlayInfo={prevImageOverlayInfo}
                 ref={containerRef}
-              />
-
-              <DisplayStreamFormattedText
-                width={effectiveWidth}
-                shouldAnimate={shouldAnimate}
-                formattedTextDisplayInfo={formattedTextDisplayInfo}
-                prevFormattedTextDisplayInfo={prevFormattedTextDisplayInfo}
               />
             </>
           )}

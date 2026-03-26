@@ -40,7 +40,7 @@ import RadioButton from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
 import { formatFree, formatSong } from "../../../utils/overflow";
 import { GlobalInfoContext } from "../../../context/globalInfo";
-import { DEFAULT_FONT_PX } from "../../../constants";
+import { DEFAULT_FONT_PX, FONT_SIZE_BUTTON_STEP } from "../../../constants";
 
 const MIN_FONT_PX = 25;
 const MAX_FONT_PX = 500;
@@ -350,7 +350,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               typeof fontSize === "number"
                 ? fontSize
                 : parseInt(String(fontSize), 10) || DEFAULT_FONT_PX;
-            _updateFontSize(num - 1);
+            _updateFontSize(num - FONT_SIZE_BUTTON_STEP);
           }}
         />
         <Input
@@ -375,7 +375,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               typeof fontSize === "number"
                 ? fontSize
                 : parseInt(String(fontSize), 10) || DEFAULT_FONT_PX;
-            _updateFontSize(num + 1);
+            _updateFontSize(num + FONT_SIZE_BUTTON_STEP);
           }}
         />
 

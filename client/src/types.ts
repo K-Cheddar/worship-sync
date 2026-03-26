@@ -232,7 +232,7 @@ export type FormattedLyrics = {
   name: string;
   words: string;
   slideSpan: number;
-  id?: string;
+  id: string;
 };
 
 export type FormattedSection = {

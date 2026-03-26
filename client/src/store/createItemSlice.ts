@@ -1,31 +1,39 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { ItemType } from "../types";
-type CreateItemState = {
+import { ItemType, TimerType } from "../types";
+
+export type CreateItemState = {
   name: string;
   type: ItemType;
   text: string;
-  duration?: number;
+  hours: number;
+  minutes: number;
+  seconds: number;
+  time: string;
+  timerType: TimerType;
 };
 
-const initialState: CreateItemState = {
+export const initialCreateItemState: CreateItemState = {
   name: "",
-  type: "",
+  type: "song",
   text: "",
+  hours: 0,
+  minutes: 1,
+  seconds: 0,
+  time: "00:00",
+  timerType: "timer",
 };
 
 export const createItemSlice = createSlice({
   name: "createItem",
-  initialState,
+  initialState: initialCreateItemState,
   reducers: {
     setCreateItem: (state, action: PayloadAction<CreateItemState>) => {
-      state.name = action.payload.name;
-      state.type = action.payload.type;
-      state.text = action.payload.text;
-      state.duration = action.payload.duration;
+      Object.assign(state, action.payload);
     },
+    resetCreateItem: () => initialCreateItemState,
   },
 });
 
-export const { setCreateItem } = createItemSlice.actions;
+export const { setCreateItem, resetCreateItem } = createItemSlice.actions;
 
 export default createItemSlice.reducer;

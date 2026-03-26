@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import DisplayWindow from "../DisplayWindow";
 import type { Box } from "../../../types";
 
@@ -116,6 +116,10 @@ describe("DisplayWindow core paths", () => {
     mockUseSelector.mockImplementation((selector) => selector(baseState));
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("renders monitor mode through MonitorView with next-slide and clock/timer flags", () => {
     render(
       <DisplayWindow
@@ -155,6 +159,104 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("display-qr-overlay-mock")).toBeInTheDocument();
     expect(screen.getByTestId("display-image-overlay-mock")).toBeInTheDocument();
     expect(screen.getByTestId("display-formatted-text-mock")).toBeInTheDocument();
+  });
+
+  it("keeps the stream item layer hidden until a participant overlay has fully animated off screen", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-03-19T12:00:00.000Z"));
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p1",
+          type: "participant",
+          name: "Alice",
+          time: Date.now(),
+          duration: 0,
+        }}
+      />,
+    );
+
+    const streamItemLayer = screen.getByTestId("stream-item-layer");
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
+
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(streamItemLayer).toHaveStyle({ opacity: "1" });
+  });
+
+  it("keeps the stream item layer hidden while a cleared overlay is still exiting through prev overlay state", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-03-19T12:00:00.000Z"));
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p1-cleared",
+          type: "participant",
+          time: Date.now(),
+        }}
+        prevParticipantOverlayInfo={{
+          id: "p1-prev",
+          type: "participant",
+          name: "Alice",
+          time: Date.now() - 1000,
+        }}
+      />,
+    );
+
+    const streamItemLayer = screen.getByTestId("stream-item-layer");
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(1400);
+    });
+
+    expect(streamItemLayer).toHaveStyle({ opacity: "0" });
+
+    act(() => {
+      jest.advanceTimersByTime(200);
+    });
+
+    expect(streamItemLayer).toHaveStyle({ opacity: "1" });
+  });
+
+  it("does not keep the stream item layer hidden when clearing an overlay that had already expired", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-03-19T12:00:00.000Z"));
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p1-cleared",
+          type: "participant",
+          time: Date.now(),
+        }}
+        prevParticipantOverlayInfo={{
+          id: "p1-prev-expired",
+          type: "participant",
+          name: "Alice",
+          time: Date.now() - 7000,
+          duration: 0,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
   });
 
   it("renders editor mode with DisplayEditor boxes", () => {

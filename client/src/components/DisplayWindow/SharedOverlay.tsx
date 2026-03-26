@@ -144,7 +144,8 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
       };
     };
 
-    const childWhiteSpace = isPrev ? "normal" : "pre-line";
+    const childWhiteSpace =
+      isPrev && overlayType !== "stick-to-bottom" ? "normal" : "pre-line";
 
     // Helper function to render child elements based on overlay type
     const renderChildren = () => {

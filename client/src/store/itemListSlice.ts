@@ -98,7 +98,10 @@ export const itemListSlice = createSlice({
       state.hasPendingUpdate = true;
     },
     addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
-      const newItem = { ...action.payload, listId: generateRandomId() };
+      const newItem = {
+        ...action.payload,
+        listId: action.payload.listId || generateRandomId(),
+      };
       const anchorIndex =
         state.insertPointIndex >= 0
           ? state.insertPointIndex

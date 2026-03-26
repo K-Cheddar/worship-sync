@@ -53,10 +53,11 @@ const Item = () => {
         dispatch(setActiveItem({ ...item, listId: decodedListId }));
         dispatch(setActiveItemInList(decodedListId));
         setStatus("success");
-        dispatch(setItemIsLoading(false));
       } catch (e) {
         console.error(e);
         setStatus("error");
+      } finally {
+        dispatch(setItemIsLoading(false));
       }
     };
     selectItem();

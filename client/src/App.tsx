@@ -5,6 +5,7 @@ import { useGSAP } from "@gsap/react";
 import { ScrollToPlugin } from "gsap/ScrollToPlugin";
 import Home from "./pages/Home";
 import Controller from "./pages/Controller/Controller";
+import OverlayController from "./pages/OverlayController/OverlayController";
 import Projector from "./pages/Projector";
 import Monitor from "./pages/Monitor";
 import Stream from "./pages/Stream";
@@ -53,6 +54,10 @@ const App: React.FC = () => {
                 <Route element={<ControllerContextWrapper />}>
                   <Route path="/" element={<Home />} />
                   <Route path="/controller/*" element={<Controller />} />
+                  <Route
+                    path="/overlay-controller"
+                    element={<OverlayController />}
+                  />
                   <Route path="/login" element={<Login />} />
                   <Route path="/credits-editor" element={<CreditsEditor />} />
                   <Route path="/info-controller" element={<InfoController />} />

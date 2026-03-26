@@ -1,8 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import LyricsEditor from "../LyricsEditor";
 
 const mockDispatch = jest.fn();
 let mockState: any;
+let lastLyricBoxesProps: any;
+let lastSectionPreviewProps: any;
 
 const mockSetIsEditMode = jest.fn((value: boolean) => ({
   type: "item/setIsEditMode",
@@ -37,7 +39,10 @@ jest.mock("../../../utils/overflow", () => ({
 
 jest.mock("../LyricBoxes", () => ({
   __esModule: true,
-  default: () => <div data-testid="lyric-boxes" />,
+  default: (props: any) => {
+    lastLyricBoxesProps = props;
+    return <div data-testid="lyric-boxes" />;
+  },
 }));
 
 jest.mock("../SongSections", () => ({
@@ -54,7 +59,10 @@ jest.mock("../Arrangement", () => ({
 
 jest.mock("../SectionPreview", () => ({
   __esModule: true,
-  default: () => <div data-testid="section-preview" />,
+  default: (props: any) => {
+    lastSectionPreviewProps = props;
+    return <div data-testid="section-preview" />;
+  },
 }));
 
 jest.mock("../../../components/ErrorBoundary/ErrorBoundary", () => ({
@@ -125,6 +133,8 @@ describe("LyricsEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockState = makeBaseState();
+    lastLyricBoxesProps = null;
+    lastSectionPreviewProps = null;
   });
 
   it("returns null when edit mode is disabled", () => {
@@ -218,5 +228,138 @@ describe("LyricsEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Leave Without Saving" }));
 
     expect(mockSetIsEditMode).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps the selected section pinned by id after lyrics reorder", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            arrangements: [
+              {
+                id: "arr-1",
+                name: "Master",
+                slides: [],
+                formattedLyrics: [
+                  {
+                    id: "verse-1",
+                    type: "Verse",
+                    name: "Verse",
+                    words: "Verse words",
+                    slideSpan: 1,
+                  },
+                  {
+                    id: "chorus-1",
+                    type: "Chorus",
+                    name: "Chorus",
+                    words: "Chorus words",
+                    slideSpan: 1,
+                  },
+                ],
+                songOrder: [
+                  { id: "order-1", name: "Verse" },
+                  { id: "order-2", name: "Chorus" },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<LyricsEditor />);
+
+    await waitFor(() => {
+      expect(lastLyricBoxesProps.selectedSectionId).toBe("verse-1");
+    });
+
+    act(() => {
+      lastLyricBoxesProps.onSectionSelect("chorus-1");
+    });
+
+    await waitFor(() => {
+      expect(lastLyricBoxesProps.selectedSectionId).toBe("chorus-1");
+    });
+
+    act(() => {
+      lastLyricBoxesProps.reformatLyrics([
+        {
+          id: "verse-1",
+          type: "Verse",
+          name: "Verse",
+          words: "Verse words",
+          slideSpan: 1,
+        },
+        {
+          id: "chorus-1",
+          type: "Bridge",
+          name: "Bridge",
+          words: "Chorus words",
+          slideSpan: 1,
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(lastLyricBoxesProps.selectedSectionId).toBe("chorus-1");
+    });
+
+    expect(lastLyricBoxesProps.recentlyMovedSectionId).toBe("chorus-1");
+    expect(lastSectionPreviewProps.selectedSection.id).toBe("chorus-1");
+    expect(lastSectionPreviewProps.selectedSection.name).toBe("Bridge");
+  });
+
+  it("falls back to the first remaining section when the selected section is deleted", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            arrangements: [
+              {
+                id: "arr-1",
+                name: "Master",
+                slides: [],
+                formattedLyrics: [
+                  {
+                    id: "verse-1",
+                    type: "Verse",
+                    name: "Verse",
+                    words: "Verse words",
+                    slideSpan: 1,
+                  },
+                  {
+                    id: "chorus-1",
+                    type: "Chorus",
+                    name: "Chorus",
+                    words: "Chorus words",
+                    slideSpan: 1,
+                  },
+                ],
+                songOrder: [
+                  { id: "order-1", name: "Verse" },
+                  { id: "order-2", name: "Chorus" },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<LyricsEditor />);
+
+    await waitFor(() => {
+      expect(lastLyricBoxesProps.selectedSectionId).toBe("verse-1");
+    });
+
+    act(() => {
+      lastLyricBoxesProps.onFormattedLyricsDelete(0);
+    });
+
+    await waitFor(() => {
+      expect(lastLyricBoxesProps.selectedSectionId).toBe("chorus-1");
+    });
+
+    expect(lastSectionPreviewProps.selectedSection.id).toBe("chorus-1");
   });
 });

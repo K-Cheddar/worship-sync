@@ -20,6 +20,7 @@ import { useMemo } from "react";
 
 type QuickLinkProps = QuickLinkType & {
   timers: TimerInfo[];
+  isMobile?: boolean;
 };
 
 const QuickLink = ({
@@ -51,14 +52,6 @@ const QuickLink = ({
       } else if (displayType === "stream") {
         if (presentationInfo.slide) {
           dispatch(updateStream(presentationInfo));
-        } else {
-          dispatch(
-            updateStream({
-              slide: null,
-              type: "clear",
-              name: "",
-            })
-          );
         }
 
         if (presentationInfo.bibleDisplayInfo) {

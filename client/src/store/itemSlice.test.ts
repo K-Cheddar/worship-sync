@@ -30,6 +30,64 @@ describe("itemSlice", () => {
       expect(state.type).toBe("song");
     });
 
+    it("setActiveItem resets transient item flags", () => {
+      const store = createStore({
+        item: {
+          ...itemSlice.getInitialState(),
+          name: "Previous Item",
+          _id: "previous-item",
+          isLoading: true,
+          isSectionLoading: true,
+          isItemFormatting: true,
+          hasPendingUpdate: true,
+          restoreFocusToBox: 3,
+        },
+      });
+
+      store.dispatch(
+        itemSlice.actions.setActiveItem({
+          name: "New Song",
+          _id: "item-123",
+          type: "song",
+        }),
+      );
+
+      const state = store.getState().item;
+      expect(state.isLoading).toBe(false);
+      expect(state.isSectionLoading).toBe(false);
+      expect(state.isItemFormatting).toBe(false);
+      expect(state.hasPendingUpdate).toBe(false);
+      expect(state.restoreFocusToBox).toBeNull();
+    });
+
+    it("preserves free slides as provided when loading the active item", () => {
+      const store = createStore();
+      store.dispatch(
+        itemSlice.actions.setActiveItem({
+          name: "Legacy Custom",
+          _id: "free-1",
+          type: "free",
+          slides: [
+            {
+              type: "Section",
+              name: "Section 1",
+              id: "slide-1",
+              boxes: [{ id: "bg" }, { id: "text" }],
+            },
+          ] as any,
+        }),
+      );
+
+      const state = store.getState().item;
+      expect(state.slides).toEqual([
+        expect.objectContaining({
+          id: "slide-1",
+          name: "Section 1",
+          boxes: [{ id: "bg" }, { id: "text" }],
+        }),
+      ]);
+    });
+
     it("setSelectedSlide updates selectedSlide", () => {
       const store = createStore();
       store.dispatch(itemSlice.actions.setSelectedSlide(3));
@@ -92,6 +150,7 @@ describe("itemSlice", () => {
               id: "arr-1",
               formattedLyrics: [
                 {
+                  id: "fl-orig",
                   type: "Verse",
                   name: "Verse 1",
                   words: "Original line",
@@ -110,6 +169,7 @@ describe("itemSlice", () => {
           id: "arr-1",
           formattedLyrics: [
             {
+              id: "fl-edit",
               type: "Verse",
               name: "Verse 1",
               words: "Edited line",

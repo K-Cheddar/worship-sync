@@ -70,6 +70,8 @@ jest.mock("../../DisplayWindow/DisplayWindow", () => ({
   default: () => <div data-testid="quick-link-preview" />,
 }));
 
+const quickLinkBase = { id: "ql-test", canDelete: false };
+
 describe("QuickLink", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -86,6 +88,7 @@ describe("QuickLink", () => {
 
     render(
       <QuickLink
+        {...quickLinkBase}
         label="Timer Link"
         displayType="monitor"
         presentationInfo={presentationInfo}
@@ -105,26 +108,39 @@ describe("QuickLink", () => {
 
   it("returns null when there is no presentationInfo and no action", () => {
     const { container } = render(
-      <QuickLink label="Empty" displayType="stream" timers={[]} />
+      <QuickLink {...quickLinkBase} label="Empty" displayType="stream" timers={[]} />
     );
     expect(container).toBeEmptyDOMElement();
   });
 
   it("dispatches clear action by display type", () => {
     const { rerender } = render(
-      <QuickLink label="Clear stream" displayType="stream" action="clear" timers={[]} />
+      <QuickLink
+        {...quickLinkBase}
+        label="Clear stream"
+        displayType="stream"
+        action="clear"
+        timers={[]}
+      />
     );
     fireEvent.click(screen.getByRole("button"));
     expect(mockClearStream).toHaveBeenCalled();
 
     rerender(
-      <QuickLink label="Clear monitor" displayType="monitor" action="clear" timers={[]} />
+      <QuickLink
+        {...quickLinkBase}
+        label="Clear monitor"
+        displayType="monitor"
+        action="clear"
+        timers={[]}
+      />
     );
     fireEvent.click(screen.getByRole("button"));
     expect(mockClearMonitor).toHaveBeenCalled();
 
     rerender(
       <QuickLink
+        {...quickLinkBase}
         label="Clear projector"
         displayType="projector"
         action="clear"
@@ -144,6 +160,7 @@ describe("QuickLink", () => {
     } as any;
     render(
       <QuickLink
+        {...quickLinkBase}
         label="Projector Link"
         displayType="projector"
         presentationInfo={presentationInfo}
@@ -165,6 +182,7 @@ describe("QuickLink", () => {
     } as any;
     render(
       <QuickLink
+        {...quickLinkBase}
         label="Stream Link"
         displayType="stream"
         presentationInfo={presentationInfo}
@@ -179,7 +197,7 @@ describe("QuickLink", () => {
     expect(mockUpdateImageOverlayInfo).not.toHaveBeenCalled();
   });
 
-  it("dispatches stream clear payload when presentation has no slide", () => {
+  it("does not clear the stream item when an overlay quick link has no slide", () => {
     const presentationInfo = {
       type: "participant",
       name: "No slide",
@@ -189,6 +207,7 @@ describe("QuickLink", () => {
     } as any;
     render(
       <QuickLink
+        {...quickLinkBase}
         label="Stream no slide"
         displayType="stream"
         presentationInfo={presentationInfo}
@@ -196,11 +215,7 @@ describe("QuickLink", () => {
       />
     );
     fireEvent.click(screen.getByRole("button"));
-    expect(mockUpdateStream).toHaveBeenCalledWith({
-      slide: null,
-      type: "clear",
-      name: "",
-    });
+    expect(mockUpdateStream).not.toHaveBeenCalled();
     expect(mockUpdateParticipantOverlayInfo).toHaveBeenCalledWith(
       presentationInfo.participantOverlayInfo
     );
