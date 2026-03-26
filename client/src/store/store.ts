@@ -89,6 +89,54 @@ const sanitizeTransientItemState = (item: RootState["undoable"]["present"]["item
   restoreFocusToBox: null,
 });
 
+const getChangedOverlayIds = (
+  currentList: OverlayInfo[],
+  previousList: OverlayInfo[],
+) => {
+  const currentMap = new Map(currentList.map((overlay) => [overlay.id, overlay]));
+  const previousMap = new Map(
+    previousList.map((overlay) => [overlay.id, overlay]),
+  );
+  const ids = new Set([...currentMap.keys(), ...previousMap.keys()]);
+
+  return Array.from(ids).filter((id) => {
+    return !_.isEqual(currentMap.get(id), previousMap.get(id));
+  });
+};
+
+const getOverlaySelectionForUndoRedo = (
+  currentState: RootState,
+  previousState: RootState,
+): OverlayInfo | null | undefined => {
+  const currentList = currentState.undoable.present.overlays.list;
+  const previousList = previousState.undoable.present.overlays.list;
+  const changedIds = getChangedOverlayIds(currentList, previousList);
+
+  if (changedIds.length === 0) return undefined;
+
+  const currentSelectedId =
+    currentState.undoable.present.overlay.selectedOverlay?.id;
+  const previousSelectedId =
+    previousState.undoable.present.overlay.selectedOverlay?.id;
+
+  let targetId: string | undefined;
+
+  if (changedIds.length === 1) {
+    targetId = changedIds[0];
+  } else if (currentSelectedId && changedIds.includes(currentSelectedId)) {
+    targetId = currentSelectedId;
+  } else if (previousSelectedId && changedIds.includes(previousSelectedId)) {
+    targetId = previousSelectedId;
+  } else {
+    targetId =
+      changedIds.find((id) => currentList.some((overlay) => overlay.id === id)) ||
+      changedIds[0];
+  }
+
+  const targetOverlay = currentList.find((overlay) => overlay.id === targetId);
+  return targetOverlay || null;
+};
+
 /** Push current presentation (projector/monitor/stream) to Firebase + localStorage. */
 export const writePresentationSnapshotToFirebase = (state: RootState) => {
   if (!globalFireDbInfo.db || !globalFireDbInfo.database) return;
@@ -1637,8 +1685,27 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     const currentState = listenerApi.getState() as RootState;
     const previousState = listenerApi.getOriginalState() as RootState;
+    const reconciledOverlaySelection = getOverlaySelectionForUndoRedo(
+      currentState,
+      previousState,
+    );
 
     listenerApi.dispatch(itemSlice.actions.clearTransientState());
+
+    if (reconciledOverlaySelection !== undefined) {
+      const currentSelectedOverlay =
+        currentState.undoable.present.overlay.selectedOverlay;
+
+      if (reconciledOverlaySelection === null) {
+        if (currentSelectedOverlay) {
+          listenerApi.dispatch(overlaySlice.actions.selectOverlay(undefined));
+        }
+      } else if (!_.isEqual(currentSelectedOverlay, reconciledOverlaySelection)) {
+        listenerApi.dispatch(
+          overlaySlice.actions.selectOverlay(reconciledOverlaySelection),
+        );
+      }
+    }
 
     // Only force update for slices that actually changed during undo/redo
     if (
