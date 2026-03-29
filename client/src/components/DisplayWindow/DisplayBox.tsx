@@ -126,7 +126,7 @@ const DisplayBox = ({
         }
       }
     },
-    { scope: boxRef, dependencies: [box, time, shouldImageBeHidden] }
+    { scope: boxRef, dependencies: [box, shouldImageBeHidden] }
   );
 
   const bWords = box.words || "";

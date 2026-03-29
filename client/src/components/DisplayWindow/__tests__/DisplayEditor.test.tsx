@@ -69,11 +69,12 @@ describe("DisplayEditor", () => {
       latestRndProps.onDragStop?.({}, { x: 960, y: 540 });
     });
 
-    expect(onChange).toHaveBeenCalledWith({
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
       index: 1,
       value: "Original words",
+      commitMode: "immediate",
       box: expect.objectContaining({ x: 50, y: 50 }),
-    });
+    }));
   });
 
   it("converts resize-stop dimensions and position into percentage values", () => {
@@ -88,16 +89,17 @@ describe("DisplayEditor", () => {
       });
     });
 
-    expect(onChange).toHaveBeenCalledWith({
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
       index: 1,
       value: "Original words",
+      commitMode: "immediate",
       box: expect.objectContaining({
         width: 50,
         height: 50,
         x: 10,
         y: 10,
       }),
-    });
+    }));
   });
 
   it("shows timer guidance toast when selecting the timer token", async () => {
@@ -120,6 +122,148 @@ describe("DisplayEditor", () => {
     expect(mockShowToast).toHaveBeenCalledWith(
       "To edit the timer use the controls in the panel to the left",
       "info"
+    );
+  });
+
+  it("syncs the textarea value while focused when upstream words change", async () => {
+    const onChange = jest.fn();
+    const user = userEvent.setup();
+    const overflowBox = {
+      ...baseBox,
+      words: "Line 1\nLine 2",
+    };
+    const { rerender } = render(
+      <DisplayEditor box={overflowBox} width={960} onChange={onChange} index={1} />
+    );
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await user.click(textarea);
+    await user.type(textarea, "\nLine 3");
+
+    expect(textarea.value).toContain("Line 3");
+
+    rerender(
+      <DisplayEditor
+        box={{ ...overflowBox, words: "Line 1" }}
+        width={960}
+        onChange={onChange}
+        index={1}
+      />
+    );
+
+    expect(textarea.value).toBe("Line 1");
+  });
+
+  it("does not flush stale overflow text on blur after upstream reformat", async () => {
+    const onChange = jest.fn();
+    const user = userEvent.setup();
+    const overflowBox = {
+      ...baseBox,
+      words: "Line 1\nLine 2",
+    };
+    const { rerender } = render(
+      <DisplayEditor box={overflowBox} width={960} onChange={onChange} index={1} />
+    );
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await user.click(textarea);
+    await user.type(textarea, "\nLine 3");
+
+    onChange.mockClear();
+
+    rerender(
+      <DisplayEditor
+        box={{ ...overflowBox, words: "Line 1" }}
+        width={960}
+        onChange={onChange}
+        index={1}
+      />
+    );
+
+    fireEvent.blur(textarea);
+
+    expect(textarea.value).toBe("Line 1");
+    expect(onChange).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        commitMode: "flush",
+        value: expect.stringContaining("Line 3"),
+      })
+    );
+  });
+
+  it("continues typing from the reformatted slide text after upstream overflow changes", async () => {
+    const onChange = jest.fn();
+    const user = userEvent.setup();
+    const overflowBox = {
+      ...baseBox,
+      words: "Line 1\nLine 2",
+    };
+    const { rerender } = render(
+      <DisplayEditor box={overflowBox} width={960} onChange={onChange} index={1} />
+    );
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await user.click(textarea);
+    await user.type(textarea, "\nLine 3");
+
+    rerender(
+      <DisplayEditor
+        box={{ ...overflowBox, words: "Line 1" }}
+        width={960}
+        onChange={onChange}
+        index={1}
+      />
+    );
+
+    onChange.mockClear();
+    await user.type(textarea, " updated");
+
+    expect(textarea.value).toBe("Line 1 updated");
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        commitMode: "typing",
+        value: "Line 1 updated",
+      })
+    );
+  });
+
+  it("syncs focused draft when the upstream box is replaced with the same words", async () => {
+    const onChange = jest.fn();
+    const user = userEvent.setup();
+    const baseOverflowBox = {
+      ...baseBox,
+      words: "Line 1",
+      x: 0,
+    };
+    const { rerender } = render(
+      <DisplayEditor box={baseOverflowBox} width={960} onChange={onChange} index={1} />
+    );
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await user.click(textarea);
+    await user.type(textarea, " overflow");
+
+    expect(textarea.value).toBe("Line 1 overflow");
+
+    rerender(
+      <DisplayEditor
+        box={{ ...baseOverflowBox, x: 5, words: "Line 1" }}
+        width={960}
+        onChange={onChange}
+        index={1}
+      />
+    );
+
+    expect(textarea.value).toBe("Line 1");
+
+    onChange.mockClear();
+    fireEvent.blur(textarea);
+
+    expect(onChange).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        commitMode: "flush",
+        value: "Line 1 overflow",
+      })
     );
   });
 });

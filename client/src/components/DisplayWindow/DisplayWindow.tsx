@@ -20,7 +20,7 @@ import DisplayStreamBible from "./DisplayStreamBible";
 import DisplayParticipantOverlay from "./DisplayParticipantOverlay";
 import DisplayStbOverlay from "./DisplayStbOverlay";
 import DisplayQrCodeOverlay from "./DisplayQrCodeOverlay";
-import DisplayEditor from "./DisplayEditor";
+import DisplayEditor, { DisplayEditorChangeInfo } from "./DisplayEditor";
 import DisplayStreamText from "./DisplayStreamText";
 import DisplayImageOverlay from "./DisplayImageOverlay";
 import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
@@ -121,17 +121,7 @@ const getPrevOverlayVisibleUntilMs = ({
 type DisplayWindowProps = {
   prevBoxes?: Box[];
   boxes?: Box[];
-  onChange?: ({
-    index,
-    value,
-    box,
-    cursorPosition,
-  }: {
-    index: number;
-    value: string;
-    box: Box;
-    cursorPosition: number;
-  }) => void;
+  onChange?: (info: DisplayEditorChangeInfo) => void;
   width?: number; // Optional: if not provided, component will scale to fit container
   showBorder?: boolean;
   displayType?: DisplayType;
@@ -861,13 +851,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         ref={containerRef}
         id={isEditor ? "display-editor" : undefined}
         style={{
-          // Ensure parent has defined width to constrain scaled content
-          // If className is provided (like "w-full"), let CSS handle it but ensure container is constrained
-          width: width
-            ? `${width}vw`
-            : className
-              ? "100%" // When using transform with className, ensure width is set
-              : "100%",
+          // Ensure parent has defined width to constrain scaled content; otherwise fill (e.g. w-full via className).
+          width: width ? `${width}vw` : "100%",
           fontFamily: "Inter, sans-serif",
           // Prevent scaled inner container from affecting layout
           contain: "layout size",

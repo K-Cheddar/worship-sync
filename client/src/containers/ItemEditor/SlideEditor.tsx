@@ -10,6 +10,7 @@ import { X } from "lucide-react";
 import Input from "../../components/Input/Input";
 import {
   CSSProperties,
+  startTransition,
   useCallback,
   useContext,
   useEffect,
@@ -39,7 +40,7 @@ import {
   getIndexFromSelectionHint,
   getSelectionHint,
 } from "../../utils/selectionHint";
-import { Box, ItemSlideType } from "../../types";
+import { ItemSlideType } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
 import { RootState } from "../../store/store";
@@ -50,10 +51,13 @@ import SectionTextEditor from "../../components/SectionTextEditor/SectionTextEdi
 import SlideBoxes from "../../components/SlideBoxes/SlideBoxes";
 import LoadingOverlay from "../../components/LoadingOverlay/LoadingOverlay";
 import TimerControls from "../../components/TimerControls/TimerControls";
+import type { DisplayEditorChangeInfo } from "../../components/DisplayWindow/DisplayEditor";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
   slideName.startsWith(lyricName) && !/^\d/.test(slideName.slice(lyricName.length));
+
+const BOX_EDIT_DEBOUNCE_MS = 200;
 
 const SlideEditor = ({ access }: { access?: AccessType }) => {
   const dispatch = useDispatch();
@@ -115,11 +119,10 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
   );
 
-  const [cursorPositions, setCursorPositions] = useState<
-    Record<number, number>
-  >({});
-
   const reformatTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const boxEditTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingBoxEditRef = useRef<DisplayEditorChangeInfo | null>(null);
+  const cursorPositionsRef = useRef<Record<number, number>>({});
   const remoteUpdateToastIdRef = useRef<string | null>(null);
   const [isReformatting, setIsReformatting] = useState(false);
   const itemTypeLabel = useMemo(() => getItemTypeLabel(type), [type]);
@@ -224,18 +227,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   }, [removeToast]);
 
   useEffect(() => {
-    Object.entries(cursorPositions).forEach(([boxIdx, position]) => {
-      const textBoxElement = document.getElementById(
-        `display-editor-box-${boxIdx}`
-      ) as HTMLTextAreaElement;
-      if (textBoxElement && typeof position === "number") {
-        textBoxElement.selectionEnd = position;
-        textBoxElement.selectionStart = position;
-        requestAnimationFrame(() => {
-          textBoxElement.scrollTop = 0;
-        });
-      }
-    });
     if (restoreFocusToBox != null) {
       const boxIdx = restoreFocusToBox;
       dispatch(setRestoreFocusToBox(null));
@@ -245,15 +236,43 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         ) as HTMLTextAreaElement | null;
         if (el) {
           el.focus();
-          const pos = cursorPositions[boxIdx];
+          const pos = cursorPositionsRef.current[boxIdx];
           if (typeof pos === "number") {
             el.selectionStart = pos;
             el.selectionEnd = pos;
           }
+          requestAnimationFrame(() => {
+            el.scrollTop = 0;
+          });
         }
       });
     }
-  }, [cursorPositions, selectedSlide, restoreFocusToBox, dispatch]);
+  }, [selectedSlide, restoreFocusToBox, dispatch]);
+
+  useEffect(() => {
+    return () => {
+      if (reformatTimeoutRef.current) {
+        clearTimeout(reformatTimeoutRef.current);
+      }
+      if (boxEditTimeoutRef.current) {
+        clearTimeout(boxEditTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const _boxes = useMemo(() => {
+    // For songs, always use arrangement slides
+    if (type === "song" && arrangement?.slides) {
+      return arrangement.slides[selectedSlide]?.boxes || [];
+    }
+    // For other types, use item slides
+    return slides?.[selectedSlide]?.boxes || [];
+  }, [type, slides, selectedSlide, arrangement]);
+
+  const boxes = useMemo(
+    () => (isLoading ? [] : _boxes),
+    [isLoading, _boxes]
+  );
 
   const saveName = () => {
     setIsEditingName(false);
@@ -262,20 +281,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     }
   };
 
-  const onChange = ({
+  const applyBoxChange = useCallback(({
     index,
     value,
     box,
     cursorPosition,
     lastKeyPressed,
-  }: {
-    index: number;
-    value: string;
-    box: Box;
-    cursorPosition?: number;
-    lastKeyPressed?: string | null;
-  }) => {
-    // Prevent editing if user doesn't have edit permissions
+  }: DisplayEditorChangeInfo) => {
     if (!canEdit) {
       return;
     }
@@ -290,19 +302,19 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     }
 
     if (typeof cursorPosition === "number") {
-      setCursorPositions((prev) => ({ ...prev, [index]: cursorPosition }));
+      cursorPositionsRef.current[index] = cursorPosition;
     }
 
     const newBoxes = boxes.map((b, i) =>
       i === index
         ? {
-          ...b,
-          x: box.x,
-          y: box.y,
-          width: box.width,
-          height: box.height,
-          words: type === "bible" ? box.words : value,
-        }
+            ...b,
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height,
+            words: type === "bible" ? box.words : value,
+          }
         : b
     );
 
@@ -310,8 +322,8 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       dispatch(updateBoxes({ boxes: newBoxes }));
     }
 
-    const updatedSlides = item.slides.map((slide, index) => {
-      if (index === selectedSlide) {
+    const updatedSlides = item.slides.map((slide, slideIndex) => {
+      if (slideIndex === selectedSlide) {
         return { ...slide, boxes: newBoxes };
       }
       return slide;
@@ -327,51 +339,46 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     };
 
     if (type === "bible") {
-      const _item = formatBible({
+      const formattedItem = formatBible({
         item: updatedItem,
         mode: item.bibleInfo?.fontMode || "separate",
       });
-      dispatch(updateSlides({ slides: _item.slides }));
+      dispatch(updateSlides({ slides: formattedItem.slides }));
     }
 
     if (type === "free") {
       if (shouldDeleteCurrentSlide) {
         dispatch(updateSlides({ slides: updatedSlides }));
       } else {
-        // Get the current section number from the slide name
         const currentSlide = updatedSlides[selectedSlide];
         const currentSectionMatch = currentSlide?.name?.match(/Section (\d+)/);
         const currentSectionNum = currentSectionMatch
           ? parseInt(currentSectionMatch[1])
           : 1;
 
-        // Get all slides in the current section (sorted by slide index to maintain order)
         const currentSectionSlidesWithIndices = updatedSlides
           .map((slide, idx) => ({ slide, idx }))
           .filter(({ slide }) => slide.name?.includes(`Section ${currentSectionNum}`))
           .sort((a, b) => a.idx - b.idx);
 
-        // Find the index of the current slide within the section
         const currentSlideIndexInSection = currentSectionSlidesWithIndices.findIndex(
           ({ idx }) => idx === selectedSlide
         );
 
-        // Safety check: if current slide not found in section, fall back to direct update
         if (currentSlideIndexInSection === -1) {
-          const _item = formatFree({
+          const formattedItem = formatFree({
             ...updatedItem,
           });
-          dispatch(updateSlides({ slides: _item.slides }));
+          dispatch(updateSlides({ slides: formattedItem.slides }));
           return;
         }
 
-        // Build the combined text from all slides in the section
-        // Use the same logic as getFormattedSections
         let newWords = "";
         for (let i = 0; i < currentSectionSlidesWithIndices.length; ++i) {
           const { slide } = currentSectionSlidesWithIndices[i];
           const slideBox = slide?.boxes[index];
-          const slideWords = i === currentSlideIndexInSection ? value : (slideBox?.words || "");
+          const slideWords =
+            i === currentSlideIndexInSection ? value : slideBox?.words || "";
 
           if (slideWords.trim().length > 0) {
             if (newWords) {
@@ -384,7 +391,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           }
         }
 
-        // Update formattedSections with the new combined text
         const formattedSections = item.formattedSections || [];
         const updatedFormattedSections = formattedSections.map((section) => {
           if (section.sectionNum === currentSectionNum) {
@@ -396,8 +402,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           return section;
         });
 
-        // If section doesn't exist, create it
-        if (!updatedFormattedSections.find((s) => s.sectionNum === currentSectionNum)) {
+        if (!updatedFormattedSections.find((section) => section.sectionNum === currentSectionNum)) {
           updatedFormattedSections.push({
             sectionNum: currentSectionNum,
             words: newWords,
@@ -405,14 +410,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           });
         }
 
-        // Now format with updated formattedSections
-        const _item = formatFree({
+        const formattedItem = formatFree({
           ...updatedItem,
           formattedSections: updatedFormattedSections,
         });
         dispatch(updateSlides({
-          slides: _item.slides,
-          formattedSections: _item.formattedSections,
+          slides: formattedItem.slides,
+          formattedSections: formattedItem.formattedSections,
         }));
       }
     }
@@ -421,53 +425,43 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       const currentArrangement = arrangements[selectedArrangement];
       if (!currentArrangement?.slides) return;
 
-      // Last slide should not be editable
       if (selectedSlide === currentArrangement.slides.length - 1) {
         return;
       }
 
-      // For title slide or boxes excluded from overflow, update directly
       if (box.excludeFromOverflow || selectedSlide === 0) {
         dispatch(updateBoxes({ boxes: newBoxes }));
         return;
       }
 
-      // For overflow slides, update the formatted lyrics
       const formattedLyrics = currentArrangement.formattedLyrics || [];
       const arrangementSlides = currentArrangement.slides;
       const currentSlide = arrangementSlides[selectedSlide];
 
       if (!currentSlide) return;
 
-      // Find the formatted lyric that matches this slide
       const lyricIndex = formattedLyrics.findIndex((lyric) =>
         slideNameMatchesLyric(currentSlide.name, lyric.name)
       );
 
       if (lyricIndex === -1) {
-        // If no matching lyric found, just update boxes directly
         dispatch(updateBoxes({ boxes: newBoxes }));
         return;
       }
 
       const formattedLyric = formattedLyrics[lyricIndex];
-
-      // Calculate the range of slides for this section
       const slideIndex = currentSlide.boxes[index]?.slideIndex || 0;
       const start = selectedSlide - slideIndex;
       const end = start + formattedLyric.slideSpan - 1;
 
-      // Build the combined text from all slides in the section
       let newWords = "";
       for (let i = start; i <= end && i < arrangementSlides.length; ++i) {
         if (i === selectedSlide) {
-          // Use the new value for the current slide
           const alreadyHasNewline = value.endsWith("\n");
           const shouldAddNewline =
             i < end && !alreadyHasNewline && value.trim().length > 0;
           newWords += shouldAddNewline ? value + "\n" : value;
         } else {
-          // Preserve text from other slides in the section
           const slideBox = arrangementSlides[i]?.boxes[index];
           if (slideBox?.words) {
             newWords += slideBox.words;
@@ -481,13 +475,12 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
       if (newWords === "" && !shouldDeleteCurrentSlide) return;
 
-      // Update the formatted lyrics and reformat
-      const updatedArrangements = item.arrangements.map((arr, idx) => {
-        if (idx === selectedArrangement) {
+      const updatedArrangements = item.arrangements.map((arr, arrIdx) => {
+        if (arrIdx === selectedArrangement) {
           return {
             ...arr,
-            formattedLyrics: formattedLyrics.map((lyric, i) =>
-              i === lyricIndex ? { ...lyric, words: newWords } : lyric
+            formattedLyrics: formattedLyrics.map((lyric, lyricIdx) =>
+              lyricIdx === lyricIndex ? { ...lyric, words: newWords } : lyric
             ),
           };
         }
@@ -505,7 +498,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         return;
       }
 
-      // Resolve which slide in the new arrangement is the same logical slide (for layout preservation only; thunk handles selection + focus)
       const newSlides = formattedItem.arrangements[selectedArrangement]?.slides ?? [];
       const hint = getSelectionHint(arrangementSlides, selectedSlide);
       const maxSlideIndex = Math.max(0, newSlides.length - 2);
@@ -513,7 +505,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         ? Math.min(getIndexFromSelectionHint(newSlides, hint), maxSlideIndex)
         : Math.min(selectedSlide, maxSlideIndex);
 
-      // Preserve drag/resize from DisplayEditor: apply only layout (x, y, width, height), keep formatted words from formatSong
       const arrangementsWithBox = formattedItem.arrangements.map((arr, arrIdx) => {
         if (arrIdx !== selectedArrangement) return arr;
         return {
@@ -534,18 +525,137 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
       dispatch(updateArrangements({ arrangements: arrangementsWithBox }));
     }
-  };
+  }, [
+    canEdit,
+    boxes,
+    type,
+    dispatch,
+    item,
+    selectedSlide,
+    arrangements,
+    selectedArrangement,
+  ]);
 
-  const _boxes = useMemo(() => {
-    // For songs, always use arrangement slides
-    if (type === "song" && arrangement?.slides) {
-      return arrangement.slides[selectedSlide]?.boxes || [];
+  const clearPendingBoxEdit = useCallback(() => {
+    if (boxEditTimeoutRef.current) {
+      clearTimeout(boxEditTimeoutRef.current);
+      boxEditTimeoutRef.current = null;
     }
-    // For other types, use item slides
-    return slides?.[selectedSlide]?.boxes || [];
-  }, [type, slides, selectedSlide, arrangement]);
+    pendingBoxEditRef.current = null;
+  }, []);
 
-  const boxes = isLoading ? [] : _boxes;
+  const flushPendingBoxEdit = useCallback(
+    (override?: DisplayEditorChangeInfo) => {
+      const pending = override ?? pendingBoxEditRef.current;
+      clearPendingBoxEdit();
+
+      if (!pending) return;
+
+      setIsReformatting(false);
+      applyBoxChange({ ...pending, commitMode: "immediate" });
+    },
+    [applyBoxChange, clearPendingBoxEdit]
+  );
+
+  const scheduleBoxEdit = useCallback(
+    (changeInfo: DisplayEditorChangeInfo) => {
+      clearPendingBoxEdit();
+      pendingBoxEditRef.current = changeInfo;
+      setIsReformatting(true);
+      boxEditTimeoutRef.current = setTimeout(() => {
+        const pending = pendingBoxEditRef.current;
+        pendingBoxEditRef.current = null;
+        boxEditTimeoutRef.current = null;
+
+        if (!pending) {
+          setIsReformatting(false);
+          return;
+        }
+
+        startTransition(() => {
+          applyBoxChange({ ...pending, commitMode: "immediate" });
+        });
+        setIsReformatting(false);
+      }, BOX_EDIT_DEBOUNCE_MS);
+    },
+    [applyBoxChange, clearPendingBoxEdit]
+  );
+
+  const onChange = useCallback((changeInfo: DisplayEditorChangeInfo) => {
+    if (!canEdit) {
+      return;
+    }
+
+    const {
+      value,
+      box,
+      lastKeyPressed,
+      commitMode = "typing",
+    } = changeInfo;
+
+    if (typeof changeInfo.cursorPosition === "number") {
+      cursorPositionsRef.current[changeInfo.index] = changeInfo.cursorPosition;
+    }
+
+    const shouldDeleteCurrentSlide =
+      (lastKeyPressed === "Backspace" || lastKeyPressed === "Delete") &&
+      !value;
+    const shouldCommitImmediatelyForLineShift = lastKeyPressed === "Enter";
+
+    const currentArrangement = arrangements[selectedArrangement];
+    const isSongOverflowEdit =
+      type === "song" &&
+      !!currentArrangement?.slides &&
+      selectedSlide !== currentArrangement.slides.length - 1 &&
+      !box.excludeFromOverflow &&
+      selectedSlide !== 0 &&
+      (() => {
+        const currentSlide = currentArrangement.slides[selectedSlide];
+        if (!currentSlide) return false;
+        return (
+          (currentArrangement.formattedLyrics || []).findIndex((lyric) =>
+            slideNameMatchesLyric(currentSlide.name, lyric.name)
+          ) !== -1
+        );
+      })();
+
+    const shouldDebounceTextEdit =
+      commitMode === "typing" &&
+      !shouldDeleteCurrentSlide &&
+      !shouldCommitImmediatelyForLineShift &&
+      (type === "free" || isSongOverflowEdit);
+
+    if (commitMode === "flush") {
+      flushPendingBoxEdit(changeInfo);
+      return;
+    }
+
+    if (commitMode === "immediate") {
+      clearPendingBoxEdit();
+      setIsReformatting(false);
+      applyBoxChange(changeInfo);
+      return;
+    }
+
+    if (shouldDebounceTextEdit) {
+      scheduleBoxEdit(changeInfo);
+      return;
+    }
+
+    clearPendingBoxEdit();
+    setIsReformatting(false);
+    applyBoxChange(changeInfo);
+  }, [
+    applyBoxChange,
+    arrangements,
+    canEdit,
+    clearPendingBoxEdit,
+    flushPendingBoxEdit,
+    scheduleBoxEdit,
+    selectedArrangement,
+    selectedSlide,
+    type,
+  ]);
 
   const canDeleteBox = useCallback(
     (index: number) => {
