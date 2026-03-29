@@ -23,8 +23,8 @@ const resolveMediaUrl = async (url: string): Promise<string> => {
 export const useCachedMediaUrl = (
   url: string | undefined,
 ): string | undefined => {
-  const mediaCacheMap = useSelector(
-    (state: RootState) => state.mediaCacheMap?.map ?? {},
+  const cachedUrl = useSelector((state: RootState) =>
+    url ? state.mediaCacheMap?.map?.[url] : undefined,
   );
   const [resolved, setResolved] = useState<string | undefined>(url);
   const checkIdRef = useRef(0);
@@ -34,17 +34,21 @@ export const useCachedMediaUrl = (
       setResolved(url);
       return;
     }
-    if (mediaCacheMap[url]) return;
+    if (cachedUrl) return;
 
     const checkId = ++checkIdRef.current;
+    // Optimistically switch to the new asset immediately so we never
+    // keep rendering the previously-resolved image while Electron checks
+    // whether a better local path exists for the current URL.
+    setResolved(url);
+
     resolveMediaUrl(url).then((result) => {
       if (checkId !== checkIdRef.current) return;
       setResolved(result);
     });
-  }, [url, mediaCacheMap]);
+  }, [url, cachedUrl]);
 
-  const syncCached = url && mediaCacheMap[url];
-  return syncCached ?? resolved;
+  return cachedUrl ?? resolved;
 };
 
 /**
@@ -55,8 +59,8 @@ export const useCachedMediaUrl = (
 export const useCachedVideoUrl = (
   url: string | undefined,
 ): string | undefined => {
-  const mediaCacheMap = useSelector(
-    (state: RootState) => state.mediaCacheMap?.map ?? {},
+  const cachedUrl = useSelector((state: RootState) =>
+    url ? state.mediaCacheMap?.map?.[url] : undefined,
   );
   const [state, setState] = useState<{
     resolved: string | undefined;
@@ -73,7 +77,7 @@ export const useCachedVideoUrl = (
       setState({ resolved: url, forUrl: url });
       return;
     }
-    if (mediaCacheMap[url]) return;
+    if (cachedUrl) return;
 
     const checkId = ++checkIdRef.current;
     setState({ resolved: undefined, forUrl: url });
@@ -82,10 +86,9 @@ export const useCachedVideoUrl = (
       if (checkId !== checkIdRef.current) return;
       setState({ resolved: result, forUrl: url });
     });
-  }, [url, mediaCacheMap]);
+  }, [url, cachedUrl]);
 
-  const syncCached = url && mediaCacheMap[url];
-  if (syncCached) return syncCached;
+  if (cachedUrl) return cachedUrl;
   if (state.forUrl !== url) return undefined;
   return state.resolved;
 };

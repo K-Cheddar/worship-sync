@@ -17,7 +17,7 @@ import {
 import Button from "../Button/Button";
 import cn from "classnames";
 
-type PresentationProps = {
+type PresentationPreviewProps = {
   name: string;
   info: PresentationType;
   prevInfo: PresentationType;
@@ -42,7 +42,8 @@ type PresentationProps = {
   previewScale?: number;
 };
 
-const Presentation = ({
+/** Transmit-handler preview card. For fullscreen /projector and /monitor routes see FullscreenPresentation. */
+const PresentationPreview = ({
   name,
   prevInfo,
   info,
@@ -60,7 +61,7 @@ const Presentation = ({
   showMonitorClockTimer = false,
   streamItemContentBlocked = false,
   previewScale = 1,
-}: PresentationProps) => {
+}: PresentationPreviewProps) => {
   const dispatch = useDispatch();
   const previewWidthVw = (isMobile ? 32 : 14) * previewScale;
   const headerRef = useRef<HTMLHeadingElement | null>(null);
@@ -145,6 +146,42 @@ const Presentation = ({
 
     return () => observer.disconnect();
   }, [hideHeader, minimalHeader, name]);
+
+  const displayWindowProps = {
+    boxes: info.slide?.boxes || [],
+    prevBoxes: prevInfo.slide?.boxes || [],
+    nextBoxes: info.nextSlide?.boxes ?? [],
+    prevNextBoxes: prevInfo.nextSlide?.boxes ?? [],
+    bibleInfoBox: info.bibleInfoBox,
+    width: previewWidthVw,
+    showBorder,
+    displayType: info.displayType,
+    participantOverlayInfo: info.participantOverlayInfo,
+    prevParticipantOverlayInfo: prevInfo.participantOverlayInfo,
+    stbOverlayInfo: info.stbOverlayInfo,
+    prevStbOverlayInfo: prevInfo.stbOverlayInfo,
+    qrCodeOverlayInfo: info.qrCodeOverlayInfo,
+    prevQrCodeOverlayInfo: prevInfo.qrCodeOverlayInfo,
+    imageOverlayInfo: info.imageOverlayInfo,
+    prevImageOverlayInfo: prevInfo.imageOverlayInfo,
+    prevBibleDisplayInfo: prevInfo.bibleDisplayInfo,
+    bibleDisplayInfo: info.bibleDisplayInfo,
+    formattedTextDisplayInfo: info.formattedTextDisplayInfo,
+    prevFormattedTextDisplayInfo: prevInfo.formattedTextDisplayInfo,
+    timerInfo,
+    prevTimerInfo,
+    time: info.time,
+    prevTime: prevInfo.time,
+    shouldAnimate: true,
+    shouldPlayVideo: true,
+    showMonitorClockTimer,
+    // Only the transmit-handler monitor preview uses the full monitor chrome.
+    monitorLayoutMode:
+      info.displayType === "monitor" ? "full-monitor" : "content-only",
+    transitionDirection: info.transitionDirection,
+    streamItemContentBlocked:
+      info.displayType === "stream" ? streamItemContentBlocked : undefined,
+  } as const;
 
   return (
     <div className="flex flex-col gap-2">
@@ -255,39 +292,7 @@ const Presentation = ({
                 </div>
               </>
             )}
-            <DisplayWindow
-              boxes={info.slide?.boxes || []}
-              prevBoxes={prevInfo.slide?.boxes || []}
-              nextBoxes={info.nextSlide?.boxes ?? []}
-              prevNextBoxes={prevInfo.nextSlide?.boxes ?? []}
-              bibleInfoBox={info.bibleInfoBox}
-              width={previewWidthVw}
-              showBorder={showBorder}
-              displayType={info.displayType}
-              participantOverlayInfo={info.participantOverlayInfo}
-              prevParticipantOverlayInfo={prevInfo.participantOverlayInfo}
-              stbOverlayInfo={info.stbOverlayInfo}
-              prevStbOverlayInfo={prevInfo.stbOverlayInfo}
-              qrCodeOverlayInfo={info.qrCodeOverlayInfo}
-              prevQrCodeOverlayInfo={prevInfo.qrCodeOverlayInfo}
-              imageOverlayInfo={info.imageOverlayInfo}
-              prevImageOverlayInfo={prevInfo.imageOverlayInfo}
-              prevBibleDisplayInfo={prevInfo.bibleDisplayInfo}
-              bibleDisplayInfo={info.bibleDisplayInfo}
-              formattedTextDisplayInfo={info.formattedTextDisplayInfo}
-              prevFormattedTextDisplayInfo={prevInfo.formattedTextDisplayInfo}
-              timerInfo={timerInfo}
-              prevTimerInfo={prevTimerInfo}
-              time={info.time}
-              prevTime={prevInfo.time}
-              shouldAnimate
-              shouldPlayVideo
-              showMonitorClockTimer={showMonitorClockTimer}
-              transitionDirection={info.transitionDirection}
-              streamItemContentBlocked={
-                info.displayType === "stream" ? streamItemContentBlocked : undefined
-              }
-            />
+            <DisplayWindow {...displayWindowProps} />
           </div>
           {!hideQuickLinks && filteredQuickLinks.length > 0 && (
             <ul className="grid grid-cols-2 gap-2 py-2 w-full pr-2">
@@ -308,4 +313,4 @@ const Presentation = ({
   );
 };
 
-export default Presentation;
+export default PresentationPreview;

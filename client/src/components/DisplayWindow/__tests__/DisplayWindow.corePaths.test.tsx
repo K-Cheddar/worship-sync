@@ -81,6 +81,7 @@ const baseState = {
           showNextSlide: true,
           clockFontSize: 16,
           timerFontSize: 18,
+          timerId: null,
         },
       },
     },
@@ -127,6 +128,7 @@ describe("DisplayWindow core paths", () => {
         boxes={[baseBox]}
         nextBoxes={[{ ...baseBox, id: "next-1" }]}
         showMonitorClockTimer
+        monitorLayoutMode="full-monitor"
       />,
     );
 
@@ -135,6 +137,20 @@ describe("DisplayWindow core paths", () => {
     expect(monitor).toHaveAttribute("data-show-next-slide", "true");
     expect(monitor).toHaveAttribute("data-show-clock", "true");
     expect(monitor).toHaveAttribute("data-show-timer", "true");
+  });
+
+  it("renders monitor previews as content-only by default", () => {
+    render(
+      <DisplayWindow
+        displayType="monitor"
+        boxes={[baseBox]}
+        prevBoxes={[{ ...baseBox, id: "prev-monitor" }]}
+      />,
+    );
+
+    expect(screen.queryByTestId("monitor-view-mock")).not.toBeInTheDocument();
+    expect(screen.getByTestId("display-box")).toBeInTheDocument();
+    expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
   });
 
   it("renders stream mode with stream text plus stream overlays", () => {
@@ -159,6 +175,70 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("display-qr-overlay-mock")).toBeInTheDocument();
     expect(screen.getByTestId("display-image-overlay-mock")).toBeInTheDocument();
     expect(screen.getByTestId("display-formatted-text-mock")).toBeInTheDocument();
+  });
+
+  it("unmounts the previous display layer after the display transition window", () => {
+    jest.useFakeTimers();
+
+    const { rerender } = render(
+      <DisplayWindow displayType="projector" boxes={[baseBox]} prevBoxes={[]} />,
+    );
+
+    expect(screen.queryByTestId("display-box-prev")).not.toBeInTheDocument();
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[{ ...baseBox, id: "next-box" }]}
+        prevBoxes={[baseBox]}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(499);
+    });
+
+    expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+
+    expect(screen.queryByTestId("display-box-prev")).not.toBeInTheDocument();
+  });
+
+  it("unmounts the previous stream text layer after the stream transition window", () => {
+    jest.useFakeTimers();
+
+    const { rerender } = render(
+      <DisplayWindow displayType="stream" boxes={[baseBox]} prevBoxes={[]} />,
+    );
+
+    expect(screen.queryByTestId("display-stream-text-prev")).not.toBeInTheDocument();
+
+    rerender(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[{ ...baseBox, id: "next-stream-box" }]}
+        prevBoxes={[baseBox]}
+      />,
+    );
+
+    expect(screen.getByTestId("display-stream-text-prev")).toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(349);
+    });
+
+    expect(screen.getByTestId("display-stream-text-prev")).toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+
+    expect(screen.queryByTestId("display-stream-text-prev")).not.toBeInTheDocument();
   });
 
   it("keeps the stream item layer hidden until a participant overlay has fully animated off screen", () => {

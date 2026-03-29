@@ -10,7 +10,7 @@ import { capitalizeFirstLetter } from "../../utils/generalUtils";
 const TimerManager = () => {
   const dispatch = useDispatch();
   const { user, database, firebaseDb, hostId } = useContext(GlobalInfoContext) || {};
-  const { timers } = useSelector((state: RootState) => state.timers);
+  const timers = useSelector((state: RootState) => state.timers.timers);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useSyncRemoteTimers(firebaseDb, database, user, hostId);

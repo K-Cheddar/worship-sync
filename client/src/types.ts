@@ -533,6 +533,8 @@ export type MonitorSettingsType = {
   timerId: string | null;
 };
 
+export type MonitorLayoutMode = "content-only" | "full-monitor";
+
 export type ScrollbarWidth = "thin" | "auto" | "none";
 
 export type ItemList = {

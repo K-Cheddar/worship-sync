@@ -1,5 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import Presentation from "./Presentation";
+import PresentationPreview from "./PresentationPreview";
+
+const mockDisplayWindow = jest.fn((_: any) => <div data-testid="display-window" />);
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => jest.fn(),
@@ -7,7 +9,7 @@ jest.mock("../../hooks", () => ({
 
 jest.mock("../DisplayWindow/DisplayWindow", () => ({
   __esModule: true,
-  default: () => <div data-testid="display-window" />,
+  default: (props: unknown) => mockDisplayWindow(props),
 }));
 
 const basePresentation = {
@@ -26,10 +28,12 @@ const makeRect = (width: number) => ({
   toJSON: () => ({}),
 });
 
-describe("Presentation", () => {
+describe("PresentationPreview", () => {
   let headerWidth = 320;
 
   beforeEach(() => {
+    mockDisplayWindow.mockClear();
+
     class ResizeObserverMock {
       private readonly callback: ResizeObserverCallback;
 
@@ -96,7 +100,7 @@ describe("Presentation", () => {
     headerWidth = 320;
 
     render(
-      <Presentation
+      <PresentationPreview
         name="Projector"
         info={basePresentation}
         prevInfo={basePresentation}
@@ -117,7 +121,7 @@ describe("Presentation", () => {
     headerWidth = 220;
 
     render(
-      <Presentation
+      <PresentationPreview
         name="Projector"
         info={basePresentation}
         prevInfo={basePresentation}
@@ -138,7 +142,7 @@ describe("Presentation", () => {
     headerWidth = 160;
 
     render(
-      <Presentation
+      <PresentationPreview
         name="Projector"
         info={basePresentation}
         prevInfo={basePresentation}
@@ -153,5 +157,47 @@ describe("Presentation", () => {
       expect(screen.queryByRole("button", { name: "Clear" })).not.toBeInTheDocument();
     });
     expect(screen.queryByRole("switch", { name: "Live:" })).not.toBeInTheDocument();
+  });
+
+  it("uses full monitor layout only for monitor previews", () => {
+    render(
+      <PresentationPreview
+        name="Monitor"
+        info={{ ...basePresentation, displayType: "monitor" }}
+        prevInfo={{ ...basePresentation, displayType: "monitor" }}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+      />
+    );
+
+    expect(mockDisplayWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayType: "monitor",
+        monitorLayoutMode: "full-monitor",
+      }),
+    );
+  });
+
+  it("keeps non-monitor previews in content-only mode", () => {
+    render(
+      <PresentationPreview
+        name="Projector"
+        info={basePresentation}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+      />
+    );
+
+    expect(mockDisplayWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayType: "projector",
+        monitorLayoutMode: "content-only",
+      }),
+    );
   });
 });

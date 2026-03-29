@@ -3,14 +3,16 @@ import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
 import { useEffect } from "react";
 
 const Stream = () => {
-  const { streamInfo, prevStreamInfo, streamItemContentBlocked } = useSelector(
-    (state) => state.presentation
+  const streamInfo = useSelector((state) => state.presentation.streamInfo);
+  const prevStreamInfo = useSelector((state) => state.presentation.prevStreamInfo);
+  const streamItemContentBlocked = useSelector(
+    (state) => state.presentation.streamItemContentBlocked
   );
-
-  const timers = useSelector((state) => state.timers.timers);
-  const streamTimer = timers.find((timer) => timer.id === streamInfo.timerId);
-  const prevStreamTimer = timers.find(
-    (timer) => timer.id === prevStreamInfo.timerId
+  const streamTimer = useSelector((state) =>
+    state.timers.timers.find((timer) => timer.id === streamInfo.timerId)
+  );
+  const prevStreamTimer = useSelector((state) =>
+    state.timers.timers.find((timer) => timer.id === prevStreamInfo.timerId)
   );
 
   useEffect(() => {

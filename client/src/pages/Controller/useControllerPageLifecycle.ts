@@ -57,27 +57,24 @@ import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemL
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
 import { CONTROLLER_PAGE_READY, RootState } from "../../store/store";
-import { useSyncRemoteTimers } from "../../hooks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
+ * Remote timer sync from Firebase is handled globally by TimerManager in App (not here).
  */
 export const useControllerPageLifecycle = () => {
   const dispatch = useDispatch();
   const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
-  const {
-    user,
-    database,
-    access,
-    firebaseDb,
-    hostId,
-    refreshPresentationListeners,
-  } = useContext(GlobalInfoContext) || {};
+  const { access, refreshPresentationListeners } =
+    useContext(GlobalInfoContext) || {};
 
-  const { selectedList, activeList } = useSelector(
-    (state) => state.undoable.present.itemLists
+  const selectedList = useSelector(
+    (state) => state.undoable.present.itemLists.selectedList
+  );
+  const activeList = useSelector(
+    (state) => state.undoable.present.itemLists.activeList
   );
   const allControllerSlicesInitialized = useSelector((state: RootState) =>
     Boolean(
@@ -154,7 +151,6 @@ export const useControllerPageLifecycle = () => {
   );
 
   useGlobalBroadcast(updatePreferencesFromExternal);
-  useSyncRemoteTimers(firebaseDb, database, user, hostId);
   useSyncOnReconnect(pullFromRemote);
 
   const layoutRef = useCallback(
