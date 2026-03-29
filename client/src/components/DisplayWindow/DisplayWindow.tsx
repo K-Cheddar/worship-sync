@@ -1,6 +1,7 @@
 import React, {
   forwardRef,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -435,7 +436,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       [boxes]
     );
 
-    useEffect(() => {
+    useLayoutEffect(() => {
       if (!isDisplay || shouldUseFullMonitorLayout || prevBoxes.length === 0) {
         setDisplayPrevLayerBoxes((current) =>
           current.length === 0 ? current : [],
@@ -455,7 +456,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       return () => window.clearTimeout(timeoutId);
     }, [isDisplay, shouldUseFullMonitorLayout, prevBoxes]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
       if (!isStream || overlayPreviewMode || prevBoxes.length === 0) {
         setStreamPrevTextLayerBoxes((current) =>
           current.length === 0 ? current : [],

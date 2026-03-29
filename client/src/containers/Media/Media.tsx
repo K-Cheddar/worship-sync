@@ -97,6 +97,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [mediaToDelete, setMediaToDelete] = useState<MediaType | null>(null);
   const [isDeletingMultiple, setIsDeletingMultiple] = useState(false);
+  const [isDeleteInProgress, setIsDeleteInProgress] = useState(false);
+  const deleteConfirmLockRef = useRef(false);
   const [showName, setShowName] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ isUploading: boolean; progress: number }>({ isUploading: false, progress: 0 });
@@ -237,70 +239,77 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
 
 
   const handleConfirmDelete = async () => {
-    if (isDeletingMultiple) {
-      // Handle multiple deletions
-      await handleDeleteAll();
-      setShowDeleteModal(false);
-      setIsDeletingMultiple(false);
-      return;
-    }
-
-    if (!db || !mediaToDelete) return;
-
+    if (deleteConfirmLockRef.current) return;
+    deleteConfirmLockRef.current = true;
+    setIsDeleteInProgress(true);
     try {
-      // Delete from source (Cloudinary or Mux)
-      if (mediaToDelete.source === "cloudinary" && cloud) {
-        let publicId = mediaToDelete.publicId;
-        if (!publicId) {
-          // Extract public_id from the background URL
-          publicId = extractPublicId(mediaToDelete.background) || "";
-        }
-
-        if (publicId) {
-          // Delete from Cloudinary
-          const cloudinarySuccess = await deleteFromCloudinary(
-            cloud,
-            publicId,
-            mediaToDelete.type
-          );
-          if (!cloudinarySuccess) {
-            console.warn(
-              "Failed to delete from Cloudinary, but continuing with local deletion"
-            );
-          }
-        }
-      } else if (mediaToDelete.source === "mux" && mediaToDelete.muxAssetId) {
-        // Delete from Mux
-        try {
-          const response = await fetch(
-            `${getApiBasePath()}api/mux/asset/${mediaToDelete.muxAssetId}`,
-            { method: "DELETE" }
-          );
-
-          if (!response.ok) {
-            console.warn(
-              "Failed to delete from Mux, but continuing with local deletion"
-            );
-          }
-        } catch (error) {
-          console.warn("Error deleting from Mux:", error);
-        }
+      if (isDeletingMultiple) {
+        await handleDeleteAll();
+        setShowDeleteModal(false);
+        setIsDeletingMultiple(false);
+        return;
       }
 
-      // Remove from local list
-      const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
-      dispatch(updateMediaList(updatedList));
-      clearSelection();
-      dispatch(ActionCreators.clearHistory());
-    } catch (error) {
-      console.error("Error deleting background:", error);
-      // Still remove from local list even if deletion fails
-      const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
-      dispatch(updateMediaList(updatedList));
-      clearSelection();
+      if (!db || !mediaToDelete) return;
+
+      try {
+        // Delete from source (Cloudinary or Mux)
+        if (mediaToDelete.source === "cloudinary" && cloud) {
+          let publicId = mediaToDelete.publicId;
+          if (!publicId) {
+            // Extract public_id from the background URL
+            publicId = extractPublicId(mediaToDelete.background) || "";
+          }
+
+          if (publicId) {
+            // Delete from Cloudinary
+            const cloudinarySuccess = await deleteFromCloudinary(
+              cloud,
+              publicId,
+              mediaToDelete.type
+            );
+            if (!cloudinarySuccess) {
+              console.warn(
+                "Failed to delete from Cloudinary, but continuing with local deletion"
+              );
+            }
+          }
+        } else if (mediaToDelete.source === "mux" && mediaToDelete.muxAssetId) {
+          // Delete from Mux
+          try {
+            const response = await fetch(
+              `${getApiBasePath()}api/mux/asset/${mediaToDelete.muxAssetId}`,
+              { method: "DELETE" }
+            );
+
+            if (!response.ok) {
+              console.warn(
+                "Failed to delete from Mux, but continuing with local deletion"
+              );
+            }
+          } catch (error) {
+            console.warn("Error deleting from Mux:", error);
+          }
+        }
+
+        // Remove from local list
+        const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
+        dispatch(updateMediaList(updatedList));
+        clearSelection();
+        dispatch(ActionCreators.clearHistory());
+      } catch (error) {
+        console.error("Error deleting background:", error);
+        // Still remove from local list even if deletion fails
+        const updatedList = list.filter((item) => item.id !== mediaToDelete.id);
+        dispatch(updateMediaList(updatedList));
+        clearSelection();
+      } finally {
+        setShowDeleteModal(false);
+        setMediaToDelete(null);
+      }
     } finally {
-      setShowDeleteModal(false);
-      setMediaToDelete(null);
+      deleteConfirmLockRef.current = false;
+      setIsDeleteInProgress(false);
     }
   };
 
@@ -785,6 +794,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         isOpen={showDeleteModal}
         onClose={handleCancelDelete}
         onConfirm={handleConfirmDelete}
+        isConfirming={isDeleteInProgress}
         itemName={
           isDeletingMultiple
             ? undefined
