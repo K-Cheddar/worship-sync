@@ -9,6 +9,7 @@ export type ToastData = {
   position?: ToastPosition;
   persist?: boolean;
   duration?: number;
+  showCloseButton?: boolean;
 };
 
 type ToastContainerProps = {

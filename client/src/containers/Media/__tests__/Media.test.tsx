@@ -64,6 +64,7 @@ jest.mock("../../../hooks", () => ({
     selectedMediaIds: new Set<string>(),
     previewMedia: null,
     setPreviewMedia: jest.fn(),
+    setSelectedMediaIds: jest.fn(),
     handleMediaClick: mockSelectionHandleClick,
     clearSelection: mockClearSelection,
   }),

@@ -115,6 +115,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     selectedMediaIds,
     previewMedia,
     setPreviewMedia,
+    setSelectedMediaIds,
     handleMediaClick,
     clearSelection,
   } = useMediaSelection({
@@ -122,6 +123,13 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     filteredList,
     enableRangeSelection: true,
   });
+
+  /** Fullscreen modal keeps selection in MediaModal; copy into parent before bulk delete. */
+  const openMultiDeleteModal = (ids: Set<string>) => {
+    setSelectedMediaIds(new Set(ids));
+    setIsDeletingMultiple(true);
+    setShowDeleteModal(true);
+  };
 
   const { db, cloud, isMobile, updater } =
     useContext(ControllerInfoContext) || {};
@@ -808,10 +816,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           setMediaToDelete(mediaItem);
           setShowDeleteModal(true);
         }}
-        onDeleteMultipleClick={() => {
-          setIsDeletingMultiple(true);
-          setShowDeleteModal(true);
-        }}
+        onDeleteMultipleClick={openMultiDeleteModal}
         onPreviewChange={setPreviewMedia}
         mediaUploadInputRef={mediaUploadInputRef}
         uploadProgress={uploadProgress}

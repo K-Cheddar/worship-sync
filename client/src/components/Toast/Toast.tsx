@@ -22,6 +22,7 @@ export type ToastProps = {
   position?: ToastPosition;
   persist?: boolean;
   duration?: number;
+  showCloseButton?: boolean;
   onClose: () => void;
 };
 
@@ -33,6 +34,7 @@ const Toast: React.FC<ToastProps> = ({
   position = "top-center",
   persist = false,
   duration = 7000,
+  showCloseButton = true,
   onClose,
 }) => {
   const [isVisible, setIsVisible] = useState(false);
@@ -127,14 +129,16 @@ const Toast: React.FC<ToastProps> = ({
           )}
           {children && <div>{children}</div>}
         </div>
-        <Button
-          onClick={handleClose}
-          svg={X}
-          variant="none"
-          padding="p-1"
-          className="w-6"
-          aria-label="Close toast"
-        />
+        {showCloseButton && (
+          <Button
+            onClick={handleClose}
+            svg={X}
+            variant="none"
+            padding="p-1"
+            className="w-6"
+            aria-label="Close toast"
+          />
+        )}
       </div>
     </div>
   );

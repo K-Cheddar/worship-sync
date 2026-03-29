@@ -178,12 +178,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
     remoteUpdateToastIdRef.current = showToast({
       message: `Someone else updated this ${itemTypeLabel}.`,
-      variant: "neutral",
+      variant: "info",
       persist: true,
+      showCloseButton: false,
       children: (toastId) => (
         <div className="mt-2 flex gap-2">
           <Button
-            variant="tertiary"
+            variant="primary"
             className="text-sm"
             onClick={() => {
               handleKeepLocalEdits();
@@ -308,13 +309,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     const newBoxes = boxes.map((b, i) =>
       i === index
         ? {
-            ...b,
-            x: box.x,
-            y: box.y,
-            width: box.width,
-            height: box.height,
-            words: type === "bible" ? box.words : value,
-          }
+          ...b,
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          words: type === "bible" ? box.words : value,
+        }
         : b
     );
 

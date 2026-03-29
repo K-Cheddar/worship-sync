@@ -26,7 +26,11 @@ import { sectionTypes } from "../../utils/slideColorMap";
 import Arrangement from "./Arrangement";
 import { updateFormattedSections } from "../../utils/itemUtil";
 import { sortList } from "../../utils/sort";
-import { formatSong, formatSection } from "../../utils/overflow";
+import {
+  formatSong,
+  formatSection,
+  getNewSlidesOffsetForSectionPreview,
+} from "../../utils/overflow";
 import { createSections as createSectionsUtil } from "../../utils/itemUtil";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { RootState } from "../../store/store";
@@ -69,6 +73,8 @@ const LyricsEditor = () => {
     localArrangements: [] as typeof localArrangements,
     localSelectedArrangement: 0,
   });
+  const currentItemIdRef = useRef(item._id);
+  const pendingRemoteItemRef = useRef(pendingRemoteItem);
   const remoteUpdateToastIdRef = useRef<string | null>(null);
   const syncedItemIdRef = useRef(item._id);
   const wasEditModeRef = useRef(Boolean(isEditMode));
@@ -127,6 +133,14 @@ const LyricsEditor = () => {
     selectedArrangement,
     unformattedLyrics,
   ]);
+
+  useEffect(() => {
+    currentItemIdRef.current = item._id;
+  }, [item._id]);
+
+  useEffect(() => {
+    pendingRemoteItemRef.current = pendingRemoteItem;
+  }, [pendingRemoteItem]);
 
   useEffect(() => {
     if (item.type !== "song") {
@@ -375,6 +389,15 @@ const LyricsEditor = () => {
     const sectionType = selectedSection.type as any;
     const sectionName = selectedSection.name;
     const fontSizePx = templateSlide.boxes[1]?.fontSize || DEFAULT_FONT_PX;
+    const songOrder = arrangement?.songOrder || [];
+    const newSlidesOffset = getNewSlidesOffsetForSectionPreview({
+      songOrder,
+      formattedLyrics: activeFormattedLyrics,
+      slides: templateSlides,
+      targetSectionName: sectionName,
+      fontSizePx,
+      selectedSlide: templateSlide,
+    });
 
     try {
       const nextPreviewSlides = formatSection({
@@ -382,7 +405,10 @@ const LyricsEditor = () => {
         type: sectionType,
         name: sectionName,
         slides: templateSlides,
-        newSlides: [],
+        newSlides: Array.from(
+          { length: newSlidesOffset },
+          () => ({}) as ItemSlideType
+        ),
         fontSizePx,
         selectedSlide: templateSlide,
         selectedBox: 1,
@@ -426,20 +452,22 @@ const LyricsEditor = () => {
   }, [dispatch]);
 
   const handleReloadRemote = useCallback(() => {
-    if (!pendingRemoteItem) return;
+    const remoteItem = pendingRemoteItemRef.current;
+    const activeItemId = currentItemIdRef.current;
+    if (!remoteItem || remoteItem._id !== activeItemId) return;
 
     const nextArrangementIndex = Math.min(
       localSelectedArrangement,
-      Math.max(0, (pendingRemoteItem.arrangements?.length ?? 1) - 1)
+      Math.max(0, (remoteItem.arrangements?.length ?? 1) - 1)
     );
 
-    setLocalArrangements(pendingRemoteItem.arrangements || []);
+    setLocalArrangements(remoteItem.arrangements || []);
     setLocalSelectedArrangement(nextArrangementIndex);
     setSelectedSectionId(null);
     setRecentlyMovedSectionId(null);
     setUnformattedLyrics("");
     dispatch(applyPendingRemoteItem());
-  }, [dispatch, pendingRemoteItem, localSelectedArrangement]);
+  }, [dispatch, localSelectedArrangement]);
 
   useEffect(() => {
     if (!isEditMode || !hasRemoteUpdate) {
@@ -454,12 +482,13 @@ const LyricsEditor = () => {
 
     remoteUpdateToastIdRef.current = showToast({
       message: `Someone else updated this ${itemTypeLabel}.`,
-      variant: "neutral",
+      variant: "info",
       persist: true,
+      showCloseButton: false,
       children: (toastId) => (
         <div className="mt-2 flex gap-2">
           <Button
-            variant="tertiary"
+            variant="primary"
             className="text-sm"
             onClick={() => {
               handleKeepLocalEdits();

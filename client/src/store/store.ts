@@ -428,19 +428,35 @@ listenerMiddleware.startListening({
   ),
   effect: (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
+    const previousState = listenerApi.getOriginalState() as RootState;
     const currentItem = state.undoable.present.item;
     const { _id: activeId, listId } = currentItem;
     if (!activeId) return;
 
     const { allSongDocs, allFreeFormDocs, allTimerDocs, allBibleDocs } =
       state.allDocs;
+    const {
+      allSongDocs: previousSongDocs,
+      allFreeFormDocs: previousFreeFormDocs,
+      allTimerDocs: previousTimerDocs,
+      allBibleDocs: previousBibleDocs,
+    } = previousState.allDocs;
     const doc =
       allSongDocs.find((d) => d._id === activeId) ??
       allFreeFormDocs.find((d) => d._id === activeId) ??
       allTimerDocs.find((d) => d._id === activeId) ??
       allBibleDocs.find((d) => d._id === activeId);
+    const previousDoc =
+      previousSongDocs.find((d) => d._id === activeId) ??
+      previousFreeFormDocs.find((d) => d._id === activeId) ??
+      previousTimerDocs.find((d) => d._id === activeId) ??
+      previousBibleDocs.find((d) => d._id === activeId);
 
     if (doc) {
+      if (_.isEqual(doc, previousDoc)) {
+        return;
+      }
+
       const docMatchesBase =
         !!currentItem.baseItem && _.isEqual(doc, currentItem.baseItem);
       const shouldBufferRemote =
