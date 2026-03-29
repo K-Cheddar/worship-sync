@@ -18,10 +18,13 @@ import {
   useState,
 } from "react";
 import { borderColorMap } from "../../utils/itemTypeMaps";
+import { getItemTypeLabel } from "../../utils/itemTypeMaps";
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useDispatch, useSelector } from "../../hooks";
 import {
+  applyPendingRemoteItem,
+  discardPendingRemoteItem,
   setSelectedBox,
   setSelectedSlide,
   setIsEditMode,
@@ -42,6 +45,7 @@ import { setShouldShowItemEditor } from "../../store/preferencesSlice";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { AccessType } from "../../context/globalInfo";
+import { ToastContext } from "../../context/toastContext";
 import SectionTextEditor from "../../components/SectionTextEditor/SectionTextEditor";
 import SlideBoxes from "../../components/SlideBoxes/SlideBoxes";
 import LoadingOverlay from "../../components/LoadingOverlay/LoadingOverlay";
@@ -63,9 +67,11 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     selectedSlide,
     selectedBox,
     slides: __slides,
+    isEditMode,
     isLoading,
     isSectionLoading,
     restoreFocusToBox,
+    hasRemoteUpdate,
   } = item;
   const showLoadingOverlay = isLoading || isSectionLoading;
 
@@ -97,6 +103,9 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   const [localName, setLocalName] = useState(name || "");
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
+  const toastContext = useContext(ToastContext);
+  const showToast = toastContext?.showToast;
+  const removeToast = toastContext?.removeToast;
 
   const [editorHeight, setEditorHeight] = useState(
     isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
@@ -111,7 +120,9 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   >({});
 
   const reformatTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const remoteUpdateToastIdRef = useRef<string | null>(null);
   const [isReformatting, setIsReformatting] = useState(false);
+  const itemTypeLabel = useMemo(() => getItemTypeLabel(type), [type]);
 
   useEffect(() => {
     if (!slides?.[selectedSlide] && selectedSlide !== 0) {
@@ -142,6 +153,75 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   useEffect(() => {
     setLocalName(name || "");
   }, [name]);
+
+  const handleKeepLocalEdits = useCallback(() => {
+    dispatch(discardPendingRemoteItem());
+  }, [dispatch]);
+
+  const handleReloadRemote = useCallback(() => {
+    dispatch(applyPendingRemoteItem());
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (!hasRemoteUpdate || isEditMode) {
+      if (remoteUpdateToastIdRef.current && removeToast) {
+        removeToast(remoteUpdateToastIdRef.current);
+        remoteUpdateToastIdRef.current = null;
+      }
+      return;
+    }
+
+    if (remoteUpdateToastIdRef.current || !showToast || !removeToast) return;
+
+    remoteUpdateToastIdRef.current = showToast({
+      message: `Someone else updated this ${itemTypeLabel}.`,
+      variant: "neutral",
+      persist: true,
+      children: (toastId) => (
+        <div className="mt-2 flex gap-2">
+          <Button
+            variant="tertiary"
+            className="text-sm"
+            onClick={() => {
+              handleKeepLocalEdits();
+              removeToast(toastId);
+              remoteUpdateToastIdRef.current = null;
+            }}
+          >
+            Keep Editing Mine
+          </Button>
+          <Button
+            variant="cta"
+            className="text-sm"
+            onClick={() => {
+              handleReloadRemote();
+              removeToast(toastId);
+              remoteUpdateToastIdRef.current = null;
+            }}
+          >
+            Use Their Changes
+          </Button>
+        </div>
+      ),
+    });
+  }, [
+    handleKeepLocalEdits,
+    handleReloadRemote,
+    hasRemoteUpdate,
+    itemTypeLabel,
+    isEditMode,
+    removeToast,
+    showToast,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (remoteUpdateToastIdRef.current && removeToast) {
+        removeToast(remoteUpdateToastIdRef.current);
+        remoteUpdateToastIdRef.current = null;
+      }
+    };
+  }, [removeToast]);
 
   useEffect(() => {
     Object.entries(cursorPositions).forEach(([boxIdx, position]) => {

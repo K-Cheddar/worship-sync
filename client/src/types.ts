@@ -215,6 +215,9 @@ export type ItemState = ItemProperties & {
   isSectionLoading?: boolean;
   isItemFormatting?: boolean;
   hasPendingUpdate?: boolean;
+  hasRemoteUpdate?: boolean;
+  baseItem?: DBItem | null;
+  pendingRemoteItem?: DBItem | null;
   /** When set, SlideEditor should focus this box index then clear. Used after format when slide count changes. */
   restoreFocusToBox?: number | null;
 };

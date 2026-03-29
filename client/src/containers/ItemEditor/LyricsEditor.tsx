@@ -5,7 +5,12 @@ import { ZoomOut } from "lucide-react";
 
 import Button from "../../components/Button/Button";
 import { useContext, useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { setIsEditMode, updateArrangements } from "../../store/itemSlice";
+import {
+  applyPendingRemoteItem,
+  discardPendingRemoteItem,
+  setIsEditMode,
+  updateArrangements,
+} from "../../store/itemSlice";
 
 import {
   increaseFormattedLyrics,
@@ -28,13 +33,22 @@ import { RootState } from "../../store/store";
 import { ButtonGroup, ButtonGroupItem } from "../../components/Button";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import Modal from "../../components/Modal/Modal";
+import { ToastContext } from "../../context/toastContext";
 import { createNewSlide, createBox } from "../../utils/slideCreation";
 import cn from "classnames";
 import { DEFAULT_FONT_PX } from "../../constants";
+import { getItemTypeLabel } from "../../utils/itemTypeMaps";
 
 const LyricsEditor = () => {
   const item = useSelector((state: RootState) => state.undoable.present.item);
-  const { isEditMode, arrangements, selectedArrangement } = item;
+  const {
+    isEditMode,
+    type,
+    arrangements,
+    selectedArrangement,
+    hasRemoteUpdate,
+    pendingRemoteItem,
+  } = item;
   const [unformattedLyrics, setUnformattedLyrics] = useState("");
   const [localArrangements, setLocalArrangements] = useState([...arrangements]);
   const [localSelectedArrangement, setLocalSelectedArrangement] =
@@ -46,12 +60,16 @@ const LyricsEditor = () => {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [recentlyMovedSectionId, setRecentlyMovedSectionId] = useState<string | null>(null);
   const dispatch = useDispatch();
+  const toastContext = useContext(ToastContext);
+  const showToast = toastContext?.showToast;
+  const removeToast = toastContext?.removeToast;
   const previewInputRef = useRef({
     selectedSectionId: null as string | null,
     localFormattedLyrics: [] as FormattedLyricsType[],
     localArrangements: [] as typeof localArrangements,
     localSelectedArrangement: 0,
   });
+  const remoteUpdateToastIdRef = useRef<string | null>(null);
   const selectedSectionPositionRef = useRef({
     id: null as string | null,
     index: null as number | null,
@@ -64,6 +82,10 @@ const LyricsEditor = () => {
   const songOrder = useMemo(
     () => localArrangements[localSelectedArrangement]?.songOrder || [],
     [localArrangements, localSelectedArrangement]
+  );
+  const itemTypeLabel = useMemo(
+    () => getItemTypeLabel(pendingRemoteItem?.type ?? type),
+    [pendingRemoteItem?.type, type]
   );
   const arrangementName = useMemo(
     () => localArrangements[localSelectedArrangement]?.name || "Master",
@@ -90,6 +112,20 @@ const LyricsEditor = () => {
     return localFormattedLyrics[selectedSectionIndex] || null;
   }, [localFormattedLyrics, selectedSectionIndex]);
 
+  const hasPendingChanges = useMemo(() => {
+    return (
+      JSON.stringify(localArrangements) !== JSON.stringify(arrangements) ||
+      localSelectedArrangement !== selectedArrangement ||
+      unformattedLyrics.trim() !== ""
+    );
+  }, [
+    localArrangements,
+    arrangements,
+    localSelectedArrangement,
+    selectedArrangement,
+    unformattedLyrics,
+  ]);
+
   useEffect(() => {
     if (item.type !== "song") {
       dispatch(setIsEditMode(false));
@@ -101,12 +137,13 @@ const LyricsEditor = () => {
   }, [isMobile]);
 
   useEffect(() => {
+    if (hasPendingChanges) return;
     setLocalArrangements(arrangements);
     setLocalSelectedArrangement(selectedArrangement);
     // Reset selection when arrangement changes to allow auto-selection of first section
     setSelectedSectionId(null);
     setRecentlyMovedSectionId(null);
-  }, [arrangements, selectedArrangement]);
+  }, [arrangements, selectedArrangement, hasPendingChanges]);
 
   useEffect(() => {
     if (!localArrangements[localSelectedArrangement]) {
@@ -156,24 +193,10 @@ const LyricsEditor = () => {
     }
   }, [recentlyMovedSectionId, selectedSectionId]);
 
-  const hasPendingChanges = useCallback(() => {
-    return (
-      JSON.stringify(localArrangements) !== JSON.stringify(arrangements) ||
-      localSelectedArrangement !== selectedArrangement ||
-      unformattedLyrics.trim() !== ""
-    );
-  }, [
-    localArrangements,
-    arrangements,
-    localSelectedArrangement,
-    selectedArrangement,
-    unformattedLyrics,
-  ]);
-
   // Handle beforeunload event for page navigation/reload
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (hasPendingChanges()) {
+      if (hasPendingChanges) {
         e.preventDefault();
         e.returnValue =
           "You have unsaved changes. Are you sure you want to leave?";
@@ -373,7 +396,7 @@ const LyricsEditor = () => {
   }, []);
 
   const handleCloseWithConfirmation = useCallback(() => {
-    if (hasPendingChanges()) {
+    if (hasPendingChanges) {
       setPendingAction(() => () => {
         setLocalArrangements(arrangements);
         dispatch(setIsEditMode(false));
@@ -384,6 +407,87 @@ const LyricsEditor = () => {
       dispatch(setIsEditMode(false));
     }
   }, [hasPendingChanges, arrangements, dispatch]);
+
+  const handleKeepLocalEdits = useCallback(() => {
+    dispatch(discardPendingRemoteItem());
+  }, [dispatch]);
+
+  const handleReloadRemote = useCallback(() => {
+    if (!pendingRemoteItem) return;
+
+    const nextArrangementIndex = Math.min(
+      localSelectedArrangement,
+      Math.max(0, (pendingRemoteItem.arrangements?.length ?? 1) - 1)
+    );
+
+    setLocalArrangements(pendingRemoteItem.arrangements || []);
+    setLocalSelectedArrangement(nextArrangementIndex);
+    setSelectedSectionId(null);
+    setRecentlyMovedSectionId(null);
+    setUnformattedLyrics("");
+    dispatch(applyPendingRemoteItem());
+  }, [dispatch, pendingRemoteItem, localSelectedArrangement]);
+
+  useEffect(() => {
+    if (!isEditMode || !hasRemoteUpdate) {
+      if (remoteUpdateToastIdRef.current && removeToast) {
+        removeToast(remoteUpdateToastIdRef.current);
+        remoteUpdateToastIdRef.current = null;
+      }
+      return;
+    }
+
+    if (remoteUpdateToastIdRef.current || !showToast || !removeToast) return;
+
+    remoteUpdateToastIdRef.current = showToast({
+      message: `Someone else updated this ${itemTypeLabel}.`,
+      variant: "neutral",
+      persist: true,
+      children: (toastId) => (
+        <div className="mt-2 flex gap-2">
+          <Button
+            variant="tertiary"
+            className="text-sm"
+            onClick={() => {
+              handleKeepLocalEdits();
+              removeToast(toastId);
+              remoteUpdateToastIdRef.current = null;
+            }}
+          >
+            Keep Editing Mine
+          </Button>
+          <Button
+            variant="cta"
+            className="text-sm"
+            onClick={() => {
+              handleReloadRemote();
+              removeToast(toastId);
+              remoteUpdateToastIdRef.current = null;
+            }}
+          >
+            Use Their Changes
+          </Button>
+        </div>
+      ),
+    });
+  }, [
+    handleKeepLocalEdits,
+    handleReloadRemote,
+    hasRemoteUpdate,
+    itemTypeLabel,
+    isEditMode,
+    removeToast,
+    showToast,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (remoteUpdateToastIdRef.current && removeToast) {
+        removeToast(remoteUpdateToastIdRef.current);
+        remoteUpdateToastIdRef.current = null;
+      }
+    };
+  }, [removeToast]);
 
   if (!isEditMode) {
     return null;

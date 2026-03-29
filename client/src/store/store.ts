@@ -217,6 +217,10 @@ const excludedActions: string[] = [
   itemSlice.actions.setIsEditMode.toString(),
   itemSlice.actions.setHasPendingUpdate.toString(),
   itemSlice.actions.forceUpdate.toString(),
+  itemSlice.actions.markItemPersisted.toString(),
+  itemSlice.actions.bufferRemoteItemUpdate.toString(),
+  itemSlice.actions.discardPendingRemoteItem.toString(),
+  itemSlice.actions.applyPendingRemoteItem.toString(),
   itemSlice.actions.setSelectedBox.toString(),
   itemSlice.actions.setActiveItem.toString(),
   itemSlice.actions.clearTransientState.toString(),
@@ -351,6 +355,10 @@ listenerMiddleware.startListening({
       itemSlice.actions.setHasPendingUpdate,
       itemSlice.actions.setItemFormatting,
       itemSlice.actions.clearTransientState,
+      itemSlice.actions.markItemPersisted,
+      itemSlice.actions.bufferRemoteItemUpdate,
+      itemSlice.actions.discardPendingRemoteItem,
+      itemSlice.actions.applyPendingRemoteItem,
     );
     return (
       (currentState as RootState).undoable.present.item !==
@@ -370,8 +378,6 @@ listenerMiddleware.startListening({
       await listenerApi.delay(1500);
     }
 
-    listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
-
     // update Item
     const item = state.undoable.present.item;
     if (!db) return;
@@ -389,7 +395,13 @@ listenerMiddleware.startListening({
       shouldSendTo: item.shouldSendTo,
       updatedAt: new Date().toISOString(),
     };
-    db.put(db_item);
+    const result = await db.put(db_item);
+    db_item = {
+      ...db_item,
+      _rev: result.rev,
+    };
+    listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
+    listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
 
     listenerApi.dispatch(upsertItemInAllDocs(db_item));
 
@@ -429,6 +441,23 @@ listenerMiddleware.startListening({
       allBibleDocs.find((d) => d._id === activeId);
 
     if (doc) {
+      const docMatchesBase =
+        !!currentItem.baseItem && _.isEqual(doc, currentItem.baseItem);
+      const shouldBufferRemote =
+        !!(currentItem.hasPendingUpdate || currentItem.isEditMode) &&
+        !docMatchesBase;
+
+      if (shouldBufferRemote) {
+        if (!_.isEqual(doc, currentItem.pendingRemoteItem)) {
+          listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(doc));
+        }
+        return;
+      }
+
+      if (docMatchesBase && !currentItem.hasRemoteUpdate) {
+        return;
+      }
+
       // Preserve UI state when syncing active item from remote (DB docs don't carry slide/box selection).
       const arrIndex = Math.min(
         currentItem.selectedArrangement ?? doc.selectedArrangement ?? 0,
