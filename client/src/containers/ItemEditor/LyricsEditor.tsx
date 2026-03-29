@@ -70,6 +70,8 @@ const LyricsEditor = () => {
     localSelectedArrangement: 0,
   });
   const remoteUpdateToastIdRef = useRef<string | null>(null);
+  const syncedItemIdRef = useRef(item._id);
+  const wasEditModeRef = useRef(Boolean(isEditMode));
   const selectedSectionPositionRef = useRef({
     id: null as string | null,
     index: null as number | null,
@@ -137,13 +139,24 @@ const LyricsEditor = () => {
   }, [isMobile]);
 
   useEffect(() => {
-    if (hasPendingChanges) return;
+    const itemChanged = syncedItemIdRef.current !== item._id;
+    const openedEditor = Boolean(isEditMode) && !wasEditModeRef.current;
+    const shouldForceSync = itemChanged || openedEditor;
+
+    if (!shouldForceSync && hasPendingChanges) {
+      wasEditModeRef.current = Boolean(isEditMode);
+      return;
+    }
+
     setLocalArrangements(arrangements);
     setLocalSelectedArrangement(selectedArrangement);
+    setUnformattedLyrics("");
     // Reset selection when arrangement changes to allow auto-selection of first section
     setSelectedSectionId(null);
     setRecentlyMovedSectionId(null);
-  }, [arrangements, selectedArrangement, hasPendingChanges]);
+    syncedItemIdRef.current = item._id;
+    wasEditModeRef.current = Boolean(isEditMode);
+  }, [arrangements, selectedArrangement, hasPendingChanges, item._id, isEditMode]);
 
   useEffect(() => {
     if (!localArrangements[localSelectedArrangement]) {

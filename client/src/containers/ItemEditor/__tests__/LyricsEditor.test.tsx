@@ -362,4 +362,115 @@ describe("LyricsEditor", () => {
 
     expect(lastSectionPreviewProps.selectedSection.id).toBe("chorus-1");
   });
+
+  it("shows the newly selected song immediately when reopening edit lyrics after switching items", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "song-a",
+            name: "Song A",
+            isEditMode: true,
+            selectedArrangement: 0,
+            arrangements: [
+              {
+                id: "arr-a",
+                name: "Master",
+                slides: [],
+                formattedLyrics: [
+                  {
+                    id: "song-a-verse",
+                    type: "Verse",
+                    name: "Verse 1",
+                    words: "Song A words",
+                    slideSpan: 1,
+                  },
+                ],
+                songOrder: [{ id: "order-a", name: "Verse 1" }],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const { rerender } = render(<LyricsEditor />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Song A")).toBeInTheDocument();
+      expect(lastLyricBoxesProps.formattedLyrics[0].id).toBe("song-a-verse");
+    });
+
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "song-b",
+            name: "Song B",
+            isEditMode: false,
+            selectedArrangement: 0,
+            arrangements: [
+              {
+                id: "arr-b",
+                name: "Master",
+                slides: [],
+                formattedLyrics: [
+                  {
+                    id: "song-b-chorus",
+                    type: "Chorus",
+                    name: "Chorus 1",
+                    words: "Song B words",
+                    slideSpan: 1,
+                  },
+                ],
+                songOrder: [{ id: "order-b", name: "Chorus 1" }],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    rerender(<LyricsEditor />);
+
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "song-b",
+            name: "Song B",
+            isEditMode: true,
+            selectedArrangement: 0,
+            arrangements: [
+              {
+                id: "arr-b",
+                name: "Master",
+                slides: [],
+                formattedLyrics: [
+                  {
+                    id: "song-b-chorus",
+                    type: "Chorus",
+                    name: "Chorus 1",
+                    words: "Song B words",
+                    slideSpan: 1,
+                  },
+                ],
+                songOrder: [{ id: "order-b", name: "Chorus 1" }],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    rerender(<LyricsEditor />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Song B")).toBeInTheDocument();
+      expect(lastLyricBoxesProps.formattedLyrics[0].id).toBe("song-b-chorus");
+      expect(lastLyricBoxesProps.formattedLyrics[0].words).toBe("Song B words");
+    });
+
+    expect(screen.queryByText("Song A")).not.toBeInTheDocument();
+  });
 });
