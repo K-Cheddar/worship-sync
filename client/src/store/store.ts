@@ -24,6 +24,7 @@ import {
 import { itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
+import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
 import { itemListSlice } from "./itemListSlice";
 import { allItemsSlice } from "./allItemsSlice";
 import { createItemSlice } from "./createItemSlice";
@@ -789,7 +790,7 @@ listenerMiddleware.startListening({
     const curr = currentState as RootState;
     const prev = previousState as RootState;
     const { monitorInfo } = curr.presentation;
-    if (monitorInfo.type !== "timer" || !monitorInfo.slide) return false;
+    if (!isMonitorShowingTimerCountdownSlide(monitorInfo)) return false;
     const itemId = monitorInfo.itemId ?? monitorInfo.timerId;
     if (!itemId) return false;
     const currTimer = curr.timers.timers.find(
@@ -808,9 +809,7 @@ listenerMiddleware.startListening({
       !prevTimer ||
       prevTimer.remainingTime > 0 ||
       prevTimer.status === "running";
-    const isTimerSlide =
-      monitorInfo.slide?.boxes?.[1]?.words?.includes?.("{{timer}}");
-    return justExpired && !!isTimerSlide;
+    return justExpired;
   },
   effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
@@ -830,11 +829,13 @@ listenerMiddleware.startListening({
     }
     if (!item?.slides?.length || item.slides.length < 2) return;
     const wrapUpSlide = item.slides[1];
+    const presentationType =
+      item.type === "timer" ? "timer" : monitorInfo.type;
     listenerApi.dispatch(
       updateMonitor({
         slide: wrapUpSlide,
         name: monitorInfo.name,
-        type: monitorInfo.type,
+        type: presentationType,
         timerId: monitorInfo.timerId,
         itemId: monitorInfo.itemId,
       }),

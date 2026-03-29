@@ -133,7 +133,7 @@ const QuickLinkSelection = ({
       setSelectedQuickLinkPresentation({
         name,
         slide: slides[selectedSlide],
-        type: "slide",
+        type: type === "timer" ? "timer" : "slide",
         timerId: timerInfo?.id,
         itemId: _id,
         bibleDisplayInfo: {
