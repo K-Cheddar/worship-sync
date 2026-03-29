@@ -75,6 +75,8 @@ export interface ElectronAPI {
 
   // Upload status
   setUploadInProgress: (inProgress: boolean) => Promise<boolean>;
+  /** 0–1 normalized progress, or `null` to clear the taskbar / dock indicator. */
+  setTaskbarUploadProgress: (progress: number | null) => Promise<boolean>;
 }
 
 declare global {

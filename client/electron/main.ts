@@ -933,3 +933,20 @@ ipcMain.handle("set-upload-in-progress", (_event, inProgress: boolean) => {
   isUploadInProgress = inProgress;
   return true;
 });
+
+/** `progress` 0–1 for determinate; `null` clears the taskbar / dock progress overlay. */
+ipcMain.handle(
+  "set-taskbar-upload-progress",
+  (_event, progress: number | null) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return false;
+    }
+    if (progress === null || Number.isNaN(progress)) {
+      mainWindow.setProgressBar(-1);
+    } else {
+      const clamped = Math.min(1, Math.max(0, progress));
+      mainWindow.setProgressBar(clamped);
+    }
+    return true;
+  },
+);

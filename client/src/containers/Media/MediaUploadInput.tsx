@@ -258,14 +258,26 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           window.removeEventListener("beforeunload", handleBeforeUnload);
           if (window.electronAPI) {
             window.electronAPI.setUploadInProgress(false);
+            void window.electronAPI.setTaskbarUploadProgress(null);
           }
         };
       } else {
         if (window.electronAPI) {
           window.electronAPI.setUploadInProgress(false);
+          void window.electronAPI.setTaskbarUploadProgress(null);
         }
       }
     }, [isUploading]);
+
+    useEffect(() => {
+      const api = window.electronAPI;
+      if (!api?.setTaskbarUploadProgress) return;
+      if (isUploading) {
+        void api.setTaskbarUploadProgress(overallProgress / 100);
+      } else {
+        void api.setTaskbarUploadProgress(null);
+      }
+    }, [isUploading, overallProgress]);
 
     const getControllerElement = () => {
       const controllerMain = document.getElementById("controller-main");
