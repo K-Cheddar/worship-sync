@@ -610,6 +610,38 @@ describe("presentationSlice", () => {
       expect(s.formattedTextDisplayInfo?.text).toBe("ft");
     });
 
+    it("clearStreamOverlaysOnly assigns a newer timestamp than the overlay it is clearing", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(1000);
+
+      const base = presentationSlice.getInitialState();
+      const store = createStore({
+        presentation: {
+          ...base,
+          isStreamTransmitting: true,
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateParticipantOverlayInfo({
+          id: "p1",
+          type: "participant",
+          name: "Ann",
+          duration: 7,
+        } as never),
+      );
+
+      const shownAt =
+        store.getState().presentation.streamInfo.participantOverlayInfo?.time;
+
+      store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
+
+      const clearedAt =
+        store.getState().presentation.streamInfo.participantOverlayInfo?.time;
+
+      expect(clearedAt).toBeGreaterThan(shownAt ?? -1);
+    });
+
     it("clearStreamOverlaysOnly no-op when not stream transmitting", () => {
       const base = presentationSlice.getInitialState();
       const store = createStore({

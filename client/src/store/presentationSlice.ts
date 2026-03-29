@@ -94,6 +94,23 @@ const hasActiveStreamOverlay = (s: Presentation) => {
   );
 };
 
+const getNextTimestamp = (...times: Array<number | undefined>) => {
+  const highestKnownTime = times.reduce<number>((highest, time) => {
+    if (time == null || !Number.isFinite(time)) return highest;
+    return Math.max(highest, time);
+  }, 0);
+
+  return Math.max(Date.now(), highestKnownTime + 1);
+};
+
+const getNextStreamOverlayTimestamp = (state: PresentationState) =>
+  getNextTimestamp(
+    state.streamInfo.participantOverlayInfo?.time,
+    state.streamInfo.stbOverlayInfo?.time,
+    state.streamInfo.qrCodeOverlayInfo?.time,
+    state.streamInfo.imageOverlayInfo?.time,
+  );
+
 const emptyParticipantOverlay = (t: number): OverlayInfo => ({
   name: "",
   time: t,
@@ -166,7 +183,7 @@ const clearStreamNonSlideItemData = (si: Presentation, t: number) => {
 
 function clearAllStreamOverlaysForTransition(state: PresentationState) {
   const { streamInfo, prevStreamInfo } = state;
-  const t = Date.now();
+  const t = getNextStreamOverlayTimestamp(state);
   prevStreamInfo.participantOverlayInfo = streamInfo.participantOverlayInfo;
   prevStreamInfo.stbOverlayInfo = streamInfo.stbOverlayInfo;
   prevStreamInfo.qrCodeOverlayInfo = streamInfo.qrCodeOverlayInfo;
@@ -273,7 +290,7 @@ export const presentationSlice = createSlice({
       action: PayloadAction<OverlayInfo>,
     ) => {
       if (!state.isStreamTransmitting) return;
-      const t = Date.now();
+      const t = getNextStreamOverlayTimestamp(state);
       state.prevStreamInfo.participantOverlayInfo =
         state.streamInfo.participantOverlayInfo;
       state.streamInfo.participantOverlayInfo = {
@@ -287,7 +304,7 @@ export const presentationSlice = createSlice({
     },
     updateStbOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
       if (!state.isStreamTransmitting) return;
-      const t = Date.now();
+      const t = getNextStreamOverlayTimestamp(state);
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.streamInfo.stbOverlayInfo = { ...action.payload, time: t };
       if (action.payload.heading || action.payload.subHeading) {
@@ -297,7 +314,7 @@ export const presentationSlice = createSlice({
     },
     updateQrCodeOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
       if (!state.isStreamTransmitting) return;
-      const t = Date.now();
+      const t = getNextStreamOverlayTimestamp(state);
       state.prevStreamInfo.qrCodeOverlayInfo =
         state.streamInfo.qrCodeOverlayInfo;
       state.streamInfo.qrCodeOverlayInfo = { ...action.payload, time: t };
@@ -308,7 +325,7 @@ export const presentationSlice = createSlice({
     },
     updateImageOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
       if (!state.isStreamTransmitting) return;
-      const t = Date.now();
+      const t = getNextStreamOverlayTimestamp(state);
       state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
       state.streamInfo.imageOverlayInfo = { ...action.payload, time: t };
       if (action.payload.imageUrl) {
