@@ -4,7 +4,7 @@
 
 This file defines review expectations for agents and contributors working in this repository. The goal is to keep changes correct, regression-resistant, performant, maintainable, and polished for real operators during live use.
 
-This repository supports a critical live workflow. Regressions are not minor inconveniences here: they can disrupt services, create operator confusion under time pressure, and be immediately visible to an audience. Reviewers should apply a high bar for safety, clarity, and confidence before approving changes.
+This repository supports a critical live workflow. Regressions are not minor inconveniences here: they can disrupt a worship service, create operator confusion under time pressure, and be immediately visible to an audience. Reviewers should apply a high bar for safety, clarity, and confidence before approving changes.
 
 ## Product Context
 
@@ -79,6 +79,7 @@ Every change should be reviewed for operator clarity and live-use safety:
 - Are error messages actionable?
 - Does the change remain usable on both desktop and mobile when relevant?
 - Does it avoid layout shift, visual jitter, or visible flicker?
+- Where operator-facing UI is affected, do focus order, keyboard access, labels, and contrast remain sufficient for confident use during a live worship service?
 
 ### 4. Performance
 
