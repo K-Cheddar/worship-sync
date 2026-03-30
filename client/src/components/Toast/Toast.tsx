@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { X, CircleAlert, CheckCircle2, Info } from "lucide-react";
 import cn from "classnames";
 import Button from "../Button/Button";
@@ -39,27 +39,87 @@ const Toast: React.FC<ToastProps> = ({
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dismissStartedAtRef = useRef<number | null>(null);
+  const remainingDurationRef = useRef(duration);
 
   const handleClose = useCallback(() => {
+    if (dismissTimeoutRef.current) {
+      clearTimeout(dismissTimeoutRef.current);
+      dismissTimeoutRef.current = null;
+    }
     setIsExiting(true);
     setTimeout(() => {
       onClose();
     }, 200); // Match animation duration
   }, [onClose]);
 
+  const startDismissTimer = useCallback(
+    (delay: number) => {
+      if (persist || isExiting) return;
+      if (dismissTimeoutRef.current) {
+        clearTimeout(dismissTimeoutRef.current);
+      }
+      dismissStartedAtRef.current = Date.now();
+      dismissTimeoutRef.current = setTimeout(() => {
+        handleClose();
+      }, delay);
+    },
+    [handleClose, isExiting, persist]
+  );
+
   useEffect(() => {
     // Trigger enter animation
     setIsVisible(true);
+  }, []);
 
-    // Auto-dismiss if not persistent
-    if (!persist) {
-      const timer = setTimeout(() => {
-        handleClose();
-      }, duration);
+  useEffect(() => {
+    remainingDurationRef.current = duration;
+  }, [duration, id]);
 
-      return () => clearTimeout(timer);
+  useEffect(() => {
+    if (persist || isExiting) {
+      if (dismissTimeoutRef.current) {
+        clearTimeout(dismissTimeoutRef.current);
+        dismissTimeoutRef.current = null;
+      }
+      return;
     }
-  }, [persist, duration, handleClose]);
+
+    if (isPaused) {
+      if (dismissTimeoutRef.current) {
+        clearTimeout(dismissTimeoutRef.current);
+        dismissTimeoutRef.current = null;
+      }
+      if (dismissStartedAtRef.current !== null) {
+        const elapsed = Date.now() - dismissStartedAtRef.current;
+        remainingDurationRef.current = Math.max(
+          0,
+          remainingDurationRef.current - elapsed
+        );
+      }
+      dismissStartedAtRef.current = null;
+      return;
+    }
+
+    startDismissTimer(remainingDurationRef.current);
+
+    return () => {
+      if (dismissTimeoutRef.current) {
+        clearTimeout(dismissTimeoutRef.current);
+        dismissTimeoutRef.current = null;
+      }
+    };
+  }, [isPaused, isExiting, persist, startDismissTimer]);
+
+  useEffect(() => {
+    return () => {
+      if (dismissTimeoutRef.current) {
+        clearTimeout(dismissTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const variantConfig = {
     info: {
@@ -112,6 +172,16 @@ const Toast: React.FC<ToastProps> = ({
       )}
       style={{
         borderColor: config.borderColor,
+      }}
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+      onFocusCapture={() => setIsPaused(true)}
+      onBlurCapture={(e) => {
+        const nextFocused = e.relatedTarget;
+        if (nextFocused && e.currentTarget.contains(nextFocused as Node)) {
+          return;
+        }
+        setIsPaused(false);
       }}
     >
       <div className="flex items-center gap-3">

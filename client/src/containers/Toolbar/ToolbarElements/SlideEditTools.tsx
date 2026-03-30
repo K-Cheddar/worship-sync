@@ -38,9 +38,13 @@ import { HexColorPicker, HexColorInput } from "react-colorful";
 import { updateTimerColor } from "../../../store/timersSlice";
 import RadioButton from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
-import { formatFree, formatSong } from "../../../utils/overflow";
+import { formatFree } from "../../../utils/overflow";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { DEFAULT_FONT_PX, FONT_SIZE_BUTTON_STEP } from "../../../constants";
+import {
+  cleanItemNewlines,
+  itemHasCleanableNewlines,
+} from "../../../utils/itemNewlineCleanup";
 
 const MIN_FONT_PX = 25;
 const MAX_FONT_PX = 500;
@@ -91,7 +95,12 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const updateItem = useCallback(
     (updatedItem: ItemState) => {
-      dispatch(updateSlides({ slides: updatedItem.slides }));
+      dispatch(
+        updateSlides({
+          slides: updatedItem.slides,
+          formattedSections: updatedItem.formattedSections,
+        })
+      );
       if (updatedItem.arrangements.length > 0) {
         dispatch(
           updateArrangements({ arrangements: updatedItem.arrangements })
@@ -300,37 +309,17 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     updateItem(updatedItem);
   };
 
-  const removeExtraNewlines = (text: string): string =>
-    text.trim().replace(/\n{2,}/g, "\n");
-
-  const handleRemoveExtraNewlines = () => {
-    const arrangement = item.arrangements[item.selectedArrangement];
-    if (!arrangement?.formattedLyrics?.length) return;
-
+  const handleRemoveExtraNewlines = useCallback(() => {
+    if (!itemHasCleanableNewlines(item)) return;
     setIsCleaningNewlines(true);
-    const updatedFormattedLyrics = arrangement.formattedLyrics.map((section) =>
-      typeof section.words === "string"
-        ? { ...section, words: removeExtraNewlines(section.words) }
-        : section
-    );
-    const updatedArrangements = item.arrangements.map((arr, i) =>
-      i === item.selectedArrangement
-        ? { ...arr, formattedLyrics: updatedFormattedLyrics }
-        : arr
-    );
-    const itemWithCleanedLyrics: ItemState = {
-      ...item,
-      arrangements: updatedArrangements,
-    };
-    const formattedItem = formatSong(itemWithCleanedLyrics);
     runWithFormatting(() => {
       try {
-        updateItem(formattedItem);
+        updateItem(cleanItemNewlines(item));
       } finally {
         setIsCleaningNewlines(false);
       }
     });
-  };
+  }, [item, runWithFormatting, updateItem]);
 
   if (!location.pathname.includes("controller/item") || !slide) {
     return null;
@@ -550,7 +539,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           onChange={(val) => _updateKeepAspectRatio(val)}
         />
       )}
-      {type === "song" && (
+      {(type === "song" || type === "free") && (
         <Button
           svg={Eraser}
           variant="tertiary"
