@@ -150,6 +150,7 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
     undoable: {
       present: {
         item: {
+          _id: "default-item",
           name: "Sample Item",
           type: "free",
           arrangements: [],
@@ -377,6 +378,122 @@ describe("SlideEditor", () => {
         },
       ],
     });
+
+    jest.useRealTimers();
+  });
+
+  it("cancels pending debounced free box edit when item identity changes before timeout", () => {
+    jest.useFakeTimers();
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "item-a",
+          },
+        },
+      },
+    });
+
+    const { rerender } = render(<SlideEditor access="full" />);
+    invokeDisplayOnChange(
+      makeOnChangePayload({ value: "Stale typing", commitMode: "typing" })
+    );
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "item-b",
+            name: "Other item",
+            slides: [
+              {
+                id: "s-other",
+                type: "Media",
+                name: "Section 1A",
+                boxes: [
+                  { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "Untouched", x: 0, y: 0 },
+                ],
+              },
+            ],
+            formattedSections: [
+              { sectionNum: 1, words: "Untouched", slideSpan: 1 },
+            ],
+          },
+        },
+      },
+    });
+    rerender(<SlideEditor access="full" />);
+
+    act(() => {
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+    jest.useRealTimers();
+  });
+
+  it("cancels pending debounced free box edit when selected slide changes before timeout", () => {
+    jest.useFakeTimers();
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            slides: [
+              {
+                id: "s1",
+                type: "Media",
+                name: "Section 1A",
+                boxes: [
+                  { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "A", x: 0, y: 0 },
+                ],
+              },
+              {
+                id: "s2",
+                type: "Media",
+                name: "Section 1B",
+                boxes: [
+                  { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "B", x: 0, y: 0 },
+                ],
+              },
+            ],
+            formattedSections: [
+              { sectionNum: 1, words: "A\nB", slideSpan: 2 },
+            ],
+            selectedSlide: 0,
+          },
+        },
+      },
+    });
+
+    const { rerender } = render(<SlideEditor access="full" />);
+    invokeDisplayOnChange(
+      makeOnChangePayload({ value: "Stale typing", commitMode: "typing" })
+    );
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            slides: mockState.undoable.present.item.slides,
+            formattedSections: mockState.undoable.present.item.formattedSections,
+            selectedSlide: 1,
+          },
+        },
+      },
+    });
+    rerender(<SlideEditor access="full" />);
+
+    act(() => {
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
 
     jest.useRealTimers();
   });

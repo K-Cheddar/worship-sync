@@ -64,6 +64,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
   const item = useSelector((state: RootState) => state.undoable.present.item);
   const {
+    _id,
     name,
     type,
     arrangements,
@@ -546,6 +547,11 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     }
     pendingBoxEditRef.current = null;
   }, []);
+
+  useEffect(() => {
+    clearPendingBoxEdit();
+    setIsReformatting(false);
+  }, [_id, selectedSlide, selectedArrangement, clearPendingBoxEdit]);
 
   const flushPendingBoxEdit = useCallback(
     (override?: DisplayEditorChangeInfo) => {
