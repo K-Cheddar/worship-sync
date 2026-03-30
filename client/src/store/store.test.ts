@@ -18,6 +18,62 @@ const createOverlay = (id: string, name: string) => ({
   formatting: {},
 });
 
+const defaultShouldSendTo = {
+  projector: true,
+  monitor: true,
+  stream: true,
+};
+
+const createSongDoc = (overrides: Record<string, unknown> = {}) => ({
+  _id: "song-1",
+  type: "song",
+  name: "Song 1",
+  selectedArrangement: 0,
+  background: "background-a.jpg",
+  arrangements: [],
+  slides: [],
+  shouldSendTo: defaultShouldSendTo,
+  ...overrides,
+});
+
+const createTimerItem = (overrides: Record<string, unknown> = {}) => ({
+  _id: "timer-item",
+  type: "timer",
+  name: "Countdown",
+  selectedArrangement: 0,
+  background: "",
+  arrangements: [],
+  slides: [
+    {
+      id: "timer-slide",
+      name: "Countdown",
+      type: "Timer",
+      boxes: [{}, { words: "{{timer}}" }],
+    },
+    {
+      id: "wrap-up-slide",
+      name: "Wrap Up",
+      type: "Timer",
+      boxes: [{}, { words: "Thanks for joining" }],
+    },
+  ],
+  timerInfo: {
+    id: "timer-1",
+    hostId: "host-123",
+    name: "Countdown",
+    timerType: "timer",
+    status: "stopped",
+    isActive: false,
+    countdownTime: "00:05",
+    duration: 5,
+    remainingTime: 0,
+    endTime: new Date(0).toISOString(),
+    showMinutesOnly: false,
+  },
+  shouldSendTo: defaultShouldSendTo,
+  ...overrides,
+});
+
 describe("store module", () => {
   afterEach(() => {
     jest.useRealTimers();
@@ -34,7 +90,7 @@ describe("store module", () => {
         globalBroadcastRef: { postMessage },
       }));
       jest.doMock("../context/globalInfo", () => ({
-        globalFireDbInfo: undefined,
+        globalFireDbInfo: { db: undefined, database: undefined },
         globalHostId: "host-123",
       }));
       jest.doMock("firebase/database", () => ({
@@ -63,7 +119,7 @@ describe("store module", () => {
         globalBroadcastRef: undefined,
       }));
       jest.doMock("../context/globalInfo", () => ({
-        globalFireDbInfo: undefined,
+        globalFireDbInfo: { db: undefined, database: undefined },
         globalHostId: "host-123",
       }));
       jest.doMock("firebase/database", () => ({
@@ -98,7 +154,7 @@ describe("store module", () => {
         globalBroadcastRef: undefined,
       }));
       jest.doMock("../context/globalInfo", () => ({
-        globalFireDbInfo: undefined,
+        globalFireDbInfo: { db: undefined, database: undefined },
         globalHostId: "host-123",
       }));
       jest.doMock("firebase/database", () => ({
@@ -178,7 +234,7 @@ describe("store module", () => {
         globalBroadcastRef: undefined,
       }));
       jest.doMock("../context/globalInfo", () => ({
-        globalFireDbInfo: undefined,
+        globalFireDbInfo: { db: undefined, database: undefined },
         globalHostId: "host-123",
       }));
       jest.doMock("firebase/database", () => ({
@@ -514,5 +570,213 @@ describe("store module", () => {
       state.overlays.list.find((overlay: any) => overlay.id === "overlay-b")
         ?.formatting?.backgroundColor,
     ).not.toBe("#123456");
+  });
+
+  it("buffers remote item docs instead of applying them while the active item is being edited", async () => {
+    let storeModule: any;
+    let itemSliceModule: any;
+    let allDocsSliceModule: any;
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: undefined,
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemSliceModule = require("./itemSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      allDocsSliceModule = require("./allDocsSlice");
+    });
+
+    const store = storeModule.default;
+    const { itemSlice } = itemSliceModule;
+    const { allDocsSlice } = allDocsSliceModule;
+
+    const baseDoc = createSongDoc();
+    const remoteDoc = createSongDoc({
+      name: "Remote Song Update",
+      background: "background-b.jpg",
+    });
+
+    store.dispatch(itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }));
+    store.dispatch(itemSlice.actions.setIsEditMode(true));
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    await flushListenerEffects();
+
+    const state = store.getState().undoable.present.item;
+    expect(state.name).toBe("Song 1");
+    expect(state.background).toBe("background-a.jpg");
+    expect(state.hasRemoteUpdate).toBe(true);
+    expect(state.pendingRemoteItem).toEqual(
+      expect.objectContaining({
+        _id: "song-1",
+        name: "Remote Song Update",
+        background: "background-b.jpg",
+      }),
+    );
+  });
+
+  it("applies refreshed remote docs immediately when the active item is not dirty", async () => {
+    let storeModule: any;
+    let itemSliceModule: any;
+    let allDocsSliceModule: any;
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: undefined,
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemSliceModule = require("./itemSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      allDocsSliceModule = require("./allDocsSlice");
+    });
+
+    const store = storeModule.default;
+    const { itemSlice } = itemSliceModule;
+    const { allDocsSlice } = allDocsSliceModule;
+
+    const baseDoc = createSongDoc({
+      slides: [{ id: "slide-a", name: "A", type: "Verse", boxes: [] }],
+    });
+    const remoteDoc = createSongDoc({
+      name: "Remote Song Update",
+      background: "background-b.jpg",
+      slides: [
+        { id: "slide-a", name: "A", type: "Verse", boxes: [] },
+        { id: "slide-b", name: "B", type: "Verse", boxes: [] },
+      ],
+    });
+
+    store.dispatch(
+      itemSlice.actions.setActiveItem({
+        ...baseDoc,
+        listId: "list-1",
+        selectedSlide: 0,
+        selectedBox: 1,
+      }),
+    );
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    await flushListenerEffects();
+
+    const state = store.getState().undoable.present.item;
+    expect(state.name).toBe("Remote Song Update");
+    expect(state.background).toBe("background-b.jpg");
+    expect(state.listId).toBe("list-1");
+    expect(state.hasRemoteUpdate).toBe(false);
+    expect(state.pendingRemoteItem).toBeNull();
+  });
+
+  it("switches quick-link monitor timers to the wrap-up slide when they expire", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+    let storeModule: any;
+    let itemSliceModule: any;
+    let timersSliceModule: any;
+    let presentationSliceModule: any;
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: { db: undefined, database: undefined },
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemSliceModule = require("./itemSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      timersSliceModule = require("./timersSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      presentationSliceModule = require("./presentationSlice");
+    });
+
+    const store = storeModule.default;
+    const { itemSlice } = itemSliceModule;
+    const { timersSlice } = timersSliceModule;
+    const { presentationSlice } = presentationSliceModule;
+
+    const timerItem = createTimerItem({ timerInfo: undefined });
+
+    store.dispatch(itemSlice.actions.setActiveItem(timerItem));
+    store.dispatch(presentationSlice.actions.toggleMonitorTransmitting());
+    store.dispatch(
+      presentationSlice.actions.updateMonitor({
+        slide: timerItem.slides[0],
+        name: "Countdown",
+        type: "slide",
+        timerId: "timer-1",
+        itemId: "timer-item",
+        skipTransmissionCheck: true,
+      }),
+    );
+    store.dispatch(
+      timersSlice.actions.addTimer({
+        id: "timer-1",
+        hostId: "host-123",
+        name: "Countdown",
+        timerType: "timer",
+        status: "running",
+        isActive: true,
+        countdownTime: "00:05",
+        duration: 5,
+        remainingTime: 5,
+        endTime: new Date("2026-01-01T00:00:01.000Z").toISOString(),
+        showMinutesOnly: false,
+      }),
+    );
+
+    jest.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
+    store.dispatch(timersSlice.actions.tickTimers());
+    await flushListenerEffects();
+
+    const timerState = store
+      .getState()
+      .timers.timers.find((timer: any) => timer.id === "timer-1");
+    const monitorInfo = store.getState().presentation.monitorInfo;
+    expect(timerState).toEqual(
+      expect.objectContaining({
+        remainingTime: 0,
+        status: "stopped",
+      }),
+    );
+    expect(monitorInfo.slide).toEqual(timerItem.slides[1]);
+    expect(monitorInfo.type).toBe("timer");
+    expect(monitorInfo.timerId).toBe("timer-1");
+    expect(monitorInfo.itemId).toBe("timer-item");
   });
 });

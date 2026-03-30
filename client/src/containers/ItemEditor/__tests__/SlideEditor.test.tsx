@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import SlideEditor from "../SlideEditor";
+import { ToastContext } from "../../../context/toastContext";
 
 const mockDispatch = jest.fn();
 let mockState: any;
@@ -20,10 +21,18 @@ const mockUpdateArrangements = jest.fn((payload: any) => ({
   type: "item/updateArrangements",
   payload,
 }));
+const mockDiscardPendingRemoteItem = jest.fn(() => ({
+  type: "item/discardPendingRemoteItem",
+}));
+const mockApplyPendingRemoteItem = jest.fn(() => ({
+  type: "item/applyPendingRemoteItem",
+}));
 const mockSetShouldShowItemEditor = jest.fn((value: boolean) => ({
   type: "preferences/setShouldShowItemEditor",
   payload: value,
 }));
+let mockShowToast = jest.fn(() => "toast-1");
+let mockRemoveToast = jest.fn();
 
 const mockFormatFree = jest.fn((item: any) => item);
 const mockFormatBible = jest.fn((item: any) => item);
@@ -49,6 +58,12 @@ jest.mock("../../../store/itemSlice", () => ({
   updateSlides: (payload: any) => mockUpdateSlides(payload),
   setName: jest.fn((payload: any) => ({ type: "item/setName", payload })),
   updateBoxes: (payload: any) => mockUpdateBoxes(payload),
+  discardPendingRemoteItem: () => mockDiscardPendingRemoteItem(),
+  applyPendingRemoteItem: () => mockApplyPendingRemoteItem(),
+  setRestoreFocusToBox: jest.fn((payload: any) => ({
+    type: "item/setRestoreFocusToBox",
+    payload,
+  })),
 }));
 
 jest.mock("../../../store/preferencesSlice", () => ({
@@ -220,11 +235,25 @@ const invokeDisplayOnChange = (payload: ReturnType<typeof makeOnChangePayload>) 
   });
 };
 
+const renderWithToastContext = () =>
+  render(
+    <ToastContext.Provider
+      value={{
+        showToast: mockShowToast,
+        removeToast: mockRemoveToast,
+      }}
+    >
+      <SlideEditor access="full" />
+    </ToastContext.Provider>
+  );
+
 describe("SlideEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     displayWindowCapture.onChange = null;
     mockState = makeBaseState();
+    mockShowToast = jest.fn(() => "toast-1");
+    mockRemoveToast = jest.fn();
   });
 
   it("renders empty state when no slide is selected", () => {
@@ -276,6 +305,34 @@ describe("SlideEditor", () => {
       type: "item/setIsEditMode",
       payload: true,
     });
+  });
+
+  it("offers toast actions for remote updates outside lyrics edit mode", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            hasRemoteUpdate: true,
+            isEditMode: false,
+          },
+        },
+      },
+    });
+
+    renderWithToastContext();
+
+    expect(mockShowToast).toHaveBeenCalled();
+
+    const toastConfig = mockShowToast.mock.calls[0][0];
+    render(<>{toastConfig.children("toast-1")}</>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use Their Changes" }));
+
+    expect(mockApplyPendingRemoteItem).toHaveBeenCalled();
+    expect(mockDispatch).toHaveBeenCalledWith({
+      type: "item/applyPendingRemoteItem",
+    });
+    expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
   });
 
   it("updates free section text and dispatches debounced reformat update", () => {

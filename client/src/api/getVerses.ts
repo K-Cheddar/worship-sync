@@ -45,7 +45,7 @@ const parseData = async (textHtml: string, chapter: number, book: string) => {
   }
 
   const versesHtml = textArea?.querySelectorAll(
-    `span.text[class*="${bookMap[book as keyof typeof bookMap]}-${chapter}-"`
+    `span.text[class*="${bookMap[book as keyof typeof bookMap]}-${chapter}-"]`,
   );
 
   const verses: verseType[] = [];

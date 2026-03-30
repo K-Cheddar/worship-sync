@@ -4,7 +4,15 @@ import { ZoomIn } from "lucide-react";
 import { ZoomOut } from "lucide-react";
 
 import Button from "../../components/Button/Button";
-import { useContext, useEffect, useMemo, useState, useCallback, useRef } from "react";
+import {
+  SetStateAction,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+} from "react";
 import {
   applyPendingRemoteItem,
   discardPendingRemoteItem,
@@ -21,7 +29,12 @@ import TextArea from "../../components/TextArea/TextArea";
 import LyricBoxes from "./LyricBoxes";
 import SongSections from "./SongSections";
 import SectionPreview from "./SectionPreview";
-import { FormattedLyrics as FormattedLyricsType, ItemSlideType, SongOrder } from "../../types";
+import {
+  Arrangment,
+  FormattedLyrics as FormattedLyricsType,
+  ItemSlideType,
+  SongOrder,
+} from "../../types";
 import { sectionTypes } from "../../utils/slideColorMap";
 import Arrangement from "./Arrangement";
 import { updateFormattedSections } from "../../utils/itemUtil";
@@ -78,10 +91,12 @@ const LyricsEditor = () => {
   const remoteUpdateToastIdRef = useRef<string | null>(null);
   const syncedItemIdRef = useRef(item._id);
   const wasEditModeRef = useRef(Boolean(isEditMode));
+  const baselineSelectedArrangementRef = useRef(selectedArrangement);
   const selectedSectionPositionRef = useRef({
     id: null as string | null,
     index: null as number | null,
   });
+  const [hasArrangementChanges, setHasArrangementChanges] = useState(false);
 
   const localFormattedLyrics = useMemo(
     () => localArrangements[localSelectedArrangement]?.formattedLyrics || [],
@@ -120,19 +135,31 @@ const LyricsEditor = () => {
     return localFormattedLyrics[selectedSectionIndex] || null;
   }, [localFormattedLyrics, selectedSectionIndex]);
 
-  const hasPendingChanges = useMemo(() => {
-    return (
-      JSON.stringify(localArrangements) !== JSON.stringify(arrangements) ||
-      localSelectedArrangement !== selectedArrangement ||
-      unformattedLyrics.trim() !== ""
-    );
-  }, [
-    localArrangements,
-    arrangements,
-    localSelectedArrangement,
-    selectedArrangement,
-    unformattedLyrics,
-  ]);
+  const hasPendingChanges =
+    hasArrangementChanges ||
+    localSelectedArrangement !== baselineSelectedArrangementRef.current ||
+    unformattedLyrics.trim() !== "";
+
+  const resetLocalEditorState = useCallback(
+    (nextArrangements: Arrangment[], nextSelectedArrangement: number) => {
+      setLocalArrangements(nextArrangements);
+      setLocalSelectedArrangement(nextSelectedArrangement);
+      setUnformattedLyrics("");
+      setSelectedSectionId(null);
+      setRecentlyMovedSectionId(null);
+      setHasArrangementChanges(false);
+      baselineSelectedArrangementRef.current = nextSelectedArrangement;
+    },
+    []
+  );
+
+  const updateLocalArrangements = useCallback(
+    (value: SetStateAction<Arrangment[]>) => {
+      setHasArrangementChanges(true);
+      setLocalArrangements(value);
+    },
+    []
+  );
 
   useEffect(() => {
     currentItemIdRef.current = item._id;
@@ -162,15 +189,17 @@ const LyricsEditor = () => {
       return;
     }
 
-    setLocalArrangements(arrangements);
-    setLocalSelectedArrangement(selectedArrangement);
-    setUnformattedLyrics("");
-    // Reset selection when arrangement changes to allow auto-selection of first section
-    setSelectedSectionId(null);
-    setRecentlyMovedSectionId(null);
+    resetLocalEditorState(arrangements, selectedArrangement);
     syncedItemIdRef.current = item._id;
     wasEditModeRef.current = Boolean(isEditMode);
-  }, [arrangements, selectedArrangement, hasPendingChanges, item._id, isEditMode]);
+  }, [
+    arrangements,
+    selectedArrangement,
+    hasPendingChanges,
+    item._id,
+    isEditMode,
+    resetLocalEditorState,
+  ]);
 
   useEffect(() => {
     if (!localArrangements[localSelectedArrangement]) {
@@ -236,7 +265,7 @@ const LyricsEditor = () => {
   }, [hasPendingChanges]);
 
   const updateSongOrder = (_songOrder: SongOrder[]) => {
-    setLocalArrangements((_lArrangements) => {
+    updateLocalArrangements((_lArrangements) => {
       return _lArrangements.map((el, index) => {
         if (index === localSelectedArrangement) {
           return { ...el, songOrder: _songOrder };
@@ -247,7 +276,7 @@ const LyricsEditor = () => {
   };
 
   const updateFormattedLyrics = (_formattedLyrics: FormattedLyricsType[]) => {
-    setLocalArrangements((_lArrangements) => {
+    updateLocalArrangements((_lArrangements) => {
       return _lArrangements.map((el, index) => {
         if (index === localSelectedArrangement) {
           return { ...el, formattedLyrics: _formattedLyrics };
@@ -303,7 +332,7 @@ const LyricsEditor = () => {
       }
       return el;
     });
-    setLocalArrangements(updatedLocalArrangements);
+    updateLocalArrangements(updatedLocalArrangements);
   };
 
   // Debounce preview regeneration to avoid expensive formatting on every keystroke
@@ -437,15 +466,21 @@ const LyricsEditor = () => {
   const handleCloseWithConfirmation = useCallback(() => {
     if (hasPendingChanges) {
       setPendingAction(() => () => {
-        setLocalArrangements(arrangements);
+        resetLocalEditorState(arrangements, selectedArrangement);
         dispatch(setIsEditMode(false));
       });
       setShowConfirmModal(true);
     } else {
-      setLocalArrangements(arrangements);
+      resetLocalEditorState(arrangements, selectedArrangement);
       dispatch(setIsEditMode(false));
     }
-  }, [hasPendingChanges, arrangements, dispatch]);
+  }, [
+    hasPendingChanges,
+    arrangements,
+    dispatch,
+    resetLocalEditorState,
+    selectedArrangement,
+  ]);
 
   const handleKeepLocalEdits = useCallback(() => {
     dispatch(discardPendingRemoteItem());
@@ -461,13 +496,9 @@ const LyricsEditor = () => {
       Math.max(0, (remoteItem.arrangements?.length ?? 1) - 1)
     );
 
-    setLocalArrangements(remoteItem.arrangements || []);
-    setLocalSelectedArrangement(nextArrangementIndex);
-    setSelectedSectionId(null);
-    setRecentlyMovedSectionId(null);
-    setUnformattedLyrics("");
+    resetLocalEditorState(remoteItem.arrangements || [], nextArrangementIndex);
     dispatch(applyPendingRemoteItem());
-  }, [dispatch, localSelectedArrangement]);
+  }, [dispatch, localSelectedArrangement, resetLocalEditorState]);
 
   useEffect(() => {
     if (!isEditMode || !hasRemoteUpdate) {
@@ -628,11 +659,9 @@ const LyricsEditor = () => {
                   <Arrangement
                     key={arrangement.name}
                     index={index}
-                    setSelectedArrangement={() =>
-                      setLocalSelectedArrangement(index)
-                    }
+                    setSelectedArrangement={() => setLocalSelectedArrangement(index)}
                     arrangement={arrangement}
-                    setLocalArrangements={setLocalArrangements}
+                    setLocalArrangements={updateLocalArrangements}
                     localArrangements={localArrangements}
                   />
                 ))}
