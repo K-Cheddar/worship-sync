@@ -10,8 +10,15 @@ import RadioButton from "../../../components/RadioButton/RadioButton";
 import PopOver from "../../../components/PopOver/PopOver";
 import { updateBoxProperties } from "../../../utils/formatter";
 import { setItemFormatting } from "../../../store/itemSlice";
+import { useToast } from "../../../context/toastContext";
+import {
+  cleanItemNewlines,
+  itemHasCleanableNewlines,
+} from "../../../utils/itemNewlineCleanup";
 
 const FORMAT_DEBOUNCE_MS = 500;
+const CLEANUP_TOAST_COOLDOWN_MS = 60_000;
+const cleanupToastLastShownAtByItem = new Map<string, number>();
 
 /** Keep the user's value for the changed field; adjust the partner only if needed to stay in bounds. */
 const constrainBoxAfterFieldChange = (
@@ -81,6 +88,23 @@ const PresetIcon = ({
   </div>
 );
 
+const CleanupNewlinesToastAction = ({
+  onDismiss,
+  onClean,
+}: {
+  onDismiss: () => void;
+  onClean: () => void;
+}) => (
+  <div className="mt-3 flex justify-center gap-2">
+    <Button variant="primary" className="text-sm" onClick={onDismiss}>
+      No thanks
+    </Button>
+    <Button variant="cta" className="text-sm" onClick={onClean}>
+      Yes please
+    </Button>
+  </div>
+);
+
 const BoxEditor = ({
   updateItem,
   className,
@@ -90,6 +114,7 @@ const BoxEditor = ({
   className?: string;
 }) => {
   const dispatch = useDispatch();
+  const { showToast, removeToast } = useToast();
   const item = useSelector((state) => state.undoable.present.item);
   const { selectedSlide, selectedBox, slides } = item;
 
@@ -114,6 +139,8 @@ const BoxEditor = ({
 
   const formatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isEditingRef = useRef(false);
+  const itemRef = useRef(item);
+  const pendingCleanupCheckRef = useRef(false);
   const pendingDimensionsRef = useRef({
     x: currentBox.x ?? 0,
     y: currentBox.y ?? 0,
@@ -124,6 +151,10 @@ const BoxEditor = ({
   useEffect(() => {
     setShouldApplyToAll(item.type === "free" ? false : true);
   }, [item.type]);
+
+  useEffect(() => {
+    itemRef.current = item;
+  }, [item]);
 
   useEffect(() => {
     if (!isEditingRef.current) {
@@ -138,7 +169,7 @@ const BoxEditor = ({
     }
   }, [currentBox.x, currentBox.y, currentBox.width, currentBox.height, selectedBox, selectedSlide]);
 
-  const updateBoxSize = useCallback(
+  const commitBoxSize = useCallback(
     ({
       width,
       height,
@@ -157,6 +188,7 @@ const BoxEditor = ({
         shouldApplyToAll: shouldApplyToAll,
       });
       updateItem(updatedItem);
+      return updatedItem;
     },
     [item, shouldApplyToAll, updateItem]
   );
@@ -175,22 +207,89 @@ const BoxEditor = ({
     [dispatch]
   );
 
+  const handleToastCleanup = useCallback(
+    (toastId: string, itemId: string) => {
+      const currentItem = itemRef.current;
+      if (
+        currentItem._id !== itemId ||
+        (currentItem.type !== "song" && currentItem.type !== "free")
+      ) {
+        removeToast(toastId);
+        return;
+      }
+      if (!itemHasCleanableNewlines(currentItem)) {
+        removeToast(toastId);
+        return;
+      }
+
+      runWithFormatting(() => {
+        try {
+          updateItem(cleanItemNewlines(currentItem));
+        } finally {
+          removeToast(toastId);
+        }
+      });
+    },
+    [removeToast, runWithFormatting, updateItem]
+  );
+
+  const scheduleCleanupToastCheck = useCallback(
+    (updatedItem: ItemState) => {
+      if (
+        !updatedItem._id ||
+        (updatedItem.type !== "song" && updatedItem.type !== "free")
+      ) {
+        return;
+      }
+
+      setTimeout(() => {
+        if (!itemHasCleanableNewlines(updatedItem)) return;
+
+        const now = Date.now();
+        const lastShownAt =
+          cleanupToastLastShownAtByItem.get(updatedItem._id) ?? 0;
+        if (now - lastShownAt < CLEANUP_TOAST_COOLDOWN_MS) return;
+
+        cleanupToastLastShownAtByItem.set(updatedItem._id, now);
+        showToast({
+          message:
+            "Looks like you have extra new lines in your text. Would you like to clean them up?",
+          variant: "info",
+          duration: 15000,
+          showCloseButton: false,
+          children: (toastId) => (
+            <CleanupNewlinesToastAction
+              onDismiss={() => removeToast(toastId)}
+              onClean={() => handleToastCleanup(toastId, updatedItem._id)}
+            />
+          ),
+        });
+      }, 0);
+    },
+    [handleToastCleanup, removeToast, showToast]
+  );
+
   const flushDebouncedFormat = useCallback(() => {
     if (formatTimeoutRef.current) {
       clearTimeout(formatTimeoutRef.current);
       formatTimeoutRef.current = null;
     }
     isEditingRef.current = false;
+    const shouldCheckCleanup = pendingCleanupCheckRef.current;
+    pendingCleanupCheckRef.current = false;
     const d = sanitizeBoxToBounds(pendingDimensionsRef.current);
-    runWithFormatting(() =>
-      updateBoxSize({
+    runWithFormatting(() => {
+      const updatedItem = commitBoxSize({
         width: d.width,
         height: d.height,
         x: d.x,
         y: d.y,
-      })
-    );
-  }, [runWithFormatting, updateBoxSize]);
+      });
+      if (shouldCheckCleanup) {
+        scheduleCleanupToastCheck(updatedItem);
+      }
+    });
+  }, [commitBoxSize, runWithFormatting, scheduleCleanupToastCheck]);
 
   useEffect(() => {
     return () => {
@@ -205,9 +304,26 @@ const BoxEditor = ({
         formatTimeoutRef.current = null;
       }
       isEditingRef.current = false;
-      runWithFormatting(() => updateBoxSize(sanitizeBoxToBounds(dims)));
+      pendingCleanupCheckRef.current = false;
+      const next = sanitizeBoxToBounds(dims);
+      const shouldCheckCleanup =
+        next.width !== (currentBox.width ?? 0) ||
+        next.height !== (currentBox.height ?? 0);
+
+      runWithFormatting(() => {
+        const updatedItem = commitBoxSize(next);
+        if (shouldCheckCleanup) {
+          scheduleCleanupToastCheck(updatedItem);
+        }
+      });
     },
-    [runWithFormatting, updateBoxSize]
+    [
+      commitBoxSize,
+      currentBox.height,
+      currentBox.width,
+      runWithFormatting,
+      scheduleCleanupToastCheck,
+    ]
   );
 
   const scheduleFormat = useCallback(() => {
@@ -229,6 +345,9 @@ const BoxEditor = ({
       setDimensions(newDims);
       pendingDimensionsRef.current = newDims;
       isEditingRef.current = true;
+      if (field === "width" || field === "height") {
+        pendingCleanupCheckRef.current = true;
+      }
       scheduleFormat();
     }
   };

@@ -4,8 +4,21 @@ import { ZoomIn } from "lucide-react";
 import { ZoomOut } from "lucide-react";
 
 import Button from "../../components/Button/Button";
-import { useContext, useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { setIsEditMode, updateArrangements } from "../../store/itemSlice";
+import {
+  SetStateAction,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+} from "react";
+import {
+  applyPendingRemoteItem,
+  discardPendingRemoteItem,
+  setIsEditMode,
+  updateArrangements,
+} from "../../store/itemSlice";
 
 import {
   increaseFormattedLyrics,
@@ -16,25 +29,43 @@ import TextArea from "../../components/TextArea/TextArea";
 import LyricBoxes from "./LyricBoxes";
 import SongSections from "./SongSections";
 import SectionPreview from "./SectionPreview";
-import { FormattedLyrics as FormattedLyricsType, ItemSlideType, SongOrder } from "../../types";
+import {
+  Arrangment,
+  FormattedLyrics as FormattedLyricsType,
+  ItemSlideType,
+  SongOrder,
+} from "../../types";
 import { sectionTypes } from "../../utils/slideColorMap";
 import Arrangement from "./Arrangement";
 import { updateFormattedSections } from "../../utils/itemUtil";
 import { sortList } from "../../utils/sort";
-import { formatSong, formatSection } from "../../utils/overflow";
+import {
+  formatSong,
+  formatSection,
+  getNewSlidesOffsetForSectionPreview,
+} from "../../utils/overflow";
 import { createSections as createSectionsUtil } from "../../utils/itemUtil";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { RootState } from "../../store/store";
 import { ButtonGroup, ButtonGroupItem } from "../../components/Button";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import Modal from "../../components/Modal/Modal";
+import { ToastContext } from "../../context/toastContext";
 import { createNewSlide, createBox } from "../../utils/slideCreation";
 import cn from "classnames";
 import { DEFAULT_FONT_PX } from "../../constants";
+import { getItemTypeLabel } from "../../utils/itemTypeMaps";
 
 const LyricsEditor = () => {
   const item = useSelector((state: RootState) => state.undoable.present.item);
-  const { isEditMode, arrangements, selectedArrangement } = item;
+  const {
+    isEditMode,
+    type,
+    arrangements,
+    selectedArrangement,
+    hasRemoteUpdate,
+    pendingRemoteItem,
+  } = item;
   const [unformattedLyrics, setUnformattedLyrics] = useState("");
   const [localArrangements, setLocalArrangements] = useState([...arrangements]);
   const [localSelectedArrangement, setLocalSelectedArrangement] =
@@ -46,16 +77,26 @@ const LyricsEditor = () => {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [recentlyMovedSectionId, setRecentlyMovedSectionId] = useState<string | null>(null);
   const dispatch = useDispatch();
+  const toastContext = useContext(ToastContext);
+  const showToast = toastContext?.showToast;
+  const removeToast = toastContext?.removeToast;
   const previewInputRef = useRef({
     selectedSectionId: null as string | null,
     localFormattedLyrics: [] as FormattedLyricsType[],
     localArrangements: [] as typeof localArrangements,
     localSelectedArrangement: 0,
   });
+  const currentItemIdRef = useRef(item._id);
+  const pendingRemoteItemRef = useRef(pendingRemoteItem);
+  const remoteUpdateToastIdRef = useRef<string | null>(null);
+  const syncedItemIdRef = useRef(item._id);
+  const wasEditModeRef = useRef(Boolean(isEditMode));
+  const baselineSelectedArrangementRef = useRef(selectedArrangement);
   const selectedSectionPositionRef = useRef({
     id: null as string | null,
     index: null as number | null,
   });
+  const [hasArrangementChanges, setHasArrangementChanges] = useState(false);
 
   const localFormattedLyrics = useMemo(
     () => localArrangements[localSelectedArrangement]?.formattedLyrics || [],
@@ -64,6 +105,10 @@ const LyricsEditor = () => {
   const songOrder = useMemo(
     () => localArrangements[localSelectedArrangement]?.songOrder || [],
     [localArrangements, localSelectedArrangement]
+  );
+  const itemTypeLabel = useMemo(
+    () => getItemTypeLabel(pendingRemoteItem?.type ?? type),
+    [pendingRemoteItem?.type, type]
   );
   const arrangementName = useMemo(
     () => localArrangements[localSelectedArrangement]?.name || "Master",
@@ -90,6 +135,40 @@ const LyricsEditor = () => {
     return localFormattedLyrics[selectedSectionIndex] || null;
   }, [localFormattedLyrics, selectedSectionIndex]);
 
+  const hasPendingChanges =
+    hasArrangementChanges ||
+    localSelectedArrangement !== baselineSelectedArrangementRef.current ||
+    unformattedLyrics.trim() !== "";
+
+  const resetLocalEditorState = useCallback(
+    (nextArrangements: Arrangment[], nextSelectedArrangement: number) => {
+      setLocalArrangements(nextArrangements);
+      setLocalSelectedArrangement(nextSelectedArrangement);
+      setUnformattedLyrics("");
+      setSelectedSectionId(null);
+      setRecentlyMovedSectionId(null);
+      setHasArrangementChanges(false);
+      baselineSelectedArrangementRef.current = nextSelectedArrangement;
+    },
+    []
+  );
+
+  const updateLocalArrangements = useCallback(
+    (value: SetStateAction<Arrangment[]>) => {
+      setHasArrangementChanges(true);
+      setLocalArrangements(value);
+    },
+    []
+  );
+
+  useEffect(() => {
+    currentItemIdRef.current = item._id;
+  }, [item._id]);
+
+  useEffect(() => {
+    pendingRemoteItemRef.current = pendingRemoteItem;
+  }, [pendingRemoteItem]);
+
   useEffect(() => {
     if (item.type !== "song") {
       dispatch(setIsEditMode(false));
@@ -101,12 +180,26 @@ const LyricsEditor = () => {
   }, [isMobile]);
 
   useEffect(() => {
-    setLocalArrangements(arrangements);
-    setLocalSelectedArrangement(selectedArrangement);
-    // Reset selection when arrangement changes to allow auto-selection of first section
-    setSelectedSectionId(null);
-    setRecentlyMovedSectionId(null);
-  }, [arrangements, selectedArrangement]);
+    const itemChanged = syncedItemIdRef.current !== item._id;
+    const openedEditor = Boolean(isEditMode) && !wasEditModeRef.current;
+    const shouldForceSync = itemChanged || openedEditor;
+
+    if (!shouldForceSync && hasPendingChanges) {
+      wasEditModeRef.current = Boolean(isEditMode);
+      return;
+    }
+
+    resetLocalEditorState(arrangements, selectedArrangement);
+    syncedItemIdRef.current = item._id;
+    wasEditModeRef.current = Boolean(isEditMode);
+  }, [
+    arrangements,
+    selectedArrangement,
+    hasPendingChanges,
+    item._id,
+    isEditMode,
+    resetLocalEditorState,
+  ]);
 
   useEffect(() => {
     if (!localArrangements[localSelectedArrangement]) {
@@ -156,24 +249,10 @@ const LyricsEditor = () => {
     }
   }, [recentlyMovedSectionId, selectedSectionId]);
 
-  const hasPendingChanges = useCallback(() => {
-    return (
-      JSON.stringify(localArrangements) !== JSON.stringify(arrangements) ||
-      localSelectedArrangement !== selectedArrangement ||
-      unformattedLyrics.trim() !== ""
-    );
-  }, [
-    localArrangements,
-    arrangements,
-    localSelectedArrangement,
-    selectedArrangement,
-    unformattedLyrics,
-  ]);
-
   // Handle beforeunload event for page navigation/reload
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (hasPendingChanges()) {
+      if (hasPendingChanges) {
         e.preventDefault();
         e.returnValue =
           "You have unsaved changes. Are you sure you want to leave?";
@@ -186,7 +265,7 @@ const LyricsEditor = () => {
   }, [hasPendingChanges]);
 
   const updateSongOrder = (_songOrder: SongOrder[]) => {
-    setLocalArrangements((_lArrangements) => {
+    updateLocalArrangements((_lArrangements) => {
       return _lArrangements.map((el, index) => {
         if (index === localSelectedArrangement) {
           return { ...el, songOrder: _songOrder };
@@ -197,7 +276,7 @@ const LyricsEditor = () => {
   };
 
   const updateFormattedLyrics = (_formattedLyrics: FormattedLyricsType[]) => {
-    setLocalArrangements((_lArrangements) => {
+    updateLocalArrangements((_lArrangements) => {
       return _lArrangements.map((el, index) => {
         if (index === localSelectedArrangement) {
           return { ...el, formattedLyrics: _formattedLyrics };
@@ -253,7 +332,7 @@ const LyricsEditor = () => {
       }
       return el;
     });
-    setLocalArrangements(updatedLocalArrangements);
+    updateLocalArrangements(updatedLocalArrangements);
   };
 
   // Debounce preview regeneration to avoid expensive formatting on every keystroke
@@ -339,6 +418,15 @@ const LyricsEditor = () => {
     const sectionType = selectedSection.type as any;
     const sectionName = selectedSection.name;
     const fontSizePx = templateSlide.boxes[1]?.fontSize || DEFAULT_FONT_PX;
+    const songOrder = arrangement?.songOrder || [];
+    const newSlidesOffset = getNewSlidesOffsetForSectionPreview({
+      songOrder,
+      formattedLyrics: activeFormattedLyrics,
+      slides: templateSlides,
+      targetSectionName: sectionName,
+      fontSizePx,
+      selectedSlide: templateSlide,
+    });
 
     try {
       const nextPreviewSlides = formatSection({
@@ -346,7 +434,10 @@ const LyricsEditor = () => {
         type: sectionType,
         name: sectionName,
         slides: templateSlides,
-        newSlides: [],
+        newSlides: Array.from(
+          { length: newSlidesOffset },
+          () => ({}) as ItemSlideType
+        ),
         fontSizePx,
         selectedSlide: templateSlide,
         selectedBox: 1,
@@ -373,17 +464,103 @@ const LyricsEditor = () => {
   }, []);
 
   const handleCloseWithConfirmation = useCallback(() => {
-    if (hasPendingChanges()) {
+    if (hasPendingChanges) {
       setPendingAction(() => () => {
-        setLocalArrangements(arrangements);
+        resetLocalEditorState(arrangements, selectedArrangement);
         dispatch(setIsEditMode(false));
       });
       setShowConfirmModal(true);
     } else {
-      setLocalArrangements(arrangements);
+      resetLocalEditorState(arrangements, selectedArrangement);
       dispatch(setIsEditMode(false));
     }
-  }, [hasPendingChanges, arrangements, dispatch]);
+  }, [
+    hasPendingChanges,
+    arrangements,
+    dispatch,
+    resetLocalEditorState,
+    selectedArrangement,
+  ]);
+
+  const handleKeepLocalEdits = useCallback(() => {
+    dispatch(discardPendingRemoteItem());
+  }, [dispatch]);
+
+  const handleReloadRemote = useCallback(() => {
+    const remoteItem = pendingRemoteItemRef.current;
+    const activeItemId = currentItemIdRef.current;
+    if (!remoteItem || remoteItem._id !== activeItemId) return;
+
+    const nextArrangementIndex = Math.min(
+      localSelectedArrangement,
+      Math.max(0, (remoteItem.arrangements?.length ?? 1) - 1)
+    );
+
+    resetLocalEditorState(remoteItem.arrangements || [], nextArrangementIndex);
+    dispatch(applyPendingRemoteItem());
+  }, [dispatch, localSelectedArrangement, resetLocalEditorState]);
+
+  useEffect(() => {
+    if (!isEditMode || !hasRemoteUpdate) {
+      if (remoteUpdateToastIdRef.current && removeToast) {
+        removeToast(remoteUpdateToastIdRef.current);
+        remoteUpdateToastIdRef.current = null;
+      }
+      return;
+    }
+
+    if (remoteUpdateToastIdRef.current || !showToast || !removeToast) return;
+
+    remoteUpdateToastIdRef.current = showToast({
+      message: `Someone else updated this ${itemTypeLabel}.`,
+      variant: "info",
+      persist: true,
+      showCloseButton: false,
+      children: (toastId) => (
+        <div className="mt-2 flex gap-2">
+          <Button
+            variant="primary"
+            className="text-sm"
+            onClick={() => {
+              handleKeepLocalEdits();
+              removeToast(toastId);
+              remoteUpdateToastIdRef.current = null;
+            }}
+          >
+            Keep Editing Mine
+          </Button>
+          <Button
+            variant="cta"
+            className="text-sm"
+            onClick={() => {
+              handleReloadRemote();
+              removeToast(toastId);
+              remoteUpdateToastIdRef.current = null;
+            }}
+          >
+            Use Their Changes
+          </Button>
+        </div>
+      ),
+    });
+  }, [
+    handleKeepLocalEdits,
+    handleReloadRemote,
+    hasRemoteUpdate,
+    itemTypeLabel,
+    isEditMode,
+    removeToast,
+    showToast,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (remoteUpdateToastIdRef.current && removeToast) {
+        removeToast(remoteUpdateToastIdRef.current);
+        remoteUpdateToastIdRef.current = null;
+      }
+    };
+  }, [removeToast]);
 
   if (!isEditMode) {
     return null;
@@ -482,11 +659,9 @@ const LyricsEditor = () => {
                   <Arrangement
                     key={arrangement.name}
                     index={index}
-                    setSelectedArrangement={() =>
-                      setLocalSelectedArrangement(index)
-                    }
+                    setSelectedArrangement={() => setLocalSelectedArrangement(index)}
                     arrangement={arrangement}
-                    setLocalArrangements={setLocalArrangements}
+                    setLocalArrangements={updateLocalArrangements}
                     localArrangements={localArrangements}
                   />
                 ))}

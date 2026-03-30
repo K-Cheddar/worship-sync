@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import SlideEditor from "../SlideEditor";
+import { ToastContext } from "../../../context/toastContext";
 
 const mockDispatch = jest.fn();
 let mockState: any;
@@ -20,10 +21,18 @@ const mockUpdateArrangements = jest.fn((payload: any) => ({
   type: "item/updateArrangements",
   payload,
 }));
+const mockDiscardPendingRemoteItem = jest.fn(() => ({
+  type: "item/discardPendingRemoteItem",
+}));
+const mockApplyPendingRemoteItem = jest.fn(() => ({
+  type: "item/applyPendingRemoteItem",
+}));
 const mockSetShouldShowItemEditor = jest.fn((value: boolean) => ({
   type: "preferences/setShouldShowItemEditor",
   payload: value,
 }));
+let mockShowToast = jest.fn(() => "toast-1");
+let mockRemoveToast = jest.fn();
 
 const mockFormatFree = jest.fn((item: any) => item);
 const mockFormatBible = jest.fn((item: any) => item);
@@ -49,6 +58,12 @@ jest.mock("../../../store/itemSlice", () => ({
   updateSlides: (payload: any) => mockUpdateSlides(payload),
   setName: jest.fn((payload: any) => ({ type: "item/setName", payload })),
   updateBoxes: (payload: any) => mockUpdateBoxes(payload),
+  discardPendingRemoteItem: () => mockDiscardPendingRemoteItem(),
+  applyPendingRemoteItem: () => mockApplyPendingRemoteItem(),
+  setRestoreFocusToBox: jest.fn((payload: any) => ({
+    type: "item/setRestoreFocusToBox",
+    payload,
+  })),
 }));
 
 jest.mock("../../../store/preferencesSlice", () => ({
@@ -72,7 +87,10 @@ const displayWindowCapture: { onChange: ((info: any) => void) | null } = {
 
 jest.mock("../../../components/DisplayWindow/DisplayWindow", () => ({
   __esModule: true,
-  default: (props: { disabled?: boolean; onChange?: (info: any) => void }) => {
+  default: (props: {
+    disabled?: boolean;
+    onChange?: (info: any) => void;
+  }) => {
     if (props.onChange) displayWindowCapture.onChange = props.onChange;
     return (
       <div data-testid="display-window" data-disabled={props.disabled ? "true" : "false"} />
@@ -132,6 +150,7 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
     undoable: {
       present: {
         item: {
+          _id: "default-item",
           name: "Sample Item",
           type: "free",
           arrangements: [],
@@ -188,6 +207,7 @@ const makeOnChangePayload = (overrides: Partial<{
   box: Record<string, unknown>;
   cursorPosition: number;
   lastKeyPressed: string | null;
+  commitMode: "typing" | "flush" | "immediate";
 }> = {}) => {
   const box = {
     width: 100,
@@ -204,6 +224,7 @@ const makeOnChangePayload = (overrides: Partial<{
     box,
     cursorPosition: 5,
     lastKeyPressed: null as string | null,
+    commitMode: "typing" as const,
     ...overrides,
   };
 };
@@ -215,11 +236,25 @@ const invokeDisplayOnChange = (payload: ReturnType<typeof makeOnChangePayload>) 
   });
 };
 
+const renderWithToastContext = () =>
+  render(
+    <ToastContext.Provider
+      value={{
+        showToast: mockShowToast,
+        removeToast: mockRemoveToast,
+      }}
+    >
+      <SlideEditor access="full" />
+    </ToastContext.Provider>
+  );
+
 describe("SlideEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     displayWindowCapture.onChange = null;
     mockState = makeBaseState();
+    mockShowToast = jest.fn(() => "toast-1");
+    mockRemoveToast = jest.fn();
   });
 
   it("renders empty state when no slide is selected", () => {
@@ -273,6 +308,34 @@ describe("SlideEditor", () => {
     });
   });
 
+  it("offers toast actions for remote updates outside lyrics edit mode", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            hasRemoteUpdate: true,
+            isEditMode: false,
+          },
+        },
+      },
+    });
+
+    renderWithToastContext();
+
+    expect(mockShowToast).toHaveBeenCalled();
+
+    const { children: renderToastChildren } = mockShowToast.mock.calls[0][0];
+    render(<>{renderToastChildren("toast-1")}</>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use Their Changes" }));
+
+    expect(mockApplyPendingRemoteItem).toHaveBeenCalled();
+    expect(mockDispatch).toHaveBeenCalledWith({
+      type: "item/applyPendingRemoteItem",
+    });
+    expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
+  });
+
   it("updates free section text and dispatches debounced reformat update", () => {
     jest.useFakeTimers();
     mockFormatFree.mockImplementation((item) => ({
@@ -315,6 +378,122 @@ describe("SlideEditor", () => {
         },
       ],
     });
+
+    jest.useRealTimers();
+  });
+
+  it("cancels pending debounced free box edit when item identity changes before timeout", () => {
+    jest.useFakeTimers();
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "item-a",
+          },
+        },
+      },
+    });
+
+    const { rerender } = render(<SlideEditor access="full" />);
+    invokeDisplayOnChange(
+      makeOnChangePayload({ value: "Stale typing", commitMode: "typing" })
+    );
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "item-b",
+            name: "Other item",
+            slides: [
+              {
+                id: "s-other",
+                type: "Media",
+                name: "Section 1A",
+                boxes: [
+                  { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "Untouched", x: 0, y: 0 },
+                ],
+              },
+            ],
+            formattedSections: [
+              { sectionNum: 1, words: "Untouched", slideSpan: 1 },
+            ],
+          },
+        },
+      },
+    });
+    rerender(<SlideEditor access="full" />);
+
+    act(() => {
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+    jest.useRealTimers();
+  });
+
+  it("cancels pending debounced free box edit when selected slide changes before timeout", () => {
+    jest.useFakeTimers();
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            slides: [
+              {
+                id: "s1",
+                type: "Media",
+                name: "Section 1A",
+                boxes: [
+                  { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "A", x: 0, y: 0 },
+                ],
+              },
+              {
+                id: "s2",
+                type: "Media",
+                name: "Section 1B",
+                boxes: [
+                  { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "B", x: 0, y: 0 },
+                ],
+              },
+            ],
+            formattedSections: [
+              { sectionNum: 1, words: "A\nB", slideSpan: 2 },
+            ],
+            selectedSlide: 0,
+          },
+        },
+      },
+    });
+
+    const { rerender } = render(<SlideEditor access="full" />);
+    invokeDisplayOnChange(
+      makeOnChangePayload({ value: "Stale typing", commitMode: "typing" })
+    );
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            slides: mockState.undoable.present.item.slides,
+            formattedSections: mockState.undoable.present.item.formattedSections,
+            selectedSlide: 1,
+          },
+        },
+      },
+    });
+    rerender(<SlideEditor access="full" />);
+
+    act(() => {
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
 
     jest.useRealTimers();
   });
@@ -522,6 +701,7 @@ describe("SlideEditor", () => {
     });
 
     it("dispatches formatFree and updateSlides when type is free and value changes", () => {
+      jest.useFakeTimers();
       mockFormatFree.mockImplementation((item: any) => ({
         ...item,
         slides: item.slides,
@@ -560,6 +740,13 @@ describe("SlideEditor", () => {
         })
       );
 
+      expect(mockFormatFree).not.toHaveBeenCalled();
+      expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+      act(() => {
+        jest.advanceTimersByTime(200);
+      });
+
       expect(mockFormatFree).toHaveBeenCalled();
       expect(mockUpdateSlides).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -567,6 +754,8 @@ describe("SlideEditor", () => {
           formattedSections: expect.any(Array),
         })
       );
+
+      jest.useRealTimers();
     });
 
     it("dispatches updateBoxes for song when on title slide (selectedSlide 0)", () => {
@@ -634,6 +823,7 @@ describe("SlideEditor", () => {
     });
 
     it("dispatches updateArrangements for song when on overflow slide and value changes", () => {
+      jest.useFakeTimers();
       const slides = [
         {
           id: "title",
@@ -711,12 +901,111 @@ describe("SlideEditor", () => {
         })
       );
 
+      expect(mockFormatSong).not.toHaveBeenCalled();
+      expect(mockUpdateArrangements).not.toHaveBeenCalled();
+
+      act(() => {
+        jest.advanceTimersByTime(200);
+      });
+
       expect(mockFormatSong).toHaveBeenCalled();
       expect(mockUpdateArrangements).toHaveBeenCalledWith(
         expect.objectContaining({
           arrangements: expect.any(Array),
         })
       );
+
+      jest.useRealTimers();
+    });
+
+    it("reformats song overflow edits immediately when Enter is pressed", () => {
+      jest.useFakeTimers();
+      const slides = [
+        {
+          id: "title",
+          type: "Media",
+          name: "Title",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "Title", x: 0, y: 0 },
+          ],
+        },
+        {
+          id: "v1",
+          type: "Media",
+          name: "Verse 1",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            {
+              width: 100,
+              height: 100,
+              words: "Line one",
+              x: 0,
+              y: 0,
+              slideIndex: 0,
+            },
+          ],
+        },
+        {
+          id: "blank",
+          type: "Media",
+          name: "Blank",
+          boxes: [
+            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+            { width: 100, height: 100, words: "", x: 0, y: 0 },
+          ],
+        },
+      ];
+      mockFormatSong.mockImplementation((item: any) => item);
+
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "song",
+              selectedSlide: 1,
+              selectedArrangement: 0,
+              arrangements: [
+                {
+                  name: "Default",
+                  slides,
+                  formattedLyrics: [
+                    { name: "Verse 1", words: "Line one", slideSpan: 1 },
+                  ],
+                  songOrder: [{ name: "Verse 1" }],
+                },
+              ],
+              slides,
+            },
+          },
+        },
+      });
+
+      render(<SlideEditor access="full" />);
+      invokeDisplayOnChange(
+        makeOnChangePayload({
+          index: 1,
+          value: "Line one\nLine two",
+          lastKeyPressed: "Enter",
+          box: {
+            width: 100,
+            height: 100,
+            words: "Line one\nLine two",
+            x: 0,
+            y: 0,
+            slideIndex: 0,
+          },
+        })
+      );
+
+      expect(mockFormatSong).toHaveBeenCalled();
+      expect(mockUpdateArrangements).toHaveBeenCalledWith(
+        expect.objectContaining({
+          arrangements: expect.any(Array),
+        })
+      );
+
+      jest.useRealTimers();
     });
 
     it("dispatches updateArrangements with fewer slides when song and Backspace with empty value", () => {
@@ -1074,6 +1363,7 @@ describe("SlideEditor", () => {
     });
 
     it("dispatches formatFree and updateSlides when free section slide not found in section (fallback)", () => {
+      jest.useFakeTimers();
       mockFormatFree.mockImplementation((item: any) => ({
         ...item,
         slides: item.slides,
@@ -1112,6 +1402,13 @@ describe("SlideEditor", () => {
         })
       );
 
+      expect(mockFormatFree).not.toHaveBeenCalled();
+      expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+      act(() => {
+        jest.advanceTimersByTime(200);
+      });
+
       expect(mockFormatFree).toHaveBeenCalledWith(
         expect.objectContaining({
           slides: expect.any(Array),
@@ -1122,9 +1419,12 @@ describe("SlideEditor", () => {
           slides: expect.any(Array),
         })
       );
+
+      jest.useRealTimers();
     });
 
     it("dispatches formatFree with combined section words when free has multiple slides in section", () => {
+      jest.useFakeTimers();
       mockFormatFree.mockImplementation((item: any) => ({
         ...item,
         slides: item.slides,
@@ -1175,6 +1475,13 @@ describe("SlideEditor", () => {
         })
       );
 
+      expect(mockFormatFree).not.toHaveBeenCalled();
+      expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+      act(() => {
+        jest.advanceTimersByTime(200);
+      });
+
       expect(mockFormatFree).toHaveBeenCalled();
       const formatFreeArg = mockFormatFree.mock.calls[0][0];
       expect(formatFreeArg.formattedSections).toEqual(
@@ -1186,6 +1493,8 @@ describe("SlideEditor", () => {
         ])
       );
       expect(mockUpdateSlides).toHaveBeenCalled();
+
+      jest.useRealTimers();
     });
 
     it("dispatches updateSlides when type is free and Delete with empty value (delete slide)", () => {

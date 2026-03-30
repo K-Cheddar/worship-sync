@@ -126,7 +126,7 @@ const DisplayBox = ({
         }
       }
     },
-    { scope: boxRef, dependencies: [box, time, shouldImageBeHidden] }
+    { scope: boxRef, dependencies: [box, shouldImageBeHidden] }
   );
 
   const bWords = box.words || "";
@@ -173,7 +173,6 @@ const DisplayBox = ({
 
   return (
     <div
-      key={box.id}
       ref={boxRef}
       className="absolute leading-tight"
       style={{

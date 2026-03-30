@@ -1,5 +1,5 @@
 import { useSelector, useDispatch } from "../hooks";
-import Presentation from "../containers/PresentationPage";
+import FullscreenPresentation from "../containers/FullscreenPresentation";
 import { useContext, useEffect, useCallback } from "react";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { onValue, ref } from "firebase/database";
@@ -15,8 +15,9 @@ import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 import { capitalizeFirstLetter } from "../utils/generalUtils";
 
 const Monitor = () => {
-  const { monitorInfo, prevMonitorInfo } = useSelector(
-    (state) => state.presentation
+  const monitorInfo = useSelector((state) => state.presentation.monitorInfo);
+  const prevMonitorInfo = useSelector(
+    (state) => state.presentation.prevMonitorInfo
   );
 
   const dispatch = useDispatch();
@@ -49,10 +50,11 @@ const Monitor = () => {
     getMonitorSettingsFromFirebase();
   }, [firebaseDb, database, dispatch]);
 
-  const timers = useSelector((state) => state.timers.timers);
-  const monitorTimer = timers.find((timer) => timer.id === monitorInfo.timerId);
-  const prevMonitorTimer = timers.find(
-    (timer) => timer.id === prevMonitorInfo.timerId
+  const monitorTimer = useSelector((state) =>
+    state.timers.timers.find((timer) => timer.id === monitorInfo.timerId)
+  );
+  const prevMonitorTimer = useSelector((state) =>
+    state.timers.timers.find((timer) => timer.id === prevMonitorInfo.timerId)
   );
 
   useEffect(() => {
@@ -77,7 +79,7 @@ const Monitor = () => {
   useCloseOnEscape(closeWindow);
 
   return (
-    <Presentation
+    <FullscreenPresentation
       displayInfo={monitorInfo}
       prevDisplayInfo={prevMonitorInfo}
       timerInfo={monitorTimer}

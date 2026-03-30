@@ -1,18 +1,17 @@
 import { useSelector } from "../hooks";
-import Presentation from "../containers/PresentationPage";
+import FullscreenPresentation from "../containers/FullscreenPresentation";
 import { useEffect } from "react";
 
 const Projector = () => {
-  const { projectorInfo, prevProjectorInfo } = useSelector(
-    (state) => state.presentation,
+  const projectorInfo = useSelector((state) => state.presentation.projectorInfo);
+  const prevProjectorInfo = useSelector(
+    (state) => state.presentation.prevProjectorInfo,
   );
-
-  const timers = useSelector((state) => state.timers.timers);
-  const projectorTimer = timers.find(
-    (timer) => timer.id === projectorInfo.timerId,
+  const projectorTimer = useSelector((state) =>
+    state.timers.timers.find((timer) => timer.id === projectorInfo.timerId),
   );
-  const prevProjectorTimer = timers.find(
-    (timer) => timer.id === prevProjectorInfo.timerId,
+  const prevProjectorTimer = useSelector((state) =>
+    state.timers.timers.find((timer) => timer.id === prevProjectorInfo.timerId),
   );
 
   useEffect(() => {
@@ -28,7 +27,7 @@ const Projector = () => {
   }, []);
 
   return (
-    <Presentation
+    <FullscreenPresentation
       displayInfo={projectorInfo}
       prevDisplayInfo={prevProjectorInfo}
       timerInfo={projectorTimer}

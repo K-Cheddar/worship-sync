@@ -46,7 +46,10 @@ const QuickLink = ({
         dispatch(updateProjector(presentationInfo));
       } else if (displayType === "monitor") {
         dispatch(updateMonitor(presentationInfo));
-        if (presentationInfo.type === "slide") {
+        if (
+          presentationInfo.type === "slide" ||
+          presentationInfo.type === "timer"
+        ) {
           dispatch(setMonitorTimerId(presentationInfo.timerId || null));
         }
       } else if (displayType === "stream") {

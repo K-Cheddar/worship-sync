@@ -3,6 +3,7 @@ import {
   Arrangment,
   BibleInfo,
   Box,
+  DBItem,
   FormattedSection,
   ItemSlideType,
   ItemState,
@@ -18,6 +19,12 @@ import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
 import { updateItemInList } from "../utils/itemUtil";
 import { AppDispatch, RootState } from "./store";
+
+const defaultShouldSendTo: ShouldSendTo = {
+  projector: true,
+  monitor: true,
+  stream: true,
+};
 
 const initialState: ItemState = {
   isEditMode: false,
@@ -44,11 +51,10 @@ const initialState: ItemState = {
   isSectionLoading: false,
   isItemFormatting: false,
   hasPendingUpdate: false,
-  shouldSendTo: {
-    projector: true,
-    monitor: true,
-    stream: true,
-  },
+  hasRemoteUpdate: false,
+  baseItem: null,
+  pendingRemoteItem: null,
+  shouldSendTo: defaultShouldSendTo,
   restoreFocusToBox: null,
 };
 
@@ -60,37 +66,104 @@ const resetTransientItemState = (state: ItemState) => {
   state.restoreFocusToBox = null;
 };
 
+const createItemSnapshot = (
+  item?: Partial<ItemState> | DBItem | null,
+): DBItem | null => {
+  if (!item?._id || !item.type) return null;
+
+  return {
+    _id: item._id,
+    name: item.name || "",
+    type: item.type,
+    shouldSkipTitle: item.shouldSkipTitle,
+    selectedArrangement: item.selectedArrangement ?? 0,
+    background: item.background,
+    arrangements: item.arrangements || [],
+    slides: item.slides || [],
+    bibleInfo: item.bibleInfo,
+    timerInfo: item.timerInfo,
+    shouldSendTo: item.shouldSendTo || defaultShouldSendTo,
+    formattedSections: item.formattedSections,
+    _rev: (item as DBItem)._rev,
+    createdAt: (item as DBItem).createdAt,
+    updatedAt: (item as DBItem).updatedAt,
+    docType: (item as DBItem).docType,
+  };
+};
+
+const getSlideCount = (
+  item: Partial<ItemState> | DBItem,
+  arrangementIndex: number,
+) => {
+  if (item.type === "song" && item.arrangements?.length) {
+    return (
+      item.arrangements[arrangementIndex]?.slides?.length ??
+      item.slides?.length ??
+      0
+    );
+  }
+
+  return item.slides?.length ?? 0;
+};
+
+const applyItemDataToState = (
+  state: ItemState,
+  payload: Partial<ItemState> | DBItem,
+  options?: { preserveSelection?: boolean },
+) => {
+  const preserveSelection = options?.preserveSelection ?? false;
+  const nextListId = "listId" in payload ? payload.listId : undefined;
+  const nextSelectedSlide =
+    "selectedSlide" in payload ? payload.selectedSlide : undefined;
+  const nextSelectedBox =
+    "selectedBox" in payload ? payload.selectedBox : undefined;
+  const nextArrangement = preserveSelection
+    ? Math.min(
+        state.selectedArrangement ?? 0,
+        Math.max(0, (payload.arrangements?.length ?? 1) - 1),
+      )
+    : (payload.selectedArrangement ?? 0);
+  const slideCount = getSlideCount(payload, nextArrangement);
+
+  state.name = payload.name || state.name;
+  state.type = payload.type || state.type;
+  state._id = payload._id || state._id;
+  state.listId = nextListId || state.listId;
+  if ("background" in payload && payload.background !== undefined) {
+    state.background = payload.background;
+  }
+  state.selectedArrangement = nextArrangement;
+  state.selectedSlide = preserveSelection
+    ? Math.min(state.selectedSlide ?? 0, Math.max(0, slideCount - 1))
+    : (nextSelectedSlide ?? 0);
+  state.selectedBox = preserveSelection
+    ? state.selectedBox ?? 1
+    : (nextSelectedBox ?? 1);
+  state.shouldSkipTitle = payload.shouldSkipTitle || false;
+  state.arrangements = payload.arrangements || [];
+  state.slides = payload.slides || [];
+  state.formattedSections = payload.formattedSections || state.formattedSections;
+  state.bibleInfo = payload.bibleInfo || {
+    book: "",
+    chapter: "",
+    version: "",
+    verses: [],
+    fontMode: "separate",
+  };
+  state.timerInfo = payload.timerInfo;
+  state.shouldSendTo = payload.shouldSendTo || defaultShouldSendTo;
+  resetTransientItemState(state);
+};
+
 export const itemSlice = createSlice({
   name: "item",
   initialState,
   reducers: {
     setActiveItem: (state, action: PayloadAction<Partial<ItemState>>) => {
-      state.name = action.payload.name || state.name;
-      state.type = action.payload.type || state.type;
-      state._id = action.payload._id || state._id;
-      state.listId = action.payload.listId || state.listId;
-      state.selectedArrangement = action.payload.selectedArrangement || 0;
-      state.selectedSlide = action.payload.selectedSlide || 0;
-      state.selectedBox = action.payload.selectedBox || 1;
-      state.shouldSkipTitle = action.payload.shouldSkipTitle || false;
-      state.arrangements = action.payload.arrangements || [];
-      state.slides = action.payload.slides || [];
-      state.formattedSections =
-        action.payload.formattedSections || state.formattedSections;
-      state.bibleInfo = action.payload.bibleInfo || {
-        book: "",
-        chapter: "",
-        version: "",
-        verses: [],
-        fontMode: "separate",
-      };
-      state.timerInfo = action.payload.timerInfo;
-      state.shouldSendTo = action.payload.shouldSendTo || {
-        projector: true,
-        monitor: true,
-        stream: true,
-      };
-      resetTransientItemState(state);
+      applyItemDataToState(state, action.payload);
+      state.baseItem = createItemSnapshot(action.payload);
+      state.pendingRemoteItem = null;
+      state.hasRemoteUpdate = false;
     },
     setIsEditMode: (state, action: PayloadAction<boolean>) => {
       state.isEditMode = action.payload;
@@ -162,6 +235,30 @@ export const itemSlice = createSlice({
     },
     clearTransientState: (state) => {
       resetTransientItemState(state);
+    },
+    markItemPersisted: (state, action: PayloadAction<DBItem>) => {
+      if (state._id !== action.payload._id) return;
+      state.baseItem = createItemSnapshot(action.payload);
+      state.pendingRemoteItem = null;
+      state.hasRemoteUpdate = false;
+    },
+    bufferRemoteItemUpdate: (state, action: PayloadAction<DBItem>) => {
+      if (state._id !== action.payload._id) return;
+      state.pendingRemoteItem = action.payload;
+      state.hasRemoteUpdate = true;
+    },
+    discardPendingRemoteItem: (state) => {
+      state.pendingRemoteItem = null;
+      state.hasRemoteUpdate = false;
+    },
+    applyPendingRemoteItem: (state) => {
+      if (!state.pendingRemoteItem) return;
+      applyItemDataToState(state, state.pendingRemoteItem, {
+        preserveSelection: true,
+      });
+      state.baseItem = createItemSnapshot(state.pendingRemoteItem);
+      state.pendingRemoteItem = null;
+      state.hasRemoteUpdate = false;
     },
   },
 });
@@ -287,12 +384,11 @@ export const updateArrangements = createAsyncThunk(
     ) {
       const hint = getSelectionHint(oldSlides, item.selectedSlide);
       const maxSlideIndex = Math.max(0, newSlides.length - 2);
-      const newIndex = hint
-        ? Math.min(
-            getIndexFromSelectionHint(newSlides, hint),
-            maxSlideIndex
-          )
-        : Math.min(item.selectedSlide, maxSlideIndex);
+      const fromHint = hint ? getIndexFromSelectionHint(newSlides, hint) : null;
+      const newIndex =
+        fromHint !== null
+          ? Math.min(fromHint, maxSlideIndex)
+          : Math.min(item.selectedSlide, maxSlideIndex);
       dispatch(setSelectedSlide(newIndex));
       dispatch(setRestoreFocusToBox(item.selectedBox));
     }
@@ -469,12 +565,11 @@ export const updateSlides = createAsyncThunk(
     ) {
       const hint = getSelectionHint(oldSlides, item.selectedSlide);
       const maxSlideIndex = Math.max(0, newSlides.length - 1);
-      const newIndex = hint
-        ? Math.min(
-            getIndexFromSelectionHint(newSlides, hint),
-            maxSlideIndex
-          )
-        : Math.min(item.selectedSlide, maxSlideIndex);
+      const fromHint = hint ? getIndexFromSelectionHint(newSlides, hint) : null;
+      const newIndex =
+        fromHint !== null
+          ? Math.min(fromHint, maxSlideIndex)
+          : Math.min(item.selectedSlide, maxSlideIndex);
       dispatch(setSelectedSlide(newIndex));
       dispatch(setRestoreFocusToBox(item.selectedBox));
     }
@@ -508,6 +603,10 @@ export const {
   setSelectedBox,
   setShouldSendTo,
   forceUpdate,
+  bufferRemoteItemUpdate,
+  discardPendingRemoteItem,
+  applyPendingRemoteItem,
+  markItemPersisted,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

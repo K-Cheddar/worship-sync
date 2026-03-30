@@ -91,6 +91,7 @@ interface ElectronAPI {
   
   // Upload status
   setUploadInProgress: (inProgress: boolean) => Promise<boolean>;
+  setTaskbarUploadProgress: (progress: number | null) => Promise<boolean>;
 }
 
 interface ObsStudioAPI {

@@ -9,6 +9,7 @@ export type ToastData = {
   position?: ToastPosition;
   persist?: boolean;
   duration?: number;
+  showCloseButton?: boolean;
 };
 
 type ToastContainerProps = {
@@ -36,7 +37,11 @@ const ToastContainer: React.FC<ToastContainerProps> = ({
   return (
     <div className="absolute inset-0 pointer-events-none z-9999">
       {Object.entries(toastsByPosition).map(([position, positionToasts]) => (
-        <div key={position} className={`toast-group toast-group-${position}`}>
+        <div
+          key={position}
+          className={`toast-group toast-group-${position}`}
+          data-testid={`toast-group-${position}`}
+        >
           {positionToasts.map((toast) => {
             const children =
               typeof toast.children === "function"

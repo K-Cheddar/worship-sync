@@ -40,12 +40,12 @@ export const getSelectionHint = (
   return { baseLyricName, occurrenceIndex, slideIndexInSection };
 };
 
-/** Find the slide index in newSlides that matches the given hint (same section occurrence and position). */
+/** Find the slide index in newSlides that matches the given hint (same section occurrence and position). Returns null if no matching section exists (caller should fall back to a clamped index). */
 export const getIndexFromSelectionHint = (
   newSlides: ItemSlideType[],
   hint: SelectionHint
-): number => {
-  if (newSlides.length === 0) return 0;
+): number | null => {
+  if (newSlides.length === 0) return null;
   const sections: {
     base: string;
     occurrenceIndex: number;
@@ -78,7 +78,7 @@ export const getIndexFromSelectionHint = (
     (s) =>
       s.base === hint.baseLyricName && s.occurrenceIndex === hint.occurrenceIndex
   );
-  if (!section) return 0;
+  if (!section) return null;
   const sectionLength = section.end - section.start + 1;
   const offset = Math.min(hint.slideIndexInSection, sectionLength - 1);
   return section.start + offset;

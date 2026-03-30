@@ -19,6 +19,7 @@ import {
 import { bibleVersions } from "../../utils/bibleVersions";
 import { getVerses as getVersesApi } from "../../api/getVerses";
 import BibleVersesList from "./BibleVersesList";
+import { hasRenderableVersesInRange } from "./bibleVerseRange";
 import { useSearchParams } from "react-router-dom";
 import { formatBible } from "../../utils/overflow";
 import { setActiveItem } from "../../store/itemSlice";
@@ -114,6 +115,11 @@ const Bible = () => {
 
     return `${bookName} ${chapterName}:${verseName} ${version.toUpperCase()}`;
   }, [books, book, chapters, chapter, verses, endVerse, startVerse, version]);
+
+  const hasRenderableVerses = useMemo(
+    () => hasRenderableVersesInRange(verses, startVerse, endVerse),
+    [verses, startVerse, endVerse]
+  );
 
   useDebouncedEffect(
     () => {
@@ -391,7 +397,9 @@ const Bible = () => {
         className="ml-auto mt-auto mb-2"
         onClick={submitVerses}
         isLoading={isLoadingChapter}
-        disabled={isLoadingChapter || justAdded}
+        disabled={
+          isLoadingChapter || justAdded || !hasRenderableVerses
+        }
         color={justAdded ? "#67e8f9" : undefined}
         svg={justAdded ? Check : Plus}
       >

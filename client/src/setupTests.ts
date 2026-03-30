@@ -13,6 +13,19 @@ jest.mock("./hooks/useCachedMediaUrl", () => ({
 // Polyfill TextEncoder/TextDecoder for Jest (required by react-router-dom in Node)
 Object.assign(global, { TextEncoder, TextDecoder });
 
+// jsdom may omit innerText; production code uses it for verse parsing (getVerses) and layout.
+if (Object.getOwnPropertyDescriptor(HTMLElement.prototype, "innerText") == null) {
+  Object.defineProperty(HTMLElement.prototype, "innerText", {
+    get() {
+      return this.textContent ?? "";
+    },
+    set(value: string) {
+      this.textContent = value;
+    },
+    configurable: true,
+  });
+}
+
 // jsdom does not implement window.scrollTo
 Object.defineProperty(window, "scrollTo", { value: jest.fn(), writable: true });
 

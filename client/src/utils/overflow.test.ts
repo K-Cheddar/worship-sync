@@ -1,4 +1,8 @@
-import { formatSection, getFormattedSections } from "./overflow";
+import {
+  formatSection,
+  getFormattedSections,
+  getNewSlidesOffsetForSectionPreview,
+} from "./overflow";
 import { formatBible, formatFree, formatLyrics, formatSong } from "./overflow";
 import { getNumLines } from "./textMeasurement";
 
@@ -115,6 +119,77 @@ describe("overflow utilities", () => {
     expect((result[1] as { monitorFormatted?: boolean }).monitorFormatted).toBe(
       true,
     );
+  });
+
+  it("preview offset matches formatLyrics so first verse slide uses slides[1] boxes", () => {
+    const titleSlide = {
+      boxes: [
+        {},
+        {
+          words: "",
+          width: 100,
+          height: 100,
+          topMargin: 0,
+          sideMargin: 0,
+          fontColor: "#fff",
+          isBold: false,
+          isItalic: false,
+        },
+      ],
+    } as any;
+    const verseSlide = {
+      boxes: [
+        {},
+        {
+          words: "",
+          width: 100,
+          height: 50,
+          topMargin: 0,
+          sideMargin: 0,
+          fontColor: "#fff",
+          isBold: false,
+          isItalic: false,
+        },
+      ],
+    } as any;
+    const slides = [titleSlide, verseSlide] as any[];
+    const selectedSlide = verseSlide;
+
+    const withoutOffset = formatSection({
+      text: "Line 1",
+      type: "Verse" as any,
+      name: "Verse 1",
+      slides,
+      newSlides: [],
+      fontSizePx: 60,
+      selectedBox: 1,
+      selectedSlide,
+    });
+    expect(withoutOffset[0].boxes[1].height).toBe(100);
+
+    const offset = getNewSlidesOffsetForSectionPreview({
+      songOrder: [{ id: "1", name: "Verse 1" }],
+      formattedLyrics: [
+        { id: "v1", type: "Verse", name: "Verse 1", words: "Line 1", slideSpan: 1 },
+      ],
+      slides,
+      targetSectionName: "Verse 1",
+      fontSizePx: 60,
+      selectedSlide,
+    });
+    expect(offset).toBe(1);
+
+    const withOffset = formatSection({
+      text: "Line 1",
+      type: "Verse" as any,
+      name: "Verse 1",
+      slides,
+      newSlides: Array.from({ length: offset }, () => ({} as any)),
+      fontSizePx: 60,
+      selectedBox: 1,
+      selectedSlide,
+    });
+    expect(withOffset[0].boxes[1].height).toBe(50);
   });
 
   it("returns original slides when free-form section metadata is missing", () => {

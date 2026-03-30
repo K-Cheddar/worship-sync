@@ -1,8 +1,10 @@
 import {
   Arrangment,
+  FormattedLyrics,
   ItemSlideType,
   ItemState,
   SlideType,
+  SongOrder,
   verseType,
   BibleFontMode,
   MediaType,
@@ -149,6 +151,55 @@ export const formatSection = ({
   }
 
   return formattedSlides.map(addMonitorFormattedToSlide);
+};
+
+/**
+ * Matches {@link formatLyrics}: `formatSection` receives `newSlides` that already
+ * includes the title slide (and prior sections). `slidePosition` starts at
+ * `newSlides.length`, so the first verse slide uses `slides[1]`, not `slides[0]`.
+ */
+export const getNewSlidesOffsetForSectionPreview = ({
+  songOrder,
+  formattedLyrics,
+  slides,
+  targetSectionName,
+  fontSizePx,
+  selectedSlide,
+}: {
+  songOrder: SongOrder[];
+  formattedLyrics: FormattedLyrics[];
+  slides: ItemSlideType[];
+  targetSectionName: string;
+  fontSizePx: number;
+  selectedSlide: ItemSlideType;
+}): number => {
+  const sectionIndex = songOrder.findIndex((s) => s.name === targetSectionName);
+  let offset = 1;
+  if (sectionIndex <= 0) {
+    return offset;
+  }
+
+  const dummyNewSlides = (length: number) =>
+    Array.from({ length }, () => ({} as ItemSlideType));
+
+  for (let j = 0; j < sectionIndex; j++) {
+    const name = songOrder[j].name;
+    const lyrics =
+      formattedLyrics.find((e) => e.name === name)?.words || "";
+    const type = name.split(" ")[0] as SlideType;
+    const produced = formatSection({
+      text: lyrics,
+      type,
+      name,
+      slides,
+      newSlides: dummyNewSlides(offset),
+      fontSizePx,
+      selectedSlide,
+      selectedBox: 1,
+    });
+    offset += produced.length;
+  }
+  return offset;
 };
 
 // Helper function to get or initialize formattedSections from slides

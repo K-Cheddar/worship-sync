@@ -6,7 +6,7 @@ import { presentationSlice } from "../../store/presentationSlice";
 import { preferencesSlice } from "../../store/preferencesSlice";
 import { timersSlice } from "../../store/timersSlice";
 
-jest.mock("../../components/Presentation/Presentation", () => ({
+jest.mock("../../components/Presentation/PresentationPreview", () => ({
   __esModule: true,
   default: ({ name }: { name: string }) => (
     <div data-testid={`presentation-${name.toLowerCase()}`}>{name}</div>

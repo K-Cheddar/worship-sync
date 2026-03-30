@@ -76,11 +76,15 @@ const ItemSlides = () => {
     isEditMode,
   } = useSelector((state: RootState) => state.undoable.present.item);
 
-  const {
-    isMonitorTransmitting,
-    isProjectorTransmitting,
-    isStreamTransmitting,
-  } = useSelector((state) => state.presentation);
+  const isMonitorTransmitting = useSelector(
+    (state) => state.presentation.isMonitorTransmitting
+  );
+  const isProjectorTransmitting = useSelector(
+    (state) => state.presentation.isProjectorTransmitting
+  );
+  const isStreamTransmitting = useSelector(
+    (state) => state.presentation.isStreamTransmitting
+  );
 
   const isTransmitting =
     (shouldSendTo.monitor && isMonitorTransmitting) ||

@@ -43,6 +43,23 @@ export const iconColorMap: Map<string, string> = new Map([
   ["free", "#f97316"],
 ]);
 
+export const itemTypeLabelMap: Map<string, string> = new Map([
+  ["song", "song"],
+  ["video", "video"],
+  ["image", "image"],
+  ["bible", "Bible item"],
+  ["timer", "timer"],
+  ["announcement", "announcement"],
+  ["create", "item"],
+  ["overlays", "overlay"],
+  ["free", "custom item"],
+]);
+
+export const getItemTypeLabel = (itemType?: string) => {
+  if (!itemType) return "item";
+  return itemTypeLabelMap.get(itemType) || itemType;
+};
+
 /** Overlay type -> left border accent (e.g. border-l-blue-500). */
 export const overlayBorderColorMap: Map<string, string> = new Map([
   ["participant", "border-l-blue-500"],

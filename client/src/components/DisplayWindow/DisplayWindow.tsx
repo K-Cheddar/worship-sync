@@ -1,6 +1,7 @@
 import React, {
   forwardRef,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -10,6 +11,7 @@ import {
   Box,
   DisplayType,
   FormattedTextDisplayInfo,
+  MonitorLayoutMode,
   OverlayInfo,
   TimerInfo,
 } from "../../types";
@@ -19,7 +21,7 @@ import DisplayStreamBible from "./DisplayStreamBible";
 import DisplayParticipantOverlay from "./DisplayParticipantOverlay";
 import DisplayStbOverlay from "./DisplayStbOverlay";
 import DisplayQrCodeOverlay from "./DisplayQrCodeOverlay";
-import DisplayEditor from "./DisplayEditor";
+import DisplayEditor, { DisplayEditorChangeInfo } from "./DisplayEditor";
 import DisplayStreamText from "./DisplayStreamText";
 import DisplayImageOverlay from "./DisplayImageOverlay";
 import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
@@ -36,6 +38,8 @@ const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
 } as const;
 
 const STREAM_PREV_OVERLAY_EXIT_MS = 1500;
+const DISPLAY_PREV_LAYER_VISIBLE_MS = 500;
+const STREAM_PREV_TEXT_LAYER_VISIBLE_MS = 350;
 
 const hasParticipantOverlayData = (overlay?: OverlayInfo) =>
   Boolean(overlay?.name || overlay?.title || overlay?.event);
@@ -118,17 +122,7 @@ const getPrevOverlayVisibleUntilMs = ({
 type DisplayWindowProps = {
   prevBoxes?: Box[];
   boxes?: Box[];
-  onChange?: ({
-    index,
-    value,
-    box,
-    cursorPosition,
-  }: {
-    index: number;
-    value: string;
-    box: Box;
-    cursorPosition: number;
-  }) => void;
+  onChange?: (info: DisplayEditorChangeInfo) => void;
   width?: number; // Optional: if not provided, component will scale to fit container
   showBorder?: boolean;
   displayType?: DisplayType;
@@ -167,6 +161,8 @@ type DisplayWindowProps = {
   transitionDirection?: "next" | "prev" | "jump";
   /** When true, stream item content is faded out; overlays still show. Synced for multi-device. */
   streamItemContentBlocked?: boolean;
+  /** Monitor rendering mode: full monitor chrome only for the live monitor surfaces. */
+  monitorLayoutMode?: MonitorLayoutMode;
 };
 
 const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
@@ -208,6 +204,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       bibleInfoBox,
       transitionDirection,
       streamItemContentBlocked = false,
+      monitorLayoutMode = "content-only",
     }: DisplayWindowProps,
     ref
   ) => {
@@ -230,6 +227,14 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     const [actualWidthPx, setActualWidthPx] = useState<number>(0);
     const [actualHeightPx, setActualHeightPx] = useState<number>(0);
+    const [displayPrevLayerBoxes, setDisplayPrevLayerBoxes] = useState<Box[]>(
+      [],
+    );
+    const [streamPrevTextLayerBoxes, setStreamPrevTextLayerBoxes] = useState<
+      Box[]
+    >([]);
+    const displayPrevLayerTokenRef = useRef(0);
+    const streamPrevTextLayerTokenRef = useRef(0);
 
     // Use ResizeObserver to track actual container width and height in pixels
     useEffect(() => {
@@ -295,8 +300,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const isEditor = displayType === "editor";
     const isDisplay = !isStream && !isEditor;
     const isMonitor = displayType === "monitor";
+    const shouldUseFullMonitorLayout =
+      isMonitor && monitorLayoutMode === "full-monitor";
     const isSlide = displayType === "slide";
     const [streamOverlayNowMs, setStreamOverlayNowMs] = useState(() => Date.now());
+    const storedMonitorSettings = useSelector(
+      (state) => state.undoable.present.preferences.monitorSettings
+    );
 
     const hasStreamItemData = useMemo(() => {
       const hasBoxes = (boxes?.length ?? 0) > 0;
@@ -426,6 +436,46 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       [boxes]
     );
 
+    useLayoutEffect(() => {
+      if (!isDisplay || shouldUseFullMonitorLayout || prevBoxes.length === 0) {
+        setDisplayPrevLayerBoxes((current) =>
+          current.length === 0 ? current : [],
+        );
+        return;
+      }
+
+      const token = ++displayPrevLayerTokenRef.current;
+      setDisplayPrevLayerBoxes(prevBoxes);
+
+      const timeoutId = window.setTimeout(() => {
+        setDisplayPrevLayerBoxes((current) =>
+          displayPrevLayerTokenRef.current === token ? [] : current,
+        );
+      }, DISPLAY_PREV_LAYER_VISIBLE_MS);
+
+      return () => window.clearTimeout(timeoutId);
+    }, [isDisplay, shouldUseFullMonitorLayout, prevBoxes]);
+
+    useLayoutEffect(() => {
+      if (!isStream || overlayPreviewMode || prevBoxes.length === 0) {
+        setStreamPrevTextLayerBoxes((current) =>
+          current.length === 0 ? current : [],
+        );
+        return;
+      }
+
+      const token = ++streamPrevTextLayerTokenRef.current;
+      setStreamPrevTextLayerBoxes(prevBoxes);
+
+      const timeoutId = window.setTimeout(() => {
+        setStreamPrevTextLayerBoxes((current) =>
+          streamPrevTextLayerTokenRef.current === token ? [] : current,
+        );
+      }, STREAM_PREV_TEXT_LAYER_VISIBLE_MS);
+
+      return () => window.clearTimeout(timeoutId);
+    }, [isStream, overlayPreviewMode, prevBoxes]);
+
     // Determine the active background video (if any) from boxes
     const { videoBox, desiredVideoUrl } = useMemo(() => {
       if (!shouldPlayVideo || !showBackground)
@@ -442,15 +492,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const [isWindowVideoLoaded, setIsWindowVideoLoaded] = useState(false);
     const resolvedVideoUrl = useCachedVideoUrl(activeVideoUrl);
 
-    const {
-      monitorSettings: {
-        showClock,
-        showTimer,
-        showNextSlide,
-        clockFontSize,
-        timerFontSize,
-      },
-    } = useSelector((state) => state.undoable.present.preferences);
+    const showClock = storedMonitorSettings?.showClock ?? true;
+    const showTimer = storedMonitorSettings?.showTimer ?? true;
+    const showNextSlide = storedMonitorSettings?.showNextSlide ?? false;
+    const clockFontSize = storedMonitorSettings?.clockFontSize ?? 75;
+    const timerFontSize = storedMonitorSettings?.timerFontSize ?? 75;
 
     // Only show clock and timer when showMonitorClockTimer is true
     const effectiveShowClock = showMonitorClockTimer ? showClock : false;
@@ -478,7 +524,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     // Render all content - wrap in scaled container when using transform
     const renderContent = () => {
-      if (isMonitor) {
+      if (shouldUseFullMonitorLayout) {
         return (
           <div
             style={{
@@ -521,6 +567,121 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         );
       }
 
+      const currentDisplayLayer =
+        isDisplay && !shouldUseFullMonitorLayout ? (
+          <div className="absolute inset-0" data-testid="current-display-layer">
+            {boxes.map((box, index) => (
+              <DisplayBox
+                key={`current-${box.id}`}
+                box={box}
+                width={effectiveWidth}
+                showBackground={showBackground}
+                index={index}
+                shouldAnimate={shouldAnimate}
+                prevBox={prevBoxes[index]}
+                time={time}
+                timerInfo={timerInfo}
+                activeVideoUrl={activeVideoUrl}
+                isWindowVideoLoaded={isWindowVideoLoaded}
+                referenceWidth={REFERENCE_WIDTH}
+                referenceHeight={REFERENCE_HEIGHT}
+                scaleFactor={scaleFactor}
+                brightness={
+                  isSlide && index === 0 && slideHasWords ? 30 : undefined
+                }
+                isSimpleFont={isSlide}
+              />
+            ))}
+          </div>
+        ) : null;
+
+      const prevDisplayLayer =
+        isDisplay && !shouldUseFullMonitorLayout && displayPrevLayerBoxes.length > 0 ? (
+          <div className="absolute inset-0" data-testid="prev-display-layer">
+            {displayPrevLayerBoxes.map((box, index) => (
+              <DisplayBox
+                key={`prev-${box.id}`}
+                box={box}
+                width={effectiveWidth}
+                showBackground={showBackground}
+                index={index}
+                shouldAnimate={shouldAnimate}
+                prevBox={boxes[index]}
+                time={time}
+                timerInfo={prevTimerInfo}
+                activeVideoUrl={activeVideoUrl}
+                isWindowVideoLoaded={isWindowVideoLoaded}
+                isPrev
+                referenceWidth={REFERENCE_WIDTH}
+                referenceHeight={REFERENCE_HEIGHT}
+                scaleFactor={scaleFactor}
+              />
+            ))}
+          </div>
+        ) : null;
+
+      const currentStreamTextLayer =
+        isStream && !overlayPreviewMode ? (
+          <div className="absolute inset-0" data-testid="current-stream-text-layer">
+            {boxes.map((box, index) => (
+              <DisplayStreamText
+                key={`current-${box.id}`}
+                box={box}
+                prevBox={prevBoxes[index]}
+                width={effectiveWidth}
+                shouldAnimate={shouldAnimate}
+                time={time}
+                timerInfo={timerInfo}
+                referenceWidth={REFERENCE_WIDTH}
+                referenceHeight={REFERENCE_HEIGHT}
+              />
+            ))}
+          </div>
+        ) : null;
+
+      const prevStreamTextLayer =
+        isStream && !overlayPreviewMode && streamPrevTextLayerBoxes.length > 0 ? (
+          <div className="absolute inset-0" data-testid="prev-stream-text-layer">
+            {streamPrevTextLayerBoxes.map((box, index) => (
+              <DisplayStreamText
+                key={`prev-${box.id}`}
+                box={box}
+                width={effectiveWidth}
+                shouldAnimate={shouldAnimate}
+                time={time}
+                timerInfo={prevTimerInfo}
+                isPrev
+                prevBox={boxes[index]}
+                referenceWidth={REFERENCE_WIDTH}
+                referenceHeight={REFERENCE_HEIGHT}
+              />
+            ))}
+          </div>
+        ) : null;
+
+      const editorLayer = isEditor ? (
+        <div className="absolute inset-0" data-testid="editor-layer">
+          {boxes.map((box, index) => (
+            <DisplayEditor
+              key={`editor-${box.id}`}
+              box={box}
+              width={effectiveWidth}
+              onChange={onChange}
+              index={index}
+              selectBox={selectBox}
+              isSelected={selectedBox === index}
+              isBoxLocked={isBoxLocked?.[index] ?? true}
+              disabled={disabled}
+              referenceWidth={REFERENCE_WIDTH}
+              referenceHeight={REFERENCE_HEIGHT}
+              scaleFactor={scaleFactor}
+              activeVideoUrl={activeVideoUrl}
+              isWindowVideoLoaded={isWindowVideoLoaded}
+            />
+          ))}
+        </div>
+      ) : null;
+
       const innerContent = (
         <>
           {showBackground &&
@@ -537,78 +698,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             )}
 
 
-          <>
-            {boxes.map((box, index) => {
-              if (isEditor)
-                return (
-                  <DisplayEditor
-                    key={box.id}
-                    box={box}
-                    width={effectiveWidth}
-                    onChange={onChange}
-                    index={index}
-                    selectBox={selectBox}
-                    isSelected={selectedBox === index}
-                    isBoxLocked={isBoxLocked?.[index] ?? true}
-                    disabled={disabled}
-                    referenceWidth={REFERENCE_WIDTH}
-                    referenceHeight={REFERENCE_HEIGHT}
-                    scaleFactor={scaleFactor}
-                    activeVideoUrl={activeVideoUrl}
-                    isWindowVideoLoaded={isWindowVideoLoaded}
-                  />
-                );
-              if (isDisplay)
-                return (
-                  <DisplayBox
-                    key={box.id}
-                    box={box}
-                    width={effectiveWidth}
-                    showBackground={showBackground}
-                    index={index}
-                    shouldAnimate={shouldAnimate}
-                    prevBox={prevBoxes[index]}
-                    time={time}
-                    timerInfo={timerInfo}
-                    activeVideoUrl={activeVideoUrl}
-                    isWindowVideoLoaded={isWindowVideoLoaded}
-                    referenceWidth={REFERENCE_WIDTH}
-                    referenceHeight={REFERENCE_HEIGHT}
-                    scaleFactor={scaleFactor}
-                    brightness={
-                      isSlide && index === 0 && slideHasWords
-                        ? 30
-                        : undefined
-                    }
-                    isSimpleFont={isSlide}
-                  />
-                );
-              return null;
-            })}
-            {prevBoxes.map((box, index) => {
-              if (isDisplay)
-                return (
-                  <DisplayBox
-                    key={box.id}
-                    box={box}
-                    width={effectiveWidth}
-                    showBackground={showBackground}
-                    index={index}
-                    shouldAnimate={shouldAnimate}
-                    prevBox={boxes[index]}
-                    time={time}
-                    timerInfo={prevTimerInfo}
-                    activeVideoUrl={activeVideoUrl}
-                    isWindowVideoLoaded={isWindowVideoLoaded}
-                    isPrev
-                    referenceWidth={REFERENCE_WIDTH}
-                    referenceHeight={REFERENCE_HEIGHT}
-                    scaleFactor={scaleFactor}
-                  />
-                );
-              return null;
-            })}
-          </>
+          {editorLayer}
+          {currentDisplayLayer}
+          {prevDisplayLayer}
 
           {isStream && !overlayPreviewMode && (
             <>
@@ -621,33 +713,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                   pointerEvents: showStreamItemContent ? "auto" : "none",
                 }}
               >
-                {boxes.map((box, index) => (
-                  <DisplayStreamText
-                    key={box.id}
-                    box={box}
-                    prevBox={prevBoxes[index]}
-                    width={effectiveWidth}
-                    shouldAnimate={shouldAnimate}
-                    time={time}
-                    timerInfo={timerInfo}
-                    referenceWidth={REFERENCE_WIDTH}
-                    referenceHeight={REFERENCE_HEIGHT}
-                  />
-                ))}
-                {prevBoxes.map((box, index) => (
-                  <DisplayStreamText
-                    key={box.id}
-                    box={box}
-                    width={effectiveWidth}
-                    shouldAnimate={shouldAnimate}
-                    time={time}
-                    timerInfo={prevTimerInfo}
-                    isPrev
-                    prevBox={boxes[index]}
-                    referenceWidth={REFERENCE_WIDTH}
-                    referenceHeight={REFERENCE_HEIGHT}
-                  />
-                ))}
+                {currentStreamTextLayer}
+                {prevStreamTextLayer}
                 <DisplayStreamBible
                   width={effectiveWidth}
                   shouldAnimate={shouldAnimate}
@@ -785,13 +852,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         ref={containerRef}
         id={isEditor ? "display-editor" : undefined}
         style={{
-          // Ensure parent has defined width to constrain scaled content
-          // If className is provided (like "w-full"), let CSS handle it but ensure container is constrained
-          width: width
-            ? `${width}vw`
-            : className
-              ? "100%" // When using transform with className, ensure width is set
-              : "100%",
+          // Ensure parent has defined width to constrain scaled content; otherwise fill (e.g. w-full via className).
+          width: width ? `${width}vw` : "100%",
           fontFamily: "Inter, sans-serif",
           // Prevent scaled inner container from affecting layout
           contain: "layout size",

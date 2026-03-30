@@ -14,7 +14,7 @@ export const UndoButton = ({
   variant?: "primary" | "secondary" | "tertiary" | "none";
 }) => {
   const dispatch = useDispatch();
-  const { past } = useSelector((state) => state.undoable);
+  const past = useSelector((state) => state.undoable.past);
   return (
     <Button
       svg={Undo2}
@@ -37,7 +37,7 @@ export const RedoButton = ({
   variant?: "primary" | "secondary" | "tertiary" | "none";
 }) => {
   const dispatch = useDispatch();
-  const { future } = useSelector((state) => state.undoable);
+  const future = useSelector((state) => state.undoable.future);
   return (
     <Button
       svg={Redo2}
@@ -52,7 +52,7 @@ export const RedoButton = ({
 
 const Undo = () => {
   const dispatch = useDispatch();
-  const { isEditMode } = useSelector((state) => state.undoable.present.item);
+  const isEditMode = useSelector((state) => state.undoable.present.item.isEditMode);
 
   useEffect(() => {
     const handleKeyPress = (event: KeyboardEvent) => {

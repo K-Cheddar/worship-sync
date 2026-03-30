@@ -65,7 +65,7 @@ type MediaModalProps = {
   onSearchChange: (value: string) => void;
   onShowNameToggle: () => void;
   onDeleteClick: (mediaItem: MediaType) => void;
-  onDeleteMultipleClick: () => void;
+  onDeleteMultipleClick: (selectedIds: Set<string>) => void;
   onPreviewChange: (media: MediaType | null) => void;
   mediaUploadInputRef?: React.MutableRefObject<MediaUploadInputRef | null>;
   uploadProgress?: { isUploading: boolean; progress: number };
@@ -200,7 +200,7 @@ const MediaModal = ({
   };
 
   const handleModalDeleteMultipleClick = () => {
-    onDeleteMultipleClick();
+    onDeleteMultipleClick(modalSelectedMediaIds);
   };
 
   // Generate context menu items for a media item

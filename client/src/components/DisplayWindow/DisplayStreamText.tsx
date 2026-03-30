@@ -110,7 +110,6 @@ const DisplayStreamText = ({
   };
   return (
     <div
-      key={box.id}
       ref={boxRef}
       className="absolute leading-tight"
       style={{

@@ -39,11 +39,11 @@ const Controller = () => {
 
   const { user } = useContext(GlobalInfoContext) || {};
 
-  const { isEditMode } = useSelector(
-    (state: RootState) => state.undoable.present.item
+  const isEditMode = useSelector(
+    (state: RootState) => state.undoable.present.item.isEditMode
   );
-  const { scrollbarWidth } = useSelector(
-    (state) => state.undoable.present.preferences
+  const scrollbarWidth = useSelector(
+    (state) => state.undoable.present.preferences.scrollbarWidth
   );
   const { access } = useContext(GlobalInfoContext) || {};
 

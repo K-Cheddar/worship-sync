@@ -24,6 +24,7 @@ import {
 import { itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
+import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
 import { itemListSlice } from "./itemListSlice";
 import { allItemsSlice } from "./allItemsSlice";
 import { createItemSlice } from "./createItemSlice";
@@ -216,6 +217,10 @@ const excludedActions: string[] = [
   itemSlice.actions.setIsEditMode.toString(),
   itemSlice.actions.setHasPendingUpdate.toString(),
   itemSlice.actions.forceUpdate.toString(),
+  itemSlice.actions.markItemPersisted.toString(),
+  itemSlice.actions.bufferRemoteItemUpdate.toString(),
+  itemSlice.actions.discardPendingRemoteItem.toString(),
+  itemSlice.actions.applyPendingRemoteItem.toString(),
   itemSlice.actions.setSelectedBox.toString(),
   itemSlice.actions.setActiveItem.toString(),
   itemSlice.actions.clearTransientState.toString(),
@@ -350,6 +355,10 @@ listenerMiddleware.startListening({
       itemSlice.actions.setHasPendingUpdate,
       itemSlice.actions.setItemFormatting,
       itemSlice.actions.clearTransientState,
+      itemSlice.actions.markItemPersisted,
+      itemSlice.actions.bufferRemoteItemUpdate,
+      itemSlice.actions.discardPendingRemoteItem,
+      itemSlice.actions.applyPendingRemoteItem,
     );
     return (
       (currentState as RootState).undoable.present.item !==
@@ -369,8 +378,6 @@ listenerMiddleware.startListening({
       await listenerApi.delay(1500);
     }
 
-    listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
-
     // update Item
     const item = state.undoable.present.item;
     if (!db) return;
@@ -388,7 +395,13 @@ listenerMiddleware.startListening({
       shouldSendTo: item.shouldSendTo,
       updatedAt: new Date().toISOString(),
     };
-    db.put(db_item);
+    const result = await db.put(db_item);
+    db_item = {
+      ...db_item,
+      _rev: result.rev,
+    };
+    listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
+    listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
 
     listenerApi.dispatch(upsertItemInAllDocs(db_item));
 
@@ -415,19 +428,52 @@ listenerMiddleware.startListening({
   ),
   effect: (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
+    const previousState = listenerApi.getOriginalState() as RootState;
     const currentItem = state.undoable.present.item;
     const { _id: activeId, listId } = currentItem;
     if (!activeId) return;
 
     const { allSongDocs, allFreeFormDocs, allTimerDocs, allBibleDocs } =
       state.allDocs;
+    const {
+      allSongDocs: previousSongDocs,
+      allFreeFormDocs: previousFreeFormDocs,
+      allTimerDocs: previousTimerDocs,
+      allBibleDocs: previousBibleDocs,
+    } = previousState.allDocs;
     const doc =
       allSongDocs.find((d) => d._id === activeId) ??
       allFreeFormDocs.find((d) => d._id === activeId) ??
       allTimerDocs.find((d) => d._id === activeId) ??
       allBibleDocs.find((d) => d._id === activeId);
+    const previousDoc =
+      previousSongDocs.find((d) => d._id === activeId) ??
+      previousFreeFormDocs.find((d) => d._id === activeId) ??
+      previousTimerDocs.find((d) => d._id === activeId) ??
+      previousBibleDocs.find((d) => d._id === activeId);
 
     if (doc) {
+      if (_.isEqual(doc, previousDoc)) {
+        return;
+      }
+
+      const docMatchesBase =
+        !!currentItem.baseItem && _.isEqual(doc, currentItem.baseItem);
+      const shouldBufferRemote =
+        !!(currentItem.hasPendingUpdate || currentItem.isEditMode) &&
+        !docMatchesBase;
+
+      if (shouldBufferRemote) {
+        if (!_.isEqual(doc, currentItem.pendingRemoteItem)) {
+          listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(doc));
+        }
+        return;
+      }
+
+      if (docMatchesBase && !currentItem.hasRemoteUpdate) {
+        return;
+      }
+
       // Preserve UI state when syncing active item from remote (DB docs don't carry slide/box selection).
       const arrIndex = Math.min(
         currentItem.selectedArrangement ?? doc.selectedArrangement ?? 0,
@@ -789,7 +835,7 @@ listenerMiddleware.startListening({
     const curr = currentState as RootState;
     const prev = previousState as RootState;
     const { monitorInfo } = curr.presentation;
-    if (monitorInfo.type !== "timer" || !monitorInfo.slide) return false;
+    if (!isMonitorShowingTimerCountdownSlide(monitorInfo)) return false;
     const itemId = monitorInfo.itemId ?? monitorInfo.timerId;
     if (!itemId) return false;
     const currTimer = curr.timers.timers.find(
@@ -808,9 +854,7 @@ listenerMiddleware.startListening({
       !prevTimer ||
       prevTimer.remainingTime > 0 ||
       prevTimer.status === "running";
-    const isTimerSlide =
-      monitorInfo.slide?.boxes?.[1]?.words?.includes?.("{{timer}}");
-    return justExpired && !!isTimerSlide;
+    return justExpired;
   },
   effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
@@ -830,11 +874,13 @@ listenerMiddleware.startListening({
     }
     if (!item?.slides?.length || item.slides.length < 2) return;
     const wrapUpSlide = item.slides[1];
+    const presentationType =
+      item.type === "timer" ? "timer" : monitorInfo.type;
     listenerApi.dispatch(
       updateMonitor({
         slide: wrapUpSlide,
         name: monitorInfo.name,
-        type: monitorInfo.type,
+        type: presentationType,
         timerId: monitorInfo.timerId,
         itemId: monitorInfo.itemId,
       }),

@@ -101,6 +101,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Upload status
   setUploadInProgress: (inProgress: boolean) =>
     ipcRenderer.invoke("set-upload-in-progress", inProgress),
+  setTaskbarUploadProgress: (progress: number | null) =>
+    ipcRenderer.invoke("set-taskbar-upload-progress", progress),
 });
 
 // Expose a flag to indicate we're running in Electron

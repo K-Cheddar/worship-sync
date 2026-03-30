@@ -110,6 +110,53 @@ describe("useCachedMediaUrl hooks", () => {
     expect(screen.getByTestId("value")).not.toHaveTextContent("/cache/one.jpg");
   });
 
+  it("switches to the new media url immediately while electron resolves a local path", async () => {
+    let resolveFirst: (value: string | null) => void = () => {};
+    let resolveSecond: (value: string | null) => void = () => {};
+    const getLocalMediaPath = jest
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<string | null>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<string | null>((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+
+    (window as { electronAPI?: unknown }).electronAPI = { getLocalMediaPath };
+
+    const onValue = jest.fn();
+    const { rerender } = renderWithProvider(
+      <HookProbe url="https://cdn.example.com/one.jpg" mode="media" onValue={onValue} />,
+    );
+
+    resolveFirst("/cache/one.jpg");
+    await waitFor(() =>
+      expect(screen.getByTestId("value")).toHaveTextContent("/cache/one.jpg"),
+    );
+
+    rerender(
+      <Provider store={store}>
+        <HookProbe url="https://cdn.example.com/two.jpg" mode="media" onValue={onValue} />
+      </Provider>,
+    );
+
+    expect(screen.getByTestId("value")).toHaveTextContent(
+      "https://cdn.example.com/two.jpg",
+    );
+    expect(screen.getByTestId("value")).not.toHaveTextContent("/cache/one.jpg");
+
+    resolveSecond("/cache/two.jpg");
+    await waitFor(() =>
+      expect(screen.getByTestId("value")).toHaveTextContent("/cache/two.jpg"),
+    );
+  });
+
   it("returns undefined while video cache url is resolving", async () => {
     let resolvePath: (value: string | null) => void = () => {};
     (window as { electronAPI?: unknown }).electronAPI = {

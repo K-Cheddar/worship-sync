@@ -258,14 +258,26 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           window.removeEventListener("beforeunload", handleBeforeUnload);
           if (window.electronAPI) {
             window.electronAPI.setUploadInProgress(false);
+            void window.electronAPI.setTaskbarUploadProgress(null);
           }
         };
       } else {
         if (window.electronAPI) {
           window.electronAPI.setUploadInProgress(false);
+          void window.electronAPI.setTaskbarUploadProgress(null);
         }
       }
     }, [isUploading]);
+
+    useEffect(() => {
+      const api = window.electronAPI;
+      if (!api?.setTaskbarUploadProgress) return;
+      if (isUploading) {
+        void api.setTaskbarUploadProgress(overallProgress / 100);
+      } else {
+        void api.setTaskbarUploadProgress(null);
+      }
+    }, [isUploading, overallProgress]);
 
     const getControllerElement = () => {
       const controllerMain = document.getElementById("controller-main");
@@ -329,8 +341,11 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         >
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-semibold">Media Files</label>
+              <label htmlFor="media-upload-input" className="text-sm font-semibold">
+                Media Files
+              </label>
               <input
+                id="media-upload-input"
                 ref={fileInputRef}
                 type="file"
                 accept="image/*,video/*"

@@ -30,6 +30,28 @@ describe("itemSlice", () => {
       expect(state.type).toBe("song");
     });
 
+    it("setActiveItem copies the incoming background", () => {
+      const store = createStore({
+        item: {
+          ...itemSlice.getInitialState(),
+          _id: "previous-item",
+          type: "song",
+          background: "previous-background.jpg",
+        },
+      });
+
+      store.dispatch(
+        itemSlice.actions.setActiveItem({
+          name: "New Song",
+          _id: "item-123",
+          type: "song",
+          background: "new-background.jpg",
+        }),
+      );
+
+      expect(store.getState().item.background).toBe("new-background.jpg");
+    });
+
     it("setActiveItem resets transient item flags", () => {
       const store = createStore({
         item: {
@@ -187,6 +209,60 @@ describe("itemSlice", () => {
         "Edited line",
       );
       expect(state.hasPendingUpdate).toBe(true);
+    });
+
+    it("markItemPersisted clears buffered remote state for the active item", () => {
+      const pendingRemoteItem = {
+        _id: "test-1",
+        name: "Remote Song",
+        type: "song",
+        selectedArrangement: 0,
+        background: "remote-background.jpg",
+        arrangements: [],
+        slides: [],
+        shouldSendTo: {
+          projector: true,
+          monitor: true,
+          stream: true,
+        },
+      } as any;
+
+      const persistedItem = {
+        _id: "test-1",
+        name: "Saved Song",
+        type: "song",
+        selectedArrangement: 0,
+        background: "saved-background.jpg",
+        arrangements: [],
+        slides: [],
+        shouldSendTo: {
+          projector: true,
+          monitor: true,
+          stream: true,
+        },
+      } as any;
+
+      const store = createStore({
+        item: {
+          ...itemSlice.getInitialState(),
+          _id: "test-1",
+          type: "song",
+          hasRemoteUpdate: true,
+          pendingRemoteItem,
+        },
+      });
+
+      store.dispatch(itemSlice.actions.markItemPersisted(persistedItem));
+
+      const state = store.getState().item;
+      expect(state.hasRemoteUpdate).toBe(false);
+      expect(state.pendingRemoteItem).toBeNull();
+      expect(state.baseItem).toEqual(
+        expect.objectContaining({
+          _id: "test-1",
+          background: "saved-background.jpg",
+        }),
+      );
     });
   });
 });

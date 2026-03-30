@@ -3,21 +3,20 @@ import DisplayWindow from "../components/DisplayWindow/DisplayWindow";
 import Button from "../components/Button/Button";
 import { Presentation as PresentationType, TimerInfo } from "../types";
 
-type PresentationProps = {
+type FullscreenPresentationProps = {
   displayInfo: PresentationType;
   prevDisplayInfo: PresentationType;
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
-  showClock?: boolean;
-  showTimer?: boolean;
 };
 
-const Presentation = ({
+/** Fullscreen output for /projector and /monitor. For toolbar previews see PresentationPreview. */
+const FullscreenPresentation = ({
   displayInfo,
   prevDisplayInfo,
   timerInfo,
   prevTimerInfo,
-}: PresentationProps) => {
+}: FullscreenPresentationProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isElectron, setIsElectron] = useState(false);
 
@@ -53,22 +52,27 @@ const Presentation = ({
     };
   }, [isElectron]);
 
+  const displayWindowProps = {
+    boxes: displayInfo.slide?.boxes || [],
+    prevBoxes: prevDisplayInfo.slide?.boxes || [],
+    nextBoxes: displayInfo.nextSlide?.boxes ?? [],
+    prevNextBoxes: prevDisplayInfo.nextSlide?.boxes ?? [],
+    bibleInfoBox: displayInfo.bibleInfoBox,
+    displayType: displayInfo.displayType,
+    timerInfo,
+    prevTimerInfo,
+    shouldAnimate: true,
+    shouldPlayVideo: true,
+    width: 100,
+    showMonitorClockTimer: true,
+    // The standalone monitor page is the other surface that should use full monitor chrome.
+    monitorLayoutMode:
+      displayInfo.displayType === "monitor" ? "full-monitor" : "content-only",
+    transitionDirection: displayInfo.transitionDirection,
+  } as const;
+
   return isFullscreen ? (
-    <DisplayWindow
-      boxes={displayInfo.slide?.boxes || []}
-      prevBoxes={prevDisplayInfo.slide?.boxes || []}
-      nextBoxes={displayInfo.nextSlide?.boxes ?? []}
-      prevNextBoxes={prevDisplayInfo.nextSlide?.boxes ?? []}
-      bibleInfoBox={displayInfo.bibleInfoBox}
-      displayType={displayInfo.displayType}
-      timerInfo={timerInfo}
-      prevTimerInfo={prevTimerInfo}
-      shouldAnimate
-      shouldPlayVideo
-      width={100}
-      showMonitorClockTimer
-      transitionDirection={displayInfo.transitionDirection}
-    />
+    <DisplayWindow {...displayWindowProps} />
   ) : (
     <div className="h-dvh w-dvw flex flex-col items-center justify-center bg-black gap-10">
       <Button
@@ -95,4 +99,4 @@ const Presentation = ({
   );
 };
 
-export default Presentation;
+export default FullscreenPresentation;

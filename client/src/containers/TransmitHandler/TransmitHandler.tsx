@@ -17,13 +17,15 @@ import {
   clearAll,
   clearStream,
 } from "../../store/presentationSlice";
-import Presentation from "../../components/Presentation/Presentation";
 import Button from "../../components/Button/Button";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import QuickLink from "../../components/QuickLink/QuickLink";
 import cn from "classnames";
 import { MonitorUp, MonitorX } from "lucide-react";
+import ProjectorPresentationPreview from "./ProjectorPresentationPreview";
+import MonitorPresentationPreview from "./MonitorPresentationPreview";
+import StreamPresentationPreview from "./StreamPresentationPreview";
 
 /** Stream quick links shown below the preview on overlay controller (max count). */
 const OVERLAY_STREAM_QUICK_LINKS_VISIBLE = 10;
@@ -55,41 +57,32 @@ const TransmitHandler = ({
   showClearStreamOverlaysButton = false,
   maxQuickLinks,
 }: TransmitHandlerProps) => {
-  const {
-    isMonitorTransmitting,
-    isProjectorTransmitting,
-    isStreamTransmitting,
-    streamItemContentBlocked,
-    prevProjectorInfo,
-    prevMonitorInfo,
-    prevStreamInfo,
-    projectorInfo,
-    monitorInfo,
-    streamInfo,
-  } = useSelector((state) => state.presentation);
+  const isMonitorTransmitting = useSelector(
+    (state) => state.presentation.isMonitorTransmitting
+  );
+  const isProjectorTransmitting = useSelector(
+    (state) => state.presentation.isProjectorTransmitting
+  );
+  const isStreamTransmitting = useSelector(
+    (state) => state.presentation.isStreamTransmitting
+  );
+  const streamItemContentBlocked = useSelector(
+    (state) => state.presentation.streamItemContentBlocked
+  );
   const [isTransmitting, setIsTransmitting] = useState(false);
 
   const timers = useSelector((state) => state.timers.timers);
-  const projectorTimer = timers.find(
-    (timer) => timer.id === projectorInfo.timerId
-  );
-  const monitorTimer = timers.find((timer) => timer.id === monitorInfo.timerId);
-  const streamTimer = timers.find((timer) => timer.id === streamInfo.timerId);
-
-  const prevProjectorTimer = timers.find(
-    (timer) => timer.id === prevProjectorInfo.timerId
-  );
-  const prevMonitorTimer = timers.find(
-    (timer) => timer.id === prevMonitorInfo.timerId
-  );
-  const prevStreamTimer = timers.find(
-    (timer) => timer.id === prevStreamInfo.timerId
-  );
 
   const dispatch = useDispatch();
 
-  const { isMediaExpanded, quickLinks, defaultQuickLinks } = useSelector(
-    (state) => state.undoable.present.preferences
+  const isMediaExpanded = useSelector(
+    (state) => state.undoable.present.preferences.isMediaExpanded
+  );
+  const quickLinks = useSelector(
+    (state) => state.undoable.present.preferences.quickLinks
+  );
+  const defaultQuickLinks = useSelector(
+    (state) => state.undoable.present.preferences.defaultQuickLinks
   );
 
   const { isMobile } = useContext(ControllerInfoContext) || {};
@@ -262,14 +255,7 @@ const TransmitHandler = ({
           )}
           <div className="scrollbar-variable overflow-y-auto flex-1 min-h-0 flex flex-col gap-2">
             {showProjector && (
-              <Presentation
-                timers={timers}
-                name="Projector"
-                prevInfo={prevProjectorInfo}
-                timerInfo={projectorTimer}
-                prevTimerInfo={prevProjectorTimer}
-                info={projectorInfo}
-                isTransmitting={isProjectorTransmitting}
+              <ProjectorPresentationPreview
                 toggleIsTransmitting={toggleProjector}
                 quickLinks={projectorQuickLinks}
                 isMobile={isMobile}
@@ -277,42 +263,21 @@ const TransmitHandler = ({
               />
             )}
             {showMonitor && (
-              <Presentation
-                timers={timers}
-                name="Monitor"
-                prevInfo={prevMonitorInfo}
-                timerInfo={monitorTimer}
-                prevTimerInfo={prevMonitorTimer}
-                info={monitorInfo}
-                isTransmitting={isMonitorTransmitting}
+              <MonitorPresentationPreview
                 toggleIsTransmitting={toggleMonitor}
                 quickLinks={monitorQuickLinks}
                 isMobile={isMobile}
-                showMonitorClockTimer
                 previewScale={previewScale}
               />
             )}
             {showStream && (
               <>
-                <Presentation
-                  timers={timers}
-                  name="Stream"
-                  prevInfo={prevStreamInfo}
-                  timerInfo={streamTimer}
-                  prevTimerInfo={prevStreamTimer}
-                  info={streamInfo}
-                  isTransmitting={isStreamTransmitting}
+                <StreamPresentationPreview
                   toggleIsTransmitting={toggleStream}
-                  quickLinks={
-                    variant === "overlayStreamFocus" ? [] : streamQuickLinks
-                  }
-                  hideQuickLinks={variant === "overlayStreamFocus"}
-                  hideHeader={variant === "overlayStreamFocus"}
-                  minimalHeader={
-                    variant === "overlayStreamFocus" && showFocusedStreamControls
-                  }
+                  quickLinks={streamQuickLinks}
+                  variant={variant}
+                  showFocusedStreamControls={showFocusedStreamControls}
                   isMobile={isMobile}
-                  streamItemContentBlocked={streamItemContentBlocked}
                   previewScale={previewScale}
                 />
                 {variant === "overlayStreamFocus" &&

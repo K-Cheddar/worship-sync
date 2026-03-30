@@ -71,7 +71,12 @@ const Toolbar = ({
 
   const updateItem = useCallback(
     (updatedItem: ItemState) => {
-      dispatch(updateSlides({ slides: updatedItem.slides }));
+      dispatch(
+        updateSlides({
+          slides: updatedItem.slides,
+          formattedSections: updatedItem.formattedSections,
+        })
+      );
       if (updatedItem.arrangements.length > 0) {
         dispatch(
           updateArrangements({ arrangements: updatedItem.arrangements })

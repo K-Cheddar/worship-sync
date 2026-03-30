@@ -1,7 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Button from "../../components/Button/Button";
 import { bookType, chapterType, verseType } from "../../types";
 import { keepElementInView } from "../../utils/generalUtils";
+
+/** Lower match index = stronger match (prefix beats interior matches like "eph" in Zephaniah). */
+const sortBooksBySearchRelevance = (
+  books: bookType[],
+  queryLower: string
+): bookType[] =>
+  [...books].sort((a, b) => {
+    const aPos = a.name.toLowerCase().indexOf(queryLower);
+    const bPos = b.name.toLowerCase().indexOf(queryLower);
+    if (aPos !== bPos) return aPos - bPos;
+    return a.index - b.index;
+  });
 
 type BibleSectionProps = {
   initialList: bookType[] | chapterType[] | verseType[];
@@ -23,15 +35,35 @@ const BibleSection = ({
   label,
 }: BibleSectionProps) => {
   const [filteredList, setFilteredList] = useState(initialList);
+  const prevBookSearchRef = useRef<string | null>(null);
 
   useEffect(() => {
     let updatedFilteredList;
 
     if (type === "book") {
-      updatedFilteredList = (initialList as bookType[]).filter(({ name }) =>
-        name.toLowerCase().includes(searchValue.toLowerCase())
+      const queryLower = searchValue.toLowerCase();
+      const matched = (initialList as bookType[]).filter(({ name }) =>
+        name.toLowerCase().includes(queryLower)
       );
+      updatedFilteredList = queryLower
+        ? sortBooksBySearchRelevance(matched, queryLower)
+        : matched;
       setFilteredList(updatedFilteredList);
+
+      const bookSearchChanged = prevBookSearchRef.current !== searchValue;
+      prevBookSearchRef.current = searchValue;
+
+      const isValueInList = updatedFilteredList.some(
+        ({ index }) => index === value
+      );
+      const first = updatedFilteredList[0];
+
+      if (first && queryLower && bookSearchChanged) {
+        setValue(first.index);
+      } else if (first && !isValueInList) {
+        setValue(first.index);
+      }
+      return;
     } else if (type === "chapter") {
       updatedFilteredList = (initialList as chapterType[]).filter(({ name }) =>
         name.includes(searchValue)
