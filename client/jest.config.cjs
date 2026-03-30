@@ -4,6 +4,7 @@ module.exports = {
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
     "\\.(css|less|scss|sass)$": "identity-obj-proxy",
+    "\\.(png|jpg|jpeg|gif|webp|svg)$": "<rootDir>/src/test/fileMock.js",
     "^.+[\\\\/]context[\\\\/]controllerInfo(\\.tsx)?$":
       "<rootDir>/src/__mocks__/context/controllerInfo.tsx",
     "^.+[\\\\/]utils[\\\\/]environment(\\.ts)?$":
