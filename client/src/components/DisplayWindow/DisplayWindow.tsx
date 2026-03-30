@@ -147,6 +147,7 @@ type DisplayWindowProps = {
   selectBox?: (index: number) => void;
   selectedBox?: number;
   isBoxLocked?: boolean[];
+  boxCursorPositions?: Record<number, number>;
   disabled?: boolean;
   className?: string;
   showMonitorClockTimer?: boolean;
@@ -195,6 +196,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       formattedTextDisplayInfo,
       prevFormattedTextDisplayInfo,
       isBoxLocked,
+      boxCursorPositions,
       disabled = false,
       className,
       showMonitorClockTimer = false,
@@ -677,6 +679,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               scaleFactor={scaleFactor}
               activeVideoUrl={activeVideoUrl}
               isWindowVideoLoaded={isWindowVideoLoaded}
+              desiredCursorPosition={boxCursorPositions?.[index]}
             />
           ))}
         </div>

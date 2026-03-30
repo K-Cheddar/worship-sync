@@ -2,7 +2,9 @@ import { ItemSlideType } from "../types";
 
 /** Strip zero-width letter suffix from song slide names (e.g. "ChorusA" -> "Chorus"). */
 export const getBaseLyricName = (slideName: string) =>
-  slideName.replace(/\u200B[a-z]+\u200B$/, "");
+  slideName
+    .replace(/\u200B[a-z]+\u200B$/, "")
+    .replace(/^(Section \d+)[A-Z]$/, "$1");
 
 export type SelectionHint = {
   baseLyricName: string;

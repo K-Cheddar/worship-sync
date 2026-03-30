@@ -21,7 +21,7 @@ const ControllerLoadingOverlay = ({
         <>
           <p className="text-center">Unable to connect to the server</p>
           <p className="text-lg text-gray-300 text-center max-w-md">
-            Oh no! We encountered an unexpected error. Please try again later.
+            Check your network connection, then reload or try again.
           </p>
           <Button
             onClick={() => window.location.reload()}

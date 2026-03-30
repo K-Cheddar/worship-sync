@@ -143,7 +143,7 @@ const QuickLinkSelection = ({
       })
     );
     removeToast(toastId);
-    showToast("Slide linked successfully!", "success");
+    showToast("Slide linked.", "success");
   };
 
   const handleOverlaySelect = () => {
@@ -211,7 +211,7 @@ const QuickLinkSelection = ({
 
     dispatch(setSelectedQuickLinkPresentation(presentationInfo));
     removeToast(toastId);
-    showToast("Overlay linked successfully!", "success");
+    showToast("Overlay linked.", "success");
   };
 
   const handleCancel = () => {

@@ -121,8 +121,7 @@ describe("BoxEditor", () => {
     expect(updateItem).toHaveBeenCalled();
     expect(mockShowToast).toHaveBeenCalledWith(
       expect.objectContaining({
-        message:
-          "Looks like you have extra new lines in your text. Would you like to clean them up?",
+        message: "This song has extra blank lines. Remove them?",
       })
     );
   });
@@ -148,7 +147,11 @@ describe("BoxEditor", () => {
       jest.runAllTimers();
     });
 
-    expect(mockShowToast).toHaveBeenCalled();
+    expect(mockShowToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "This custom item has extra blank lines. Remove them?",
+      })
+    );
   });
 
   it("does not show a cleanup toast for x-only changes", () => {
@@ -250,7 +253,7 @@ describe("BoxEditor", () => {
     const { children: renderToastChildren } = mockShowToast.mock.calls[0][0];
     render(<>{renderToastChildren("toast-1")}</>);
 
-    fireEvent.click(screen.getByRole("button", { name: "Yes please" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove blank lines" }));
 
     act(() => {
       jest.runAllTimers();
@@ -265,7 +268,7 @@ describe("BoxEditor", () => {
     expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
   });
 
-  it("clicking No thanks dismisses the toast without cleaning", () => {
+  it("clicking Keep as is dismisses the toast without cleaning", () => {
     const updateItem = jest.fn();
 
     render(<BoxEditor updateItem={updateItem} isMobile={false} />);
@@ -280,7 +283,7 @@ describe("BoxEditor", () => {
     const { children: renderToastChildren } = mockShowToast.mock.calls[0][0];
     render(<>{renderToastChildren("toast-2")}</>);
 
-    fireEvent.click(screen.getByRole("button", { name: "No thanks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep as is" }));
 
     expect(mockCleanItemNewlines).not.toHaveBeenCalled();
     expect(mockRemoveToast).toHaveBeenCalledWith("toast-2");

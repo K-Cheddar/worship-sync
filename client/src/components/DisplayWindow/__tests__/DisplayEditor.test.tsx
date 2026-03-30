@@ -154,6 +154,56 @@ describe("DisplayEditor", () => {
     expect(textarea.value).toBe("Line 1");
   });
 
+  it("anchors scroll to the top when upstream overflow text is reformatted out of the slide", async () => {
+    const onChange = jest.fn();
+    const user = userEvent.setup();
+    const overflowBox = {
+      ...baseBox,
+      words: "Line 1\nLine 2",
+    };
+    const { rerender } = render(
+      <DisplayEditor box={overflowBox} width={960} onChange={onChange} index={1} />
+    );
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await user.click(textarea);
+    await user.type(textarea, "\nLine 3");
+    textarea.scrollTop = 120;
+
+    rerender(
+      <DisplayEditor
+        box={{ ...overflowBox, words: "Line 1" }}
+        width={960}
+        onChange={onChange}
+        index={1}
+      />
+    );
+
+    expect(textarea.value).toBe("Line 1");
+    expect(textarea.scrollTop).toBe(0);
+  });
+
+  it("keeps the textarea anchored to the top when scrolling is not expanded", async () => {
+    const onChange = jest.fn();
+    const user = userEvent.setup();
+    render(
+      <DisplayEditor
+        box={{ ...baseBox, words: "Line 1\nLine 2\nLine 3" }}
+        width={960}
+        onChange={onChange}
+        index={1}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await user.click(textarea);
+    textarea.scrollTop = 140;
+
+    fireEvent.scroll(textarea);
+
+    expect(textarea.scrollTop).toBe(0);
+  });
+
   it("does not flush stale overflow text on blur after upstream reformat", async () => {
     const onChange = jest.fn();
     const user = userEvent.setup();
@@ -265,5 +315,69 @@ describe("DisplayEditor", () => {
         value: "Line 1 overflow",
       })
     );
+  });
+
+  it("keeps the cursor where the user is editing when upstream text grows after reformat", async () => {
+    const onChange = jest.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <DisplayEditor
+        box={{ ...baseBox, words: "Line 1\nLine 2" }}
+        width={960}
+        onChange={onChange}
+        index={1}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await user.click(textarea);
+    textarea.setSelectionRange(1, 1);
+    textarea.scrollTop = 80;
+
+    rerender(
+      <DisplayEditor
+        box={{ ...baseBox, words: "Line 1\nLine 2\nLine 3" }}
+        width={960}
+        onChange={onChange}
+        index={1}
+      />
+    );
+
+    expect(textarea.selectionStart).toBe(1);
+    expect(textarea.selectionEnd).toBe(1);
+    expect(textarea.scrollTop).toBe(0);
+  });
+
+  it("uses the requested cursor position after upstream reformat sync", async () => {
+    const onChange = jest.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <DisplayEditor
+        box={{ ...baseBox, words: "Line 1\nLine 2" }}
+        width={960}
+        onChange={onChange}
+        index={1}
+        desiredCursorPosition={1}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await user.click(textarea);
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    textarea.scrollTop = 90;
+
+    rerender(
+      <DisplayEditor
+        box={{ ...baseBox, words: "Line 1\nLine 2\nLine 3" }}
+        width={960}
+        onChange={onChange}
+        index={1}
+        desiredCursorPosition={1}
+      />
+    );
+
+    expect(textarea.selectionStart).toBe(1);
+    expect(textarea.selectionEnd).toBe(1);
+    expect(textarea.scrollTop).toBe(0);
   });
 });

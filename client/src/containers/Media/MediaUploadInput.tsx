@@ -175,13 +175,17 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       } else {
         if (errorCount === 0) {
           setUploadStatus("ready");
-          setStatusMessage(`All ${successCount} ${successCount === 1 ? 'file' : 'files'} uploaded successfully!`);
+          setStatusMessage(
+            `All ${successCount} ${successCount === 1 ? "file" : "files"} uploaded.`
+          );
         } else if (successCount === 0) {
           setUploadStatus("error");
           setError(`All ${errorCount} ${errorCount === 1 ? 'file' : 'files'} failed to upload`);
         } else {
           setUploadStatus("ready");
-          setStatusMessage(`Upload complete! ${successCount} succeeded, ${errorCount} failed.`);
+          setStatusMessage(
+            `Upload complete. ${successCount} succeeded, ${errorCount} failed.`
+          );
         }
 
         if (errorCount === 0) {

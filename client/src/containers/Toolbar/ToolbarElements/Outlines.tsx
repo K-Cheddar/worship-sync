@@ -237,7 +237,7 @@ const Services = ({ className }: { className: string }) => {
                   setTimeout(() => setJustAdded(false), 2000);
                 }}
               >
-                {justAdded ? "Added!" : "Add New Service"}
+                {justAdded ? "Added." : "Add New Service"}
               </Button>
             )}
           </div>

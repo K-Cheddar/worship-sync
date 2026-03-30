@@ -87,7 +87,7 @@ const FilteredItem = ({
           svg={justAdded ? Check : Plus}
           onClick={() => addItem(item)}
         >
-          {justAdded ? "Added!" : "Add to outline"}
+          {justAdded ? "Added." : "Add to outline"}
         </Button>
         <Button
           svg={Trash2}

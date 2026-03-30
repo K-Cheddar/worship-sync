@@ -20,6 +20,11 @@ const FORMAT_DEBOUNCE_MS = 500;
 const CLEANUP_TOAST_COOLDOWN_MS = 60_000;
 const cleanupToastLastShownAtByItem = new Map<string, number>();
 
+const cleanupNewlinesToastMessage = (itemKind: "song" | "free") =>
+  itemKind === "song"
+    ? "This song has extra blank lines. Remove them?"
+    : "This custom item has extra blank lines. Remove them?";
+
 /** Keep the user's value for the changed field; adjust the partner only if needed to stay in bounds. */
 const constrainBoxAfterFieldChange = (
   dims: { x: number; y: number; width: number; height: number },
@@ -97,10 +102,10 @@ const CleanupNewlinesToastAction = ({
 }) => (
   <div className="mt-3 flex justify-center gap-2">
     <Button variant="primary" className="text-sm" onClick={onDismiss}>
-      No thanks
+      Keep as is
     </Button>
     <Button variant="cta" className="text-sm" onClick={onClean}>
-      Yes please
+      Remove blank lines
     </Button>
   </div>
 );
@@ -235,10 +240,11 @@ const BoxEditor = ({
 
   const scheduleCleanupToastCheck = useCallback(
     (updatedItem: ItemState) => {
-      if (
-        !updatedItem._id ||
-        (updatedItem.type !== "song" && updatedItem.type !== "free")
-      ) {
+      if (!updatedItem._id) {
+        return;
+      }
+      const itemKind = updatedItem.type;
+      if (itemKind !== "song" && itemKind !== "free") {
         return;
       }
 
@@ -252,8 +258,7 @@ const BoxEditor = ({
 
         cleanupToastLastShownAtByItem.set(updatedItem._id, now);
         showToast({
-          message:
-            "Looks like you have extra new lines in your text. Would you like to clean them up?",
+          message: cleanupNewlinesToastMessage(itemKind),
           variant: "info",
           duration: 15000,
           showCloseButton: false,
