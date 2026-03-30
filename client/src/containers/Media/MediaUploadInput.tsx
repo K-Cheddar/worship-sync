@@ -341,8 +341,11 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         >
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-semibold">Media Files</label>
+              <label htmlFor="media-upload-input" className="text-sm font-semibold">
+                Media Files
+              </label>
               <input
+                id="media-upload-input"
                 ref={fileInputRef}
                 type="file"
                 accept="image/*,video/*"

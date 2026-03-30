@@ -247,8 +247,8 @@ describe("BoxEditor", () => {
       jest.runAllTimers();
     });
 
-    const toastArgs = mockShowToast.mock.calls[0][0];
-    render(<>{toastArgs.children("toast-1")}</>);
+    const { children: renderToastChildren } = mockShowToast.mock.calls[0][0];
+    render(<>{renderToastChildren("toast-1")}</>);
 
     fireEvent.click(screen.getByRole("button", { name: "Yes please" }));
 
@@ -277,8 +277,8 @@ describe("BoxEditor", () => {
       jest.runAllTimers();
     });
 
-    const toastArgs = mockShowToast.mock.calls[0][0];
-    render(<>{toastArgs.children("toast-2")}</>);
+    const { children: renderToastChildren } = mockShowToast.mock.calls[0][0];
+    render(<>{renderToastChildren("toast-2")}</>);
 
     fireEvent.click(screen.getByRole("button", { name: "No thanks" }));
 

@@ -85,7 +85,7 @@ describe("MediaUploadInput", () => {
       }
     );
 
-    const { container } = render(
+    render(
       <MediaUploadInput
         onImageComplete={onImageComplete}
         onVideoComplete={jest.fn()}
@@ -94,7 +94,7 @@ describe("MediaUploadInput", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
-    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const fileInput = screen.getByLabelText(/Media Files/i);
     const file = new File(["image"], "photo.png", { type: "image/png" });
 
     fireEvent.change(fileInput, { target: { files: [file] } });
@@ -107,10 +107,7 @@ describe("MediaUploadInput", () => {
     electronAPI.setUploadInProgress.mockClear();
     electronAPI.setTaskbarUploadProgress.mockClear();
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
-      await Promise.resolve();
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
 
     await waitFor(() => {
       expect(electronAPI.setUploadInProgress).toHaveBeenCalledWith(true);
@@ -135,6 +132,8 @@ describe("MediaUploadInput", () => {
 
     await waitFor(() => {
       expect(electronAPI.setUploadInProgress).toHaveBeenCalledWith(false);
+    });
+    await waitFor(() => {
       expect(electronAPI.setTaskbarUploadProgress).toHaveBeenCalledWith(null);
     });
 

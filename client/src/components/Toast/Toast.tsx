@@ -161,6 +161,7 @@ const Toast: React.FC<ToastProps> = ({
 
   return (
     <div
+      role="status"
       className={cn(
         "fixed z-9999 min-w-[300px] max-w-[50vw] px-4 py-3 rounded-lg border-2 shadow-md pointer-events-auto bg-white",
         config.textColor,

@@ -24,19 +24,15 @@ describe("Toast", () => {
       />
     );
 
-    const toast = screen.getByText("Hover me").closest("div[class*='fixed']")!;
+    const toast = screen.getByRole("status");
 
-    act(() => {
-      fireEvent.mouseEnter(toast);
-    });
+    fireEvent.mouseEnter(toast);
     act(() => {
       jest.advanceTimersByTime(1500);
     });
     expect(onClose).not.toHaveBeenCalled();
 
-    act(() => {
-      fireEvent.mouseLeave(toast);
-    });
+    fireEvent.mouseLeave(toast);
     act(() => {
       jest.advanceTimersByTime(999);
     });
@@ -61,17 +57,13 @@ describe("Toast", () => {
     );
 
     const closeButton = screen.getByRole("button", { name: "Close toast" });
-    act(() => {
-      fireEvent.focus(closeButton);
-    });
+    fireEvent.focus(closeButton);
     act(() => {
       jest.advanceTimersByTime(1500);
     });
     expect(onClose).not.toHaveBeenCalled();
 
-    act(() => {
-      fireEvent.blur(closeButton);
-    });
+    fireEvent.blur(closeButton);
     act(() => {
       jest.advanceTimersByTime(999);
     });

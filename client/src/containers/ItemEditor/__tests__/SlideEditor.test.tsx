@@ -323,8 +323,8 @@ describe("SlideEditor", () => {
 
     expect(mockShowToast).toHaveBeenCalled();
 
-    const toastConfig = mockShowToast.mock.calls[0][0];
-    render(<>{toastConfig.children("toast-1")}</>);
+    const { children: renderToastChildren } = mockShowToast.mock.calls[0][0];
+    render(<>{renderToastChildren("toast-1")}</>);
 
     fireEvent.click(screen.getByRole("button", { name: "Use Their Changes" }));
 

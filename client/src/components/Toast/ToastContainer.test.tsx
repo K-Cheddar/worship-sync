@@ -25,8 +25,8 @@ describe("ToastContainer", () => {
 
     expect(screen.getByText("Top")).toBeInTheDocument();
     expect(screen.getByTestId("fn-child")).toHaveTextContent("b");
-    expect(document.querySelector(".toast-group-top-center")).toBeTruthy();
-    expect(document.querySelector(".toast-group-bottom-right")).toBeTruthy();
+    expect(screen.getByTestId("toast-group-top-center")).toBeInTheDocument();
+    expect(screen.getByTestId("toast-group-bottom-right")).toBeInTheDocument();
   });
 
   it("defaults position to top-center when omitted", () => {
@@ -38,6 +38,6 @@ describe("ToastContainer", () => {
     );
 
     expect(screen.getByText("Hello")).toBeInTheDocument();
-    expect(document.querySelector(".toast-group-top-center")).toBeTruthy();
+    expect(screen.getByTestId("toast-group-top-center")).toBeInTheDocument();
   });
 });

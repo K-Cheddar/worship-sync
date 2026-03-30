@@ -439,6 +439,8 @@ describe("LyricsEditor", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Song A")).toBeInTheDocument();
+    });
+    await waitFor(() => {
       expect(lastLyricBoxesProps.formattedLyrics[0].id).toBe("song-a-verse");
     });
 
@@ -508,7 +510,11 @@ describe("LyricsEditor", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Song B")).toBeInTheDocument();
+    });
+    await waitFor(() => {
       expect(lastLyricBoxesProps.formattedLyrics[0].id).toBe("song-b-chorus");
+    });
+    await waitFor(() => {
       expect(lastLyricBoxesProps.formattedLyrics[0].words).toBe("Song B words");
     });
 
@@ -545,8 +551,8 @@ describe("LyricsEditor", () => {
       expect(mockShowToast).toHaveBeenCalled();
     });
 
-    const toastConfig = mockShowToast.mock.calls[0][0];
-    render(<>{toastConfig.children("toast-1")}</>);
+    const { children: renderToastChildren } = mockShowToast.mock.calls[0][0];
+    render(<>{renderToastChildren("toast-1")}</>);
 
     fireEvent.click(screen.getByRole("button", { name: "Keep Editing Mine" }));
 
