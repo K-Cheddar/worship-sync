@@ -502,9 +502,11 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       const newSlides = formattedItem.arrangements[selectedArrangement]?.slides ?? [];
       const hint = getSelectionHint(arrangementSlides, selectedSlide);
       const maxSlideIndex = Math.max(0, newSlides.length - 2);
-      const newSelectedIndex = hint
-        ? Math.min(getIndexFromSelectionHint(newSlides, hint), maxSlideIndex)
-        : Math.min(selectedSlide, maxSlideIndex);
+      const fromHint = hint ? getIndexFromSelectionHint(newSlides, hint) : null;
+      const newSelectedIndex =
+        fromHint !== null
+          ? Math.min(fromHint, maxSlideIndex)
+          : Math.min(selectedSlide, maxSlideIndex);
 
       const arrangementsWithBox = formattedItem.arrangements.map((arr, arrIdx) => {
         if (arrIdx !== selectedArrangement) return arr;

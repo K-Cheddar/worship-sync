@@ -379,12 +379,11 @@ export const updateArrangements = createAsyncThunk(
     ) {
       const hint = getSelectionHint(oldSlides, item.selectedSlide);
       const maxSlideIndex = Math.max(0, newSlides.length - 2);
-      const newIndex = hint
-        ? Math.min(
-            getIndexFromSelectionHint(newSlides, hint),
-            maxSlideIndex
-          )
-        : Math.min(item.selectedSlide, maxSlideIndex);
+      const fromHint = hint ? getIndexFromSelectionHint(newSlides, hint) : null;
+      const newIndex =
+        fromHint !== null
+          ? Math.min(fromHint, maxSlideIndex)
+          : Math.min(item.selectedSlide, maxSlideIndex);
       dispatch(setSelectedSlide(newIndex));
       dispatch(setRestoreFocusToBox(item.selectedBox));
     }
@@ -561,12 +560,11 @@ export const updateSlides = createAsyncThunk(
     ) {
       const hint = getSelectionHint(oldSlides, item.selectedSlide);
       const maxSlideIndex = Math.max(0, newSlides.length - 1);
-      const newIndex = hint
-        ? Math.min(
-            getIndexFromSelectionHint(newSlides, hint),
-            maxSlideIndex
-          )
-        : Math.min(item.selectedSlide, maxSlideIndex);
+      const fromHint = hint ? getIndexFromSelectionHint(newSlides, hint) : null;
+      const newIndex =
+        fromHint !== null
+          ? Math.min(fromHint, maxSlideIndex)
+          : Math.min(item.selectedSlide, maxSlideIndex);
       dispatch(setSelectedSlide(newIndex));
       dispatch(setRestoreFocusToBox(item.selectedBox));
     }
