@@ -1,3 +1,31 @@
+# [1.40.0](https://github.com/K-Cheddar/worship-sync/compare/v1.39.0...v1.40.0) (2026-03-30)
+
+
+### Bug Fixes
+
+* Cancel pending edit when switching items ([78e3369](https://github.com/K-Cheddar/worship-sync/commit/78e3369b323be261a597321ec05f8cc1c1123e1e))
+* Deleting multiple from media now works in full screen ([669efc5](https://github.com/K-Cheddar/worship-sync/commit/669efc584a3e415b52d943c32ce61f2cda9849b8))
+* Deleting multiple items from full screen media view now works ([120962b](https://github.com/K-Cheddar/worship-sync/commit/120962b6571a203396a9b27acb262d86b36db71e))
+* fix edit lyrics opening wrong lyrics ([30aa33a](https://github.com/K-Cheddar/worship-sync/commit/30aa33a7abec4182abf6ef00c450a120ca60d41b))
+* Improve bible search and empty state ([51fb3e4](https://github.com/K-Cheddar/worship-sync/commit/51fb3e4d12ab822e0a84f424bee38a3f52ce2de0))
+* Improve editing an item when someone else makes changes ([8e0fb2a](https://github.com/K-Cheddar/worship-sync/commit/8e0fb2acb4e8212762c64b90461d37587a6f8d66))
+* Issue where updating a bible item could change the selected slide ([f78748b](https://github.com/K-Cheddar/worship-sync/commit/f78748b482d2000c83913b00f59e8bea19011aac))
+* Item content now shows after clearing overlays early ([169b235](https://github.com/K-Cheddar/worship-sync/commit/169b235b74606bd37d2ccef005feff5c68c246bc))
+* Item updating background when pulling changes ([33f06fe](https://github.com/K-Cheddar/worship-sync/commit/33f06feb501981ccc5032c75e36ccacace108c43))
+* Timers navigate to next slide when clicked from a quick link ([2fd49e2](https://github.com/K-Cheddar/worship-sync/commit/2fd49e28f99e374848899b7dd57939e0d6ad2e5e))
+
+
+### Features
+
+* Show clean new lines if applicable after making box edits ([5dd801a](https://github.com/K-Cheddar/worship-sync/commit/5dd801abdb35ea74ac3997948abeaf4aeb7c60d3))
+* Show upload progress on icon in taskbar ([58d54e6](https://github.com/K-Cheddar/worship-sync/commit/58d54e68fab8510ee5ff5d7dc85d7e8a1d8a39bc))
+
+
+### Performance Improvements
+
+* Improve typing experience in the item editor ([129bc75](https://github.com/K-Cheddar/worship-sync/commit/129bc75b2f6f84d3a3e1687635d2aeb1c85c565f))
+* Reduce renders from state unrelated to components ([852b91a](https://github.com/K-Cheddar/worship-sync/commit/852b91a5ed4f0d86c57989a106b1e39c83310ef5))
+
 # [1.39.0](https://github.com/K-Cheddar/worship-sync/compare/v1.38.7...v1.39.0) (2026-03-26)
 
 
