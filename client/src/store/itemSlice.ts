@@ -129,6 +129,9 @@ const applyItemDataToState = (
   state.type = payload.type || state.type;
   state._id = payload._id || state._id;
   state.listId = nextListId || state.listId;
+  if ("background" in payload && payload.background !== undefined) {
+    state.background = payload.background;
+  }
   state.selectedArrangement = nextArrangement;
   state.selectedSlide = preserveSelection
     ? Math.min(state.selectedSlide ?? 0, Math.max(0, slideCount - 1))
@@ -236,6 +239,8 @@ export const itemSlice = createSlice({
     markItemPersisted: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
       state.baseItem = createItemSnapshot(action.payload);
+      state.pendingRemoteItem = null;
+      state.hasRemoteUpdate = false;
     },
     bufferRemoteItemUpdate: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
