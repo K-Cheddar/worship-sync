@@ -1,10 +1,13 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { ItemType, TimerType } from "../types";
+import { ItemType, SongMetadata, TimerType } from "../types";
 
 export type CreateItemState = {
   name: string;
   type: ItemType;
   text: string;
+  songArtist: string;
+  songAlbum: string;
+  songMetadata: SongMetadata | null;
   hours: number;
   minutes: number;
   seconds: number;
@@ -16,6 +19,9 @@ export const initialCreateItemState: CreateItemState = {
   name: "",
   type: "song",
   text: "",
+  songArtist: "",
+  songAlbum: "",
+  songMetadata: null,
   hours: 0,
   minutes: 1,
   seconds: 0,

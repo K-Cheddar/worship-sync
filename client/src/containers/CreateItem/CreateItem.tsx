@@ -31,6 +31,15 @@ import { addTimer } from "../../store/timersSlice";
 import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import Modal from "../../components/Modal/Modal";
+import {
+  resolveLrclibImport,
+  type LrclibImportResolution,
+} from "../../api/lrclib";
+import {
+  createSongMetadataFromLrclib,
+  getImportableLyricsFromTrack,
+} from "../../utils/lrclib";
 
 type ItemTypesType = {
   type: ItemType;
@@ -90,6 +99,11 @@ const CreateItem = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [justAdded, setJustAdded] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
+  const [isImportingLyrics, setIsImportingLyrics] = useState(false);
+  const [lrclibError, setLrclibError] = useState("");
+  const [lrclibCandidates, setLrclibCandidates] =
+    useState<LrclibImportResolution["candidates"]>([]);
+  const [isCandidateModalOpen, setIsCandidateModalOpen] = useState(false);
 
   const { db } = useContext(ControllerInfoContext) || {};
 
@@ -100,6 +114,9 @@ const CreateItem = () => {
     name: itemName,
     type: selectedType,
     text,
+    songArtist = "",
+    songAlbum = "",
+    songMetadata = null,
     hours,
     minutes,
     seconds,
@@ -141,6 +158,61 @@ const CreateItem = () => {
         ...updates,
       })
     );
+  };
+
+  const applyLrclibImport = (candidate: LrclibImportResolution["candidates"][0]) => {
+    const lyricsText = getImportableLyricsFromTrack(candidate);
+
+    if (!lyricsText) {
+      setLrclibError("Lyrics were found, but there was no importable text.");
+      return;
+    }
+
+    updateCreateItemDraft({
+      text: lyricsText,
+      songArtist: candidate.artistName,
+      songAlbum: candidate.albumName || "",
+      songMetadata: createSongMetadataFromLrclib(candidate),
+    });
+    setLrclibError("");
+    setIsCandidateModalOpen(false);
+    setLrclibCandidates([]);
+  };
+
+  const importLyricsFromLrclib = async () => {
+    if (!itemName.trim()) {
+      setLrclibError("Enter a song title before importing lyrics.");
+      return;
+    }
+
+    setIsImportingLyrics(true);
+    setLrclibError("");
+
+    try {
+      const result = await resolveLrclibImport({
+        trackName: itemName.trim(),
+        artistName: songArtist.trim() || undefined,
+        albumName: songAlbum.trim() || undefined,
+      });
+
+      if (result.match) {
+        applyLrclibImport(result.match);
+        return;
+      }
+
+      if (result.candidates.length === 0) {
+        setLrclibError("No LRCLIB matches were found for that song.");
+        return;
+      }
+
+      setLrclibCandidates(result.candidates);
+      setIsCandidateModalOpen(true);
+    } catch (error) {
+      console.error("LRCLIB import failed:", error);
+      setLrclibError("Could not import lyrics right now. Try again.");
+    } finally {
+      setIsImportingLyrics(false);
+    }
   };
 
   const existingItem: ServiceItem | undefined = useMemo(() => {
@@ -197,6 +269,7 @@ const CreateItem = () => {
         background: defaultSongBackground.background,
         mediaInfo: defaultSongBackground.mediaInfo,
         brightness: defaultSongBackgroundBrightness,
+        songMetadata,
       });
 
       setJustCreated(true);
@@ -265,6 +338,58 @@ const CreateItem = () => {
     <ErrorBoundary>
       <h2 className="text-2xl text-center font-semibold">Create Item</h2>
       <div className="my-2 mx-4 rounded-md p-4 bg-gray-800 w-1/2 max-lg:w-[95%]">
+        <Modal
+          isOpen={isCandidateModalOpen}
+          onClose={() => setIsCandidateModalOpen(false)}
+          title="Choose LRCLIB Match"
+          size="lg"
+        >
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-gray-300">
+              Select the song entry to import into this draft.
+            </p>
+            <ul className="flex flex-col gap-2">
+              {lrclibCandidates.map((candidate) => (
+                <li
+                  key={`${candidate.lrclibId}-${candidate.trackName}-${candidate.artistName}`}
+                  className="rounded-md border border-gray-600 bg-gray-900 p-3"
+                >
+                  <div className="flex flex-col gap-1">
+                    <p className="font-semibold text-white">
+                      {candidate.trackName}
+                    </p>
+                    <p className="text-sm text-gray-300">
+                      {candidate.artistName}
+                      {candidate.albumName ? ` • ${candidate.albumName}` : ""}
+                    </p>
+                    {candidate.durationMs ? (
+                      <p className="text-xs text-gray-400">
+                        {(candidate.durationMs / 1000).toFixed(0)} seconds
+                      </p>
+                    ) : null}
+                    <div className="mt-2 rounded-md bg-gray-800 p-2">
+                      <p className="mb-1 text-xs font-semibold text-gray-300">
+                        Lyrics Preview
+                      </p>
+                      <div className="max-h-40 overflow-y-auto whitespace-pre-wrap text-xs text-gray-200 scrollbar-variable">
+                        {getImportableLyricsFromTrack(candidate) || "No lyrics preview available."}
+                      </div>
+                    </div>
+                    <div className="pt-2">
+                      <Button
+                        variant="cta"
+                        className="justify-center"
+                        onClick={() => applyLrclibImport(candidate)}
+                      >
+                        Use Lyrics
+                      </Button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Modal>
         <ul className="flex flex-col gap-2">
           <h3 className="text-lg font-semibold text-center">
             Select Item Type
@@ -277,12 +402,11 @@ const CreateItem = () => {
             data-ignore-undo="true"
           />
           {existingItem && (
-            <p className="text-cyan-400 bg-gray-600 text-sm rounded-md p-1">
-              <span className="italic">"{existingItem.name}"</span>
+            <p className="text-cyan-400 bg-gray-600 text-sm rounded-md p-1 w-full flex items-center">
+              <span className="italic font-semibold mr-2">"{existingItem.name}"</span>
               <span> already exists.</span>
               <Button
                 variant="tertiary"
-                className="inline"
                 onClick={addItem}
                 svg={justAdded ? Check : Plus}
                 color={justAdded ? "#84cc16" : "#22d3ee"}
@@ -317,6 +441,50 @@ const CreateItem = () => {
             onChange={(val) => updateCreateItemDraft({ text: val as string })}
             data-ignore-undo="true"
           />
+        )}
+
+        {selectedType === "song" && (
+          <div className="mt-3 rounded-md border border-gray-600 bg-gray-900 p-3">
+            <h3 className="text-base font-semibold text-center">
+              Import Lyrics From LRCLIB
+            </h3>
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              <Input
+                value={songArtist}
+                onChange={(val) =>
+                  updateCreateItemDraft({ songArtist: val as string })
+                }
+                label="Artist"
+                className="text-base"
+                data-ignore-undo="true"
+              />
+              <Input
+                value={songAlbum}
+                onChange={(val) =>
+                  updateCreateItemDraft({ songAlbum: val as string })
+                }
+                label="Album"
+                className="text-base"
+                data-ignore-undo="true"
+              />
+            </div>
+            <Button
+              variant="secondary"
+              className="mt-3 w-full justify-center"
+              onClick={importLyricsFromLrclib}
+              disabled={!itemName.trim() || isImportingLyrics}
+            >
+              {isImportingLyrics ? "Importing..." : "Import Lyrics"}
+            </Button>
+            {songMetadata && (
+              <p className="mt-2 text-sm text-cyan-300">
+                Imported: {songMetadata.artistName} - {songMetadata.trackName}
+              </p>
+            )}
+            {lrclibError && (
+              <p className="mt-2 text-sm text-red-300">{lrclibError}</p>
+            )}
+          </div>
         )}
 
         {selectedType === "timer" && (

@@ -138,6 +138,19 @@ export type DBItem = ItemProperties & {
   docType?: DocType;
 };
 
+export type SongMetadata = {
+  source: "lrclib";
+  lrclibId: number;
+  trackName: string;
+  artistName: string;
+  albumName?: string;
+  durationMs?: number;
+  instrumental?: boolean;
+  plainLyrics?: string | null;
+  syncedLyrics?: string | null;
+  importedAt: string;
+};
+
 export type DBHeading = {
   _id: string;
   name: string;
@@ -194,6 +207,7 @@ export type ItemProperties = {
   timerInfo?: TimerInfo;
   shouldSendTo: ShouldSendTo;
   formattedSections?: FormattedSection[]; // For free form items
+  songMetadata?: SongMetadata;
 };
 
 export type BibleFontMode = "fit" | "separate" | "multiple";

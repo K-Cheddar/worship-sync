@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ToastData } from "../../../components/Toast/ToastContainer";
 import LyricsEditor from "../LyricsEditor";
 import { ToastContext } from "../../../context/toastContext";
+import { resolveLrclibImport } from "../../../api/lrclib";
 
 type ShowToastArg = string | Omit<ToastData, "id">;
 
@@ -25,6 +26,10 @@ const mockDiscardPendingRemoteItem = jest.fn(() => ({
 const mockApplyPendingRemoteItem = jest.fn(() => ({
   type: "item/applyPendingRemoteItem",
 }));
+const mockSetSongMetadata = jest.fn((value: unknown) => ({
+  type: "item/setSongMetadata",
+  payload: value,
+}));
 const mockFormatSong = jest.fn((item: any) => item);
 let mockShowToast: jest.Mock<string, [ShowToastArg]> = jest.fn<string, [ShowToastArg]>(() => "toast-1");
 let mockRemoveToast = jest.fn();
@@ -40,6 +45,11 @@ jest.mock("../../../store/itemSlice", () => ({
   updateArrangements: (payload: any) => mockUpdateArrangements(payload),
   discardPendingRemoteItem: () => mockDiscardPendingRemoteItem(),
   applyPendingRemoteItem: () => mockApplyPendingRemoteItem(),
+  setSongMetadata: (value: unknown) => mockSetSongMetadata(value),
+}));
+
+jest.mock("../../../api/lrclib", () => ({
+  resolveLrclibImport: jest.fn(),
 }));
 
 jest.mock("../../../store/preferencesSlice", () => ({
@@ -164,6 +174,7 @@ describe("LyricsEditor", () => {
     lastSectionPreviewProps = null;
     mockShowToast = jest.fn<string, [ShowToastArg]>(() => "toast-1");
     mockRemoveToast = jest.fn();
+    mockFormatSong.mockImplementation((item: any) => item);
   });
 
   it("returns null when edit mode is disabled", () => {
@@ -223,6 +234,75 @@ describe("LyricsEditor", () => {
         selectedArrangement: 0,
       },
     });
+    expect(mockDispatch).toHaveBeenCalledWith({
+      type: "item/setSongMetadata",
+      payload: undefined,
+    });
+  });
+
+  it("imports LRCLIB lyrics into a new arrangement and stages song metadata until save", async () => {
+    (resolveLrclibImport as jest.Mock).mockResolvedValue({
+      match: {
+        lrclibId: 44,
+        trackName: "Sample Song",
+        artistName: "Choir",
+        albumName: "Live",
+        plainLyrics: "Verse line\n\nChorus line",
+        syncedLyrics: null,
+      },
+      candidates: [],
+    });
+
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            arrangements: [
+              {
+                id: "arr-1",
+                name: "Master",
+                slides: [
+                  { id: "title", name: "Title", type: "Title", boxes: [{}, {}] },
+                  { id: "blank", name: "Blank", type: "Blank", boxes: [{}, {}] },
+                ],
+                formattedLyrics: [],
+                songOrder: [],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<LyricsEditor />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
+    });
+
+    expect(resolveLrclibImport).toHaveBeenCalledWith({
+      trackName: "Sample Song",
+      artistName: undefined,
+      albumName: undefined,
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("arrangement-item")).toHaveLength(2);
+    });
+
+    expect(screen.getAllByTestId("arrangement-item")[1]).toHaveTextContent(
+      "LRCLIB Import",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(mockSetSongMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "lrclib",
+        lrclibId: 44,
+        artistName: "Choir",
+      }),
+    );
   });
 
   it("closes immediately on cancel when there are no pending changes", () => {

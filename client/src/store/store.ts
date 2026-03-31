@@ -392,6 +392,7 @@ listenerMiddleware.startListening({
       selectedArrangement: item.selectedArrangement,
       bibleInfo: item.bibleInfo,
       timerInfo: item.timerInfo,
+      songMetadata: item.songMetadata,
       shouldSendTo: item.shouldSendTo,
       updatedAt: new Date().toISOString(),
     };

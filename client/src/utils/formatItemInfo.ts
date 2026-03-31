@@ -16,6 +16,7 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
     selectedSlide: 0,
     bibleInfo: item.bibleInfo,
     timerInfo: item.timerInfo,
+    songMetadata: item.songMetadata,
     shouldSendTo: item.shouldSendTo || {
       projector: true,
       monitor: true,

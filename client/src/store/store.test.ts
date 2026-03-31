@@ -608,6 +608,15 @@ describe("store module", () => {
     const remoteDoc = createSongDoc({
       name: "Remote Song Update",
       background: "background-b.jpg",
+      songMetadata: {
+        source: "lrclib",
+        lrclibId: 5,
+        trackName: "Remote Song Update",
+        artistName: "Remote Artist",
+        plainLyrics: "Words",
+        syncedLyrics: null,
+        importedAt: "2026-03-30T12:00:00.000Z",
+      },
     });
 
     store.dispatch(itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }));
@@ -666,6 +675,15 @@ describe("store module", () => {
     const remoteDoc = createSongDoc({
       name: "Remote Song Update",
       background: "background-b.jpg",
+      songMetadata: {
+        source: "lrclib",
+        lrclibId: 5,
+        trackName: "Remote Song Update",
+        artistName: "Remote Artist",
+        plainLyrics: "Words",
+        syncedLyrics: null,
+        importedAt: "2026-03-30T12:00:00.000Z",
+      },
       slides: [
         { id: "slide-a", name: "A", type: "Verse", boxes: [] },
         { id: "slide-b", name: "B", type: "Verse", boxes: [] },
@@ -687,6 +705,13 @@ describe("store module", () => {
     expect(state.name).toBe("Remote Song Update");
     expect(state.background).toBe("background-b.jpg");
     expect(state.listId).toBe("list-1");
+    expect(state.songMetadata).toEqual(
+      expect.objectContaining({
+        source: "lrclib",
+        lrclibId: 5,
+        artistName: "Remote Artist",
+      }),
+    );
     expect(state.hasRemoteUpdate).toBe(false);
     expect(state.pendingRemoteItem).toBeNull();
   });

@@ -39,6 +39,112 @@ const port = process.env.PORT || 5000;
 const frontEndHost = isDevelopment
   ? "https://local.worshipsync.net:3000"
   : "http://localhost:3000";
+const LRCLIB_BASE_URL = "https://lrclib.net/api";
+
+const getStringValue = (value) => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const getBooleanValue = (value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    if (value.toLowerCase() === "true") return true;
+    if (value.toLowerCase() === "false") return false;
+  }
+  return undefined;
+};
+
+const normalizeDurationMs = (value) => {
+  if (typeof value !== "number" && typeof value !== "string") return undefined;
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return undefined;
+  return Math.round(numericValue < 10000 ? numericValue * 1000 : numericValue);
+};
+
+const extractPlainLyricsFromSyncedLyrics = (syncedLyrics) => {
+  if (typeof syncedLyrics !== "string" || !syncedLyrics.trim()) return null;
+
+  const plainText = syncedLyrics
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\[[^\]]+\]/g, "").trim())
+    .filter(Boolean)
+    .join("\n");
+
+  return plainText.trim() || null;
+};
+
+const normalizeLrclibTrack = (track) => {
+  const lrclibId = Number(track.id ?? track.trackId ?? track.track_id ?? 0);
+  const trackName =
+    getStringValue(track.trackName) ??
+    getStringValue(track.track_name) ??
+    getStringValue(track.name) ??
+    "";
+  const artistName =
+    getStringValue(track.artistName) ??
+    getStringValue(track.artist_name) ??
+    getStringValue(track.artist) ??
+    "";
+
+  if (!Number.isFinite(lrclibId) || lrclibId <= 0 || !trackName || !artistName) {
+    throw new Error("Invalid LRCLIB track payload");
+  }
+
+  const syncedLyrics =
+    getStringValue(track.syncedLyrics) ??
+    getStringValue(track.synced_lyrics) ??
+    null;
+  const plainLyrics =
+    getStringValue(track.plainLyrics) ??
+    getStringValue(track.plain_lyrics) ??
+    extractPlainLyricsFromSyncedLyrics(syncedLyrics);
+
+  return {
+    lrclibId,
+    trackName,
+    artistName,
+    albumName:
+      getStringValue(track.albumName) ??
+      getStringValue(track.album_name) ??
+      getStringValue(track.album),
+    durationMs: normalizeDurationMs(
+      track.durationMs ?? track.duration_ms ?? track.duration,
+    ),
+    instrumental: getBooleanValue(track.instrumental),
+    plainLyrics: plainLyrics ?? null,
+    syncedLyrics,
+  };
+};
+
+const normalizeLrclibTracksList = (tracks) => {
+  if (!Array.isArray(tracks)) return [];
+
+  return tracks.flatMap((track) => {
+    try {
+      return [normalizeLrclibTrack(track)];
+    } catch (error) {
+      console.warn("Skipping invalid LRCLIB track payload:", track);
+      return [];
+    }
+  });
+};
+
+const getLrclibRequestParams = (req) => {
+  const params = {};
+  const trackName = getStringValue(req.query.trackName);
+  const artistName = getStringValue(req.query.artistName);
+  const albumName = getStringValue(req.query.albumName);
+  const durationMs = getStringValue(req.query.durationMs);
+
+  if (trackName) params.track_name = trackName;
+  if (artistName) params.artist_name = artistName;
+  if (albumName) params.album_name = albumName;
+  if (durationMs) params.duration = durationMs;
+
+  return params;
+};
 
 // Configure Cloudinary
 cloudinary.config({
@@ -154,6 +260,67 @@ app.get("/api/getEventDetails", async (req, res) => {
   }
 
   res.send(data);
+});
+
+app.get("/api/lrclib/get", async (req, res) => {
+  const params = getLrclibRequestParams(req);
+
+  if (!params.track_name) {
+    return res.status(400).json({ error: "trackName is required" });
+  }
+
+  if (!params.artist_name) {
+    return res
+      .status(400)
+      .json({ error: "artistName is required for exact LRCLIB lookup" });
+  }
+
+  try {
+    const response = await axios.get(`${LRCLIB_BASE_URL}/get`, {
+      params,
+      timeout: 10000,
+    });
+
+    res.json(normalizeLrclibTrack(response.data));
+  } catch (error) {
+    if (error.response?.status === 404) {
+      return res.status(404).json({ error: "No LRCLIB match found" });
+    }
+    if (error.response?.status === 400) {
+      return res.status(400).json({ error: "Invalid LRCLIB lookup query" });
+    }
+
+    console.error("Error fetching LRCLIB exact match:", error.message);
+    res.status(502).json({ error: "Could not fetch lyrics from LRCLIB" });
+  }
+});
+
+app.get("/api/lrclib/search", async (req, res) => {
+  const params = getLrclibRequestParams(req);
+
+  if (!params.track_name) {
+    return res.status(400).json({ error: "trackName is required" });
+  }
+
+  try {
+    const response = await axios.get(`${LRCLIB_BASE_URL}/search`, {
+      params: {
+        query: params.track_name,
+        track_name: params.track_name,
+        artist_name: params.artist_name,
+        album_name: params.album_name,
+        duration: params.duration,
+      },
+      timeout: 10000,
+    });
+
+    const normalizedResults = normalizeLrclibTracksList(response.data);
+
+    res.json(normalizedResults);
+  } catch (error) {
+    console.error("Error searching LRCLIB:", error.message);
+    res.status(502).json({ error: "Could not search LRCLIB" });
+  }
 });
 
 app.get("/bible", async (req, res) => {

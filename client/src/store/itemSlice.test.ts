@@ -52,6 +52,34 @@ describe("itemSlice", () => {
       expect(store.getState().item.background).toBe("new-background.jpg");
     });
 
+    it("setActiveItem copies incoming song metadata", () => {
+      const store = createStore();
+
+      store.dispatch(
+        itemSlice.actions.setActiveItem({
+          name: "New Song",
+          _id: "item-123",
+          type: "song",
+          songMetadata: {
+            source: "lrclib",
+            lrclibId: 8,
+            trackName: "New Song",
+            artistName: "Artist",
+            plainLyrics: "Words",
+            syncedLyrics: null,
+            importedAt: "2026-03-30T12:00:00.000Z",
+          },
+        }),
+      );
+
+      expect(store.getState().item.songMetadata).toEqual(
+        expect.objectContaining({
+          source: "lrclib",
+          lrclibId: 8,
+        }),
+      );
+    });
+
     it("setActiveItem resets transient item flags", () => {
       const store = createStore({
         item: {
@@ -133,6 +161,27 @@ describe("itemSlice", () => {
     it("setHasPendingUpdate updates hasPendingUpdate", () => {
       const store = createStore();
       store.dispatch(itemSlice.actions.setHasPendingUpdate(true));
+      expect(store.getState().item.hasPendingUpdate).toBe(true);
+    });
+
+    it("setSongMetadata updates songMetadata and marks the item dirty", () => {
+      const store = createStore();
+
+      store.dispatch(
+        itemSlice.actions.setSongMetadata({
+          source: "lrclib",
+          lrclibId: 12,
+          trackName: "Song",
+          artistName: "Artist",
+          plainLyrics: "Words",
+          syncedLyrics: null,
+          importedAt: "2026-03-30T12:00:00.000Z",
+        }),
+      );
+
+      expect(store.getState().item.songMetadata).toEqual(
+        expect.objectContaining({ lrclibId: 12 }),
+      );
       expect(store.getState().item.hasPendingUpdate).toBe(true);
     });
 

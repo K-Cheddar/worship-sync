@@ -27,6 +27,7 @@ import {
   createNewSong,
   createNewTimer,
 } from "../../utils/itemUtil";
+import { resolveLrclibImport } from "../../api/lrclib";
 
 jest.mock("../../utils/itemUtil", () => {
   const actual = jest.requireActual("../../utils/itemUtil");
@@ -38,6 +39,10 @@ jest.mock("../../utils/itemUtil", () => {
   };
 });
 
+jest.mock("../../api/lrclib", () => ({
+  resolveLrclibImport: jest.fn(),
+}));
+
 const mockedCreateNewSong = createNewSong as jest.MockedFunction<
   typeof createNewSong
 >;
@@ -46,6 +51,9 @@ const mockedCreateNewFreeForm = createNewFreeForm as jest.MockedFunction<
 >;
 const mockedCreateNewTimer = createNewTimer as jest.MockedFunction<
   typeof createNewTimer
+>;
+const mockedResolveLrclibImport = resolveLrclibImport as jest.MockedFunction<
+  typeof resolveLrclibImport
 >;
 
 const createMockItem = (overrides: Partial<ItemState> = {}): ItemState => ({
@@ -156,6 +164,7 @@ describe("CreateItem", () => {
     mockedCreateNewSong.mockReset();
     mockedCreateNewFreeForm.mockReset();
     mockedCreateNewTimer.mockReset();
+    mockedResolveLrclibImport.mockReset();
   });
 
   it("persists the song draft when leaving and returning", () => {
@@ -211,6 +220,9 @@ describe("CreateItem", () => {
         name: "Old Draft",
         type: "timer",
         text: "Keep me",
+        songArtist: "",
+        songAlbum: "",
+        songMetadata: null,
         hours: 4,
         minutes: 5,
         seconds: 6,
@@ -265,6 +277,66 @@ describe("CreateItem", () => {
     expect(store.getState().createItem).toEqual(initialCreateItemState);
     await waitFor(() => {
       expect(screen.getByTestId("item-page")).toBeInTheDocument();
+    });
+  });
+
+  it("imports LRCLIB lyrics into the song draft and passes song metadata to createNewSong", async () => {
+    mockedResolveLrclibImport.mockResolvedValue({
+      match: {
+        lrclibId: 17,
+        trackName: "Amazing Grace",
+        artistName: "Traditional",
+        albumName: "Hymns",
+        plainLyrics: "Amazing grace",
+        syncedLyrics: null,
+      },
+      candidates: [],
+    });
+    mockedCreateNewSong.mockResolvedValue(
+      createMockItem({
+        name: "Amazing Grace",
+        _id: "song-17",
+        type: "song",
+      }),
+    );
+
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        name: "Amazing Grace",
+      },
+    });
+
+    renderCreateItem({ store });
+
+    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Paste Text Here:")).toHaveValue(
+        "Amazing grace",
+      );
+    });
+
+    expect(store.getState().createItem.songMetadata).toEqual(
+      expect.objectContaining({
+        source: "lrclib",
+        lrclibId: 17,
+        trackName: "Amazing Grace",
+        artistName: "Traditional",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Song" }));
+
+    await waitFor(() => {
+      expect(mockedCreateNewSong).toHaveBeenCalledWith(
+        expect.objectContaining({
+          songMetadata: expect.objectContaining({
+            source: "lrclib",
+            lrclibId: 17,
+          }),
+        }),
+      );
     });
   });
 

@@ -18,6 +18,7 @@ import {
   OverflowMode,
   ItemListDetails,
   DBOverlay,
+  SongMetadata,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import { formatBible, formatFree, formatSong } from "./overflow";
@@ -76,6 +77,7 @@ type CreateNewSongType = {
   background: string;
   mediaInfo?: MediaType;
   brightness: number;
+  songMetadata?: SongMetadata | null;
 };
 
 export const createNewSong = async ({
@@ -87,6 +89,7 @@ export const createNewSong = async ({
   background,
   mediaInfo,
   brightness,
+  songMetadata,
 }: CreateNewSongType): Promise<ItemState> => {
   const arrangements: Arrangment[] = [
     {
@@ -136,6 +139,7 @@ export const createNewSong = async ({
       monitor: true,
       stream: true,
     },
+    songMetadata: songMetadata || undefined,
   };
 
   const item = formatSong(newItem);
@@ -155,6 +159,7 @@ export const createItemFromProps = ({
   selectedSlide,
   selectedBox,
   slides,
+  songMetadata,
 }: Partial<ItemState>): ItemState => {
   const item: ItemState = {
     name: name || "",
@@ -171,6 +176,7 @@ export const createItemFromProps = ({
       monitor: true,
       stream: true,
     },
+    songMetadata,
   };
 
   return item;
