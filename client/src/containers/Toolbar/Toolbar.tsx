@@ -185,8 +185,8 @@ const Toolbar = ({
                 className={cn(
                   section !== "settings" && "hidden",
                   location.pathname.includes("preferences") &&
-                    !location.pathname.includes("quick-links") &&
-                    "outline-2 outline-white",
+                  !location.pathname.includes("quick-links") &&
+                  "outline-2 outline-white",
                 )}
                 variant="tertiary"
                 svg={Settings}
@@ -202,7 +202,7 @@ const Toolbar = ({
                 (variant === "overlay"
                   ? quickLinksDrawerOpen
                   : location.pathname.includes("quick-links")) &&
-                  "outline-2 outline-white",
+                "outline-2 outline-white",
               )}
               variant="tertiary"
               svg={RectangleEllipsis}
@@ -223,7 +223,7 @@ const Toolbar = ({
                 className={cn(
                   section !== "settings" && "hidden",
                   location.pathname.includes("monitor-settings") &&
-                    "outline-2 outline-white",
+                  "outline-2 outline-white",
                 )}
                 variant="tertiary"
                 svg={Monitor}

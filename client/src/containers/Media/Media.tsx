@@ -462,375 +462,375 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         className={cn(
           isPanelVariant && "flex flex-col min-h-0 w-full",
           isPanelVariant &&
-            (isMediaExpanded ? "flex-1" : "shrink-0 mt-auto"),
+          (isMediaExpanded ? "flex-1" : "shrink-0 mt-auto"),
           !isPanelVariant && "contents"
         )}
       >
-      <div
-        className={cn(
-          "mx-2 bg-gray-900 flex items-center text-sm relative z-10 transition-all px-2",
-          isMediaExpanded ? "py-1 rounded-t-md" : "rounded-b-md py-0.5",
-          "rounded-t-md mt-2"
-        )}
-      >
-        <h2 className="font-semibold">Media</h2>
-        <div className="flex-1 flex items-center justify-center">
-          <Button
-            variant="tertiary"
-            svg={isMediaExpanded ? ChevronDown : ChevronUp}
-            onClick={() => {
-              dispatch(setIsMediaExpanded(!isMediaExpanded));
-              if (isMediaExpanded) {
-                setSearchTerm("");
-              }
-            }}
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="tertiary"
-            svg={Plus}
-            onClick={() => mediaUploadInputRef.current?.openModal()}
-            title={uploadProgress.isUploading ? `Uploading... ${Math.round(uploadProgress.progress)}%` : "Add Media"}
-            disabled={uploadProgress.isUploading}
-          >
-            {uploadProgress.isUploading ? `${Math.round(uploadProgress.progress)}%` : ""}
-          </Button>
-          <Button
-            variant="tertiary"
-            svg={Maximize}
-            onClick={() => setIsFullscreen(true)}
-            title="Fullscreen"
-          />
-        </div>
-      </div>
-      {/* Unified media upload component */}
-      <MediaUploadInput
-        ref={mediaUploadInputRef}
-        onImageComplete={(info: mediaInfoType) => {
-          addNewBackground(info);
-        }}
-        onVideoComplete={(muxData: {
-          playbackId: string;
-          assetId: string;
-          playbackUrl: string;
-          thumbnailUrl: string;
-          name: string;
-        }) => {
-          addMuxVideo(muxData);
-        }}
-        showButton={false}
-        uploadPreset="bpqu4ma5"
-        cloudName="portable-media"
-        onUploadActiveChange={handleUploadActiveChange}
-      />
-      {!isMediaLoading && isMediaExpanded && (
-        <div className="px-4 py-2 bg-gray-900 mx-2 flex items-center gap-2">
-          <Input
-            type="text"
-            label="Search"
-            value={searchTerm}
-            onChange={(value) => {
-              setSearchTerm(value as string);
-            }}
-            placeholder="Name"
-            className="flex gap-4 items-center flex-1"
-            inputWidth="w-full"
-            inputTextSize="text-sm"
-            svg={searchTerm ? X : undefined}
-            svgAction={() => setSearchTerm("")}
-          />
-          <Toggle
-            icon={Eye}
-            value={showName}
-            onChange={() => setShowName(!showName)}
-          />
-        </div>
-      )}
-      {isMediaLoading && isMediaExpanded && (
-        <h3
+        <div
           className={cn(
-            "text-center font-lg pt-4 bg-gray-800 mx-2",
-            isPanelVariant ? "flex-1 min-h-0" : "h-full"
+            "mx-2 bg-gray-900 flex items-center text-sm relative z-10 transition-all px-2",
+            isMediaExpanded ? "py-1 rounded-t-md" : "rounded-b-md py-0.5",
+            "rounded-t-md mt-2"
           )}
         >
-          Loading media...
-        </h3>
-      )}
-      {!isMediaLoading && isMediaExpanded && filteredList.length !== 0 && (
-        <ul
-          ref={mediaListRef}
-          className={cn(
-            "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-x-2 gap-y-1 z-10 rounded-b-md min-h-0",
-            isPanelVariant && "flex-1",
-            sizeMap.get(mediaItemsPerRow)
-          )}
-          style={{
-            gridAutoRows: "auto",
+          <h2 className="font-semibold">Media</h2>
+          <div className="flex-1 flex items-center justify-center">
+            <Button
+              variant="tertiary"
+              svg={isMediaExpanded ? ChevronDown : ChevronUp}
+              onClick={() => {
+                dispatch(setIsMediaExpanded(!isMediaExpanded));
+                if (isMediaExpanded) {
+                  setSearchTerm("");
+                }
+              }}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="tertiary"
+              svg={Plus}
+              onClick={() => mediaUploadInputRef.current?.openModal()}
+              title={uploadProgress.isUploading ? `Uploading... ${Math.round(uploadProgress.progress)}%` : "Add Media"}
+              disabled={uploadProgress.isUploading}
+            >
+              {uploadProgress.isUploading ? `${Math.round(uploadProgress.progress)}%` : ""}
+            </Button>
+            <Button
+              variant="tertiary"
+              svg={Maximize}
+              onClick={() => setIsFullscreen(true)}
+              title="Fullscreen"
+            />
+          </div>
+        </div>
+        {/* Unified media upload component */}
+        <MediaUploadInput
+          ref={mediaUploadInputRef}
+          onImageComplete={(info: mediaInfoType) => {
+            addNewBackground(info);
           }}
-        >
-          {filteredList.map((mediaItem, index) => {
-            const { id, thumbnail, name, type } = mediaItem;
-            const isSelected = id === selectedMedia.id;
-            const isMultiSelected = selectedMediaIds.has(id);
-            const hasMultipleSelection = selectedMediaIds.size > 1;
-            const shownName = name.includes("/")
-              ? name.split("/").slice(1).join("/")
-              : name;
+          onVideoComplete={(muxData: {
+            playbackId: string;
+            assetId: string;
+            playbackUrl: string;
+            thumbnailUrl: string;
+            name: string;
+          }) => {
+            addMuxVideo(muxData);
+          }}
+          showButton={false}
+          uploadPreset="bpqu4ma5"
+          cloudName="portable-media"
+          onUploadActiveChange={handleUploadActiveChange}
+        />
+        {!isMediaLoading && isMediaExpanded && (
+          <div className="px-4 py-2 bg-gray-900 mx-2 flex items-center gap-2">
+            <Input
+              type="text"
+              label="Search"
+              value={searchTerm}
+              onChange={(value) => {
+                setSearchTerm(value as string);
+              }}
+              placeholder="Name"
+              className="flex gap-4 items-center flex-1"
+              inputWidth="w-full"
+              inputTextSize="text-sm"
+              svg={searchTerm ? X : undefined}
+              svgAction={() => setSearchTerm("")}
+            />
+            <Toggle
+              icon={Eye}
+              value={showName}
+              onChange={() => setShowName(!showName)}
+            />
+          </div>
+        )}
+        {isMediaLoading && isMediaExpanded && (
+          <h3
+            className={cn(
+              "text-center font-lg pt-4 bg-gray-800 mx-2",
+              isPanelVariant ? "flex-1 min-h-0" : "h-full"
+            )}
+          >
+            Loading media...
+          </h3>
+        )}
+        {!isMediaLoading && isMediaExpanded && filteredList.length !== 0 && (
+          <ul
+            ref={mediaListRef}
+            className={cn(
+              "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-x-2 gap-y-1 z-10 rounded-b-md min-h-0",
+              isPanelVariant && "flex-1",
+              sizeMap.get(mediaItemsPerRow)
+            )}
+            style={{
+              gridAutoRows: "auto",
+            }}
+          >
+            {filteredList.map((mediaItem, index) => {
+              const { id, thumbnail, name, type } = mediaItem;
+              const isSelected = id === selectedMedia.id;
+              const isMultiSelected = selectedMediaIds.has(id);
+              const hasMultipleSelection = selectedMediaIds.size > 1;
+              const shownName = name.includes("/")
+                ? name.split("/").slice(1).join("/")
+                : name;
 
-            const contextMenuItems = hasMultipleSelection
-              ? [
-                {
-                  label: `Delete ${selectedMediaIds.size} items`,
-                  onClick: () => {
-                    setIsDeletingMultiple(true);
-                    setShowDeleteModal(true);
+              const contextMenuItems = hasMultipleSelection
+                ? [
+                  {
+                    label: `Delete ${selectedMediaIds.size} items`,
+                    onClick: () => {
+                      setIsDeletingMultiple(true);
+                      setShowDeleteModal(true);
+                    },
+                    icon: <Trash2 className="w-4 h-4" />,
+                    variant: "destructive" as const,
                   },
-                  icon: <Trash2 className="w-4 h-4" />,
-                  variant: "destructive" as const,
-                },
-              ]
-              : [
-                ...(location.pathname.includes("item")
-                  ? [
-                    {
-                      label: "Set All Slides",
-                      onClick: () => {
-                        if (mediaItem.background && db) {
+                ]
+                : [
+                  ...(location.pathname.includes("item")
+                    ? [
+                      {
+                        label: "Set All Slides",
+                        onClick: () => {
+                          if (mediaItem.background && db) {
+                            dispatch(
+                              updateAllSlideBackgrounds({
+                                background: mediaItem.background,
+                                mediaInfo: mediaItem,
+                              })
+                            );
+                          }
+                        },
+                        icon: <Images className="w-4 h-4" />,
+                        disabled: isLoading || !mediaItem.background,
+                      },
+                      {
+                        label: "Set Selected Slide",
+                        onClick: () => {
+                          if (mediaItem.background && db) {
+                            dispatch(
+                              updateSlideBackground({
+                                background: mediaItem.background,
+                                mediaInfo: mediaItem,
+                              })
+                            );
+                          }
+                        },
+                        icon: <Image className="w-4 h-4" />,
+                        disabled: isLoading || !mediaItem.background,
+                      },
+                    ]
+                    : []),
+                  ...((location.pathname.includes("overlays") ||
+                    isOverlayControllerPage) &&
+                    selectedOverlay?.type === "image"
+                    ? [
+                      {
+                        label: "Set Image Overlay",
+                        onClick: () => {
+                          if (mediaItem.background && db) {
+                            dispatch(
+                              updateOverlay({
+                                imageUrl: mediaItem.background,
+                                id: selectedOverlay?.id,
+                              })
+                            );
+                            dispatch(
+                              updateOverlayInList({
+                                imageUrl: mediaItem.background,
+                                id: selectedOverlay?.id,
+                              })
+                            );
+                          }
+                        },
+                        icon: <Image className="w-4 h-4" />,
+                        disabled: !mediaItem.background || !selectedOverlay,
+                      },
+                    ]
+                    : []),
+                  ...(location.pathname.includes("preferences") &&
+                    !location.pathname.includes("quick-links") &&
+                    !location.pathname.includes("monitor-settings") &&
+                    selectedPreference
+                    ? [
+                      {
+                        label: "Set Background",
+                        onClick: () => {
                           dispatch(
-                            updateAllSlideBackgrounds({
-                              background: mediaItem.background,
-                              mediaInfo: mediaItem,
+                            setDefaultPreferences({
+                              [selectedPreference]: {
+                                background: mediaItem.background,
+                                mediaInfo: mediaItem,
+                              },
                             })
                           );
-                        }
+                        },
+                        icon: <Image className="w-4 h-4" />,
+                        disabled: !selectedPreference || !mediaItem.background,
                       },
-                      icon: <Images className="w-4 h-4" />,
-                      disabled: isLoading || !mediaItem.background,
-                    },
-                    {
-                      label: "Set Selected Slide",
-                      onClick: () => {
-                        if (mediaItem.background && db) {
-                          dispatch(
-                            updateSlideBackground({
-                              background: mediaItem.background,
-                              mediaInfo: mediaItem,
-                            })
-                          );
-                        }
+                    ]
+                    : []),
+                  ...(location.pathname.includes("quick-links") &&
+                    selectedQuickLink?.linkType === "media"
+                    ? [
+                      {
+                        label: "Set Quick Link Background",
+                        onClick: () => {
+                          dispatch(setSelectedQuickLinkImage(mediaItem));
+                        },
+                        icon: <Image className="w-4 h-4" />,
+                        disabled: !selectedQuickLink || selectedQuickLink?.linkType !== "media",
                       },
-                      icon: <Image className="w-4 h-4" />,
-                      disabled: isLoading || !mediaItem.background,
+                    ]
+                    : []),
+                  {
+                    label: "Delete",
+                    onClick: () => {
+                      setMediaToDelete(mediaItem);
+                      setShowDeleteModal(true);
                     },
-                  ]
-                  : []),
-                ...((location.pathname.includes("overlays") ||
-                  isOverlayControllerPage) &&
-                  selectedOverlay?.type === "image"
-                  ? [
-                    {
-                      label: "Set Image Overlay",
-                      onClick: () => {
-                        if (mediaItem.background && db) {
-                          dispatch(
-                            updateOverlay({
-                              imageUrl: mediaItem.background,
-                              id: selectedOverlay?.id,
-                            })
-                          );
-                          dispatch(
-                            updateOverlayInList({
-                              imageUrl: mediaItem.background,
-                              id: selectedOverlay?.id,
-                            })
-                          );
-                        }
-                      },
-                      icon: <Image className="w-4 h-4" />,
-                      disabled: !mediaItem.background || !selectedOverlay,
-                    },
-                  ]
-                  : []),
-                ...(location.pathname.includes("preferences") &&
-                  !location.pathname.includes("quick-links") &&
-                  !location.pathname.includes("monitor-settings") &&
-                  selectedPreference
-                  ? [
-                    {
-                      label: "Set Background",
-                      onClick: () => {
-                        dispatch(
-                          setDefaultPreferences({
-                            [selectedPreference]: {
-                              background: mediaItem.background,
-                              mediaInfo: mediaItem,
-                            },
-                          })
-                        );
-                      },
-                      icon: <Image className="w-4 h-4" />,
-                      disabled: !selectedPreference || !mediaItem.background,
-                    },
-                  ]
-                  : []),
-                ...(location.pathname.includes("quick-links") &&
-                  selectedQuickLink?.linkType === "media"
-                  ? [
-                    {
-                      label: "Set Quick Link Background",
-                      onClick: () => {
-                        dispatch(setSelectedQuickLinkImage(mediaItem));
-                      },
-                      icon: <Image className="w-4 h-4" />,
-                      disabled: !selectedQuickLink || selectedQuickLink?.linkType !== "media",
-                    },
-                  ]
-                  : []),
-                {
-                  label: "Delete",
-                  onClick: () => {
-                    setMediaToDelete(mediaItem);
-                    setShowDeleteModal(true);
+                    icon: <Trash2 className="w-4 h-4" />,
+                    variant: "destructive" as const,
                   },
-                  icon: <Trash2 className="w-4 h-4" />,
-                  variant: "destructive" as const,
-                },
-              ];
+                ];
 
-            return (
-              <li key={id}>
-                <ContextMenu
-                  menuItems={contextMenuItems}
-                  header={
-                    hasMultipleSelection
-                      ? {
-                        title: `${selectedMediaIds.size} items selected`,
-                        subtitle: "Multiple selection",
-                      }
-                      : {
-                        title: shownName,
-                        subtitle: type.charAt(0).toUpperCase() + type.slice(1),
-                      }
-                  }
-                  onOpen={() => {
-                    // Ensure this item is selected when context menu opens
-                    if (!isMultiSelected && !hasMultipleSelection) {
-                      handleMediaClick(
-                        { ctrlKey: false, metaKey: false, shiftKey: false } as React.MouseEvent,
-                        mediaItem,
-                        index
-                      );
+              return (
+                <li key={id}>
+                  <ContextMenu
+                    menuItems={contextMenuItems}
+                    header={
+                      hasMultipleSelection
+                        ? {
+                          title: `${selectedMediaIds.size} items selected`,
+                          subtitle: "Multiple selection",
+                        }
+                        : {
+                          title: shownName,
+                          subtitle: type.charAt(0).toUpperCase() + type.slice(1),
+                        }
                     }
-                  }}
-                >
-                  <Button
-                    variant="none"
-                    padding="p-0"
-                    className={cn(
-                      "w-full h-full justify-center flex flex-col items-center border-2",
-                      isMultiSelected
-                        ? "border-cyan-400 bg-cyan-400/10"
-                        : isSelected
-                          ? "border-cyan-400"
-                          : "border-gray-500 hover:border-gray-300"
-                    )}
-                    onClick={(e) => {
-                      handleMediaClick(e, mediaItem, index);
-                    }}
-                    onContextMenu={(e) => {
-                      // Ensure selection happens on right-click too
-                      if (!isMultiSelected && !isSelected) {
-                        handleMediaClick(e, mediaItem, index);
+                    onOpen={() => {
+                      // Ensure this item is selected when context menu opens
+                      if (!isMultiSelected && !hasMultipleSelection) {
+                        handleMediaClick(
+                          { ctrlKey: false, metaKey: false, shiftKey: false } as React.MouseEvent,
+                          mediaItem,
+                          index
+                        );
                       }
                     }}
                   >
-                    <div
+                    <Button
+                      variant="none"
+                      padding="p-0"
                       className={cn(
-                        "aspect-video flex items-center justify-center w-full flex-1 overflow-hidden relative",
-                        isMediaExpanded && "border-b border-gray-500"
+                        "w-full h-full justify-center flex flex-col items-center border-2",
+                        isMultiSelected
+                          ? "border-cyan-400 bg-cyan-400/10"
+                          : isSelected
+                            ? "border-cyan-400"
+                            : "border-gray-500 hover:border-gray-300"
                       )}
+                      onClick={(e) => {
+                        handleMediaClick(e, mediaItem, index);
+                      }}
+                      onContextMenu={(e) => {
+                        // Ensure selection happens on right-click too
+                        if (!isMultiSelected && !isSelected) {
+                          handleMediaClick(e, mediaItem, index);
+                        }
+                      }}
                     >
-                      <CachedMediaImage
-                        className="max-w-full max-h-full"
-                        alt={id}
-                        src={thumbnail}
-                        loading="lazy"
-                      />
-                      <MediaTypeBadge type={type} />
-                    </div>
-
-                    {isMediaExpanded && name && showName && (
-                      <div className="w-full px-1 py-1 text-center">
-                        <p
-                          className="text-sm text-gray-300 truncate"
-                          title={name}
-                        >
-                          {shownName}
-                        </p>
+                      <div
+                        className={cn(
+                          "aspect-video flex items-center justify-center w-full flex-1 overflow-hidden relative",
+                          isMediaExpanded && "border-b border-gray-500"
+                        )}
+                      >
+                        <CachedMediaImage
+                          className="max-w-full max-h-full"
+                          alt={id}
+                          src={thumbnail}
+                          loading="lazy"
+                        />
+                        <MediaTypeBadge type={type} />
                       </div>
-                    )}
-                  </Button>
-                </ContextMenu>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {!isMediaLoading && isMediaExpanded && searchTerm && filteredList.length === 0 && (
-        <div
-          className={cn(
-            "text-center py-8 bg-gray-800 mx-2 px-2",
-            isPanelVariant && "flex-1 min-h-0"
-          )}
-        >
-          <p className="text-gray-400">
-            No media found matching "{searchTerm}"
-          </p>
-        </div>
-      )}
 
-      <DeleteModal
-        isOpen={showDeleteModal}
-        onClose={handleCancelDelete}
-        onConfirm={handleConfirmDelete}
-        isConfirming={isDeleteInProgress}
-        itemName={
-          isDeletingMultiple
-            ? undefined
-            : mediaToDelete?.name
-        }
-        title="Delete Media"
-        message={
-          isDeletingMultiple
-            ? `Are you sure you want to delete ${selectedMediaIds.size} items`
-            : "Are you sure you want to delete"
-        }
-        imageUrl={isDeletingMultiple ? undefined : mediaToDelete?.thumbnail}
-      />
+                      {isMediaExpanded && name && showName && (
+                        <div className="w-full px-1 py-1 text-center">
+                          <p
+                            className="text-sm text-gray-300 truncate"
+                            title={name}
+                          >
+                            {shownName}
+                          </p>
+                        </div>
+                      )}
+                    </Button>
+                  </ContextMenu>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {!isMediaLoading && isMediaExpanded && searchTerm && filteredList.length === 0 && (
+          <div
+            className={cn(
+              "text-center py-8 bg-gray-800 mx-2 px-2",
+              isPanelVariant && "flex-1 min-h-0"
+            )}
+          >
+            <p className="text-gray-400">
+              No media found matching "{searchTerm}"
+            </p>
+          </div>
+        )}
 
-      {/* Fullscreen Modal */}
-      <MediaModal
-        isOpen={isFullscreen}
-        onClose={() => setIsFullscreen(false)}
-        mediaList={list}
-        selectedMedia={selectedMedia}
-        selectedMediaIds={selectedMediaIds}
-        previewMedia={previewMedia}
-        searchTerm={searchTerm}
-        showName={showName}
-        onMediaClick={handleMediaClick}
-        onSearchChange={(value) => setSearchTerm(value)}
-        onShowNameToggle={() => setShowName(!showName)}
-        onDeleteClick={(mediaItem) => {
-          setMediaToDelete(mediaItem);
-          setShowDeleteModal(true);
-        }}
-        onDeleteMultipleClick={openMultiDeleteModal}
-        onPreviewChange={setPreviewMedia}
-        mediaUploadInputRef={mediaUploadInputRef}
-        uploadProgress={uploadProgress}
-      />
+        <DeleteModal
+          isOpen={showDeleteModal}
+          onClose={handleCancelDelete}
+          onConfirm={handleConfirmDelete}
+          isConfirming={isDeleteInProgress}
+          itemName={
+            isDeletingMultiple
+              ? undefined
+              : mediaToDelete?.name
+          }
+          title="Delete Media"
+          message={
+            isDeletingMultiple
+              ? `Are you sure you want to delete ${selectedMediaIds.size} items`
+              : "Are you sure you want to delete"
+          }
+          imageUrl={isDeletingMultiple ? undefined : mediaToDelete?.thumbnail}
+        />
+
+        {/* Fullscreen Modal */}
+        <MediaModal
+          isOpen={isFullscreen}
+          onClose={() => setIsFullscreen(false)}
+          mediaList={list}
+          selectedMedia={selectedMedia}
+          selectedMediaIds={selectedMediaIds}
+          previewMedia={previewMedia}
+          searchTerm={searchTerm}
+          showName={showName}
+          onMediaClick={handleMediaClick}
+          onSearchChange={(value) => setSearchTerm(value)}
+          onShowNameToggle={() => setShowName(!showName)}
+          onDeleteClick={(mediaItem) => {
+            setMediaToDelete(mediaItem);
+            setShowDeleteModal(true);
+          }}
+          onDeleteMultipleClick={openMultiDeleteModal}
+          onPreviewChange={setPreviewMedia}
+          mediaUploadInputRef={mediaUploadInputRef}
+          uploadProgress={uploadProgress}
+        />
       </div>
     </ErrorBoundary>
   );

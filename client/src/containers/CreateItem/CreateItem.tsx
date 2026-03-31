@@ -288,7 +288,7 @@ const CreateItem = () => {
                 color={justAdded ? "#84cc16" : "#22d3ee"}
                 disabled={justAdded}
               >
-                {justAdded ? "Added!" : "Add to outline"}
+                {justAdded ? "Added." : "Add to outline"}
               </Button>
             </p>
           )}
@@ -400,7 +400,7 @@ const CreateItem = () => {
           color={justCreated ? "#84cc16" : undefined}
         >
           {justCreated
-            ? "Created!"
+            ? "Created."
             : `Create ${selectedTypeLabel}`}
         </Button>
       </div>

@@ -14,6 +14,7 @@ import {
   REFERENCE_HEIGHT,
   REFERENCE_WIDTH,
 } from "../../constants";
+import { resolveFormattedCursorPosition } from "../../utils/cursorPosition";
 
 type DraggableData = {
   node: HTMLElement;
@@ -48,6 +49,7 @@ type DisplayEditorProps = {
   scaleFactor?: number;
   activeVideoUrl?: string;
   isWindowVideoLoaded?: boolean;
+  desiredCursorPosition?: number;
 };
 
 const DisplayEditorComponent = ({
@@ -63,6 +65,7 @@ const DisplayEditorComponent = ({
   scaleFactor = 1,
   activeVideoUrl,
   isWindowVideoLoaded,
+  desiredCursorPosition,
 }: DisplayEditorProps) => {
   const [boxWidth, setBoxWidth] = useState(`${box.width}%`);
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
@@ -105,18 +108,47 @@ const DisplayEditorComponent = ({
     [isVideoBg, videoUrl, activeVideoUrl, isWindowVideoLoaded]
   );
 
-  const syncDraftToWords = useCallback((nextWords: string) => {
-    if (textAreaRef.current && textAreaRef.current.value !== nextWords) {
-      textAreaRef.current.value = nextWords;
-      const nextCursorPosition = Math.min(
-        textAreaRef.current.selectionStart,
-        nextWords.length
-      );
+  const anchorScrollToTop = useCallback(() => {
+    const textArea = textAreaRef.current;
+    if (!textArea || showOverflow) {
+      return;
+    }
+
+    const resetScroll = () => {
+      if (!textAreaRef.current || showOverflow) {
+        return;
+      }
+      textAreaRef.current.scrollTop = 0;
+      textAreaRef.current.scrollLeft = 0;
+    };
+
+    resetScroll();
+    requestAnimationFrame(resetScroll);
+  }, [showOverflow]);
+
+  const syncDraftToWords = useCallback((
+    nextWords: string,
+    options?: { preserveCursor?: boolean; cursorPosition?: number }
+  ) => {
+    if (textAreaRef.current) {
+      const previousValue = textAreaRef.current.value;
+      const previousSelection =
+        textAreaRef.current.selectionStart ?? previousValue.length;
+      const nextCursorPosition = typeof options?.cursorPosition === "number"
+        ? Math.min(options.cursorPosition, nextWords.length)
+        : options?.preserveCursor
+        ? resolveFormattedCursorPosition(previousValue, nextWords, previousSelection)
+        : Math.min(previousSelection, nextWords.length);
+
+      if (textAreaRef.current.value !== nextWords) {
+        textAreaRef.current.value = nextWords;
+      }
       textAreaRef.current.selectionStart = nextCursorPosition;
       textAreaRef.current.selectionEnd = nextCursorPosition;
     }
     setDraftWords(nextWords);
-  }, []);
+    anchorScrollToTop();
+  }, [anchorScrollToTop]);
 
   useLayoutEffect(() => {
     const boxChanged = box !== lastBoxRef.current;
@@ -124,21 +156,42 @@ const DisplayEditorComponent = ({
       lastBoxRef.current = box;
     }
 
+    const cursorPosition = isTextAreaFocused ? desiredCursorPosition : undefined;
+
     if (words !== lastPropWordsRef.current) {
       lastPropWordsRef.current = words;
-      syncDraftToWords(words);
+      syncDraftToWords(words, {
+        preserveCursor: isTextAreaFocused,
+        cursorPosition,
+      });
       return;
     }
 
     if (boxChanged && draftWords !== words) {
-      syncDraftToWords(words);
+      syncDraftToWords(words, {
+        preserveCursor: isTextAreaFocused,
+        cursorPosition,
+      });
       return;
     }
 
     if (!isTextAreaFocused && draftWords !== words) {
       syncDraftToWords(words);
     }
-  }, [box, draftWords, isTextAreaFocused, syncDraftToWords, words]);
+  }, [
+    box,
+    desiredCursorPosition,
+    draftWords,
+    isTextAreaFocused,
+    syncDraftToWords,
+    words,
+  ]);
+
+  useLayoutEffect(() => {
+    if (isTextAreaFocused) {
+      anchorScrollToTop();
+    }
+  }, [anchorScrollToTop, draftWords, isTextAreaFocused]);
 
   const checkTimerAtCursor = useCallback(() => {
     const textArea = textAreaRef.current;
@@ -459,6 +512,7 @@ const DisplayEditorComponent = ({
                 commitMode: "typing",
                 cursorPosition: e.target.selectionStart,
               });
+              anchorScrollToTop();
             }}
             onKeyDown={(e) => {
               lastKeyPressedRef.current = e.key;
@@ -482,6 +536,7 @@ const DisplayEditorComponent = ({
               e.stopPropagation();
               checkAndHandleTimer();
             }}
+            onScroll={() => anchorScrollToTop()}
           />
           {isOverflowing && isTextAreaFocused && (
             <Button
@@ -519,7 +574,8 @@ const areDisplayEditorPropsEqual = (
   prevProps.referenceHeight === nextProps.referenceHeight &&
   prevProps.scaleFactor === nextProps.scaleFactor &&
   prevProps.activeVideoUrl === nextProps.activeVideoUrl &&
-  prevProps.isWindowVideoLoaded === nextProps.isWindowVideoLoaded;
+  prevProps.isWindowVideoLoaded === nextProps.isWindowVideoLoaded &&
+  prevProps.desiredCursorPosition === nextProps.desiredCursorPosition;
 
 const DisplayEditor = memo(DisplayEditorComponent, areDisplayEditorPropsEqual);
 

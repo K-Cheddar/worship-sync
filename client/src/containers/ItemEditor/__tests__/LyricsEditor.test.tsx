@@ -1,6 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ToastData } from "../../../components/Toast/ToastContainer";
 import LyricsEditor from "../LyricsEditor";
 import { ToastContext } from "../../../context/toastContext";
+
+type ShowToastArg = string | Omit<ToastData, "id">;
 
 const mockDispatch = jest.fn();
 let mockState: any;
@@ -22,7 +26,7 @@ const mockApplyPendingRemoteItem = jest.fn(() => ({
   type: "item/applyPendingRemoteItem",
 }));
 const mockFormatSong = jest.fn((item: any) => item);
-let mockShowToast = jest.fn(() => "toast-1");
+let mockShowToast: jest.Mock<string, [ShowToastArg]> = jest.fn<string, [ShowToastArg]>(() => "toast-1");
 let mockRemoveToast = jest.fn();
 
 jest.mock("../../../hooks", () => ({
@@ -158,7 +162,7 @@ describe("LyricsEditor", () => {
     mockState = makeBaseState();
     lastLyricBoxesProps = null;
     lastSectionPreviewProps = null;
-    mockShowToast = jest.fn(() => "toast-1");
+    mockShowToast = jest.fn<string, [ShowToastArg]>(() => "toast-1");
     mockRemoveToast = jest.fn();
   });
 
@@ -551,7 +555,11 @@ describe("LyricsEditor", () => {
       expect(mockShowToast).toHaveBeenCalled();
     });
 
-    const { children: renderToastChildren } = mockShowToast.mock.calls[0][0];
+    const [toastArg] = mockShowToast.mock.calls[0];
+    const renderToastChildren = typeof toastArg === "object" && toastArg !== null ? toastArg["children"] : undefined;
+    if (typeof renderToastChildren !== "function") {
+      throw new Error("expected showToast with object payload and children render function");
+    }
     render(<>{renderToastChildren("toast-1")}</>);
 
     fireEvent.click(screen.getByRole("button", { name: "Keep Editing Mine" }));

@@ -40,6 +40,7 @@ import {
   getIndexFromSelectionHint,
   getSelectionHint,
 } from "../../utils/selectionHint";
+import { resolveFormattedCursorPosition } from "../../utils/cursorPosition";
 import { ItemSlideType } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
@@ -58,6 +59,26 @@ const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
   slideName.startsWith(lyricName) && !/^\d/.test(slideName.slice(lyricName.length));
 
 const BOX_EDIT_DEBOUNCE_MS = 200;
+
+const resolveFormattedSlideIndex = ({
+  oldSlides,
+  newSlides,
+  selectedSlide,
+  maxSlideIndex,
+}: {
+  oldSlides: ItemSlideType[];
+  newSlides: ItemSlideType[];
+  selectedSlide: number;
+  maxSlideIndex: number;
+}) => {
+  const hint = getSelectionHint(oldSlides, selectedSlide);
+  const fromHint = hint ? getIndexFromSelectionHint(newSlides, hint) : null;
+  return hint
+    ? fromHint !== null
+      ? Math.min(fromHint, maxSlideIndex)
+      : Math.min(selectedSlide, maxSlideIndex)
+    : Math.min(selectedSlide, maxSlideIndex);
+};
 
 const SlideEditor = ({ access }: { access?: AccessType }) => {
   const dispatch = useDispatch();
@@ -371,6 +392,22 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           const formattedItem = formatFree({
             ...updatedItem,
           });
+          if (typeof cursorPosition === "number") {
+            const newSlides = formattedItem.slides;
+            const newSelectedIndex = resolveFormattedSlideIndex({
+              oldSlides: item.slides,
+              newSlides,
+              selectedSlide,
+              maxSlideIndex: Math.max(0, newSlides.length - 1),
+            });
+            const nextWords =
+              newSlides[newSelectedIndex]?.boxes[index]?.words || "";
+            cursorPositionsRef.current[index] = resolveFormattedCursorPosition(
+              value,
+              nextWords,
+              cursorPosition,
+            );
+          }
           dispatch(updateSlides({ slides: formattedItem.slides }));
           return;
         }
@@ -416,6 +453,22 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           ...updatedItem,
           formattedSections: updatedFormattedSections,
         });
+        if (typeof cursorPosition === "number") {
+          const newSlides = formattedItem.slides;
+          const newSelectedIndex = resolveFormattedSlideIndex({
+            oldSlides: item.slides,
+            newSlides,
+            selectedSlide,
+            maxSlideIndex: Math.max(0, newSlides.length - 1),
+          });
+          const nextWords =
+            newSlides[newSelectedIndex]?.boxes[index]?.words || "";
+          cursorPositionsRef.current[index] = resolveFormattedCursorPosition(
+            value,
+            nextWords,
+            cursorPosition,
+          );
+        }
         dispatch(updateSlides({
           slides: formattedItem.slides,
           formattedSections: formattedItem.formattedSections,
@@ -526,6 +579,17 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           }),
         };
       });
+
+      if (typeof cursorPosition === "number") {
+        const nextWords =
+          arrangementsWithBox[selectedArrangement]?.slides?.[newSelectedIndex]
+            ?.boxes[index]?.words || "";
+        cursorPositionsRef.current[index] = resolveFormattedCursorPosition(
+          value,
+          nextWords,
+          cursorPosition,
+        );
+      }
 
       dispatch(updateArrangements({ arrangements: arrangementsWithBox }));
     }
@@ -1102,6 +1166,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                   className="lg:max-h-[42vh] max-lg:max-h-[30vh] h-full w-full"
                   showBorder
                   boxes={boxes}
+                  boxCursorPositions={cursorPositionsRef.current}
                   selectBox={(val) => dispatch(setSelectedBox(val))}
                   ref={editorRef}
                   onChange={(onChangeInfo) => {

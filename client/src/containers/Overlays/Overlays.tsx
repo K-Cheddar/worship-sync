@@ -516,7 +516,7 @@ const Overlays = () => {
       : "Add Overlay";
 
   const justAddedText =
-    selectedOverlay.name || selectedOverlay.url ? "Copied!" : "Added!";
+    selectedOverlay.name || selectedOverlay.url ? "Copied." : "Added.";
 
   return (
     <ErrorBoundary>

@@ -15,6 +15,25 @@ export const isElectron = (): boolean => {
 };
 
 /**
+ * True when running in a normal browser on Windows (not Electron).
+ * Used to show Windows desktop installer actions on the web home page.
+ */
+export const isWindowsBrowser = (): boolean => {
+  if (typeof window === "undefined" || isElectron()) {
+    return false;
+  }
+  const ua = navigator.userAgent;
+  const uaDataPlatform = (
+    navigator as Navigator & { userAgentData?: { platform?: string } }
+  ).userAgentData?.platform;
+  return (
+    /Windows/i.test(navigator.platform) ||
+    /Windows/i.test(ua) ||
+    uaDataPlatform === "Windows"
+  );
+};
+
+/**
  * Get the API base path based on the environment
  * In Electron, we'll use the production server or localhost
  * In web, we'll use the environment variable

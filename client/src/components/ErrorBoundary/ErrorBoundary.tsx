@@ -46,7 +46,7 @@ class ErrorBoundary extends Component<Props, State> {
         <div className="bg-white border border-red-200 rounded-lg p-2 flex flex-col justify-center items-center gap-2 h-fit w-fit text-center">
           <Icon svg={CircleAlert} size="lg" className="text-red-600" />
           <h3 className="text-sm font-medium text-red-800">
-            Something went wrong!
+            This section could not load.
           </h3>
           <Button className="text-sm" onClick={this.handleComponentRefresh}>
             Try again

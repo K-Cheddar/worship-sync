@@ -403,7 +403,7 @@ const Bible = () => {
         color={justAdded ? "#67e8f9" : undefined}
         svg={justAdded ? Check : Plus}
       >
-        {justAdded ? "Added!" : "Add to outline"}
+        {justAdded ? "Added." : "Add to outline"}
       </Button>
     </div>
   );

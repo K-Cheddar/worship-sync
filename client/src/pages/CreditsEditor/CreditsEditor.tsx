@@ -510,7 +510,7 @@ const CreditsEditor = () => {
       {isGenerating
         ? "Generating..."
         : justGenerated
-          ? "Generated!"
+          ? "Generated."
           : "Generate Credits"}
     </Button>
   );

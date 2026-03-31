@@ -198,7 +198,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                   setTimeout(() => setJustAdded(false), 500);
                 }}
               >
-                {justAdded ? "Added!" : "Add Credit"}
+                {justAdded ? "Added." : "Add Credit"}
               </Button>
               <Button
                 className="text-sm w-full justify-center mt-2"
@@ -209,7 +209,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                 onClick={handlePublish}
               >
                 {justPublished
-                  ? "Published Credits and Scenes!"
+                  ? "Published credits and scenes"
                   : "Publish Credits and Scenes"}
               </Button>
             </section>
