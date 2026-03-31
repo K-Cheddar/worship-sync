@@ -1,3 +1,16 @@
+# [1.41.0](https://github.com/K-Cheddar/worship-sync/compare/v1.40.0...v1.41.0) (2026-03-31)
+
+
+### Bug Fixes
+
+* Adjust download ([9dbdc44](https://github.com/K-Cheddar/worship-sync/commit/9dbdc44f2c039f123130dde6be0afd9c16cc1529))
+* Correct cursor position when editing items ([12844be](https://github.com/K-Cheddar/worship-sync/commit/12844be7b8ff17f6b89ef0f06b5bd9d7736a369a))
+
+
+### Features
+
+* Improve homepage layout ([8d636b4](https://github.com/K-Cheddar/worship-sync/commit/8d636b4b364643695fe1f701fa7d9525f89f8781))
+
 # [1.40.0](https://github.com/K-Cheddar/worship-sync/compare/v1.39.0...v1.40.0) (2026-03-30)
 
 
