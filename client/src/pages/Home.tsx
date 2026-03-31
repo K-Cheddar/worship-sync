@@ -127,16 +127,61 @@ const DisplayLinkGroup = ({
   );
 };
 
+type WindowsDownloadHelpProps = {
+  onTryAgain: () => void;
+  onClose: () => void;
+};
+
+type WindowsInstallPopoverView = "menu" | "downloadHelp";
+
+const WindowsDownloadHelp = ({
+  onTryAgain,
+  onClose,
+}: WindowsDownloadHelpProps) => (
+  <>
+    <p className="text-sm font-semibold text-white">Download for Windows</p>
+    <p className="mt-2 text-sm">
+      Your download should begin automatically. If it does not, try
+      again or open the
+      {" "}
+      <a
+        href={getLatestReleaseUrl()}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="font-semibold text-gray-100 underline underline-offset-2 hover:text-white"
+      >
+        release page
+      </a>
+      {" "}
+      and choose the Windows installer from Assets.
+    </p>
+
+    <div className="mt-3 flex flex-col gap-2">
+      <Button
+        component="button"
+        variant="tertiary"
+        className="w-full"
+        onClick={onTryAgain}
+      >
+        Download again
+      </Button>
+    </div>
+  </>
+);
+
 const Welcome = () => {
   const { loginState } = useContext(GlobalInfoContext) || {};
   const { logout } = useContext(ControllerInfoContext) || {};
   const isLoggedIn = loginState === "success";
   const { canShowInstall, installPwa } = usePwaInstallPrompt();
-  const [windowsDownloadHref, setWindowsDownloadHref] = useState(
-    getLatestReleaseUrl,
+  const [windowsDownloadHref, setWindowsDownloadHref] = useState(() =>
+    isElectron() ? "" : getLatestReleaseUrl(),
   );
-
+  const [windowsAppMenuOpen, setWindowsAppMenuOpen] = useState(false);
+  const [windowsInstallPopoverView, setWindowsInstallPopoverView] =
+    useState<WindowsInstallPopoverView>("menu");
   useEffect(() => {
+    if (isElectron()) return;
     let cancelled = false;
     fetchLatestWindowsInstallerUrl().then((directUrl) => {
       if (!cancelled && directUrl) {
@@ -152,61 +197,115 @@ const Welcome = () => {
     window.open(windowsDownloadHref, "_blank", "noopener,noreferrer");
   };
 
+  const handleDownloadWindowsClick = () => {
+    openWindowsDownload();
+  };
+
+  const handleWindowsInstallPopoverOpenChange = (open: boolean) => {
+    setWindowsAppMenuOpen(open);
+    if (!open) setWindowsInstallPopoverView("menu");
+  };
+
+  const handleInstallAppClick = () => {
+    handleWindowsInstallPopoverOpenChange(false);
+    void installPwa();
+  };
+
+  const handleDownloadWindowsFromMenu = () => {
+    openWindowsDownload();
+    setWindowsInstallPopoverView("downloadHelp");
+  };
+
+  const isWeb = !isElectron();
+  /** One Windows web entry point avoids a toolbar flash when `beforeinstallprompt` arrives after first paint. */
+  const showWindowsAppMenu = isWeb && isWindowsBrowser();
+  const showInstallOnlyNonWindows = isWeb && !isWindowsBrowser() && canShowInstall;
+
+  const popoverSurfaceClass =
+    "w-80 max-w-[min(100vw-2rem,20rem)] border border-gray-500 bg-gray-800 p-4 text-gray-100 shadow-xl";
+
   return (
     <main className="h-dvh overflow-y-auto bg-gray-700 text-white">
       <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col px-4 pb-10">
         <div className="flex w-full items-center justify-between gap-4 py-3 text-lg">
           <div className="flex flex-wrap items-center gap-2">
-            {!isElectron() && isWindowsBrowser() && (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    component="button"
-                    variant="tertiary"
-                    className="flex items-center gap-2"
-                    svg={Download}
-                    iconSize="md"
-                    onClick={openWindowsDownload}
-                  >
-                    Download Windows App
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  align="start"
-                  side="bottom"
-                  sideOffset={8}
-                  className="w-80 max-w-[min(100vw-2rem,20rem)] border border-gray-500 bg-gray-800 p-4 text-gray-100 shadow-xl"
+            {showWindowsAppMenu && (
+              <div className="relative inline-flex">
+                <Popover
+                  open={windowsAppMenuOpen}
+                  onOpenChange={handleWindowsInstallPopoverOpenChange}
+                  modal={false}
                 >
-                  <p className="text-sm font-semibold text-white">
-                    Download for Windows
-                  </p>
-                  <p className="mt-2 text-sm">
-                    Your download should start in a new browser tab. If it does
-                    not, try again or open the
-                    {" "}
-                    <a
-                      href={getLatestReleaseUrl()}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-semibold text-gray-100 underline underline-offset-2 hover:text-white"
+                  <PopoverTrigger asChild>
+                    <Button
+                      component="button"
+                      variant="tertiary"
+                      className="flex items-center gap-2"
+                      svg={Smartphone}
+                      iconSize="md"
                     >
-                      release page
-                    </a>
-                    {" "}
-                    and choose the Windows installer from Assets.
-                  </p>
-                  <Button
-                    component="button"
-                    variant="tertiary"
-                    className="mt-3"
-                    onClick={openWindowsDownload}
+                      Install
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="start"
+                    side="bottom"
+                    sideOffset={8}
+                    className={popoverSurfaceClass}
+                    aria-label={
+                      windowsInstallPopoverView === "downloadHelp"
+                        ? "Windows download help"
+                        : undefined
+                    }
                   >
-                    Try download again
-                  </Button>
-                </PopoverContent>
-              </Popover>
+                    {windowsInstallPopoverView === "menu" ? (
+                      <>
+                        <p className="text-sm font-semibold text-white">
+                          Choose how to run WorshipSync
+                        </p>
+                        <p className="mt-1.5 text-sm text-gray-200">
+                          {canShowInstall
+                            ? "Install as an app in this browser for quick access, or download the Windows installer for the desktop app."
+                            : "Download the Windows installer for the desktop app."}
+                        </p>
+                        <div className="mt-3 flex flex-col gap-2">
+                          {canShowInstall && (
+                            <Button
+                              component="button"
+                              variant="tertiary"
+                              className="flex w-full items-center justify-center gap-2"
+                              svg={Smartphone}
+                              iconSize="md"
+                              onClick={handleInstallAppClick}
+                            >
+                              Install app
+                            </Button>
+                          )}
+                          <Button
+                            component="button"
+                            variant="tertiary"
+                            className="flex w-full items-center justify-center gap-2"
+                            svg={Download}
+                            iconSize="md"
+                            onClick={handleDownloadWindowsFromMenu}
+                          >
+                            Download Windows app
+                          </Button>
+                        </div>
+                      </>
+                    ) : (
+                      <WindowsDownloadHelp
+                        onTryAgain={handleDownloadWindowsClick}
+                        onClose={() =>
+                          handleWindowsInstallPopoverOpenChange(false)
+                        }
+                      />
+                    )}
+                  </PopoverContent>
+                </Popover>
+              </div>
             )}
-            {!isElectron() && canShowInstall && (
+            {showInstallOnlyNonWindows && (
               <Button
                 component="button"
                 variant="tertiary"
@@ -215,7 +314,7 @@ const Welcome = () => {
                 iconSize="md"
                 onClick={() => void installPwa()}
               >
-                Install app
+                Install
               </Button>
             )}
           </div>

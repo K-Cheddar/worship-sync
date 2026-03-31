@@ -8,6 +8,7 @@ import {
   createMockControllerContext,
   createMockGlobalContext,
 } from "../../test/mocks";
+import { usePwaInstallPrompt } from "../../hooks/usePwaInstallPrompt";
 
 jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
   <div>User</div>
@@ -25,7 +26,20 @@ jest.mock("../../utils/githubRelease", () => ({
   fetchLatestWindowsInstallerUrl: jest.fn(() => Promise.resolve(null)),
 }));
 
+jest.mock("../../hooks/usePwaInstallPrompt", () => ({
+  usePwaInstallPrompt: jest.fn(),
+}));
+
+const mockUsePwaInstallPrompt = jest.mocked(usePwaInstallPrompt);
+
 describe("Home", () => {
+  beforeEach(() => {
+    mockUsePwaInstallPrompt.mockReturnValue({
+      canShowInstall: false,
+      installPwa: jest.fn(),
+    });
+  });
+
   it("describes features and keeps controller and display guidance available", async () => {
     const user = userEvent.setup();
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
@@ -78,8 +92,9 @@ describe("Home", () => {
       screen.getByText(/Advanced access/, { hidden: true }),
     ).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: /^Install$/i }));
     await user.click(
-      screen.getByRole("button", { name: /Download Windows App/i }),
+      screen.getByRole("button", { name: /Download Windows app/i }),
     );
     expect(openSpy).toHaveBeenCalledWith(
       "https://github.com/K-Cheddar/worship-sync/releases/latest",
@@ -89,9 +104,7 @@ describe("Home", () => {
     expect(
       await screen.findByText(/Download for Windows/),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/new browser tab/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/new browser tab/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /release page/i })).toHaveAttribute(
       "href",
       "https://github.com/K-Cheddar/worship-sync/releases/latest",
@@ -99,6 +112,56 @@ describe("Home", () => {
     expect(
       screen.getByRole("button", { name: /Try download again/i }),
     ).toBeInTheDocument();
+    openSpy.mockRestore();
+  });
+
+  it("uses one popover with install and download when both are available", async () => {
+    const user = userEvent.setup();
+    const installPwa = jest.fn().mockResolvedValue(undefined);
+    mockUsePwaInstallPrompt.mockReturnValue({
+      canShowInstall: true,
+      installPwa,
+    });
+    const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
+    render(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /Download Windows App/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Install$/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Install$/i }));
+    expect(
+      await screen.findByText(/Choose how to run WorshipSync/),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /Download Windows app/i }),
+    );
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://github.com/K-Cheddar/worship-sync/releases/latest",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(
+      screen.getByRole("dialog", { name: /windows download help/i }),
+    ).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: /^Install$/i }));
+    await user.click(screen.getByRole("button", { name: /^Install app$/i }));
+    expect(installPwa).toHaveBeenCalled();
+
     openSpy.mockRestore();
   });
 });

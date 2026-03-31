@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 
 echo "🔍 Running pre-push checks..."
+export PATH="$PATH:./node_modules/.bin"
+
 
 # Run basic linting (allows warnings)
 cd client && npm run lint
