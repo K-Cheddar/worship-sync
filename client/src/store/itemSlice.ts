@@ -10,6 +10,7 @@ import {
   MediaType,
   SongMetadata,
   ShouldSendTo,
+  TimerInfo,
 } from "../types";
 import { createAsyncThunk } from "../hooks/reduxHooks";
 import {
@@ -194,6 +195,13 @@ export const itemSlice = createSlice({
     _updateBibleInfo: (state, action: PayloadAction<BibleInfo>) => {
       state.bibleInfo = action.payload;
       state.hasPendingUpdate = true;
+    },
+    _updateTimerInfo: (state, action: PayloadAction<TimerInfo>) => {
+      state.timerInfo = action.payload;
+      state.hasPendingUpdate = true;
+    },
+    syncLiveTimerInfo: (state, action: PayloadAction<TimerInfo>) => {
+      state.timerInfo = action.payload;
     },
     _updateFormattedSections: (
       state,
@@ -608,6 +616,8 @@ export const {
   setItemFormatting,
   _updateSlides,
   _updateBibleInfo,
+  _updateTimerInfo,
+  syncLiveTimerInfo,
   _updateFormattedSections,
   setBackground,
   setHasPendingUpdate,

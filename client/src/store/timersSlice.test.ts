@@ -16,6 +16,10 @@ const createStore = (preloadedState?: Partial<TimersSliceState>) =>
   });
 
 describe("timersSlice", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   describe("reducer only", () => {
     it("setShouldUpdateTimers sets shouldUpdateTimers", () => {
       const store = createStore();
@@ -60,6 +64,162 @@ describe("timersSlice", () => {
       const store = createStore();
       expect(store.getState().timers.timers).toEqual([]);
       expect(store.getState().timers.shouldUpdateTimers).toBe(false);
+    });
+
+    it("syncTimers applies persisted timer fields like color and display settings", () => {
+      const store = createStore({
+        timers: {
+          timers: [
+            createTimerInfo({
+              id: "t1",
+              hostId: "h1",
+              color: "#ffffff",
+              duration: 60,
+              remainingTime: 60,
+            }),
+          ],
+          shouldUpdateTimers: false,
+        },
+      });
+
+      store.dispatch(
+        timersSlice.actions.syncTimers([
+          createTimerInfo({
+            id: "t1",
+            hostId: "h1",
+            color: "#12ab34",
+            duration: 90,
+            remainingTime: 90,
+            showMinutesOnly: true,
+          }),
+        ]),
+      );
+
+      expect(store.getState().timers.timers[0]).toEqual(
+        expect.objectContaining({
+          color: "#12ab34",
+          duration: 90,
+          showMinutesOnly: true,
+          remainingTime: 90,
+        }),
+      );
+    });
+
+    it("syncTimers preserves a live running timer when older persisted data says stopped", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-04-05T12:00:00.000Z"));
+
+      const runningEndTime = new Date("2026-04-05T12:05:00.000Z").toISOString();
+      const store = createStore({
+        timers: {
+          timers: [
+            createTimerInfo({
+              id: "t1",
+              hostId: "live-host",
+              status: "running",
+              isActive: true,
+              duration: 300,
+              remainingTime: 300,
+              endTime: runningEndTime,
+              time: 500,
+            }),
+          ],
+          shouldUpdateTimers: false,
+        },
+      });
+
+      store.dispatch(
+        timersSlice.actions.syncTimers([
+          createTimerInfo({
+            id: "t1",
+            hostId: "db-host",
+            status: "stopped",
+            isActive: false,
+            duration: 300,
+            remainingTime: 300,
+            color: "#00ff88",
+          }),
+        ]),
+      );
+
+      expect(store.getState().timers.timers[0]).toEqual(
+        expect.objectContaining({
+          color: "#00ff88",
+          status: "running",
+          isActive: true,
+          endTime: runningEndTime,
+        }),
+      );
+    });
+
+    it("reconcileTimersFromRemote removes stale remote timers but keeps own timers", () => {
+      const store = createStore({
+        timers: {
+          timers: [
+            createTimerInfo({
+              id: "own-timer",
+              hostId: "host-1",
+              status: "running",
+              isActive: true,
+            }),
+            createTimerInfo({
+              id: "remote-stale",
+              hostId: "host-2",
+              status: "running",
+              isActive: true,
+            }),
+          ],
+          shouldUpdateTimers: false,
+        },
+      });
+
+      store.dispatch(
+        timersSlice.actions.reconcileTimersFromRemote({
+          hostId: "host-1",
+          timers: [
+            createTimerInfo({
+              id: "remote-fresh",
+              hostId: "host-3",
+              status: "running",
+              isActive: true,
+            }),
+          ],
+        }),
+      );
+
+      expect(store.getState().timers.timers).toEqual([
+        expect.objectContaining({ id: "own-timer", hostId: "host-1" }),
+        expect.objectContaining({ id: "remote-fresh", hostId: "host-3" }),
+      ]);
+    });
+
+    it("reconcileTimersFromDocs removes deleted item-backed timers and keeps unrelated timers", () => {
+      const store = createStore({
+        timers: {
+          timers: [
+            createTimerInfo({
+              id: "timer-doc-1",
+              hostId: "host-1",
+            }),
+            createTimerInfo({
+              id: "next-service",
+              hostId: "host-1",
+            }),
+          ],
+          shouldUpdateTimers: false,
+        },
+      });
+
+      store.dispatch(
+        timersSlice.actions.reconcileTimersFromDocs({
+          knownDocIds: ["timer-doc-1"],
+          timers: [],
+        }),
+      );
+
+      expect(store.getState().timers.timers).toEqual([
+        expect.objectContaining({ id: "next-service" }),
+      ]);
     });
   });
 });

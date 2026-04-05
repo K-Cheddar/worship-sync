@@ -119,9 +119,14 @@ const DisplayQRCodeOverlay = forwardRef<
           return;
 
         prevOverlayTimeline.current?.clear();
+        const hasCurrentQrData =
+          Boolean(qrCodeOverlayInfo.url) ||
+          Boolean(qrCodeOverlayInfo.description);
         prevOverlayTimeline.current = gsap
           .timeline()
-          .set(prevQrCodeOverlayRef.current, { opacity: opacity.current });
+          .set(prevQrCodeOverlayRef.current, {
+            opacity: hasCurrentQrData ? opacity.current : 1,
+          });
 
         if (prevQrCodeOverlayInfo.url || prevQrCodeOverlayInfo.description) {
           prevOverlayTimeline.current.to(prevQrCodeOverlayRef.current, {
@@ -133,7 +138,7 @@ const DisplayQRCodeOverlay = forwardRef<
       },
       {
         scope: prevQrCodeOverlayRef,
-        dependencies: [prevQrCodeOverlayInfo, opacity],
+        dependencies: [prevQrCodeOverlayInfo, qrCodeOverlayInfo],
       }
     );
 

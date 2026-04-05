@@ -1,4 +1,4 @@
-import { useDispatch } from "../../hooks";
+import { useDispatch, useSelector } from "../../hooks";
 import {
   clearMonitor,
   clearProjector,
@@ -17,6 +17,7 @@ import { QuickLinkType, TimerInfo } from "../../types";
 import Button from "../Button/Button";
 import DisplayWindow from "../DisplayWindow/DisplayWindow";
 import { useMemo } from "react";
+import { mergeStoredPresentationWithLiveOverlay } from "../../utils/quickLinkOverlayPresentation";
 
 type QuickLinkProps = QuickLinkType & {
   timers: TimerInfo[];
@@ -31,46 +32,61 @@ const QuickLink = ({
   timers,
 }: QuickLinkProps) => {
   const dispatch = useDispatch();
+  const overlaysList = useSelector(
+    (state) => state.undoable.present.overlays.list
+  );
+
+  const resolvedPresentation = useMemo(
+    () =>
+      mergeStoredPresentationWithLiveOverlay(presentationInfo, overlaysList),
+    [presentationInfo, overlaysList]
+  );
 
   const timerInfo = useMemo(() => {
-    return timers.find((t) => t.id === presentationInfo?.timerId);
-  }, [timers, presentationInfo]);
+    return timers.find((t) => t.id === resolvedPresentation?.timerId);
+  }, [timers, resolvedPresentation]);
 
   const handleClick = () => {
     if (action === "clear") {
       if (displayType === "stream") dispatch(clearStream());
       if (displayType === "monitor") dispatch(clearMonitor());
       if (displayType === "projector") dispatch(clearProjector());
-    } else if (presentationInfo) {
+    } else if (resolvedPresentation) {
       if (displayType === "projector") {
-        dispatch(updateProjector(presentationInfo));
+        dispatch(updateProjector(resolvedPresentation));
       } else if (displayType === "monitor") {
-        dispatch(updateMonitor(presentationInfo));
+        dispatch(updateMonitor(resolvedPresentation));
         if (
-          presentationInfo.type === "slide" ||
-          presentationInfo.type === "timer"
+          resolvedPresentation.type === "slide" ||
+          resolvedPresentation.type === "timer"
         ) {
-          dispatch(setMonitorTimerId(presentationInfo.timerId || null));
+          dispatch(setMonitorTimerId(resolvedPresentation.timerId || null));
         }
       } else if (displayType === "stream") {
-        if (presentationInfo.slide) {
-          dispatch(updateStream(presentationInfo));
+        if (resolvedPresentation.slide) {
+          dispatch(updateStream(resolvedPresentation));
         }
 
-        if (presentationInfo.bibleDisplayInfo) {
-          dispatch(updateBibleDisplayInfo(presentationInfo.bibleDisplayInfo));
-        } else if (presentationInfo.imageOverlayInfo) {
-          dispatch(updateImageOverlayInfo(presentationInfo.imageOverlayInfo));
-        } else if (presentationInfo.participantOverlayInfo) {
+        if (resolvedPresentation.bibleDisplayInfo) {
+          dispatch(
+            updateBibleDisplayInfo(resolvedPresentation.bibleDisplayInfo)
+          );
+        } else if (resolvedPresentation.imageOverlayInfo) {
+          dispatch(
+            updateImageOverlayInfo(resolvedPresentation.imageOverlayInfo)
+          );
+        } else if (resolvedPresentation.participantOverlayInfo) {
           dispatch(
             updateParticipantOverlayInfo(
-              presentationInfo.participantOverlayInfo
+              resolvedPresentation.participantOverlayInfo
             )
           );
-        } else if (presentationInfo.stbOverlayInfo) {
-          dispatch(updateStbOverlayInfo(presentationInfo.stbOverlayInfo));
-        } else if (presentationInfo.qrCodeOverlayInfo) {
-          dispatch(updateQrCodeOverlayInfo(presentationInfo.qrCodeOverlayInfo));
+        } else if (resolvedPresentation.stbOverlayInfo) {
+          dispatch(updateStbOverlayInfo(resolvedPresentation.stbOverlayInfo));
+        } else if (resolvedPresentation.qrCodeOverlayInfo) {
+          dispatch(
+            updateQrCodeOverlayInfo(resolvedPresentation.qrCodeOverlayInfo)
+          );
         }
       }
     }
@@ -81,18 +97,18 @@ const QuickLink = ({
   return (
     <li className="flex flex-col hover:bg-gray-500 cursor-pointer rounded items-center p-0 border-2 border-gray-500 h-fit">
       <Button onClick={handleClick} variant="none" padding="p-0" className="w-full h-fit flex-col">
-        {presentationInfo && (
+        {resolvedPresentation && (
           <DisplayWindow
-            boxes={presentationInfo.slide?.boxes || []}
+            boxes={resolvedPresentation.slide?.boxes || []}
             className="w-full"
             displayType={displayType}
-            participantOverlayInfo={presentationInfo.participantOverlayInfo}
-            stbOverlayInfo={presentationInfo.stbOverlayInfo}
-            qrCodeOverlayInfo={presentationInfo.qrCodeOverlayInfo}
-            imageOverlayInfo={presentationInfo.imageOverlayInfo}
-            prevBibleDisplayInfo={presentationInfo.bibleDisplayInfo}
-            bibleDisplayInfo={presentationInfo.bibleDisplayInfo}
-            formattedTextDisplayInfo={presentationInfo.formattedTextDisplayInfo}
+            participantOverlayInfo={resolvedPresentation.participantOverlayInfo}
+            stbOverlayInfo={resolvedPresentation.stbOverlayInfo}
+            qrCodeOverlayInfo={resolvedPresentation.qrCodeOverlayInfo}
+            imageOverlayInfo={resolvedPresentation.imageOverlayInfo}
+            prevBibleDisplayInfo={resolvedPresentation.bibleDisplayInfo}
+            bibleDisplayInfo={resolvedPresentation.bibleDisplayInfo}
+            formattedTextDisplayInfo={resolvedPresentation.formattedTextDisplayInfo}
             timerInfo={timerInfo}
           />
         )}

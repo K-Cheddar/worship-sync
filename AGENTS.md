@@ -241,6 +241,7 @@ Agents assisting engineers, designers, and architects must:
 - Prefer explicit, idiomatic solutions over clever abstractions.
 - Surface risks, edge cases, and failure modes clearly.
 - Keep explanations focused and free of filler.
+- When requirements, constraints, or product intent are ambiguous or incomplete, ask **brief, targeted questions** instead of guessing.
 
 Internal agents must not:
 
@@ -248,6 +249,11 @@ Internal agents must not:
 - Use marketing tone.
 - Hide complexity that engineers need to understand.
 - Generate magical or opaque solutions.
+- Assume unstated behavior, data shapes, or UX expectations to “fill in” an ambiguous request.
+
+### Ambiguity and unstated requirements
+
+All agents (internal and external) should treat unclear instructions as **blocking** until resolved or explicitly scoped. Prefer a short question over an inferred implementation. If the user must choose between valid options, present those options plainly.
 
 ### Shared style rules
 

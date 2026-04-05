@@ -106,6 +106,16 @@ describe("HLSVideoPlayer", () => {
     expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(2);
   });
 
+  it("starts native mp4 playback on metadata load and restarts when the video ends", () => {
+    render(<HLSPlayer src="https://cdn.example.com/video.mp4" />);
+
+    const video = screen.getByTestId("hls-video-player");
+    fireEvent.loadedMetadata(video);
+    fireEvent.ended(video);
+
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2);
+  });
+
   it("uses hls.js for m3u8 when supported and handles network/media fatal errors", () => {
     mockIsSupported.mockReturnValue(true);
     render(<HLSPlayer src="https://stream.example.com/live.m3u8" />);
@@ -121,6 +131,16 @@ describe("HLSVideoPlayer", () => {
 
     instance.emit("hlsError", {}, { fatal: true, type: "mediaError" });
     expect(instance.recoverMediaError).toHaveBeenCalled();
+  });
+
+  it("destroys hls.js instance on unrecoverable fatal errors", () => {
+    mockIsSupported.mockReturnValue(true);
+    render(<HLSPlayer src="https://stream.example.com/live.m3u8" />);
+
+    const instance = mockInstances[0];
+    instance.emit("hlsError", {}, { fatal: true, type: "otherFatalError" });
+
+    expect(instance.destroy).toHaveBeenCalled();
   });
 
   it("uses native HLS fallback when hls.js is unsupported but canPlayType supports it", () => {
@@ -141,5 +161,25 @@ describe("HLSVideoPlayer", () => {
     render(<HLSPlayer src="media-cache://clip.mp4" />);
     const video = screen.getByTestId("hls-video-player");
     expect(video.getAttribute("preload")).toBe("auto");
+  });
+
+  it("forwards loaded-data and error callbacks to the video element", () => {
+    const onLoadedData = jest.fn();
+    const onError = jest.fn();
+
+    render(
+      <HLSPlayer
+        src="https://cdn.example.com/video.mp4"
+        onLoadedData={onLoadedData}
+        onError={onError}
+      />,
+    );
+
+    const video = screen.getByTestId("hls-video-player");
+    fireEvent.loadedData(video);
+    fireEvent.error(video);
+
+    expect(onLoadedData).toHaveBeenCalled();
+    expect(onError).toHaveBeenCalled();
   });
 });

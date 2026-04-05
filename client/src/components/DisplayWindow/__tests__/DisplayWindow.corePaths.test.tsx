@@ -275,6 +275,28 @@ describe("DisplayWindow core paths", () => {
     expect(streamItemLayer).toHaveStyle({ opacity: "1" });
   });
 
+  it("does not remount an expired stream overlay when the preview opens later", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-03-19T12:00:00.000Z"));
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        imageOverlayInfo={{
+          id: "img-expired",
+          type: "image",
+          imageUrl: "https://img.example/expired.jpg",
+          time: Date.now() - 6000,
+          duration: 0,
+        }}
+      />,
+    );
+
+    expect(screen.queryByTestId("display-image-overlay-mock")).not.toBeInTheDocument();
+    expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+  });
+
   it("keeps the stream item layer hidden while a cleared overlay is still exiting through prev overlay state", () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-03-19T12:00:00.000Z"));

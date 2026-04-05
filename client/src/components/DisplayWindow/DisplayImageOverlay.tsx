@@ -111,11 +111,16 @@ const DisplayImageOverlay = forwardRef<
           return;
 
         prevOverlayTimeline.current?.clear();
+        const hasCurrentImageData = Boolean(imageOverlayInfo.imageUrl);
         prevOverlayTimeline.current = gsap
           .timeline()
           .set(prevImageOverlayRef.current, {
             // Prevent a brief flash when interrupting an active video overlay.
-            opacity: isPrevOverlayVideo ? 0 : currentOpacity.current,
+            opacity: isPrevOverlayVideo
+              ? 0
+              : hasCurrentImageData
+                ? currentOpacity.current
+                : 1,
           });
 
         if (prevImageOverlayInfo.imageUrl) {
@@ -126,7 +131,10 @@ const DisplayImageOverlay = forwardRef<
           });
         }
       },
-      { scope: prevImageOverlayRef, dependencies: [prevImageOverlayInfo] }
+      {
+        scope: prevImageOverlayRef,
+        dependencies: [imageOverlayInfo, prevImageOverlayInfo],
+      }
     );
 
     // Merge default styles with custom formatting

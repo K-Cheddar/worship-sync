@@ -1,9 +1,26 @@
 import { render, screen } from "@testing-library/react";
 import DisplayStreamText from "../DisplayStreamText";
 import type { Box } from "../../../types";
+import { useGSAP } from "@gsap/react";
 
 jest.mock("@gsap/react", () => ({
   useGSAP: jest.fn(),
+}));
+
+const gsapFromToMock = jest.fn();
+const timelineMock = {
+  fromTo: (...args: any[]) => {
+    gsapFromToMock(...args);
+    return timelineMock;
+  },
+  clear: jest.fn(),
+};
+
+jest.mock("gsap", () => ({
+  __esModule: true,
+  default: {
+    timeline: jest.fn(() => timelineMock),
+  },
 }));
 
 const timerDisplayMock = jest.fn(({ words }) => (
@@ -39,8 +56,14 @@ const baseBox: Box = {
 };
 
 describe("DisplayStreamText", () => {
+  const gsapCallbacks: Array<() => void> = [];
+
   beforeEach(() => {
     jest.clearAllMocks();
+    gsapCallbacks.length = 0;
+    (useGSAP as jest.Mock).mockImplementation((cb: () => void) => {
+      gsapCallbacks.push(cb);
+    });
   });
 
   it("renders normalized plain text when no timer token is present", () => {
@@ -68,5 +91,47 @@ describe("DisplayStreamText", () => {
 
     expect(screen.getByTestId("timer-display-mock")).toBeInTheDocument();
     expect(timerDisplayMock).toHaveBeenCalled();
+  });
+
+  it("uses a zero-duration text fade when the previous words match", () => {
+    render(
+      <DisplayStreamText
+        box={{ ...baseBox, words: "Same words" }}
+        prevBox={{ ...baseBox, words: "Same words" }}
+        width={50}
+        shouldAnimate
+      />,
+    );
+
+    gsapCallbacks.forEach((cb) => cb());
+
+    expect(
+      gsapFromToMock.mock.calls.some(
+        ([, , props]) => props?.opacity === 1 && props?.duration === 0,
+      ),
+    ).toBe(true);
+  });
+
+  it("fades previous text out when rendering the previous layer", () => {
+    render(
+      <DisplayStreamText
+        box={{ ...baseBox, words: "Current words" }}
+        prevBox={{ ...baseBox, words: "Older words" }}
+        width={50}
+        shouldAnimate
+        isPrev
+      />,
+    );
+
+    gsapCallbacks.forEach((cb) => cb());
+
+    expect(
+      gsapFromToMock.mock.calls.some(
+        ([, fromProps, toProps]) =>
+          fromProps?.opacity === 1 &&
+          toProps?.opacity === 0 &&
+          toProps?.duration === 0.35,
+      ),
+    ).toBe(true);
   });
 });

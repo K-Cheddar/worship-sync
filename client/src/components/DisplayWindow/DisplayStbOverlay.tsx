@@ -116,9 +116,14 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
           return;
 
         prevOverlayTimeline.current?.clear();
+        const hasCurrentStbData =
+          Boolean(stbOverlayInfo.heading) || Boolean(stbOverlayInfo.subHeading);
+        const prevOverlayStartState = hasCurrentStbData
+          ? { yPercent, opacity }
+          : { yPercent: 0, opacity: 1 };
         prevOverlayTimeline.current = gsap
           .timeline()
-          .set(prevStbOverlayRef.current, { yPercent, opacity });
+          .set(prevStbOverlayRef.current, prevOverlayStartState);
 
         if (prevStbOverlayInfo.heading || prevStbOverlayInfo.subHeading) {
           prevOverlayTimeline.current.to(prevStbOverlayRef.current, {
@@ -131,7 +136,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       },
       {
         scope: prevStbOverlayRef,
-        dependencies: [prevStbOverlayInfo, yPercent, opacity],
+        dependencies: [opacity, prevStbOverlayInfo, stbOverlayInfo, yPercent],
       }
     );
 

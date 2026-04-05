@@ -104,13 +104,15 @@ describe("Home", () => {
     expect(
       await screen.findByText(/Download for Windows/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/new browser tab/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Your download should begin automatically/),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /release page/i })).toHaveAttribute(
       "href",
       "https://github.com/K-Cheddar/worship-sync/releases/latest",
     );
     expect(
-      screen.getByRole("button", { name: /Try download again/i }),
+      screen.getByRole("button", { name: /Download again/i }),
     ).toBeInTheDocument();
     openSpy.mockRestore();
   });
