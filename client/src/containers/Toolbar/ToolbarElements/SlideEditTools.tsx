@@ -21,7 +21,6 @@ import { useDispatch, useSelector } from "../../../hooks";
 import { useLocation } from "react-router-dom";
 import {
   updateBoxProperties,
-  updateItemTimerColor,
   updateBibleFontMode,
 } from "../../../utils/formatter";
 import {
@@ -245,11 +244,9 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     timeoutRef.current = setTimeout(() => {
       setTimerColor(val);
 
-      const updatedItem = updateItemTimerColor({ timerColor: val, item });
       if (timerInfo?.id) {
         dispatch(updateTimerColor({ id: timerInfo?.id, color: val, hostId }));
       }
-      updateItem(updatedItem);
     }, 250);
   };
 

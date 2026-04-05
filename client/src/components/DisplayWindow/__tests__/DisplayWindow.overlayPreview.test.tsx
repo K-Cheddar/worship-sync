@@ -96,4 +96,40 @@ describe("DisplayWindow overlay preview mode", () => {
     const overlaysWithSoloText = screen.getAllByText("Solo");
     expect(overlaysWithSoloText.length).toBe(1);
   });
+
+  it("renders QR preview content in overlayPreviewMode", () => {
+    render(
+      <DisplayWindow
+        displayType="stream"
+        overlayPreviewMode
+        qrCodeOverlayInfo={{
+          id: "q1",
+          type: "qr-code",
+          url: "https://example.com",
+          description: "Scan here",
+          formatting: {},
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Scan here")).toBeInTheDocument();
+  });
+
+  it("renders image preview content in overlayPreviewMode", () => {
+    render(
+      <DisplayWindow
+        displayType="stream"
+        overlayPreviewMode
+        imageOverlayInfo={{
+          id: "img-1",
+          type: "image",
+          imageUrl: "https://cdn.example.com/preview.jpg",
+          name: "Preview image",
+          formatting: {},
+        }}
+      />,
+    );
+
+    expect(screen.getByAltText("Preview image")).toBeInTheDocument();
+  });
 });

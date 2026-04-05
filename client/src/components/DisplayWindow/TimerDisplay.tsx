@@ -57,6 +57,7 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   );
 
   if (!timerInfo) return <>{words.replace("{{timer}}", "")}</>;
+  const resolvedTimer = timer || timerInfo;
 
   const parts = words.split("{{timer}}");
 
@@ -69,10 +70,16 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   };
 
   const getDisplayTime = () => {
-    if (timerInfo.timerType === "countdown" && timerInfo.status === "stopped") {
-      return formatTime12Hour(timerInfo.countdownTime || "00:00");
+    if (
+      resolvedTimer.timerType === "countdown" &&
+      resolvedTimer.status === "stopped"
+    ) {
+      return formatTime12Hour(resolvedTimer.countdownTime || "00:00");
     }
-    return formatTime(timer?.remainingTime || 0, timerInfo.showMinutesOnly);
+    return formatTime(
+      resolvedTimer.remainingTime || 0,
+      resolvedTimer.showMinutesOnly
+    );
   };
 
   return (
@@ -82,8 +89,8 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
           {part}
           {index < parts.length - 1 && (
             <span
-              className="inline-flex flex-wrap"
-              style={{ color: timer?.color }}
+              className="inline-flex flex-wrap whitespace-nowrap tabular-nums"
+              style={{ color: resolvedTimer.color || "#ffffff" }}
             >
               {getDisplayTime()}
             </span>

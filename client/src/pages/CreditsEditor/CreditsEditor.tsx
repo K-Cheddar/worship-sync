@@ -7,6 +7,7 @@ import {
   Check,
   History,
   Home,
+  Layers,
   Menu as MenuIcon,
   RefreshCcw,
   Settings,
@@ -477,6 +478,15 @@ const CreditsEditor = () => {
         </div>
       ),
       onClick: () => navigate("/"),
+    },
+    {
+      element: (
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={Layers} color="#d1d5dc" />
+          Overlay Controller
+        </div>
+      ),
+      to: "/overlay-controller",
     },
     {
       element: (

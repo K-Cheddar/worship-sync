@@ -66,6 +66,7 @@ const DisplayParticipantOverlay = forwardRef<
       prevParticipantOverlayInfo.title,
       prevParticipantOverlayInfo.event,
     ].filter((item): item is string => Boolean(item));
+    const hasCurrentParticipantData = participantData.length > 0;
 
     useGSAP(
       () => {
@@ -207,20 +208,38 @@ const DisplayParticipantOverlay = forwardRef<
 
         prevOverlayTimeline.current?.clear();
 
+        let prevOverlayStartState: {
+          opacity: number;
+          xPercent: number;
+        };
+        if (hasCurrentParticipantData) {
+          if (isCenter) {
+            prevOverlayStartState = {
+              opacity: containerOpacity.current,
+              xPercent: -50,
+            };
+          } else {
+            prevOverlayStartState = {
+              xPercent: containerXPercent.current,
+              opacity: containerOpacity.current,
+            };
+          }
+        } else if (prevIsCenter) {
+          prevOverlayStartState = {
+            opacity: 1,
+            xPercent: -50,
+          };
+        } else {
+          prevOverlayStartState = {
+            xPercent: 0,
+            opacity: 1,
+          };
+        }
+
         // Set previous overlay to match current animation state
         prevOverlayTimeline.current = gsap
           .timeline()
-          .set(prevParticipantOverlayRef.current, {
-            ...(isCenter
-              ? {
-                  opacity: containerOpacity.current,
-                  xPercent: -50,
-                }
-              : {
-                  xPercent: containerXPercent.current,
-                  opacity: containerOpacity.current,
-                }),
-          });
+          .set(prevParticipantOverlayRef.current, prevOverlayStartState);
 
         if (prevParticipantData.length > 0) {
           prevOverlayTimeline.current = gsap
@@ -250,7 +269,13 @@ const DisplayParticipantOverlay = forwardRef<
       },
       {
         scope: prevParticipantOverlayRef,
-        dependencies: [prevParticipantOverlayInfo, participantOverlayInfo],
+        dependencies: [
+          hasCurrentParticipantData,
+          isCenter,
+          participantOverlayInfo,
+          prevIsCenter,
+          prevParticipantOverlayInfo,
+        ],
       }
     );
 

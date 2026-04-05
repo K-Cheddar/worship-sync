@@ -12,6 +12,126 @@ const initialState: TimersState = {
   shouldUpdateTimers: false,
 };
 
+const buildBaseTimer = (
+  timerInfo: Partial<TimerInfo>,
+  existingTimer?: TimerInfo
+): TimerInfo => ({
+  hostId: timerInfo.hostId ?? existingTimer?.hostId ?? "",
+  id: timerInfo.id ?? existingTimer?.id ?? "",
+  name: timerInfo.name ?? existingTimer?.name ?? "",
+  color: timerInfo.color ?? existingTimer?.color,
+  duration: timerInfo.duration ?? existingTimer?.duration,
+  countdownTime:
+    timerInfo.countdownTime ?? existingTimer?.countdownTime ?? "00:00",
+  timerType: timerInfo.timerType ?? existingTimer?.timerType ?? "timer",
+  status: timerInfo.status ?? existingTimer?.status ?? "stopped",
+  isActive:
+    timerInfo.status !== undefined
+      ? timerInfo.status === "running"
+      : (existingTimer?.isActive ?? false),
+  remainingTime:
+    timerInfo.remainingTime ??
+    existingTimer?.remainingTime ??
+    timerInfo.duration ??
+    existingTimer?.duration ??
+    0,
+  startedAt: timerInfo.startedAt ?? existingTimer?.startedAt,
+  endTime: timerInfo.endTime ?? existingTimer?.endTime,
+  showMinutesOnly:
+    timerInfo.showMinutesOnly ?? existingTimer?.showMinutesOnly ?? false,
+  time: timerInfo.time ?? existingTimer?.time,
+});
+
+const finalizeTimerState = (
+  timerInfo: TimerInfo,
+  existingTimer?: TimerInfo
+): TimerInfo => {
+  const previousStatus = existingTimer?.status;
+  const hasExplicitEndTime = timerInfo.endTime !== undefined;
+  const isStarting =
+    timerInfo.status === "running" &&
+    previousStatus === "stopped" &&
+    !hasExplicitEndTime;
+  const isResuming =
+    timerInfo.status === "running" &&
+    previousStatus === "paused" &&
+    !hasExplicitEndTime;
+
+  const endTime = calculateEndTime(
+    timerInfo,
+    isStarting,
+    isResuming,
+    existingTimer
+  );
+
+  return {
+    ...timerInfo,
+    isActive: timerInfo.status === "running",
+    endTime,
+    remainingTime: calculateRemainingTime({
+      timerInfo: { ...timerInfo, endTime },
+      previousStatus,
+    }),
+  };
+};
+
+const shouldPreserveExistingRuntime = (
+  existingTimer: TimerInfo | undefined,
+  timerInfo: Partial<TimerInfo>
+) => {
+  if (!existingTimer) return false;
+
+  const existingTime = existingTimer.time ?? -1;
+  const incomingTime = timerInfo.time ?? -1;
+  if (existingTime > incomingTime) return true;
+
+  return (
+    timerInfo.time === undefined &&
+    existingTimer.status !== "stopped" &&
+    timerInfo.status === "stopped"
+  );
+};
+
+const hydrateTimer = (
+  timerInfo: Partial<TimerInfo>,
+  existingTimer?: TimerInfo
+): TimerInfo => {
+  const preserveExistingRuntime = shouldPreserveExistingRuntime(
+    existingTimer,
+    timerInfo
+  );
+  const runtimeSource = preserveExistingRuntime ? existingTimer : timerInfo;
+
+  return finalizeTimerState(
+    buildBaseTimer(
+      {
+        ...timerInfo,
+        status: runtimeSource?.status ?? timerInfo.status,
+        remainingTime: runtimeSource?.remainingTime ?? timerInfo.remainingTime,
+        startedAt: runtimeSource?.startedAt ?? timerInfo.startedAt,
+        endTime: runtimeSource?.endTime ?? timerInfo.endTime,
+      },
+      existingTimer
+    ),
+    existingTimer
+  );
+};
+
+const applyTimerUpdate = (
+  timerInfo: Partial<TimerInfo>,
+  existingTimer: TimerInfo
+) =>
+  finalizeTimerState(
+    buildBaseTimer(
+      {
+        ...existingTimer,
+        ...timerInfo,
+      },
+      existingTimer
+    ),
+    existingTimer
+  );
+
 export const timersSlice = createSlice({
   name: "timers",
   initialState,
@@ -26,46 +146,9 @@ export const timersSlice = createSlice({
       );
 
       const newTimers = action.payload.map((timerInfo) => {
-        const existingTimer = state.timers.find(
-          (timer) => timer.id === timerInfo?.id
-        );
         if (!timerInfo) return null;
-
-        const isStarting =
-          timerInfo.status === "running" &&
-          (!existingTimer || existingTimer.status === "stopped");
-        const isResuming =
-          timerInfo.status === "running" && existingTimer?.status === "paused";
-
-        const endTime = calculateEndTime(
-          timerInfo,
-          isStarting,
-          isResuming,
-          existingTimer
-        );
-
-        // Preserve existing timer state if available
-        const timerState = existingTimer || {
-          hostId: timerInfo.hostId,
-          id: timerInfo.id,
-          name: timerInfo.name,
-          timerType: timerInfo.timerType || "timer",
-          status: timerInfo.status || "stopped",
-          isActive: timerInfo.status === "running",
-          countdownTime: timerInfo.countdownTime || "00:00",
-          duration: timerInfo.duration || 0,
-          startedAt: timerInfo.startedAt,
-          endTime,
-          showMinutesOnly: timerInfo.showMinutesOnly || false,
-        };
-
-        return {
-          ...timerState,
-          remainingTime: calculateRemainingTime({
-            timerInfo: { ...timerInfo, endTime },
-            previousStatus: existingTimer?.status,
-          }),
-        };
+        const existingTimer = existingTimersMap.get(timerInfo.id);
+        return hydrateTimer(timerInfo, existingTimer);
       });
 
       // Update or add new timers
@@ -78,17 +161,65 @@ export const timersSlice = createSlice({
       // Convert map back to array
       state.timers = Array.from(existingTimersMap.values());
     },
-    syncTimersFromRemote: (state, action: PayloadAction<TimerInfo[]>) => {
+    reconcileTimersFromRemote: (
+      state,
+      action: PayloadAction<{ timers: TimerInfo[]; hostId: string }>
+    ) => {
+      const { timers: remoteTimers, hostId } = action.payload;
       const existingTimersMap = new Map(
         state.timers.map((timer) => [timer.id, timer])
       );
-      action.payload.forEach((timerInfo) => {
-        existingTimersMap.set(timerInfo.id, timerInfo);
+      const nextTimers = state.timers.filter((timer) => timer.hostId === hostId);
+
+      remoteTimers.forEach((timerInfo) => {
+        const existingTimer = existingTimersMap.get(timerInfo.id);
+        nextTimers.push(hydrateTimer(timerInfo, existingTimer));
       });
-      state.timers = Array.from(existingTimersMap.values());
+
+      state.timers = nextTimers;
+    },
+    reconcileTimersFromDocs: (
+      state,
+      action: PayloadAction<{
+        timers: TimerInfo[];
+        knownDocIds: string[];
+      }>
+    ) => {
+      const { timers, knownDocIds } = action.payload;
+      const docIds = new Set(timers.map((timer) => timer.id));
+      const knownDocIdSet = new Set(knownDocIds);
+      const existingTimersMap = new Map(
+        state.timers.map((timer) => [timer.id, timer])
+      );
+
+      const nextTimers = state.timers.filter(
+        (timer) => !knownDocIdSet.has(timer.id) || docIds.has(timer.id)
+      );
+      const nextTimersMap = new Map(nextTimers.map((timer) => [timer.id, timer]));
+
+      timers.forEach((timerInfo) => {
+        const existingTimer =
+          nextTimersMap.get(timerInfo.id) || existingTimersMap.get(timerInfo.id);
+        nextTimersMap.set(timerInfo.id, hydrateTimer(timerInfo, existingTimer));
+      });
+
+      state.timers = Array.from(nextTimersMap.values());
     },
     addTimer: (state, action: PayloadAction<TimerInfo>) => {
-      state.timers.push(action.payload);
+      const timerInfo = {
+        ...action.payload,
+        time: action.payload.time ?? Date.now(),
+      };
+      const existingTimer = state.timers.find((timer) => timer.id === timerInfo.id);
+      const nextTimer = hydrateTimer(timerInfo, existingTimer);
+
+      if (existingTimer) {
+        state.timers = state.timers.map((timer) =>
+          timer.id === nextTimer.id ? nextTimer : timer
+        );
+      } else {
+        state.timers.push(nextTimer);
+      }
       state.shouldUpdateTimers = true;
     },
     updateTimer: (
@@ -98,34 +229,13 @@ export const timersSlice = createSlice({
       const { id, timerInfo } = action.payload;
       state.timers = state.timers.map((timer) => {
         if (timer.id === id) {
-          const isStarting =
-            timerInfo.status === "running" && timer.status === "stopped";
-          const isResuming =
-            timerInfo.status === "running" && timer.status === "paused";
-
-          const endTime = calculateEndTime(
-            timerInfo,
-            isStarting,
-            isResuming,
+          return applyTimerUpdate(
+            {
+              ...timerInfo,
+              time: Date.now(),
+            },
             timer
           );
-
-          return {
-            ...timer,
-            hostId: timerInfo.hostId,
-            status: timerInfo.status,
-            isActive: timerInfo.status === "running",
-            countdownTime: timerInfo.countdownTime,
-            duration: timerInfo.duration,
-            timerType: timerInfo.timerType,
-            startedAt: timerInfo.startedAt,
-            endTime,
-            showMinutesOnly: timerInfo.showMinutesOnly,
-            remainingTime: calculateRemainingTime({
-              timerInfo: { ...timerInfo, endTime },
-              previousStatus: timer.status,
-            }),
-          };
         }
         return timer;
       });
@@ -138,7 +248,15 @@ export const timersSlice = createSlice({
       const { id, color, hostId } = action.payload;
       state.timers = state.timers.map((timer) => {
         if (timer.id === id) {
-          return { ...timer, color, hostId: hostId || timer.hostId };
+          return applyTimerUpdate(
+            {
+              ...timer,
+              color,
+              hostId: hostId || timer.hostId,
+              time: Date.now(),
+            },
+            timer
+          );
         }
         return timer;
       });
@@ -149,14 +267,7 @@ export const timersSlice = createSlice({
       const { id, ...timerInfo } = action.payload;
       state.timers = state.timers.map((timer) => {
         if (timer.id === id) {
-          return {
-            ...timer,
-            ...timerInfo,
-            remainingTime: calculateRemainingTime({
-              timerInfo,
-              previousStatus: timer.status,
-            }),
-          };
+          return hydrateTimer({ id, ...timerInfo }, timer);
         }
         return timer;
       });
@@ -189,7 +300,8 @@ export const timersSlice = createSlice({
 
 export const {
   syncTimers,
-  syncTimersFromRemote,
+  reconcileTimersFromRemote,
+  reconcileTimersFromDocs,
   addTimer,
   updateTimer,
   updateTimerFromRemote,
