@@ -97,32 +97,39 @@ export const itemListSlice = createSlice({
       );
       state.hasPendingUpdate = true;
     },
-    addItemToItemList: (state, action: PayloadAction<ServiceItem>) => {
-      const newItem = {
-        ...action.payload,
-        listId: action.payload.listId || generateRandomId(),
-      };
-      const anchorIndex =
-        state.insertPointIndex >= 0
-          ? state.insertPointIndex
-          : state.list.findIndex(
-              (e) => e.listId === state.selectedItemListId,
-            );
-      let insertAt: number;
-      if (anchorIndex >= 0) {
-        insertAt =
-          newItem.type === "heading" ? anchorIndex : anchorIndex + 1;
-      } else {
-        insertAt =
-          newItem.type === "heading" ? 0 : state.list.length;
-      }
-      const index = Math.max(0, Math.min(insertAt, state.list.length));
-      state.list.splice(index, 0, newItem);
-      if (newItem.type !== "heading") {
-        state.selectedItemListId = newItem.listId;
-        state.insertPointIndex = index;
-      }
-      state.hasPendingUpdate = true;
+    addItemToItemList: {
+      prepare: (item: ServiceItem) => ({
+        payload: {
+          ...item,
+          // Always assign a new listId: each outline row is a distinct instance
+          // even when the same underlying item (_id) appears more than once.
+          listId: generateRandomId(),
+        },
+      }),
+      reducer: (state, action: PayloadAction<ServiceItem>) => {
+        const newItem = action.payload;
+        const anchorIndex =
+          state.insertPointIndex >= 0
+            ? state.insertPointIndex
+            : state.list.findIndex(
+                (e) => e.listId === state.selectedItemListId,
+              );
+        let insertAt: number;
+        if (anchorIndex >= 0) {
+          insertAt =
+            newItem.type === "heading" ? anchorIndex : anchorIndex + 1;
+        } else {
+          insertAt =
+            newItem.type === "heading" ? 0 : state.list.length;
+        }
+        const index = Math.max(0, Math.min(insertAt, state.list.length));
+        state.list.splice(index, 0, newItem);
+        if (newItem.type !== "heading") {
+          state.selectedItemListId = newItem.listId;
+          state.insertPointIndex = index;
+        }
+        state.hasPendingUpdate = true;
+      },
     },
     setIsInitialized: (state, action: PayloadAction<boolean>) => {
       state.isInitialized = action.payload;

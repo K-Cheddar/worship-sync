@@ -1,4 +1,5 @@
 import {
+  createManualSongMetadata,
   createSongMetadataFromLrclib,
   extractPlainLyricsFromSyncedLyrics,
   normalizeLrclibTrack,
@@ -17,6 +18,7 @@ describe("lrclib utils", () => {
     });
 
     expect(result).toEqual({
+      source: "lrclib",
       lrclibId: 15,
       trackName: "Amazing Grace",
       artistName: "John Newton",
@@ -36,9 +38,29 @@ describe("lrclib utils", () => {
     ).toBe("Line 1\nLine 2");
   });
 
+  it("creates manual song metadata for operator-entered details", () => {
+    expect(
+      createManualSongMetadata(
+        {
+          trackName: "  Holy Holy Holy ",
+          artistName: " Reginald Heber ",
+          albumName: " Hymns ",
+        },
+        "2026-04-05T12:00:00.000Z",
+      ),
+    ).toEqual({
+      source: "manual",
+      trackName: "Holy Holy Holy",
+      artistName: "Reginald Heber",
+      albumName: "Hymns",
+      importedAt: "2026-04-05T12:00:00.000Z",
+    });
+  });
+
   it("creates persisted song metadata with source and import timestamp", () => {
     const metadata = createSongMetadataFromLrclib(
       {
+        source: "lrclib",
         lrclibId: 20,
         trackName: "Song",
         artistName: "Artist",
@@ -61,6 +83,7 @@ describe("lrclib utils", () => {
 
   it("accepts tracks that are already normalized by the server", () => {
     const result = normalizeLrclibTrack({
+      source: "lrclib",
       lrclibId: 3937704,
       trackName: "Order My Steps",
       artistName: "GMWA Women of Worship",
@@ -72,6 +95,7 @@ describe("lrclib utils", () => {
     });
 
     expect(result).toEqual({
+      source: "lrclib",
       lrclibId: 3937704,
       trackName: "Order My Steps",
       artistName: "GMWA Women of Worship",
@@ -80,6 +104,28 @@ describe("lrclib utils", () => {
       instrumental: false,
       plainLyrics: "Order my steps",
       syncedLyrics: "[00:01.06] Order my steps",
+    });
+  });
+
+  it("normalizes Genius-backed track payloads", () => {
+    const result = normalizeLrclibTrack({
+      source: "genius",
+      geniusId: 99,
+      geniusUrl: "https://genius.com/example-song-lyrics",
+      trackName: "Firm Foundation",
+      artistName: "Maverick City Music",
+      plainLyrics: "Christ is my firm foundation",
+      syncedLyrics: null,
+    });
+
+    expect(result).toEqual({
+      source: "genius",
+      geniusId: 99,
+      geniusUrl: "https://genius.com/example-song-lyrics",
+      trackName: "Firm Foundation",
+      artistName: "Maverick City Music",
+      plainLyrics: "Christ is my firm foundation",
+      syncedLyrics: null,
     });
   });
 });

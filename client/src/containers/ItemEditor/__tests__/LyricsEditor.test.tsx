@@ -240,10 +240,12 @@ describe("LyricsEditor", () => {
     });
   });
 
-  it("imports LRCLIB lyrics into a new arrangement and stages song metadata until save", async () => {
+  it("imports Genius lyrics into a new arrangement and stages song metadata until save", async () => {
     (resolveLrclibImport as jest.Mock).mockResolvedValue({
       match: {
-        lrclibId: 44,
+        source: "genius",
+        geniusId: 44,
+        geniusUrl: "https://genius.com/sample-song-lyrics",
         trackName: "Sample Song",
         artistName: "Choir",
         albumName: "Live",
@@ -276,9 +278,7 @@ describe("LyricsEditor", () => {
 
     render(<LyricsEditor />);
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
 
     expect(resolveLrclibImport).toHaveBeenCalledWith({
       trackName: "Sample Song",
@@ -291,15 +291,15 @@ describe("LyricsEditor", () => {
     });
 
     expect(screen.getAllByTestId("arrangement-item")[1]).toHaveTextContent(
-      "LRCLIB Import",
+      "Lyrics import",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(mockSetSongMetadata).toHaveBeenCalledWith(
       expect.objectContaining({
-        source: "lrclib",
-        lrclibId: 44,
+        source: "genius",
+        geniusId: 44,
         artistName: "Choir",
       }),
     );

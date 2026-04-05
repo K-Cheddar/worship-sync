@@ -11,6 +11,10 @@ import itemListReducer, {
 } from "./itemListSlice";
 import { createServiceItem } from "../test/fixtures";
 import type { ServiceItem } from "../types";
+import generateRandomId from "../utils/generateRandomId";
+
+jest.mock("../utils/generateRandomId");
+const mockGenerateRandomId = jest.mocked(generateRandomId);
 
 type ItemListState = {
   list: ServiceItem[];
@@ -24,11 +28,6 @@ type ItemListState = {
 
 type ItemListSliceState = { itemList: ItemListState };
 
-jest.mock("../utils/generateRandomId", () => ({
-  __esModule: true,
-  default: () => "fixed-list-id",
-}));
-
 const createStore = (preloadedState?: Partial<ItemListSliceState>) =>
   configureStore({
     reducer: { itemList: itemListReducer },
@@ -40,6 +39,11 @@ const createStore = (preloadedState?: Partial<ItemListSliceState>) =>
 
 describe("itemListSlice", () => {
   describe("reducer only", () => {
+    beforeEach(() => {
+      let n = 0;
+      mockGenerateRandomId.mockImplementation(() => `list-id-${++n}`);
+    });
+
     it("initiateItemList sets list and isInitialized", () => {
       const store = createStore();
       const items: ServiceItem[] = [
@@ -53,7 +57,7 @@ describe("itemListSlice", () => {
       const state = store.getState().itemList;
       expect(state.list).toHaveLength(2);
       expect(state.isInitialized).toBe(true);
-      expect(state.list[1].listId).toBe("fixed-list-id");
+      expect(state.list[1].listId).toBe("list-id-1");
     });
 
     it("updateItemList replaces list and sets hasPendingUpdate", () => {
@@ -153,7 +157,7 @@ describe("itemListSlice", () => {
       const state = store.getState().itemList;
       expect(state.list).toHaveLength(3);
       expect(state.list[1].name).toBe("New");
-      expect(state.selectedItemListId).toBe("fixed-list-id");
+      expect(state.selectedItemListId).toBe("list-id-1");
       expect(state.insertPointIndex).toBe(1);
     });
 
@@ -189,7 +193,7 @@ describe("itemListSlice", () => {
       expect(state.list[2].name).toBe("Song");
     });
 
-    it("addItemToItemList preserves a provided listId", () => {
+    it("addItemToItemList always assigns a fresh listId (ignores payload listId)", () => {
       const store = createStore({
         itemList: {
           list: [
@@ -206,12 +210,42 @@ describe("itemListSlice", () => {
       const newItem = createServiceItem({
         name: "New",
         _id: "new",
-        listId: "preserved-list-id",
+        listId: "stale-list-id-from-payload",
       });
       store.dispatch(addItemToItemList(newItem));
       const state = store.getState().itemList;
-      expect(state.list[1].listId).toBe("preserved-list-id");
-      expect(state.selectedItemListId).toBe("preserved-list-id");
+      expect(state.list[1].listId).toBe("list-id-1");
+      expect(state.list[1].listId).not.toBe("stale-list-id-from-payload");
+      expect(state.selectedItemListId).toBe("list-id-1");
+    });
+
+    it("addItemToItemList gives distinct listIds when adding the same outline payload twice", () => {
+      const store = createStore({
+        itemList: {
+          list: [
+            createServiceItem({ name: "Intro", _id: "intro", listId: "l0" }),
+          ],
+          isLoading: false,
+          selectedItemListId: "l0",
+          insertPointIndex: 0,
+          hasPendingUpdate: false,
+          initialItems: [],
+          isInitialized: true,
+        },
+      });
+      const duplicateAdd = createServiceItem({
+        name: "Same Song",
+        _id: "song-1",
+        type: "song",
+        listId: "duplicate-if-reused",
+      });
+      store.dispatch(addItemToItemList(duplicateAdd));
+      store.dispatch(addItemToItemList(duplicateAdd));
+      const state = store.getState().itemList;
+      expect(state.list).toHaveLength(3);
+      expect(state.list[1].listId).toBe("list-id-1");
+      expect(state.list[2].listId).toBe("list-id-2");
+      expect(state.list[1].listId).not.toBe(state.list[2].listId);
     });
 
     it("addItemToItemList adds existing song to outline", () => {

@@ -40,9 +40,41 @@ describe("lrclib api", () => {
     );
     expect(result).toEqual({
       lrclibId: 7,
+      source: "lrclib",
       trackName: "Amazing Grace",
       artistName: "Traditional",
       plainLyrics: "Amazing grace",
+      syncedLyrics: null,
+    });
+  });
+
+  it("accepts Genius-backed exact matches from the shared import endpoint", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        source: "genius",
+        geniusId: 51,
+        geniusUrl: "https://genius.com/example-song-lyrics",
+        trackName: "Firm Foundation",
+        artistName: "Maverick City Music",
+        plainLyrics: "Christ is my firm foundation",
+        syncedLyrics: null,
+      }),
+    });
+
+    const result = await getLrclibTrack({
+      trackName: "Firm Foundation",
+      artistName: "Maverick City Music",
+    });
+
+    expect(result).toEqual({
+      source: "genius",
+      geniusId: 51,
+      geniusUrl: "https://genius.com/example-song-lyrics",
+      trackName: "Firm Foundation",
+      artistName: "Maverick City Music",
+      plainLyrics: "Christ is my firm foundation",
       syncedLyrics: null,
     });
   });
@@ -77,6 +109,7 @@ describe("lrclib api", () => {
       candidates: [
         {
           lrclibId: 11,
+          source: "lrclib",
           trackName: "Amazing Grace",
           artistName: "Choir",
           plainLyrics: "Amazing grace",
@@ -112,6 +145,7 @@ describe("lrclib api", () => {
       candidates: [
         {
           lrclibId: 12,
+          source: "lrclib",
           trackName: "Order My Steps",
           artistName: "Brooklyn Tabernacle Choir",
           plainLyrics: "Order my steps",
@@ -133,6 +167,66 @@ describe("lrclib api", () => {
     expect(result).toEqual([]);
   });
 
+  it("normalizes the candidate list returned by the server", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [
+        {
+          id: 20,
+          track_name: "Clean Song",
+          artist_name: "Choir",
+          plainLyrics: "Grace and peace",
+          syncedLyrics: null,
+        },
+        {
+          id: 21,
+          track_name: "Explicit Song",
+          artist_name: "Artist",
+          explicit: true,
+          plainLyrics: "clean words",
+          syncedLyrics: null,
+        },
+        {
+          id: 22,
+          track_name: "Rude Song",
+          artist_name: "Artist",
+          plainLyrics: "This lyric says fuck",
+          syncedLyrics: null,
+        },
+      ],
+    });
+
+    const result = await searchLrclibTracks({ trackName: "Song" });
+
+    expect(result).toEqual([
+      {
+        lrclibId: 20,
+        source: "lrclib",
+        trackName: "Clean Song",
+        artistName: "Choir",
+        plainLyrics: "Grace and peace",
+        syncedLyrics: null,
+      },
+      {
+        lrclibId: 21,
+        source: "lrclib",
+        trackName: "Explicit Song",
+        artistName: "Artist",
+        plainLyrics: "clean words",
+        syncedLyrics: null,
+      },
+      {
+        lrclibId: 22,
+        source: "lrclib",
+        trackName: "Rude Song",
+        artistName: "Artist",
+        plainLyrics: "This lyric says fuck",
+        syncedLyrics: null,
+      },
+    ]);
+  });
+
   it("throws when LRCLIB search returns a server error", async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: false,
@@ -141,6 +235,6 @@ describe("lrclib api", () => {
 
     await expect(
       searchLrclibTracks({ trackName: "Amazing Grace" }),
-    ).rejects.toThrow("Could not search LRCLIB.");
+    ).rejects.toThrow("Could not search for lyrics.");
   });
 });

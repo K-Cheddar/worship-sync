@@ -54,6 +54,10 @@ jest.mock("../../../store/itemSlice", () => ({
     payload: value,
   })),
   setIsEditMode: (value: boolean) => mockSetIsEditMode(value),
+  setSongMetadata: jest.fn((payload: unknown) => ({
+    type: "item/setSongMetadata",
+    payload,
+  })),
   updateArrangements: (payload: any) => mockUpdateArrangements(payload),
   updateSlides: (payload: any) => mockUpdateSlides(payload),
   setName: jest.fn((payload: any) => ({ type: "item/setName", payload })),
@@ -306,6 +310,24 @@ describe("SlideEditor", () => {
       type: "item/setIsEditMode",
       payload: true,
     });
+  });
+
+  it("opens song details modal when song name edit button is clicked", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            type: "song",
+            arrangements: [{ name: "Default", slides: [], formattedLyrics: [] }],
+          },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" />);
+    fireEvent.click(screen.getByRole("button", { name: /song details/i }));
+
+    expect(screen.getByRole("dialog", { name: /song details/i })).toBeInTheDocument();
   });
 
   it("offers toast actions for remote updates outside lyrics edit mode", async () => {

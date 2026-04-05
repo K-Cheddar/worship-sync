@@ -1,7 +1,5 @@
 import { useSelector, useDispatch } from "../../hooks";
-import { X } from "lucide-react";
-import { ZoomIn } from "lucide-react";
-import { ZoomOut } from "lucide-react";
+import { Import, X, ZoomIn, ZoomOut } from "lucide-react";
 
 import Button from "../../components/Button/Button";
 import {
@@ -53,6 +51,11 @@ import { RootState } from "../../store/store";
 import { ButtonGroup, ButtonGroupItem } from "../../components/Button";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import Modal from "../../components/Modal/Modal";
+import {
+  LyricsImportQuerySummary,
+  buildLyricsImportQueryEntries,
+} from "../../components/LyricsImportQuerySummary/LyricsImportQuerySummary";
+import { LyricsImportLyricsPreview } from "../../components/LyricsImportLyricsPreview/LyricsImportLyricsPreview";
 import { ToastContext } from "../../context/toastContext";
 import { createNewSlide, createBox } from "../../utils/slideCreation";
 import cn from "classnames";
@@ -406,7 +409,7 @@ const LyricsEditor = () => {
     });
 
     const arrangementName = makeUniqueArrangementName(
-      "LRCLIB Import",
+      "Lyrics import",
       localArrangements.map((arrangement) => arrangement.name),
     );
     const nextArrangementIndex = localArrangements.length;
@@ -467,7 +470,9 @@ const LyricsEditor = () => {
       }
 
       if (result.candidates.length === 0) {
-        setLrclibError("No LRCLIB matches were found for that song.");
+        setLrclibError(
+          "No songs matched the title you entered, and artist and album when you added them.",
+        );
         return;
       }
 
@@ -775,39 +780,50 @@ const LyricsEditor = () => {
         <Modal
           isOpen={isCandidateModalOpen}
           onClose={() => setIsCandidateModalOpen(false)}
-          title="Choose LRCLIB Match"
+          title="Choose song"
           size="lg"
         >
           <div className="flex flex-col gap-3">
-            <p className="text-sm text-gray-300">
-              Select the song entry to import as a new arrangement.
+            <LyricsImportQuerySummary
+              entries={buildLyricsImportQueryEntries({
+                primaryLabel: "Title",
+                primaryValue: lrclibTrackName,
+                artist: lrclibArtistName,
+                album: lrclibAlbumName,
+              })}
+            />
+            <p className="text-sm text-gray-200">
+              Select a result below to import as a new arrangement.
             </p>
             <ul className="flex flex-col gap-2">
               {lrclibCandidates.map((candidate) => (
                 <li
-                  key={`${candidate.lrclibId}-${candidate.trackName}-${candidate.artistName}`}
-                  className="rounded-md border border-gray-600 bg-gray-900 p-3"
+                  key={`${
+                    candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName
+                  }-${candidate.artistName}`}
+                  className="rounded-md border border-slate-500/90 bg-slate-800/95 p-3"
                 >
                   <div className="flex flex-col gap-1">
-                    <p className="font-semibold text-white">
-                      {candidate.trackName}
-                    </p>
-                    <p className="text-sm text-gray-300">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="font-semibold text-gray-50">
+                        {candidate.trackName}
+                      </p>
+                      <span className="shrink-0 rounded-full border border-cyan-400/60 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-100">
+                        {candidate.source === "genius" ? "Genius" : "LRCLIB"}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-200">
                       {candidate.artistName}
                       {candidate.albumName ? ` • ${candidate.albumName}` : ""}
                     </p>
-                    <div className="mt-2 rounded-md bg-gray-800 p-2">
-                      <p className="mb-1 text-xs font-semibold text-gray-300">
-                        Lyrics Preview
-                      </p>
-                      <div className="max-h-40 overflow-y-auto whitespace-pre-wrap text-xs text-gray-200 scrollbar-variable">
-                        {getImportableLyricsFromTrack(candidate) || "No lyrics preview available."}
-                      </div>
-                    </div>
+                    <LyricsImportLyricsPreview
+                      lyricsText={getImportableLyricsFromTrack(candidate)}
+                    />
                     <div className="pt-2">
                       <Button
                         variant="cta"
                         className="justify-center"
+                        svg={Import}
                         onClick={() => applyLrclibImport(candidate)}
                       >
                         Use Lyrics
@@ -863,7 +879,7 @@ const LyricsEditor = () => {
                 Format Lyrics
               </Button>
               <div className="mt-4 rounded-md border border-gray-600 bg-gray-900 p-2">
-                <h3 className="text-sm font-semibold text-center">LRCLIB Import</h3>
+                <h3 className="text-sm font-semibold text-center">Import lyrics</h3>
                 <Input
                   value={lrclibTrackName}
                   onChange={(value) => setLrclibTrackName(value as string)}
@@ -875,7 +891,7 @@ const LyricsEditor = () => {
                 <Input
                   value={lrclibArtistName}
                   onChange={(value) => setLrclibArtistName(value as string)}
-                  label="Artist"
+                  label="Artist (optional)"
                   className="mt-2"
                   inputTextSize="text-xs"
                   data-ignore-undo="true"
@@ -883,13 +899,15 @@ const LyricsEditor = () => {
                 <Input
                   value={lrclibAlbumName}
                   onChange={(value) => setLrclibAlbumName(value as string)}
-                  label="Album"
+                  label="Album (optional)"
                   className="mt-2"
                   inputTextSize="text-xs"
                   data-ignore-undo="true"
                 />
                 <Button
                   className="text-xs mt-2 w-full justify-center"
+                  svg={Import}
+                  iconSize="sm"
                   onClick={importLyricsFromLrclib}
                   disabled={!lrclibTrackName.trim() || isImportingLyrics}
                 >

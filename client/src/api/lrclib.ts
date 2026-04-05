@@ -60,10 +60,11 @@ export const getLrclibTrack = async (
 
   if (response.status === 400 || response.status === 404) return null;
   if (!response.ok) {
-    throw new Error("Could not fetch lyrics from LRCLIB.");
+    throw new Error("Could not fetch lyrics.");
   }
 
-  return normalizeLrclibTrack(await response.json());
+  const track = await response.json();
+  return normalizeLrclibTrack(track);
 };
 
 export const searchLrclibTracks = async (
@@ -72,7 +73,7 @@ export const searchLrclibTracks = async (
   const response = await fetchLrclibEndpoint("search", query);
 
   if (!response.ok) {
-    throw new Error("Could not search LRCLIB.");
+    throw new Error("Could not search for lyrics.");
   }
 
   const data = await response.json();

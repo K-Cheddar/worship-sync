@@ -139,8 +139,10 @@ export type DBItem = ItemProperties & {
 };
 
 export type SongMetadata = {
-  source: "lrclib";
-  lrclibId: number;
+  source: "lrclib" | "genius" | "manual";
+  lrclibId?: number;
+  geniusId?: number;
+  geniusUrl?: string;
   trackName: string;
   artistName: string;
   albumName?: string;

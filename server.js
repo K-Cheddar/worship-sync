@@ -13,6 +13,7 @@ import { v2 as cloudinary } from "cloudinary";
 import Mux from "@mux/mux-node";
 import https from "https";
 import { fetchExcelFile } from "./getScheduleFunctions.js";
+import { createLyricsImportService } from "./lyricsImport.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -39,112 +40,15 @@ const port = process.env.PORT || 5000;
 const frontEndHost = isDevelopment
   ? "https://local.worshipsync.net:3000"
   : "http://localhost:3000";
-const LRCLIB_BASE_URL = "https://lrclib.net/api";
-
-const getStringValue = (value) => {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-};
-
-const getBooleanValue = (value) => {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") {
-    if (value.toLowerCase() === "true") return true;
-    if (value.toLowerCase() === "false") return false;
-  }
-  return undefined;
-};
-
-const normalizeDurationMs = (value) => {
-  if (typeof value !== "number" && typeof value !== "string") return undefined;
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue) || numericValue <= 0) return undefined;
-  return Math.round(numericValue < 10000 ? numericValue * 1000 : numericValue);
-};
-
-const extractPlainLyricsFromSyncedLyrics = (syncedLyrics) => {
-  if (typeof syncedLyrics !== "string" || !syncedLyrics.trim()) return null;
-
-  const plainText = syncedLyrics
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\[[^\]]+\]/g, "").trim())
-    .filter(Boolean)
-    .join("\n");
-
-  return plainText.trim() || null;
-};
-
-const normalizeLrclibTrack = (track) => {
-  const lrclibId = Number(track.id ?? track.trackId ?? track.track_id ?? 0);
-  const trackName =
-    getStringValue(track.trackName) ??
-    getStringValue(track.track_name) ??
-    getStringValue(track.name) ??
-    "";
-  const artistName =
-    getStringValue(track.artistName) ??
-    getStringValue(track.artist_name) ??
-    getStringValue(track.artist) ??
-    "";
-
-  if (!Number.isFinite(lrclibId) || lrclibId <= 0 || !trackName || !artistName) {
-    throw new Error("Invalid LRCLIB track payload");
-  }
-
-  const syncedLyrics =
-    getStringValue(track.syncedLyrics) ??
-    getStringValue(track.synced_lyrics) ??
-    null;
-  const plainLyrics =
-    getStringValue(track.plainLyrics) ??
-    getStringValue(track.plain_lyrics) ??
-    extractPlainLyricsFromSyncedLyrics(syncedLyrics);
-
-  return {
-    lrclibId,
-    trackName,
-    artistName,
-    albumName:
-      getStringValue(track.albumName) ??
-      getStringValue(track.album_name) ??
-      getStringValue(track.album),
-    durationMs: normalizeDurationMs(
-      track.durationMs ?? track.duration_ms ?? track.duration,
-    ),
-    instrumental: getBooleanValue(track.instrumental),
-    plainLyrics: plainLyrics ?? null,
-    syncedLyrics,
-  };
-};
-
-const normalizeLrclibTracksList = (tracks) => {
-  if (!Array.isArray(tracks)) return [];
-
-  return tracks.flatMap((track) => {
-    try {
-      return [normalizeLrclibTrack(track)];
-    } catch (error) {
-      console.warn("Skipping invalid LRCLIB track payload:", track);
-      return [];
-    }
-  });
-};
-
-const getLrclibRequestParams = (req) => {
-  const params = {};
-  const trackName = getStringValue(req.query.trackName);
-  const artistName = getStringValue(req.query.artistName);
-  const albumName = getStringValue(req.query.albumName);
-  const durationMs = getStringValue(req.query.durationMs);
-
-  if (trackName) params.track_name = trackName;
-  if (artistName) params.artist_name = artistName;
-  if (albumName) params.album_name = albumName;
-  if (durationMs) params.duration = durationMs;
-
-  return params;
-};
+const {
+  getGeniusTrack,
+  getLrclibRequestParams,
+  getLrclibTrack,
+  searchGeniusTracks,
+  searchLrclibTracks,
+} = createLyricsImportService({
+  geniusAccessToken: process.env.GENIUS_ACCESS_TOKEN,
+});
 
 // Configure Cloudinary
 cloudinary.config({
@@ -272,26 +176,41 @@ app.get("/api/lrclib/get", async (req, res) => {
   if (!params.artist_name) {
     return res
       .status(400)
-      .json({ error: "artistName is required for exact LRCLIB lookup" });
+      .json({ error: "artistName is required for exact lyrics lookup" });
   }
 
   try {
-    const response = await axios.get(`${LRCLIB_BASE_URL}/get`, {
-      params,
-      timeout: 10000,
-    });
+    try {
+      const geniusTrack = await getGeniusTrack(params);
 
-    res.json(normalizeLrclibTrack(response.data));
+      if (geniusTrack) {
+        return res.json(geniusTrack);
+      }
+    } catch (error) {}
+
+    const lrclibTrack = await getLrclibTrack(params);
+
+    if (lrclibTrack) {
+      return res.json(lrclibTrack);
+    }
+
+    return res.status(404).json({
+      error:
+        "No exact importable lyrics match for this title and artist (Genius and LRCLIB were checked).",
+    });
   } catch (error) {
     if (error.response?.status === 404) {
-      return res.status(404).json({ error: "No LRCLIB match found" });
+      return res.status(404).json({
+        error:
+          "No exact importable lyrics match for this title and artist (Genius and LRCLIB were checked).",
+      });
     }
     if (error.response?.status === 400) {
-      return res.status(400).json({ error: "Invalid LRCLIB lookup query" });
+      return res.status(400).json({ error: "Invalid lyrics lookup query" });
     }
 
-    console.error("Error fetching LRCLIB exact match:", error.message);
-    res.status(502).json({ error: "Could not fetch lyrics from LRCLIB" });
+    console.error("Error fetching exact lyrics match:", error.message);
+    res.status(502).json({ error: "Could not fetch lyrics." });
   }
 });
 
@@ -303,20 +222,15 @@ app.get("/api/lrclib/search", async (req, res) => {
   }
 
   try {
-    const response = await axios.get(`${LRCLIB_BASE_URL}/search`, {
-      params: {
-        query: params.track_name,
-        track_name: params.track_name,
-        artist_name: params.artist_name,
-        album_name: params.album_name,
-        duration: params.duration,
-      },
-      timeout: 10000,
-    });
+    try {
+      const geniusTracks = await searchGeniusTracks(params);
 
-    const normalizedResults = normalizeLrclibTracksList(response.data);
+      if (geniusTracks.length > 0) {
+        return res.json(geniusTracks);
+      }
+    } catch (error) {}
 
-    res.json(normalizedResults);
+    res.json(await searchLrclibTracks(params));
   } catch (error) {
     console.error("Error searching LRCLIB:", error.message);
     res.status(502).json({ error: "Could not search LRCLIB" });

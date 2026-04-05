@@ -2,7 +2,13 @@ import React from "react";
 import { configureStore } from "@reduxjs/toolkit";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
-import { MemoryRouter, Route, Routes, useSearchParams } from "react-router-dom";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import CreateItem from "./CreateItem";
 import {
   createItemSlice,
@@ -28,6 +34,7 @@ import {
   createNewTimer,
 } from "../../utils/itemUtil";
 import { resolveLrclibImport } from "../../api/lrclib";
+import generateRandomId from "../../utils/generateRandomId";
 
 jest.mock("../../utils/itemUtil", () => {
   const actual = jest.requireActual("../../utils/itemUtil");
@@ -43,6 +50,8 @@ jest.mock("../../api/lrclib", () => ({
   resolveLrclibImport: jest.fn(),
 }));
 
+jest.mock("../../utils/generateRandomId");
+
 const mockedCreateNewSong = createNewSong as jest.MockedFunction<
   typeof createNewSong
 >;
@@ -55,6 +64,7 @@ const mockedCreateNewTimer = createNewTimer as jest.MockedFunction<
 const mockedResolveLrclibImport = resolveLrclibImport as jest.MockedFunction<
   typeof resolveLrclibImport
 >;
+const mockedGenerateRandomId = jest.mocked(generateRandomId);
 
 const createMockItem = (overrides: Partial<ItemState> = {}): ItemState => ({
   name: "Created Item",
@@ -84,6 +94,15 @@ const createUndoableState = () => ({
 const BibleRouteProbe = () => {
   const [searchParams] = useSearchParams();
   return <div data-testid="bible-page">{searchParams.get("name")}</div>;
+};
+
+const ItemRouteProbe = () => {
+  const { itemId, listId } = useParams();
+  return (
+    <div data-testid="item-page">
+      {itemId}:{listId}
+    </div>
+  );
 };
 
 const createTestStore = ({
@@ -148,7 +167,7 @@ const renderCreateItem = ({
                 <Route path="/controller/bible" element={<BibleRouteProbe />} />
                 <Route
                   path="/controller/item/:itemId/:listId"
-                  element={<div data-testid="item-page">Item Page</div>}
+                  element={<ItemRouteProbe />}
                 />
               </Routes>
             </MemoryRouter>
@@ -165,24 +184,26 @@ describe("CreateItem", () => {
     mockedCreateNewFreeForm.mockReset();
     mockedCreateNewTimer.mockReset();
     mockedResolveLrclibImport.mockReset();
+    let n = 0;
+    mockedGenerateRandomId.mockImplementation(() => `list-id-${++n}`);
   });
 
   it("persists the song draft when leaving and returning", () => {
     const store = createTestStore();
     const view = renderCreateItem({ store });
 
-    fireEvent.change(screen.getByLabelText("Item Name:"), {
+    fireEvent.change(screen.getByLabelText("Song name:"), {
       target: { value: "Amazing Grace" },
     });
-    fireEvent.change(screen.getByLabelText("Paste Text Here:"), {
+    fireEvent.change(screen.getByLabelText("Paste Lyrics Here:"), {
       target: { value: "Verse 1" },
     });
 
     view.unmount();
     renderCreateItem({ store });
 
-    expect(screen.getByLabelText("Item Name:")).toHaveValue("Amazing Grace");
-    expect(screen.getByLabelText("Paste Text Here:")).toHaveValue("Verse 1");
+    expect(screen.getByLabelText("Song name:")).toHaveValue("Amazing Grace");
+    expect(screen.getByLabelText("Paste Lyrics Here:")).toHaveValue("Verse 1");
   });
 
   it("persists timer values when leaving and returning", () => {
@@ -237,11 +258,11 @@ describe("CreateItem", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Item Name:")).toHaveValue("Grace");
+      expect(screen.getByLabelText("Song name:")).toHaveValue("Grace");
     });
 
     expect(screen.getByLabelText("Song:")).toBeChecked();
-    expect(screen.getByLabelText("Paste Text Here:")).toHaveValue("");
+    expect(screen.getByLabelText("Paste Lyrics Here:")).toHaveValue("");
     expect(store.getState().createItem).toEqual({
       ...initialCreateItemState,
       name: "Grace",
@@ -278,12 +299,48 @@ describe("CreateItem", () => {
     await waitFor(() => {
       expect(screen.getByTestId("item-page")).toBeInTheDocument();
     });
+    expect(store.getState().itemList.list).toHaveLength(1);
   });
 
-  it("imports LRCLIB lyrics into the song draft and passes song metadata to createNewSong", async () => {
+  it("navigates to the inserted outline row listId after creating a song", async () => {
+    mockedCreateNewSong.mockResolvedValue(
+      createMockItem({
+        name: "Created Song",
+        _id: "song-1",
+        type: "song",
+      })
+    );
+
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        name: "Created Song",
+        text: "Verse 1",
+      },
+    });
+
+    renderCreateItem({ store });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Song" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("item-page")).toBeInTheDocument();
+    });
+
+    const insertedListId = store.getState().itemList.list[0].listId;
+    expect(screen.getByTestId("item-page")).toHaveTextContent(
+      `${window.btoa(encodeURI("song-1"))}:${window.btoa(
+        encodeURI(insertedListId),
+      )}`,
+    );
+  });
+
+  it("imports Genius lyrics into the song draft and passes song metadata to createNewSong", async () => {
     mockedResolveLrclibImport.mockResolvedValue({
       match: {
-        lrclibId: 17,
+        source: "genius",
+        geniusId: 17,
+        geniusUrl: "https://genius.com/amazing-grace-lyrics",
         trackName: "Amazing Grace",
         artistName: "Traditional",
         albumName: "Hymns",
@@ -312,15 +369,15 @@ describe("CreateItem", () => {
     fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Paste Text Here:")).toHaveValue(
+      expect(screen.getByLabelText("Paste Lyrics Here:")).toHaveValue(
         "Amazing grace",
       );
     });
 
     expect(store.getState().createItem.songMetadata).toEqual(
       expect.objectContaining({
-        source: "lrclib",
-        lrclibId: 17,
+        source: "genius",
+        geniusId: 17,
         trackName: "Amazing Grace",
         artistName: "Traditional",
       }),
@@ -332,8 +389,8 @@ describe("CreateItem", () => {
       expect(mockedCreateNewSong).toHaveBeenCalledWith(
         expect.objectContaining({
           songMetadata: expect.objectContaining({
-            source: "lrclib",
-            lrclibId: 17,
+            source: "genius",
+            geniusId: 17,
           }),
         }),
       );

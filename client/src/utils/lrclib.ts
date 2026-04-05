@@ -2,7 +2,7 @@ import { SongMetadata } from "../types";
 
 export type RawLrclibTrack = Record<string, unknown>;
 
-export type NormalizedLrclibTrack = Omit<SongMetadata, "source" | "importedAt">;
+export type NormalizedLrclibTrack = Omit<SongMetadata, "importedAt">;
 
 const asString = (value: unknown): string | undefined => {
   if (typeof value !== "string") return undefined;
@@ -45,6 +45,7 @@ export const extractPlainLyricsFromSyncedLyrics = (
 export const normalizeLrclibTrack = (
   rawTrack: RawLrclibTrack,
 ): NormalizedLrclibTrack => {
+  const source = asString(rawTrack.source) === "genius" ? "genius" : "lrclib";
   const lrclibId = Number(
     rawTrack.lrclibId ??
       rawTrack.id ??
@@ -52,6 +53,7 @@ export const normalizeLrclibTrack = (
       rawTrack.track_id ??
       0,
   );
+  const geniusId = Number(rawTrack.geniusId ?? 0);
   const trackName =
     asString(rawTrack.trackName) ??
     asString(rawTrack.track_name) ??
@@ -63,8 +65,16 @@ export const normalizeLrclibTrack = (
     asString(rawTrack.artist) ??
     "";
 
-  if (!Number.isFinite(lrclibId) || lrclibId <= 0 || !trackName || !artistName) {
-    throw new Error("Invalid LRCLIB track payload");
+  const hasValidLrclibId = Number.isFinite(lrclibId) && lrclibId > 0;
+  const hasValidGeniusId = Number.isFinite(geniusId) && geniusId > 0;
+
+  if (
+    !trackName ||
+    !artistName ||
+    (source === "lrclib" && !hasValidLrclibId) ||
+    (source === "genius" && !hasValidGeniusId)
+  ) {
+    throw new Error("Invalid lyrics import track payload");
   }
 
   const syncedLyrics =
@@ -78,7 +88,10 @@ export const normalizeLrclibTrack = (
     null;
 
   return {
-    lrclibId,
+    source,
+    ...(hasValidLrclibId ? { lrclibId } : {}),
+    ...(hasValidGeniusId ? { geniusId } : {}),
+    geniusUrl: asString(rawTrack.geniusUrl) ?? asString(rawTrack.url),
     trackName,
     artistName,
     albumName:
@@ -98,9 +111,25 @@ export const createSongMetadataFromLrclib = (
   track: NormalizedLrclibTrack,
   importedAt = new Date().toISOString(),
 ): SongMetadata => ({
-  source: "lrclib",
   importedAt,
   ...track,
+});
+
+export const createManualSongMetadata = (
+  fields: {
+    trackName: string;
+    artistName: string;
+    albumName?: string;
+  },
+  importedAt = new Date().toISOString(),
+): SongMetadata => ({
+  source: "manual",
+  trackName: fields.trackName.trim(),
+  artistName: fields.artistName.trim(),
+  ...(fields.albumName?.trim()
+    ? { albumName: fields.albumName.trim() }
+    : {}),
+  importedAt,
 });
 
 export const getImportableLyricsFromTrack = (
