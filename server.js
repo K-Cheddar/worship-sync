@@ -192,7 +192,8 @@ const boardPostCreateChains = new Map();
 
 const runExclusiveBoardPostCreate = (boardId, fn) => {
   const previous = boardPostCreateChains.get(boardId) ?? Promise.resolve();
-  const tail = previous.then(() => fn());
+  // Recover the chain if the predecessor rejected so queued submissions still run.
+  const tail = previous.catch(() => {}).then(() => fn());
   boardPostCreateChains.set(boardId, tail);
   return tail.finally(() => {
     if (boardPostCreateChains.get(boardId) === tail) {
