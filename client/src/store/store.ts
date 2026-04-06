@@ -56,7 +56,12 @@ import {
 } from "../types";
 import { allDocsSlice, upsertItemInAllDocs } from "./allDocsSlice";
 import { creditsSlice } from "./creditsSlice";
-import { timersSlice, addTimer, updateTimerFromRemote } from "./timersSlice";
+import {
+  timersSlice,
+  reconcileTimersFromDocs,
+  syncTimers,
+  updateTimerFromRemote,
+} from "./timersSlice";
 import { overlayTemplatesSlice } from "./overlayTemplatesSlice";
 import serviceTimesSliceReducer, {
   serviceTimesSlice,
@@ -279,7 +284,6 @@ const excludedActions: string[] = [
   overlaySlice.actions.setHasPendingUpdate.toString(),
   overlaySlice.actions.forceUpdate.toString(),
   overlaySlice.actions.selectOverlay.toString(),
-  timersSlice.actions.syncTimersFromRemote.toString(),
   timersSlice.actions.setShouldUpdateTimers.toString(),
   allDocsSlice.actions.updateAllBibleDocs.toString(),
   allDocsSlice.actions.updateAllFreeFormDocs.toString(),
@@ -392,6 +396,7 @@ listenerMiddleware.startListening({
       selectedArrangement: item.selectedArrangement,
       bibleInfo: item.bibleInfo,
       timerInfo: item.timerInfo,
+      songMetadata: item.songMetadata,
       shouldSendTo: item.shouldSendTo,
       updatedAt: new Date().toISOString(),
     };
@@ -501,6 +506,33 @@ listenerMiddleware.startListening({
   },
 });
 
+listenerMiddleware.startListening({
+  actionCreator: allDocsSlice.actions.updateAllTimerDocs,
+  effect: (action, listenerApi) => {
+    const previousState = listenerApi.getOriginalState() as RootState;
+    const timersFromDocs = action.payload
+      .map((doc) => {
+        if (!doc.timerInfo) return undefined;
+        return {
+          ...doc.timerInfo,
+          id: doc.timerInfo.id || doc._id,
+          name: doc.timerInfo.name || doc.name,
+        };
+      })
+      .filter((timer): timer is TimerInfo => timer !== undefined);
+    const knownDocIds = Array.from(
+      new Set([
+        ...previousState.allDocs.allTimerDocs.map((doc) => doc._id),
+        ...action.payload.map((doc) => doc._id),
+      ])
+    );
+
+    listenerApi.dispatch(
+      reconcileTimersFromDocs({ timers: timersFromDocs, knownDocIds })
+    );
+  },
+});
+
 // When opening a timer item, ensure its timer is in the timers slice (for Demo and when timer was created elsewhere)
 listenerMiddleware.startListening({
   actionCreator: itemSlice.actions.setActiveItem,
@@ -508,14 +540,56 @@ listenerMiddleware.startListening({
     const state = listenerApi.getState() as RootState;
     const item = state.undoable.present.item;
     if (item.type !== "timer" || !item.timerInfo) return;
-    const exists = state.timers.timers.some(
-      (t) => t.id === item.timerInfo!.id || t.id === item._id,
+    listenerApi.dispatch(
+      syncTimers([
+        {
+          ...item.timerInfo,
+          id: item.timerInfo.id || item._id,
+          name: item.timerInfo.name || item.name,
+        },
+      ]),
     );
-    if (!exists) {
-      listenerApi.dispatch(
-        addTimer({ ...item.timerInfo, hostId: globalHostId }),
-      );
-    }
+  },
+});
+
+listenerMiddleware.startListening({
+  predicate: isAnyOf(
+    timersSlice.actions.updateTimer,
+    timersSlice.actions.updateTimerColor
+  ),
+  effect: (action, listenerApi) => {
+    const state = listenerApi.getState() as RootState;
+    const item = state.undoable.present.item;
+    if (item.type !== "timer" || !item.timerInfo) return;
+
+    const activeTimerId = item.timerInfo.id || item._id;
+    const updatedTimerId = (action.payload as { id?: string })?.id;
+    if (!updatedTimerId || updatedTimerId !== activeTimerId) return;
+
+    const timer = state.timers.timers.find((t) => t.id === activeTimerId);
+    if (!timer) return;
+
+    listenerApi.dispatch(itemSlice.actions._updateTimerInfo(timer));
+  },
+});
+
+listenerMiddleware.startListening({
+  predicate: isAnyOf(
+    timersSlice.actions.addTimer,
+    timersSlice.actions.syncTimers,
+    timersSlice.actions.updateTimerFromRemote,
+    timersSlice.actions.tickTimers
+  ),
+  effect: (_action, listenerApi) => {
+    const state = listenerApi.getState() as RootState;
+    const item = state.undoable.present.item;
+    if (item.type !== "timer" || !item.timerInfo) return;
+
+    const activeTimerId = item.timerInfo.id || item._id;
+    const timer = state.timers.timers.find((t) => t.id === activeTimerId);
+    if (!timer) return;
+
+    listenerApi.dispatch(itemSlice.actions.syncLiveTimerInfo(timer));
   },
 });
 
@@ -772,7 +846,6 @@ listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const excluded = isAnyOf(
       timersSlice.actions.updateTimerFromRemote,
-      timersSlice.actions.syncTimersFromRemote,
       timersSlice.actions.setShouldUpdateTimers,
       timersSlice.actions.tickTimers,
     );

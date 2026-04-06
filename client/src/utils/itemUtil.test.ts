@@ -138,6 +138,39 @@ describe("itemUtil", () => {
         item.arrangements[0].formattedLyrics.map((f) => f.name),
       );
     });
+
+    it("persists song metadata on new songs when provided", async () => {
+      const { formattedLyrics, songOrder } = createSections({
+        unformattedLyrics: "Verse 1",
+      });
+
+      const item = await createNewSong({
+        name: "My Song",
+        formattedLyrics,
+        songOrder,
+        list: [],
+        db: undefined,
+        background: "#000",
+        brightness: 100,
+        songMetadata: {
+          source: "lrclib",
+          lrclibId: 10,
+          trackName: "My Song",
+          artistName: "Artist",
+          plainLyrics: "Verse 1",
+          syncedLyrics: null,
+          importedAt: "2026-03-30T12:00:00.000Z",
+        },
+      });
+
+      expect(item.songMetadata).toEqual(
+        expect.objectContaining({
+          source: "lrclib",
+          lrclibId: 10,
+          artistName: "Artist",
+        }),
+      );
+    });
   });
 
   describe("createNewFreeForm", () => {

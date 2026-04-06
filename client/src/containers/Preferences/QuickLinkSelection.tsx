@@ -1,7 +1,7 @@
 import { CheckCheck, X } from "lucide-react";
 import Button from "../../components/Button/Button";
 import { useDispatch, useSelector } from "../../hooks";
-import { DisplayType, OverlayInfo, Presentation } from "../../types";
+import { DisplayType } from "../../types";
 import {
   setSelectedQuickLink,
   setSelectedQuickLinkPresentation,
@@ -10,6 +10,7 @@ import { useToast } from "../../context/toastContext";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useMemo } from "react";
 import { getDefaultFormatting } from "../../utils/overlayUtils";
+import { presentationFromOverlayInfo } from "../../utils/quickLinkOverlayPresentation";
 
 interface QuickLinkSelectionProps {
   linkType: "slide" | "overlay";
@@ -149,67 +150,11 @@ const QuickLinkSelection = ({
   const handleOverlaySelect = () => {
     if (!selectedOverlay?.id) return;
 
-    let presentationInfo: Presentation = {
-      name: selectedOverlay.name || selectedOverlay.description || "",
-      slide: null,
-      type: "overlay",
-    };
-
-    const info: OverlayInfo = {
-      id: selectedOverlay.id,
-      type: selectedOverlay.type,
-      duration: selectedOverlay.duration,
-      formatting: {
-        ...getDefaultFormatting(selectedOverlay.type || "participant"),
-        ...selectedOverlay.formatting,
-      },
-    };
-
-    if (selectedOverlay.type === "participant") {
-      presentationInfo = {
-        ...presentationInfo,
-        participantOverlayInfo: {
-          ...info,
-          name: selectedOverlay.name,
-          event: selectedOverlay.event,
-          title: selectedOverlay.title,
-        },
-      };
-    }
-
-    if (selectedOverlay.type === "stick-to-bottom") {
-      presentationInfo = {
-        ...presentationInfo,
-        stbOverlayInfo: {
-          ...info,
-          heading: selectedOverlay.heading,
-          subHeading: selectedOverlay.subHeading,
-        },
-      };
-    }
-
-    if (selectedOverlay.type === "qr-code") {
-      presentationInfo = {
-        ...presentationInfo,
-        qrCodeOverlayInfo: {
-          ...info,
-          url: selectedOverlay.url,
-          description: selectedOverlay.description,
-        },
-      };
-    }
-
-    if (selectedOverlay.type === "image") {
-      presentationInfo = {
-        ...presentationInfo,
-        imageOverlayInfo: {
-          ...info,
-          imageUrl: selectedOverlay.imageUrl,
-        },
-      };
-    }
-
-    dispatch(setSelectedQuickLinkPresentation(presentationInfo));
+    dispatch(
+      setSelectedQuickLinkPresentation(
+        presentationFromOverlayInfo(selectedOverlay)
+      )
+    );
     removeToast(toastId);
     showToast("Overlay linked.", "success");
   };

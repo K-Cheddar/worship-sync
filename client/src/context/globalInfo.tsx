@@ -456,10 +456,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setLoginState("loading");
 
     try {
-      const { success, errorMessage, user } = await loginUser(
+      const response = await loginUser(
         username,
         password
       );
+      const { success, errorMessage, user } = response;
 
       if (!success) {
         console.error("Login failed:", errorMessage);

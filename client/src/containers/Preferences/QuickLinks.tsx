@@ -4,13 +4,23 @@ import { Plus } from "lucide-react";
 import generateRandomId from "../../utils/generateRandomId";
 import Select from "../../components/Select/Select";
 import Button from "../../components/Button/Button";
-import { useMemo, useContext } from "react";
+import { useCallback, useContext, useMemo, useState } from "react";
 import {
   setQuickLinks,
   setSelectedQuickLink,
 } from "../../store/preferencesSlice";
-import { useState } from "react";
-import QuickLink from "./QuickLink";
+import {
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { useSensors } from "../../utils/dndUtils";
+import { applyQuickLinkReorder } from "../../utils/quickLinksReorder";
+import SortableQuickLink from "./SortableQuickLink";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 
@@ -129,33 +139,65 @@ const QuickLinks = ({ streamOnly = false }: QuickLinksProps) => {
     setNewQuickLinkDisplayType(newDisplayType);
   };
 
+  const sensors = useSensors();
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over) return;
+      const next = applyQuickLinkReorder(
+        quickLinks,
+        streamOnly,
+        String(active.id),
+        String(over.id)
+      );
+      if (next) {
+        dispatch(setQuickLinks(next));
+      }
+    },
+    [dispatch, quickLinks, streamOnly]
+  );
+
   return (
     <ErrorBoundary>
-      <ul className="flex flex-col gap-6 items-center max-lg:gap-12">
-        {visibleQuickLinks.map((quickLinkInfo, index) => {
-          const { id } = quickLinkInfo;
-          return (
-            <QuickLink
-              timers={timers}
-              key={id}
-              index={index}
-              isSelected={selectedQuickLink?.id === id}
-              setSelectedQuickLink={() => dispatch(setSelectedQuickLink(id))}
-              isMobile={isMobile}
-              hideDisplayTypeSelect={streamOnly}
-              updateQuickLink={(key, value) => updateQuickLink(id, key, value)}
-              removeQuickLink={() => {
-                const updatedQuickLinks = quickLinks.filter(
-                  (ql) => ql.id !== id
-                );
-                dispatch(setQuickLinks(updatedQuickLinks));
-                updateNewQuickLinkDisplayType(updatedQuickLinks);
-              }}
-              {...quickLinkInfo}
-            />
-          );
-        })}
-      </ul>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <ul className="flex flex-col gap-6 items-center max-lg:gap-12">
+          <SortableContext
+            items={visibleQuickLinks.map((q) => q.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            {visibleQuickLinks.map((quickLinkInfo, index) => {
+              const { id } = quickLinkInfo;
+              return (
+                <SortableQuickLink
+                  timers={timers}
+                  key={id}
+                  index={index}
+                  isSelected={selectedQuickLink?.id === id}
+                  setSelectedQuickLink={() => dispatch(setSelectedQuickLink(id))}
+                  isMobile={isMobile}
+                  hideDisplayTypeSelect={streamOnly}
+                  updateQuickLink={(key, value) =>
+                    updateQuickLink(id, key, value)
+                  }
+                  removeQuickLink={() => {
+                    const updatedQuickLinks = quickLinks.filter(
+                      (ql) => ql.id !== id
+                    );
+                    dispatch(setQuickLinks(updatedQuickLinks));
+                    updateNewQuickLinkDisplayType(updatedQuickLinks);
+                  }}
+                  {...quickLinkInfo}
+                />
+              );
+            })}
+          </SortableContext>
+        </ul>
+      </DndContext>
       {newQuickLinkOptions.length > 0 ? (
         <section className="flex items-center justify-center gap-4 my-8">
           {!streamOnly && (

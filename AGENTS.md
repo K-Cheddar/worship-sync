@@ -145,6 +145,16 @@ Prefer existing patterns already used in the client:
 - Existing `DisplayWindow` and preview architecture for rendering
 - Existing test style with Jest and Testing Library
 
+**Operator UI density (live controllers and moderator surfaces)**
+
+Busy operator pages should respect a clear **hierarchy of concern**: default view emphasizes what is used most often during live use (scanning content, frequent actions, sharing links). Less common or higher-impact actions (fine-tuning presentation sizing, clearing all items, starting a new session, bulk resets) belong in a **single, clearly labeled overflow** (for example a **More tools** control opening a panel or menu), with **short in-context helper text** so operators understand scope before acting.
+
+- Keep the primary column **readable**: give the live feed or preview the most vertical space; avoid stacking rarely used toolbars above it when they can live one level deeper.
+- **Group** related secondary actions together (for example presentation sizing with session-level resets) so operators do not hunt across the page.
+- **Do not hide** safety-critical state (counts, which session is active, connection issues); surface those inline with the feed or header.
+- Destructive actions stay **reachable but not prominent**: same overflow group is fine; avoid duplicate destructive entry points unless a live hotspot truly needs a shortcut.
+- When using **popovers** or **side sheets** (slide-in panels) for overflow, prefer **sheets** when the content is **tall or scrollable** (several sections, forms, or session pickers); **popovers** stay a good fit for compact, single-column actions. Ensure **keyboard access**, **focus return** to the trigger, **Escape to dismiss**, and **stable labels** for tests (`aria-label` on icon-only or ambiguous controls).
+
 Be careful when changing shared display code. A change in one surface may affect:
 
 - Controller previews
@@ -241,6 +251,7 @@ Agents assisting engineers, designers, and architects must:
 - Prefer explicit, idiomatic solutions over clever abstractions.
 - Surface risks, edge cases, and failure modes clearly.
 - Keep explanations focused and free of filler.
+- When requirements, constraints, or product intent are ambiguous or incomplete, ask **brief, targeted questions** instead of guessing.
 
 Internal agents must not:
 
@@ -248,6 +259,11 @@ Internal agents must not:
 - Use marketing tone.
 - Hide complexity that engineers need to understand.
 - Generate magical or opaque solutions.
+- Assume unstated behavior, data shapes, or UX expectations to “fill in” an ambiguous request.
+
+### Ambiguity and unstated requirements
+
+All agents (internal and external) should treat unclear instructions as **blocking** until resolved or explicitly scoped. Prefer a short question over an inferred implementation. If the user must choose between valid options, present those options plainly.
 
 ### Shared style rules
 

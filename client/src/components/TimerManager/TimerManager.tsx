@@ -22,10 +22,18 @@ const TimerManager = () => {
       firebaseDb,
       "users/" + capitalizeFirstLetter(database) + "/v2/activeInstances"
     );
-    onValue(activeInstancesRef, (snapshot) => {
+    const unsubscribe = onValue(activeInstancesRef, (snapshot) => {
       const data = snapshot.val();
-      dispatch(setShouldUpdateTimers(data?.length > 0));
+      dispatch(
+        setShouldUpdateTimers(
+          !!data && Object.keys(data as Record<string, unknown>).length > 0
+        )
+      );
     });
+
+    return () => {
+      unsubscribe();
+    };
   }, [firebaseDb, database, user, dispatch]);
 
   useEffect(() => {

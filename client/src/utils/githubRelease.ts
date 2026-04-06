@@ -2,6 +2,8 @@
  * Utility functions for GitHub Releases
  */
 
+import { isElectron } from "./environment";
+
 // Get repository info from environment or use defaults
 const GITHUB_REPO_OWNER = import.meta.env.VITE_GITHUB_REPO_OWNER || "K-Cheddar";
 const GITHUB_REPO_NAME = import.meta.env.VITE_GITHUB_REPO_NAME || "worship-sync";
@@ -19,6 +21,9 @@ type GitHubReleaseLatest = {
  * Falls back to null on failure; callers should use {@link getLatestReleaseUrl} as a fallback href.
  */
 export const fetchLatestWindowsInstallerUrl = async (): Promise<string | null> => {
+  if (isElectron()) {
+    return null;
+  }
   try {
     const res = await fetch(latestReleaseApiUrl, {
       headers: { Accept: "application/vnd.github+json" },

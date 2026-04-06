@@ -4,6 +4,9 @@
   "version": "1.41.0",
   "scripts": {
     "start": "node server.js",
+    "test": "npm run test:server",
+    "test:server": "node --test server/boardService.test.js",
+    "checks": "npm run test:server && npm run test --prefix client && npm run lint:check --prefix client",
     "heroku-postbuild": "cd client && npm ci && npm run build",
     "client": "cd client && npm run dev",
     "server": "npx nodemon server.js",
@@ -30,6 +33,7 @@
     "html2plaintext": "^2.1.2",
     "imap": "^0.8.19",
     "jade": "^1.11.0",
+    "leo-profanity": "^1.9.0",
     "mailparser": "^3.5.0",
     "pouchdb": "^9.0.0",
     "querystring": "^0.2.0",

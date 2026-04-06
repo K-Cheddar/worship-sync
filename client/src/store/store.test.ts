@@ -3,6 +3,68 @@ const flushListenerEffects = async () => {
   await Promise.resolve();
 };
 
+const waitForListenerDelay = async (ms = 30) => {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+  await flushListenerEffects();
+};
+
+const createScreenSlide = (id: string, words: string) => ({
+  id,
+  name: id,
+  type: "Verse",
+  boxes: [{ words }],
+});
+
+const createScreenPresentation = (
+  displayType: "projector" | "monitor" | "stream",
+  time: number,
+  overrides: Record<string, unknown> = {},
+) => ({
+  displayType,
+  name: `${displayType}-presentation`,
+  type: "slide",
+  slide: createScreenSlide(`${displayType}-slide-${time}`, `${displayType}-${time}`),
+  time,
+  ...overrides,
+});
+
+const loadStoreWithPresentationSync = () => {
+  let storeModule: any;
+  let presentationSliceModule: any;
+  const setMock = jest.fn();
+  const refMock = jest.fn((_db: unknown, path: string) => path);
+
+  jest.isolateModules(() => {
+    jest.doMock("../context/controllerInfo", () => ({
+      globalDb: undefined,
+      globalBroadcastRef: undefined,
+    }));
+    jest.doMock("../context/globalInfo", () => ({
+      globalFireDbInfo: { db: "firebase-db", database: "main" },
+      globalHostId: "host-123",
+    }));
+    jest.doMock("firebase/database", () => ({
+      ref: refMock,
+      set: setMock,
+      get: jest.fn(),
+    }));
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    storeModule = require("./store");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    presentationSliceModule = require("./presentationSlice");
+  });
+
+  return {
+    store: storeModule.default,
+    writePresentationSnapshotToFirebase:
+      storeModule.writePresentationSnapshotToFirebase,
+    presentationSlice: presentationSliceModule.presentationSlice,
+    setMock,
+    refMock,
+  };
+};
+
 const createOverlay = (id: string, name: string) => ({
   id,
   type: "participant" as const,
@@ -79,6 +141,7 @@ describe("store module", () => {
     jest.useRealTimers();
     jest.resetModules();
     jest.clearAllMocks();
+    localStorage.clear();
   });
 
   it("broadcastCreditsUpdate posts docs with hostId when broadcast channel exists", () => {
@@ -608,6 +671,15 @@ describe("store module", () => {
     const remoteDoc = createSongDoc({
       name: "Remote Song Update",
       background: "background-b.jpg",
+      songMetadata: {
+        source: "lrclib",
+        lrclibId: 5,
+        trackName: "Remote Song Update",
+        artistName: "Remote Artist",
+        plainLyrics: "Words",
+        syncedLyrics: null,
+        importedAt: "2026-03-30T12:00:00.000Z",
+      },
     });
 
     store.dispatch(itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }));
@@ -666,6 +738,15 @@ describe("store module", () => {
     const remoteDoc = createSongDoc({
       name: "Remote Song Update",
       background: "background-b.jpg",
+      songMetadata: {
+        source: "lrclib",
+        lrclibId: 5,
+        trackName: "Remote Song Update",
+        artistName: "Remote Artist",
+        plainLyrics: "Words",
+        syncedLyrics: null,
+        importedAt: "2026-03-30T12:00:00.000Z",
+      },
       slides: [
         { id: "slide-a", name: "A", type: "Verse", boxes: [] },
         { id: "slide-b", name: "B", type: "Verse", boxes: [] },
@@ -687,6 +768,13 @@ describe("store module", () => {
     expect(state.name).toBe("Remote Song Update");
     expect(state.background).toBe("background-b.jpg");
     expect(state.listId).toBe("list-1");
+    expect(state.songMetadata).toEqual(
+      expect.objectContaining({
+        source: "lrclib",
+        lrclibId: 5,
+        artistName: "Remote Artist",
+      }),
+    );
     expect(state.hasRemoteUpdate).toBe(false);
     expect(state.pendingRemoteItem).toBeNull();
   });
@@ -778,5 +866,372 @@ describe("store module", () => {
     expect(monitorInfo.type).toBe("timer");
     expect(monitorInfo.timerId).toBe("timer-1");
     expect(monitorInfo.itemId).toBe("timer-item");
+  });
+
+  it("persists finalized timer runtime onto the active timer item after starting", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-04-05T12:00:00.000Z"));
+
+    let storeModule: any;
+    let itemSliceModule: any;
+    let timersSliceModule: any;
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: { db: undefined, database: undefined },
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemSliceModule = require("./itemSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      timersSliceModule = require("./timersSlice");
+    });
+
+    const store = storeModule.default;
+    const { itemSlice } = itemSliceModule;
+    const { timersSlice } = timersSliceModule;
+
+    const timerItem = createTimerItem({
+      timerInfo: {
+        id: "timer-1",
+        hostId: "host-123",
+        name: "Countdown",
+        timerType: "timer",
+        status: "stopped",
+        isActive: false,
+        countdownTime: "00:05",
+        duration: 5,
+        remainingTime: 5,
+        showMinutesOnly: false,
+      },
+    });
+
+    store.dispatch(itemSlice.actions.setActiveItem(timerItem));
+    store.dispatch(
+      timersSlice.actions.updateTimer({
+        id: "timer-1",
+        timerInfo: {
+          ...timerItem.timerInfo,
+          status: "running",
+          startedAt: new Date("2026-04-05T12:00:00.000Z").toISOString(),
+        },
+      }),
+    );
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.item.timerInfo).toEqual(
+      expect.objectContaining({
+        status: "running",
+        isActive: true,
+        endTime: new Date("2026-04-05T12:00:05.000Z").toISOString(),
+      }),
+    );
+  });
+
+  it("keeps the active timer item synced with live ticking state", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-04-05T12:00:00.000Z"));
+
+    let storeModule: any;
+    let itemSliceModule: any;
+    let timersSliceModule: any;
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: { db: undefined, database: undefined },
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemSliceModule = require("./itemSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      timersSliceModule = require("./timersSlice");
+    });
+
+    const store = storeModule.default;
+    const { itemSlice } = itemSliceModule;
+    const { timersSlice } = timersSliceModule;
+
+    const timerItem = createTimerItem({
+      timerInfo: {
+        id: "timer-1",
+        hostId: "host-123",
+        name: "Countdown",
+        timerType: "timer",
+        status: "running",
+        isActive: true,
+        countdownTime: "00:05",
+        duration: 5,
+        remainingTime: 5,
+        endTime: new Date("2026-04-05T12:00:05.000Z").toISOString(),
+        showMinutesOnly: false,
+      },
+    });
+
+    store.dispatch(itemSlice.actions.setActiveItem(timerItem));
+    store.dispatch(
+      timersSlice.actions.syncTimers([
+        timerItem.timerInfo,
+      ]),
+    );
+    await flushListenerEffects();
+
+    jest.setSystemTime(new Date("2026-04-05T12:00:02.000Z"));
+    store.dispatch(timersSlice.actions.tickTimers());
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.item.timerInfo).toEqual(
+      expect.objectContaining({
+        status: "running",
+        remainingTime: 3,
+      }),
+    );
+  });
+
+  it("writes projector, monitor, and stream snapshots to Firebase and localStorage", () => {
+    const setItemSpy = jest.spyOn(Storage.prototype, "setItem");
+    const {
+      store,
+      writePresentationSnapshotToFirebase,
+      presentationSlice,
+      setMock,
+      refMock,
+    } = loadStoreWithPresentationSync();
+
+    store.dispatch(presentationSlice.actions.setTransmitToAll(true));
+    store.dispatch(
+      presentationSlice.actions.updateProjector(
+        createScreenPresentation("projector", 101, {
+          name: "Projector Song",
+        }),
+      ),
+    );
+    store.dispatch(
+      presentationSlice.actions.updateMonitor(
+        createScreenPresentation("monitor", 202, {
+          name: "Monitor Notes",
+          nextSlide: createScreenSlide("monitor-next", "monitor-next"),
+          bibleInfoBox: { words: "Reference" },
+        }),
+      ),
+    );
+    store.dispatch(
+      presentationSlice.actions.updateStream(
+        createScreenPresentation("stream", 303, {
+          name: "Stream Lyrics",
+        }),
+      ),
+    );
+
+    writePresentationSnapshotToFirebase(store.getState());
+
+    expect(refMock).toHaveBeenCalledWith(
+      "firebase-db",
+      "users/Main/v2/presentation",
+    );
+    expect(setMock).toHaveBeenCalledWith(
+      "users/Main/v2/presentation",
+      expect.objectContaining({
+        projectorInfo: expect.objectContaining({
+          name: "Projector Song",
+          displayType: "projector",
+        }),
+        monitorInfo: expect.objectContaining({
+          name: "Monitor Notes",
+          displayType: "monitor",
+        }),
+        streamInfo: expect.objectContaining({
+          name: "Stream Lyrics",
+          displayType: "stream",
+        }),
+      }),
+    );
+    expect(setItemSpy).toHaveBeenCalledWith(
+      "projectorInfo",
+      expect.stringContaining("Projector Song"),
+    );
+    expect(setItemSpy).toHaveBeenCalledWith(
+      "monitorInfo",
+      expect.stringContaining("Monitor Notes"),
+    );
+    expect(setItemSpy).toHaveBeenCalledWith(
+      "streamInfo",
+      expect.stringContaining("Stream Lyrics"),
+    );
+  });
+
+  it("pushes a presentation snapshot after a local projector update", async () => {
+    const { store, presentationSlice, setMock } = loadStoreWithPresentationSync();
+
+    store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
+    setMock.mockClear();
+
+    store.dispatch(
+      presentationSlice.actions.updateProjector(
+        createScreenPresentation("projector", 111, {
+          name: "Live Projector",
+        }),
+      ),
+    );
+
+    await waitForListenerDelay();
+
+    expect(setMock).toHaveBeenCalledTimes(1);
+    expect(setMock.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        projectorInfo: expect.objectContaining({ name: "Live Projector" }),
+      }),
+    );
+  });
+
+  it("pushes the current stream snapshot when stream transmission turns on", async () => {
+    const { store, presentationSlice, setMock } = loadStoreWithPresentationSync();
+
+    store.dispatch(
+      presentationSlice.actions.updateStreamFromRemote(
+        createScreenPresentation("stream", 222, {
+          name: "Remote Stream Snapshot",
+        }),
+      ),
+    );
+    setMock.mockClear();
+
+    store.dispatch(presentationSlice.actions.toggleStreamTransmitting());
+
+    await waitForListenerDelay();
+
+    expect(setMock).toHaveBeenCalledTimes(1);
+    expect(setMock.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        streamInfo: expect.objectContaining({ name: "Remote Stream Snapshot" }),
+      }),
+    );
+  });
+
+  it("applies only newer remote projector updates", async () => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+
+    store.dispatch(
+      presentationSlice.actions.updateProjectorFromRemote(
+        createScreenPresentation("projector", 500, {
+          name: "Existing Projector",
+        }),
+      ),
+    );
+
+    store.dispatch({
+      type: "debouncedUpdateProjector",
+      payload: createScreenPresentation("projector", 400, {
+        name: "Stale Projector",
+      }),
+    });
+    await waitForListenerDelay();
+    expect(store.getState().presentation.projectorInfo.name).toBe(
+      "Existing Projector",
+    );
+
+    store.dispatch({
+      type: "debouncedUpdateProjector",
+      payload: createScreenPresentation("projector", 600, {
+        name: "New Projector",
+      }),
+    });
+    await waitForListenerDelay();
+    expect(store.getState().presentation.projectorInfo.name).toBe(
+      "New Projector",
+    );
+  });
+
+  it("applies only newer remote monitor updates", async () => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+
+    store.dispatch(
+      presentationSlice.actions.updateMonitorFromRemote(
+        createScreenPresentation("monitor", 500, {
+          name: "Existing Monitor",
+          nextSlide: createScreenSlide("monitor-next-old", "next-old"),
+        }),
+      ),
+    );
+
+    store.dispatch({
+      type: "debouncedUpdateMonitor",
+      payload: createScreenPresentation("monitor", 450, {
+        name: "Stale Monitor",
+        nextSlide: createScreenSlide("monitor-next-stale", "next-stale"),
+      }),
+    });
+    await waitForListenerDelay();
+    expect(store.getState().presentation.monitorInfo.name).toBe(
+      "Existing Monitor",
+    );
+
+    store.dispatch({
+      type: "debouncedUpdateMonitor",
+      payload: createScreenPresentation("monitor", 700, {
+        name: "New Monitor",
+        nextSlide: createScreenSlide("monitor-next-new", "next-new"),
+      }),
+    });
+    await waitForListenerDelay();
+    expect(store.getState().presentation.monitorInfo.name).toBe("New Monitor");
+    expect(store.getState().presentation.monitorInfo.nextSlide).toEqual(
+      createScreenSlide("monitor-next-new", "next-new"),
+    );
+  });
+
+  it("applies only newer remote stream updates", async () => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+
+    store.dispatch(
+      presentationSlice.actions.updateStreamFromRemote(
+        createScreenPresentation("stream", 800, {
+          name: "Existing Stream",
+        }),
+      ),
+    );
+
+    store.dispatch({
+      type: "debouncedUpdateStream",
+      payload: createScreenPresentation("stream", 750, {
+        name: "Stale Stream",
+      }),
+    });
+    await waitForListenerDelay();
+    expect(store.getState().presentation.streamInfo.name).toBe(
+      "Existing Stream",
+    );
+
+    store.dispatch({
+      type: "debouncedUpdateStream",
+      payload: createScreenPresentation("stream", 900, {
+        name: "New Stream",
+      }),
+    });
+    await waitForListenerDelay();
+    expect(store.getState().presentation.streamInfo.name).toBe("New Stream");
   });
 });

@@ -29,6 +29,7 @@ import {
   setSelectedBox,
   setSelectedSlide,
   setIsEditMode,
+  setSongMetadata,
   updateArrangements,
   updateSlides,
   setRestoreFocusToBox,
@@ -41,7 +42,7 @@ import {
   getSelectionHint,
 } from "../../utils/selectionHint";
 import { resolveFormattedCursorPosition } from "../../utils/cursorPosition";
-import { ItemSlideType } from "../../types";
+import { ItemSlideType, SongMetadata } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
 import { RootState } from "../../store/store";
@@ -53,6 +54,7 @@ import SlideBoxes from "../../components/SlideBoxes/SlideBoxes";
 import LoadingOverlay from "../../components/LoadingOverlay/LoadingOverlay";
 import TimerControls from "../../components/TimerControls/TimerControls";
 import type { DisplayEditorChangeInfo } from "../../components/DisplayWindow/DisplayEditor";
+import { SongItemMetadataModal } from "../../components/SongItemMetadataModal/SongItemMetadataModal";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
@@ -98,6 +100,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     isSectionLoading,
     restoreFocusToBox,
     hasRemoteUpdate,
+    songMetadata,
   } = item;
   const showLoadingOverlay = isLoading || isSectionLoading;
 
@@ -115,6 +118,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   );
 
   const [isEditingName, setIsEditingName] = useState(false);
+  const [isSongMetadataModalOpen, setIsSongMetadataModalOpen] = useState(false);
 
   const [isBoxLocked, setIsBoxLocked] = useState<boolean[]>([]);
 
@@ -303,6 +307,38 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       dispatch(setName({ name: localName }));
     }
   };
+
+  const saveSongDetails = ({
+    name: nextName,
+    songMetadataPatch,
+  }: {
+    name: string;
+    songMetadataPatch?: SongMetadata | null;
+  }) => {
+    if (!db) return;
+    dispatch(setName({ name: nextName }));
+    if (songMetadataPatch !== undefined) {
+      dispatch(setSongMetadata(songMetadataPatch));
+    }
+  };
+
+  const onNameEditButtonClick = () => {
+    if (type === "song") {
+      setIsSongMetadataModalOpen(true);
+      return;
+    }
+    if (isEditingName) {
+      saveName();
+      return;
+    }
+    setIsEditingName(true);
+  };
+
+  const nameEditButtonAriaLabel = (() => {
+    if (type === "song") return "Song details";
+    if (isEditingName) return "Save item name";
+    return "Edit item name";
+  })();
 
   const applyBoxChange = useCallback(({
     index,
@@ -1079,7 +1115,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               borderColorMap.get(type)
             )}
           >
-            {isEditingName && (
+            {type !== "song" && isEditingName && (
               <Button
                 variant="tertiary"
                 svg={X}
@@ -1089,10 +1125,9 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             <Button
               variant="tertiary"
               disabled={isLoading || !canEdit}
-              svg={isEditingName ? Check : Pencil}
-              onClick={
-                isEditingName ? () => saveName() : () => setIsEditingName(true)
-              }
+              svg={type === "song" ? Pencil : isEditingName ? Check : Pencil}
+              onClick={onNameEditButtonClick}
+              aria-label={nameEditButtonAriaLabel}
             />
             {!isEditingName && (
               <span className="text-base font-semibold flex-1 truncate flex items-center gap-2 max-w-[calc(100%-2rem)]">
@@ -1104,7 +1139,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                 )}
               </span>
             )}
-            {isEditingName && (
+            {type !== "song" && isEditingName && (
               <Input
                 hideLabel
                 className="text-base font-semibold flex-1 truncate flex items-center gap-2 max-w-[calc(100%-2rem)]"
@@ -1191,6 +1226,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           )}
         </div>
       </div>
+      <SongItemMetadataModal
+        isOpen={isSongMetadataModalOpen}
+        onClose={() => setIsSongMetadataModalOpen(false)}
+        itemName={name}
+        songMetadata={songMetadata}
+        onSave={saveSongDetails}
+      />
     </ErrorBoundary>
   );
 };

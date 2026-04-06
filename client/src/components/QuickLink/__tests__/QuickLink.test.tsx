@@ -42,8 +42,14 @@ const mockSetMonitorTimerId = jest.fn((payload: string | null) => ({
   payload,
 }));
 
+const mockOverlaysState = {
+  undoable: { present: { overlays: { list: [] as { id: string }[] } } },
+};
+
 jest.mock("../../../hooks", () => ({
   useDispatch: () => mockDispatch,
+  useSelector: (selector: (state: typeof mockOverlaysState) => unknown) =>
+    selector(mockOverlaysState),
 }));
 
 jest.mock("../../../store/presentationSlice", () => ({

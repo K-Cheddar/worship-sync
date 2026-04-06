@@ -13,6 +13,8 @@ type FilteredItemProps = {
   showWords: boolean;
   searchValue: string;
   updateShowWords: (showWords: boolean, index: number) => void;
+  /** Shown under the title for songs when stored metadata includes an artist (e.g. lyrics import). */
+  artistName?: string;
 };
 
 const FilteredItem = ({
@@ -23,6 +25,7 @@ const FilteredItem = ({
   showWords: _showWords,
   searchValue,
   updateShowWords,
+  artistName,
 }: FilteredItemProps) => {
   const isEven = index % 2 === 0;
   const bg = isEven ? "bg-gray-800" : "bg-gray-600";
@@ -62,14 +65,21 @@ const FilteredItem = ({
       className={`flex flex-col ${bg} hover:border-gray-300 border border-transparent rounded-md overflow-clip`}
     >
       <div className="flex gap-2 pl-4 items-center py-1.5">
-        <HighlightWords
-          searchValue={searchValue}
-          string={item.name}
-          className="text-base"
-          highlightWordColor={showWords ? "text-white" : "text-orange-400"}
-          nonHighlightWordColor={searchValue ? "text-gray-300" : "text-white"}
-          allowPartial
-        />
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <HighlightWords
+            searchValue={searchValue}
+            string={item.name}
+            className="text-base"
+            highlightWordColor={showWords ? "text-white" : "text-orange-400"}
+            nonHighlightWordColor={searchValue ? "text-gray-300" : "text-white"}
+            allowPartial
+          />
+          {artistName ? (
+            <p className="truncate text-sm text-gray-400" title={artistName}>
+              {artistName}
+            </p>
+          ) : null}
+        </div>
         {matchedWords && (
           <Button
             onClick={() => _updateShowWords()}

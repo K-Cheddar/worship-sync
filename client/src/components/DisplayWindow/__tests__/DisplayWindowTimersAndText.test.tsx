@@ -1,8 +1,8 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import DisplayClock from "../DisplayClock";
 import DisplayTimer from "../DisplayTimer";
 import NowDisplay from "../NowDisplay";
-import TimerDisplay from "../TimerDisplay";
+import TimerDisplay, { formatTime } from "../TimerDisplay";
 import VerseDisplay from "../VerseDisplay";
 import type { TimerInfo } from "../../../types";
 
@@ -44,6 +44,24 @@ describe("DisplayWindow timer and text helpers", () => {
   });
 
   describe("TimerDisplay", () => {
+    it("formats minute-only values when requested", () => {
+      expect(formatTime(125, true)).toBe("2");
+    });
+
+    it("renders split spans when formatting mm:ss sections", () => {
+      render(<div data-testid="format-root">{formatTime(65, false, true)}</div>);
+      const root = screen.getByTestId("format-root");
+      expect(root).toHaveTextContent("01:05");
+      expect(within(root).getAllByText(/^(01|:05)$/)).toHaveLength(2);
+    });
+
+    it("renders split spans when formatting hh:mm:ss sections", () => {
+      render(<div data-testid="format-root">{formatTime(3661, false, true)}</div>);
+      const root = screen.getByTestId("format-root");
+      expect(root).toHaveTextContent("01:01:01");
+      expect(within(root).getAllByText(/^(01|:01)$/)).toHaveLength(3);
+    });
+
     it("removes timer token when timerInfo is not provided", () => {
       const { container } = render(<TimerDisplay words={"Starts {{timer}} now"} />);
       expect(container.textContent).toBe("Starts  now");
@@ -107,6 +125,32 @@ describe("DisplayWindow timer and text helpers", () => {
         <DisplayTimer fontSize={18} />,
       );
       expect(container).toBeEmptyDOMElement();
+    });
+
+    it("returns null when the current timer is already displayed elsewhere", () => {
+      const timer = createTimer({ remainingTime: 90 });
+      hooksState = {
+        undoable: { present: { preferences: { monitorSettings: { timerId: "timer-1" } } } },
+        timers: { timers: [timer] },
+      };
+
+      const { container } = render(
+        <DisplayTimer fontSize={18} currentTimerInfo={{ ...timer, id: "timer-1" }} />,
+      );
+
+      expect(container).toBeEmptyDOMElement();
+    });
+
+    it("renders minute-only timer text when monitor timer is configured that way", () => {
+      const timer = createTimer({ remainingTime: 125, showMinutesOnly: true });
+      hooksState = {
+        undoable: { present: { preferences: { monitorSettings: { timerId: "timer-1" } } } },
+        timers: { timers: [timer] },
+      };
+
+      render(<DisplayTimer fontSize={20} />);
+
+      expect(screen.getByText("2")).toBeInTheDocument();
     });
   });
 

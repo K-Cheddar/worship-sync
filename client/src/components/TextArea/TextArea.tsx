@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, HTMLProps, useId, forwardRef } from "react";
 import cn from "classnames";
 
-type TextAreaProps = HTMLProps<HTMLTextAreaElement> & {
+type TextAreaProps = Omit<HTMLProps<HTMLTextAreaElement>, "onChange" | "value"> & {
   className?: string;
   textareaClassName?: string;
   type?: string;

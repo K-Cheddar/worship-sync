@@ -1,5 +1,5 @@
 import { FunctionComponent, HTMLProps, SVGProps, useId } from "react";
-import cn from "classnames";
+import { cn } from "@/utils/cnHelper";
 import Button from "../Button/Button";
 
 export type InputProps = HTMLProps<HTMLInputElement> & {
@@ -19,6 +19,7 @@ export type InputProps = HTMLProps<HTMLInputElement> & {
   inputTextSize?: string;
   hideSpinButtons?: boolean;
   inputWidth?: string;
+  inputClassName?: string;
   endAdornment?: React.ReactNode;
 };
 
@@ -41,11 +42,14 @@ const Input = ({
   inputTextSize = "text-sm",
   hideSpinButtons = true,
   inputWidth = "w-full",
+  inputClassName,
   endAdornment: _endAdornment,
   ...rest
 }: InputProps) => {
   const generatedId = useId();
   const inputId = id || generatedId;
+
+  const hasTrailingAction = Boolean(svg || _endAdornment);
 
   let endAdornment = _endAdornment;
 
@@ -80,12 +84,13 @@ const Input = ({
         <input
           className={cn(
             "rounded py-1 pl-2 text-black",
-            svg ? "pr-6" : "pr-2",
+            hasTrailingAction ? "pr-10" : "pr-2",
             disabled && "opacity-50",
             inputTextSize,
             inputWidth,
             hideSpinButtons &&
-            "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]"
+            "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]",
+            inputClassName,
           )}
           type={type}
           value={value ?? ""}
@@ -103,8 +108,8 @@ const Input = ({
           {...rest}
         />
         {endAdornment && (
-          <div className="absolute top-0 bottom-0 right-1 flex items-center">
-            {endAdornment}
+          <div className="pointer-events-none absolute top-0 bottom-0 right-1.5 flex items-center">
+            <span className="pointer-events-auto">{endAdornment}</span>
           </div>
         )}
       </span>

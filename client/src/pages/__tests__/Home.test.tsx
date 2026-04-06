@@ -74,6 +74,9 @@ describe("Home", () => {
       screen.getByRole("link", { name: /^Credits Editor / }),
     ).toHaveAttribute("href", "/credits-editor");
     expect(
+      screen.getByRole("link", { name: /Board moderation/i }),
+    ).toHaveAttribute("href", "/boards/controller");
+    expect(
       screen.getByRole("link", { name: /Info Controller/i }),
     ).toHaveAttribute("href", "/info-controller");
 
@@ -165,5 +168,28 @@ describe("Home", () => {
     expect(installPwa).toHaveBeenCalled();
 
     openSpy.mockRestore();
+  });
+
+  it("hides board moderation when the user is not logged in", () => {
+    render(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext({ loginState: "demo" }) as any}
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.queryByRole("link", { name: /Board moderation/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /^Credits Editor / }),
+    ).toHaveAttribute("href", "/credits-editor");
   });
 });

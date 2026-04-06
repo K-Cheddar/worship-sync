@@ -59,6 +59,20 @@ const FilteredItems = ({
     return list.filter((item) => item.type === type);
   }, [list, type]);
 
+  const songArtistById = useMemo(() => {
+    const byId = new Map<string, string>();
+    if (type !== "song") {
+      return byId;
+    }
+    for (const doc of allDocs) {
+      const artist = doc.songMetadata?.artistName?.trim();
+      if (artist) {
+        byId.set(doc._id, artist);
+      }
+    }
+    return byId;
+  }, [allDocs, type]);
+
   const [filteredList, setFilteredList] =
     useState<filteredItemsListType[]>(listOfType);
   const [numShownItems, setNumShownItems] = useState(20);
@@ -343,6 +357,7 @@ const FilteredItems = ({
               addItemToList={(_item) => dispatch(addItemToItemList(_item))}
               setItemToBeDeleted={setItemToBeDeleted}
               searchValue={searchValue}
+              artistName={songArtistById.get(item._id)}
             />
           );
         })}

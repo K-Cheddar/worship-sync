@@ -2,7 +2,7 @@ import { app, screen, BrowserWindow } from "electron";
 import { join } from "node:path";
 import * as fs from "node:fs";
 
-export type WindowType = "projector" | "monitor";
+export type WindowType = "projector" | "monitor" | "board";
 
 export interface SavedDisplayBounds {
   x: number;
@@ -26,6 +26,7 @@ export interface MainWindowState {
 export interface WindowStates {
   projector: WindowState;
   monitor: WindowState;
+  board: WindowState;
   main?: MainWindowState;
 }
 
@@ -33,6 +34,7 @@ export interface WindowStates {
 const DEFAULT_WINDOW_STATES: WindowStates = {
   projector: {},
   monitor: {},
+  board: {},
 };
 
 export class WindowStateManager {
@@ -130,10 +132,12 @@ export class WindowStateManager {
       if (byBounds) return byBounds;
     }
 
-    // 3. Fallback: assign by index (projector = second, monitor = third or second)
+    // 3. Fallback: assign by index (projector = second; monitor and board = third when available)
     if (displays.length > 1) {
       if (windowType === "projector") return displays[1];
-      if (windowType === "monitor") return displays.length > 2 ? displays[2] : displays[1];
+      if (windowType === "monitor" || windowType === "board") {
+        return displays.length > 2 ? displays[2] : displays[1];
+      }
     }
 
     return screen.getPrimaryDisplay();

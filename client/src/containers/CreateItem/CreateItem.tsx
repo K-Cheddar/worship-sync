@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import RadioButton from "../../components/RadioButton/RadioButton";
-import { FileQuestion, Plus, Check } from "lucide-react";
+import { FileQuestion, Import, Plus, Check } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -25,12 +25,25 @@ import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { ItemState, ItemType, ServiceItem } from "../../types";
-import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
 import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import Modal from "../../components/Modal/Modal";
+import {
+  LyricsImportQuerySummary,
+  buildLyricsImportQueryEntries,
+} from "../../components/LyricsImportQuerySummary/LyricsImportQuerySummary";
+import { LyricsImportLyricsPreview } from "../../components/LyricsImportLyricsPreview/LyricsImportLyricsPreview";
+import {
+  resolveLrclibImport,
+  type LrclibImportResolution,
+} from "../../api/lrclib";
+import {
+  createSongMetadataFromLrclib,
+  getImportableLyricsFromTrack,
+} from "../../utils/lrclib";
 
 type ItemTypesType = {
   type: ItemType;
@@ -90,6 +103,11 @@ const CreateItem = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [justAdded, setJustAdded] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
+  const [isImportingLyrics, setIsImportingLyrics] = useState(false);
+  const [lrclibError, setLrclibError] = useState("");
+  const [lrclibCandidates, setLrclibCandidates] =
+    useState<LrclibImportResolution["candidates"]>([]);
+  const [isCandidateModalOpen, setIsCandidateModalOpen] = useState(false);
 
   const { db } = useContext(ControllerInfoContext) || {};
 
@@ -100,6 +118,9 @@ const CreateItem = () => {
     name: itemName,
     type: selectedType,
     text,
+    songArtist = "",
+    songAlbum = "",
+    songMetadata = null,
     hours,
     minutes,
     seconds,
@@ -143,6 +164,63 @@ const CreateItem = () => {
     );
   };
 
+  const applyLrclibImport = (candidate: LrclibImportResolution["candidates"][0]) => {
+    const lyricsText = getImportableLyricsFromTrack(candidate);
+
+    if (!lyricsText) {
+      setLrclibError("Lyrics were found, but there was no importable text.");
+      return;
+    }
+
+    updateCreateItemDraft({
+      text: lyricsText,
+      songArtist: candidate.artistName,
+      songAlbum: candidate.albumName || "",
+      songMetadata: createSongMetadataFromLrclib(candidate),
+    });
+    setLrclibError("");
+    setIsCandidateModalOpen(false);
+    setLrclibCandidates([]);
+  };
+
+  const importLyricsFromLrclib = async () => {
+    if (!itemName.trim()) {
+      setLrclibError("Enter a song title before importing lyrics.");
+      return;
+    }
+
+    setIsImportingLyrics(true);
+    setLrclibError("");
+
+    try {
+      const result = await resolveLrclibImport({
+        trackName: itemName.trim(),
+        artistName: songArtist.trim() || undefined,
+        albumName: songAlbum.trim() || undefined,
+      });
+
+      if (result.match) {
+        applyLrclibImport(result.match);
+        return;
+      }
+
+      if (result.candidates.length === 0) {
+        setLrclibError(
+          "No songs matched the name you entered above, and artist and album when you added them.",
+        );
+        return;
+      }
+
+      setLrclibCandidates(result.candidates);
+      setIsCandidateModalOpen(true);
+    } catch (error) {
+      console.error("LRCLIB import failed:", error);
+      setLrclibError("Could not import lyrics right now. Try again.");
+    } finally {
+      setIsImportingLyrics(false);
+    }
+  };
+
   const existingItem: ServiceItem | undefined = useMemo(() => {
     if (selectedType !== "bible") {
       return (list as ServiceItem[]).find(
@@ -168,12 +246,12 @@ const CreateItem = () => {
       type: item.type,
       background: item.background,
       _id: item._id,
-      listId: generateRandomId(),
+      listId: "",
     };
     dispatch(setActiveItem(item));
-    dispatch(addItemToItemList(listItem));
+    const addedAction = dispatch(addItemToItemList(listItem));
     dispatch(addItemToAllItemsList(listItem));
-    goToItem(item._id, listItem.listId);
+    goToItem(item._id, addedAction.payload.listId);
   };
 
   const createItem = async () => {
@@ -197,6 +275,7 @@ const CreateItem = () => {
         background: defaultSongBackground.background,
         mediaInfo: defaultSongBackground.mediaInfo,
         brightness: defaultSongBackgroundBrightness,
+        songMetadata,
       });
 
       setJustCreated(true);
@@ -263,26 +342,84 @@ const CreateItem = () => {
 
   return (
     <ErrorBoundary>
-      <h2 className="text-2xl text-center font-semibold">Create Item</h2>
+      <h2 className="text-2xl text-center font-semibold mt-2">Create Item</h2>
       <div className="my-2 mx-4 rounded-md p-4 bg-gray-800 w-1/2 max-lg:w-[95%]">
+        <Modal
+          isOpen={isCandidateModalOpen}
+          onClose={() => setIsCandidateModalOpen(false)}
+          title="Choose song"
+          size="lg"
+        >
+          <div className="flex flex-col gap-3">
+            <LyricsImportQuerySummary
+              entries={buildLyricsImportQueryEntries({
+                primaryLabel: "Name",
+                primaryValue: itemName,
+                artist: songArtist,
+                album: songAlbum,
+              })}
+            />
+            <p className="text-sm text-gray-200">
+              Select a result below to import into this draft.
+            </p>
+            <ul className="flex flex-col gap-2">
+              {lrclibCandidates.map((candidate) => (
+                <li
+                  key={`${candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName
+                    }-${candidate.artistName}`}
+                  className="rounded-md border border-slate-500/90 bg-slate-800/95 p-3"
+                >
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="font-semibold text-gray-50">
+                        {candidate.trackName}
+                      </p>
+                      <span className="shrink-0 rounded-full border border-cyan-400/60 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-100">
+                        {candidate.source === "genius" ? "Genius" : "LRCLIB"}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-200">
+                      {candidate.artistName}
+                      {candidate.albumName ? ` • ${candidate.albumName}` : ""}
+                    </p>
+                    {candidate.durationMs ? (
+                      <p className="text-xs text-gray-300">
+                        {(candidate.durationMs / 1000).toFixed(0)} seconds
+                      </p>
+                    ) : null}
+                    <LyricsImportLyricsPreview
+                      lyricsText={getImportableLyricsFromTrack(candidate)}
+                    />
+                    <div className="pt-2">
+                      <Button
+                        variant="cta"
+                        className="justify-center"
+                        svg={Import}
+                        onClick={() => applyLrclibImport(candidate)}
+                      >
+                        Use Lyrics
+                      </Button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Modal>
         <ul className="flex flex-col gap-2">
-          <h3 className="text-lg font-semibold text-center">
-            Select Item Type
-          </h3>
           <Input
             value={itemName}
             onChange={(val) => updateCreateItemDraft({ name: val as string })}
-            label="Item Name"
+            label={selectedType === "song" ? "Song name" : "Item Name"}
             className="text-base"
             data-ignore-undo="true"
           />
           {existingItem && (
-            <p className="text-cyan-400 bg-gray-600 text-sm rounded-md p-1">
-              <span className="italic">"{existingItem.name}"</span>
+            <p className="text-cyan-400 bg-gray-600 text-sm rounded-md p-1 w-full flex items-center">
+              <span className="italic font-semibold mr-2">"{existingItem.name}"</span>
               <span> already exists.</span>
               <Button
                 variant="tertiary"
-                className="inline"
                 onClick={addItem}
                 svg={justAdded ? Check : Plus}
                 color={justAdded ? "#84cc16" : "#22d3ee"}
@@ -309,10 +446,60 @@ const CreateItem = () => {
           ))}
         </ul>
 
+        {selectedType === "song" && (
+          <div className="mt-3 rounded-md border border-gray-600 bg-gray-900 p-3 space-y-3">
+            <div className="grid gap-2 md:grid-cols-2">
+              <Input
+                value={songArtist}
+                onChange={(val) =>
+                  updateCreateItemDraft({ songArtist: val as string })
+                }
+                label="Artist"
+                className="text-base"
+                data-ignore-undo="true"
+              />
+              <Input
+                value={songAlbum}
+                onChange={(val) =>
+                  updateCreateItemDraft({ songAlbum: val as string })
+                }
+                label="Album"
+                className="text-base"
+                data-ignore-undo="true"
+              />
+            </div>
+            <div className="border-t border-gray-600 pt-3 space-y-2">
+              <p className="text-xs text-gray-400">
+                Lookup uses your song name, artist, and album. Or paste lyrics below.
+              </p>
+              <Button
+                variant="secondary"
+                className="w-full justify-center"
+                svg={Import}
+                onClick={importLyricsFromLrclib}
+                disabled={!itemName.trim() || isImportingLyrics}
+              >
+                {isImportingLyrics ? "Importing..." : "Import Lyrics"}
+              </Button>
+              {songMetadata && (
+                <p className="text-sm text-cyan-300">
+                  Imported: {songMetadata.artistName} - {songMetadata.trackName}
+                </p>
+              )}
+              {lrclibError && (
+                <p className="text-sm text-red-300">{lrclibError}</p>
+              )}
+            </div>
+          </div>
+        )}
+
         {(selectedType === "song" || selectedType === "free") && (
           <TextArea
-            className="w-full h-72 mt-2 flex flex-col"
-            label="Paste Text Here"
+            className={`w-full h-72 flex flex-col ${selectedType === "song" ? "mt-3" : "mt-2"
+              }`}
+            label={
+              selectedType === "song" ? "Paste Lyrics Here" : "Paste Text Here"
+            }
             value={text}
             onChange={(val) => updateCreateItemDraft({ text: val as string })}
             data-ignore-undo="true"

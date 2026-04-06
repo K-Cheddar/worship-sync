@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import Button from "../Button/Button";
 import { X } from "lucide-react";
-import cn from "classnames";
+import { cn } from "@/utils/cnHelper";
 
 interface ModalProps {
   isOpen: boolean;
@@ -14,6 +14,14 @@ interface ModalProps {
   contentPadding?: string;
   headerAction?: React.ReactNode;
   zIndexLevel?: 1 | 2;
+  /** Merged onto the backdrop layer (default: bg-black/50). */
+  backdropClassName?: string;
+  /** Merged onto the modal panel (default: bg-gray-800 …). */
+  surfaceClassName?: string;
+  /** Merged onto the header row (title + close). */
+  headerClassName?: string;
+  /** Merged onto the title element. */
+  titleClassName?: string;
 }
 
 const sizeClasses = {
@@ -35,6 +43,10 @@ const Modal = ({
   contentPadding = "p-4",
   headerAction,
   zIndexLevel = 1,
+  backdropClassName,
+  surfaceClassName,
+  headerClassName,
+  titleClassName,
 }: ModalProps) => {
   const modalRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
@@ -103,7 +115,7 @@ const Modal = ({
         "fixed inset-0 flex items-center justify-center p-4",
         zIndexClass,
         size === "full" ? "max-md:p-0" : "p-4",
-        isOpen ? "block" : "hidden"
+        !isOpen && "hidden",
       )}
       onClick={handleBackdropClick}
       onKeyDown={handleKeyDown}
@@ -112,22 +124,45 @@ const Modal = ({
       aria-labelledby={title && "modal-title"}
       tabIndex={-1}
     >
-      <div className="absolute inset-0 bg-black/50 transition-opacity" />
+      <div
+        className={cn(
+          "absolute inset-0 bg-black/50 transition-opacity",
+          backdropClassName,
+        )}
+      />
 
       <div
         ref={modalRef}
         className={cn(
-          "relative bg-gray-800 shadow-2xl w-full overflow-hidden",
-          size === "full" ? "max-md:rounded-none max-md:h-full" : "rounded-lg max-h-[90vh] max-md:max-h-[95vh] max-md:rounded-none",
-          sizeClasses[size]
+          "relative w-full overflow-hidden shadow-2xl",
+          sizeClasses[size],
+          surfaceClassName
+            ? surfaceClassName
+            : cn(
+                "bg-gray-800",
+                size === "full"
+                  ? "max-md:h-full max-md:rounded-none"
+                  : "max-h-[90vh] rounded-lg max-md:max-h-[95vh] max-md:rounded-none",
+              ),
         )}
         role="document"
         onClick={handleModalContentClick}
       >
         {(title || showCloseButton || headerAction) && (
-          <div className="flex items-center justify-between p-4">
+          <div
+            className={cn(
+              "flex items-center justify-between p-4",
+              headerClassName,
+            )}
+          >
             {title && (
-              <h2 id="modal-title" className="text-xl font-semibold text-white">
+              <h2
+                id="modal-title"
+                className={cn(
+                  "text-xl font-semibold text-white",
+                  titleClassName,
+                )}
+              >
                 {title}
               </h2>
             )}

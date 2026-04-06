@@ -21,7 +21,12 @@ import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
 import TimerManager from "./components/TimerManager/TimerManager";
 import StreamInfo from "./pages/StreamInfo";
 import InfoController from "./pages/InfoController";
+import BoardController from "./pages/BoardController";
+import BoardDisplay from "./pages/BoardDisplay";
+import BoardPage from "./pages/BoardPage";
+import BoardPresent from "./pages/BoardPresent";
 import RoutePersistence from "./components/RoutePersistence/RoutePersistence";
+import RequireLogin from "./components/RequireLogin";
 import { useEffect } from "react";
 import { delay } from "./utils/generalUtils";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -62,6 +67,12 @@ const App: React.FC = () => {
                   <Route path="/credits-editor" element={<CreditsEditor />} />
                   <Route path="/info-controller" element={<InfoController />} />
                 </Route>
+                <Route element={<RequireLogin />}>
+                  <Route path="/boards/controller" element={<BoardController />} />
+                </Route>
+                <Route path="/boards/display" element={<BoardDisplay />} />
+                <Route path="/boards/:aliasId" element={<BoardPage />} />
+                <Route path="/boards/present/:aliasId" element={<BoardPresent />} />
                 <Route path="/projector" element={<Projector />} />
                 <Route path="/projector-full" element={<ProjectorFull />} />
                 <Route path="/monitor" element={<Monitor />} />

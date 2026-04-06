@@ -8,7 +8,9 @@ import {
   ItemSlideType,
   ItemState,
   MediaType,
+  SongMetadata,
   ShouldSendTo,
+  TimerInfo,
 } from "../types";
 import { createAsyncThunk } from "../hooks/reduxHooks";
 import {
@@ -56,6 +58,7 @@ const initialState: ItemState = {
   pendingRemoteItem: null,
   shouldSendTo: defaultShouldSendTo,
   restoreFocusToBox: null,
+  songMetadata: undefined,
 };
 
 const resetTransientItemState = (state: ItemState) => {
@@ -84,6 +87,7 @@ const createItemSnapshot = (
     timerInfo: item.timerInfo,
     shouldSendTo: item.shouldSendTo || defaultShouldSendTo,
     formattedSections: item.formattedSections,
+    songMetadata: item.songMetadata,
     _rev: (item as DBItem)._rev,
     createdAt: (item as DBItem).createdAt,
     updatedAt: (item as DBItem).updatedAt,
@@ -152,6 +156,7 @@ const applyItemDataToState = (
   };
   state.timerInfo = payload.timerInfo;
   state.shouldSendTo = payload.shouldSendTo || defaultShouldSendTo;
+  state.songMetadata = payload.songMetadata || undefined;
   resetTransientItemState(state);
 };
 
@@ -191,11 +196,25 @@ export const itemSlice = createSlice({
       state.bibleInfo = action.payload;
       state.hasPendingUpdate = true;
     },
+    _updateTimerInfo: (state, action: PayloadAction<TimerInfo>) => {
+      state.timerInfo = action.payload;
+      state.hasPendingUpdate = true;
+    },
+    syncLiveTimerInfo: (state, action: PayloadAction<TimerInfo>) => {
+      state.timerInfo = action.payload;
+    },
     _updateFormattedSections: (
       state,
       action: PayloadAction<FormattedSection[]>,
     ) => {
       state.formattedSections = [...action.payload];
+      state.hasPendingUpdate = true;
+    },
+    setSongMetadata: (
+      state,
+      action: PayloadAction<SongMetadata | null | undefined>,
+    ) => {
+      state.songMetadata = action.payload ?? undefined;
       state.hasPendingUpdate = true;
     },
     setItemIsLoading: (state, action: PayloadAction<boolean>) => {
@@ -597,10 +616,13 @@ export const {
   setItemFormatting,
   _updateSlides,
   _updateBibleInfo,
+  _updateTimerInfo,
+  syncLiveTimerInfo,
   _updateFormattedSections,
   setBackground,
   setHasPendingUpdate,
   setSelectedBox,
+  setSongMetadata,
   setShouldSendTo,
   forceUpdate,
   bufferRemoteItemUpdate,

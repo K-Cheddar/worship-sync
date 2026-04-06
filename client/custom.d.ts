@@ -29,7 +29,7 @@ interface Display {
   label?: string;
 }
 
-type WindowType = "projector" | "monitor";
+type WindowType = "projector" | "monitor" | "board";
 
 interface WindowState {
   displayId?: number;
@@ -43,8 +43,10 @@ interface WindowState {
 interface WindowStatesInfo {
   projector: WindowState;
   monitor: WindowState;
+  board: WindowState;
   projectorOpen: boolean;
   monitorOpen: boolean;
+  boardOpen: boolean;
 }
 
 interface ElectronAPI {

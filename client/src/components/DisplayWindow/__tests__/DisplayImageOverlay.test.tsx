@@ -130,4 +130,28 @@ describe("DisplayImageOverlay", () => {
     expect(gsapSetMock).toHaveBeenCalled();
     expect(gsapToMock).toHaveBeenCalled();
   });
+
+  it("keeps the previous image overlay visible when the current type has switched away", () => {
+    const containerRef = { current: document.createElement("div") };
+    render(
+      <DisplayImageOverlay
+        ref={containerRef as any}
+        width={30}
+        shouldAnimate
+        imageOverlayInfo={{}}
+        prevImageOverlayInfo={{
+          id: "img-prev",
+          name: "Previous",
+          imageUrl: "https://cdn/previous.jpg",
+        }}
+      />,
+    );
+
+    gsapCallbacks.forEach((cb) => cb());
+
+    expect(
+      gsapSetMock.mock.calls.some(([, props]) => props?.opacity === 1),
+    ).toBe(true);
+    expect(gsapToMock).toHaveBeenCalled();
+  });
 });
