@@ -23,6 +23,7 @@ import {
   isBoardAuthorInUse,
   isBoardPostOwnedByParticipant,
 } from "../boards/boardUtils";
+import { useStickToBottomScroll } from "../hooks/useStickToBottomScroll";
 
 const boardDarkFieldClassName =
   "rounded-md border border-stone-600 bg-stone-900 text-stone-100 caret-amber-400 placeholder:text-stone-500 focus:outline-none focus:ring-2 focus:ring-amber-500/40";
@@ -221,6 +222,15 @@ const BoardPage = () => {
     [participantId, posts],
   );
 
+  const postsScrollTrigger = useMemo(
+    () => attendeePosts.map((p) => `${p._id}:${p._rev ?? ""}`).join("|"),
+    [attendeePosts],
+  );
+  const { scrollRef, endRef, onScroll } = useStickToBottomScroll({
+    scrollTrigger: postsScrollTrigger,
+    resetKey: aliasId,
+  });
+
   const isCurrentUserPost = (postAuthor: string) => {
     if (!nameLocked) return false;
     const mine = author.trim();
@@ -323,7 +333,11 @@ const BoardPage = () => {
             <span className="text-sm text-stone-400">{attendeePosts.length} shown</span>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
+          <div
+            ref={scrollRef}
+            onScroll={onScroll}
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5"
+          >
             {!hasLoadedOnce && connectionStatus.status !== "failed" ? (
               <div className="rounded-xl border border-stone-700 bg-stone-900/80 p-6">
                 <p className="text-base font-semibold">
@@ -440,6 +454,7 @@ const BoardPage = () => {
                 </div>
               </div>
             )}
+            <div ref={endRef} className="h-px shrink-0" aria-hidden />
           </div>
         </section>
 

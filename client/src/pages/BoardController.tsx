@@ -35,6 +35,7 @@ import { useToast } from "../context/toastContext";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useElectronWindows } from "../hooks/useElectronWindows";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useStickToBottomScroll } from "../hooks/useStickToBottomScroll";
 import BoardSyncProvider, { useBoardSync } from "../boards/BoardSyncContext";
 import { BoardCreateDiscussionForm } from "../boards/BoardCreateDiscussionForm";
 import { BoardRenameModal } from "../boards/BoardRenameModal";
@@ -439,6 +440,15 @@ export const BoardControllerContent = () => {
   }, []);
 
   const visibleCount = filterVisibleBoardPosts(posts).length;
+  const postsScrollTrigger = useMemo(
+    () => posts.map((p) => `${p._id}:${p._rev ?? ""}`).join("|"),
+    [posts],
+  );
+  const stickToBottomResetKey = `${selectedAliasId}:${boardIdToView}`;
+  const { scrollRef, endRef, onScroll } = useStickToBottomScroll({
+    scrollTrigger: postsScrollTrigger,
+    resetKey: stickToBottomResetKey,
+  });
   const renameAlias = aliases.find((alias) => alias.aliasId === renameAliasId) ?? null;
 
   return (
@@ -941,7 +951,11 @@ export const BoardControllerContent = () => {
                 </div>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div
+                ref={scrollRef}
+                onScroll={onScroll}
+                className="min-h-0 flex-1 overflow-y-auto p-4"
+              >
                 {isLoading ? (
                   <div className="flex items-center gap-2 text-gray-300">
                     <LoaderCircle className="animate-spin" size={18} />
@@ -1035,6 +1049,7 @@ export const BoardControllerContent = () => {
                     ))}
                   </div>
                 )}
+                <div ref={endRef} className="h-px shrink-0" aria-hidden />
               </div>
             </>
           )}
