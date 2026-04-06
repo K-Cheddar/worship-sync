@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import DisplayClock from "../DisplayClock";
 import DisplayTimer from "../DisplayTimer";
 import NowDisplay from "../NowDisplay";
@@ -49,15 +49,17 @@ describe("DisplayWindow timer and text helpers", () => {
     });
 
     it("renders split spans when formatting mm:ss sections", () => {
-      const { container } = render(<>{formatTime(65, false, true)}</>);
-      expect(container.textContent).toBe("01:05");
-      expect(container.querySelectorAll("span")).toHaveLength(2);
+      render(<div data-testid="format-root">{formatTime(65, false, true)}</div>);
+      const root = screen.getByTestId("format-root");
+      expect(root).toHaveTextContent("01:05");
+      expect(within(root).getAllByText(/^(01|:05)$/)).toHaveLength(2);
     });
 
     it("renders split spans when formatting hh:mm:ss sections", () => {
-      const { container } = render(<>{formatTime(3661, false, true)}</>);
-      expect(container.textContent).toBe("01:01:01");
-      expect(container.querySelectorAll("span")).toHaveLength(3);
+      render(<div data-testid="format-root">{formatTime(3661, false, true)}</div>);
+      const root = screen.getByTestId("format-root");
+      expect(root).toHaveTextContent("01:01:01");
+      expect(within(root).getAllByText(/^(01|:01)$/)).toHaveLength(3);
     });
 
     it("removes timer token when timerInfo is not provided", () => {

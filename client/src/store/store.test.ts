@@ -3,12 +3,6 @@ const flushListenerEffects = async () => {
   await Promise.resolve();
 };
 
-const flushListenerDelay = async (ms = 20) => {
-  await flushListenerEffects();
-  jest.advanceTimersByTime(ms);
-  await flushListenerEffects();
-};
-
 const waitForListenerDelay = async (ms = 30) => {
   await new Promise((resolve) => setTimeout(resolve, ms));
   await flushListenerEffects();

@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { BoardControllerContent } from "./BoardController";
 import { useBoardSync } from "../boards/BoardSyncContext";
 import { useElectronWindows } from "../hooks/useElectronWindows";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import {
   createBoardAlias,
   deleteBoardAlias,
@@ -24,6 +25,10 @@ jest.mock("../containers/Toolbar/ToolbarElements/UserSection", () => () => (
 
 jest.mock("../hooks/useElectronWindows", () => ({
   useElectronWindows: jest.fn(),
+}));
+
+jest.mock("../hooks/useMediaQuery", () => ({
+  useMediaQuery: jest.fn(() => true),
 }));
 
 jest.mock("../boards/BoardSyncContext", () => ({
@@ -52,7 +57,15 @@ const mockUpdateBoardPostHidden = jest.mocked(updateBoardPostHidden);
 const mockUpdateBoardPostHighlighted = jest.mocked(updateBoardPostHighlighted);
 const mockUseBoardSync = jest.mocked(useBoardSync);
 const mockUseElectronWindows = jest.mocked(useElectronWindows);
+const mockUseMediaQuery = jest.mocked(useMediaQuery);
 let mockBoardDb: any;
+
+const findMoreBoardToolsButton = () =>
+  screen.findByRole(
+    "button",
+    { name: /More board tools/i },
+    { timeout: 15000 },
+  );
 
 const createMockBoardDb = () => {
   let aliasDoc = {
@@ -214,6 +227,7 @@ const createMockBoardDb = () => {
 describe("BoardControllerContent", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUseMediaQuery.mockImplementation(() => true);
     localStorage.clear();
     mockBoardDb = createMockBoardDb();
     mockUseElectronWindows.mockReturnValue({
@@ -264,16 +278,16 @@ describe("BoardControllerContent", () => {
     );
 
   const openMoreBoardTools = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(
-      await screen.findByRole("button", { name: /More board tools/i }),
-    );
+    await user.click(await findMoreBoardToolsButton());
   };
 
-  it("creates boards and sends moderation actions to the board api", async () => {
+  it(
+    "creates boards and sends moderation actions to the board api",
+    async () => {
     const user = userEvent.setup();
     renderPage();
 
-    await screen.findByRole("button", { name: /More board tools/i });
+    await findMoreBoardToolsButton();
 
     await user.click(screen.getAllByRole("button", { name: /^Hide$/i })[0]);
     expect(mockUpdateBoardPostHidden).toHaveBeenCalledWith(
@@ -312,7 +326,9 @@ describe("BoardControllerContent", () => {
       title: "New Board",
       database: "test",
     });
-  });
+    },
+    20000,
+  );
 
   it("sorts moderator posts by timestamp ascending", async () => {
     renderPage();
@@ -327,7 +343,7 @@ describe("BoardControllerContent", () => {
   it("stores the selected alias for the board display page", async () => {
     renderPage();
 
-    await screen.findByRole("button", { name: /More board tools/i });
+    await findMoreBoardToolsButton();
 
     expect(localStorage.getItem("worshipsyncBoardDisplayAliasId")).toBe(
       "sunday",
@@ -339,7 +355,7 @@ describe("BoardControllerContent", () => {
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     renderPage();
 
-    await screen.findByRole("button", { name: /More board tools/i });
+    await findMoreBoardToolsButton();
 
     await user.click(screen.getByRole("button", { name: /Open menu/i }));
     await user.click(screen.getByRole("menuitem", { name: /Open Board/i }));

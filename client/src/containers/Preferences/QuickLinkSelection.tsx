@@ -1,7 +1,7 @@
 import { CheckCheck, X } from "lucide-react";
 import Button from "../../components/Button/Button";
 import { useDispatch, useSelector } from "../../hooks";
-import { DisplayType, Presentation } from "../../types";
+import { DisplayType } from "../../types";
 import {
   setSelectedQuickLink,
   setSelectedQuickLinkPresentation,

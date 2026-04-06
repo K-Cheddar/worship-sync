@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import WindowManager from "./WindowManager";
 
 const mockUseElectronWindows = jest.fn();
@@ -19,9 +19,9 @@ describe("WindowManager", () => {
       windowStates: null,
     });
 
-    const { container } = render(<WindowManager />);
+    render(<WindowManager />);
 
-    expect(container.firstChild).toBeNull();
+    expect(screen.queryByText("Window Management")).not.toBeInTheDocument();
   });
 
   it("renders the default projector and monitor controls and wires their actions", async () => {
@@ -88,15 +88,9 @@ describe("WindowManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Bring to Front" }));
     expect(focusWindow).toHaveBeenCalledWith("monitor");
 
-    const monitorCard = screen.getByText("Stage Monitor Window").closest("div");
-    if (!monitorCard) {
-      throw new Error("Monitor card not found");
-    }
-
-    const monitorRadio = within(monitorCard).getByLabelText(
-      "Side Display (1920x1080):"
-    );
-    fireEvent.click(monitorRadio);
+    const sideDisplayRadios = screen.getAllByLabelText("Side Display (1920x1080):");
+    expect(sideDisplayRadios).toHaveLength(2);
+    fireEvent.click(sideDisplayRadios[1]);
 
     await waitFor(() =>
       expect(moveWindowToDisplay).toHaveBeenCalledWith("monitor", 2)

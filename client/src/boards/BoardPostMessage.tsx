@@ -2,9 +2,16 @@ import { useLayoutEffect, useRef, useState } from "react";
 import cn from "classnames";
 
 const COLLAPSED_MAX_CLASS = "max-h-48";
+/** Bottom fade height; matches previous overlay so “Show more” lines up. */
+const COLLAPSED_FADE_HEIGHT = "3.5rem";
 /** Caps expanded body height so long posts scroll inside this region. */
 const EXPANDED_BODY_CLASS =
   "max-h-[100vh] min-h-0 overflow-y-auto overflow-x-hidden pr-0.5 touch-pan-y";
+
+const collapsedBottomFadeMaskStyle = {
+  WebkitMaskImage: `linear-gradient(to bottom, black 0%, black calc(100% - ${COLLAPSED_FADE_HEIGHT}), transparent 100%)`,
+  maskImage: `linear-gradient(to bottom, black 0%, black calc(100% - ${COLLAPSED_FADE_HEIGHT}), transparent 100%)`,
+} as const;
 
 type BoardPostMessageProps = {
   text: string;
@@ -54,16 +61,6 @@ export const BoardPostMessage = ({
 
   const showCollapsedFade = !expanded && showToggle;
 
-  let collapsedFadeClass =
-    "bg-gradient-to-t from-stone-900/95 via-stone-900/65 to-transparent";
-  if (isModeratorTone) {
-    collapsedFadeClass =
-      "bg-gradient-to-t from-gray-800/95 via-gray-800/65 to-transparent";
-  } else if (isMine) {
-    collapsedFadeClass =
-      "bg-gradient-to-t from-amber-950/95 via-amber-950/55 to-transparent";
-  }
-
   let showMoreButtonClass = "text-amber-400/95";
   if (isModeratorTone) {
     showMoreButtonClass = "text-amber-300/95";
@@ -73,32 +70,22 @@ export const BoardPostMessage = ({
 
   return (
     <div className="mt-3">
-      <div className="relative">
-        <div
-          ref={bodyRef}
-          className={cn(
-            textClass,
-            expanded
-              ? EXPANDED_BODY_CLASS
-              : `${COLLAPSED_MAX_CLASS} overflow-hidden`,
-          )}
-          style={
-            expanded
-              ? { WebkitOverflowScrolling: "touch" as const }
-              : undefined
-          }
-        >
-          {text}
-        </div>
-        {showCollapsedFade && (
-          <div
-            className={cn(
-              "pointer-events-none absolute inset-x-0 bottom-0 z-1 h-14",
-              collapsedFadeClass,
-            )}
-            aria-hidden
-          />
+      <div
+        ref={bodyRef}
+        className={cn(
+          textClass,
+          expanded
+            ? EXPANDED_BODY_CLASS
+            : `${COLLAPSED_MAX_CLASS} overflow-hidden`,
         )}
+        style={{
+          ...(expanded
+            ? { WebkitOverflowScrolling: "touch" as const }
+            : {}),
+          ...(showCollapsedFade ? collapsedBottomFadeMaskStyle : {}),
+        }}
+      >
+        {text}
       </div>
       {showToggle && (
         <button
