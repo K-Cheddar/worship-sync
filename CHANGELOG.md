@@ -1,3 +1,19 @@
+# [1.42.0](https://github.com/K-Cheddar/worship-sync/compare/v1.41.0...v1.42.0) (2026-04-06)
+
+
+### Bug Fixes
+
+* Cross fade between different overlay types restored ([bdd9369](https://github.com/K-Cheddar/worship-sync/commit/bdd93690441a62e39e8b1da691f5d3d068928495))
+* Fix minor board ui issues ([7de0e88](https://github.com/K-Cheddar/worship-sync/commit/7de0e882790aa3f3164eadc512b2e6bfd4ea959f))
+* new posts auto scroll ([e6f5ed4](https://github.com/K-Cheddar/worship-sync/commit/e6f5ed4cbf916d27028ffdc6e3aa13834c73d056))
+
+
+### Features
+
+* Adding ability to import lyrics ([77f1475](https://github.com/K-Cheddar/worship-sync/commit/77f1475f7bce13949185cf39af8840116913594d))
+* Adding basic discussion board ([8ebc201](https://github.com/K-Cheddar/worship-sync/commit/8ebc2016b2025eacb900833f55eae20a059b163d))
+* Import lyrics from LRCLIB ([23d9a89](https://github.com/K-Cheddar/worship-sync/commit/23d9a8930cb9095e9a5d7b296dee686b04af6819))
+
 # [1.41.0](https://github.com/K-Cheddar/worship-sync/compare/v1.40.0...v1.41.0) (2026-03-31)
 
 

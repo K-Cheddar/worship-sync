@@ -1,7 +1,7 @@
 {
   "name": "worship-sync-server",
   "private": true,
-  "version": "1.41.0",
+  "version": "1.42.0",
   "scripts": {
     "start": "node server.js",
     "test": "npm run test:server",
