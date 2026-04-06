@@ -60,10 +60,11 @@ const mockUseElectronWindows = jest.mocked(useElectronWindows);
 const mockUseMediaQuery = jest.mocked(useMediaQuery);
 let mockBoardDb: any;
 
-const findMoreBoardToolsButton = () =>
+/** Board tools live in the right column on desktop (lg+); the mock uses desktop layout. */
+const findBoardToolsPanel = () =>
   screen.findByRole(
-    "button",
-    { name: /More board tools/i },
+    "complementary",
+    { name: /board tools/i },
     { timeout: 15000 },
   );
 
@@ -277,8 +278,15 @@ describe("BoardControllerContent", () => {
       </MemoryRouter>,
     );
 
-  const openMoreBoardTools = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(await findMoreBoardToolsButton());
+  const openBoardToolsSheetIfMobile = async (
+    user: ReturnType<typeof userEvent.setup>,
+  ) => {
+    const mobileMore = screen.queryByRole("button", { name: /More board tools/i });
+    if (mobileMore) {
+      await user.click(mobileMore);
+    } else {
+      await findBoardToolsPanel();
+    }
   };
 
   it(
@@ -287,7 +295,7 @@ describe("BoardControllerContent", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await findMoreBoardToolsButton();
+    await findBoardToolsPanel();
 
     await user.click(screen.getAllByRole("button", { name: /^Hide$/i })[0]);
     expect(mockUpdateBoardPostHidden).toHaveBeenCalledWith(
@@ -301,7 +309,7 @@ describe("BoardControllerContent", () => {
       true,
     );
 
-    await openMoreBoardTools(user);
+    await openBoardToolsSheetIfMobile(user);
     await user.click(
       await screen.findByRole("button", { name: /Reset presentation text size/i }),
     );
@@ -343,7 +351,7 @@ describe("BoardControllerContent", () => {
   it("stores the selected alias for the board display page", async () => {
     renderPage();
 
-    await findMoreBoardToolsButton();
+    await findBoardToolsPanel();
 
     expect(localStorage.getItem("worshipsyncBoardDisplayAliasId")).toBe(
       "sunday",
@@ -355,7 +363,7 @@ describe("BoardControllerContent", () => {
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     renderPage();
 
-    await findMoreBoardToolsButton();
+    await findBoardToolsPanel();
 
     await user.click(screen.getByRole("button", { name: /Open menu/i }));
     await user.click(screen.getByRole("menuitem", { name: /Open Board/i }));
@@ -411,7 +419,7 @@ describe("BoardControllerContent", () => {
 
     await screen.findByText(/Earlier question/i);
 
-    await openMoreBoardTools(user);
+    await openBoardToolsSheetIfMobile(user);
     await user.click(screen.getByRole("button", { name: /Start new session/i }));
 
     mockBoardDb.__setBoardDoc("board-new", {
@@ -474,7 +482,7 @@ describe("BoardControllerContent", () => {
 
     expect(await screen.findAllByRole("button", { name: /^Hide$/i })).toHaveLength(2);
 
-    await openMoreBoardTools(user);
+    await openBoardToolsSheetIfMobile(user);
     await user.selectOptions(
       screen.getByLabelText(/Show posts from/i),
       "board-old",
