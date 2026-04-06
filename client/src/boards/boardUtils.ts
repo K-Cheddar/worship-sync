@@ -16,6 +16,16 @@ const trimString = (value: string) => value.trim();
 
 /** Matches server `MAX_BOARD_AUTHOR_LENGTH` for client-side validation. */
 export const MAX_BOARD_AUTHOR_LENGTH = 40;
+
+/** Matches server `MAX_BOARD_TITLE_LENGTH` in `server/boardService.js`. */
+export const BOARD_TITLE_MAX_LENGTH = 80;
+/** Show length counter when approaching the limit (same idea as the board post composer). */
+export const BOARD_TITLE_WARNING_THRESHOLD = 40;
+
+/** Matches server `MAX_BOARD_POST_LENGTH` in `server/boardService.js`. */
+export const BOARD_POST_MAX_LENGTH = 800;
+/** Show length counter when approaching the post length limit. */
+export const BOARD_POST_WARNING_THRESHOLD = 400;
 export const DEFAULT_BOARD_PRESENTATION_FONT_SCALE = 1;
 export const MIN_BOARD_PRESENTATION_FONT_SCALE = 0.5;
 export const MAX_BOARD_PRESENTATION_FONT_SCALE = 2;

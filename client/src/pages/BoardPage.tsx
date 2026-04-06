@@ -13,6 +13,8 @@ import { BoardPostMessage } from "../boards/BoardPostMessage";
 import type { DBBoardPost } from "../types";
 import {
   BOARD_LOCAL_NAME_STORAGE_KEY,
+  BOARD_POST_MAX_LENGTH,
+  BOARD_POST_WARNING_THRESHOLD,
   formatBoardTimestamp,
   generateAnonymousDisplayNameAvoidingDuplicates,
   getBoardAuthorNameColorClass,
@@ -38,9 +40,6 @@ const boardModalDisplayNameInputClassName = cn(
   boardDarkFieldClassName,
   "min-h-[3.25rem] rounded-lg py-3 pl-4 pr-12 text-lg leading-snug",
 );
-
-const BOARD_POST_WARNING_THRESHOLD = 400;
-const BOARD_POST_MAX_LENGTH = 800;
 
 const BoardPage = () => {
   const { aliasId = "" } = useParams();
@@ -376,13 +375,13 @@ const BoardPage = () => {
                       className={cn(
                         "rounded-xl border p-5 shadow-lg",
                         isHiddenFromOthers &&
-                          "border-dashed border-stone-500/70 bg-stone-950/90 ring-1 ring-stone-600/40",
+                        "border-dashed border-stone-500/70 bg-stone-950/90 ring-1 ring-stone-600/40",
                         !isHiddenFromOthers &&
-                          showAsMine &&
-                          "border-amber-500/45 bg-amber-950/30 ring-1 ring-amber-500/25",
+                        showAsMine &&
+                        "border-amber-500/45 bg-amber-950/30 ring-1 ring-amber-500/25",
                         !isHiddenFromOthers &&
-                          !showAsMine &&
-                          "border-stone-700 bg-stone-900/85",
+                        !showAsMine &&
+                        "border-stone-700 bg-stone-900/85",
                       )}
                     >
                       <div className="flex flex-wrap items-center gap-2 text-sm text-stone-300">
@@ -391,11 +390,11 @@ const BoardPage = () => {
                             "font-semibold",
                             isHiddenFromOthers && "text-stone-400",
                             !isHiddenFromOthers &&
-                              showAsMine &&
-                              "text-amber-100",
+                            showAsMine &&
+                            "text-amber-100",
                             !isHiddenFromOthers &&
-                              !showAsMine &&
-                              getBoardAuthorNameColorClass(post),
+                            !showAsMine &&
+                            getBoardAuthorNameColorClass(post),
                           )}
                         >
                           {post.author}
