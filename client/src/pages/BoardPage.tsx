@@ -36,7 +36,8 @@ const boardModalSurfaceClassName =
 const boardModalHeaderClassName =
   "border-b border-stone-700/90 bg-stone-950/35 px-5 py-4";
 const boardModalTitleClassName = "text-lg text-stone-50";
-const boardModalDisplayNameInputClassName = cn(
+/** Shared sizing for display name fields (initial step + change-name modal). */
+const boardDisplayNameInputClassName = cn(
   boardDarkFieldClassName,
   "min-h-[3.25rem] rounded-lg py-3 pl-4 pr-12 text-lg leading-snug",
 );
@@ -274,7 +275,7 @@ const BoardPage = () => {
               labelClassName={boardFieldLabelClassName}
               labelFontSize="text-base"
               inputTextSize="text-lg"
-              inputClassName={boardModalDisplayNameInputClassName}
+              inputClassName={boardDisplayNameInputClassName}
               endAdornment={randomDisplayNameEndAdornment(handlePickAnonymousNameInModal)}
             />
             {displayNameError && (
@@ -454,7 +455,7 @@ const BoardPage = () => {
                 onChange={(value) => setAuthor(String(value))}
                 placeholder="Your name"
                 labelClassName={boardFieldLabelClassName}
-                inputClassName={cn(boardDarkFieldClassName, "pl-3 pr-11")}
+                inputClassName={boardDisplayNameInputClassName}
                 endAdornment={randomDisplayNameEndAdornment(handlePickAnonymousNameInitial)}
               />
               {displayNameError && (
