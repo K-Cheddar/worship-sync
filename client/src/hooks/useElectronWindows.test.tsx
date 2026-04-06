@@ -17,8 +17,10 @@ describe("useElectronWindows", () => {
   const windowStates = {
     projector: { displayId: 1, width: 1280, height: 720, isFullScreen: true },
     monitor: { displayId: 2, width: 1280, height: 720, isFullScreen: false },
+    board: { displayId: 1, width: 1280, height: 720, isFullScreen: true },
     projectorOpen: true,
     monitorOpen: false,
+    boardOpen: false,
   };
 
   let windowStateChangedCallback: (() => void) | null = null;

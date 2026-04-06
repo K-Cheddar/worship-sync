@@ -4,6 +4,8 @@
   "version": "1.36.5",
   "scripts": {
     "start": "node server.js",
+    "test": "npm run test:server",
+    "test:server": "node --test server/boardService.test.js",
     "heroku-postbuild": "cd client && npm ci && npm run build",
     "client": "cd client && npm run dev",
     "server": "npx nodemon server.js",

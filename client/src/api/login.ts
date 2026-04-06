@@ -12,6 +12,20 @@ type LoginResponse = {
   };
 };
 
+export const getStoredBoardAdminHeaders = (): Record<string, string> => {
+  const loggedIn = localStorage.getItem("loggedIn") || "false";
+  const username = localStorage.getItem("user") || "";
+  const database = localStorage.getItem("database") || "";
+  const access = localStorage.getItem("access") || "";
+
+  return {
+    "x-worshipsync-logged-in": loggedIn,
+    "x-worshipsync-user": username,
+    "x-worshipsync-database": database,
+    "x-worshipsync-access": access,
+  };
+};
+
 export const loginUser = async (
   username: string,
   password: string

@@ -146,6 +146,18 @@ jest.mock("./pages/ProjectorFull", () => () => (
 jest.mock("./pages/CreditsEditor/CreditsEditor", () => () => (
   <div data-testid="credits-editor-page">Credits Editor Page</div>
 ));
+jest.mock("./pages/BoardController", () => () => (
+  <div data-testid="board-controller-page">Board Controller Page</div>
+));
+jest.mock("./pages/BoardDisplay", () => () => (
+  <div data-testid="board-display-page">Board Display Page</div>
+));
+jest.mock("./pages/BoardPage", () => () => (
+  <div data-testid="board-page">Board Page</div>
+));
+jest.mock("./pages/BoardPresent", () => () => (
+  <div data-testid="board-present-page">Board Present Page</div>
+));
 
 // Mock the context providers (value shape from shared mocks)
 jest.mock("./context/globalInfo", () => {

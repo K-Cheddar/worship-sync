@@ -14,6 +14,23 @@ import Mux from "@mux/mux-node";
 import https from "https";
 import { fetchExcelFile } from "./getScheduleFunctions.js";
 import { createLyricsImportService } from "./lyricsImport.js";
+import {
+  BOARD_DB_NAME,
+  archiveBoardDoc,
+  createAliasDoc,
+  createBoardDoc,
+  createBoardPostDoc,
+  getAliasDocId,
+  getBoardPostRange,
+  isBoardAuthorInUse,
+  normalizeAliasId,
+  normalizeBoardParticipantId,
+  normalizeBoardTitle,
+  rotateAliasDoc,
+  updateAliasPresentationFontScale,
+  validateAliasInput,
+  validateBoardPostInput,
+} from "./server/boardService.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -23,6 +40,9 @@ const requiredEnvVars = [
   "AZURE_TENANT_ID",
   "AZURE_CLIENT_ID",
   "AZURE_CLIENT_SECRET",
+  "COUCHDB_HOST",
+  "COUCHDB_USER",
+  "COUCHDB_PASSWORD",
 ];
 const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
 
@@ -49,6 +69,276 @@ const {
 } = createLyricsImportService({
   geniusAccessToken: process.env.GENIUS_ACCESS_TOKEN,
 });
+
+const BOARD_ADMIN_LOGGED_IN_HEADER = "x-worshipsync-logged-in";
+const BOARD_ADMIN_USER_HEADER = "x-worshipsync-user";
+const BOARD_ADMIN_DATABASE_HEADER = "x-worshipsync-database";
+const BOARD_ADMIN_ACCESS_HEADER = "x-worshipsync-access";
+
+const getRequestHeaderValue = (headers, name) => {
+  const value = headers[name];
+  if (Array.isArray(value)) {
+    return String(value[0] || "").trim();
+  }
+  return String(value || "").trim();
+};
+
+const requireAppSession = (req, res, next) => {
+  const loggedIn = getRequestHeaderValue(req.headers, BOARD_ADMIN_LOGGED_IN_HEADER);
+  const username = getRequestHeaderValue(req.headers, BOARD_ADMIN_USER_HEADER);
+  const database = getRequestHeaderValue(req.headers, BOARD_ADMIN_DATABASE_HEADER);
+  const access = getRequestHeaderValue(req.headers, BOARD_ADMIN_ACCESS_HEADER);
+
+  if (
+    loggedIn !== "true" ||
+    !username ||
+    username === "Demo" ||
+    !database
+  ) {
+    return res.status(401).json({ error: "Sign in to continue." });
+  }
+
+  req.appSession = { username, database, access };
+  next();
+};
+
+const requireBoardDatabaseAccess = (req, res, database) => {
+  if (!database || req.appSession?.database !== database) {
+    res.status(403).json({ error: "That discussion board is not available." });
+    return false;
+  }
+
+  return true;
+};
+
+const buildCouchAdminHeaders = (contentType = "application/json") => ({
+  Authorization:
+    "Basic " +
+    Buffer.from(
+      `${process.env.COUCHDB_USER}:${process.env.COUCHDB_PASSWORD}`,
+    ).toString("base64"),
+  "Content-Type": contentType,
+});
+
+const getBoardDbUrl = () =>
+  `https://${process.env.COUCHDB_HOST}/${BOARD_DB_NAME}`;
+
+let boardDbEnsurePromise;
+
+const ensureBoardDbExists = async () => {
+  if (!boardDbEnsurePromise) {
+    boardDbEnsurePromise = axios({
+      method: "PUT",
+      url: getBoardDbUrl(),
+      headers: buildCouchAdminHeaders(),
+    }).catch((error) => {
+      if (error?.response?.status === 412) return;
+      boardDbEnsurePromise = undefined;
+      throw error;
+    });
+  }
+
+  await boardDbEnsurePromise;
+};
+
+const boardSseClients = new Map();
+
+const addBoardSseClient = (aliasId, res) => {
+  const clients = boardSseClients.get(aliasId);
+  if (clients) {
+    clients.add(res);
+    return;
+  }
+  boardSseClients.set(aliasId, new Set([res]));
+};
+
+const removeBoardSseClient = (aliasId, res) => {
+  const clients = boardSseClients.get(aliasId);
+  if (!clients) return;
+  clients.delete(res);
+  if (clients.size === 0) {
+    boardSseClients.delete(aliasId);
+  }
+};
+
+const emitBoardEvent = (aliasId, type, payload = {}) => {
+  const clients = boardSseClients.get(aliasId);
+  if (!clients?.size) return;
+
+  const event = JSON.stringify({
+    type,
+    aliasId,
+    timestamp: Date.now(),
+    ...payload,
+  });
+
+  clients.forEach((client) => {
+    client.write(`data: ${event}\n\n`);
+  });
+};
+
+const closeBoardSseClients = (aliasId) => {
+  const clients = boardSseClients.get(aliasId);
+  if (!clients?.size) return;
+
+  clients.forEach((client) => {
+    client.end();
+  });
+  boardSseClients.delete(aliasId);
+};
+
+/** Serializes create-post handling per board session to avoid duplicate display-name races. */
+const boardPostCreateChains = new Map();
+
+const runExclusiveBoardPostCreate = (boardId, fn) => {
+  const previous = boardPostCreateChains.get(boardId) ?? Promise.resolve();
+  const tail = previous.then(() => fn());
+  boardPostCreateChains.set(boardId, tail);
+  return tail.finally(() => {
+    if (boardPostCreateChains.get(boardId) === tail) {
+      boardPostCreateChains.delete(boardId);
+    }
+  });
+};
+
+const boardDbRequest = async ({
+  method,
+  path = "",
+  params,
+  data,
+  headers,
+}) => {
+  await ensureBoardDbExists();
+
+  const response = await axios({
+    method,
+    url: `${getBoardDbUrl()}${path}`,
+    params,
+    data,
+    headers: headers || buildCouchAdminHeaders(),
+  });
+
+  return response.data;
+};
+
+const getBoardDoc = async (docId) => {
+  try {
+    return await boardDbRequest({
+      method: "GET",
+      path: `/${encodeURIComponent(docId)}`,
+    });
+  } catch (error) {
+    if (error?.response?.status === 404) return null;
+    throw error;
+  }
+};
+
+const putBoardDoc = (doc) =>
+  boardDbRequest({
+    method: "PUT",
+    path: `/${encodeURIComponent(doc._id)}`,
+    data: doc,
+  });
+
+const getBoardDocsByRange = async ({
+  startkey,
+  endkey,
+  keys,
+  includeDocs = true,
+}) => {
+  if (keys) {
+    const result = await boardDbRequest({
+      method: "POST",
+      path: "/_all_docs",
+      params: { include_docs: includeDocs },
+      data: { keys },
+    });
+    return result.rows ?? [];
+  }
+
+  const result = await boardDbRequest({
+    method: "GET",
+    path: "/_all_docs",
+    params: {
+      include_docs: includeDocs,
+      startkey: JSON.stringify(startkey),
+      endkey: JSON.stringify(endkey),
+    },
+  });
+  return result.rows ?? [];
+};
+
+const bulkDeleteBoardDocs = async (docs) => {
+  if (!docs.length) return;
+
+  await boardDbRequest({
+    method: "POST",
+    path: "/_bulk_docs",
+    data: {
+      docs: docs.map((doc) => ({ ...doc, _deleted: true })),
+    },
+  });
+};
+
+const serializeBoardAlias = (aliasDoc) => ({
+  _id: aliasDoc._id,
+  _rev: aliasDoc._rev,
+  type: aliasDoc.type,
+  docType: aliasDoc.docType,
+  aliasId: aliasDoc.aliasId,
+  title: aliasDoc.title,
+  database: aliasDoc.database,
+  currentBoardId: aliasDoc.currentBoardId,
+  history: aliasDoc.history || [],
+  presentationFontScale:
+    typeof aliasDoc.presentationFontScale === "number"
+      ? aliasDoc.presentationFontScale
+      : 1,
+  createdAt: aliasDoc.createdAt,
+  updatedAt: aliasDoc.updatedAt,
+});
+
+const serializeBoardDoc = (boardDoc) => ({
+  _id: boardDoc._id,
+  _rev: boardDoc._rev,
+  type: boardDoc.type,
+  docType: boardDoc.docType,
+  id: boardDoc.id,
+  aliasId: boardDoc.aliasId,
+  database: boardDoc.database,
+  createdAt: boardDoc.createdAt,
+  archived: boardDoc.archived,
+});
+
+const serializeBoardPost = (postDoc) => ({
+  _id: postDoc._id,
+  _rev: postDoc._rev,
+  type: postDoc.type,
+  docType: postDoc.docType,
+  id: postDoc.id,
+  aliasId: postDoc.aliasId,
+  boardId: postDoc.boardId,
+  database: postDoc.database,
+  text: postDoc.text,
+  author: postDoc.author,
+  authorId: postDoc.authorId || "",
+  timestamp: postDoc.timestamp,
+  hidden: Boolean(postDoc.hidden),
+  highlighted: Boolean(postDoc.highlighted),
+});
+
+const serializeBoardPostForViewer = (postDoc, viewerAuthorId) => {
+  const normalizedViewerAuthorId = normalizeBoardParticipantId(viewerAuthorId);
+  const normalizedPostAuthorId = normalizeBoardParticipantId(postDoc.authorId);
+  const isOwnedByViewer =
+    Boolean(normalizedViewerAuthorId) &&
+    normalizedViewerAuthorId === normalizedPostAuthorId;
+
+  return {
+    ...serializeBoardPost(postDoc),
+    authorId: isOwnedByViewer ? normalizedPostAuthorId : "",
+  };
+};
 
 // Configure Cloudinary
 cloudinary.config({
@@ -107,12 +397,446 @@ app.use(
       }
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Origin", "X-Requested-With", "Content-Type", "Accept"],
+    allowedHeaders: [
+      "Origin",
+      "X-Requested-With",
+      "Content-Type",
+      "Accept",
+      "x-worshipsync-logged-in",
+      "x-worshipsync-user",
+      "x-worshipsync-database",
+      "x-worshipsync-access",
+    ],
     credentials: true,
   }),
 );
 
 // API calls
+app.use("/api/boards/admin", requireAppSession);
+
+app.get("/api/boards/stream/:aliasId", (req, res) => {
+  const aliasId = normalizeAliasId(req.params.aliasId || "");
+
+  if (!aliasId) {
+    res.status(400).json({ error: "Link name is required." });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+  res.write(`data: ${JSON.stringify({ type: "connected", aliasId })}\n\n`);
+
+  addBoardSseClient(aliasId, res);
+
+  const heartbeat = setInterval(() => {
+    res.write(": keep-alive\n\n");
+  }, 25000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    removeBoardSseClient(aliasId, res);
+    res.end();
+  });
+});
+
+app.get("/api/boards/admin/bootstrap", async (req, res) => {
+  try {
+    await ensureBoardDbExists();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error bootstrapping board database:", error);
+    res.status(500).json({ error: "Could not prepare discussion boards." });
+  }
+});
+
+app.post("/api/boards/admin/aliases", async (req, res) => {
+  try {
+    const validation = validateAliasInput(req.body || {});
+    if (!validation.ok) {
+      return res.status(400).json({ error: validation.error });
+    }
+
+    const { aliasId, title } = validation.value;
+    const database = req.appSession.database;
+    const existingAlias = await getBoardDoc(getAliasDocId(aliasId));
+    if (existingAlias) {
+      return res.status(409).json({ error: "That link name is already in use." });
+    }
+
+    const boardDoc = createBoardDoc({ aliasId, database });
+    const aliasDoc = createAliasDoc({
+      aliasId,
+      title,
+      database,
+      boardId: boardDoc.id,
+    });
+
+    await putBoardDoc(boardDoc);
+    await putBoardDoc(aliasDoc);
+
+    emitBoardEvent(aliasId, "alias-created");
+
+    res.status(201).json({
+      alias: serializeBoardAlias(aliasDoc),
+      board: serializeBoardDoc(boardDoc),
+    });
+  } catch (error) {
+    console.error("Error creating board alias:", error);
+    res.status(500).json({ error: "Could not create discussion board." });
+  }
+});
+
+app.post("/api/boards/admin/aliases/:aliasId/soft-reset", async (req, res) => {
+  try {
+    const aliasId = normalizeAliasId(req.params.aliasId || "");
+    const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+    if (!aliasDoc) {
+      return res.status(404).json({ error: "Discussion board not found." });
+    }
+    if (!requireBoardDatabaseAccess(req, res, aliasDoc.database)) return;
+
+    const range = getBoardPostRange(aliasDoc.currentBoardId);
+    const rows = await getBoardDocsByRange(range);
+    const docs = rows.flatMap((row) => (row.doc ? [row.doc] : []));
+
+    await bulkDeleteBoardDocs(docs);
+    emitBoardEvent(aliasId, "board-soft-reset");
+
+    res.json({ deletedCount: docs.length });
+  } catch (error) {
+    console.error("Error soft resetting board:", error);
+    res.status(500).json({ error: "Could not clear posts." });
+  }
+});
+
+app.post("/api/boards/admin/aliases/:aliasId/hard-reset", async (req, res) => {
+  try {
+    const aliasId = normalizeAliasId(req.params.aliasId || "");
+    const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+    if (!aliasDoc) {
+      return res.status(404).json({ error: "Discussion board not found." });
+    }
+    if (!requireBoardDatabaseAccess(req, res, aliasDoc.database)) return;
+
+    const currentBoardDoc = await getBoardDoc(`board:${aliasDoc.currentBoardId}`);
+    const nextBoardDoc = createBoardDoc({
+      aliasId: aliasDoc.aliasId,
+      database: aliasDoc.database,
+    });
+    const nextAliasDoc = rotateAliasDoc({
+      aliasDoc,
+      nextBoardId: nextBoardDoc.id,
+    });
+
+    await putBoardDoc(nextBoardDoc);
+    if (currentBoardDoc) {
+      await putBoardDoc(archiveBoardDoc(currentBoardDoc));
+    }
+    await putBoardDoc(nextAliasDoc);
+
+    emitBoardEvent(aliasId, "board-hard-reset");
+
+    res.json({
+      alias: serializeBoardAlias(nextAliasDoc),
+      board: serializeBoardDoc(nextBoardDoc),
+    });
+  } catch (error) {
+    console.error("Error rotating board:", error);
+    res.status(500).json({ error: "Could not start a new session." });
+  }
+});
+
+app.post("/api/boards/admin/aliases/:aliasId/title", async (req, res) => {
+  try {
+    const aliasId = normalizeAliasId(req.params.aliasId || "");
+    const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+    if (!aliasDoc) {
+      return res.status(404).json({ error: "Discussion board not found." });
+    }
+    if (!requireBoardDatabaseAccess(req, res, aliasDoc.database)) return;
+
+    const title = normalizeBoardTitle(req.body?.title);
+    if (!title) {
+      return res.status(400).json({ error: "Title is required." });
+    }
+
+    const nextAliasDoc = {
+      ...aliasDoc,
+      title,
+      updatedAt: Date.now(),
+    };
+
+    await putBoardDoc(nextAliasDoc);
+    emitBoardEvent(aliasId, "alias-updated");
+
+    res.json({
+      alias: serializeBoardAlias(nextAliasDoc),
+    });
+  } catch (error) {
+    console.error("Error renaming board alias:", error);
+    res.status(500).json({ error: "Could not rename discussion board." });
+  }
+});
+
+app.delete("/api/boards/admin/aliases/:aliasId", async (req, res) => {
+  try {
+    const aliasId = normalizeAliasId(req.params.aliasId || "");
+    const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+    if (!aliasDoc) {
+      return res.status(404).json({ error: "Discussion board not found." });
+    }
+    if (!requireBoardDatabaseAccess(req, res, aliasDoc.database)) return;
+
+    const boardIds = Array.from(
+      new Set([aliasDoc.currentBoardId, ...(aliasDoc.history || [])]),
+    );
+
+    const boardRows = await getBoardDocsByRange({
+      keys: boardIds.map((boardId) => `board:${boardId}`),
+    });
+    const boardDocs = boardRows.flatMap((row) => (row.doc ? [row.doc] : []));
+
+    const postRowsByBoard = await Promise.all(
+      boardIds.map((boardId) => getBoardDocsByRange(getBoardPostRange(boardId))),
+    );
+    const postDocs = postRowsByBoard.flatMap((rows) =>
+      rows.flatMap((row) => (row.doc ? [row.doc] : [])),
+    );
+
+    await bulkDeleteBoardDocs([...postDocs, ...boardDocs, aliasDoc]);
+    emitBoardEvent(aliasId, "alias-deleted");
+    closeBoardSseClients(aliasId);
+
+    res.json({ deletedAliasId: aliasId });
+  } catch (error) {
+    console.error("Error deleting board alias:", error);
+    res.status(500).json({ error: "Could not delete discussion board." });
+  }
+});
+
+app.post(
+  "/api/boards/admin/aliases/:aliasId/presentation-font-scale",
+  async (req, res) => {
+    try {
+      const aliasId = normalizeAliasId(req.params.aliasId || "");
+      const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+      if (!aliasDoc) {
+        return res.status(404).json({ error: "Discussion board not found." });
+      }
+      if (!requireBoardDatabaseAccess(req, res, aliasDoc.database)) return;
+
+      const nextAliasDoc = updateAliasPresentationFontScale({
+        aliasDoc,
+        presentationFontScale: Number(req.body?.value),
+      });
+
+      await putBoardDoc(nextAliasDoc);
+      emitBoardEvent(aliasId, "board-presentation-updated", {
+        presentationFontScale: nextAliasDoc.presentationFontScale,
+      });
+
+      res.json({
+        alias: serializeBoardAlias(nextAliasDoc),
+      });
+    } catch (error) {
+      console.error("Error updating board presentation font scale:", error);
+      res.status(500).json({ error: "Could not update presentation text size." });
+    }
+  },
+);
+
+app.post("/api/boards/admin/posts/:postId/hidden", async (req, res) => {
+  try {
+    const postId = req.params.postId;
+    const postDoc = await getBoardDoc(postId);
+    if (!postDoc) {
+      return res.status(404).json({ error: "Post not found." });
+    }
+    if (!requireBoardDatabaseAccess(req, res, postDoc.database)) return;
+
+    const nextHidden =
+      typeof req.body?.value === "boolean" ? req.body.value : !postDoc.hidden;
+    const nextPost = {
+      ...postDoc,
+      hidden: nextHidden,
+      highlighted: nextHidden ? false : Boolean(postDoc.highlighted),
+    };
+
+    const response = await putBoardDoc(nextPost);
+    nextPost._rev = response.rev;
+
+    emitBoardEvent(postDoc.aliasId, "post-updated");
+
+    res.json({ post: serializeBoardPost(nextPost) });
+  } catch (error) {
+    console.error("Error updating board post hidden state:", error);
+    res.status(500).json({ error: "Could not update post." });
+  }
+});
+
+app.post("/api/boards/admin/posts/:postId/highlighted", async (req, res) => {
+  try {
+    const postId = req.params.postId;
+    const postDoc = await getBoardDoc(postId);
+    if (!postDoc) {
+      return res.status(404).json({ error: "Post not found." });
+    }
+    if (!requireBoardDatabaseAccess(req, res, postDoc.database)) return;
+
+    const nextHighlighted =
+      typeof req.body?.value === "boolean"
+        ? req.body.value
+        : !postDoc.highlighted;
+    const nextPost = {
+      ...postDoc,
+      highlighted: postDoc.hidden ? false : nextHighlighted,
+    };
+
+    const response = await putBoardDoc(nextPost);
+    nextPost._rev = response.rev;
+
+    emitBoardEvent(postDoc.aliasId, "post-updated");
+
+    res.json({ post: serializeBoardPost(nextPost) });
+  } catch (error) {
+    console.error("Error updating board post highlight state:", error);
+    res.status(500).json({ error: "Could not update post." });
+  }
+});
+
+app.get("/api/boards/:aliasId/posts", async (req, res) => {
+  try {
+    const aliasId = normalizeAliasId(req.params.aliasId || "");
+    const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+    if (!aliasDoc) {
+      return res.status(404).json({ error: "Discussion board not found." });
+    }
+
+    const requestedBoardId = String(req.query.boardId || aliasDoc.currentBoardId);
+    const boardIds = new Set([aliasDoc.currentBoardId, ...(aliasDoc.history || [])]);
+    if (!boardIds.has(requestedBoardId)) {
+      return res.status(404).json({ error: "That session was not found for this board." });
+    }
+
+    const range = getBoardPostRange(requestedBoardId);
+    const rows = await getBoardDocsByRange(range);
+    const includeHidden = String(req.query.includeHidden || "") === "true";
+    const viewerAuthorId = normalizeBoardParticipantId(req.query.viewerAuthorId);
+    const posts = rows
+      .flatMap((row) => (row.doc ? [row.doc] : []))
+      .filter((post) => {
+        if (includeHidden) return true;
+        if (!post.hidden) return true;
+
+        const postAuthorId = normalizeBoardParticipantId(post.authorId);
+        return Boolean(viewerAuthorId && postAuthorId && postAuthorId === viewerAuthorId);
+      })
+      .map((post) =>
+        includeHidden
+          ? serializeBoardPost(post)
+          : serializeBoardPostForViewer(post, viewerAuthorId),
+      )
+      .sort((a, b) => {
+        if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+        return a._id.localeCompare(b._id);
+      });
+
+    res.json({
+      aliasId: aliasDoc.aliasId,
+      boardId: requestedBoardId,
+      posts,
+    });
+  } catch (error) {
+    console.error("Error loading board posts:", error);
+    res.status(500).json({ error: "Could not load posts." });
+  }
+});
+
+app.post("/api/boards/:aliasId/posts", async (req, res) => {
+  try {
+    const aliasId = normalizeAliasId(req.params.aliasId || "");
+    const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+    if (!aliasDoc) {
+      return res.status(404).json({ error: "Discussion board not found." });
+    }
+
+    const validation = validateBoardPostInput(req.body || {});
+    if (!validation.ok) {
+      return res.status(400).json({ error: validation.error });
+    }
+
+    const boardId = aliasDoc.currentBoardId;
+
+    const outcome = await runExclusiveBoardPostCreate(boardId, async () => {
+      const existingRows = await getBoardDocsByRange(
+        getBoardPostRange(boardId),
+      );
+      const existingPosts = existingRows.flatMap((row) =>
+        row.doc ? [row.doc] : [],
+      );
+
+      if (isBoardAuthorInUse(existingPosts, validation.value)) {
+        return { kind: "conflict" };
+      }
+
+      const postDoc = createBoardPostDoc({
+        aliasId: aliasDoc.aliasId,
+        boardId,
+        database: aliasDoc.database,
+        author: validation.value.author,
+        authorId: validation.value.authorId,
+        text: validation.value.text,
+      });
+
+      const response = await putBoardDoc(postDoc);
+      postDoc._rev = response.rev;
+
+      emitBoardEvent(aliasId, "post-created");
+
+      return { kind: "created", post: serializeBoardPost(postDoc) };
+    });
+
+    if (outcome.kind === "conflict") {
+      return res.status(409).json({
+        error:
+          "That display name is already in use for this discussion board.",
+      });
+    }
+
+    return res.status(201).json({ post: outcome.post });
+  } catch (error) {
+    console.error("Error creating board post:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Could not send post." });
+    }
+  }
+});
+
+app.get("/api/boards/:aliasId", async (req, res) => {
+  try {
+    const aliasId = normalizeAliasId(req.params.aliasId || "");
+    const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+    if (!aliasDoc) {
+      return res.status(404).json({ error: "Discussion board not found." });
+    }
+
+    const boardDoc = await getBoardDoc(`board:${aliasDoc.currentBoardId}`);
+    if (!boardDoc) {
+      return res.status(404).json({ error: "Current session was not found." });
+    }
+
+    res.json({
+      alias: serializeBoardAlias(aliasDoc),
+      board: serializeBoardDoc(boardDoc),
+    });
+  } catch (error) {
+    console.error("Error resolving board alias:", error);
+    res.status(500).json({ error: "Could not load discussion board." });
+  }
+});
+
 app.get("/api/hello", (req, res) => {
   res.send({ express: "Hello From Express" });
 });
@@ -333,7 +1057,6 @@ app.post("/api/login", async (req, res) => {
         .json({ success: false, errorMessage: "Invalid credentials" });
     }
 
-    // Return user info (excluding password for security)
     res.json({
       success: true,
       user: {

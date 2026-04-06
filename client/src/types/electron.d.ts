@@ -1,6 +1,6 @@
 // Re-export WindowType from windowState for use in React code
 // The actual type is defined in electron/windowState.ts
-export type WindowType = "projector" | "monitor";
+export type WindowType = "projector" | "monitor" | "board";
 
 export interface Display {
   id: number;
@@ -34,8 +34,10 @@ export interface WindowState {
 export interface WindowStatesInfo {
   projector: WindowState;
   monitor: WindowState;
+  board: WindowState;
   projectorOpen: boolean;
   monitorOpen: boolean;
+  boardOpen: boolean;
 }
 
 export interface ElectronAPI {

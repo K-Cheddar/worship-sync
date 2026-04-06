@@ -127,6 +127,9 @@ export type DocType =
   | "credit"
   | "credit-history"
   | "overlay-history"
+  | "board-alias"
+  | "board"
+  | "board-post"
   | "services"
   | "media"
   | "unknown";
@@ -724,6 +727,51 @@ export type DBServices = {
   docType?: DocType;
 };
 
+export type DBBoardAlias = {
+  _id: string;
+  _rev?: string;
+  type: "alias";
+  docType?: DocType;
+  aliasId: string;
+  title: string;
+  database: string;
+  currentBoardId: string;
+  history: string[];
+  presentationFontScale?: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type DBBoard = {
+  _id: string;
+  _rev?: string;
+  type: "board";
+  docType?: DocType;
+  id: string;
+  aliasId: string;
+  database: string;
+  createdAt: number;
+  archived: boolean;
+};
+
+export type DBBoardPost = {
+  _id: string;
+  _rev?: string;
+  type: "post";
+  docType?: DocType;
+  id: string;
+  aliasId: string;
+  boardId: string;
+  database: string;
+  text: string;
+  author: string;
+  /** Stable id for this device/session; used to allow reusing the same display name across own posts. */
+  authorId?: string;
+  timestamp: number;
+  hidden: boolean;
+  highlighted: boolean;
+};
+
 export type DBDoc =
   | DBMedia
   | DBItemLists
@@ -739,7 +787,10 @@ export type DBDoc =
   | DBOverlayHistory
   | DBBibleChapter
   | DBItemList
-  | DBServices;
+  | DBServices
+  | DBBoardAlias
+  | DBBoard
+  | DBBoardPost;
 
 export type allDocsType = {
   offset: number;

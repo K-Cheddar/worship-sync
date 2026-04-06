@@ -201,6 +201,38 @@ const createMonitorWindow = () => {
   });
 };
 
+const createBoardWindow = () => {
+  const existing = getDisplayWindow("board") as BrowserWindow | null;
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
+    return;
+  }
+
+  const display = windowStateManager.getDisplayForWindow("board");
+  const bounds = windowStateManager.getWindowBounds(display);
+
+  const newWindow = createDisplayWindow({
+    bounds,
+    route: "/boards/display",
+    isDev,
+    dirname: __dirname,
+  });
+
+  setDisplayWindow("board", newWindow);
+  setupContextMenu(newWindow.webContents);
+  notifyWindowStateChanged();
+
+  setupReadyToShow(newWindow, "board", windowStateManager);
+
+  setupWindowEventListeners(newWindow, "board", windowStateManager, () => {
+    if (!isAppClosing) {
+      windowStateManager.markWindowClosed("board");
+    }
+    setDisplayWindow("board", null);
+    notifyWindowStateChanged();
+  });
+};
+
 const createWindow = () => {
   const iconPath = getIconPath();
   const savedBounds = windowStateManager.getMainWindowBounds();
@@ -271,6 +303,9 @@ const createWindow = () => {
       if (windowStateManager.wasWindowOpen("monitor")) {
         createMonitorWindow();
       }
+      if (windowStateManager.wasWindowOpen("board")) {
+        createBoardWindow();
+      }
     }, 500);
   });
 
@@ -299,13 +334,17 @@ const createWindow = () => {
         }
         const projWin = getDisplayWindow("projector") as BrowserWindow | null;
         const monWin = getDisplayWindow("monitor") as BrowserWindow | null;
+        const boardWin = getDisplayWindow("board") as BrowserWindow | null;
         if (projWin && !projWin.isDestroyed()) {
           windowStateManager.saveWindowState("projector", projWin);
         }
         if (monWin && !monWin.isDestroyed()) {
           windowStateManager.saveWindowState("monitor", monWin);
         }
-        // Close projector and monitor windows
+        if (boardWin && !boardWin.isDestroyed()) {
+          windowStateManager.saveWindowState("board", boardWin);
+        }
+        // Close display windows
         if (projWin) {
           projWin.close();
           setDisplayWindow("projector", null);
@@ -313,6 +352,10 @@ const createWindow = () => {
         if (monWin) {
           monWin.close();
           setDisplayWindow("monitor", null);
+        }
+        if (boardWin) {
+          boardWin.close();
+          setDisplayWindow("board", null);
         }
         // Actually close the window
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -329,13 +372,17 @@ const createWindow = () => {
       }
       const projWin = getDisplayWindow("projector") as BrowserWindow | null;
       const monWin = getDisplayWindow("monitor") as BrowserWindow | null;
+      const boardWin = getDisplayWindow("board") as BrowserWindow | null;
       if (projWin && !projWin.isDestroyed()) {
         windowStateManager.saveWindowState("projector", projWin);
       }
       if (monWin && !monWin.isDestroyed()) {
         windowStateManager.saveWindowState("monitor", monWin);
       }
-      // Close projector and monitor windows
+      if (boardWin && !boardWin.isDestroyed()) {
+        windowStateManager.saveWindowState("board", boardWin);
+      }
+      // Close display windows
       if (projWin) {
         projWin.close();
         setDisplayWindow("projector", null);
@@ -343,6 +390,10 @@ const createWindow = () => {
       if (monWin) {
         monWin.close();
         setDisplayWindow("monitor", null);
+      }
+      if (boardWin) {
+        boardWin.close();
+        setDisplayWindow("board", null);
       }
       mainWindow = null;
     }
@@ -673,9 +724,15 @@ ipcMain.handle("quit-and-install", () => {
 const createWindowByType = (windowType: WindowType): void => {
   if (windowType === "projector") {
     createProjectorWindow();
-  } else {
-    createMonitorWindow();
+    return;
   }
+
+  if (windowType === "monitor") {
+    createMonitorWindow();
+    return;
+  }
+
+  createBoardWindow();
 };
 
 // Generic window management functions
@@ -787,12 +844,15 @@ ipcMain.handle(
 ipcMain.handle("get-window-states", () => {
   const projectorState = windowStateManager.getState("projector");
   const monitorState = windowStateManager.getState("monitor");
+  const boardState = windowStateManager.getState("board");
 
   return {
     projector: projectorState,
     monitor: monitorState,
+    board: boardState,
     projectorOpen: hasDisplayWindow("projector"),
     monitorOpen: hasDisplayWindow("monitor"),
+    boardOpen: hasDisplayWindow("board"),
   };
 });
 

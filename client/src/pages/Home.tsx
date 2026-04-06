@@ -39,6 +39,12 @@ const primaryControllers: CardLink[] = [
 
 const secondaryControllers: CardLink[] = [
   {
+    title: "Board moderation",
+    description:
+      "Take attendee questions, moderate posts, and send highlights to the presentation screen.",
+    to: "/boards/controller",
+  },
+  {
     title: "Credits Editor",
     description:
       "Build the credits roll and choose which OBS scene to transition to when credits finish.",
@@ -173,6 +179,9 @@ const Welcome = () => {
   const { loginState } = useContext(GlobalInfoContext) || {};
   const { logout } = useContext(ControllerInfoContext) || {};
   const isLoggedIn = loginState === "success";
+  const visibleSecondaryControllers = isLoggedIn
+    ? secondaryControllers
+    : secondaryControllers.filter((link) => link.to !== "/boards/controller");
   const { canShowInstall, installPwa } = usePwaInstallPrompt();
   const [windowsDownloadHref, setWindowsDownloadHref] = useState(() =>
     isElectron() ? "" : getLatestReleaseUrl(),
@@ -371,7 +380,7 @@ const Welcome = () => {
             Credits and info
           </p>
           <div className="grid gap-4 md:grid-cols-2">
-            {secondaryControllers.map((link) => (
+            {visibleSecondaryControllers.map((link) => (
               <HomeLinkCard key={link.to} {...link} />
             ))}
           </div>
