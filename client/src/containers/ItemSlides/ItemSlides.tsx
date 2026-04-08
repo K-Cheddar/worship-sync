@@ -668,6 +668,7 @@ const ItemSlides = () => {
                     getBibleInfo={getBibleInfo}
                     borderWidth={sizeConfig.borderWidth}
                     hSize={sizeConfig.hSize}
+                    canEdit={canEdit}
                   />
                 ))}
               </SortableContext>

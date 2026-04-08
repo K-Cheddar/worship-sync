@@ -60,14 +60,26 @@ describe("Credits Component", () => {
     jest.clearAllMocks();
   });
 
-  it("should not fetch data when user is Demo", () => {
+  it("should not fetch data when login state is guest", () => {
     const store = createMockStore({
       publishedList: [],
       transitionScene: "",
       creditsScene: "",
     });
 
-    renderComponent(store, "Demo");
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider
+          value={{
+            ...mockGlobalInfo,
+            user: mockUser,
+            loginState: "guest",
+          }}
+        >
+          <Credits />
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
 
     expect(onValue).not.toHaveBeenCalled();
   });
@@ -78,8 +90,7 @@ describe("Credits Component", () => {
       transitionScene: mockTransitionScene,
       creditsScene: mockCreditsScene,
     });
-    // Credits uses capitalizeFirstLetter(database) for Firebase paths (mockGlobalInfo.database is "test-database")
-    const expectedPathPrefix = `users/Test-database/v2/credits`;
+    const expectedPathPrefix = `churches/church-1/data/credits`;
 
     renderComponent(store);
 

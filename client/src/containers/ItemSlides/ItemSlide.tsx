@@ -29,6 +29,7 @@ type ItemSlideProps = {
   getBibleInfo: (index: number) => { title: string; text: string };
   borderWidth: string;
   hSize: string;
+  canEdit?: boolean;
 };
 
 const ItemSlide = ({
@@ -46,6 +47,7 @@ const ItemSlide = ({
   getBibleInfo,
   borderWidth,
   hSize,
+  canEdit = true,
 }: ItemSlideProps) => {
   const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) || {};
@@ -62,6 +64,7 @@ const ItemSlide = ({
     isDragging,
   } = useSortable({
     id: slide.id || "",
+    disabled: !canEdit,
   });
 
   const style = {
@@ -85,22 +88,24 @@ const ItemSlide = ({
       }
       : undefined;
 
-  const contextMenuItems = [
-    {
-      label: "Clear Background",
-      onClick: () => {
-        if (db) {
-          dispatch(
-            updateSlideBackground({
-              background: "",
-            })
-          );
-        }
-      },
-      icon: <ImageOff className="w-4 h-4" />,
-      disabled: isLoading,
-    },
-  ];
+  const contextMenuItems = canEdit
+    ? [
+        {
+          label: "Clear Background",
+          onClick: () => {
+            if (db) {
+              dispatch(
+                updateSlideBackground({
+                  background: "",
+                })
+              );
+            }
+          },
+          icon: <ImageOff className="w-4 h-4" />,
+          disabled: isLoading,
+        },
+      ]
+    : [];
 
   return (
     <li
@@ -121,8 +126,8 @@ const ItemSlide = ({
         }
         return borderStyle;
       })()}
-      {...(isFree && attributes)}
-      {...(isFree && listeners)}
+      {...(isFree && canEdit ? attributes : {})}
+      {...(isFree && canEdit ? listeners : {})}
       key={slide.id}
       className={cn(
         "cursor-pointer w-full rounded-lg",
@@ -140,7 +145,6 @@ const ItemSlide = ({
           subtitle: "Item Slide",
         }}
         onOpen={() => {
-          // Select the slide when context menu opens
           if (selectedSlide !== index) {
             selectSlide(index);
           }

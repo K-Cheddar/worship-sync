@@ -574,6 +574,7 @@ const AddExistingOverlayDrawer = ({
               hideLabel
               svgAction={searchValue ? () => setSearchValue("") : undefined}
               svg={searchValue ? X : Search}
+              svgActionAriaLabel={searchValue ? "Clear search" : undefined}
             />
             <RadixSelect
               value={typeFilter}

@@ -1,0 +1,7 @@
+{
+  "watch": ["server.js", "authService.js", "instrument.js", "email-templates"],
+  "ext": "js,tsx,json",
+  "execMap": {
+    "js": "tsx"
+  }
+}

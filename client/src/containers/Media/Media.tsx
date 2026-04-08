@@ -539,6 +539,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
               inputTextSize="text-sm"
               svg={searchTerm ? X : undefined}
               svgAction={() => setSearchTerm("")}
+              svgActionAriaLabel="Clear search"
             />
             <Toggle
               icon={Eye}

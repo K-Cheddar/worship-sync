@@ -52,6 +52,9 @@ const ServiceItems = () => {
   );
   const { db } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
+  const canMutateHeadingRow = access === "full";
+  const canMutateServiceItemRow = (item: ServiceItemType) =>
+    access === "full" || (access === "music" && item.type === "song");
   const [isAddingHeading, setIsAddingHeading] = useState(false);
   const [collapsedHeadingListIds, setCollapsedHeadingListIds] = useState<
     Set<string>
@@ -103,11 +106,23 @@ const ServiceItems = () => {
   const sensors = useSensors();
 
   const onDragEnd = (event: DragEndEvent) => {
+    if (access === "view") return;
     const { over, active } = event;
     if (!over || !active) return;
 
     const overId = over.id as string;
     const activeId = active.id as string;
+    if (access === "music") {
+      const activeItem = serviceItems.find((i) => i.listId === activeId);
+      if (!activeItem || activeItem.type !== "song") return;
+      const idsToMove = selectedListIds.has(activeId)
+        ? selectedListIds
+        : new Set([activeId]);
+      for (const id of idsToMove) {
+        const row = serviceItems.find((i) => i.listId === id);
+        if (!row || row.type !== "song") return;
+      }
+    }
     const updatedServiceItems = [...serviceItems];
     const dropIndex = updatedServiceItems.findIndex(
       (item) => item.listId === overId
@@ -280,6 +295,12 @@ const ServiceItems = () => {
   };
 
   const handleItemClick = (listId: string, e: React.MouseEvent) => {
+    if (access === "view" || access === "music") {
+      setSelectedListIds(new Set([listId]));
+      setAnchorListId(listId);
+      dispatch(setActiveItemInList(listId));
+      return;
+    }
     if (e.shiftKey) {
       const clickedIndex = serviceItems.findIndex((i) => i.listId === listId);
       const anchorIndex = anchorListId
@@ -311,10 +332,31 @@ const ServiceItems = () => {
 
   const handleDeleteSelected = () => {
     if (selectedListIds.size === 0) return;
+    if (access === "music") {
+      const songIds = Array.from(selectedListIds).filter((id) => {
+        const row = serviceItems.find((i) => i.listId === id);
+        return row?.type === "song";
+      });
+      if (songIds.length === 0) return;
+      dispatch(removeItemsFromList(songIds));
+      setSelectedListIds(new Set());
+      setAnchorListId(null);
+      return;
+    }
     dispatch(removeItemsFromList(Array.from(selectedListIds)));
     setSelectedListIds(new Set());
     setAnchorListId(null);
   };
+
+  const showBulkDeleteMenu =
+    access === "full" && selectedListIds.size > 0
+      ? true
+      : access === "music" &&
+        selectedListIds.size > 0 &&
+        [...selectedListIds].every((id) => {
+          const row = serviceItems.find((i) => i.listId === id);
+          return row?.type === "song";
+        });
 
   useEffect(() => {
     const itemElement = document.getElementById(
@@ -365,8 +407,9 @@ const ServiceItems = () => {
         )}
         {!isLoading && serviceItems.length === 0 && (
           <p className="text-sm p-2">
-            This outline is empty. Create a new item or add an existing one
-            using the buttons above.
+            {access !== "view"
+              ? "This outline is empty. Create a new item or add an existing one using the buttons above."
+              : "This outline is empty."}
           </p>
         )}
         {isLoading ? (
@@ -375,7 +418,7 @@ const ServiceItems = () => {
           <ContextMenu
             className="flex-1 min-h-0 flex flex-col overflow-hidden"
             menuItems={[
-              ...(selectedListIds.size > 0
+              ...(showBulkDeleteMenu
                 ? [
                   {
                     label: `Delete selected (${selectedListIds.size})`,
@@ -435,6 +478,7 @@ const ServiceItems = () => {
                         }
                         onDelete={() => handleDeleteHeading(item.listId)}
                         onItemClick={handleItemClick}
+                        canMutateOutline={canMutateHeadingRow}
                       />
                     );
                   }
@@ -456,6 +500,7 @@ const ServiceItems = () => {
                       selectedListIds={selectedListIds}
                       initialItems={initialItems}
                       onItemClick={handleItemClick}
+                      canMutateOutline={canMutateServiceItemRow(item)}
                     />
                   );
                 })}

@@ -16,6 +16,8 @@ interface DeleteModalProps {
   imageUrl?: string;
   /** When true, confirm shows a spinner, both actions are disabled, and close (backdrop/Escape) is ignored. */
   isConfirming?: boolean;
+  /** Label on the confirm button while `isConfirming` is true (default: "Deleting..."). */
+  confirmingLabel?: string;
 }
 
 const DeleteModal: React.FC<DeleteModalProps> = ({
@@ -30,6 +32,7 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
   cancelText = "Cancel",
   imageUrl,
   isConfirming = false,
+  confirmingLabel = "Deleting...",
 }) => {
   const resolvedImageUrl = useCachedMediaUrl(imageUrl);
 
@@ -38,7 +41,7 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
     onClose();
   };
 
-  const resolvedConfirmLabel = isConfirming ? "Deleting..." : confirmText;
+  const resolvedConfirmLabel = isConfirming ? confirmingLabel : confirmText;
 
   return (
     <Modal
@@ -61,7 +64,7 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
           </div>
         </div>
       )}
-      <p className="text-xl mb-4 wrap-break-word">
+      <p className="text-xl mb-4 wrap-break-word text-white">
         {message}{" "}
         {itemName && <span className="font-semibold">"{itemName}"</span>}?
       </p>

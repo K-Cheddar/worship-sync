@@ -40,7 +40,7 @@ const loadStoreWithPresentationSync = () => {
       globalBroadcastRef: undefined,
     }));
     jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: { db: "firebase-db", database: "main" },
+      globalFireDbInfo: { db: "firebase-db", database: "main", churchId: "church-main" },
       globalHostId: "host-123",
     }));
     jest.doMock("firebase/database", () => ({
@@ -1011,6 +1011,121 @@ describe("store module", () => {
     );
   });
 
+  it("removes this host's last timer from localStorage and Firebase", async () => {
+    let storeModule: any;
+    let timersSliceModule: any;
+    const setMock = jest.fn();
+    const getMock = jest.fn(() =>
+      Promise.resolve({
+        val: () => [
+          {
+            id: "timer-1",
+            hostId: "host-123",
+            name: "Countdown",
+            timerType: "timer",
+            status: "stopped",
+            isActive: false,
+            countdownTime: "00:05",
+            duration: 5,
+            remainingTime: 5,
+            endTime: new Date(0).toISOString(),
+            showMinutesOnly: false,
+          },
+          {
+            id: "timer-2",
+            hostId: "remote-host",
+            name: "Remote Countdown",
+            timerType: "timer",
+            status: "stopped",
+            isActive: false,
+            countdownTime: "00:10",
+            duration: 10,
+            remainingTime: 10,
+            endTime: new Date(0).toISOString(),
+            showMinutesOnly: false,
+          },
+        ],
+      })
+    );
+    const refMock = jest.fn((_db: unknown, path: string) => path);
+    const removeItemSpy = jest.spyOn(Storage.prototype, "removeItem");
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: { db: "firebase-db", database: "main", churchId: "church-main" },
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: refMock,
+        set: setMock,
+        get: getMock,
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      timersSliceModule = require("./timersSlice");
+    });
+
+    const store = storeModule.default;
+    const { timersSlice } = timersSliceModule;
+
+    store.dispatch(
+      timersSlice.actions.syncTimers([
+        {
+          id: "timer-1",
+          hostId: "host-123",
+          name: "Countdown",
+          timerType: "timer",
+          status: "stopped",
+          isActive: false,
+          countdownTime: "00:05",
+          duration: 5,
+          remainingTime: 5,
+          endTime: new Date(0).toISOString(),
+          showMinutesOnly: false,
+        },
+        {
+          id: "timer-2",
+          hostId: "remote-host",
+          name: "Remote Countdown",
+          timerType: "timer",
+          status: "stopped",
+          isActive: false,
+          countdownTime: "00:10",
+          duration: 10,
+          remainingTime: 10,
+          endTime: new Date(0).toISOString(),
+          showMinutesOnly: false,
+        },
+      ])
+    );
+    await waitForListenerDelay();
+
+    store.dispatch(timersSlice.actions.deleteTimer("timer-1"));
+    await waitForListenerDelay();
+
+    expect(removeItemSpy).toHaveBeenCalledWith("timerInfo");
+    expect(getMock).toHaveBeenCalled();
+    expect(refMock).toHaveBeenCalledWith(
+      "firebase-db",
+      "churches/church-main/data/timers"
+    );
+    expect(setMock).toHaveBeenCalledWith(
+      "churches/church-main/data/timers",
+      [
+        expect.objectContaining({
+          id: "timer-2",
+          hostId: "remote-host",
+        }),
+      ]
+    );
+  });
+
   it("writes projector, monitor, and stream snapshots to Firebase and localStorage", () => {
     const setItemSpy = jest.spyOn(Storage.prototype, "setItem");
     const {
@@ -1050,10 +1165,10 @@ describe("store module", () => {
 
     expect(refMock).toHaveBeenCalledWith(
       "firebase-db",
-      "users/Main/v2/presentation",
+      "churches/church-main/data/presentation",
     );
     expect(setMock).toHaveBeenCalledWith(
-      "users/Main/v2/presentation",
+      "churches/church-main/data/presentation",
       expect.objectContaining({
         projectorInfo: expect.objectContaining({
           name: "Projector Song",

@@ -5,12 +5,14 @@ interface DurationInputsProps {
   duration: number;
   onDurationChange: (duration: number) => void;
   className?: string;
+  disabled?: boolean;
 }
 
 const DurationInputs: React.FC<DurationInputsProps> = ({
   duration,
   onDurationChange,
   className = "",
+  disabled = false,
 }) => {
   return (
     <TimePicker
@@ -18,6 +20,8 @@ const DurationInputs: React.FC<DurationInputsProps> = ({
       onChange={(val) => onDurationChange(Number(val))}
       variant="timer"
       label="hh:mm:ss"
+      disabled={disabled}
+      className={className}
     />
   );
 };

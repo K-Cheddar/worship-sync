@@ -174,7 +174,7 @@ describe("Home", () => {
     render(
       <MemoryRouter>
         <GlobalInfoContext.Provider
-          value={createMockGlobalContext({ loginState: "demo" }) as any}
+          value={createMockGlobalContext({ loginState: "guest" }) as any}
         >
           <ControllerInfoContext.Provider
             value={createMockControllerContext() as any}
@@ -191,5 +191,116 @@ describe("Home", () => {
     expect(
       screen.getByRole("link", { name: /^Credits Editor / }),
     ).toHaveAttribute("href", "/credits-editor");
+  });
+
+  it("hides board moderation, info controller, and display outputs for view access", () => {
+    render(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={
+            createMockGlobalContext({
+              loginState: "success",
+              access: "view",
+            }) as any
+          }
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.queryByRole("link", { name: /Board moderation/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Info Controller/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Show display links$/ }),
+    ).not.toBeInTheDocument();
+    const outboundLinks = screen.getAllByRole("link");
+    const hrefs = outboundLinks.map((el) => el.getAttribute("href") || "");
+    expect(hrefs.some((h) => h.includes("/monitor"))).toBe(false);
+    expect(hrefs.some((h) => h.includes("/stream"))).toBe(false);
+    expect(
+      screen.getByRole("link", { name: /^Credits Editor / }),
+    ).toHaveAttribute("href", "/credits-editor");
+  });
+
+  it("shows only presentation controller for music access", () => {
+    render(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={
+            createMockGlobalContext({
+              loginState: "success",
+              access: "music",
+            }) as any
+          }
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.getByRole("link", { name: /Presentation Controller/i }),
+    ).toHaveAttribute("href", "/controller");
+    expect(
+      screen.queryByRole("link", { name: /Overlay Controller/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /^Credits Editor / }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Board moderation/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Info Controller/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Show display links$/ }),
+    ).not.toBeInTheDocument();
+
+    const outboundLinks = screen.getAllByRole("link");
+    const hrefs = outboundLinks.map((el) => el.getAttribute("href") || "");
+    expect(hrefs.some((h) => h.includes("/monitor"))).toBe(false);
+    expect(hrefs.some((h) => h.includes("/stream"))).toBe(false);
+  });
+
+  it("hides display output links when the user is not logged in and explains why", () => {
+    render(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext({ loginState: "guest" }) as any}
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    // Avoid matching the guest explainer copy ("Sign in to show display links…").
+    expect(
+      screen.queryByText(/^Show display links$/),
+    ).not.toBeInTheDocument();
+    const outboundLinks = screen.getAllByRole("link");
+    const hrefs = outboundLinks.map((el) => el.getAttribute("href") || "");
+    expect(hrefs.some((h) => h.includes("/monitor"))).toBe(false);
+    expect(hrefs.some((h) => h.includes("/stream"))).toBe(false);
+    expect(
+      screen.getByText(/Sign in to show display links/),
+    ).toBeInTheDocument();
   });
 });

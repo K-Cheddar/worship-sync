@@ -140,6 +140,7 @@ const OverlayHistoryDrawer = ({
             hideLabel
             svgAction={searchQuery ? () => setSearchQuery("") : undefined}
             svg={searchQuery ? X : Search}
+            svgActionAriaLabel={searchQuery ? "Clear search" : undefined}
           />
         </div>
 

@@ -12,7 +12,7 @@ import {
   setMonitorTimerFontSize,
 } from "../store/preferencesSlice";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
-import { capitalizeFirstLetter } from "../utils/generalUtils";
+import { getChurchDataPath } from "../utils/firebasePaths";
 
 const Monitor = () => {
   const monitorInfo = useSelector((state) => state.presentation.monitorInfo);
@@ -22,7 +22,7 @@ const Monitor = () => {
 
   const dispatch = useDispatch();
 
-  const { firebaseDb, database } = useContext(GlobalInfoContext) || {};
+  const { firebaseDb, churchId } = useContext(GlobalInfoContext) || {};
 
   useEffect(() => {
     const getMonitorSettingsFromFirebase = async () => {
@@ -30,7 +30,7 @@ const Monitor = () => {
 
       const monitorSettingsRef = ref(
         firebaseDb,
-        "users/" + capitalizeFirstLetter(database) + "/v2/monitorSettings"
+        getChurchDataPath(churchId, "monitorSettings")
       );
       onValue(monitorSettingsRef, (snapshot) => {
         const data = snapshot.val();
@@ -48,7 +48,7 @@ const Monitor = () => {
       });
     };
     getMonitorSettingsFromFirebase();
-  }, [firebaseDb, database, dispatch]);
+  }, [churchId, firebaseDb, dispatch]);
 
   const monitorTimer = useSelector((state) =>
     state.timers.timers.find((timer) => timer.id === monitorInfo.timerId)

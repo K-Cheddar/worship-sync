@@ -9,11 +9,11 @@ import {
 } from "react";
 import PouchDB from "pouchdb-browser";
 import { BOARD_REMOTE_DB_NAME } from "./boardUtils";
-import { getStoredBoardAdminHeaders } from "../api/login";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { getApiBasePath } from "../utils/environment";
 import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
 import { BoardConnectionStatus } from "./useBoardData";
+import { createBoardRequestHeaders } from "./api";
 
 const BOARD_SESSION_TIMEOUT_MS = 15000;
 const getRetryDelay = (attempt: number) => Math.min(30000, 5000 * 2 ** attempt);
@@ -33,13 +33,12 @@ export const useBoardSync = () => useContext(BoardSyncContext);
 const getBoardSession = async () => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), BOARD_SESSION_TIMEOUT_MS);
-  const bootstrapHeaders = new Headers(getStoredBoardAdminHeaders());
-
   try {
     const bootstrapResponse = await fetch(
       `${getApiBasePath()}api/boards/admin/bootstrap`,
       {
-        headers: bootstrapHeaders,
+        credentials: "include",
+        headers: createBoardRequestHeaders(),
         signal: controller.signal,
       },
     );

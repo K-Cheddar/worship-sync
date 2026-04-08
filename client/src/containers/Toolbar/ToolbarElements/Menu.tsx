@@ -19,8 +19,9 @@ import { MenuItemType } from "../../../types";
 import { RedoButton, UndoButton } from "./Undo";
 import ChangelogModal from "../../../components/ChangelogModal/ChangelogModal";
 import AboutModal from "../../../components/AboutModal/AboutModal";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useContext } from "react";
 import { useElectronWindows } from "../../../hooks/useElectronWindows";
+import { GlobalInfoContext } from "../../../context/globalInfo";
 import { getDisplayLabel } from "../../../utils/displayUtils";
 import type { WindowType } from "../../../types/electron";
 
@@ -33,6 +34,7 @@ const ToolbarMenu = ({
   isEditMode?: boolean;
   variant?: "default" | "overlay";
 }) => {
+  const { access } = useContext(GlobalInfoContext) || {};
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
@@ -165,44 +167,46 @@ const ToolbarMenu = ({
           to: "/credits-editor",
         },
       ]
-      : [
-        {
-          text: "Open Stage Monitor",
-          element: (
-            <div className="flex items-center gap-2 max-md:min-h-12">
-              <Icon svg={Monitor} color="#d1d5dc" />
-              Open Stage Monitor
-            </div>
-          ),
-          ...(isElectron && displays.length > 0
-            ? {
-              subItems: buildDisplaySubItems("monitor"),
-            }
-            : {
-              onClick: async () => {
-                await openWindowOnLastUsedDisplay("monitor");
-              },
-            }),
-        },
-        {
-          text: "Open Projector",
-          element: (
-            <div className="flex items-center gap-2 max-md:min-h-12">
-              <Icon svg={Presentation} color="#d1d5dc" />
-              Open Projector
-            </div>
-          ),
-          ...(isElectron && displays.length > 0
-            ? {
-              subItems: buildDisplaySubItems("projector"),
-            }
-            : {
-              onClick: async () => {
-                await openWindowOnLastUsedDisplay("projector");
-              },
-            }),
-        },
-      ]),
+      : access === "view"
+        ? []
+        : [
+            {
+              text: "Open Stage Monitor",
+              element: (
+                <div className="flex items-center gap-2 max-md:min-h-12">
+                  <Icon svg={Monitor} color="#d1d5dc" />
+                  Open Stage Monitor
+                </div>
+              ),
+              ...(isElectron && displays.length > 0
+                ? {
+                    subItems: buildDisplaySubItems("monitor"),
+                  }
+                : {
+                    onClick: async () => {
+                      await openWindowOnLastUsedDisplay("monitor");
+                    },
+                  }),
+            },
+            {
+              text: "Open Projector",
+              element: (
+                <div className="flex items-center gap-2 max-md:min-h-12">
+                  <Icon svg={Presentation} color="#d1d5dc" />
+                  Open Projector
+                </div>
+              ),
+              ...(isElectron && displays.length > 0
+                ? {
+                    subItems: buildDisplaySubItems("projector"),
+                  }
+                : {
+                    onClick: async () => {
+                      await openWindowOnLastUsedDisplay("projector");
+                    },
+                  }),
+            },
+          ]),
 
     {
       element: (
@@ -257,7 +261,7 @@ const ToolbarMenu = ({
       ),
       preventClose: true,
     },
-    ...(isPhone && !isEditMode
+    ...(isPhone && !isEditMode && access !== "view"
       ? [
         {
           element: (
@@ -279,7 +283,7 @@ const ToolbarMenu = ({
       ]
       : []),
     // {
-    //   text: isLoggedIn ? "Logout" : "Login",
+    //   text: isLoggedIn ? "Sign out" : "Sign in",
     //   onClick: async () => {
     //     if (isLoggedIn && logout) {
     //       logout();

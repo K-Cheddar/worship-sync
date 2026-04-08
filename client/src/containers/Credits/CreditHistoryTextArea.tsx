@@ -7,6 +7,7 @@ type CreditHistoryTextAreaProps = {
   historyLines: string[];
   /** Optional callback to remove a history line from the underlying history store. */
   onRemoveHistoryLine?: (line: string) => void;
+  disabled?: boolean;
 };
 
 const CreditHistoryTextArea = ({
@@ -14,6 +15,7 @@ const CreditHistoryTextArea = ({
   onChange,
   historyLines,
   onRemoveHistoryLine,
+  disabled = false,
 }: CreditHistoryTextAreaProps) => (
   <HistorySuggestField
     value={value}
@@ -26,6 +28,7 @@ const CreditHistoryTextArea = ({
     hideLabel
     autoResize
     data-ignore-undo="true"
+    disabled={disabled}
   />
 );
 

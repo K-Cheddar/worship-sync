@@ -24,6 +24,7 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
   label,
   value,
   onChange,
+  disabled = false,
   id,
   className,
   inputClassName,
@@ -387,7 +388,13 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
         </Label>
       )}
 
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={disabled ? false : open}
+        onOpenChange={(nextOpen) => {
+          if (disabled) return;
+          setOpen(nextOpen);
+        }}
+      >
         <PopoverTrigger asChild>
           <div className="relative">
             <Input
@@ -403,55 +410,58 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
               className={inputClassName}
               ref={inputRef}
               readOnly
+              disabled={disabled}
             />
           </div>
         </PopoverTrigger>
-        <PopoverContent
-          className="z-110 w-auto p-3 bg-card"
-          align="start"
-          onOpenAutoFocus={(e) => e.preventDefault()}
-          portal={portal}
-        >
-          <div
-            className="flex gap-1"
-            role="group"
-            aria-label="Time selection lists"
+        {!disabled && (
+          <PopoverContent
+            className="z-110 w-auto p-3 bg-card"
+            align="start"
+            onOpenAutoFocus={(e) => e.preventDefault()}
+            portal={portal}
           >
-            <Listbox
-              label="Hour"
-              aria-label="Select hour"
-              items={HOURS as readonly string[]}
-              value={hour}
-              onChange={(h) => {
-                setHour(h);
-                handleCommit(h, minute || "00", meridiem);
-                selectSegment("hour");
-              }}
-            />
-            <Listbox
-              label="Minute"
-              aria-label="Select minutes"
-              items={MINUTES as readonly string[]}
-              value={minute}
-              onChange={(m) => {
-                setMinute(m);
-                handleCommit(hour || "12", m, meridiem);
-                selectSegment("minute");
-              }}
-            />
-            <Listbox
-              label="AM/PM"
-              aria-label="Select AM or PM"
-              items={MERIDIEMS as readonly string[]}
-              value={meridiem}
-              onChange={(ap) => {
-                setMeridiem(ap as Meridiem);
-                handleCommit(hour || "12", minute || "00", ap as Meridiem);
-                selectSegment("meridiem");
-              }}
-            />
-          </div>
-        </PopoverContent>
+            <div
+              className="flex gap-1"
+              role="group"
+              aria-label="Time selection lists"
+            >
+              <Listbox
+                label="Hour"
+                aria-label="Select hour"
+                items={HOURS as readonly string[]}
+                value={hour}
+                onChange={(h) => {
+                  setHour(h);
+                  handleCommit(h, minute || "00", meridiem);
+                  selectSegment("hour");
+                }}
+              />
+              <Listbox
+                label="Minute"
+                aria-label="Select minutes"
+                items={MINUTES as readonly string[]}
+                value={minute}
+                onChange={(m) => {
+                  setMinute(m);
+                  handleCommit(hour || "12", m, meridiem);
+                  selectSegment("minute");
+                }}
+              />
+              <Listbox
+                label="AM/PM"
+                aria-label="Select AM or PM"
+                items={MERIDIEMS as readonly string[]}
+                value={meridiem}
+                onChange={(ap) => {
+                  setMeridiem(ap as Meridiem);
+                  handleCommit(hour || "12", minute || "00", ap as Meridiem);
+                  selectSegment("meridiem");
+                }}
+              />
+            </div>
+          </PopoverContent>
+        )}
       </Popover>
       {message && (
         <div className="flex gap-1">

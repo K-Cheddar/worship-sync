@@ -26,6 +26,8 @@ type HeadingItemProps = {
   onSaveName: (newName: string) => Promise<void>;
   onDelete: () => void;
   onItemClick: (listId: string, e: React.MouseEvent) => void;
+  /** When false, heading cannot be reordered, renamed, or deleted (view-only access). */
+  canMutateOutline?: boolean;
 };
 
 const HeadingItem = ({
@@ -39,6 +41,7 @@ const HeadingItem = ({
   onSaveName,
   onDelete,
   onItemClick,
+  canMutateOutline = true,
 }: HeadingItemProps) => {
   const [isEditing, setIsEditing] = useState(false);
   const [localName, setLocalName] = useState(item.name);
@@ -47,7 +50,7 @@ const HeadingItem = ({
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
       id: item.listId,
-      disabled: isEditing,
+      disabled: isEditing || !canMutateOutline,
     });
 
   const style = {
@@ -76,6 +79,7 @@ const HeadingItem = ({
   }, [isEditing]);
 
   const handleStartEdit = () => {
+    if (!canMutateOutline) return;
     setLocalName(item.name);
     setIsEditing(true);
   };
@@ -133,25 +137,30 @@ const HeadingItem = ({
               iconSize="sm"
             />
             <p
-              {...attributes}
-              {...listeners}
-              className="text-xs truncate flex-1 px-1 cursor-grab active:cursor-grabbing text-center"
+              {...(canMutateOutline ? attributes : {})}
+              {...(canMutateOutline ? listeners : {})}
+              className={cn(
+                "text-xs truncate flex-1 px-1 text-center",
+                canMutateOutline && "cursor-grab active:cursor-grabbing",
+              )}
             >
               {item.name}
             </p>
-            <Button
-              variant="tertiary"
-              svg={Pencil}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleStartEdit();
-              }}
-              className={cn(
-                "opacity-0 group-hover:opacity-100 transition-opacity",
-              )}
-              iconSize="sm"
-              title="Edit heading name"
-            />
+            {canMutateOutline && (
+              <Button
+                variant="tertiary"
+                svg={Pencil}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleStartEdit();
+                }}
+                className={cn(
+                  "opacity-0 group-hover:opacity-100 transition-opacity",
+                )}
+                iconSize="sm"
+                title="Edit heading name"
+              />
+            )}
           </>
         ) : (
           <div

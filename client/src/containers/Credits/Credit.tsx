@@ -32,6 +32,7 @@ type CreditProps = CreditsInfo & {
   selectedCreditId: string;
   /** History lines for this credit's heading, used for suggestions. */
   historyLines: string[];
+  readOnly?: boolean;
 };
 
 const Credit = ({
@@ -43,6 +44,7 @@ const Credit = ({
   selectCredit,
   selectedCreditId,
   historyLines,
+  readOnly = false,
 }: CreditProps) => {
   const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) ?? {};
@@ -83,6 +85,7 @@ const Credit = ({
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
       id,
+      disabled: readOnly,
     });
 
   const style = {
@@ -189,15 +192,17 @@ const Credit = ({
       id={`credit-editor-${id}`}
       onClick={selectCredit}
     >
-      <Button
-        variant="tertiary"
-        className="text-sm ml-auto"
-        padding="px-2 py-1"
-        svg={Grip}
-        {...listeners}
-        {...attributes}
-        tabIndex={-1}
-      />
+      {!readOnly && (
+        <Button
+          variant="tertiary"
+          className="text-sm ml-auto"
+          padding="px-2 py-1"
+          svg={Grip}
+          {...listeners}
+          {...attributes}
+          tabIndex={-1}
+        />
+      )}
       <div className="flex flex-col flex-1 min-h-0 leading-4 text-center px-2 py-1.5 gap-1">
         <Input
           label="Heading"
@@ -207,30 +212,36 @@ const Credit = ({
           value={heading}
           onChange={(val) => updateField("heading", val as string)}
           data-ignore-undo="true"
+          disabled={readOnly}
         />
         <CreditHistoryTextArea
           value={text}
           onChange={(val) => updateField("text", val)}
           historyLines={historyLines}
           onRemoveHistoryLine={handleRemoveHistoryLine}
+          disabled={readOnly}
         />
       </div>
-      <Button
-        variant="tertiary"
-        className="text-sm"
-        padding="px-2 py-1"
-        svg={hidden ? EyeOff : Eye}
-        tabIndex={-1}
-        onClick={toggleHidden}
-      />
-      <Button
-        variant="tertiary"
-        className="text-sm"
-        padding="px-2 py-1"
-        svg={Trash2}
-        tabIndex={-1}
-        onClick={deleteOverlayHandler}
-      />
+      {!readOnly && (
+        <>
+          <Button
+            variant="tertiary"
+            className="text-sm"
+            padding="px-2 py-1"
+            svg={hidden ? EyeOff : Eye}
+            tabIndex={-1}
+            onClick={toggleHidden}
+          />
+          <Button
+            variant="tertiary"
+            className="text-sm"
+            padding="px-2 py-1"
+            svg={Trash2}
+            tabIndex={-1}
+            onClick={deleteOverlayHandler}
+          />
+        </>
+      )}
     </li>
   );
 };

@@ -12,7 +12,7 @@ import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
 import Songs from "../../containers/Songs/Songs";
-import { Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
@@ -28,6 +28,7 @@ import cn from "classnames";
 import { RootState } from "../../store/store";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 import ControllerPageShell from "../../components/ControllerPageShell/ControllerPageShell";
+import ControllerViewRouteGuard from "../../components/ControllerViewRouteGuard/ControllerViewRouteGuard";
 
 const Controller = () => {
   const dispatch = useDispatch();
@@ -87,7 +88,7 @@ const Controller = () => {
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
-      <LyricsEditor />
+      {(access === "full" || access === "music") && <LyricsEditor />}
       <Button
         className={cn("lg:hidden mr-2 h-1/4 z-10", isEditMode && "hidden")}
         svg={isLeftPanelOpen ? ArrowLeftFromLine : ArrowRightFromLine}
@@ -109,26 +110,29 @@ const Controller = () => {
         <ServiceItems />
       </div>
       <div className="flex flex-col flex-1 relative w-[60%] h-full">
-        <Routes>
-          <Route
-            path="/"
-            element={
-              <h2 className="text-2xl text-center mt-4 font-bold">
-                No Item Selected
-              </h2>
-            }
-          />
-          <Route path="/item/:itemId/:listId" element={<Item />} />
-          <Route path="overlays" element={<Overlays />} />
-          <Route path="bible" element={<Bible />} />
-          <Route path="songs" element={<Songs />} />
-          <Route path="free" element={<FreeForms />} />
-          <Route path="timers" element={<Timers />} />
-          <Route path="create" element={<CreateItem />} />
-          <Route path="preferences" element={<Preferences />} />
-          <Route path="quick-links" element={<QuickLinks />} />
-          <Route path="monitor-settings" element={<MonitorSettings />} />
-        </Routes>
+        <ControllerViewRouteGuard>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <h2 className="text-2xl text-center mt-4 font-bold">
+                  No Item Selected
+                </h2>
+              }
+            />
+            <Route path="/item/:itemId/:listId" element={<Item />} />
+            <Route path="overlays" element={<Overlays />} />
+            <Route path="bible" element={<Bible />} />
+            <Route path="songs" element={<Songs />} />
+            <Route path="free" element={<FreeForms />} />
+            <Route path="timers" element={<Timers />} />
+            <Route path="create" element={<CreateItem />} />
+            <Route path="preferences" element={<Preferences />} />
+            <Route path="account" element={<Navigate to="/account" replace />} />
+            <Route path="quick-links" element={<QuickLinks />} />
+            <Route path="monitor-settings" element={<MonitorSettings />} />
+          </Routes>
+        </ControllerViewRouteGuard>
       </div>
 
       {access === "full" && (

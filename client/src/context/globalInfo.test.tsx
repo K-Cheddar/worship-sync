@@ -1,6 +1,14 @@
-import { render, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { type ReactNode, useContext } from "react";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import GlobalInfoProvider from "./globalInfo";
+import { GlobalInfoContext } from "./globalInfo";
+import * as authApi from "../api/auth";
+import * as firebaseApps from "../firebase/apps";
+import {
+  getWorkstationSessionOperatorName,
+  setWorkstationSessionOperatorName,
+} from "../utils/authStorage";
 
 const mockDispatch = jest.fn();
 const onValueCallbacks = new Map<string, (snapshot: any) => void>();
@@ -19,45 +27,117 @@ const onValueMock = jest.fn(
 );
 const setMock = jest.fn();
 const getDatabaseMock = jest.fn(() => ({ name: "firebase-db" }));
-const initializeAppMock = jest.fn();
-const getAuthMock = jest.fn(() => ({ name: "auth" }));
-const signInWithEmailAndPasswordMock = jest.fn(() => Promise.resolve({}));
-const onDisconnectRemoveMock = jest.fn();
-const onDisconnectMock = jest.fn(() => ({
-  remove: onDisconnectRemoveMock,
-}));
+const signInWithCustomTokenMock = jest.fn(() => Promise.resolve({}));
+const signOutMock = jest.fn(() => Promise.resolve());
 
 jest.mock("../hooks", () => ({
   useDispatch: () => mockDispatch,
 }));
 
-jest.mock("firebase/app", () => ({
-  initializeApp: (...args: unknown[]) => initializeAppMock(...args),
+jest.mock("../api/auth", () => ({
+  AuthApiError: class MockAuthApiError extends Error {
+    isReachabilityError: boolean;
+
+    constructor(message: string, options?: { isReachabilityError?: boolean }) {
+      super(message);
+      this.name = "AuthApiError";
+      this.isReachabilityError = Boolean(options?.isReachabilityError);
+    }
+  },
+  getAuthBootstrap: jest.fn(),
+  getSharedDataToken: jest.fn(() =>
+    Promise.resolve({ success: true, token: "test-token", database: "main" })
+  ),
+  createHumanSession: jest.fn(),
+  createChurchAccount: jest.fn(),
+  forgotPassword: jest.fn(),
+  logoutSession: jest.fn(),
+  unlinkWorkstation: jest.fn(() => Promise.resolve({ success: true })),
+  verifyEmailCode: jest.fn(),
+  updateWorkstationOperator: jest.fn(() =>
+    Promise.resolve({ success: true, workstation: {} })
+  ),
+}));
+
+jest.mock("../firebase/apps", () => ({
+  getHumanAuth: jest.fn(() => ({})),
+  getSharedDataAuth: jest.fn(() => ({})),
+  getSharedDataDatabase: jest.fn(() => ({ name: "firebase-db" })),
 }));
 
 jest.mock("firebase/auth", () => ({
-  getAuth: () => getAuthMock(),
-  signInWithEmailAndPassword: (...args: unknown[]) =>
-    signInWithEmailAndPasswordMock(...args),
+  onAuthStateChanged: (_auth: unknown, callback: (user: unknown) => void) => {
+    const unsubscribe = jest.fn();
+    Promise.resolve().then(() => callback(null));
+    return unsubscribe;
+  },
+  signInWithCustomToken: (...args: any[]) =>
+    signInWithCustomTokenMock(...args),
+  signInWithEmailAndPassword: jest.fn(() => Promise.resolve({})),
+  signOut: (...args: any[]) => signOutMock(...args),
+  createUserWithEmailAndPassword: jest.fn(() => Promise.resolve({ user: {} })),
+  updateProfile: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock("firebase/database", () => ({
-  getDatabase: () => getDatabaseMock(),
-  ref: (...args: unknown[]) => refMock(...args),
-  onValue: (...args: unknown[]) => onValueMock(...args),
-  set: (...args: unknown[]) => setMock(...args),
-  onDisconnect: (...args: unknown[]) => onDisconnectMock(...args),
+  ref: (...args: any[]) => refMock(...args),
+  onValue: (...args: any[]) => onValueMock(...args),
+  set: (...args: any[]) => setMock(...args),
+  onDisconnect: jest.fn(() => ({
+    remove: jest.fn(),
+  })),
 }));
 
-jest.mock("../api/login", () => ({
-  loginUser: jest.fn(),
-}));
+const demoBootstrap = { authenticated: false as const };
 
-const renderProvider = () =>
+const loggedInHumanBootstrap = {
+  authenticated: true as const,
+  sessionKind: "human" as const,
+  database: "main",
+  uploadPreset: "bpqu4ma5",
+  appAccess: "full",
+  churchId: "church-1",
+  churchName: "Test Church",
+  churchStatus: "active" as const,
+  recoveryEmail: "",
+  role: "admin",
+  user: {
+    uid: "u1",
+    email: "test@example.com",
+    displayName: "Test User",
+  },
+  device: null,
+  csrfToken: "csrf-test",
+};
+
+const loggedInWorkstationBootstrap = {
+  authenticated: true as const,
+  sessionKind: "workstation" as const,
+  database: "main",
+  uploadPreset: "bpqu4ma5",
+  appAccess: "full",
+  churchId: "church-1",
+  churchName: "Test Church",
+  churchStatus: "active" as const,
+  recoveryEmail: "",
+  role: "member",
+  user: null,
+  device: {
+    deviceId: "workstation-1",
+    label: "Front Row Laptop",
+    operatorName: "Alex",
+  },
+  csrfToken: "csrf-test",
+};
+
+const renderProvider = (
+  child: ReactNode = <div>child</div>,
+  initialEntries = ["/controller"]
+) =>
   render(
-    <MemoryRouter initialEntries={["/controller"]}>
+    <MemoryRouter initialEntries={initialEntries}>
       <GlobalInfoProvider>
-        <div>child</div>
+        {child}
       </GlobalInfoProvider>
     </MemoryRouter>
   );
@@ -67,20 +147,89 @@ const snapshotFor = (value: any) => ({
   val: () => value,
 });
 
+const makeReachabilityError = (message = "offline") => {
+  const AuthApiErrorCtor = authApi.AuthApiError as unknown as new (
+    message: string,
+    options?: { isReachabilityError?: boolean }
+  ) => Error;
+  return new AuthApiErrorCtor(message, { isReachabilityError: true });
+};
+
+const createDeferred = <T,>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
+const ContextProbe = () => {
+  const context = useContext(GlobalInfoContext);
+  const location = useLocation();
+
+  if (!context) return null;
+
+  return (
+    <div>
+      <div data-testid="session-kind">{context.sessionKind || "none"}</div>
+      <div data-testid="church-id">{context.churchId || "none"}</div>
+      <div data-testid="operator-name">{context.operatorName || "none"}</div>
+      <div data-testid="auth-status">{context.authServerStatus}</div>
+      <div data-testid="user-name">{context.user || "none"}</div>
+      <div data-testid="path">{location.pathname}</div>
+      <button type="button" onClick={() => void context.refreshAuthBootstrap()}>
+        Refresh bootstrap
+      </button>
+      <button
+        type="button"
+        onClick={() => void context.endWorkstationOperatorSession()}
+      >
+        End workstation session
+      </button>
+      <button
+        type="button"
+        onClick={() => void context.unlinkCurrentWorkstation()}
+      >
+        Unlink workstation
+      </button>
+    </div>
+  );
+};
+
 describe("GlobalInfoProvider presentation listener contracts", () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     mockDispatch.mockClear();
     onValueCallbacks.clear();
     refMock.mockClear();
     onValueMock.mockClear();
     setMock.mockClear();
-    initializeAppMock.mockClear();
-    getDatabaseMock.mockClear();
-    getAuthMock.mockClear();
-    signInWithEmailAndPasswordMock.mockClear();
-    onDisconnectMock.mockClear();
-    onDisconnectRemoveMock.mockClear();
+    signInWithCustomTokenMock.mockClear();
+    signOutMock.mockClear();
+    (authApi.getAuthBootstrap as jest.Mock).mockReset();
+    (authApi.getSharedDataToken as jest.Mock).mockReset();
+    (authApi.unlinkWorkstation as jest.Mock).mockReset();
+    (authApi.updateWorkstationOperator as jest.Mock).mockReset();
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(demoBootstrap);
+    (authApi.getSharedDataToken as jest.Mock).mockResolvedValue({
+      success: true,
+      token: "test-token",
+      database: "main",
+    });
+    (authApi.unlinkWorkstation as jest.Mock).mockResolvedValue({
+      success: true,
+    });
+    (authApi.updateWorkstationOperator as jest.Mock).mockResolvedValue({
+      success: true,
+      workstation: {},
+    });
+    (firebaseApps.getSharedDataDatabase as jest.Mock).mockImplementation(() =>
+      getDatabaseMock()
+    );
+    (firebaseApps.getSharedDataDatabase as jest.Mock).mockClear();
   });
 
   it("routes storage updates to the current debounced projector, monitor, and stream actions", async () => {
@@ -159,38 +308,42 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     localStorage.setItem("user", "Test User");
     localStorage.setItem("database", "main");
 
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+
     renderProvider();
 
-    await waitFor(() => expect(initializeAppMock).toHaveBeenCalledTimes(1));
     await waitFor(() =>
-      expect(onValueCallbacks.has("users/Main/v2/presentation/projectorInfo")).toBe(
+      expect(firebaseApps.getSharedDataDatabase).toHaveBeenCalled()
+    );
+    await waitFor(() =>
+      expect(onValueCallbacks.has("churches/church-1/data/presentation/projectorInfo")).toBe(
         true
       )
     );
 
-    expect(onValueCallbacks.has("users/Main/v2/presentation/monitorInfo")).toBe(
+    expect(onValueCallbacks.has("churches/church-1/data/presentation/monitorInfo")).toBe(
       true
     );
-    expect(onValueCallbacks.has("users/Main/v2/presentation/streamInfo")).toBe(
+    expect(onValueCallbacks.has("churches/church-1/data/presentation/streamInfo")).toBe(
       true
     );
     expect(
-      onValueCallbacks.has("users/Main/v2/presentation/stream_itemContentBlocked")
+      onValueCallbacks.has("churches/church-1/data/presentation/stream_itemContentBlocked")
     ).toBe(true);
 
     mockDispatch.mockClear();
 
     onValueCallbacks
-      .get("users/Main/v2/presentation/projectorInfo")
+      .get("churches/church-1/data/presentation/projectorInfo")
       ?.(snapshotFor({ name: "Remote Projector", time: 500 }));
     onValueCallbacks
-      .get("users/Main/v2/presentation/monitorInfo")
+      .get("churches/church-1/data/presentation/monitorInfo")
       ?.(snapshotFor({ name: "Remote Monitor", time: 600 }));
     onValueCallbacks
-      .get("users/Main/v2/presentation/streamInfo")
+      .get("churches/church-1/data/presentation/streamInfo")
       ?.(snapshotFor({ name: "Remote Stream", time: 700 }));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_itemContentBlocked")
+      .get("churches/church-1/data/presentation/stream_itemContentBlocked")
       ?.(snapshotFor(true));
 
     await waitFor(() =>
@@ -229,6 +382,8 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     localStorage.setItem("loggedIn", "true");
     localStorage.setItem("user", "Test User");
     localStorage.setItem("database", "main");
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
 
     renderProvider();
 
@@ -301,46 +456,46 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
 
     await waitFor(() =>
       expect(
-        onValueCallbacks.has("users/Main/v2/presentation/stream_bibleInfo")
+        onValueCallbacks.has("churches/church-1/data/presentation/stream_bibleInfo")
       ).toBe(true)
     );
     expect(
-      onValueCallbacks.has("users/Main/v2/presentation/stream_participantOverlayInfo")
+      onValueCallbacks.has("churches/church-1/data/presentation/stream_participantOverlayInfo")
     ).toBe(true);
     expect(
-      onValueCallbacks.has("users/Main/v2/presentation/stream_stbOverlayInfo")
+      onValueCallbacks.has("churches/church-1/data/presentation/stream_stbOverlayInfo")
     ).toBe(true);
     expect(
-      onValueCallbacks.has("users/Main/v2/presentation/stream_qrCodeOverlayInfo")
+      onValueCallbacks.has("churches/church-1/data/presentation/stream_qrCodeOverlayInfo")
     ).toBe(true);
     expect(
-      onValueCallbacks.has("users/Main/v2/presentation/stream_imageOverlayInfo")
+      onValueCallbacks.has("churches/church-1/data/presentation/stream_imageOverlayInfo")
     ).toBe(true);
     expect(
       onValueCallbacks.has(
-        "users/Main/v2/presentation/stream_formattedTextDisplayInfo"
+        "churches/church-1/data/presentation/stream_formattedTextDisplayInfo"
       )
     ).toBe(true);
 
     mockDispatch.mockClear();
 
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_bibleInfo")
+      .get("churches/church-1/data/presentation/stream_bibleInfo")
       ?.(snapshotFor(bibleInfo));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_participantOverlayInfo")
+      .get("churches/church-1/data/presentation/stream_participantOverlayInfo")
       ?.(snapshotFor(participantOverlay));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_stbOverlayInfo")
+      .get("churches/church-1/data/presentation/stream_stbOverlayInfo")
       ?.(snapshotFor(stbOverlay));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_qrCodeOverlayInfo")
+      .get("churches/church-1/data/presentation/stream_qrCodeOverlayInfo")
       ?.(snapshotFor(qrOverlay));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_imageOverlayInfo")
+      .get("churches/church-1/data/presentation/stream_imageOverlayInfo")
       ?.(snapshotFor(imageOverlay));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_formattedTextDisplayInfo")
+      .get("churches/church-1/data/presentation/stream_formattedTextDisplayInfo")
       ?.(snapshotFor(formattedText));
 
     await waitFor(() =>
@@ -365,5 +520,170 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
         ])
       )
     );
+  });
+
+  it("keeps the current workstation session during an offline bootstrap retry", async () => {
+    setWorkstationSessionOperatorName("Alex");
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValueOnce(
+      loggedInWorkstationBootstrap
+    );
+    (authApi.getAuthBootstrap as jest.Mock).mockRejectedValue(
+      makeReachabilityError()
+    );
+
+    renderProvider(<ContextProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-kind")).toHaveTextContent("workstation")
+    );
+    expect(screen.getByTestId("operator-name")).toHaveTextContent("Alex");
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh bootstrap" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("auth-status")).toHaveTextContent("checking")
+    );
+    expect(screen.getByTestId("session-kind")).toHaveTextContent("workstation");
+    expect(screen.getByTestId("operator-name")).toHaveTextContent("Alex");
+    expect(getWorkstationSessionOperatorName()).toBe("Alex");
+  });
+
+  it("re-authenticates shared Firebase when the session context changes mid-session", async () => {
+    const staleSharedToken = createDeferred<{
+      success: true;
+      token: string;
+      database: string;
+    }>();
+    const freshSharedToken = createDeferred<{
+      success: true;
+      token: string;
+      database: string;
+    }>();
+
+    (authApi.getAuthBootstrap as jest.Mock)
+      .mockResolvedValueOnce(loggedInWorkstationBootstrap)
+      .mockResolvedValueOnce({
+        ...loggedInWorkstationBootstrap,
+        churchId: "church-2",
+        churchName: "Second Church",
+        database: "main-2",
+        device: {
+          ...loggedInWorkstationBootstrap.device,
+          deviceId: "workstation-2",
+          label: "Balcony Laptop",
+        },
+      });
+    (authApi.getSharedDataToken as jest.Mock)
+      .mockReturnValueOnce(staleSharedToken.promise)
+      .mockReturnValueOnce(freshSharedToken.promise);
+
+    renderProvider(<ContextProbe />);
+
+    await waitFor(() =>
+      expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(1)
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh bootstrap" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("church-id")).toHaveTextContent("church-2")
+    );
+    await waitFor(() =>
+      expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(2)
+    );
+
+    staleSharedToken.resolve({
+      success: true,
+      token: "stale-token",
+      database: "main",
+    });
+
+    await waitFor(() =>
+      expect(signInWithCustomTokenMock).toHaveBeenCalledTimes(0)
+    );
+
+    freshSharedToken.resolve({
+      success: true,
+      token: "fresh-token",
+      database: "main-2",
+    });
+
+    await waitFor(() =>
+      expect(signInWithCustomTokenMock).toHaveBeenCalledTimes(1)
+    );
+    expect(signInWithCustomTokenMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "fresh-token"
+    );
+  });
+
+  it("navigates to operator handoff immediately even when the server clear fails", async () => {
+    setWorkstationSessionOperatorName("Alex");
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValueOnce(
+      loggedInWorkstationBootstrap
+    );
+    (authApi.updateWorkstationOperator as jest.Mock).mockRejectedValueOnce(
+      makeReachabilityError()
+    );
+
+    renderProvider(<ContextProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-kind")).toHaveTextContent("workstation")
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "End workstation session" })
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("path")).toHaveTextContent("/workstation/operator")
+    );
+    expect(screen.getByTestId("session-kind")).toHaveTextContent("workstation");
+    expect(screen.getByTestId("operator-name")).toHaveTextContent("none");
+    expect(screen.getByTestId("user-name")).toHaveTextContent("Front Row Laptop");
+    expect(getWorkstationSessionOperatorName()).toBe("");
+  });
+
+  it("clears the workstation operator when the server confirms the session is gone", async () => {
+    setWorkstationSessionOperatorName("Alex");
+    (authApi.getAuthBootstrap as jest.Mock)
+      .mockResolvedValueOnce(loggedInWorkstationBootstrap)
+      .mockResolvedValueOnce(demoBootstrap);
+
+    renderProvider(<ContextProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-kind")).toHaveTextContent("workstation")
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh bootstrap" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-kind")).toHaveTextContent("none")
+    );
+    expect(getWorkstationSessionOperatorName()).toBe("");
+  });
+
+  it("unlinks the current workstation and clears local auth state", async () => {
+    setWorkstationSessionOperatorName("Alex");
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValueOnce(
+      loggedInWorkstationBootstrap
+    );
+
+    renderProvider(<ContextProbe />, ["/workstation/operator"]);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-kind")).toHaveTextContent("workstation")
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Unlink workstation" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("path")).toHaveTextContent("/")
+    );
+    expect(authApi.unlinkWorkstation).toHaveBeenCalledWith("workstation-1", "");
+    expect(screen.getByTestId("session-kind")).toHaveTextContent("none");
+    expect(getWorkstationSessionOperatorName()).toBe("");
   });
 });

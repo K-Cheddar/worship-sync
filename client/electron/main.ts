@@ -22,6 +22,8 @@ import {
   setupWindowEventListeners,
   setupReadyToShow,
   focusWindow,
+  setupSharedSessionWindowOpenHandler,
+  WORSHIPSYNC_SESSION_PARTITION,
 } from "./windowHelpers";
 import {
   getDisplayWindow,
@@ -128,7 +130,6 @@ let windowStateManager: WindowStateManager;
 let mediaCacheManager: MediaCacheManager;
 let isUploadInProgress = false;
 let isAppClosing = false;
-
 const notifyWindowStateChanged = () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("window-state-changed");
@@ -249,6 +250,7 @@ const createWindow = () => {
     show: false,
     webPreferences: {
       preload: join(__dirname, "../preload/preload.mjs"),
+      partition: WORSHIPSYNC_SESSION_PARTITION,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
@@ -406,40 +408,51 @@ const createWindow = () => {
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
+  // window.open / middle-click children do not inherit `partition` by default; attach for every
+  // renderer webContents (including nested opens) so auth cookies and storage stay consistent.
+  app.on("web-contents-created", (_event, contents) => {
+    setupSharedSessionWindowOpenHandler(contents, __dirname);
+  });
+
   // Strict CSP for Electron; allowlists for Firebase (Realtime DB + Auth), Cloudinary, Mux, Sentry.
   // Dev: local origins only when unpackaged. Prod: Firebase/Google must be explicit (app may load from file://).
   const devConnectSrc = app.isPackaged
     ? ""
     : "https://local.worshipsync.net:5000 https://localhost:5000 ";
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        "Content-Security-Policy": [
-          "default-src 'self'; " +
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app; " +
-            "style-src 'self' 'unsafe-inline' data:; " +
-            "font-src 'self' data:; " +
-            "img-src 'self' data: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com; " +
-            "media-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com; " +
-            "connect-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com https://*.cloudinary.com " +
-            devConnectSrc +
-            "https://*.worshipsync.net " +
-            "https://*.firebaseio.com wss://*.firebaseio.com " +
-            "https://*.firebasedatabase.app wss://*.firebasedatabase.app " +
-            "https://*.firebaseapp.com https://*.googleapis.com " +
-            "https://securetoken.googleapis.com https://www.googleapis.com " +
-            "https://apis.google.com https://www.google.com " +
-            "https://*.ingest.us.sentry.io https://*.ingest.euro.sentry.io; " +
-            "frame-src 'self' https://*.firebaseio.com https://*.firebasedatabase.app https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com https://apis.google.com; " +
-            "worker-src 'self' blob:; " +
-            "child-src 'self' blob:; " +
-            "object-src 'none'; " +
-            "base-uri 'self';",
-        ],
-      },
+  const cspHeaderValue =
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app https://apis.google.com https://www.gstatic.com; " +
+    "style-src 'self' 'unsafe-inline' data:; " +
+    "font-src 'self' data:; " +
+    "img-src 'self' data: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com; " +
+    "media-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com; " +
+    "connect-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com https://*.cloudinary.com " +
+    devConnectSrc +
+    "https://*.worshipsync.net " +
+    "https://*.firebaseio.com wss://*.firebaseio.com " +
+    "https://*.firebasedatabase.app wss://*.firebasedatabase.app " +
+    "https://*.firebaseapp.com https://*.googleapis.com " +
+    "https://securetoken.googleapis.com https://www.googleapis.com " +
+    "https://apis.google.com https://www.google.com " +
+    "https://*.ingest.us.sentry.io https://*.ingest.euro.sentry.io; " +
+    "frame-src 'self' https://*.firebaseio.com https://*.firebasedatabase.app https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com https://apis.google.com; " +
+    "worker-src 'self' blob:; " +
+    "child-src 'self' blob:; " +
+    "object-src 'none'; " +
+    "base-uri 'self';";
+  const appBrowserSession = session.fromPartition(WORSHIPSYNC_SESSION_PARTITION);
+  const attachCspHeaders = (targetSession: Electron.Session) => {
+    targetSession.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          "Content-Security-Policy": [cspHeaderValue],
+        },
+      });
     });
-  });
+  };
+  attachCspHeaders(session.defaultSession);
+  attachCspHeaders(appBrowserSession);
 
   // Register protocol handler for media-cache:// to serve files from filesystem
   const cacheDir = join(app.getPath("userData"), "media-cache");
@@ -518,7 +531,7 @@ app.whenReady().then(() => {
 
   const notFound = () => new Response("Not Found", { status: 404 });
 
-  protocol.handle("media-cache", async (request) => {
+  const handleMediaCacheRequest = async (request: GlobalRequest) => {
     try {
       const filename = getMediaCacheFilename(request.url);
       if (!filename) return notFound();
@@ -573,7 +586,22 @@ app.whenReady().then(() => {
       console.error("Protocol error:", err);
       return new Response("Internal Server Error", { status: 500 });
     }
-  });
+  };
+
+  const registerMediaCacheProtocol = async (targetSession: Electron.Session) => {
+    const protocolHandler = targetSession.protocol;
+    try {
+      if (protocolHandler.isProtocolHandled("media-cache")) {
+        protocolHandler.unhandle("media-cache");
+      }
+    } catch (error) {
+      console.warn("Could not reset media-cache protocol handler:", error);
+    }
+    protocolHandler.handle("media-cache", handleMediaCacheRequest);
+  };
+
+  void registerMediaCacheProtocol(session.defaultSession);
+  void registerMediaCacheProtocol(appBrowserSession);
 
   windowStateManager = new WindowStateManager();
   mediaCacheManager = new MediaCacheManager();

@@ -33,19 +33,19 @@ const ControllerLoadingOverlay = ({
         </>
       ) : (
         <>
-          <p>
+          <p className="max-w-lg px-4 text-center">
             Setting up <span className="font-bold">Worship</span>
             <span className="text-orange-500 font-semibold">Sync</span> for{" "}
             <span className="font-semibold">{user}</span>
           </p>
           {connectionStatus?.status === "retrying" && (
-            <p className="text-lg text-yellow-400">
+            <p className="text-center text-lg text-yellow-400">
               Connection failed. Retrying...
             </p>
           )}
           <Spinner />
           {dbProgress !== 0 && (
-            <p>
+            <p className="text-center">
               Progress: <span className="text-orange-500">{dbProgress}%</span>
             </p>
           )}
