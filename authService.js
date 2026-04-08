@@ -19,6 +19,7 @@ import {
   sanitizeWorkstationDeviceForClient,
 } from "./server/authResponseSanitize.js";
 import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
+import { getInviteMembershipConflict } from "./server/inviteMembershipGuards.js";
 
 const SESSION_KIND_HUMAN = "human";
 const SESSION_KIND_WORKSTATION = "workstation";
@@ -1265,6 +1266,28 @@ const acceptInviteMembership = async ({ invite, user }) => {
         return { expired: true };
       }
 
+      const userActiveMembershipsSnap = await transaction.get(
+        db
+          .collection(COLLECTIONS.memberships)
+          .where("userId", "==", user.uid)
+          .where("status", "==", "active"),
+      );
+      const inviteMembershipConflict = getInviteMembershipConflict({
+        userId: user.uid,
+        invitedChurchId: churchId,
+        activeMemberships: userActiveMembershipsSnap.docs.map((d) => ({
+          userId: d.get("userId"),
+          churchId: d.get("churchId"),
+          status: d.get("status"),
+        })),
+      });
+      if (inviteMembershipConflict) {
+        throw httpError(
+          inviteMembershipConflict.statusCode,
+          inviteMembershipConflict.message,
+        );
+      }
+
       const adminSnapshot = await transaction.get(
         db
           .collection(COLLECTIONS.memberships)
@@ -1309,6 +1332,25 @@ const acceptInviteMembership = async ({ invite, user }) => {
       throw httpError(400, "This invite has expired");
     }
   } else {
+    const activeRows = await queryDocs(
+      COLLECTIONS.memberships,
+      [
+        { field: "userId", value: user.uid },
+        { field: "status", value: "active" },
+      ],
+      { limit: 25 },
+    );
+    const inviteMembershipConflict = getInviteMembershipConflict({
+      userId: user.uid,
+      invitedChurchId: churchId,
+      activeMemberships: activeRows,
+    });
+    if (inviteMembershipConflict) {
+      throw httpError(
+        inviteMembershipConflict.statusCode,
+        inviteMembershipConflict.message,
+      );
+    }
     await setDoc(
       COLLECTIONS.memberships,
       membershipId,
@@ -2792,7 +2834,8 @@ export const authHandlers = {
       const memberships = await listMembershipsForChurch(req.params.churchId);
       const targetMembership = memberships.find(
         (membership) =>
-          membership.userId === req.params.userId && membership.status === "active",
+          membership.userId === req.params.userId &&
+          membership.status === "active",
       );
       if (!targetMembership) {
         throw httpError(404, "Membership not found");
