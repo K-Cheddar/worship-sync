@@ -232,6 +232,18 @@ const collectionMap = {
 };
 
 const rateLimits = new Map();
+const RATE_LIMIT_SWEEP_INTERVAL = 200;
+let rateLimitEnforcementCount = 0;
+
+const sweepExpiredRateLimits = (now) => {
+  for (const [bucketKey, bucket] of rateLimits.entries()) {
+    const blockedUntil = Number(bucket?.blockedUntil || 0);
+    const resetAt = Number(bucket?.resetAt || 0);
+    if (blockedUntil <= now && resetAt <= now) {
+      rateLimits.delete(bucketKey);
+    }
+  }
+};
 
 /**
  * Use the direct request IP for auth rate limits.
@@ -244,6 +256,14 @@ const getClientIp = (req) =>
 const enforceRateLimit = ({ scope, key, limit, windowMs, blockMs }) => {
   const bucketKey = `${scope}:${key}`;
   const now = Date.now();
+  rateLimitEnforcementCount += 1;
+  if (
+    rateLimits.size > 0 &&
+    rateLimitEnforcementCount % RATE_LIMIT_SWEEP_INTERVAL === 0
+  ) {
+    sweepExpiredRateLimits(now);
+  }
+
   const current = rateLimits.get(bucketKey) || {
     count: 0,
     resetAt: now + windowMs,
@@ -795,12 +815,22 @@ const memoryPairingRedeemTails = new Map();
 const enqueueMemoryPairingRedeem = (tokenHash, fn) => {
   const prev = memoryPairingRedeemTails.get(tokenHash) || Promise.resolve();
   const job = prev.then(() => fn());
-  memoryPairingRedeemTails.set(
-    tokenHash,
-    job.catch(() => {}),
-  );
+  const tail = job.catch(() => {});
+  memoryPairingRedeemTails.set(tokenHash, tail);
+  tail.finally(() => {
+    if (memoryPairingRedeemTails.get(tokenHash) === tail) {
+      memoryPairingRedeemTails.delete(tokenHash);
+    }
+  });
   return job;
 };
+
+const setNoStoreHeaders = (res) =>
+  res.set({
+    "Cache-Control": "no-store, no-cache, must-revalidate, private",
+    Pragma: "no-cache",
+    Expires: "0",
+  });
 
 const redeemWorkstationPairingFirestore = async (
   token,
@@ -2227,12 +2257,14 @@ export const authHandlers = {
         deviceId: bootstrap.device?.deviceId || null,
       });
 
+      setNoStoreHeaders(res);
       return res.json({
         success: true,
         token,
         database: bootstrap.database,
       });
     } catch (error) {
+      setNoStoreHeaders(res);
       logAuthEvent("warn", "shared-data-token.error", {
         message: error.message,
       });

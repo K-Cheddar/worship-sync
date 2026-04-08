@@ -16,7 +16,6 @@ import VerificationCodeInput from "../components/VerificationCodeInput/Verificat
 import { GlobalInfoContext } from "../context/globalInfo";
 import {
   getAuthRedirectPathnameFromState,
-  getHumanPostAuthPath,
 } from "../utils/authRedirectPath";
 
 type Mode = "signIn" | "code" | "forgotPassword";
@@ -83,12 +82,6 @@ const Login = () => {
     }, 1000);
     return () => window.clearTimeout(timerId);
   }, [resendCooldownSec]);
-
-  useEffect(() => {
-    if (context?.loginState === "success") {
-      navigate(getHumanPostAuthPath(location));
-    }
-  }, [context?.loginState, location, navigate]);
 
   useEffect(() => {
     const pendingId = context?.pendingEmailVerificationId;
