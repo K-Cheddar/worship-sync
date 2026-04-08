@@ -309,6 +309,21 @@ export const updateWorkstationOperator = async (
     },
   );
 
+export const unlinkWorkstation = async (
+  deviceId: string,
+  workstationToken?: string,
+) =>
+  apiFetch<{ success: boolean }>(
+    `api/workstations/${deviceId}/unlink`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+    {
+      ...(workstationToken ? { "x-workstation-token": workstationToken } : {}),
+    },
+  );
+
 export const createDisplayPairing = async (churchId: string, body: JsonBody) =>
   apiFetch<{ success: boolean; pairing: PairingClient }>(
     `api/churches/${churchId}/display-pairings`,

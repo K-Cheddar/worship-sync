@@ -5,6 +5,7 @@ import Input from "../components/Input/Input";
 import SetupScreenBackButton from "../components/SetupScreenBackButton";
 import { redeemDisplayPairing, redeemWorkstationPairing } from "../api/auth";
 import {
+  clearDisplayToken,
   clearWorkstationToken,
   setDisplayToken,
   setWorkstationToken,
@@ -15,8 +16,8 @@ import { GlobalInfoContext } from "../context/globalInfo";
 
 const roleDescription = (pairType: "workstation" | "display") =>
   pairType === "workstation"
-    ? "This setup code is for a shared controller (workstation)."
-    : "This setup code is for a projector, monitor, or stream output.";
+    ? "This code is for a shared controller (workstation)."
+    : "This code is for a linked display—room screens, stream, credits, or discussion board.";
 
 const WorkstationPair = ({
   lockedPairType,
@@ -63,7 +64,7 @@ const WorkstationPair = ({
       const codeToUse = String(codeOverride || pairingCode).trim();
       if (!codeToUse) {
         setBannerError("");
-        setCodeFieldError("Enter the setup code to continue");
+        setCodeFieldError("Enter the link code to continue");
         return;
       }
 
@@ -76,6 +77,7 @@ const WorkstationPair = ({
           const response = await redeemDisplayPairing({
             token: codeToUse,
           });
+          clearWorkstationToken();
           setDisplayToken(response.credential);
           await context?.refreshAuthBootstrap();
           navigate(
@@ -90,6 +92,7 @@ const WorkstationPair = ({
             token: codeToUse,
             platformType: isElectron() ? "electron" : "web",
           });
+          clearDisplayToken();
           if (response.credential) {
             setWorkstationToken(response.credential);
             await context?.refreshAuthBootstrap();
@@ -101,7 +104,7 @@ const WorkstationPair = ({
         }
       } catch (error) {
         setBannerError(
-          error instanceof Error ? error.message : "Could not set up this device"
+          error instanceof Error ? error.message : "Could not link this device"
         );
       } finally {
         setIsLoading(false);
@@ -122,9 +125,9 @@ const WorkstationPair = ({
     <main className="flex min-h-dvh items-center justify-center bg-gray-700 px-4 text-white">
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         <SetupScreenBackButton />
-        <h1 className="text-2xl font-semibold">Set up this device</h1>
+        <h1 className="text-2xl font-semibold">Link this device</h1>
         <p className="mt-2 text-sm text-gray-200">
-          Enter the setup code from WorshipSync account settings to connect this device
+          Enter the link code from WorshipSync account settings to connect this device
           to your church.
         </p>
         <p
@@ -135,7 +138,7 @@ const WorkstationPair = ({
         </p>
         {tokenFromQuery && (
           <p className="mt-3 text-sm text-cyan-300">
-            Setup link detected. We&apos;ll try to connect this device automatically.
+            Device link detected. We&apos;ll try to connect this device automatically.
           </p>
         )}
 
@@ -148,8 +151,8 @@ const WorkstationPair = ({
         <div className="mt-6 rounded-xl border border-gray-600/90 bg-gray-900/35 p-4 shadow-inner">
           <Input
             className="mt-0"
-            id="setup-code"
-            label="Setup code"
+            id="device-link-code"
+            label="Link code"
             value={pairingCode}
             errorText={codeFieldError}
             onChange={(value) => {
@@ -168,7 +171,7 @@ const WorkstationPair = ({
               isLoading={isLoading}
               disabled={isLoading}
             >
-              Finish setup
+              Link device
             </Button>
             <Button
               className="flex-1 justify-center"

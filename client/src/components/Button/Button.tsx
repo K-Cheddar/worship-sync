@@ -21,12 +21,13 @@ export type ButtonProps = Omit<
   svg?: FunctionComponent<React.SVGProps<SVGSVGElement>>;
   image?: string;
   variant?:
-    | "primary"
-    | "secondary"
-    | "tertiary"
-    | "cta"
-    | "textLink"
-    | "none";
+  | "primary"
+  | "secondary"
+  | "tertiary"
+  | "cta"
+  | "destructive"
+  | "textLink"
+  | "none";
   className?: string;
   color?: string;
   wrap?: boolean;
@@ -80,8 +81,13 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       return _iconSize || "md";
     }, [isMobile, _iconSize]);
 
+    const iconColor =
+      variant === "cta" || variant === "destructive"
+        ? (color ?? "#ffffff")
+        : color;
+
     const iconWProps = (
-      <Icon svg={svg || FileQuestion} color={color} size={iconSize} />
+      <Icon svg={svg || FileQuestion} color={iconColor} size={iconSize} />
     );
 
     const _padding = padding
@@ -97,6 +103,8 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       string
     > = {
       cta: "bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 border-2 border-cyan-600 hover:border-cyan-700 active:border-cyan-800 text-white",
+      destructive:
+        "bg-red-600 hover:bg-red-700 active:bg-red-800 border-2 border-red-600 hover:border-red-700 active:border-red-800 text-white",
       primary:
         "bg-black hover:bg-gray-900 active:bg-gray-800 border-2 border-black hover:border-gray-900 active:border-gray-800 text-white",
       secondary:
@@ -116,7 +124,9 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       variant === "textLink" && "disabled:opacity-100",
       _padding,
       !isSelected && variant && variantClasses[variant],
-      wrap ? "whitespace-normal text-left break-words" : "whitespace-nowrap",
+      wrap
+        ? "text-wrap whitespace-normal text-left break-words"
+        : "whitespace-nowrap",
       truncate && "truncate",
       position,
       className

@@ -130,9 +130,9 @@ const ACCOUNT_TABS: {
   },
   {
     id: "setup",
-    label: "Setup",
+    label: "Devices",
     description:
-      "Generate codes on this device; enter the code on the workstation or display.",
+      "Create link codes here; enter the code on the workstation or display to connect.",
   },
   {
     id: "trust",
@@ -390,7 +390,7 @@ const AccountPage = () => {
           itemName:
             destructiveConfirm.device.label.trim() || "Unnamed workstation",
           warningMessage:
-            "That computer can't control this church until someone pairs it again from this account page.",
+            "That computer can't control this church until someone links it again from this account page.",
           confirmText: "Revoke access",
         };
       case "revokeDisplay":
@@ -401,7 +401,7 @@ const AccountPage = () => {
           itemName:
             destructiveConfirm.device.label.trim() || "Unnamed display",
           warningMessage:
-            "That screen can't receive output until someone pairs it again from this account page.",
+            "That screen can't receive output until someone links it again from this account page.",
           confirmText: "Revoke access",
         };
       case "revokeTrusted": {
@@ -576,7 +576,7 @@ const AccountPage = () => {
         <div>
           <h2 className="text-2xl font-semibold">Overview</h2>
           <p className="mt-1 max-w-xl text-sm text-gray-300">
-            People, setup codes, and recovery for this church in one place.
+            Invite people, link shared devices, and manage recovery for this church in one place.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 sm:flex-nowrap">
@@ -909,7 +909,7 @@ const AccountPage = () => {
           >
             <h3 className="text-lg font-semibold">Display screens</h3>
             <p className="mt-1 text-sm text-gray-400">
-              Projector and other outputs you set up without a personal sign-in.
+              Projector and other outputs you link without a personal sign-in.
             </p>
             <DisplayPairingForm
               churchId={churchId}

@@ -1,7 +1,10 @@
-import { type FormEvent, useContext, useEffect, useState } from "react";
+import { type FormEvent, useContext, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
+import WorkstationUnpairConfirmModal, {
+  WORKSTATION_UNLINK_TRIGGER_LABEL,
+} from "../components/WorkstationUnpairConfirmModal/WorkstationUnpairConfirmModal";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { getWorkstationToken } from "../utils/authStorage";
 import { updateWorkstationOperator } from "../api/auth";
@@ -9,20 +12,19 @@ import { updateWorkstationOperator } from "../api/auth";
 const WorkstationOperator = () => {
   const navigate = useNavigate();
   const context = useContext(GlobalInfoContext);
-  const [operatorName, setOperatorName] = useState(context?.operatorName || "");
+  const [operatorName, setOperatorName] = useState("");
   const [nameFieldError, setNameFieldError] = useState("");
   const [bannerError, setBannerError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    if (context?.operatorName) {
-      setOperatorName(context.operatorName);
-    }
-  }, [context?.operatorName]);
+  const [unlinkModalOpen, setUnlinkModalOpen] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
 
   const deviceId = context?.device?.deviceId;
+  const deviceLabel = context?.device?.label?.trim() ?? "";
+  const churchName = context?.churchName?.trim() ?? "";
   const bootstrapStatus = context?.bootstrapStatus;
   const loginState = context?.loginState;
+  const unlinkCurrentWorkstation = context?.unlinkCurrentWorkstation;
 
   if (
     !context ||
@@ -88,6 +90,17 @@ const WorkstationOperator = () => {
         <p className="mt-2 text-sm text-gray-200">
           This name helps the team know who is running this shared workstation.
         </p>
+        {churchName ? (
+          <p className="mt-2 text-sm text-cyan-200/90">
+            Church: <span className="font-medium text-white">{churchName}</span>
+            {deviceLabel ? (
+              <>
+                {" "}
+                · Device: <span className="font-medium text-white">{deviceLabel}</span>
+              </>
+            ) : null}
+          </p>
+        ) : null}
         {bannerError && (
           <p className="mt-4 text-sm text-red-400" role="alert">
             {bannerError}
@@ -125,6 +138,38 @@ const WorkstationOperator = () => {
             Cancel
           </Button>
         </div>
+        {unlinkCurrentWorkstation ? (
+          <div className="mt-6 border-t border-gray-600 pt-4">
+            <p className="text-xs text-gray-400">
+              Only unlink if this computer should no longer be a shared workstation for your
+              church.
+            </p>
+            <Button
+              type="button"
+              variant="tertiary"
+              className="mt-3 w-full justify-center text-sm"
+              disabled={isSaving}
+              onClick={() => setUnlinkModalOpen(true)}
+            >
+              {WORKSTATION_UNLINK_TRIGGER_LABEL}
+            </Button>
+            <WorkstationUnpairConfirmModal
+              isOpen={unlinkModalOpen}
+              onClose={() => setUnlinkModalOpen(false)}
+              isConfirming={unlinking}
+              onConfirm={async () => {
+                if (!unlinkCurrentWorkstation) return;
+                setUnlinking(true);
+                try {
+                  await unlinkCurrentWorkstation();
+                  setUnlinkModalOpen(false);
+                } finally {
+                  setUnlinking(false);
+                }
+              }}
+            />
+          </div>
+        ) : null}
       </form>
     </main>
   );

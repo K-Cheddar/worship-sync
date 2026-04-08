@@ -8,7 +8,7 @@ type SetupScreenBackButtonProps = {
 };
 
 const SetupScreenBackButton = ({
-  label = "Back to setup",
+  label = "Back to start",
   to = "/",
 }: SetupScreenBackButtonProps) => {
   const navigate = useNavigate();

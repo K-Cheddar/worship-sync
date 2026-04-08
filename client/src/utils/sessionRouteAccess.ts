@@ -48,6 +48,21 @@ const HUMAN_ALLOWED_EXACT = new Set([
 ]);
 
 const WORKSTATION_ALLOWED_PREFIXES = ["/controller"];
+
+/** Output / audience surfaces a workstation may open before an operator name is set. */
+export const WORKSTATION_DISPLAY_SURFACE_EXACT = new Set([
+  "/projector",
+  "/projector-full",
+  "/monitor",
+  "/stream",
+  "/stream-info",
+  "/credits",
+  "/boards/display",
+]);
+
+export const isWorkstationDisplaySurfacePath = (pathname: string): boolean =>
+  WORKSTATION_DISPLAY_SURFACE_EXACT.has(pathname);
+
 const WORKSTATION_ALLOWED_EXACT = new Set([
   "/home",
   "/overlay-controller",
@@ -56,6 +71,7 @@ const WORKSTATION_ALLOWED_EXACT = new Set([
   "/boards/controller",
   "/workstation/operator",
   "/workstation/pair",
+  ...WORKSTATION_DISPLAY_SURFACE_EXACT,
 ]);
 
 const DISPLAY_ALLOWED_EXACT = new Set([
@@ -80,6 +96,9 @@ const VIEW_BLOCKED_EXACT = new Set([
   "/stream-info",
   "/credits",
 ]);
+
+/** Paths that only members with full app access may open (human / workstation). */
+export const FULL_ACCESS_ONLY_EXACT = new Set(["/boards/controller"]);
 
 const matchesAllowedRoute = (
   pathname: string,
@@ -106,6 +125,9 @@ export const isRouteAllowedForSession = (
     if (context.access === "view" && VIEW_BLOCKED_EXACT.has(pathname)) {
       return false;
     }
+    if (context.access !== "full" && FULL_ACCESS_ONLY_EXACT.has(pathname)) {
+      return false;
+    }
     return true;
   }
 
@@ -114,6 +136,9 @@ export const isRouteAllowedForSession = (
       return false;
     }
     if (context.access === "view" && VIEW_BLOCKED_EXACT.has(pathname)) {
+      return false;
+    }
+    if (context.access !== "full" && FULL_ACCESS_ONLY_EXACT.has(pathname)) {
       return false;
     }
     return true;

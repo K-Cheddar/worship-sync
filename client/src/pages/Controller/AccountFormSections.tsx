@@ -96,7 +96,6 @@ const PairingCodeBanner = ({
 }: PairingCodeBannerProps) => {
   const { showToast } = useToast();
   const title = variant === "workstation" ? "Workstation" : "Display";
-  const [copyStatus, setCopyStatus] = useState("");
   const [emailTo, setEmailTo] = useState("");
   const [emailError, setEmailError] = useState("");
   const [emailSending, setEmailSending] = useState(false);
@@ -120,9 +119,23 @@ const PairingCodeBanner = ({
   })();
 
   const copyText = async (value: string, successMessage: string) => {
-    if (!value || !navigator?.clipboard?.writeText) return;
-    await navigator.clipboard.writeText(value);
-    setCopyStatus(successMessage);
+    if (!value) {
+      showToast("Nothing to copy.", "error");
+      return;
+    }
+    if (!navigator?.clipboard?.writeText) {
+      showToast(
+        "Could not access the clipboard. Check browser permissions and try again.",
+        "error",
+      );
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast(successMessage, "success");
+    } catch {
+      showToast("Could not copy. Try again.", "error");
+    }
   };
 
   const handleSendPairingEmail = async () => {
@@ -143,7 +156,7 @@ const PairingCodeBanner = ({
         token,
         to: trimmed,
       });
-      showToast("Setup code sent.", "success");
+      showToast("Link code sent.", "success");
       setEmailTo("");
       setEmailStepOpen(false);
     } catch (error) {
@@ -167,10 +180,10 @@ const PairingCodeBanner = ({
         <span className="font-mono font-semibold tracking-wide">{token}</span>
       </p>
       <p className="mt-2 text-sm text-gray-200">
-        On the {instructionTarget}, open WorshipSync and choose the setup option for this device,
+        On the {instructionTarget}, open WorshipSync and choose the option to link this device,
         or go to <span className="font-mono">/#/{route.replace(/^\//, "")}</span>. Use{" "}
-        <span className="font-medium text-gray-100">Pair in this window</span> or{" "}
-        <span className="font-medium text-gray-100">Copy setup link</span> to open or share the
+        <span className="font-medium text-gray-100">Link in this window</span> or{" "}
+        <span className="font-medium text-gray-100">Copy device link</span> to open or share the
         full URL with this code filled in.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -179,27 +192,24 @@ const PairingCodeBanner = ({
           variant="tertiary"
           to={setupPath}
         >
-          Pair in this window
+          Link in this window
         </Button>
         <Button
           variant="tertiary"
           onClick={() =>
-            void copyText(setupUrl, `${title} setup link copied.`)
+            void copyText(setupUrl, `${title} device link copied.`)
           }
           disabled={!setupUrl}
         >
-          Copy setup link
+          Copy device link
         </Button>
         <Button
           variant="tertiary"
-          onClick={() => void copyText(token, `${title} setup code copied.`)}
+          onClick={() => void copyText(token, `${title} link code copied.`)}
         >
           Copy code
         </Button>
       </div>
-      {copyStatus ? (
-        <p className="mt-2 text-sm text-cyan-300">{copyStatus}</p>
-      ) : null}
       <div className="mt-4 border-t border-gray-600/50 pt-3">
         {!emailStepOpen ? (
           <Button
@@ -244,7 +254,7 @@ const PairingCodeBanner = ({
               </Button>
             </div>
             <p className="mt-2 text-xs text-gray-400">
-              Sends the setup code and link. Email must be enabled on the server.
+              Sends the link code and device link. Email must be enabled on the server.
             </p>
           </>
         )}
@@ -390,7 +400,7 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
       const token = response.pairing.token;
       if (!token) {
         showToast(
-          "Pairing code was not returned. Try again.",
+          "Link code was not returned. Try again.",
           "error",
         );
         return;
@@ -499,7 +509,7 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
       const token = response.pairing.token;
       if (!token) {
         showToast(
-          "Pairing code was not returned. Try again.",
+          "Link code was not returned. Try again.",
           "error",
         );
         return;

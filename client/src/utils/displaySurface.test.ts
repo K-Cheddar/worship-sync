@@ -1,7 +1,7 @@
 import { getDisplayHomePath, getDisplayPairingDestination } from "./displaySurface";
 
 describe("getDisplayHomePath", () => {
-  it("maps each paired surface type to its route", () => {
+  it("maps each linked display surface type to its route", () => {
     expect(getDisplayHomePath("projector-display")).toBe("/projector");
     expect(getDisplayHomePath("projector")).toBe("/projector-full");
     expect(getDisplayHomePath("monitor")).toBe("/monitor");

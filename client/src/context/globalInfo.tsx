@@ -36,7 +36,9 @@ import {
   getAuthBootstrap,
   getSharedDataToken,
   logoutSession,
+  unlinkWorkstation as unlinkWorkstationRequest,
   SessionKind,
+  updateWorkstationOperator,
   verifyEmailCode as verifyEmailCodeRequest,
   resendEmailCode as resendEmailCodeRequest,
 } from "../api/auth";
@@ -56,14 +58,18 @@ import {
 import {
   clearCsrfToken,
   clearDisplayToken,
+  clearLegacyWorkstationOperatorName,
   clearOperatorNameStorage,
+  clearWorkstationSessionOperatorName,
   clearWorkstationToken,
   setCsrfToken,
   getDisplayToken,
   getOperatorName,
   getOrCreateDeviceId,
+  getWorkstationSessionOperatorName,
   getWorkstationToken,
   setOperatorNameStorage,
+  setWorkstationSessionOperatorName,
 } from "../utils/authStorage";
 import {
   getHumanAuth,
@@ -114,6 +120,9 @@ type GlobalInfoContextType = {
   }) => Promise<{ requiresEmailCode?: boolean; pendingAuthId?: string }>;
   forgotPassword: (email: string) => Promise<void>;
   logout: () => Promise<void>;
+  unlinkCurrentWorkstation: () => Promise<void>;
+  /** Shared workstation: clear operator for handoff; keeps device link and church session. */
+  endWorkstationOperatorSession: () => Promise<void>;
   enterGuestMode: (nextPath?: string) => void;
   exitGuestMode: (nextPath?: string) => void;
   loginState: LoginStateType;
@@ -369,7 +378,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     return trimmedUser || trimmedOperatorName || trimmedDeviceLabel || "Operator";
   }, [device?.label, operatorName, sessionKind, user]);
 
-  const applyBootstrap = useCallback((bootstrap?: AuthBootstrap | null) => {
+  const applyBootstrap = useCallback((
+    bootstrap?: AuthBootstrap | null,
+    options?: { clearWorkstationSessionOperator?: boolean }
+  ) => {
     if (!bootstrap?.authenticated) {
       setLoginState("idle");
       setSessionKind(null);
@@ -387,6 +399,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setOperatorNameState("");
       setDevice(null);
       clearCsrfToken();
+      if (options?.clearWorkstationSessionOperator) {
+        clearWorkstationSessionOperatorName();
+      }
       localStorage.setItem("loggedIn", "false");
       localStorage.removeItem("user");
       localStorage.removeItem("database");
@@ -406,12 +421,17 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       bootstrap.user?.displayName?.trim() ||
       bootstrap.user?.email?.trim() ||
       "";
-    setUser(
-      humanToolbarLabel ||
-      bootstrap.device?.operatorName ||
-      bootstrap.device?.label ||
-      "Operator"
-    );
+    const workstationSessionOperator = getWorkstationSessionOperatorName().trim();
+    const toolbarDisplayName =
+      bootstrap.sessionKind === "workstation"
+        ? workstationSessionOperator ||
+          bootstrap.device?.label?.trim() ||
+          "Operator"
+        : humanToolbarLabel ||
+          bootstrap.device?.operatorName ||
+          bootstrap.device?.label ||
+          "Operator";
+    setUser(toolbarDisplayName);
     setDatabase(bootstrap.database || "demo");
     setUploadPreset(bootstrap.uploadPreset || "bpqu4ma5");
     setAccess((bootstrap.appAccess as AccessType) || "view");
@@ -420,7 +440,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setChurchStatus(bootstrap.churchStatus || "active");
     setRecoveryEmail(bootstrap.recoveryEmail || "");
     setRole(bootstrap.role || "");
-    setOperatorNameState(bootstrap.device?.operatorName || getOperatorName());
+    if (bootstrap.sessionKind === "workstation") {
+      clearLegacyWorkstationOperatorName();
+      setOperatorNameState(workstationSessionOperator);
+    } else {
+      setOperatorNameState(bootstrap.device?.operatorName || getOperatorName());
+    }
     setDevice(bootstrap.device || null);
     if (bootstrap.csrfToken) {
       setCsrfToken(bootstrap.csrfToken);
@@ -428,23 +453,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       clearCsrfToken();
     }
     localStorage.setItem("loggedIn", "true");
-    localStorage.setItem(
-      "user",
-      humanToolbarLabel ||
-      bootstrap.device?.operatorName ||
-      bootstrap.device?.label ||
-      "Operator"
-    );
+    localStorage.setItem("user", toolbarDisplayName);
     localStorage.setItem("database", bootstrap.database || "demo");
     localStorage.setItem("upload_preset", bootstrap.uploadPreset || "bpqu4ma5");
     localStorage.setItem("access", (bootstrap.appAccess as AccessType) || "view");
-    globalFireDbInfo.user =
-      humanToolbarLabel ||
-      bootstrap.device?.operatorName ||
-      bootstrap.device?.label ||
-      "Operator";
+    globalFireDbInfo.user = toolbarDisplayName;
     globalFireDbInfo.database = bootstrap.database || "demo";
     globalFireDbInfo.churchId = bootstrap.churchId || "";
+  }, []);
+
+  const applyOfflineBootstrapFallback = useCallback(() => {
+    setAuthServerStatus("offline");
+    setPendingEmailVerificationId(null);
+    setLoginState((current) => (current === "loading" ? "idle" : current));
   }, []);
 
   const clearPendingEmailVerification = useCallback(() => {
@@ -472,6 +493,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setDevice(null);
       setAuthError("");
       clearCsrfToken();
+      clearWorkstationSessionOperatorName();
       localStorage.setItem("loggedIn", "false");
       localStorage.setItem("user", "Demo");
       localStorage.setItem("database", "demo");
@@ -544,8 +566,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           if (bootstrapError) {
             console.error("Auth bootstrap server check failed:", bootstrapError);
           }
+          if (bootstrapError && isReachabilityError(bootstrapError)) {
+            applyOfflineBootstrapFallback();
+            return;
+          }
           setAuthServerStatus("offline");
-          applyBootstrap(null);
+          applyBootstrap(null, { clearWorkstationSessionOperator: true });
           return;
         }
 
@@ -556,7 +582,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         const persistedUser = await waitForHumanAuthUser();
         if (!persistedUser) {
-          applyBootstrap(null);
+          applyBootstrap(null, { clearWorkstationSessionOperator: true });
           return;
         }
 
@@ -590,23 +616,26 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               "Your sign-in code expired. Sign in again with your password to receive a new code."
             );
           }
-          applyBootstrap(null);
+          applyBootstrap(null, { clearWorkstationSessionOperator: true });
         } catch (error) {
           if (isReachabilityError(error)) {
             console.error("Could not reach server while restoring session:", error);
-            setAuthServerStatus("offline");
-            applyBootstrap(null);
+            applyOfflineBootstrapFallback();
             return;
           }
 
           console.error("Auth session restore failed:", error);
           setAuthError("Could not restore your session.");
-          applyBootstrap(null);
+          applyBootstrap(null, { clearWorkstationSessionOperator: true });
         }
       } catch (error) {
         console.error("Auth bootstrap failed:", error);
+        if (isReachabilityError(error)) {
+          applyOfflineBootstrapFallback();
+          return;
+        }
         setAuthServerStatus("offline");
-        applyBootstrap(null);
+        applyBootstrap(null, { clearWorkstationSessionOperator: true });
       } finally {
         setBootstrapStatus("ready");
       }
@@ -618,7 +647,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     } finally {
       refreshAuthBootstrapPromiseRef.current = null;
     }
-  }, [applyBootstrap, isReachabilityError, waitForHumanAuthUser]);
+  }, [
+    applyBootstrap,
+    applyOfflineBootstrapFallback,
+    isReachabilityError,
+    waitForHumanAuthUser,
+  ]);
 
   const refreshAuthBootstrapRef = useRef(refreshAuthBootstrap);
   refreshAuthBootstrapRef.current = refreshAuthBootstrap;
@@ -1168,11 +1202,68 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
   const setOperatorName = useCallback((value: string) => {
     setOperatorNameState(value);
-    setOperatorNameStorage(value);
     if (sessionKind === "workstation") {
+      setWorkstationSessionOperatorName(value);
+      clearLegacyWorkstationOperatorName();
       setUser(value);
+      return;
     }
+    setOperatorNameStorage(value);
   }, [sessionKind]);
+
+  const endWorkstationOperatorSession = useCallback(async () => {
+    if (sessionKind !== "workstation" || !device?.deviceId) {
+      return;
+    }
+    const deviceId = device.deviceId;
+    const token = getWorkstationToken();
+    clearWorkstationSessionOperatorName();
+    clearLegacyWorkstationOperatorName();
+    setOperatorNameState("");
+    const fallback = device.label?.trim() || "Operator";
+    setUser(fallback);
+    localStorage.setItem("user", fallback);
+    globalFireDbInfo.user = fallback;
+    navigate("/workstation/operator", { replace: true });
+    try {
+      await updateWorkstationOperator(deviceId, "", token);
+    } catch (error) {
+      console.error("Could not clear operator on server:", error);
+    }
+  }, [device, navigate, sessionKind]);
+
+  const clearLocalSessionState = useCallback(async (nextPath: string) => {
+    clearOperatorNameStorage();
+    clearWorkstationSessionOperatorName();
+    clearCsrfToken();
+    if (sessionKind === "workstation") {
+      clearWorkstationToken();
+      // Same partition as projector/monitor/stream windows; do not leave a display token behind.
+      clearDisplayToken();
+    }
+    if (sessionKind === "display") {
+      clearDisplayToken();
+    }
+    await signOut(getSharedDataAuth()).catch(() => undefined);
+    setPendingEmailVerificationId(null);
+    setAccess("full");
+    dispatch({ type: "RESET" });
+    dispatch(ActionCreators.clearHistory());
+    applyBootstrap(null);
+    navigate(nextPath, { replace: true });
+    setFirebaseDb(undefined);
+    globalFireDbInfo.db = undefined;
+  }, [applyBootstrap, dispatch, navigate, sessionKind]);
+
+  const unlinkCurrentWorkstation = useCallback(async () => {
+    if (sessionKind !== "workstation" || !device?.deviceId) {
+      return;
+    }
+    const token = getWorkstationToken();
+    await unlinkWorkstationRequest(device.deviceId, token);
+    await signOut(getHumanAuth()).catch(() => undefined);
+    await clearLocalSessionState("/");
+  }, [clearLocalSessionState, device, sessionKind]);
 
   const logout = useCallback(async () => {
     try {
@@ -1181,25 +1272,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     } catch (error) {
       console.error("Sign-out error:", error);
     } finally {
-      clearOperatorNameStorage();
-      clearCsrfToken();
-      if (sessionKind === "workstation") {
-        clearWorkstationToken();
-      }
-      if (sessionKind === "display") {
-        clearDisplayToken();
-      }
-      await signOut(getSharedDataAuth()).catch(() => undefined);
-      setPendingEmailVerificationId(null);
-      setAccess("full");
-      dispatch({ type: "RESET" });
-      dispatch(ActionCreators.clearHistory());
-      applyBootstrap(null);
-      navigate("/login");
-      setFirebaseDb(undefined);
-      globalFireDbInfo.db = undefined;
+      await clearLocalSessionState("/login");
     }
-  }, [applyBootstrap, dispatch, navigate, sessionKind]);
+  }, [clearLocalSessionState]);
 
   const value = useMemo(
     () => ({
@@ -1222,6 +1297,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       exitGuestMode,
       setLoginState,
       logout,
+      unlinkCurrentWorkstation,
+      endWorkstationOperatorSession,
       firebaseDb,
       hostId,
       activeInstances,
@@ -1260,6 +1337,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       exitGuestMode,
       setLoginState,
       logout,
+      unlinkCurrentWorkstation,
+      endWorkstationOperatorSession,
       firebaseDb,
       hostId,
       activeInstances,

@@ -22,6 +22,8 @@ import {
   setupWindowEventListeners,
   setupReadyToShow,
   focusWindow,
+  setupSharedSessionWindowOpenHandler,
+  WORSHIPSYNC_SESSION_PARTITION,
 } from "./windowHelpers";
 import {
   getDisplayWindow,
@@ -128,8 +130,6 @@ let windowStateManager: WindowStateManager;
 let mediaCacheManager: MediaCacheManager;
 let isUploadInProgress = false;
 let isAppClosing = false;
-const appSessionPartition = "persist:worshipsync";
-
 const notifyWindowStateChanged = () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("window-state-changed");
@@ -250,7 +250,7 @@ const createWindow = () => {
     show: false,
     webPreferences: {
       preload: join(__dirname, "../preload/preload.mjs"),
-      partition: appSessionPartition,
+      partition: WORSHIPSYNC_SESSION_PARTITION,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
@@ -408,6 +408,12 @@ const createWindow = () => {
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
+  // window.open / middle-click children do not inherit `partition` by default; attach for every
+  // renderer webContents (including nested opens) so auth cookies and storage stay consistent.
+  app.on("web-contents-created", (_event, contents) => {
+    setupSharedSessionWindowOpenHandler(contents, __dirname);
+  });
+
   // Strict CSP for Electron; allowlists for Firebase (Realtime DB + Auth), Cloudinary, Mux, Sentry.
   // Dev: local origins only when unpackaged. Prod: Firebase/Google must be explicit (app may load from file://).
   const devConnectSrc = app.isPackaged
@@ -434,7 +440,7 @@ app.whenReady().then(() => {
     "child-src 'self' blob:; " +
     "object-src 'none'; " +
     "base-uri 'self';";
-  const appBrowserSession = session.fromPartition(appSessionPartition);
+  const appBrowserSession = session.fromPartition(WORSHIPSYNC_SESSION_PARTITION);
   const attachCspHeaders = (targetSession: Electron.Session) => {
     targetSession.webRequest.onHeadersReceived((details, callback) => {
       callback({

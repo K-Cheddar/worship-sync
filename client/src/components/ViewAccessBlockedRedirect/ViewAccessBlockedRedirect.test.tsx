@@ -4,13 +4,17 @@ import ViewAccessBlockedRedirect from "./ViewAccessBlockedRedirect";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { createMockGlobalContext } from "../../test/mocks";
 
-const renderGuard = (overrides: Record<string, unknown>, initialEntry = "/projector") =>
+const renderGuard = (
+  overrides: Record<string, unknown>,
+  initialEntry = "/projector",
+  routePath = "/projector"
+) =>
   render(
     <GlobalInfoContext.Provider value={createMockGlobalContext(overrides) as any}>
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route
-            path="/projector"
+            path={routePath}
             element={
               <ViewAccessBlockedRedirect>
                 <div data-testid="display-page">Display page</div>
@@ -24,7 +28,7 @@ const renderGuard = (overrides: Record<string, unknown>, initialEntry = "/projec
   );
 
 describe("ViewAccessBlockedRedirect", () => {
-  it("allows paired display sessions onto display routes", () => {
+  it("allows linked display sessions onto display routes", () => {
     renderGuard({
       sessionKind: "display",
       access: "view",
@@ -42,6 +46,21 @@ describe("ViewAccessBlockedRedirect", () => {
       access: "view",
       loginState: "success",
     });
+
+    expect(await screen.findByTestId("home-page")).toBeInTheDocument();
+    expect(screen.queryByTestId("display-page")).not.toBeInTheDocument();
+  });
+
+  it("redirects music-access human sessions away from board moderation", async () => {
+    renderGuard(
+      {
+        sessionKind: "human",
+        access: "music",
+        loginState: "success",
+      },
+      "/boards/controller",
+      "/boards/controller"
+    );
 
     expect(await screen.findByTestId("home-page")).toBeInTheDocument();
     expect(screen.queryByTestId("display-page")).not.toBeInTheDocument();

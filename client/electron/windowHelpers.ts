@@ -1,6 +1,79 @@
-import { BrowserWindow } from "electron";
+import { BrowserWindow, shell, type WebContents } from "electron";
 import { join } from "node:path";
 import type { WindowType } from "./windowState";
+
+/** Persisted session partition; must match main process and any window.open / middle-click children. */
+export const WORSHIPSYNC_SESSION_PARTITION = "persist:worshipsync";
+
+const sharedChildWindowWebPreferences = (
+  electronMainDirname: string
+): Electron.WebPreferences => ({
+  preload: join(electronMainDirname, "../preload/preload.mjs"),
+  partition: WORSHIPSYNC_SESSION_PARTITION,
+  nodeIntegration: false,
+  contextIsolation: true,
+  sandbox: false,
+  backgroundThrottling: false,
+});
+
+const EXTERNAL_CHILD_WINDOW_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
+
+/**
+ * Only same-app child windows should inherit the WorshipSync session partition and preload.
+ * External links should open in the OS browser instead of receiving app privileges.
+ */
+export const shouldUseSharedSessionChildWindow = (
+  parentUrl: string,
+  targetUrl: string
+): boolean => {
+  try {
+    const parent = new URL(parentUrl);
+    const target = new URL(targetUrl);
+
+    if (target.protocol === "file:") {
+      return parent.protocol === "file:" && target.pathname === parent.pathname;
+    }
+
+    if (target.protocol === "http:" || target.protocol === "https:") {
+      return target.origin === parent.origin;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Child windows from window.open / middle-click do not inherit `partition` by default,
+ * so they appear logged out. Force the same partition and preload as other app windows.
+ */
+export const setupSharedSessionWindowOpenHandler = (
+  webContents: WebContents,
+  electronMainDirname: string
+): void => {
+  webContents.setWindowOpenHandler(({ url }) => {
+    if (shouldUseSharedSessionChildWindow(webContents.getURL(), url)) {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          webPreferences: sharedChildWindowWebPreferences(electronMainDirname),
+        },
+      };
+    }
+
+    try {
+      const target = new URL(url);
+      if (EXTERNAL_CHILD_WINDOW_PROTOCOLS.has(target.protocol)) {
+        void shell.openExternal(url);
+      }
+    } catch {
+      // Ignore malformed URLs and deny the popup.
+    }
+
+    return { action: "deny" };
+  });
+};
 
 interface WindowConfig {
   bounds: { x: number; y: number; width: number; height: number };
@@ -24,13 +97,7 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
   const window = new BrowserWindow({
     ...config.bounds,
     webPreferences: {
-      preload: join(config.dirname, "../preload/preload.mjs"),
-      partition: "persist:worshipsync",
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: false,
-      // Keep playback smooth even when the controller window has focus.
-      backgroundThrottling: false,
+      ...sharedChildWindowWebPreferences(config.dirname),
     },
     autoHideMenuBar: true,
     frame: false,

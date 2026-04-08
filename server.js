@@ -142,6 +142,13 @@ const requireAppSession = async (req, res, next) => {
   }
 };
 
+const requireFullAppAccess = (req, res, next) => {
+  if (req.appSession?.access !== "full") {
+    return res.status(403).json({ error: "Full access is required." });
+  }
+  next();
+};
+
 const requireBoardDatabaseAccess = (req, res, database) => {
   if (!database || req.appSession?.database !== database) {
     res.status(403).json({ error: "That discussion board is not available." });
@@ -498,6 +505,10 @@ app.post(
   authHandlers.updateWorkstationOperator,
 );
 app.post(
+  "/api/workstations/:deviceId/unlink",
+  authHandlers.unlinkWorkstation,
+);
+app.post(
   "/api/churches/:churchId/display-pairings",
   authHandlers.createDisplayPairing,
 );
@@ -514,7 +525,7 @@ app.post(
   "/api/churches/:churchId/display-devices/:deviceId/revoke",
   authHandlers.revokeDisplayDevice,
 );
-app.use("/api/boards/admin", requireAppSession);
+app.use("/api/boards/admin", requireAppSession, requireFullAppAccess);
 
 app.get("/api/boards/stream/:aliasId", (req, res) => {
   const aliasId = normalizeAliasId(req.params.aliasId || "");

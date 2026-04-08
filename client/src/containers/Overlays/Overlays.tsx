@@ -526,7 +526,13 @@ const Overlays = () => {
     <ErrorBoundary>
       <DndContext onDragEnd={onDragEnd} sensors={sensors}>
         <div className="flex flex-col w-full h-full p-2 gap-2">
-          <div className="mx-auto flex w-full max-w-[70%] flex-1 min-h-0 min-w-0 flex-col gap-2">
+          <div
+            className={
+              access === "view"
+                ? "mx-auto flex w-full max-w-[70%] flex-1 min-h-0 min-w-0 flex-col gap-2"
+                : "flex w-full flex-1 min-h-0 min-w-0 flex-col gap-2"
+            }
+          >
             <div className="relative flex w-full items-center">
               <h2 className="flex-1 text-xl font-semibold text-center h-fit">
                 Overlays

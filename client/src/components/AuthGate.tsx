@@ -5,6 +5,7 @@ import Button from "./Button/Button";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 import { getElectronDisplayWindowTypeFromPathname } from "../utils/electronDisplayWindowFromPath";
+import { isWorkstationDisplaySurfacePath } from "../utils/sessionRouteAccess";
 
 type AllowedKind = "human" | "workstation" | "display";
 
@@ -40,8 +41,8 @@ const DisplayBlockedScreen = () => {
   useCloseOnEscape(closeDisplayWindow);
   return (
     <ValidationScreen
-      title="This display needs to be set up again"
-      description="Ask an admin to set up or reauthorize this screen before continuing."
+      title="This display isn’t linked yet"
+      description="Ask an admin to link or reauthorize this screen before continuing."
       actions={
         <>
           <Button
@@ -50,7 +51,7 @@ const DisplayBlockedScreen = () => {
             state={{ from: location }}
             variant="cta"
           >
-            Set up as display
+            Link as display
           </Button>
           <Button
             component="link"
@@ -125,7 +126,11 @@ const AuthGate = ({
   }
 
   if (sessionKind && allowedKinds.includes(sessionKind as AllowedKind)) {
-    if (sessionKind === "workstation" && !operatorName) {
+    const needsOperator =
+      sessionKind === "workstation" &&
+      !operatorName?.trim() &&
+      !isWorkstationDisplaySurfacePath(location.pathname);
+    if (needsOperator) {
       return <Navigate to="/workstation/operator" replace />;
     }
     return <>{children}</>;

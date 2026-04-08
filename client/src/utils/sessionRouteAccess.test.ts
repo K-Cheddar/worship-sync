@@ -25,6 +25,26 @@ describe("sessionRouteAccess", () => {
     ).toBe(false);
   });
 
+  it("blocks board moderation for music-access human sessions", () => {
+    expect(
+      isRouteAllowedForSession("/boards/controller", {
+        sessionKind: "human",
+        loginState: "success",
+        access: "music",
+      })
+    ).toBe(false);
+  });
+
+  it("allows board moderation for full-access human sessions", () => {
+    expect(
+      isRouteAllowedForSession("/boards/controller", {
+        sessionKind: "human",
+        loginState: "success",
+        access: "full",
+      })
+    ).toBe(true);
+  });
+
   it("blocks account for guest sessions and falls back to controller", () => {
     expect(
       getAllowedRouteOrDefault("/account", {
@@ -33,7 +53,7 @@ describe("sessionRouteAccess", () => {
     ).toBe("/controller");
   });
 
-  it("blocks projector for workstation sessions and falls back to controller", () => {
+  it("allows projector for workstation sessions with full access", () => {
     expect(
       getAllowedRouteOrDefault("/projector", {
         sessionKind: "workstation",
@@ -41,7 +61,18 @@ describe("sessionRouteAccess", () => {
         operatorName: "Alex",
         access: "full",
       })
-    ).toBe("/controller");
+    ).toBe("/projector");
+  });
+
+  it("allows projector for workstation sessions without an operator name", () => {
+    expect(
+      isRouteAllowedForSession("/projector", {
+        sessionKind: "workstation",
+        loginState: "success",
+        operatorName: "",
+        access: "full",
+      })
+    ).toBe(true);
   });
 
   it("uses the display home route for display sessions", () => {

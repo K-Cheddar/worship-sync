@@ -46,8 +46,10 @@ import { getAuthBootstrapLoadingDescription } from "./utils/authUserMessages";
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
 
-/** Connecting splash on setup and board/controller surfaces; display windows stay blank until ready. */
+/** Connecting splash on entry and board/controller surfaces; display windows stay blank until ready. */
 const isBootstrapSplashRoute = (pathname: string) => {
+  /** Root entry: avoid flashing the entry screen before Navigate (e.g. workstation → operator). */
+  if (pathname === "/" || pathname === "") return true;
   if (pathname === "/home") return true;
   if (pathname.startsWith("/controller")) return true;
   if (pathname === "/overlay-controller") return true;
@@ -183,7 +185,7 @@ const AppRoutes = () => {
         <Route
           path="/boards/display"
           element={
-            <AuthGate allowedKinds={["human", "display"]}>
+            <AuthGate allowedKinds={["human", "display", "workstation"]}>
               <ViewAccessBlockedRedirect>
                 <BoardDisplay />
               </ViewAccessBlockedRedirect>
@@ -196,7 +198,7 @@ const AppRoutes = () => {
         <Route
           path="/projector"
           element={
-            <AuthGate allowedKinds={["human", "display"]}>
+            <AuthGate allowedKinds={["human", "display", "workstation"]}>
               <ViewAccessBlockedRedirect>
                 <Projector />
               </ViewAccessBlockedRedirect>
@@ -206,7 +208,7 @@ const AppRoutes = () => {
         <Route
           path="/projector-full"
           element={
-            <AuthGate allowedKinds={["human", "display"]}>
+            <AuthGate allowedKinds={["human", "display", "workstation"]}>
               <ViewAccessBlockedRedirect>
                 <ProjectorFull />
               </ViewAccessBlockedRedirect>
@@ -216,7 +218,7 @@ const AppRoutes = () => {
         <Route
           path="/monitor"
           element={
-            <AuthGate allowedKinds={["human", "display"]}>
+            <AuthGate allowedKinds={["human", "display", "workstation"]}>
               <ViewAccessBlockedRedirect>
                 <Monitor />
               </ViewAccessBlockedRedirect>
@@ -226,7 +228,7 @@ const AppRoutes = () => {
         <Route
           path="/stream"
           element={
-            <AuthGate allowedKinds={["human", "display"]}>
+            <AuthGate allowedKinds={["human", "display", "workstation"]}>
               <ViewAccessBlockedRedirect>
                 <Stream />
               </ViewAccessBlockedRedirect>
@@ -236,7 +238,7 @@ const AppRoutes = () => {
         <Route
           path="/stream-info"
           element={
-            <AuthGate allowedKinds={["human", "display"]}>
+            <AuthGate allowedKinds={["human", "display", "workstation"]}>
               <ViewAccessBlockedRedirect>
                 <StreamInfo />
               </ViewAccessBlockedRedirect>
@@ -246,7 +248,7 @@ const AppRoutes = () => {
         <Route
           path="/credits"
           element={
-            <AuthGate allowedKinds={["human", "display"]}>
+            <AuthGate allowedKinds={["human", "display", "workstation"]}>
               <ViewAccessBlockedRedirect>
                 <Credits />
               </ViewAccessBlockedRedirect>

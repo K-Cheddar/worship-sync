@@ -60,7 +60,7 @@ const adminLinks: CardLink[] = [
   {
     title: "Account management",
     description:
-      "Manage admins, recovery settings, trusted devices, and paired workstations for this church.",
+      "Manage admins, recovery settings, trusted devices, and linked workstations for this church.",
     to: "/account",
   },
 ];
@@ -378,7 +378,7 @@ const Welcome = () => {
               and keep each display in sync during the service.
             </p>
             <p className="mx-auto max-w-3xl text-sm text-gray-200 md:hidden">
-              For the most complete setup, use the Windows desktop app. Most
+              For the full experience on room outputs, use the Windows desktop app. Most
               browsers also work well.
             </p>
           </div>
@@ -471,7 +471,7 @@ const Welcome = () => {
             </p>
             <p className="mt-4 rounded-xl border border-gray-600 bg-gray-900/40 p-4 text-sm leading-relaxed text-gray-200">
               Sign in to show display links. Projector, monitor, and stream pages
-              require a signed-in account or a paired display device, so those
+              require a signed-in account or a linked display device, so those
               URLs are available after you authenticate.
             </p>
           </section>

@@ -1,7 +1,9 @@
 import {
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
@@ -30,6 +32,13 @@ const RESEND_COOLDOWN_SEC = 60;
 const FORGOT_PASSWORD_EMAIL_HELPER =
   "If an account exists for that email, you will receive a reset link shortly.";
 
+/**
+ * Dedupes concurrent `verifyEmailCode` calls for the same pending auth + digits.
+ * Ref-based guards reset on remount; this survives React Strict Mode remounts and
+ * blocks overlapping async work from the auto-submit effect and manual submit.
+ */
+let emailCodeVerificationInFlight: string | null = null;
+
 const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -54,6 +63,8 @@ const Login = () => {
   const isAuthServerChecking = authServerStatus === "checking";
   const isAuthActionDisabled =
     context?.loginState === "loading" || !isAuthServerOnline;
+  const verifyEmailCode = context?.verifyEmailCode;
+  const prevVerificationDigitsLenRef = useRef(0);
 
   useLayoutEffect(() => {
     if (mode !== "code") {
@@ -149,24 +160,53 @@ const Login = () => {
     }
   };
 
-  const handleVerifyCode = async () => {
+  const handleVerifyCode = useCallback(async () => {
     setInfoBanner("");
     const digits = code.replace(/\D/g, "");
     if (!pendingAuthId || digits.length !== 6) {
       setFieldErrors({ code: "Enter the six-digit code from your email." });
       return;
     }
-    setFieldErrors({});
-    const success = await context?.verifyEmailCode({
-      pendingAuthId,
-      code: digits,
-    });
-    if (!success) {
+    const dedupeKey = `${pendingAuthId}:${digits}`;
+    if (emailCodeVerificationInFlight === dedupeKey) {
       return;
     }
-    setCode("");
-    setPendingAuthId("");
-  };
+    emailCodeVerificationInFlight = dedupeKey;
+    setFieldErrors({});
+    try {
+      const success = await verifyEmailCode?.({
+        pendingAuthId,
+        code: digits,
+      });
+      if (!success) {
+        return;
+      }
+      setCode("");
+      setPendingAuthId("");
+    } finally {
+      if (emailCodeVerificationInFlight === dedupeKey) {
+        emailCodeVerificationInFlight = null;
+      }
+    }
+  }, [code, pendingAuthId, verifyEmailCode]);
+
+  useEffect(() => {
+    if (mode !== "code") {
+      prevVerificationDigitsLenRef.current = 0;
+      return;
+    }
+    const digits = code.replace(/\D/g, "");
+    const len = digits.length;
+    const prevLen = prevVerificationDigitsLenRef.current;
+    prevVerificationDigitsLenRef.current = len;
+    if (len !== 6 || !pendingAuthId || isAuthActionDisabled) {
+      return;
+    }
+    if (prevLen === 6) {
+      return;
+    }
+    void handleVerifyCode();
+  }, [code, mode, pendingAuthId, isAuthActionDisabled, handleVerifyCode]);
 
   const handleResendCode = async () => {
     if (

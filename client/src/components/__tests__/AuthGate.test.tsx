@@ -35,6 +35,14 @@ const renderWithGate = (
             }
           />
           <Route
+            path="/projector"
+            element={
+              <AuthGate allowedKinds={allowedKinds}>
+                <div data-testid="projector-surface">Projector</div>
+              </AuthGate>
+            }
+          />
+          <Route
             path="/workstation/operator"
             element={<div data-testid="operator-page">Operator</div>}
           />
@@ -74,10 +82,24 @@ describe("AuthGate", () => {
     expect(screen.queryByTestId("protected")).not.toBeInTheDocument();
   });
 
-  it("shows the display setup message when display is required but not signed in", () => {
+  it("allows workstation sessions without an operator on display output routes", () => {
+    renderWithGate(
+      {
+        sessionKind: "workstation",
+        operatorName: "",
+      },
+      ["human", "display", "workstation"],
+      "/projector"
+    );
+
+    expect(screen.getByTestId("projector-surface")).toBeInTheDocument();
+    expect(screen.queryByTestId("operator-page")).not.toBeInTheDocument();
+  });
+
+  it("shows the display link message when display is required but not signed in", () => {
     renderWithGate({ sessionKind: null, loginState: "guest" }, ["human", "display"]);
     expect(
-      screen.getByText("This display needs to be set up again")
+      screen.getByText("This display isn’t linked yet")
     ).toBeInTheDocument();
   });
 });

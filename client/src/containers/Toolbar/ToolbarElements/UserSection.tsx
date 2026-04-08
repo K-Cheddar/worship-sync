@@ -6,6 +6,7 @@ import { ControllerInfoContext } from "../../../context/controllerInfo";
 import Icon from "../../../components/Icon/Icon";
 import Button from "../../../components/Button/Button";
 import PopOver from "../../../components/PopOver/PopOver";
+import { WORKSTATION_END_SESSION_LABEL } from "../../../components/WorkstationUnpairConfirmModal/WorkstationUnpairConfirmModal";
 import { getHumanAuth } from "../../../firebase/apps";
 import { firstNameFromDisplayName } from "../../../utils/displayName";
 import type { Instance } from "../../../types";
@@ -22,6 +23,7 @@ const UserSection = () => {
     loginState,
     churchName,
     exitGuestMode,
+    endWorkstationOperatorSession,
   } = useContext(GlobalInfoContext) || {};
   const { isMobile, logout } = useContext(ControllerInfoContext) || {};
   const isDemo = loginState === "guest";
@@ -50,6 +52,7 @@ const UserSection = () => {
 
   const toolbarFirstName = firstNameFromDisplayName(fullDisplayName);
   const churchLine = churchName?.trim() ?? "";
+  const emailLine = userEmail?.trim() ?? "";
 
   useEffect(() => {
     if ((activeInstances?.length || 0) > 0) {
@@ -142,7 +145,7 @@ const UserSection = () => {
         </Button>
       }
     >
-      <div className="flex max-w-xs flex-col gap-3 pt-1">
+      <div className="flex min-w-[150px] max-w-xs flex-col gap-3 pt-1">
         <div className="flex flex-col gap-1">
           <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
             User
@@ -151,14 +154,14 @@ const UserSection = () => {
             {fullDisplayName || "—"}
           </span>
         </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-            Email
-          </span>
-          <span className="wrap-break-word text-sm text-gray-300">
-            {userEmail?.trim() || "—"}
-          </span>
-        </div>
+        {emailLine ? (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Email
+            </span>
+            <span className="wrap-break-word text-sm text-gray-300">{emailLine}</span>
+          </div>
+        ) : null}
         <div className="flex flex-col gap-1">
           <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
             Church
@@ -200,7 +203,19 @@ const UserSection = () => {
             </ul>
           </div>
         ) : null}
-        {isLoggedIn && logout ? (
+        {isLoggedIn &&
+        (sessionKind === "workstation" && endWorkstationOperatorSession ? (
+          <div className="border-t border-gray-600 pt-3">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full justify-center text-sm"
+              onClick={() => void endWorkstationOperatorSession()}
+            >
+              {WORKSTATION_END_SESSION_LABEL}
+            </Button>
+          </div>
+        ) : logout ? (
           <div className="border-t border-gray-600 pt-3">
             <Button
               type="button"
@@ -211,7 +226,7 @@ const UserSection = () => {
               Sign out
             </Button>
           </div>
-        ) : null}
+        ) : null)}
         {isDemo && exitGuestMode ? (
           <div className="border-t border-gray-600 pt-3">
             <Button
@@ -220,11 +235,11 @@ const UserSection = () => {
               className="w-full justify-center text-sm"
               onClick={() => exitGuestMode()}
             >
-              Return to setup
+              Return to start
             </Button>
             <p className="mt-2 text-xs text-gray-400">
-              Leave the local demo and open the screen where you choose sign-in, setup,
-              or guest mode.
+              Leave the local demo and open the screen where you choose sign-in, link a
+              device, or guest mode.
             </p>
           </div>
         ) : null}

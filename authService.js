@@ -3218,6 +3218,52 @@ export const authHandlers = {
     }
   },
 
+  async unlinkWorkstation(req, res) {
+    try {
+      if (req.session?.auth?.sessionKind === SESSION_KIND_WORKSTATION) {
+        assertCsrf(req);
+      }
+      const workstation = await resolveAuthenticatedWorkstation(req);
+      if (req.params.deviceId !== workstation.deviceId) {
+        throw httpError(403, "That workstation is not available.");
+      }
+      const revokedAt = nowIso();
+      await setDoc(
+        COLLECTIONS.workstationDevices,
+        workstation.deviceId,
+        {
+          lastOperatorName: null,
+          lastSeenAt: revokedAt,
+          revokedAt,
+          revokedBy: null,
+          status: "revoked",
+        },
+        { merge: true },
+      );
+      await addSecurityEvent({
+        type: "workstation_unlinked",
+        churchId: workstation.churchId,
+        deviceId: workstation.deviceId,
+      });
+      if (
+        req.session?.auth?.sessionKind === SESSION_KIND_WORKSTATION &&
+        req.session.auth.deviceId === workstation.deviceId
+      ) {
+        await destroySession(req);
+        res.clearCookie(sessionCookieName, {
+          path: process.env.AUTH_COOKIE_PATH || "/",
+          domain: process.env.AUTH_COOKIE_DOMAIN || undefined,
+        });
+      }
+      return res.json({ success: true });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message,
+      });
+    }
+  },
+
   async updateWorkstationOperator(req, res) {
     try {
       if (req.session?.auth?.sessionKind === SESSION_KIND_WORKSTATION) {
@@ -3225,23 +3271,34 @@ export const authHandlers = {
       }
       const workstation = await resolveAuthenticatedWorkstation(req);
       const operatorName = String(req.body?.operatorName || "").trim();
-      if (!operatorName) {
-        throw httpError(400, "Operator name is required.");
+      const now = nowIso();
+      if (operatorName) {
+        await setDoc(
+          COLLECTIONS.workstationDevices,
+          workstation.deviceId,
+          {
+            lastOperatorName: operatorName,
+            lastSeenAt: now,
+          },
+          { merge: true },
+        );
+      } else {
+        await setDoc(
+          COLLECTIONS.workstationDevices,
+          workstation.deviceId,
+          {
+            lastOperatorName: null,
+            lastSeenAt: now,
+          },
+          { merge: true },
+        );
       }
-      await setDoc(
-        COLLECTIONS.workstationDevices,
-        workstation.deviceId,
-        {
-          lastOperatorName: operatorName,
-          lastSeenAt: nowIso(),
-        },
-        { merge: true },
-      );
       return res.json({
         success: true,
         workstation: sanitizeWorkstationDeviceForClient({
           ...workstation,
-          lastOperatorName: operatorName,
+          lastOperatorName: operatorName || null,
+          lastSeenAt: now,
         }),
       });
     } catch (error) {

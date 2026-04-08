@@ -20,6 +20,9 @@ const AppEntry = () => {
     [location, requestedPath]
   );
 
+  const guestDestination =
+    requestedPath && requestedPath !== "/" ? requestedPath : "/controller";
+
   if (context?.sessionKind === "human") {
     return <Navigate to={requestedPath && requestedPath !== "/" ? requestedPath : "/home"} replace />;
   }
@@ -36,19 +39,18 @@ const AppEntry = () => {
   }
 
   if (context?.sessionKind === "workstation") {
-    const nextPath = getAllowedRouteOrDefault(requestedPath, {
+    const routeContext = {
       loginState: context.loginState,
       sessionKind: context.sessionKind,
       access: context.access,
       operatorName: context.operatorName,
       displaySurfaceType: context.device?.surfaceType,
-    });
-    return (
-      <Navigate
-        to={nextPath}
-        replace
-      />
-    );
+    };
+    const nextPath =
+      requestedPath && requestedPath !== "/"
+        ? getAllowedRouteOrDefault(requestedPath, routeContext)
+        : "/home";
+    return <Navigate to={nextPath} replace />;
   }
 
   if (context?.sessionKind === "display") {
@@ -68,14 +70,16 @@ const AppEntry = () => {
   }
 
   return (
-    <main className="min-h-dvh overflow-y-auto bg-gray-700 px-4 py-8 text-white">
-      <div className="mx-auto w-full max-w-2xl rounded-2xl border border-gray-500 bg-gray-800 p-6 sm:p-8">
-        <h1 className="text-2xl font-semibold sm:text-3xl">Setup WorshipSync</h1>
-        <p className="mt-2 max-w-xl text-sm text-gray-200 sm:text-base">
-          Choose how to use this device.
-        </p>
+    <main className="flex min-h-dvh flex-col items-center justify-center overflow-hidden bg-gray-700 px-4 py-8 text-white">
+      <div className="flex min-h-0 max-h-[calc(100dvh-4rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-500 bg-gray-800 p-6 sm:p-8">
+        <div className="shrink-0">
+          <h1 className="text-2xl font-semibold sm:text-3xl">Get started with WorshipSync</h1>
+          <p className="mt-2 max-w-xl text-sm text-gray-200 sm:text-base">
+            Choose how to use this device.
+          </p>
+        </div>
 
-        <div className="mt-8 space-y-8">
+        <div className="mt-8 min-h-0 flex-1 space-y-8 overflow-y-auto overscroll-y-contain">
           <section aria-labelledby="entry-personal-heading">
             <h2
               id="entry-personal-heading"
@@ -102,17 +106,17 @@ const AppEntry = () => {
 
           <div className="border-t border-gray-600/80" role="presentation" />
 
-          <section aria-labelledby="entry-setup-heading">
+          <section aria-labelledby="entry-link-heading">
             <h2
-              id="entry-setup-heading"
+              id="entry-link-heading"
               className="text-xs font-semibold uppercase tracking-wide text-gray-400"
             >
-              Setup with a code (no personal account)
+              Link with a code (no personal account)
             </h2>
             <p className="mt-1 text-sm text-gray-300">
-              Shared controller for the live presentation, or display for the audience
-              (projector, monitor, or stream). Enter the code from account settings—no mode
-              switch on the next screen.
+              Shared controller for the live presentation, or a linked display for the audience
+              (room screens, stream, credits, or discussion board). Enter the code from account
+              settings—no mode switch on the next screen.
             </p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <Button
@@ -123,9 +127,10 @@ const AppEntry = () => {
                 state={nextState}
                 wrap
               >
-                <span className="text-lg font-semibold">Set up as workstation</span>
+                <span className="text-lg font-semibold">Link as workstation</span>
                 <span className="text-sm font-normal text-gray-200">
-                  Shared controller for your team—keyboard and controls only.
+                  Shared computer for the full live controller—no personal sign-in. You can also open
+                  audience outputs on this device, or use a linked display on another machine.
                 </span>
               </Button>
               <Button
@@ -136,9 +141,10 @@ const AppEntry = () => {
                 state={nextState}
                 wrap
               >
-                <span className="text-lg font-semibold">Set up as display</span>
+                <span className="text-lg font-semibold">Link as display</span>
                 <span className="text-sm font-normal text-gray-200">
-                  Projector, monitor, or stream output—shows what the controller sends.
+                  Room screens, stream, credits, or discussion board—content your team presents
+                  from WorshipSync.
                 </span>
               </Button>
             </div>
@@ -155,15 +161,16 @@ const AppEntry = () => {
             </h2>
             <div className="mt-3">
               <Button
-                type="button"
+                component="link"
+                to={guestDestination}
                 variant="tertiary"
                 className="min-h-[5.5rem] w-full flex-col items-start justify-center gap-2 rounded-xl border border-gray-500 bg-gray-900/50 p-4 text-left sm:min-h-24"
-                onClick={() =>
-                  context?.enterGuestMode(
-                    requestedPath && requestedPath !== "/" ? requestedPath : "/controller"
-                  )
-                }
+                state={nextState}
                 wrap
+                onClick={(e) => {
+                  e.preventDefault();
+                  context?.enterGuestMode(guestDestination);
+                }}
               >
                 <span className="text-lg font-semibold">Test as guest</span>
                 <span className="text-sm font-normal text-gray-200">

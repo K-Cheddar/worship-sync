@@ -210,7 +210,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                 <Button
                   className="mt-2 w-full justify-center text-sm"
                   svg={justPublished ? Check : Save}
-                  color={justPublished ? "#84cc16" : "#0284c7"}
+                  color={justPublished ? "#84cc16" : undefined}
                   variant="cta"
                   disabled={justPublished}
                   onClick={handlePublish}
