@@ -184,6 +184,10 @@ Be careful when changing shared display code. A change in one surface may affect
 - Stream display
 - Electron windows
 
+**Linked display sessions (pairing vs routing)**
+
+When a device is linked as a **display**, the pairing `surfaceType` sets the **initial** destination (for example credits vs monitor) via `getDisplayHomePath` / `getDefaultRouteForSession`. It is **not** a lock to that surface only: `sessionKind === "display"` may still open any read-only audience route in `DISPLAY_ALLOWED_EXACT` in `client/src/utils/sessionRouteAccess.ts` (projector, monitor, stream, credits, board display, etc.) on the **same** machine. That is intentional so operators authenticate one display link and can open multiple output URLs without separate pairings per route.
+
 ### Server
 
 Server changes should be reviewed for:

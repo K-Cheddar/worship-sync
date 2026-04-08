@@ -789,6 +789,227 @@ const findDocByTokenHash = async (collectionName, token) => {
   return item ? { id: item.id, ...item } : null;
 };
 
+/** Serialize in-memory pairing redeems per token hash (dev / no-Firestore). */
+const memoryPairingRedeemTails = new Map();
+
+const enqueueMemoryPairingRedeem = (tokenHash, fn) => {
+  const prev = memoryPairingRedeemTails.get(tokenHash) || Promise.resolve();
+  const job = prev.then(() => fn());
+  memoryPairingRedeemTails.set(
+    tokenHash,
+    job.catch(() => {}),
+  );
+  return job;
+};
+
+const redeemWorkstationPairingFirestore = async (
+  token,
+  platformTypeFromBody,
+) => {
+  const db = requireFirestore();
+  const tokenHash = hashValue(token);
+  return db.runTransaction(async (transaction) => {
+    const pairingQuery = db
+      .collection(COLLECTIONS.workstationPairings)
+      .where("tokenHash", "==", tokenHash)
+      .limit(1);
+    const querySnap = await transaction.get(pairingQuery);
+    if (querySnap.empty) {
+      throw httpError(400, "This workstation pairing code is not active.");
+    }
+    const docSnap = querySnap.docs[0];
+    const pairingRef = docSnap.ref;
+    const pairing = docSnap.data();
+    if (pairing.status !== "pending") {
+      throw httpError(400, "This workstation pairing code is not active.");
+    }
+    if (new Date(pairing.expiresAt).getTime() < Date.now()) {
+      transaction.update(pairingRef, { status: "expired" });
+      throw httpError(400, "This workstation pairing code has expired.");
+    }
+    const credential = crypto.randomUUID();
+    const deviceId = createId("workstation");
+    const workstation = {
+      churchId: pairing.churchId,
+      label: pairing.label,
+      appAccess: pairing.appAccess,
+      platformType: platformTypeFromBody || pairing.platformType || "web",
+      status: "active",
+      credentialHash: hashValue(credential),
+      createdAt: nowIso(),
+      lastSeenAt: nowIso(),
+      revokedAt: null,
+      revokedBy: null,
+      lastOperatorName: null,
+    };
+    transaction.set(
+      db.collection(COLLECTIONS.workstationDevices).doc(deviceId),
+      workstation,
+    );
+    transaction.update(pairingRef, {
+      status: "redeemed",
+      redeemedAt: nowIso(),
+      workstationDeviceId: deviceId,
+    });
+    return {
+      credential,
+      deviceId,
+      workstation,
+      pairingChurchId: pairing.churchId,
+    };
+  });
+};
+
+const redeemWorkstationPairingMemory = async (token, platformTypeFromBody) => {
+  const pairing = await findDocByTokenHash(
+    COLLECTIONS.workstationPairings,
+    token,
+  );
+  if (!pairing || pairing.status !== "pending") {
+    throw httpError(400, "This workstation pairing code is not active.");
+  }
+  if (new Date(pairing.expiresAt).getTime() < Date.now()) {
+    await setDoc(
+      COLLECTIONS.workstationPairings,
+      pairing.pairingId,
+      { status: "expired" },
+      { merge: true },
+    );
+    throw httpError(400, "This workstation pairing code has expired.");
+  }
+  const credential = crypto.randomUUID();
+  const deviceId = createId("workstation");
+  const workstation = {
+    churchId: pairing.churchId,
+    label: pairing.label,
+    appAccess: pairing.appAccess,
+    platformType: platformTypeFromBody || pairing.platformType || "web",
+    status: "active",
+    credentialHash: hashValue(credential),
+    createdAt: nowIso(),
+    lastSeenAt: nowIso(),
+    revokedAt: null,
+    revokedBy: null,
+    lastOperatorName: null,
+  };
+  await setDoc(COLLECTIONS.workstationDevices, deviceId, workstation);
+  await setDoc(
+    COLLECTIONS.workstationPairings,
+    pairing.pairingId,
+    {
+      status: "redeemed",
+      redeemedAt: nowIso(),
+      workstationDeviceId: deviceId,
+    },
+    { merge: true },
+  );
+  return {
+    credential,
+    deviceId,
+    workstation,
+    pairingChurchId: pairing.churchId,
+  };
+};
+
+const redeemDisplayPairingFirestore = async (token) => {
+  const db = requireFirestore();
+  const tokenHash = hashValue(token);
+  return db.runTransaction(async (transaction) => {
+    const pairingQuery = db
+      .collection(COLLECTIONS.displayPairings)
+      .where("tokenHash", "==", tokenHash)
+      .limit(1);
+    const querySnap = await transaction.get(pairingQuery);
+    if (querySnap.empty) {
+      throw httpError(400, "This display pairing code is not active.");
+    }
+    const docSnap = querySnap.docs[0];
+    const pairingRef = docSnap.ref;
+    const pairing = docSnap.data();
+    if (pairing.status !== "pending") {
+      throw httpError(400, "This display pairing code is not active.");
+    }
+    if (new Date(pairing.expiresAt).getTime() < Date.now()) {
+      transaction.update(pairingRef, { status: "expired" });
+      throw httpError(400, "This display pairing code has expired.");
+    }
+    const credential = crypto.randomUUID();
+    const deviceId = createId("display");
+    const display = {
+      churchId: pairing.churchId,
+      label: pairing.label,
+      surfaceType: pairing.surfaceType,
+      status: "active",
+      credentialHash: hashValue(credential),
+      createdAt: nowIso(),
+      lastSeenAt: nowIso(),
+      revokedAt: null,
+      revokedBy: null,
+    };
+    transaction.set(
+      db.collection(COLLECTIONS.displayDevices).doc(deviceId),
+      display,
+    );
+    transaction.update(pairingRef, {
+      status: "redeemed",
+      redeemedAt: nowIso(),
+      displayDeviceId: deviceId,
+    });
+    return {
+      credential,
+      deviceId,
+      display,
+      pairingChurchId: pairing.churchId,
+    };
+  });
+};
+
+const redeemDisplayPairingMemory = async (token) => {
+  const pairing = await findDocByTokenHash(COLLECTIONS.displayPairings, token);
+  if (!pairing || pairing.status !== "pending") {
+    throw httpError(400, "This display pairing code is not active.");
+  }
+  if (new Date(pairing.expiresAt).getTime() < Date.now()) {
+    await setDoc(
+      COLLECTIONS.displayPairings,
+      pairing.pairingId,
+      { status: "expired" },
+      { merge: true },
+    );
+    throw httpError(400, "This display pairing code has expired.");
+  }
+  const credential = crypto.randomUUID();
+  const deviceId = createId("display");
+  const display = {
+    churchId: pairing.churchId,
+    label: pairing.label,
+    surfaceType: pairing.surfaceType,
+    status: "active",
+    credentialHash: hashValue(credential),
+    createdAt: nowIso(),
+    lastSeenAt: nowIso(),
+    revokedAt: null,
+    revokedBy: null,
+  };
+  await setDoc(COLLECTIONS.displayDevices, deviceId, display);
+  await setDoc(
+    COLLECTIONS.displayPairings,
+    pairing.pairingId,
+    {
+      status: "redeemed",
+      redeemedAt: nowIso(),
+      displayDeviceId: deviceId,
+    },
+    { merge: true },
+  );
+  return {
+    credential,
+    deviceId,
+    display,
+    pairingChurchId: pairing.churchId,
+  };
+};
+
 const verifyIdToken = async (idToken) => {
   const auth = requireFirebaseAdmin();
   return auth.verifyIdToken(idToken);
@@ -3129,51 +3350,16 @@ export const authHandlers = {
       if (!token) {
         throw httpError(400, "Pairing token is required.");
       }
-      const pairing = await findDocByTokenHash(
-        COLLECTIONS.workstationPairings,
-        token,
-      );
-      if (!pairing || pairing.status !== "pending") {
-        throw httpError(400, "This workstation pairing code is not active.");
-      }
-      if (new Date(pairing.expiresAt).getTime() < Date.now()) {
-        await setDoc(
-          COLLECTIONS.workstationPairings,
-          pairing.pairingId,
-          { status: "expired" },
-          { merge: true },
-        );
-        throw httpError(400, "This workstation pairing code has expired.");
-      }
+      const platformTypeFromBody = req.body?.platformType;
+      const db = requireFirestore();
+      const payload = db
+        ? await redeemWorkstationPairingFirestore(token, platformTypeFromBody)
+        : await enqueueMemoryPairingRedeem(hashValue(token), () =>
+            redeemWorkstationPairingMemory(token, platformTypeFromBody),
+          );
 
-      const credential = crypto.randomUUID();
-      const deviceId = createId("workstation");
-      const workstation = {
-        churchId: pairing.churchId,
-        label: pairing.label,
-        appAccess: pairing.appAccess,
-        platformType: req.body?.platformType || pairing.platformType || "web",
-        status: "active",
-        credentialHash: hashValue(credential),
-        createdAt: nowIso(),
-        lastSeenAt: nowIso(),
-        revokedAt: null,
-        revokedBy: null,
-        lastOperatorName: null,
-      };
-      await setDoc(COLLECTIONS.workstationDevices, deviceId, workstation);
-      await setDoc(
-        COLLECTIONS.workstationPairings,
-        pairing.pairingId,
-        {
-          status: "redeemed",
-          redeemedAt: nowIso(),
-          workstationDeviceId: deviceId,
-        },
-        { merge: true },
-      );
-
-      const church = await getChurchById(pairing.churchId);
+      const { credential, deviceId, workstation, pairingChurchId } = payload;
+      const church = await getChurchById(pairingChurchId);
       if (req.body?.platformType === "web" && church) {
         const bootstrap = await establishWorkstationSession({
           req,
@@ -3182,7 +3368,7 @@ export const authHandlers = {
         });
         await addSecurityEvent({
           type: "workstation_pairing_redeemed",
-          churchId: pairing.churchId,
+          churchId: pairingChurchId,
           deviceId,
           mode: "session",
         });
@@ -3199,7 +3385,7 @@ export const authHandlers = {
 
       await addSecurityEvent({
         type: "workstation_pairing_redeemed",
-        churchId: pairing.churchId,
+        churchId: pairingChurchId,
         deviceId,
         mode: "credential",
       });
@@ -3492,49 +3678,17 @@ export const authHandlers = {
       if (!token) {
         throw httpError(400, "Pairing token is required.");
       }
-      const pairing = await findDocByTokenHash(
-        COLLECTIONS.displayPairings,
-        token,
-      );
-      if (!pairing || pairing.status !== "pending") {
-        throw httpError(400, "This display pairing code is not active.");
-      }
-      if (new Date(pairing.expiresAt).getTime() < Date.now()) {
-        await setDoc(
-          COLLECTIONS.displayPairings,
-          pairing.pairingId,
-          { status: "expired" },
-          { merge: true },
-        );
-        throw httpError(400, "This display pairing code has expired.");
-      }
-      const credential = crypto.randomUUID();
-      const deviceId = createId("display");
-      const display = {
-        churchId: pairing.churchId,
-        label: pairing.label,
-        surfaceType: pairing.surfaceType,
-        status: "active",
-        credentialHash: hashValue(credential),
-        createdAt: nowIso(),
-        lastSeenAt: nowIso(),
-        revokedAt: null,
-        revokedBy: null,
-      };
-      await setDoc(COLLECTIONS.displayDevices, deviceId, display);
-      await setDoc(
-        COLLECTIONS.displayPairings,
-        pairing.pairingId,
-        {
-          status: "redeemed",
-          redeemedAt: nowIso(),
-          displayDeviceId: deviceId,
-        },
-        { merge: true },
-      );
+      const db = requireFirestore();
+      const payload = db
+        ? await redeemDisplayPairingFirestore(token)
+        : await enqueueMemoryPairingRedeem(hashValue(token), () =>
+            redeemDisplayPairingMemory(token),
+          );
+
+      const { credential, deviceId, display, pairingChurchId } = payload;
       await addSecurityEvent({
         type: "display_pairing_redeemed",
-        churchId: pairing.churchId,
+        churchId: pairingChurchId,
         deviceId,
       });
       return res.json({

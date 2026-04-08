@@ -1,5 +1,8 @@
+/** Default output path after display pairing; not a hard route lock (see `sessionRouteAccess.ts`). */
 export const getDisplayHomePath = (surfaceType?: string | null) => {
-  const normalized = String(surfaceType || "").trim().toLowerCase();
+  const normalized = String(surfaceType || "")
+    .trim()
+    .toLowerCase();
   if (normalized === "monitor") return "/monitor";
   if (normalized === "stream") return "/stream";
   if (normalized === "stream-info") return "/stream-info";
@@ -15,12 +18,7 @@ export const getDisplayPairingDestination = (
   surfaceType?: string | null,
 ) => {
   const path = returnPath.trim();
-  if (
-    !path ||
-    path === "/" ||
-    path === "/home" ||
-    path === "/login"
-  ) {
+  if (!path || path === "/" || path === "/home" || path === "/login") {
     return getDisplayHomePath(surfaceType);
   }
   return path;

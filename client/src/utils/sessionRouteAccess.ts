@@ -74,6 +74,18 @@ const WORKSTATION_ALLOWED_EXACT = new Set([
   ...WORKSTATION_DISPLAY_SURFACE_EXACT,
 ]);
 
+/**
+ * Display-linked sessions: allowed output URLs after pairing.
+ *
+ * Pairing `surfaceType` (see `getDisplayHomePath`) only chooses the **default** route after
+ * link (e.g. `/credits` vs `/monitor`). It does **not** restrict navigation: any path in this
+ * set remains allowed for `sessionKind === "display"`.
+ *
+ * **Intended behavior:** outputs are read-only; one display credential on a machine may open
+ * projector, monitor, stream, credits, board display, etc. on that same device without
+ * re-pairing each URL. Do not tighten routing to a single surface unless product explicitly
+ * requires device-locked surfaces.
+ */
 const DISPLAY_ALLOWED_EXACT = new Set([
   "/projector",
   "/projector-full",
@@ -103,23 +115,35 @@ export const FULL_ACCESS_ONLY_EXACT = new Set(["/boards/controller"]);
 const matchesAllowedRoute = (
   pathname: string,
   exactPaths: Set<string>,
-  prefixes: string[] = []
-) => exactPaths.has(pathname) || prefixes.some((prefix) => pathname.startsWith(prefix));
+  prefixes: string[] = [],
+) =>
+  exactPaths.has(pathname) ||
+  prefixes.some((prefix) => pathname.startsWith(prefix));
 
 export const isRouteAllowedForSession = (
   pathname: string,
-  context: RouteSessionContext
+  context: RouteSessionContext,
 ): boolean => {
   if (!pathname || pathname === "/") {
     return false;
   }
 
   if (context.loginState === "guest") {
-    return matchesAllowedRoute(pathname, GUEST_ALLOWED_EXACT, GUEST_ALLOWED_PREFIXES);
+    return matchesAllowedRoute(
+      pathname,
+      GUEST_ALLOWED_EXACT,
+      GUEST_ALLOWED_PREFIXES,
+    );
   }
 
   if (context.sessionKind === "human") {
-    if (!matchesAllowedRoute(pathname, HUMAN_ALLOWED_EXACT, HUMAN_ALLOWED_PREFIXES)) {
+    if (
+      !matchesAllowedRoute(
+        pathname,
+        HUMAN_ALLOWED_EXACT,
+        HUMAN_ALLOWED_PREFIXES,
+      )
+    ) {
       return false;
     }
     if (context.access === "view" && VIEW_BLOCKED_EXACT.has(pathname)) {
@@ -132,7 +156,13 @@ export const isRouteAllowedForSession = (
   }
 
   if (context.sessionKind === "workstation") {
-    if (!matchesAllowedRoute(pathname, WORKSTATION_ALLOWED_EXACT, WORKSTATION_ALLOWED_PREFIXES)) {
+    if (
+      !matchesAllowedRoute(
+        pathname,
+        WORKSTATION_ALLOWED_EXACT,
+        WORKSTATION_ALLOWED_PREFIXES,
+      )
+    ) {
       return false;
     }
     if (context.access === "view" && VIEW_BLOCKED_EXACT.has(pathname)) {
@@ -144,6 +174,7 @@ export const isRouteAllowedForSession = (
     return true;
   }
 
+  // Display: see DISPLAY_ALLOWED_EXACT — all listed surfaces allowed; surfaceType is default only.
   if (context.sessionKind === "display") {
     return matchesAllowedRoute(pathname, DISPLAY_ALLOWED_EXACT);
   }
@@ -151,7 +182,9 @@ export const isRouteAllowedForSession = (
   return false;
 };
 
-export const getDefaultRouteForSession = (context: RouteSessionContext): string => {
+export const getDefaultRouteForSession = (
+  context: RouteSessionContext,
+): string => {
   if (context.loginState === "guest") {
     return "/controller";
   }
@@ -159,7 +192,9 @@ export const getDefaultRouteForSession = (context: RouteSessionContext): string 
     return "/home";
   }
   if (context.sessionKind === "workstation") {
-    return context.operatorName?.trim() ? "/controller" : "/workstation/operator";
+    return context.operatorName?.trim()
+      ? "/controller"
+      : "/workstation/operator";
   }
   if (context.sessionKind === "display") {
     return getDisplayHomePath(context.displaySurfaceType || undefined);
@@ -169,7 +204,7 @@ export const getDefaultRouteForSession = (context: RouteSessionContext): string 
 
 export const getAllowedRouteOrDefault = (
   pathname: string | null | undefined,
-  context: RouteSessionContext
+  context: RouteSessionContext,
 ): string => {
   if (pathname && isRouteAllowedForSession(pathname, context)) {
     return pathname;
