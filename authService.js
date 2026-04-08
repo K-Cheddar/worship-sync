@@ -18,6 +18,7 @@ import {
   sanitizePairingForClient,
   sanitizeWorkstationDeviceForClient,
 } from "./server/authResponseSanitize.js";
+import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
 
 const SESSION_KIND_HUMAN = "human";
 const SESSION_KIND_WORKSTATION = "workstation";
@@ -1693,10 +1694,25 @@ const getHumanBootstrap = async (req) => {
     await destroySession(req);
     return null;
   }
-  const { user, membership, church } = await getHumanContext({
-    uid: authSession.userId,
-    churchId: authSession.churchId,
-  });
+  let humanContext;
+  try {
+    humanContext = await getHumanContext({
+      uid: authSession.userId,
+      churchId: authSession.churchId,
+    });
+  } catch (error) {
+    if (!isRecoverableInvalidHumanSessionError(error)) {
+      throw error;
+    }
+    logAuthEvent("warn", "auth.session.invalid_human_recovered", {
+      message: error.message,
+      userId: authSession.userId || null,
+      churchId: authSession.churchId || null,
+    });
+    await destroySession(req);
+    return null;
+  }
+  const { user, membership, church } = humanContext;
   const devices = await listTrustedHumanDevicesForUser(user.uid);
   const device =
     devices.find(

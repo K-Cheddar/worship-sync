@@ -155,6 +155,16 @@ const makeReachabilityError = (message = "offline") => {
   return new AuthApiErrorCtor(message, { isReachabilityError: true });
 };
 
+const createDeferred = <T,>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
 const ContextProbe = () => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
@@ -164,6 +174,7 @@ const ContextProbe = () => {
   return (
     <div>
       <div data-testid="session-kind">{context.sessionKind || "none"}</div>
+      <div data-testid="church-id">{context.churchId || "none"}</div>
       <div data-testid="operator-name">{context.operatorName || "none"}</div>
       <div data-testid="auth-status">{context.authServerStatus}</div>
       <div data-testid="user-name">{context.user || "none"}</div>
@@ -199,9 +210,15 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     signInWithCustomTokenMock.mockClear();
     signOutMock.mockClear();
     (authApi.getAuthBootstrap as jest.Mock).mockReset();
+    (authApi.getSharedDataToken as jest.Mock).mockReset();
     (authApi.unlinkWorkstation as jest.Mock).mockReset();
     (authApi.updateWorkstationOperator as jest.Mock).mockReset();
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(demoBootstrap);
+    (authApi.getSharedDataToken as jest.Mock).mockResolvedValue({
+      success: true,
+      token: "test-token",
+      database: "main",
+    });
     (authApi.unlinkWorkstation as jest.Mock).mockResolvedValue({
       success: true,
     });
@@ -529,6 +546,75 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     expect(screen.getByTestId("session-kind")).toHaveTextContent("workstation");
     expect(screen.getByTestId("operator-name")).toHaveTextContent("Alex");
     expect(getWorkstationSessionOperatorName()).toBe("Alex");
+  });
+
+  it("re-authenticates shared Firebase when the session context changes mid-session", async () => {
+    const staleSharedToken = createDeferred<{
+      success: true;
+      token: string;
+      database: string;
+    }>();
+    const freshSharedToken = createDeferred<{
+      success: true;
+      token: string;
+      database: string;
+    }>();
+
+    (authApi.getAuthBootstrap as jest.Mock)
+      .mockResolvedValueOnce(loggedInWorkstationBootstrap)
+      .mockResolvedValueOnce({
+        ...loggedInWorkstationBootstrap,
+        churchId: "church-2",
+        churchName: "Second Church",
+        database: "main-2",
+        device: {
+          ...loggedInWorkstationBootstrap.device,
+          deviceId: "workstation-2",
+          label: "Balcony Laptop",
+        },
+      });
+    (authApi.getSharedDataToken as jest.Mock)
+      .mockReturnValueOnce(staleSharedToken.promise)
+      .mockReturnValueOnce(freshSharedToken.promise);
+
+    renderProvider(<ContextProbe />);
+
+    await waitFor(() =>
+      expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(1)
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh bootstrap" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("church-id")).toHaveTextContent("church-2")
+    );
+    await waitFor(() =>
+      expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(2)
+    );
+
+    staleSharedToken.resolve({
+      success: true,
+      token: "stale-token",
+      database: "main",
+    });
+
+    await waitFor(() =>
+      expect(signInWithCustomTokenMock).toHaveBeenCalledTimes(0)
+    );
+
+    freshSharedToken.resolve({
+      success: true,
+      token: "fresh-token",
+      database: "main-2",
+    });
+
+    await waitFor(() =>
+      expect(signInWithCustomTokenMock).toHaveBeenCalledTimes(1)
+    );
+    expect(signInWithCustomTokenMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "fresh-token"
+    );
   });
 
   it("navigates to operator handoff immediately even when the server clear fails", async () => {

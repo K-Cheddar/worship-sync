@@ -237,6 +237,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const hasRehydratedTimersRef = useRef(false);
+  const sharedDataAuthRequestIdRef = useRef(0);
+  const sharedDataAuthChainRef = useRef<Promise<void>>(Promise.resolve());
   const location = useLocation();
   const isOnController = useMemo(() => {
     const path = location.pathname;
@@ -246,6 +248,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   }, [location.pathname]);
 
   const hostId = useMemo(() => globalHostId, []);
+  const sharedDataSessionScope = useMemo(
+    () =>
+      JSON.stringify({
+        loginState,
+        sessionKind,
+        churchId,
+        database,
+        access,
+        userId,
+        deviceId: device?.deviceId || "",
+      }),
+    [access, churchId, database, device?.deviceId, loginState, sessionKind, userId]
+  );
 
   const onValueRef = useRef<{
     projectorInfo: Unsubscribe | undefined;
@@ -681,15 +696,21 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
   // initialize firebase
   useEffect(() => {
+    const auth = getSharedDataAuth();
     if (loginState !== "success") {
+      sharedDataAuthRequestIdRef.current += 1;
       setFirebaseDb(undefined);
       setIsSharedDataReady(false);
       globalFireDbInfo.db = undefined;
-      void signOut(getSharedDataAuth()).catch(() => undefined);
+      sharedDataAuthChainRef.current = sharedDataAuthChainRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          await signOut(auth).catch(() => undefined);
+        });
       return;
     }
 
-    const auth = getSharedDataAuth();
+    const requestId = ++sharedDataAuthRequestIdRef.current;
     const _db = getSharedDataDatabase();
     let cancelled = false;
 
@@ -701,17 +722,37 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       workstationToken: getWorkstationToken(),
       displayToken: getDisplayToken(),
     })
-      .then(async (response) => {
-        await signInWithCustomToken(auth, response.token);
-        if (cancelled) {
+      .then((response) => {
+        if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
           return;
         }
-        setFirebaseDb(_db);
-        setIsSharedDataReady(true);
-        globalFireDbInfo.db = _db;
+        sharedDataAuthChainRef.current = sharedDataAuthChainRef.current
+          .catch(() => undefined)
+          .then(async () => {
+            if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
+              return;
+            }
+            await signInWithCustomToken(auth, response.token);
+            if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
+              return;
+            }
+            setFirebaseDb(_db);
+            setIsSharedDataReady(true);
+            globalFireDbInfo.db = _db;
+          })
+          .catch((error) => {
+            if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
+              return;
+            }
+            console.error("Shared realtime sign-in error:", error);
+            setFirebaseDb(undefined);
+            setIsSharedDataReady(false);
+            globalFireDbInfo.db = undefined;
+            setAuthError("Could not connect live data.");
+          });
       })
       .catch((error) => {
-        if (cancelled) {
+        if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
           return;
         }
         console.error("Shared realtime sign-in error:", error);
@@ -724,7 +765,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     return () => {
       cancelled = true;
     };
-  }, [loginState]);
+  }, [loginState, sharedDataSessionScope]);
 
   // Monitor connection state and handle reconnection
   useEffect(() => {
