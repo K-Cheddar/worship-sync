@@ -109,6 +109,7 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
             hideLabel
             svgAction={searchQuery ? () => setSearchQuery("") : undefined}
             svg={searchQuery ? X : Search}
+            svgActionAriaLabel={searchQuery ? "Clear search" : undefined}
           />
         </div>
         {entries.length === 0 ? (

@@ -6,10 +6,15 @@ import {
   useRef,
   useState,
 } from "react";
-import { initializeApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 import {
-  getDatabase,
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithCustomToken,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile,
+} from "firebase/auth";
+import {
   Database,
   ref,
   onValue,
@@ -22,7 +27,19 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import generateRandomId from "../utils/generateRandomId";
 import { syncTimers } from "../store/timersSlice";
-import { loginUser } from "../api/login";
+import {
+  AuthBootstrap,
+  AuthApiError,
+  createChurchAccount,
+  createHumanSession,
+  forgotPassword as forgotPasswordRequest,
+  getAuthBootstrap,
+  getSharedDataToken,
+  logoutSession,
+  SessionKind,
+  verifyEmailCode as verifyEmailCodeRequest,
+  resendEmailCode as resendEmailCodeRequest,
+} from "../api/auth";
 
 import {
   BibleDisplayInfo,
@@ -30,22 +47,84 @@ import {
   Presentation as PresentationType,
 } from "../types";
 import { ActionCreators } from "redux-undo";
-import { capitalizeFirstLetter } from "../utils/generalUtils";
+import {
+  getForgotPasswordErrorMessage,
+  getSignInFlowErrorMessage,
+  getVerifyEmailCodeErrorMessage,
+  SIGN_IN_UNEXPECTED_RESPONSE,
+} from "../utils/authUserMessages";
+import {
+  clearCsrfToken,
+  clearDisplayToken,
+  clearOperatorNameStorage,
+  clearWorkstationToken,
+  setCsrfToken,
+  getDisplayToken,
+  getOperatorName,
+  getOrCreateDeviceId,
+  getWorkstationToken,
+  setOperatorNameStorage,
+} from "../utils/authStorage";
+import {
+  getHumanAuth,
+  getSharedDataAuth,
+  getSharedDataDatabase,
+} from "../firebase/apps";
+import { getChurchDataPath } from "../utils/firebasePaths";
+import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
+import { backoff } from "../utils/generalUtils";
+import { getTrustedDeviceLabel } from "../utils/deviceInfo";
+import { getHumanPostAuthPath } from "../utils/authRedirectPath";
 
-type LoginStateType = "idle" | "loading" | "error" | "success" | "demo";
+type LoginStateType = "idle" | "loading" | "error" | "success" | "guest";
+type BootstrapStatus = "loading" | "ready";
+type AuthServerStatus = "checking" | "online" | "offline";
 
 export type AccessType = "full" | "music" | "view";
 type GlobalInfoContextType = {
   login: ({
-    username,
+    email,
     password,
   }: {
-    username: string;
+    email: string;
     password: string;
-  }) => void;
-  logout: () => void;
+  }) => Promise<{ requiresEmailCode?: boolean; pendingAuthId?: string }>;
+  verifyEmailCode: ({
+    pendingAuthId,
+    code,
+  }: {
+    pendingAuthId: string;
+    code: string;
+  }) => Promise<boolean>;
+  resendEmailCode: ({
+    pendingAuthId,
+  }: {
+    pendingAuthId: string;
+  }) => Promise<{ pendingAuthId?: string }>;
+  createChurchAccount: ({
+    churchName,
+    adminName,
+    adminEmail,
+    password,
+  }: {
+    churchName: string;
+    adminName: string;
+    adminEmail: string;
+    password: string;
+  }) => Promise<{ requiresEmailCode?: boolean; pendingAuthId?: string }>;
+  forgotPassword: (email: string) => Promise<void>;
+  logout: () => Promise<void>;
+  enterGuestMode: (nextPath?: string) => void;
+  exitGuestMode: (nextPath?: string) => void;
   loginState: LoginStateType;
+  bootstrapStatus: BootstrapStatus;
+  authServerStatus: AuthServerStatus;
+  authServerRetryCount: number;
+  sessionKind: SessionKind;
+  userId: string;
   user: string;
+  /** Account email when session has a human user (from bootstrap). */
+  userEmail: string;
   database: string;
   uploadPreset: string;
   setLoginState: (val: LoginStateType) => void;
@@ -53,6 +132,19 @@ type GlobalInfoContextType = {
   hostId: string;
   activeInstances: Instance[];
   access: AccessType;
+  churchId: string;
+  churchName: string;
+  churchStatus: string;
+  recoveryEmail: string;
+  role: string;
+  authError: string;
+  /** Set when session restore needs email verification; Login should open the code step. */
+  pendingEmailVerificationId: string | null;
+  clearPendingEmailVerification: () => void;
+  operatorName: string;
+  device: AuthBootstrap["device"] | null;
+  setOperatorName: (value: string) => void;
+  refreshAuthBootstrap: () => Promise<void>;
   refreshPresentationListeners: () => void;
 };
 
@@ -60,40 +152,78 @@ export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
   null
 );
 
-const firebaseConfig = {
-  apiKey: "AIzaSyD8JdTmUVvAhQjBYnt59dOUqucnWiRMyMk",
-  authDomain: "portable-media.firebaseapp.com",
-  databaseURL: "https://portable-media.firebaseio.com",
-  projectId: "portable-media",
-  storageBucket: "portable-media.appspot.com",
-  messagingSenderId: "456418139697",
-  appId: "1:456418139697:web:02dabb94557dbf1dc07f10",
-};
-
 type globalFireBaseInfoType = {
   db: Database | undefined;
   user: string;
   database: string;
+  churchId: string;
 };
 
 export const globalFireDbInfo: globalFireBaseInfoType = {
   db: undefined,
   user: "Demo",
   database: "demo",
+  churchId: "",
 };
 
-export const globalHostId =
-  (window as unknown as { __globalHostId: string })?.__globalHostId ??
-  ((window as unknown as { __globalHostId: string }).__globalHostId =
-    generateRandomId());
+const HOST_ID_STORAGE_KEY = "worshipsync_host_id";
+
+const getStableHostId = () => {
+  const win = window as unknown as { __globalHostId?: string };
+  if (win.__globalHostId) {
+    return win.__globalHostId;
+  }
+
+  let hostId = "";
+  try {
+    hostId = window.sessionStorage.getItem(HOST_ID_STORAGE_KEY) || "";
+  } catch {
+    hostId = "";
+  }
+
+  if (!hostId) {
+    hostId = generateRandomId();
+    try {
+      window.sessionStorage.setItem(HOST_ID_STORAGE_KEY, hostId);
+    } catch {
+      // Ignore sessionStorage failures and continue with the in-memory id.
+    }
+  }
+
+  win.__globalHostId = hostId;
+  return hostId;
+};
+
+export const globalHostId = getStableHostId();
 
 const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
-  const [loginState, setLoginState] = useState<LoginStateType>("idle");
+  const [isSharedDataReady, setIsSharedDataReady] = useState(false);
+  const [loginState, setLoginState] = useState<LoginStateType>("loading");
+  const [bootstrapStatus, setBootstrapStatus] =
+    useState<BootstrapStatus>("loading");
+  const bootstrapStatusRef = useRef(bootstrapStatus);
+  bootstrapStatusRef.current = bootstrapStatus;
+  const [authServerStatus, setAuthServerStatus] =
+    useState<AuthServerStatus>("checking");
+  const [authServerRetryCount, setAuthServerRetryCount] = useState(0);
+  const [sessionKind, setSessionKind] = useState<SessionKind>(null);
+  const [userId, setUserId] = useState("");
   const [user, setUser] = useState("Demo");
+  const [userEmail, setUserEmail] = useState("");
   const [database, setDatabase] = useState("demo");
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
   const [access, setAccess] = useState<AccessType>("full");
+  const [churchId, setChurchId] = useState("");
+  const [churchName, setChurchName] = useState("");
+  const [churchStatus, setChurchStatus] = useState("active");
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [role, setRole] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [pendingEmailVerificationId, setPendingEmailVerificationId] =
+    useState<string | null>(null);
+  const [operatorName, setOperatorNameState] = useState("");
+  const [device, setDevice] = useState<AuthBootstrap["device"] | null>(null);
 
   const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
@@ -135,9 +265,29 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   });
 
   const storageListenerCleanupRef = useRef<(() => void) | undefined>(undefined);
+  const refreshAuthBootstrapPromiseRef = useRef<Promise<void> | null>(null);
 
   const navigate = useNavigate();
   const dispatch = useDispatch();
+
+  const waitForHumanAuthUser = useCallback(async () => {
+    const auth = getHumanAuth();
+    if (auth.currentUser) {
+      return auth.currentUser;
+    }
+    return new Promise<ReturnType<typeof getHumanAuth>["currentUser"]>(
+      (resolve) => {
+        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+          unsubscribe();
+          resolve(currentUser);
+        });
+      }
+    );
+  }, []);
+
+  const isReachabilityError = useCallback((error: unknown) => {
+    return error instanceof AuthApiError && error.isReachabilityError;
+  }, []);
 
   const updateFromRemote = useCallback(
     (data: any) => {
@@ -207,34 +357,280 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     [dispatch]
   );
 
-  // get info from local storage on startup
-  useEffect(() => {
-    localStorage.setItem("presentation", "null");
-    const _isLoggedIn = localStorage.getItem("loggedIn") === "true";
-    setLoginState(_isLoggedIn ? "success" : "demo");
-    const _user = localStorage.getItem("user");
-    if (_user !== null && _user !== "null") {
-      setUser(_user);
-      globalFireDbInfo.user = _user;
+  const activeInstanceName = useMemo(() => {
+    const trimmedOperatorName = operatorName.trim();
+    const trimmedUser = user.trim();
+    const trimmedDeviceLabel = device?.label?.trim() || "";
+
+    if (sessionKind === "workstation") {
+      return trimmedOperatorName || trimmedUser || trimmedDeviceLabel || "Operator";
     }
-    const _database = localStorage.getItem("database");
-    if (_database !== null && _database !== "null") {
-      setDatabase(_database);
-      globalFireDbInfo.database = _database;
+
+    return trimmedUser || trimmedOperatorName || trimmedDeviceLabel || "Operator";
+  }, [device?.label, operatorName, sessionKind, user]);
+
+  const applyBootstrap = useCallback((bootstrap?: AuthBootstrap | null) => {
+    if (!bootstrap?.authenticated) {
+      setLoginState("idle");
+      setSessionKind(null);
+      setUserId("");
+      setUser("");
+      setUserEmail("");
+      setDatabase("");
+      setUploadPreset("bpqu4ma5");
+      setAccess("full");
+      setChurchId("");
+      setChurchName("");
+      setChurchStatus("active");
+      setRecoveryEmail("");
+      setRole("");
+      setOperatorNameState("");
+      setDevice(null);
+      clearCsrfToken();
+      localStorage.setItem("loggedIn", "false");
+      localStorage.removeItem("user");
+      localStorage.removeItem("database");
+      localStorage.setItem("upload_preset", "bpqu4ma5");
+      localStorage.setItem("access", "full");
+      globalFireDbInfo.user = "";
+      globalFireDbInfo.database = "";
+      globalFireDbInfo.churchId = "";
+      return;
     }
-    const _uploadPreset = localStorage.getItem("upload_preset");
-    if (_uploadPreset !== null && _uploadPreset !== "null") {
-      setUploadPreset(_uploadPreset);
+
+    setLoginState("success");
+    setSessionKind(bootstrap.sessionKind);
+    setUserId(bootstrap.user?.uid || "");
+    setUserEmail(bootstrap.user?.email?.trim() || "");
+    const humanToolbarLabel =
+      bootstrap.user?.displayName?.trim() ||
+      bootstrap.user?.email?.trim() ||
+      "";
+    setUser(
+      humanToolbarLabel ||
+      bootstrap.device?.operatorName ||
+      bootstrap.device?.label ||
+      "Operator"
+    );
+    setDatabase(bootstrap.database || "demo");
+    setUploadPreset(bootstrap.uploadPreset || "bpqu4ma5");
+    setAccess((bootstrap.appAccess as AccessType) || "view");
+    setChurchId(bootstrap.churchId || "");
+    setChurchName(bootstrap.churchName?.trim() || "");
+    setChurchStatus(bootstrap.churchStatus || "active");
+    setRecoveryEmail(bootstrap.recoveryEmail || "");
+    setRole(bootstrap.role || "");
+    setOperatorNameState(bootstrap.device?.operatorName || getOperatorName());
+    setDevice(bootstrap.device || null);
+    if (bootstrap.csrfToken) {
+      setCsrfToken(bootstrap.csrfToken);
+    } else {
+      clearCsrfToken();
     }
-    const _access = localStorage.getItem("access");
-    if (_access !== null && _access !== "null") {
-      setAccess(_access as AccessType);
-    }
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem(
+      "user",
+      humanToolbarLabel ||
+      bootstrap.device?.operatorName ||
+      bootstrap.device?.label ||
+      "Operator"
+    );
+    localStorage.setItem("database", bootstrap.database || "demo");
+    localStorage.setItem("upload_preset", bootstrap.uploadPreset || "bpqu4ma5");
+    localStorage.setItem("access", (bootstrap.appAccess as AccessType) || "view");
+    globalFireDbInfo.user =
+      humanToolbarLabel ||
+      bootstrap.device?.operatorName ||
+      bootstrap.device?.label ||
+      "Operator";
+    globalFireDbInfo.database = bootstrap.database || "demo";
+    globalFireDbInfo.churchId = bootstrap.churchId || "";
   }, []);
 
-  // Rehydrate timers from localStorage for Demo user so timers work after refresh
+  const clearPendingEmailVerification = useCallback(() => {
+    setPendingEmailVerificationId(null);
+  }, []);
+
+  const enterGuestMode = useCallback(
+    (nextPath = "/controller") => {
+      hasRehydratedTimersRef.current = false;
+      setPendingEmailVerificationId(null);
+      setLoginState("guest");
+      setSessionKind(null);
+      setUserId("");
+      setUser("Demo");
+      setUserEmail("");
+      setDatabase("demo");
+      setUploadPreset("bpqu4ma5");
+      setAccess("full");
+      setChurchId("");
+      setChurchName("");
+      setChurchStatus("active");
+      setRecoveryEmail("");
+      setRole("");
+      setOperatorNameState("");
+      setDevice(null);
+      setAuthError("");
+      clearCsrfToken();
+      localStorage.setItem("loggedIn", "false");
+      localStorage.setItem("user", "Demo");
+      localStorage.setItem("database", "demo");
+      localStorage.setItem("upload_preset", "bpqu4ma5");
+      localStorage.setItem("access", "full");
+      globalFireDbInfo.user = "Demo";
+      globalFireDbInfo.database = "demo";
+      globalFireDbInfo.churchId = "";
+      dispatch({ type: "RESET" });
+      navigate(nextPath, { replace: true });
+    },
+    [dispatch, navigate]
+  );
+
+  const exitGuestMode = useCallback(
+    (nextPath = "/") => {
+      hasRehydratedTimersRef.current = false;
+      dispatch({ type: "RESET" });
+      dispatch(ActionCreators.clearHistory());
+      setPendingEmailVerificationId(null);
+      setAuthError("");
+      applyBootstrap(null);
+      setFirebaseDb(undefined);
+      globalFireDbInfo.db = undefined;
+      navigate(nextPath, { replace: true });
+    },
+    [applyBootstrap, dispatch, navigate]
+  );
+
+  const refreshAuthBootstrap = useCallback(async () => {
+    if (refreshAuthBootstrapPromiseRef.current) {
+      await refreshAuthBootstrapPromiseRef.current;
+      return;
+    }
+
+    if (bootstrapStatusRef.current !== "ready") {
+      setBootstrapStatus("loading");
+    }
+    setAuthServerStatus("checking");
+    setAuthServerRetryCount(0);
+    setAuthError("");
+    setPendingEmailVerificationId(null);
+
+    const promise = (async () => {
+      try {
+        let bootstrap: AuthBootstrap | null = null;
+        let bootstrapError: unknown = null;
+
+        for (let attempt = 0; attempt <= MAX_INITIAL_SESSION_RETRIES; attempt++) {
+          try {
+            bootstrap = await getAuthBootstrap({
+              workstationToken: getWorkstationToken(),
+              displayToken: getDisplayToken(),
+            });
+            setAuthServerStatus("online");
+            setAuthServerRetryCount(0);
+            bootstrapError = null;
+            break;
+          } catch (error) {
+            bootstrapError = error;
+            setAuthServerRetryCount(attempt + 1);
+            if (attempt === MAX_INITIAL_SESSION_RETRIES) {
+              break;
+            }
+            await backoff(attempt, 1000, 5000);
+          }
+        }
+
+        if (!bootstrap) {
+          if (bootstrapError) {
+            console.error("Auth bootstrap server check failed:", bootstrapError);
+          }
+          setAuthServerStatus("offline");
+          applyBootstrap(null);
+          return;
+        }
+
+        if (bootstrap.authenticated) {
+          applyBootstrap(bootstrap);
+          return;
+        }
+
+        const persistedUser = await waitForHumanAuthUser();
+        if (!persistedUser) {
+          applyBootstrap(null);
+          return;
+        }
+
+        try {
+          const idToken = await persistedUser.getIdToken(true);
+          const restoredSession = await createHumanSession({
+            idToken,
+            deviceId: getOrCreateDeviceId(),
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            deviceLabel: getTrustedDeviceLabel(),
+            requestNewCode: false,
+          });
+
+          setAuthServerStatus("online");
+
+          if (restoredSession.bootstrap) {
+            applyBootstrap(restoredSession.bootstrap);
+            return;
+          }
+
+          if (
+            restoredSession.requiresEmailCode &&
+            restoredSession.pendingAuthId
+          ) {
+            setPendingEmailVerificationId(restoredSession.pendingAuthId);
+          } else if (restoredSession.requiresEmailCode) {
+            setAuthError("Verify this device to continue.");
+          } else if (restoredSession.requiresEmailCode === false) {
+            setAuthError(
+              "Your sign-in code expired. Sign in again with your password to receive a new code."
+            );
+          }
+          applyBootstrap(null);
+        } catch (error) {
+          if (isReachabilityError(error)) {
+            console.error("Could not reach server while restoring session:", error);
+            setAuthServerStatus("offline");
+            applyBootstrap(null);
+            return;
+          }
+
+          console.error("Auth session restore failed:", error);
+          setAuthError("Could not restore your session.");
+          applyBootstrap(null);
+        }
+      } catch (error) {
+        console.error("Auth bootstrap failed:", error);
+        setAuthServerStatus("offline");
+        applyBootstrap(null);
+      } finally {
+        setBootstrapStatus("ready");
+      }
+    })();
+
+    refreshAuthBootstrapPromiseRef.current = promise;
+    try {
+      await promise;
+    } finally {
+      refreshAuthBootstrapPromiseRef.current = null;
+    }
+  }, [applyBootstrap, isReachabilityError, waitForHumanAuthUser]);
+
+  const refreshAuthBootstrapRef = useRef(refreshAuthBootstrap);
+  refreshAuthBootstrapRef.current = refreshAuthBootstrap;
+
   useEffect(() => {
-    if (user !== "Demo" || hasRehydratedTimersRef.current) return;
+    localStorage.setItem("presentation", "null");
+    void refreshAuthBootstrapRef.current();
+  }, []);
+
+  // Rehydrate timers from localStorage for guest mode so timers work after refresh
+  useEffect(() => {
+    if (loginState !== "guest" || hasRehydratedTimersRef.current) return;
     hasRehydratedTimersRef.current = true;
     try {
       const raw = localStorage.getItem("timerInfo");
@@ -247,29 +643,58 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     } catch {
       // ignore invalid stored data
     }
-  }, [user, dispatch]);
+  }, [loginState, dispatch]);
 
   // initialize firebase
   useEffect(() => {
-    if (loginState !== "success") return; // only initialize app for logged in users
+    if (loginState !== "success") {
+      setFirebaseDb(undefined);
+      setIsSharedDataReady(false);
+      globalFireDbInfo.db = undefined;
+      void signOut(getSharedDataAuth()).catch(() => undefined);
+      return;
+    }
 
-    initializeApp(firebaseConfig);
+    const auth = getSharedDataAuth();
+    const _db = getSharedDataDatabase();
+    let cancelled = false;
 
-    const _db = getDatabase();
-    setFirebaseDb(_db);
-    globalFireDbInfo.db = _db;
+    setFirebaseDb(undefined);
+    setIsSharedDataReady(false);
+    globalFireDbInfo.db = undefined;
 
-    const auth = getAuth();
-    signInWithEmailAndPassword(
-      auth,
-      "eliathahsdatechteam@gmail.com",
-      "TamTam7550"
-    );
+    void getSharedDataToken({
+      workstationToken: getWorkstationToken(),
+      displayToken: getDisplayToken(),
+    })
+      .then(async (response) => {
+        await signInWithCustomToken(auth, response.token);
+        if (cancelled) {
+          return;
+        }
+        setFirebaseDb(_db);
+        setIsSharedDataReady(true);
+        globalFireDbInfo.db = _db;
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        console.error("Shared realtime sign-in error:", error);
+        setFirebaseDb(undefined);
+        setIsSharedDataReady(false);
+        globalFireDbInfo.db = undefined;
+        setAuthError("Could not connect live data.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [loginState]);
 
   // Monitor connection state and handle reconnection
   useEffect(() => {
-    if (!firebaseDb || loginState !== "success") return;
+    if (!firebaseDb || !isSharedDataReady || loginState !== "success") return;
 
     const connectedRef = ref(firebaseDb, ".info/connected");
     const unsubscribe = onValue(connectedRef, (snap) => {
@@ -278,10 +703,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         if (isOnController && instanceRef.current) {
           set(instanceRef.current, {
             lastActive: new Date().toISOString(),
-            user: user,
+            user: activeInstanceName,
+            name: activeInstanceName,
             database,
             hostId,
             isOnController,
+            sessionKind,
+            deviceLabel: device?.label || null,
           });
         }
       }
@@ -290,11 +718,21 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     return () => {
       unsubscribe();
     };
-  }, [firebaseDb, loginState, isOnController, user, database, hostId]);
+  }, [
+    activeInstanceName,
+    database,
+    device?.label,
+    firebaseDb,
+    hostId,
+    isOnController,
+    isSharedDataReady,
+    loginState,
+    sessionKind,
+  ]);
 
   // Function to set up Firebase listeners
   const setupFirebaseListeners = useCallback(() => {
-    if (!firebaseDb) return;
+    if (!firebaseDb || !isSharedDataReady) return;
 
     if (onValueRef.current) {
       const keys = Object.keys(onValueRef.current);
@@ -305,7 +743,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         const updateRef = ref(
           firebaseDb,
-          "users/" + capitalizeFirstLetter(database) + "/v2/presentation/" + key
+          getChurchDataPath(churchId, "presentation", key)
         );
 
         onValueRef.current[_key] = onValue(updateRef, (snapshot) => {
@@ -315,7 +753,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         });
       }
     }
-  }, [firebaseDb, database, updateFromRemote]);
+  }, [churchId, firebaseDb, isSharedDataReady, updateFromRemote]);
 
   // Function to set up storage listener
   const setupStorageListener = useCallback(() => {
@@ -353,11 +791,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Track active instances
   useEffect(() => {
-    if (!firebaseDb || loginState !== "success") return;
+    if (!firebaseDb || !isSharedDataReady || loginState !== "success") return;
 
     const activeInstancesRef = ref(
       firebaseDb,
-      "users/" + capitalizeFirstLetter(database) + "/v2/activeInstances"
+      getChurchDataPath(churchId, "activeInstances")
     );
 
     // Listen for changes in active instances
@@ -377,7 +815,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         staleInstances.forEach(([hostId]) => {
           const staleRef = ref(
             firebaseDb,
-            `users/${capitalizeFirstLetter(database)}/v2/activeInstances/${hostId}`
+            getChurchDataPath(churchId, "activeInstances", hostId)
           );
           set(staleRef, null);
         });
@@ -395,7 +833,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     // Set this instance as active only if on controller page
     instanceRef.current = ref(
       firebaseDb,
-      `users/${capitalizeFirstLetter(database)}/v2/activeInstances/${hostId}`
+      getChurchDataPath(churchId, "activeInstances", hostId)
     );
 
     // Function to update the instance
@@ -403,10 +841,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       if (instanceRef.current) {
         set(instanceRef.current, {
           lastActive: new Date().toISOString(),
-          user: user,
+          user: activeInstanceName,
+          name: activeInstanceName,
           database: database,
           hostId: hostId,
           isOnController,
+          sessionKind,
+          deviceLabel: device?.label || null,
         });
       }
     };
@@ -430,7 +871,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         set(instanceRef.current, null);
       }
     };
-  }, [firebaseDb, loginState, database, hostId, isOnController, user]);
+  }, [
+    activeInstanceName,
+    churchId,
+    database,
+    device?.label,
+    firebaseDb,
+    hostId,
+    isSharedDataReady,
+    isOnController,
+    loginState,
+    sessionKind,
+  ]);
 
   // Handle navigation away from the app - set up once when component mounts
   useEffect(() => {
@@ -447,96 +899,383 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   }, []); // Empty dependency array means this only runs once on mount
 
   const login = useCallback(async ({
-    username,
+    email,
     password,
   }: {
-    username: string;
+    email: string;
+    password: string;
+  }) => {
+    if (authServerStatus !== "online") {
+      setAuthError(
+        authServerStatus === "checking"
+          ? "Connecting to WorshipSync..."
+          : "Could not reach the server. Check the connection and try again."
+      );
+      setLoginState("idle");
+      return {};
+    }
+
+    setLoginState("loading");
+    setAuthError("");
+
+    try {
+      const auth = getHumanAuth();
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+      const idToken = await credential.user.getIdToken(true);
+      const response = await createHumanSession({
+        idToken,
+        deviceId: getOrCreateDeviceId(),
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        deviceLabel: getTrustedDeviceLabel(),
+        requestNewCode: true,
+      });
+
+      if (response.bootstrap) {
+        setPendingEmailVerificationId(null);
+        dispatch({ type: "RESET" });
+        applyBootstrap(response.bootstrap);
+        setAuthServerStatus("online");
+        navigate(getHumanPostAuthPath(location));
+        return {};
+      }
+
+      if (response.requiresEmailCode && response.pendingAuthId) {
+        setLoginState("idle");
+        return {
+          requiresEmailCode: true,
+          pendingAuthId: response.pendingAuthId,
+        };
+      }
+
+      setLoginState("error");
+      setAuthError(SIGN_IN_UNEXPECTED_RESPONSE);
+      return {};
+    } catch (e) {
+      console.error("Sign-in error:", e);
+      if (isReachabilityError(e)) {
+        setAuthServerStatus("offline");
+        setAuthError("Could not reach the server. Check the connection and try again.");
+        setLoginState("idle");
+        return {};
+      }
+      setAuthError(getSignInFlowErrorMessage(e));
+      setLoginState("error");
+      return {};
+    }
+  }, [
+    applyBootstrap,
+    authServerStatus,
+    dispatch,
+    isReachabilityError,
+    location,
+    navigate,
+  ]);
+
+  const verifyEmailCode = useCallback(async ({
+    pendingAuthId,
+    code,
+  }: {
+    pendingAuthId: string;
+    code: string;
+  }) => {
+    if (authServerStatus !== "online") {
+      setAuthError("Could not reach the server. Check the connection and try again.");
+      setLoginState("idle");
+      return false;
+    }
+
+    setLoginState("loading");
+    setAuthError("");
+    try {
+      const response = await verifyEmailCodeRequest({
+        pendingAuthId,
+        code,
+        deviceId: getOrCreateDeviceId(),
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        deviceLabel: getTrustedDeviceLabel(),
+      });
+      setPendingEmailVerificationId(null);
+      dispatch({ type: "RESET" });
+      applyBootstrap(response.bootstrap);
+      setAuthServerStatus("online");
+      navigate(getHumanPostAuthPath(location));
+      return true;
+    } catch (error) {
+      console.error("verifyEmailCode error:", error);
+      if (isReachabilityError(error)) {
+        setAuthServerStatus("offline");
+        setAuthError("Could not reach the server. Check the connection and try again.");
+        setLoginState("idle");
+        return false;
+      }
+      setAuthError(getVerifyEmailCodeErrorMessage(error));
+      setLoginState("error");
+      return false;
+    }
+  }, [
+    applyBootstrap,
+    authServerStatus,
+    dispatch,
+    isReachabilityError,
+    location,
+    navigate,
+  ]);
+
+  const resendEmailCode = useCallback(
+    async ({ pendingAuthId }: { pendingAuthId: string }) => {
+      if (authServerStatus !== "online") {
+        setAuthError(
+          authServerStatus === "checking"
+            ? "Connecting to WorshipSync..."
+            : "Could not reach the server. Check the connection and try again."
+        );
+        return {};
+      }
+
+      setAuthError("");
+      const auth = getHumanAuth();
+      const user = auth.currentUser;
+      if (!user) {
+        setAuthError("Sign in again to continue.");
+        return {};
+      }
+
+      try {
+        const idToken = await user.getIdToken(true);
+        const response = await resendEmailCodeRequest({
+          idToken,
+          pendingAuthId,
+          deviceId: getOrCreateDeviceId(),
+          userAgent: navigator.userAgent,
+          platform: navigator.platform,
+          deviceLabel: getTrustedDeviceLabel(),
+        });
+
+        if (response.bootstrap) {
+          setPendingEmailVerificationId(null);
+          dispatch({ type: "RESET" });
+          applyBootstrap(response.bootstrap);
+          setAuthServerStatus("online");
+          navigate(getHumanPostAuthPath(location));
+          return {};
+        }
+
+        if (response.requiresEmailCode && response.pendingAuthId) {
+          return { pendingAuthId: response.pendingAuthId };
+        }
+
+        setAuthError("Could not resend the code. Try again.");
+        return {};
+      } catch (error) {
+        console.error("resendEmailCode error:", error);
+        if (isReachabilityError(error)) {
+          setAuthServerStatus("offline");
+          setAuthError(
+            "Could not reach the server. Check the connection and try again."
+          );
+          return {};
+        }
+        setAuthError(
+          error instanceof AuthApiError
+            ? error.message
+            : "Could not resend the code. Try again."
+        );
+        return {};
+      }
+    },
+    [
+      applyBootstrap,
+      authServerStatus,
+      dispatch,
+      isReachabilityError,
+      location,
+      navigate,
+    ]
+  );
+
+  const createChurchAccountHandler = useCallback(async ({
+    churchName,
+    adminName,
+    adminEmail,
+    password,
+  }: {
+    churchName: string;
+    adminName: string;
+    adminEmail: string;
     password: string;
   }) => {
     setLoginState("loading");
-
+    setAuthError("");
+    let createdUserCredential:
+      | Awaited<ReturnType<typeof createUserWithEmailAndPassword>>
+      | null = null;
     try {
-      const response = await loginUser(
-        username,
+      const auth = getHumanAuth();
+      const credential = await createUserWithEmailAndPassword(
+        auth,
+        adminEmail,
         password
       );
-      const { success, errorMessage, user } = response;
-
-      if (!success) {
-        console.error("Login failed:", errorMessage);
-        setLoginState("error");
-      } else if (user) {
-        dispatch({ type: "RESET" });
-        setLoginState("success");
-        localStorage.setItem("loggedIn", "true");
-        localStorage.setItem("user", user.username);
-        localStorage.setItem("database", user.database);
-        localStorage.setItem("upload_preset", user.upload_preset);
-        localStorage.setItem("access", user.access || "full");
-        setUser(user.username);
-        globalFireDbInfo.user = user.username;
-        setDatabase(user.database);
-        globalFireDbInfo.database = user.database;
-        setUploadPreset(user.upload_preset);
-        setAccess(user.access || "full");
-        navigate("/");
-      } else {
-        console.error("Login failed:", errorMessage);
-        setLoginState("error");
+      createdUserCredential = credential;
+      if (adminName.trim()) {
+        await updateProfile(credential.user, { displayName: adminName.trim() });
       }
-    } catch (e) {
-      console.error("Login error:", e);
+      const idToken = await credential.user.getIdToken(true);
+      const response = await createChurchAccount({
+        idToken,
+        churchName,
+        adminName,
+        deviceId: getOrCreateDeviceId(),
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        deviceLabel: getTrustedDeviceLabel(),
+      });
+      setLoginState("idle");
+      return {
+        requiresEmailCode: response.requiresEmailCode,
+        pendingAuthId: response.pendingAuthId,
+      };
+    } catch (error) {
+      if (createdUserCredential) {
+        await createdUserCredential.user.delete().catch(() => undefined);
+      }
+      console.error("Create church error:", error);
+      setAuthError(error instanceof Error ? error.message : "Could not create church");
       setLoginState("error");
+      return {};
     }
-  }, [dispatch, navigate, setLoginState, setUser, setDatabase, setUploadPreset, setAccess]);
+  }, []);
 
-  const logout = useCallback(() => {
-    localStorage.setItem("loggedIn", "false");
-    localStorage.setItem("user", "Demo");
-    localStorage.setItem("database", "demo");
-    localStorage.setItem("upload_preset", "bpqu4ma5");
-    localStorage.setItem("access", "full");
-    setAccess("full");
-    dispatch({ type: "RESET" });
-    dispatch(ActionCreators.clearHistory());
-    setUser("Demo");
-    globalFireDbInfo.user = "Demo";
-    setDatabase("demo");
-    globalFireDbInfo.database = "demo";
-    setUploadPreset("bpqu4ma5");
-    navigate("/");
-    setLoginState("demo");
-    setFirebaseDb(undefined);
-    globalFireDbInfo.db = undefined;
-  }, [dispatch, navigate, setUser, setDatabase, setUploadPreset, setAccess, setLoginState, setFirebaseDb]);
+  const forgotPassword = useCallback(async (email: string) => {
+    if (authServerStatus !== "online") {
+      setAuthError("Could not reach the server. Check the connection and try again.");
+      throw new Error("Server unavailable");
+    }
+
+    setAuthError("");
+    try {
+      await forgotPasswordRequest(email);
+    } catch (error) {
+      if (isReachabilityError(error)) {
+        setAuthServerStatus("offline");
+      }
+      setAuthError(getForgotPasswordErrorMessage(error));
+      throw error;
+    }
+  }, [authServerStatus, isReachabilityError]);
+
+  const setOperatorName = useCallback((value: string) => {
+    setOperatorNameState(value);
+    setOperatorNameStorage(value);
+    if (sessionKind === "workstation") {
+      setUser(value);
+    }
+  }, [sessionKind]);
+
+  const logout = useCallback(async () => {
+    try {
+      await logoutSession();
+      await signOut(getHumanAuth()).catch(() => undefined);
+    } catch (error) {
+      console.error("Sign-out error:", error);
+    } finally {
+      clearOperatorNameStorage();
+      clearCsrfToken();
+      if (sessionKind === "workstation") {
+        clearWorkstationToken();
+      }
+      if (sessionKind === "display") {
+        clearDisplayToken();
+      }
+      await signOut(getSharedDataAuth()).catch(() => undefined);
+      setPendingEmailVerificationId(null);
+      setAccess("full");
+      dispatch({ type: "RESET" });
+      dispatch(ActionCreators.clearHistory());
+      applyBootstrap(null);
+      navigate("/login");
+      setFirebaseDb(undefined);
+      globalFireDbInfo.db = undefined;
+    }
+  }, [applyBootstrap, dispatch, navigate, sessionKind]);
 
   const value = useMemo(
     () => ({
       loginState,
+      bootstrapStatus,
+      authServerStatus,
+      authServerRetryCount,
+      sessionKind,
+      userId,
       user,
+      userEmail,
       database,
       uploadPreset,
       login,
+      verifyEmailCode,
+      resendEmailCode,
+      createChurchAccount: createChurchAccountHandler,
+      forgotPassword,
+      enterGuestMode,
+      exitGuestMode,
       setLoginState,
       logout,
       firebaseDb,
       hostId,
       activeInstances,
       access,
+      churchId,
+      churchName,
+      churchStatus,
+      recoveryEmail,
+      role,
+      authError,
+      pendingEmailVerificationId,
+      clearPendingEmailVerification,
+      operatorName,
+      device,
+      setOperatorName,
+      refreshAuthBootstrap,
       refreshPresentationListeners,
     }),
     [
       loginState,
+      bootstrapStatus,
+      authServerStatus,
+      authServerRetryCount,
+      sessionKind,
+      userId,
       user,
+      userEmail,
       database,
       uploadPreset,
       login,
+      verifyEmailCode,
+      resendEmailCode,
+      createChurchAccountHandler,
+      forgotPassword,
+      enterGuestMode,
+      exitGuestMode,
       setLoginState,
       logout,
       firebaseDb,
       hostId,
       activeInstances,
       access,
+      churchId,
+      churchName,
+      churchStatus,
+      recoveryEmail,
+      role,
+      authError,
+      pendingEmailVerificationId,
+      clearPendingEmailVerification,
+      operatorName,
+      device,
+      setOperatorName,
+      refreshAuthBootstrap,
       refreshPresentationListeners,
     ]
   );

@@ -13,6 +13,8 @@ export type InputProps = HTMLProps<HTMLInputElement> & {
   labelFontSize?: string;
   svg?: FunctionComponent<SVGProps<SVGSVGElement>>;
   svgAction?: () => void;
+  /** For icon-only trailing actions (e.g. show password, clear search) */
+  svgActionAriaLabel?: string;
   color?: string;
   svgPadding?: string;
   svgClassName?: string;
@@ -21,6 +23,12 @@ export type InputProps = HTMLProps<HTMLInputElement> & {
   inputWidth?: string;
   inputClassName?: string;
   endAdornment?: React.ReactNode;
+  /** Shown below the input field, above error text */
+  helperText?: string;
+  /** Classes for the helper line (default suits dark toolbars / gray cards) */
+  helperTextClassName?: string;
+  /** Shown below the input; pairs with aria-invalid / aria-describedby */
+  errorText?: string;
 };
 
 const Input = ({
@@ -35,19 +43,38 @@ const Input = ({
   labelFontSize = "text-sm",
   svg,
   svgAction,
+  svgActionAriaLabel,
   color = "#1f2937",
   disabled = false,
-  svgPadding = "p-1",
+  svgPadding = "p-0.5",
   svgClassName = "right-px",
   inputTextSize = "text-sm",
   hideSpinButtons = true,
   inputWidth = "w-full",
   inputClassName,
   endAdornment: _endAdornment,
+  helperText,
+  helperTextClassName,
+  errorText,
   ...rest
 }: InputProps) => {
   const generatedId = useId();
   const inputId = id || generatedId;
+  const helperId = useId();
+  const errorId = useId();
+
+  const {
+    "aria-describedby": ariaDescribedByProp,
+    ...restForInput
+  } = rest;
+
+  const describedByIds = [
+    helperText ? helperId : null,
+    errorText ? errorId : null,
+    ariaDescribedByProp,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const hasTrailingAction = Boolean(svg || _endAdornment);
 
@@ -56,14 +83,19 @@ const Input = ({
   if (svg) {
     endAdornment = (
       <Button
+        type="button"
         svg={svg}
         variant="tertiary"
-        className={svgClassName}
+        className={cn(
+          "inline-flex h-7 w-7 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center",
+          svgClassName,
+        )}
         padding={svgPadding}
         color={color}
         onClick={svgAction}
         tabIndex={-1}
-        iconSize={"md"}
+        iconSize="sm"
+        aria-label={svgActionAriaLabel}
       />
     );
   }
@@ -88,6 +120,7 @@ const Input = ({
             disabled && "opacity-50",
             inputTextSize,
             inputWidth,
+            errorText && "border-2 border-red-500",
             hideSpinButtons &&
             "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]",
             inputClassName,
@@ -96,6 +129,8 @@ const Input = ({
           value={value ?? ""}
           disabled={disabled}
           data-ignore-undo="true"
+          aria-invalid={Boolean(errorText)}
+          aria-describedby={describedByIds || undefined}
           onChange={(e) => {
             const val = e.target.value;
             if (type === "number") {
@@ -105,7 +140,7 @@ const Input = ({
             }
           }}
           id={inputId}
-          {...rest}
+          {...restForInput}
         />
         {endAdornment && (
           <div className="pointer-events-none absolute top-0 bottom-0 right-1.5 flex items-center">
@@ -113,6 +148,22 @@ const Input = ({
           </div>
         )}
       </span>
+      {helperText ? (
+        <p
+          id={helperId}
+          className={cn(
+            "mt-1 text-xs leading-relaxed text-gray-400",
+            helperTextClassName
+          )}
+        >
+          {helperText}
+        </p>
+      ) : null}
+      {errorText ? (
+        <p id={errorId} className="mt-1 text-sm text-red-400" role="alert">
+          {errorText}
+        </p>
+      ) : null}
     </div>
   );
 };

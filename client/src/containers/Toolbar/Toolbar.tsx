@@ -60,7 +60,7 @@ const Toolbar = ({
 }) => {
   const location = useLocation();
   const [quickLinksDrawerOpen, setQuickLinksDrawerOpen] = useState(false);
-  const { isEditMode } = useSelector(
+  const { isEditMode, type: itemType } = useSelector(
     (state) => state.undoable.present.item
   );
   const [section, setSection] = useState<sections>("settings");
@@ -92,14 +92,22 @@ const Toolbar = ({
     () => location.pathname.includes("controller/item"),
     [location.pathname]
   );
+  const canShowSlideAndBoxTools = useMemo(
+    () => access === "full" || (access === "music" && itemType === "song"),
+    [access, itemType]
+  );
 
   useEffect(() => {
     if (onItemPage) {
-      setSection("slide-tools");
+      setSection(
+        access === "view" || !canShowSlideAndBoxTools
+          ? "settings"
+          : "slide-tools"
+      );
     } else {
       setSection("settings");
     }
-  }, [onItemPage]);
+  }, [onItemPage, access, canShowSlideAndBoxTools]);
 
   useEffect(() => {
     dispatch(setToolbarSection(section));
@@ -119,7 +127,7 @@ const Toolbar = ({
             isEditMode={isEditMode}
             variant={variant}
           />
-          {!isEditMode && !isPhone && <Undo />}
+          {!isEditMode && !isPhone && access !== "view" && <Undo />}
         </div>
         <div
           className={cn(
@@ -138,7 +146,7 @@ const Toolbar = ({
             <ToolbarButton
               svg={SquarePen}
               onClick={() => setSection("slide-tools")}
-              hidden={!onItemPage}
+              hidden={!onItemPage || access === "view" || !canShowSlideAndBoxTools}
               isActive={section === "slide-tools"}
             >
               Slide Tools
@@ -146,7 +154,7 @@ const Toolbar = ({
             <ToolbarButton
               svg={Pencil}
               onClick={() => setSection("box-tools")}
-              hidden={!onItemPage}
+              hidden={!onItemPage || access === "view" || !canShowSlideAndBoxTools}
               isActive={section === "box-tools"}
             >
               Box Tools
@@ -180,7 +188,7 @@ const Toolbar = ({
             )}
           >
             <Outlines className={cn(section !== "settings" && "hidden")} />
-            {variant !== "overlay" && (
+            {variant !== "overlay" && access !== "view" && (
               <Button
                 className={cn(
                   section !== "settings" && "hidden",
@@ -196,29 +204,31 @@ const Toolbar = ({
                 Preferences
               </Button>
             )}
-            <Button
-              className={cn(
-                section !== "settings" && "hidden",
-                (variant === "overlay"
-                  ? quickLinksDrawerOpen
-                  : location.pathname.includes("quick-links")) &&
-                "outline-2 outline-white",
-              )}
-              variant="tertiary"
-              svg={RectangleEllipsis}
-              component={variant === "overlay" ? "button" : "link"}
-              to={
-                variant === "overlay" ? undefined : "/controller/quick-links"
-              }
-              onClick={
-                variant === "overlay"
-                  ? () => setQuickLinksDrawerOpen(true)
-                  : undefined
-              }
-            >
-              Quick Links
-            </Button>
-            {variant !== "overlay" && (
+            {access === "full" && (
+              <Button
+                className={cn(
+                  section !== "settings" && "hidden",
+                  (variant === "overlay"
+                    ? quickLinksDrawerOpen
+                    : location.pathname.includes("quick-links")) &&
+                  "outline-2 outline-white",
+                )}
+                variant="tertiary"
+                svg={RectangleEllipsis}
+                component={variant === "overlay" ? "button" : "link"}
+                to={
+                  variant === "overlay" ? undefined : "/controller/quick-links"
+                }
+                onClick={
+                  variant === "overlay"
+                    ? () => setQuickLinksDrawerOpen(true)
+                    : undefined
+                }
+              >
+                Quick Links
+              </Button>
+            )}
+            {variant !== "overlay" && access === "full" && (
               <Button
                 className={cn(
                   section !== "settings" && "hidden",
@@ -253,7 +263,7 @@ const Toolbar = ({
           <UserSection />
         </div>
       </div>
-      {variant === "overlay" && (
+      {variant === "overlay" && access === "full" && (
         <Drawer
           isOpen={quickLinksDrawerOpen}
           onClose={() => setQuickLinksDrawerOpen(false)}

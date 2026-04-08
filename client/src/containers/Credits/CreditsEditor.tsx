@@ -19,6 +19,7 @@ import {
 } from "../../store/creditsSlice";
 import { broadcastCreditsUpdate } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import { putCreditHistoryDocs } from "../../utils/dbUtils";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
@@ -30,6 +31,8 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     useSelector((state: RootState) => state.undoable.present.credits);
   const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) ?? {};
+  const { access } = useContext(GlobalInfoContext) ?? {};
+  const readOnly = access === "view";
 
   const [justAdded, setJustAdded] = useState(false);
   const [justPublished, setJustPublished] = useState(false);
@@ -57,6 +60,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
   };
 
   const onDragEnd = (event: DragEndEvent) => {
+    if (readOnly) return;
     const { over, active } = event;
     if (!over || !active) return;
 
@@ -139,8 +143,9 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         </h2>
         {!isLoading && list.length === 0 && (
           <p className="text-sm px-2">
-            This credits list is empty. Click the button below to add some
-            credits.
+            {readOnly
+              ? "This credits list is empty."
+              : "This credits list is empty. Click the button below to add some credits."}
           </p>
         )}
         {isLoading && (
@@ -169,50 +174,53 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                       hidden={credit.hidden}
                       id={credit.id}
                       historyLines={creditsHistory[credit.heading] ?? []}
+                      readOnly={readOnly}
                     />
                   );
                 })}
               </SortableContext>
             </ul>
-            <section className="flex flex-col gap-2 min-h-0">
-              <Button
-                className="text-sm w-full justify-center mt-2"
-                svg={justAdded ? Check : Plus}
-                color={justAdded ? "#84cc16" : "#22d3ee"}
-                disabled={justAdded}
-                onClick={async () => {
-                  if (!db) return;
-                  setJustAdded(true);
-                  const newId = generateRandomId();
-                  const newCredit: DBCredit = {
-                    _id: `credit-${newId}`,
-                    id: newId,
-                    heading: "",
-                    text: "",
-                    updatedAt: new Date().toISOString(),
-                    docType: "credit",
-                  };
-                  await db.put(newCredit);
-                  broadcastCreditsUpdate([newCredit]);
-                  dispatch(addCredit({ id: newId, heading: "", text: "" }));
-                  setTimeout(() => setJustAdded(false), 500);
-                }}
-              >
-                {justAdded ? "Added." : "Add Credit"}
-              </Button>
-              <Button
-                className="text-sm w-full justify-center mt-2"
-                svg={justPublished ? Check : Save}
-                color={justPublished ? "#84cc16" : "#0284c7"}
-                variant="cta"
-                disabled={justPublished}
-                onClick={handlePublish}
-              >
-                {justPublished
-                  ? "Published credits and scenes"
-                  : "Publish Credits and Scenes"}
-              </Button>
-            </section>
+            {!readOnly && (
+              <section className="flex min-h-0 flex-col gap-2">
+                <Button
+                  className="mt-2 w-full justify-center text-sm"
+                  svg={justAdded ? Check : Plus}
+                  color={justAdded ? "#84cc16" : "#22d3ee"}
+                  disabled={justAdded}
+                  onClick={async () => {
+                    if (!db) return;
+                    setJustAdded(true);
+                    const newId = generateRandomId();
+                    const newCredit: DBCredit = {
+                      _id: `credit-${newId}`,
+                      id: newId,
+                      heading: "",
+                      text: "",
+                      updatedAt: new Date().toISOString(),
+                      docType: "credit",
+                    };
+                    await db.put(newCredit);
+                    broadcastCreditsUpdate([newCredit]);
+                    dispatch(addCredit({ id: newId, heading: "", text: "" }));
+                    setTimeout(() => setJustAdded(false), 500);
+                  }}
+                >
+                  {justAdded ? "Added." : "Add Credit"}
+                </Button>
+                <Button
+                  className="mt-2 w-full justify-center text-sm"
+                  svg={justPublished ? Check : Save}
+                  color={justPublished ? "#84cc16" : "#0284c7"}
+                  variant="cta"
+                  disabled={justPublished}
+                  onClick={handlePublish}
+                >
+                  {justPublished
+                    ? "Published credits and scenes"
+                    : "Publish Credits and Scenes"}
+                </Button>
+              </section>
+            )}
           </>
         )}
       </div>

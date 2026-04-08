@@ -6,6 +6,7 @@ export interface BaseTimePickerProps {
   label?: string;
   value?: string | number;
   onChange?: (value: string | number) => void;
+  disabled?: boolean;
   id?: string;
   className?: string;
   inputClassName?: string;

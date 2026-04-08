@@ -8,7 +8,6 @@ import {
   PopoverTrigger,
 } from "../components/ui/Popover";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
-import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { usePwaInstallPrompt } from "../hooks/usePwaInstallPrompt";
 import { isElectron, isWindowsBrowser } from "../utils/environment";
@@ -54,6 +53,15 @@ const secondaryControllers: CardLink[] = [
     title: "Info Controller",
     description: "Prepare the information pages used during the service.",
     to: "/info-controller",
+  },
+];
+
+const adminLinks: CardLink[] = [
+  {
+    title: "Account management",
+    description:
+      "Manage admins, recovery settings, trusted devices, and paired workstations for this church.",
+    to: "/account",
   },
 ];
 
@@ -176,12 +184,25 @@ const WindowsDownloadHelp = ({
 );
 
 const Welcome = () => {
-  const { loginState } = useContext(GlobalInfoContext) || {};
-  const { logout } = useContext(ControllerInfoContext) || {};
+  const { loginState, role, access } = useContext(GlobalInfoContext) || {};
   const isLoggedIn = loginState === "success";
-  const visibleSecondaryControllers = isLoggedIn
-    ? secondaryControllers
-    : secondaryControllers.filter((link) => link.to !== "/boards/controller");
+  const isAdmin = role === "admin";
+  const isMusicAccess = isLoggedIn && access === "music";
+  const visiblePrimaryControllers = isMusicAccess
+    ? primaryControllers.filter((link) => link.to === "/controller")
+    : primaryControllers;
+  const visibleSecondaryControllers = isMusicAccess
+    ? []
+    : isLoggedIn
+      ? secondaryControllers.filter((link) => {
+          if (access === "view") {
+            return (
+              link.to !== "/boards/controller" && link.to !== "/info-controller"
+            );
+          }
+          return true;
+        })
+      : secondaryControllers.filter((link) => link.to !== "/boards/controller");
   const { canShowInstall, installPwa } = usePwaInstallPrompt();
   const [windowsDownloadHref, setWindowsDownloadHref] = useState(() =>
     isElectron() ? "" : getLatestReleaseUrl(),
@@ -328,15 +349,16 @@ const Welcome = () => {
             )}
           </div>
           <div className="flex flex-1 justify-end gap-4">
-            <Button
-              variant="tertiary"
-              onClick={isLoggedIn && logout ? logout : undefined}
-              padding="px-4 py-1"
-              component={!isLoggedIn ? "link" : "button"}
-              to={!isLoggedIn ? "/login" : "/"}
-            >
-              {!isLoggedIn ? "Login" : "Logout"}
-            </Button>
+            {!isLoggedIn ? (
+              <Button
+                variant="tertiary"
+                component="link"
+                to="/login"
+                padding="px-4 py-1"
+              >
+                Sign in
+              </Button>
+            ) : null}
             <UserSection />
           </div>
         </div>
@@ -363,6 +385,23 @@ const Welcome = () => {
         </section>
 
         <section className="mx-auto mt-6 w-full max-w-5xl space-y-6">
+          {isAdmin && (
+            <div className="space-y-4">
+              <div className="space-y-2 text-center">
+                <h2 className="text-2xl font-semibold">Account management</h2>
+                <p className="text-sm text-gray-200">
+                  Admin tools for church access, recovery, and device setup.
+                </p>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                {adminLinks.map((link) => (
+                  <HomeLinkCard key={link.to} {...link} />
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="space-y-2 text-center">
             <h2 className="text-2xl font-semibold">Controllers</h2>
             <p className="text-sm text-gray-200">
@@ -371,49 +410,72 @@ const Welcome = () => {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            {primaryControllers.map((link) => (
+            {visiblePrimaryControllers.map((link) => (
               <HomeLinkCard key={link.to} {...link} />
             ))}
           </div>
 
-          <p className="pt-2 text-center text-sm font-medium text-gray-300 md:text-left">
-            Credits and info
-          </p>
-          <div className="grid gap-4 md:grid-cols-2">
-            {visibleSecondaryControllers.map((link) => (
-              <HomeLinkCard key={link.to} {...link} />
-            ))}
-          </div>
+          {visibleSecondaryControllers.length > 0 && (
+            <>
+              <p className="pt-2 text-center text-sm font-medium text-gray-300 md:text-left">
+                Credits and info
+              </p>
+              <div className="grid gap-4 md:grid-cols-2">
+                {visibleSecondaryControllers.map((link) => (
+                  <HomeLinkCard key={link.to} {...link} />
+                ))}
+              </div>
+            </>
+          )}
         </section>
 
-        <details className="mx-auto mt-8 w-full max-w-5xl rounded-2xl border border-gray-500 px-5 py-4">
-          <summary className="cursor-pointer list-none">
-            <div className="flex flex-col gap-2 text-left md:flex-row md:items-center md:justify-between">
-              <div>
-                <h2 className="text-2xl font-semibold">Display outputs</h2>
-                <p className="text-sm text-gray-200">
-                  URLs for room screens or browser sources in streaming software.
-                </p>
+        {isLoggedIn && access === "full" ? (
+          <details className="mx-auto mt-8 w-full max-w-5xl rounded-2xl border border-gray-500 px-5 py-4">
+            <summary className="cursor-pointer list-none">
+              <div className="flex flex-col gap-2 text-left md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-2xl font-semibold">Display outputs</h2>
+                  <p className="text-sm text-gray-200">
+                    URLs for room screens or browser sources in streaming software.
+                  </p>
+                </div>
+                <span className="shrink-0 self-start rounded-full border border-gray-400 px-3 py-1 text-sm font-semibold text-gray-100 md:self-center">
+                  Show display links
+                </span>
               </div>
-              <span className="shrink-0 self-start rounded-full border border-gray-400 px-3 py-1 text-sm font-semibold text-gray-100 md:self-center">
-                Show display links
-              </span>
-            </div>
-          </summary>
+            </summary>
 
-          <div className="mt-6 space-y-5 border-t border-gray-600 pt-6">
-            <DisplayLinkGroup
-              heading="Fullscreen in the browser"
-              description="For a computer wired to a projector or monitor. Open the page on that machine, then click the button to enter fullscreen."
-              links={standaloneDisplays}
-            />
-            <DisplayLinkGroup
-              heading="Browser sources (streaming)"
-              description="Add each URL as a browser source or browser input in OBS, vMix, or other streaming tools."
-              links={obsDisplays}
-            />
-          </div>
-        </details>
+            <div className="mt-6 space-y-5 border-t border-gray-600 pt-6">
+              <DisplayLinkGroup
+                heading="Fullscreen in the browser"
+                description="For a computer wired to a projector or monitor. Open the page on that machine, then click the button to enter fullscreen."
+                links={standaloneDisplays}
+              />
+              <DisplayLinkGroup
+                heading="Browser sources (streaming)"
+                description="Add each URL as a browser source or browser input in OBS, vMix, or other streaming tools."
+                links={obsDisplays}
+              />
+            </div>
+          </details>
+        ) : !isLoggedIn ? (
+          <section
+            className="mx-auto mt-8 w-full max-w-5xl rounded-2xl border border-gray-500 px-5 py-4"
+            aria-labelledby="display-outputs-heading"
+          >
+            <h2 id="display-outputs-heading" className="text-2xl font-semibold">
+              Display outputs
+            </h2>
+            <p className="mt-1.5 text-sm text-gray-200">
+              URLs for room screens or browser sources in streaming software.
+            </p>
+            <p className="mt-4 rounded-xl border border-gray-600 bg-gray-900/40 p-4 text-sm leading-relaxed text-gray-200">
+              Sign in to show display links. Projector, monitor, and stream pages
+              require a signed-in account or a paired display device, so those
+              URLs are available after you authenticate.
+            </p>
+          </section>
+        ) : null}
       </div>
     </main>
   );

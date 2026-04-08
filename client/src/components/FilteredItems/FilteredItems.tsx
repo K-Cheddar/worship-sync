@@ -12,18 +12,19 @@ import {
 import { removeItemFromAllItemsList } from "../../store/allItemsSlice";
 import { DBItem, ServiceItem } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import { ActionCreators } from "redux-undo";
 import FilteredItem from "./FilteredItem";
 import {
   getMatchForString,
   punctuationRegex,
   updateWordMatches,
-  capitalizeFirstLetter,
 } from "../../utils/generalUtils";
 import Spinner from "../Spinner/Spinner";
 import { ref, get, set } from "firebase/database";
 import { globalFireDbInfo } from "../../context/globalInfo";
 import { deleteTimer } from "../../store/timersSlice";
+import { getChurchDataPath } from "../../utils/firebasePaths";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -87,6 +88,8 @@ const FilteredItems = ({
   const isFullListLoaded = filteredList.length <= numShownItems;
 
   const { db } = useContext(ControllerInfoContext) || {};
+  const { access } = useContext(GlobalInfoContext) || {};
+  const canMutateLibrary = access !== "view";
 
   // Memoize the search function
   const searchItems = useMemo(() => {
@@ -240,11 +243,11 @@ const FilteredItems = ({
       }
 
       // Delete from Firebase
-      if (globalFireDbInfo.db && globalFireDbInfo.database) {
+      if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
         try {
           const timersRef = ref(
             globalFireDbInfo.db,
-            "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/timers"
+            getChurchDataPath(globalFireDbInfo.churchId, "timers")
           );
 
           const snapshot = await get(timersRef);
@@ -317,6 +320,7 @@ const FilteredItems = ({
           data-ignore-undo="true"
           svg={searchValue ? X : undefined}
           svgAction={() => setSearchValue("")}
+          svgActionAriaLabel="Clear search"
         />
         <Button
           disabled={!searchValue}
@@ -326,19 +330,21 @@ const FilteredItems = ({
           {showWords ? "Hide" : "Show"} All{" "}
         </Button>
       </div>
-      <section className="text-sm flex gap-2 items-center mt-1 mb-2 justify-center">
-        <p>Can't find what you're looking for?</p>
-        <Button
-          variant="secondary"
-          className="relative"
-          svg={FilePlus}
-          color="#84cc16"
-          component="link"
-          to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
-        >
-          Create a new {label}
-        </Button>
-      </section>
+      {canMutateLibrary && (
+        <section className="text-sm flex gap-2 items-center mt-1 mb-2 justify-center">
+          <p>Can't find what you're looking for?</p>
+          <Button
+            variant="secondary"
+            className="relative"
+            svg={FilePlus}
+            color="#84cc16"
+            component="link"
+            to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
+          >
+            Create a new {label}
+          </Button>
+        </section>
+      )}
       <ul className="scrollbar-variable max-2xl:w-full 2xl:w-2/3 overflow-y-auto mx-2 px-2">
         {isSearchLoading && (
           <li className="absolute top-0 left-0 w-full h-full flex items-center justify-center bg-gray-800/35">
@@ -358,6 +364,7 @@ const FilteredItems = ({
               setItemToBeDeleted={setItemToBeDeleted}
               searchValue={searchValue}
               artistName={songArtistById.get(item._id)}
+              canMutateLibrary={canMutateLibrary}
             />
           );
         })}

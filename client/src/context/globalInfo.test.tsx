@@ -1,6 +1,8 @@
 import { render, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import GlobalInfoProvider from "./globalInfo";
+import * as authApi from "../api/auth";
+import * as firebaseApps from "../firebase/apps";
 
 const mockDispatch = jest.fn();
 const onValueCallbacks = new Map<string, (snapshot: any) => void>();
@@ -19,39 +21,70 @@ const onValueMock = jest.fn(
 );
 const setMock = jest.fn();
 const getDatabaseMock = jest.fn(() => ({ name: "firebase-db" }));
-const initializeAppMock = jest.fn();
-const getAuthMock = jest.fn(() => ({ name: "auth" }));
-const signInWithEmailAndPasswordMock = jest.fn(() => Promise.resolve({}));
-const onDisconnectRemoveMock = jest.fn();
-const onDisconnectMock = jest.fn(() => ({
-  remove: onDisconnectRemoveMock,
-}));
+const signInWithCustomTokenMock = jest.fn(() => Promise.resolve({}));
+const signOutMock = jest.fn(() => Promise.resolve());
 
 jest.mock("../hooks", () => ({
   useDispatch: () => mockDispatch,
 }));
 
-jest.mock("firebase/app", () => ({
-  initializeApp: (...args: unknown[]) => initializeAppMock(...args),
+jest.mock("../api/auth", () => ({
+  getAuthBootstrap: jest.fn(),
+  getSharedDataToken: jest.fn(() =>
+    Promise.resolve({ success: true, token: "test-token", database: "main" })
+  ),
+  createHumanSession: jest.fn(),
+  createChurchAccount: jest.fn(),
+  forgotPassword: jest.fn(),
+  logoutSession: jest.fn(),
+  verifyEmailCode: jest.fn(),
+}));
+
+jest.mock("../firebase/apps", () => ({
+  getHumanAuth: jest.fn(() => ({})),
+  getSharedDataAuth: jest.fn(() => ({})),
+  getSharedDataDatabase: jest.fn(() => ({ name: "firebase-db" })),
 }));
 
 jest.mock("firebase/auth", () => ({
-  getAuth: () => getAuthMock(),
-  signInWithEmailAndPassword: (...args: unknown[]) =>
-    signInWithEmailAndPasswordMock(...args),
+  signInWithCustomToken: (...args: unknown[]) =>
+    signInWithCustomTokenMock(...args),
+  signInWithEmailAndPassword: jest.fn(() => Promise.resolve({})),
+  signOut: (...args: unknown[]) => signOutMock(...args),
+  createUserWithEmailAndPassword: jest.fn(() => Promise.resolve({ user: {} })),
+  updateProfile: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock("firebase/database", () => ({
-  getDatabase: () => getDatabaseMock(),
   ref: (...args: unknown[]) => refMock(...args),
   onValue: (...args: unknown[]) => onValueMock(...args),
   set: (...args: unknown[]) => setMock(...args),
-  onDisconnect: (...args: unknown[]) => onDisconnectMock(...args),
+  onDisconnect: jest.fn(() => ({
+    remove: jest.fn(),
+  })),
 }));
 
-jest.mock("../api/login", () => ({
-  loginUser: jest.fn(),
-}));
+const demoBootstrap = { authenticated: false as const };
+
+const loggedInHumanBootstrap = {
+  authenticated: true as const,
+  sessionKind: "human" as const,
+  database: "main",
+  uploadPreset: "bpqu4ma5",
+  appAccess: "full",
+  churchId: "church-1",
+  churchName: "Test Church",
+  churchStatus: "active" as const,
+  recoveryEmail: "",
+  role: "admin",
+  user: {
+    uid: "u1",
+    email: "test@example.com",
+    displayName: "Test User",
+  },
+  device: null,
+  csrfToken: "csrf-test",
+};
 
 const renderProvider = () =>
   render(
@@ -75,12 +108,14 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     refMock.mockClear();
     onValueMock.mockClear();
     setMock.mockClear();
-    initializeAppMock.mockClear();
-    getDatabaseMock.mockClear();
-    getAuthMock.mockClear();
-    signInWithEmailAndPasswordMock.mockClear();
-    onDisconnectMock.mockClear();
-    onDisconnectRemoveMock.mockClear();
+    signInWithCustomTokenMock.mockClear();
+    signOutMock.mockClear();
+    (authApi.getAuthBootstrap as jest.Mock).mockReset();
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(demoBootstrap);
+    (firebaseApps.getSharedDataDatabase as jest.Mock).mockImplementation(() =>
+      getDatabaseMock()
+    );
+    (firebaseApps.getSharedDataDatabase as jest.Mock).mockClear();
   });
 
   it("routes storage updates to the current debounced projector, monitor, and stream actions", async () => {
@@ -159,38 +194,42 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     localStorage.setItem("user", "Test User");
     localStorage.setItem("database", "main");
 
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+
     renderProvider();
 
-    await waitFor(() => expect(initializeAppMock).toHaveBeenCalledTimes(1));
     await waitFor(() =>
-      expect(onValueCallbacks.has("users/Main/v2/presentation/projectorInfo")).toBe(
+      expect(firebaseApps.getSharedDataDatabase).toHaveBeenCalled()
+    );
+    await waitFor(() =>
+      expect(onValueCallbacks.has("churches/church-1/data/presentation/projectorInfo")).toBe(
         true
       )
     );
 
-    expect(onValueCallbacks.has("users/Main/v2/presentation/monitorInfo")).toBe(
+    expect(onValueCallbacks.has("churches/church-1/data/presentation/monitorInfo")).toBe(
       true
     );
-    expect(onValueCallbacks.has("users/Main/v2/presentation/streamInfo")).toBe(
+    expect(onValueCallbacks.has("churches/church-1/data/presentation/streamInfo")).toBe(
       true
     );
     expect(
-      onValueCallbacks.has("users/Main/v2/presentation/stream_itemContentBlocked")
+      onValueCallbacks.has("churches/church-1/data/presentation/stream_itemContentBlocked")
     ).toBe(true);
 
     mockDispatch.mockClear();
 
     onValueCallbacks
-      .get("users/Main/v2/presentation/projectorInfo")
+      .get("churches/church-1/data/presentation/projectorInfo")
       ?.(snapshotFor({ name: "Remote Projector", time: 500 }));
     onValueCallbacks
-      .get("users/Main/v2/presentation/monitorInfo")
+      .get("churches/church-1/data/presentation/monitorInfo")
       ?.(snapshotFor({ name: "Remote Monitor", time: 600 }));
     onValueCallbacks
-      .get("users/Main/v2/presentation/streamInfo")
+      .get("churches/church-1/data/presentation/streamInfo")
       ?.(snapshotFor({ name: "Remote Stream", time: 700 }));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_itemContentBlocked")
+      .get("churches/church-1/data/presentation/stream_itemContentBlocked")
       ?.(snapshotFor(true));
 
     await waitFor(() =>
@@ -229,6 +268,8 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     localStorage.setItem("loggedIn", "true");
     localStorage.setItem("user", "Test User");
     localStorage.setItem("database", "main");
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
 
     renderProvider();
 
@@ -301,46 +342,46 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
 
     await waitFor(() =>
       expect(
-        onValueCallbacks.has("users/Main/v2/presentation/stream_bibleInfo")
+        onValueCallbacks.has("churches/church-1/data/presentation/stream_bibleInfo")
       ).toBe(true)
     );
     expect(
-      onValueCallbacks.has("users/Main/v2/presentation/stream_participantOverlayInfo")
+      onValueCallbacks.has("churches/church-1/data/presentation/stream_participantOverlayInfo")
     ).toBe(true);
     expect(
-      onValueCallbacks.has("users/Main/v2/presentation/stream_stbOverlayInfo")
+      onValueCallbacks.has("churches/church-1/data/presentation/stream_stbOverlayInfo")
     ).toBe(true);
     expect(
-      onValueCallbacks.has("users/Main/v2/presentation/stream_qrCodeOverlayInfo")
+      onValueCallbacks.has("churches/church-1/data/presentation/stream_qrCodeOverlayInfo")
     ).toBe(true);
     expect(
-      onValueCallbacks.has("users/Main/v2/presentation/stream_imageOverlayInfo")
+      onValueCallbacks.has("churches/church-1/data/presentation/stream_imageOverlayInfo")
     ).toBe(true);
     expect(
       onValueCallbacks.has(
-        "users/Main/v2/presentation/stream_formattedTextDisplayInfo"
+        "churches/church-1/data/presentation/stream_formattedTextDisplayInfo"
       )
     ).toBe(true);
 
     mockDispatch.mockClear();
 
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_bibleInfo")
+      .get("churches/church-1/data/presentation/stream_bibleInfo")
       ?.(snapshotFor(bibleInfo));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_participantOverlayInfo")
+      .get("churches/church-1/data/presentation/stream_participantOverlayInfo")
       ?.(snapshotFor(participantOverlay));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_stbOverlayInfo")
+      .get("churches/church-1/data/presentation/stream_stbOverlayInfo")
       ?.(snapshotFor(stbOverlay));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_qrCodeOverlayInfo")
+      .get("churches/church-1/data/presentation/stream_qrCodeOverlayInfo")
       ?.(snapshotFor(qrOverlay));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_imageOverlayInfo")
+      .get("churches/church-1/data/presentation/stream_imageOverlayInfo")
       ?.(snapshotFor(imageOverlay));
     onValueCallbacks
-      .get("users/Main/v2/presentation/stream_formattedTextDisplayInfo")
+      .get("churches/church-1/data/presentation/stream_formattedTextDisplayInfo")
       ?.(snapshotFor(formattedText));
 
     await waitFor(() =>

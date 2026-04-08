@@ -119,6 +119,9 @@ jest.mock("@cloudinary/url-gen/actions/resize", () => ({
 jest.mock("./pages/Home", () => () => (
   <div data-testid="home-page">Home Page</div>
 ));
+jest.mock("./pages/AppEntry", () => () => (
+  <div data-testid="app-entry-page">App Entry Page</div>
+));
 jest.mock("./pages/Controller/Controller", () => () => (
   <div data-testid="controller-page">Controller Page</div>
 ));
@@ -135,7 +138,7 @@ jest.mock("./pages/Stream", () => () => (
   <div data-testid="stream-page">Stream Page</div>
 ));
 jest.mock("./pages/Login", () => () => (
-  <div data-testid="login-page">Login Page</div>
+  <div data-testid="login-page">Sign in</div>
 ));
 jest.mock("./pages/Credits", () => () => (
   <div data-testid="credits-page">Credits Page</div>
@@ -145,6 +148,9 @@ jest.mock("./pages/ProjectorFull", () => () => (
 ));
 jest.mock("./pages/CreditsEditor/CreditsEditor", () => () => (
   <div data-testid="credits-editor-page">Credits Editor Page</div>
+));
+jest.mock("./pages/InfoController", () => () => (
+  <div data-testid="info-controller-page">Info Controller Page</div>
 ));
 jest.mock("./pages/BoardController", () => () => (
   <div data-testid="board-controller-page">Board Controller Page</div>
@@ -157,6 +163,24 @@ jest.mock("./pages/BoardPage", () => () => (
 ));
 jest.mock("./pages/BoardPresent", () => () => (
   <div data-testid="board-present-page">Board Present Page</div>
+));
+jest.mock("./pages/WorkstationPair", () => () => (
+  <div data-testid="workstation-pair-page">Workstation Pair Page</div>
+));
+jest.mock("./pages/WorkstationOperator", () => () => (
+  <div data-testid="workstation-operator-page">Workstation Operator Page</div>
+));
+jest.mock("./pages/InviteAccept", () => () => (
+  <div data-testid="invite-accept-page">Invite Accept Page</div>
+));
+jest.mock("./pages/PasswordReset", () => () => (
+  <div data-testid="password-reset-page">Password Reset Page</div>
+));
+jest.mock("./pages/RecoveryConfirm", () => () => (
+  <div data-testid="recovery-confirm-page">Recovery Confirm Page</div>
+));
+jest.mock("./pages/Account", () => () => (
+  <div data-testid="account-page">Account Page</div>
 ));
 
 // Mock the context providers (value shape from shared mocks)
@@ -201,8 +225,8 @@ describe("App Component", () => {
     renderApp();
   });
 
-  test("renders home page by default", () => {
+  test("renders app entry page by default", () => {
     renderApp();
-    expect(screen.getByTestId("home-page")).toBeInTheDocument();
+    expect(screen.getByTestId("app-entry-page")).toBeInTheDocument();
   });
 });

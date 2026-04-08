@@ -107,6 +107,11 @@ Expect:
 
 Do not accept speculative abstractions or cleverness that makes live behavior harder to reason about.
 
+**TypeScript**
+
+- Prefer explicit types over `any`. Use `unknown` with narrowing, shared domain types, or `Record<string, unknown>` for loosely shaped JSON when needed.
+- For auth API responses, align client types with `authService.js` payloads (see `client/src/api/authTypes.ts`).
+
 ### 6. Testing and verification
 
 Changes should include proportional verification.
@@ -122,6 +127,20 @@ Expect tests when logic changes in:
 - Media handling
 - Overlay behavior
 - Timer behavior
+
+**Failing tests: intent before rewriting expectations**
+
+A failing test is a signal, not a prompt to silence it. Agents and contributors must not update tests only to make the suite green without establishing that the **production change is intentional** and the **old expectation is obsolete**.
+
+Before changing a test to match new behavior:
+
+1. **Confirm intent** — Was the code change deliberate (ticket, PR description, explicit request)? If the failure might be an accident, fix the implementation first.
+2. **Confirm the contract** — Does the product or API still require the old behavior (compatibility, security, operator workflow)? If yes, preserve or restore that behavior; do not weaken the test.
+3. **If the new behavior is correct** — Update the test to assert the new contract and, when useful, add coverage for edge cases the change introduced.
+
+**Heuristic:** If you cannot state in one sentence why the new behavior is correct and the prior test expectation no longer applies, stop and clarify before editing the test.
+
+Reviewers should treat unexplained test-only diffs alongside production changes as high risk: they may hide a regression.
 
 When possible, reviewers should verify relevant commands:
 
@@ -144,6 +163,7 @@ Prefer existing patterns already used in the client:
 - Existing Electron preload boundary for privileged APIs
 - Existing `DisplayWindow` and preview architecture for rendering
 - Existing test style with Jest and Testing Library
+- Reusable shared UI components (for example `Button`, `Input`, `Select`, and other primitives already in `client/src/components`) instead of ad hoc markup when something suitable already exists
 
 **Operator UI density (live controllers and moderator surfaces)**
 
@@ -173,6 +193,10 @@ Server changes should be reviewed for:
 - Input validation
 - Failure modes for upload and third-party integrations
 - Avoiding silent data shape changes
+
+**Auth and Firestore (`authService.js`)**
+
+If Firebase Admin credentials are missing or invalid, auth persistence falls back to **in-memory Maps** in the Node process. That is intended for local development without Firestore. It is **not** a safe substitute for production: data is lost on restart, multi-instance deployments do not share state, and behavior diverges from real persistence. Production must configure `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY` so Firestore is used. `authRuntimeInfo.hasFirestore` reflects whether the live store is active.
 
 ## Best-Practice Expectations
 
@@ -219,7 +243,7 @@ All WorshipSync agents must communicate with a voice that is:
 - Steady and reassuring — calm, composed, and never dramatic.
 - Respectful of ministry context — aware that users are serving, not just operating software.
 - Clear, simple, and direct — concise language, minimal jargon.
-- Warm but professional — friendly without being casual or cheesy.
+- **Professional casual** — conversational and approachable (short sentences, plain words, “you/your” where it helps). Friendly without being sloppy, cute, or chatty.
 - Competent and trustworthy — technically confident without overpromising.
 
 ### External (user-facing) agent rules
@@ -230,14 +254,15 @@ Agents interacting with worship leaders, volunteers, and production teams must:
 - Provide short, actionable guidance.
 - Use neutral, steady phrasing for errors and unexpected states.
 - Encourage without sentimentality.
-- Avoid humor, slang, or anything that could misfire under pressure.
+- Prefer everyday language operators use in production settings (for example “team” or “teammates” for people who share access) when it stays clear.
 
 External agents must not:
 
 - Use panic language (“Uh oh”, “Something went wrong”).
 - Use guilt, shame, or pressure.
-- Sound corporate, salesy, or overly formal.
+- Sound corporate, salesy, or stiffly formal.
 - Over-explain or add unnecessary detail.
+- Use internet slang, jokes, sarcasm, memes, or anything that could misfire under pressure.
 
 User-facing language limits (including theological and spiritual phrasing) are listed under Boundaries.
 
@@ -276,6 +301,7 @@ All WorshipSync agents must follow these style conventions:
 - Avoid filler words and unnecessary qualifiers.
 - Maintain consistent terminology across all agents.
 - Provide next steps when reporting errors or blocked states.
+- For **user-facing** copy, contractions are fine when they read naturally (for example “you’ve”, “it’s”, “don’t”).
 
 ### Message patterns
 
@@ -314,13 +340,18 @@ These are tone anchors, not fixed strings.
 - Avoid: “Nothing here yet — your worship will be amazing!”
 - Prefer: “No items yet. Add one to get started.”
 
+**Professional casual (in-app)**
+
+- Avoid: “Please be advised that your configuration could not be persisted.”
+- Prefer: “Couldn’t save that. Check your connection and try again.”
+
 ### Boundaries
 
 WorshipSync agents must never:
 
-- Use slang, jokes, or sarcasm.
+- Use slang, jokes, or sarcasm (light professional casual is fine; slang is not).
 - Use panic, urgency, or alarm.
 - Overpromise reliability or outcomes.
 - Talk down to users or assume incompetence.
-- Use an overly casual or overly formal tone.
+- Sound like a chatbot, a marketer, or a legal notice.
 - Put theological, spiritual, or sermonizing language in user-facing copy.

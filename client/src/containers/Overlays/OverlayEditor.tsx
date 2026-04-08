@@ -31,6 +31,7 @@ type OverlayEditorProps = {
   isMobile: boolean;
   handleOverlayUpdate: (overlay: OverlayInfo) => void;
   handleFormattingChange: (formatting: any) => void;
+  readOnly?: boolean;
 };
 const OverlayEditor = ({
   selectedOverlay,
@@ -42,11 +43,12 @@ const OverlayEditor = ({
   isMobile,
   handleOverlayUpdate,
   handleFormattingChange,
+  readOnly = false,
 }: OverlayEditorProps) => {
   const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) ?? {};
   const [isExpandedDrawerOpen, setIsExpandedDrawerOpen] = useState(false);
-  const isDisabled = isOverlayLoading || !selectedOverlay.id;
+  const isDisabled = isOverlayLoading || !selectedOverlay.id || readOnly;
 
   const overlayHistory = useSelector(
     (state: RootState) => state.undoable.present.overlays.overlayHistory
@@ -273,6 +275,7 @@ const OverlayEditor = ({
             iconSize="sm"
             title="Expand to full screen"
             color="#22d3ee"
+            disabled={isDisabled}
           />
         </div>
         <DisplayWindow

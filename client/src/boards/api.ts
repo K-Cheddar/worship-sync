@@ -1,12 +1,21 @@
 import { getApiBasePath } from "../utils/environment";
 import { DBBoard, DBBoardAlias, DBBoardPost } from "../types";
-import { getStoredBoardAdminHeaders } from "../api/login";
+import { getWorkstationToken } from "../utils/authStorage";
 
 type JsonRequestInit = RequestInit & {
   body?: Record<string, unknown> | string;
 };
 
 const BOARD_REQUEST_TIMEOUT_MS = 15000;
+
+export const createBoardRequestHeaders = (initHeaders?: HeadersInit) => {
+  const headers = new Headers(initHeaders ?? {});
+  const workstationToken = getWorkstationToken();
+  if (workstationToken) {
+    headers.set("x-workstation-token", workstationToken);
+  }
+  return headers;
+};
 
 export type BoardAliasResponse = {
   alias: DBBoardAlias;
@@ -20,16 +29,10 @@ export type BoardPostsResponse = {
 };
 
 const fetchJson = async <T>(path: string, init?: JsonRequestInit): Promise<T> => {
-  const headers = new Headers(init?.headers ?? {});
+  const headers = createBoardRequestHeaders(init?.headers);
   let body = init?.body as BodyInit | undefined;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), BOARD_REQUEST_TIMEOUT_MS);
-  const boardAdminHeaders = getStoredBoardAdminHeaders();
-  Object.entries(boardAdminHeaders).forEach(([key, value]) => {
-    if (value) {
-      headers.set(key, value);
-    }
-  });
 
   if (init?.body && typeof init.body !== "string") {
     headers.set("Content-Type", "application/json");
@@ -41,6 +44,7 @@ const fetchJson = async <T>(path: string, init?: JsonRequestInit): Promise<T> =>
   try {
     response = await fetch(`${getApiBasePath()}${path}`, {
       ...init,
+      credentials: "include",
       headers,
       body,
       signal: controller.signal,

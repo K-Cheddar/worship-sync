@@ -9,6 +9,7 @@ interface TimerControlButtonsProps {
   onPause: () => void;
   onStop: () => void;
   className?: string;
+  disabled?: boolean;
 }
 
 const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
@@ -17,6 +18,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
   onPause,
   onStop,
   className = "",
+  disabled = false,
 }) => {
   return (
     <div className={`flex gap-2 items-center px-2 ${className} w-full justify-center`}>
@@ -24,7 +26,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
         variant="tertiary"
         svg={Play}
         onClick={onPlay}
-        disabled={status === "running"}
+        disabled={disabled || status === "running"}
         title="Play"
         color="#48bb78"
         iconSize="xl"
@@ -33,7 +35,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
         variant="tertiary"
         svg={Pause}
         onClick={onPause}
-        disabled={status !== "running"}
+        disabled={disabled || status !== "running"}
         title="Pause"
         color="#ecc94b"
         iconSize="xl"
@@ -42,7 +44,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
         variant="tertiary"
         svg={Square}
         onClick={onStop}
-        disabled={status === "stopped"}
+        disabled={disabled || status === "stopped"}
         title="Stop"
         color="#f56565"
         iconSize="xl"
@@ -52,6 +54,7 @@ const TimerControlButtons: React.FC<TimerControlButtonsProps> = ({
         title="Reset"
         svg={RotateCw}
         onClick={onStop}
+        disabled={disabled}
         color="#f59e0b"
         iconSize="xl"
       />

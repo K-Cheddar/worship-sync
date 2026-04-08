@@ -808,4 +808,7 @@ export type Instance = {
   isOnController: boolean;
   lastActive: string;
   user: string;
+  name?: string;
+  sessionKind?: "human" | "workstation" | "display" | null;
+  deviceLabel?: string | null;
 };

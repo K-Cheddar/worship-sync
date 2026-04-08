@@ -20,7 +20,13 @@ export type ButtonProps = Omit<
   children?: ReactNode;
   svg?: FunctionComponent<React.SVGProps<SVGSVGElement>>;
   image?: string;
-  variant?: "primary" | "secondary" | "tertiary" | "cta" | "none";
+  variant?:
+    | "primary"
+    | "secondary"
+    | "tertiary"
+    | "cta"
+    | "textLink"
+    | "none";
   className?: string;
   color?: string;
   wrap?: boolean;
@@ -35,6 +41,7 @@ export type ButtonProps = Omit<
   position?: "relative" | "absolute";
   component?: "button" | "link";
   to?: string;
+  state?: unknown;
 };
 
 const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
@@ -77,24 +84,36 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       <Icon svg={svg || FileQuestion} color={color} size={iconSize} />
     );
 
-    const _padding = padding ? padding : children ? "py-1 px-2" : "p-1";
+    const _padding = padding
+      ? padding
+      : variant === "textLink"
+        ? "py-0.5 px-0"
+        : children
+          ? "py-1 px-2"
+          : "p-1";
 
     const variantClasses: Record<
       NonNullable<ButtonProps["variant"]>,
       string
     > = {
-      cta: "bg-green-600 hover:bg-green-700 active:bg-green-800 border-2 border-green-600 hover:border-green-700 active:border-green-800 text-white",
+      cta: "bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 border-2 border-cyan-600 hover:border-cyan-700 active:border-cyan-800 text-white",
       primary:
         "bg-black hover:bg-gray-900 active:bg-gray-800 border-2 border-black hover:border-gray-900 active:border-gray-800 text-white",
       secondary:
         "bg-white hover:bg-gray-200 active:bg-gray-300 border-2 border-white hover:border-gray-200 active:border-gray-300 text-black",
       tertiary:
         "bg-transparent hover:bg-gray-500 active:bg-gray-400 border-2 border-transparent hover:border-gray-500 active:border-gray-400 text-white",
+      textLink:
+        "min-h-0 max-md:min-h-0 border-0 bg-transparent text-sm text-cyan-400 underline underline-offset-2 hover:text-cyan-300 active:text-cyan-400 focus-visible:rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 disabled:cursor-not-allowed disabled:font-normal disabled:text-gray-500 disabled:no-underline disabled:hover:text-gray-500",
       none: "",
     };
 
     const commonClassName = cn(
-      `font-semibold rounded-md flex items-center max-w-full max-md:min-h-14 cursor-pointer disabled:opacity-65 disabled:pointer-events-none ${gap}`,
+      variant === "textLink" ? "font-normal" : "font-semibold",
+      `rounded-md flex items-center max-w-full cursor-pointer disabled:pointer-events-none ${gap}`,
+      variant !== "textLink" && "max-md:min-h-14",
+      variant !== "textLink" && "disabled:opacity-65",
+      variant === "textLink" && "disabled:opacity-100",
       _padding,
       !isSelected && variant && variantClasses[variant],
       wrap ? "whitespace-normal text-left break-words" : "whitespace-nowrap",

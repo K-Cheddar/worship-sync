@@ -512,6 +512,7 @@ const MediaModal = ({
               inputTextSize="text-sm"
               svg={searchTerm ? X : undefined}
               svgAction={() => onSearchChange("")}
+              svgActionAriaLabel="Clear search"
             />
             <Toggle
               icon={Eye}

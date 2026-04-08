@@ -25,6 +25,8 @@ type OverlayProps = {
   initialList: string[];
   selectAndLoadOverlay: (overlayId: string) => void;
   handleDeleteOverlay: (overlayId: string) => void;
+  /** Disables reorder and delete; selection and Send remain for view-only access. */
+  readOnly?: boolean;
 };
 
 const Overlay = ({
@@ -34,6 +36,7 @@ const Overlay = ({
   initialList,
   selectAndLoadOverlay,
   handleDeleteOverlay,
+  readOnly = false,
 }: OverlayProps) => {
   const dispatch = useDispatch();
 
@@ -55,6 +58,7 @@ const Overlay = ({
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
       id: overlay.id,
+      disabled: readOnly,
     });
 
   const style = {
@@ -177,7 +181,7 @@ const Overlay = ({
       }}
       style={style}
       {...attributes}
-      {...listeners}
+      {...(readOnly ? {} : listeners)}
       id={`overlay-${overlay.id}`}
     >
       <Button
@@ -248,14 +252,16 @@ const Overlay = ({
           </span>
         )}
       </Button>
-      <Button
-        variant="tertiary"
-        className="text-sm ml-auto h-full"
-        padding="px-2 py-1"
-        svg={Trash2}
-        onClick={deleteOverlayHandler}
-      />
-      {hasData && (
+      {!readOnly && (
+        <Button
+          variant="tertiary"
+          className="text-sm ml-auto h-full"
+          padding="px-2 py-1"
+          svg={Trash2}
+          onClick={deleteOverlayHandler}
+        />
+      )}
+      {hasData && !readOnly && (
         <Button
           color={isStreamTransmitting ? "#22c55e" : "gray"}
           variant="tertiary"

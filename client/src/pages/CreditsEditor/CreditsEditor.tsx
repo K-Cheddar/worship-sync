@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Credits from "../../containers/Credits/Credits";
 import { default as CreditsEditorContainer } from "../../containers/Credits/CreditsEditor";
@@ -50,7 +50,7 @@ import { setItemListIsLoading } from "../../store/itemListSlice";
 import { initiateOverlayList } from "../../store/overlaysSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
-import { capitalizeFirstLetter } from "../../utils/generalUtils";
+import { getChurchDataPath } from "../../utils/firebasePaths";
 import { broadcastCreditsUpdate, CREDITS_EDITOR_PAGE_READY } from "../../store/store";
 import CreditHistoryDrawer from "../../containers/Credits/CreditHistoryDrawer";
 import CreditsSettingsDrawer from "../../containers/Credits/CreditsSettingsDrawer";
@@ -68,7 +68,8 @@ const CreditsEditor = () => {
 
   const { db, dbProgress, isMobile = false, setIsMobile, updater, pullFromRemote } =
     useContext(ControllerInfoContext) ?? {};
-  const { database, firebaseDb, user } = useContext(GlobalInfoContext) || {};
+  const { churchId, firebaseDb, user, access } = useContext(GlobalInfoContext) || {};
+  const canEditCredits = access !== "view";
   const dispatch = useDispatch();
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -262,7 +263,7 @@ const CreditsEditor = () => {
 
       const transitionSceneRef = ref(
         firebaseDb,
-        "users/" + capitalizeFirstLetter(database) + "/v2/credits/transitionScene"
+        getChurchDataPath(churchId, "credits", "transitionScene")
       );
       onValue(transitionSceneRef, (snapshot) => {
         const data = snapshot.val();
@@ -273,7 +274,7 @@ const CreditsEditor = () => {
 
       const creditsSceneRef = ref(
         firebaseDb,
-        "users/" + capitalizeFirstLetter(database) + "/v2/credits/creditsScene"
+        getChurchDataPath(churchId, "credits", "creditsScene")
       );
       onValue(creditsSceneRef, (snapshot) => {
         const data = snapshot.val();
@@ -284,7 +285,7 @@ const CreditsEditor = () => {
 
       const scheduleNameRef = ref(
         firebaseDb,
-        "users/" + capitalizeFirstLetter(database) + "/v2/credits/scheduleName"
+        getChurchDataPath(churchId, "credits", "scheduleName")
       );
       onValue(scheduleNameRef, (snapshot) => {
         const data = snapshot.val();
@@ -295,7 +296,7 @@ const CreditsEditor = () => {
 
       const getPublishedRef = ref(
         firebaseDb,
-        "users/" + capitalizeFirstLetter(database) + "/v2/credits/publishedList"
+        getChurchDataPath(churchId, "credits", "publishedList")
       );
       onValue(getPublishedRef, (snapshot) => {
         const data = snapshot.val();
@@ -306,7 +307,7 @@ const CreditsEditor = () => {
     };
 
     getCreditsFromFirebase();
-  }, [dispatch, firebaseDb, database]);
+  }, [churchId, dispatch, firebaseDb]);
 
   const editorRef = useCallback(
     (node: HTMLDivElement) => {
@@ -460,53 +461,60 @@ const CreditsEditor = () => {
     navigate("/");
   }, [navigate]);
 
-  const creditsMenuItems = [
-    {
-      element: (
-        <div className="flex items-center gap-2 max-md:min-h-12">
-          <Icon svg={ArrowLeft} color="#d1d5dc" />
-          Back
-        </div>
-      ),
-      onClick: handleBack,
-    },
-    {
-      element: (
-        <div className="flex items-center gap-2 max-md:min-h-12">
-          <Icon svg={Home} color="#d1d5dc" />
-          Home
-        </div>
-      ),
-      onClick: () => navigate("/"),
-    },
-    {
-      element: (
-        <div className="flex items-center gap-2 max-md:min-h-12">
-          <Icon svg={Layers} color="#d1d5dc" />
-          Overlay Controller
-        </div>
-      ),
-      to: "/overlay-controller",
-    },
-    {
-      element: (
-        <div className="flex items-center gap-2 max-md:min-h-12">
-          <Icon svg={Settings} color="#d1d5dc" />
-          Settings
-        </div>
-      ),
-      onClick: () => setIsSettingsDrawerOpen(true),
-    },
-    {
-      element: (
-        <>
-          <Icon svg={History} color="#d1d5dc" />
-          History
-        </>
-      ),
-      onClick: () => setIsHistoryDrawerOpen(true),
-    },
-  ];
+  const creditsMenuItems = useMemo(
+    () => [
+      {
+        element: (
+          <div className="flex items-center gap-2 max-md:min-h-12">
+            <Icon svg={ArrowLeft} color="#d1d5dc" />
+            Back
+          </div>
+        ),
+        onClick: handleBack,
+      },
+      {
+        element: (
+          <div className="flex items-center gap-2 max-md:min-h-12">
+            <Icon svg={Home} color="#d1d5dc" />
+            Home
+          </div>
+        ),
+        onClick: () => navigate("/"),
+      },
+      {
+        element: (
+          <div className="flex items-center gap-2 max-md:min-h-12">
+            <Icon svg={Layers} color="#d1d5dc" />
+            Overlay Controller
+          </div>
+        ),
+        to: "/overlay-controller",
+      },
+      ...(canEditCredits
+        ? [
+            {
+              element: (
+                <div className="flex items-center gap-2 max-md:min-h-12">
+                  <Icon svg={Settings} color="#d1d5dc" />
+                  Settings
+                </div>
+              ),
+              onClick: () => setIsSettingsDrawerOpen(true),
+            },
+            {
+              element: (
+                <>
+                  <Icon svg={History} color="#d1d5dc" />
+                  History
+                </>
+              ),
+              onClick: () => setIsHistoryDrawerOpen(true),
+            },
+          ]
+        : []),
+    ],
+    [handleBack, navigate, canEditCredits]
+  );
 
   const generateCreditsButton = (
     <Button
@@ -545,12 +553,16 @@ const CreditsEditor = () => {
               />
             }
           />
-          <div className="border-l-2 border-gray-400 pl-4">
-            <Undo />
-          </div>
-          <div className="flex gap-2 items-center border-l-2 border-gray-400 pl-4">
-            {generateCreditsButton}
-          </div>
+          {canEditCredits && (
+            <div className="border-l-2 border-gray-400 pl-4">
+              <Undo />
+            </div>
+          )}
+          {canEditCredits && (
+            <div className="flex items-center gap-2 border-l-2 border-gray-400 pl-4">
+              {generateCreditsButton}
+            </div>
+          )}
           <div className="ml-auto">
             <UserSection />
           </div>

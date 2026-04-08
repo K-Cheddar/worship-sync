@@ -25,6 +25,7 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
     ...config.bounds,
     webPreferences: {
       preload: join(config.dirname, "../preload/preload.mjs"),
+      partition: "persist:worshipsync",
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,

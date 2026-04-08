@@ -24,6 +24,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import generateRandomId from "../../utils/generateRandomId";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
@@ -94,6 +95,8 @@ const Overlays = () => {
   const { isMobile, db, updater } = useContext(ControllerInfoContext) || {
     isMobile: false,
   };
+  const { access } = useContext(GlobalInfoContext) || {};
+  const canMutateOverlays = access !== "view";
 
   const [showPreview, setShowPreview] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
@@ -199,6 +202,7 @@ const Overlays = () => {
   const sensors = useSensors();
 
   const onDragEnd = (event: DragEndEvent) => {
+    if (!canMutateOverlays) return;
     const { over, active } = event;
     if (!over || !active) return;
 
@@ -522,125 +526,134 @@ const Overlays = () => {
     <ErrorBoundary>
       <DndContext onDragEnd={onDragEnd} sensors={sensors}>
         <div className="flex flex-col w-full h-full p-2 gap-2">
-          <div className="relative flex w-full items-center">
-            <h2 className="flex-1 text-xl font-semibold text-center h-fit">
-              Overlays
-            </h2>
-            <div className="absolute right-0 flex items-center gap-2">
-              <Button
-                variant="tertiary"
-                padding="px-2 py-1"
-                color="#f59e0b"
-                svg={History}
-                onClick={() => setIsOverlayHistoryDrawerOpen(true)}
-                title="Overlay history"
-                iconSize="sm"
-              />
-              <PopOver
-                TriggeringButton={
+          <div className="mx-auto flex w-full max-w-[70%] flex-1 min-h-0 min-w-0 flex-col gap-2">
+            <div className="relative flex w-full items-center">
+              <h2 className="flex-1 text-xl font-semibold text-center h-fit">
+                Overlays
+              </h2>
+              <div className="absolute right-0 flex items-center gap-2">
+                {canMutateOverlays && (
                   <Button
-                    className="text-sm hidden"
-                    padding="px-1"
                     variant="tertiary"
-                    color="#06b6d4"
-                    svg={RefreshCw}
-                  >
-                    Get Names
-                  </Button>
-                }
-              >
-                <div className="flex gap-2">
-                  <Input
-                    label="Service Planning URL"
-                    className="flex gap-2"
-                    value={url}
-                    onChange={(val) => setUrl(val as string)}
+                    padding="px-2 py-1"
+                    color="#f59e0b"
+                    svg={History}
+                    onClick={() => setIsOverlayHistoryDrawerOpen(true)}
+                    title="Overlay history"
+                    iconSize="sm"
                   />
-                  <Button
-                    variant="primary"
-                    onClick={() => getNames(url)}
-                    isLoading={isGettingNames}
-                    svg={Download}
-                    color="#06b6d4"
-                  />
-                </div>
-              </PopOver>
-            </div>
-          </div>
-          <OverlayHistoryDrawer
-            isOpen={isOverlayHistoryDrawerOpen}
-            onClose={() => setIsOverlayHistoryDrawerOpen(false)}
-            size={isMobile ? "xl" : "lg"}
-            position={isMobile ? "bottom" : "right"}
-          />
-          {!isLoading && list.length === 0 && (
-            <p className="text-sm px-2">
-              This outline doesn't have any overlays yet. Click the button below
-              to add some.
-            </p>
-          )}
-          {isLoading ? (
-            <h3 className="text-lg text-center">Loading overlays...</h3>
-          ) : (
-            <div className="flex gap-2 max-lg:flex-col-reverse pb-2 flex-1 min-h-0">
-              <section className="flex-1 flex flex-col gap-2 min-h-0">
-                <ul
-                  id="overlays-list"
-                  className="scrollbar-variable flex flex-col gap-2 w-full overflow-y-auto overflow-x-hidden flex-1 min-h-0 pr-2"
-                  ref={setNodeRef}
+                )}
+                <PopOver
+                  TriggeringButton={
+                    <Button
+                      className="text-sm hidden"
+                      padding="px-1"
+                      variant="tertiary"
+                      color="#06b6d4"
+                      svg={RefreshCw}
+                    >
+                      Get Names
+                    </Button>
+                  }
                 >
-                  <SortableContext
-                    items={list.map((overlay) => overlay.id)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    {list.map((overlay) => {
-                      return (
-                        <Overlay
-                          key={overlay.id}
-                          initialList={initialList}
-                          overlay={overlay}
-                          selectedId={selectedOverlay.id}
-                          isStreamTransmitting={isStreamTransmitting}
-                          selectAndLoadOverlay={selectAndLoadOverlay}
-                          handleDeleteOverlay={handleDeleteOverlay}
-                        />
-                      );
-                    })}
-                  </SortableContext>
-                </ul>
-                <div className="flex gap-2 mt-2">
-                  <Button
-                    className="text-sm flex-1 justify-center"
-                    svg={justAdded ? Check : Plus}
-                    color={justAdded ? "#84cc16" : "#22d3ee"}
-                    disabled={justAdded}
-                    onClick={createNewOverlay}
-                  >
-                    {justAdded ? justAddedText : addButtonText}
-                  </Button>
-                  <Button
-                    className="text-sm flex-1 justify-center"
-                    svg={FolderOpen}
-                    color="#a78bfa"
-                    onClick={() => setIsAddExistingOpen(true)}
-                  >
-                    Existing overlays
-                  </Button>
-                </div>
-              </section>
-              <OverlayEditor
-                selectedOverlay={selectedOverlay}
-                isOverlayLoading={isOverlayLoading}
-                setShowPreview={setShowPreview}
-                showPreview={showPreview}
-                setIsStyleDrawerOpen={setIsStyleDrawerOpen}
-                setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
-                isMobile={isMobile}
-                handleOverlayUpdate={handleOverlayUpdate}
-                handleFormattingChange={handleFormattingChange}
-              />
+                  <div className="flex gap-2">
+                    <Input
+                      label="Service Planning URL"
+                      className="flex gap-2"
+                      value={url}
+                      onChange={(val) => setUrl(val as string)}
+                    />
+                    <Button
+                      variant="primary"
+                      onClick={() => getNames(url)}
+                      isLoading={isGettingNames}
+                      svg={Download}
+                      color="#06b6d4"
+                    />
+                  </div>
+                </PopOver>
+              </div>
             </div>
-          )}
+            <OverlayHistoryDrawer
+              isOpen={isOverlayHistoryDrawerOpen}
+              onClose={() => setIsOverlayHistoryDrawerOpen(false)}
+              size={isMobile ? "xl" : "lg"}
+              position={isMobile ? "bottom" : "right"}
+            />
+            {!isLoading && list.length === 0 && (
+              <p className="text-sm px-2">
+                {canMutateOverlays
+                  ? "This outline doesn't have any overlays yet. Click the button below to add some."
+                  : "This outline doesn't have any overlays yet."}
+              </p>
+            )}
+            {isLoading ? (
+              <h3 className="text-lg text-center">Loading overlays...</h3>
+            ) : (
+              <div className="flex min-h-0 flex-1 gap-2 pb-2 max-lg:flex-col-reverse">
+                <section className="flex min-h-0 flex-1 flex-col gap-2">
+                  <ul
+                    id="overlays-list"
+                    className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden pr-2"
+                    ref={setNodeRef}
+                  >
+                    <SortableContext
+                      items={list.map((overlay) => overlay.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {list.map((overlay) => {
+                        return (
+                          <Overlay
+                            key={overlay.id}
+                            initialList={initialList}
+                            overlay={overlay}
+                            selectedId={selectedOverlay.id}
+                            isStreamTransmitting={isStreamTransmitting}
+                            selectAndLoadOverlay={selectAndLoadOverlay}
+                            handleDeleteOverlay={handleDeleteOverlay}
+                            readOnly={!canMutateOverlays}
+                          />
+                        );
+                      })}
+                    </SortableContext>
+                  </ul>
+                  {canMutateOverlays && (
+                    <div className="mt-2 flex gap-2">
+                      <Button
+                        className="flex-1 justify-center text-sm"
+                        svg={justAdded ? Check : Plus}
+                        color={justAdded ? "#84cc16" : "#22d3ee"}
+                        disabled={justAdded}
+                        onClick={createNewOverlay}
+                      >
+                        {justAdded ? justAddedText : addButtonText}
+                      </Button>
+                      <Button
+                        className="flex-1 justify-center text-sm"
+                        svg={FolderOpen}
+                        color="#a78bfa"
+                        onClick={() => setIsAddExistingOpen(true)}
+                      >
+                        Existing overlays
+                      </Button>
+                    </div>
+                  )}
+                </section>
+                <OverlayEditor
+                  selectedOverlay={selectedOverlay}
+                  isOverlayLoading={isOverlayLoading}
+                  setShowPreview={setShowPreview}
+                  showPreview={showPreview}
+                  setIsStyleDrawerOpen={setIsStyleDrawerOpen}
+                  setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
+                  isMobile={isMobile}
+                  handleOverlayUpdate={handleOverlayUpdate}
+                  handleFormattingChange={handleFormattingChange}
+                  readOnly={!canMutateOverlays}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         <Drawer

@@ -1,14 +1,55 @@
-import { useContext, useState, useEffect } from "react";
+import { useContext, useState, useEffect, useMemo } from "react";
+import { onAuthStateChanged } from "firebase/auth";
 import { CloudOff, Cloud, CircleDot } from "lucide-react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import Icon from "../../../components/Icon/Icon";
+import Button from "../../../components/Button/Button";
+import PopOver from "../../../components/PopOver/PopOver";
+import { getHumanAuth } from "../../../firebase/apps";
+import { firstNameFromDisplayName } from "../../../utils/displayName";
+import type { Instance } from "../../../types";
+
+const ACCOUNT_TRIGGER_MAX_W = "max-w-[10rem]";
 
 const UserSection = () => {
-  const { user, activeInstances } = useContext(GlobalInfoContext) || {};
-  const { isMobile } = useContext(ControllerInfoContext) || {};
-  const isDemo = user === "Demo";
+  const {
+    user,
+    userEmail,
+    activeInstances,
+    hostId,
+    sessionKind,
+    loginState,
+    churchName,
+    exitGuestMode,
+  } = useContext(GlobalInfoContext) || {};
+  const { isMobile, logout } = useContext(ControllerInfoContext) || {};
+  const isDemo = loginState === "guest";
+  const isLoggedIn = loginState === "success";
   const [isPulsing, setIsPulsing] = useState(false);
+  const [firebaseDisplayName, setFirebaseDisplayName] = useState("");
+
+  useEffect(() => {
+    if (sessionKind !== "human") {
+      setFirebaseDisplayName("");
+      return;
+    }
+    const auth = getHumanAuth();
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setFirebaseDisplayName(u?.displayName?.trim() || "");
+    });
+    return () => unsub();
+  }, [sessionKind]);
+
+  const fullDisplayName = useMemo(() => {
+    if (sessionKind === "human" && firebaseDisplayName) {
+      return firebaseDisplayName;
+    }
+    return user ?? "";
+  }, [sessionKind, firebaseDisplayName, user]);
+
+  const toolbarFirstName = firstNameFromDisplayName(fullDisplayName);
+  const churchLine = churchName?.trim() ?? "";
 
   useEffect(() => {
     if ((activeInstances?.length || 0) > 0) {
@@ -20,26 +61,179 @@ const UserSection = () => {
     }
   }, [activeInstances?.length]);
 
-  return (
-    <div className="flex items-center gap-2 text-white">
-      <Icon
-        svg={isDemo ? CloudOff : Cloud}
-        size="md"
-        color={isDemo ? "oklch(0.75 0.183 55.934)" : "#22d3ee"}
-      />
-      <span className="text-sm font-semibold">{user}</span>
-      {!isMobile && (
-        <>
+  const activeCount = activeInstances?.length || 0;
+  const activeInstanceRows = useMemo(() => {
+    const instances = activeInstances || [];
+    const getInstanceLabel = (instance: Instance) =>
+      instance.name?.trim() ||
+      instance.user?.trim() ||
+      instance.deviceLabel?.trim() ||
+      "Operator";
+
+    return [...instances]
+      .sort((a, b) => {
+        if (a.hostId === hostId) return -1;
+        if (b.hostId === hostId) return 1;
+        return getInstanceLabel(a).localeCompare(getInstanceLabel(b));
+      })
+      .map((instance) => ({
+        key: instance.hostId,
+        label: getInstanceLabel(instance),
+        isCurrentHost: instance.hostId === hostId,
+        detail:
+          instance.sessionKind === "workstation"
+            ? "Shared workstation"
+            : null,
+      }));
+  }, [activeInstances, hostId]);
+
+  const accountAriaLabel = (() => {
+    let label = "";
+    if (!fullDisplayName && !churchLine) {
+      label = "Account";
+    } else if (!churchLine) {
+      label = `Account: ${fullDisplayName}`;
+    } else {
+      label = `Account: ${fullDisplayName}, ${churchLine}`;
+    }
+    if (!isMobile) {
+      label = `${label}. ${activeCount} active ${activeCount === 1 ? "session" : "sessions"}`;
+    }
+    return label;
+  })();
+
+  const accountBlock = (
+    <PopOver
+      TriggeringButton={
+        <Button
+          type="button"
+          variant="none"
+          gap="gap-2"
+          padding="py-0.5 px-1"
+          className="h-auto min-h-0! max-md:min-h-0! flex! flex-row! flex-nowrap! items-center! rounded-md font-normal text-white hover:bg-white/10"
+          aria-label={accountAriaLabel}
+        >
           <Icon
-            svg={CircleDot}
-            size="xs"
-            color="#22d3ee"
-            className={isPulsing ? "animate-pulse" : ""}
+            svg={isDemo ? CloudOff : Cloud}
+            size="md"
+            color={isDemo ? "oklch(0.75 0.183 55.934)" : "#22d3ee"}
           />
-          <span className="text-sm">{activeInstances?.length || 0}</span>
-        </>
-      )}
-    </div>
+          <div
+            className={`flex min-w-0 flex-col items-start text-left ${ACCOUNT_TRIGGER_MAX_W}`}
+          >
+            <span className="w-full truncate text-sm font-semibold">
+              {toolbarFirstName || fullDisplayName || "—"}
+            </span>
+            {churchLine ? (
+              <span className="w-full truncate text-xs text-gray-300">{churchLine}</span>
+            ) : null}
+          </div>
+          {!isMobile ? (
+            <>
+              <Icon
+                svg={CircleDot}
+                size="xs"
+                color="#22d3ee"
+                className={`shrink-0 ${isPulsing ? "animate-pulse" : ""}`}
+              />
+              <span className="shrink-0 text-sm">{activeCount}</span>
+            </>
+          ) : null}
+        </Button>
+      }
+    >
+      <div className="flex max-w-xs flex-col gap-3 pt-1">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+            User
+          </span>
+          <span className="wrap-break-word text-sm font-semibold text-white">
+            {fullDisplayName || "—"}
+          </span>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+            Email
+          </span>
+          <span className="wrap-break-word text-sm text-gray-300">
+            {userEmail?.trim() || "—"}
+          </span>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+            Church
+          </span>
+          <span className="wrap-break-word text-sm text-gray-300">
+            {churchLine || "—"}
+          </span>
+        </div>
+        {activeInstanceRows.length > 0 ? (
+          <div className="border-t border-gray-600 pt-3">
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Active right now
+            </span>
+            <ul className="mt-2 flex flex-col gap-2" aria-label="Active sessions">
+              {activeInstanceRows.map((instance) => (
+                <li
+                  key={instance.key}
+                  className={
+                    instance.isCurrentHost
+                      ? "flex flex-col gap-1 rounded-md border border-cyan-500/35 bg-cyan-950/40 px-2 py-2"
+                      : "flex flex-col gap-1 px-2 py-1"
+                  }
+                >
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <span className="wrap-break-word text-sm text-white">
+                      {instance.label}
+                    </span>
+                    {instance.isCurrentHost ? (
+                      <span className="shrink-0 rounded border border-cyan-400/60 bg-cyan-950/60 px-1.5 py-px text-xs font-semibold uppercase tracking-wide text-cyan-200">
+                        You
+                      </span>
+                    ) : null}
+                  </div>
+                  {instance.detail ? (
+                    <span className="text-xs text-gray-400">{instance.detail}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {isLoggedIn && logout ? (
+          <div className="border-t border-gray-600 pt-3">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full justify-center text-sm"
+              onClick={() => void logout()}
+            >
+              Sign out
+            </Button>
+          </div>
+        ) : null}
+        {isDemo && exitGuestMode ? (
+          <div className="border-t border-gray-600 pt-3">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full justify-center text-sm"
+              onClick={() => exitGuestMode()}
+            >
+              Return to setup
+            </Button>
+            <p className="mt-2 text-xs text-gray-400">
+              Leave the local demo and open the screen where you choose sign-in, setup,
+              or guest mode.
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </PopOver>
+  );
+
+  return (
+    <div className="flex min-w-0 items-center text-white">{accountBlock}</div>
   );
 };
 

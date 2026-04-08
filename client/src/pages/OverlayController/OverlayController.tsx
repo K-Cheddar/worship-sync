@@ -86,7 +86,7 @@ const OverlayController = () => {
           </div>
         </>
       )}
-      {access !== "full" && (
+      {access === "music" && (
         <div className="flex flex-col h-full lg:w-[min(46rem,46%)] lg:min-w-120 shrink-0 border-l-2 border-gray-500 bg-gray-700">
           <TransmitHandler
             visibleScreens={["stream"]}

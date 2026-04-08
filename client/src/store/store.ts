@@ -69,7 +69,7 @@ import serviceTimesSliceReducer, {
 import { mergeTimers } from "../utils/timerUtils";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import _ from "lodash";
-import { capitalizeFirstLetter } from "../utils/generalUtils";
+import { getChurchDataPath } from "../utils/firebasePaths";
 
 // Helper function to safely post messages to the broadcast channel
 const safePostMessage = (message: any) => {
@@ -145,7 +145,7 @@ const getOverlaySelectionForUndoRedo = (
 
 /** Push current presentation (projector/monitor/stream) to Firebase + localStorage. */
 export const writePresentationSnapshotToFirebase = (state: RootState) => {
-  if (!globalFireDbInfo.db || !globalFireDbInfo.database) return;
+  if (!globalFireDbInfo.db || !globalFireDbInfo.churchId) return;
   const { projectorInfo, monitorInfo, streamInfo, streamItemContentBlocked } =
     state.presentation;
   const presentationUpdate = {
@@ -203,9 +203,7 @@ export const writePresentationSnapshotToFirebase = (state: RootState) => {
   set(
     ref(
       globalFireDbInfo.db,
-      "users/" +
-        capitalizeFirstLetter(globalFireDbInfo.database) +
-        "/v2/presentation",
+      getChurchDataPath(globalFireDbInfo.churchId, "presentation"),
     ),
     cleanObject(presentationUpdate),
   );
@@ -871,33 +869,34 @@ listenerMiddleware.startListening({
 
     if (ownTimers.length > 0) {
       localStorage.setItem("timerInfo", JSON.stringify(ownTimers));
-
-      if (globalFireDbInfo.db && globalFireDbInfo.database) {
-        // Get current timers from Firebase
-        const timersRef = ref(
-          globalFireDbInfo.db,
-          "users/" +
-            capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/timers",
-        );
-
-        // Get current timers and merge with own timers
-        const snapshot = await get(timersRef);
-        const currentTimers = snapshot.val() || [];
-
-        // First add other timers to the map
-        // Merge timers, prioritizing own timers over remote ones
-        const mergedTimers = mergeTimers(
-          currentTimers,
-          ownTimers,
-          globalHostId,
-        );
-
-        set(timersRef, cleanObject(mergedTimers));
-      }
-      // Reset flag after writing (to localStorage and/or Firebase) so effect doesn't keep re-running (e.g. for Demo)
-      listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
+    } else {
+      localStorage.removeItem("timerInfo");
     }
+
+    if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
+      // Get current timers from Firebase
+      const timersRef = ref(
+        globalFireDbInfo.db,
+        getChurchDataPath(globalFireDbInfo.churchId, "timers"),
+      );
+
+      // Get current timers and merge with own timers
+      const snapshot = await get(timersRef);
+      const currentTimers = Array.isArray(snapshot.val()) ? snapshot.val() : [];
+
+      // Merge timers, prioritizing own timers over remote ones.
+      // Passing an empty ownTimers array removes this host's timers remotely.
+      const mergedTimers = mergeTimers(
+        currentTimers,
+        ownTimers,
+        globalHostId,
+      );
+
+      set(timersRef, cleanObject(mergedTimers));
+    }
+
+    // Reset flag after writing (to localStorage and/or Firebase) so effect doesn't keep re-running.
+    listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
   },
 });
 
@@ -1003,41 +1002,33 @@ listenerMiddleware.startListening({
     if (
       creditsSlice.actions.updatePublishedCreditsList.match(action) &&
       globalFireDbInfo.db &&
-      globalFireDbInfo.database
+      globalFireDbInfo.churchId
     ) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" +
-            capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/publishedList",
+          getChurchDataPath(globalFireDbInfo.churchId, "credits", "publishedList"),
         ),
         cleanObject(publishedList),
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" +
-            capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/transitionScene",
+          getChurchDataPath(globalFireDbInfo.churchId, "credits", "transitionScene"),
         ),
         transitionScene,
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" +
-            capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/creditsScene",
+          getChurchDataPath(globalFireDbInfo.churchId, "credits", "creditsScene"),
         ),
         creditsScene,
       );
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" +
-            capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/credits/scheduleName",
+          getChurchDataPath(globalFireDbInfo.churchId, "credits", "scheduleName"),
         ),
         scheduleName,
       );
@@ -1217,13 +1208,11 @@ listenerMiddleware.startListening({
       listenerApi.getState() as RootState
     ).undoable.present.preferences;
 
-    if (globalFireDbInfo.db && globalFireDbInfo.database) {
+    if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" +
-            capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/monitorSettings",
+          getChurchDataPath(globalFireDbInfo.churchId, "monitorSettings"),
         ),
         cleanObject({
           ...monitorSettings,
@@ -1408,13 +1397,11 @@ listenerMiddleware.startListening({
         }
       }
     }
-    if (globalFireDbInfo.db && globalFireDbInfo.database) {
+    if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" +
-            capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/services",
+          getChurchDataPath(globalFireDbInfo.churchId, "services"),
         ),
         cleanObject(list),
       );
@@ -1440,13 +1427,11 @@ listenerMiddleware.startListening({
       return;
     }
 
-    if (globalFireDbInfo.db && globalFireDbInfo.database) {
+    if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
       set(
         ref(
           globalFireDbInfo.db,
-          "users/" +
-            capitalizeFirstLetter(globalFireDbInfo.database) +
-            "/v2/services",
+          getChurchDataPath(globalFireDbInfo.churchId, "services"),
         ),
         cleanObject(list),
       );

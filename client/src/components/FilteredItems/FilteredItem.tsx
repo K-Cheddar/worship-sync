@@ -15,6 +15,8 @@ type FilteredItemProps = {
   updateShowWords: (showWords: boolean, index: number) => void;
   /** Shown under the title for songs when stored metadata includes an artist (e.g. lyrics import). */
   artistName?: string;
+  /** When false, hide add-to-outline and delete (view-only library access). */
+  canMutateLibrary?: boolean;
 };
 
 const FilteredItem = ({
@@ -26,6 +28,7 @@ const FilteredItem = ({
   searchValue,
   updateShowWords,
   artistName,
+  canMutateLibrary = true,
 }: FilteredItemProps) => {
   const isEven = index % 2 === 0;
   const bg = isEven ? "bg-gray-800" : "bg-gray-600";
@@ -88,23 +91,27 @@ const FilteredItem = ({
             variant="tertiary"
           />
         )}
-        <Button
-          color={justAdded ? "#84cc16" : "#22d3ee"}
-          variant="tertiary"
-          className="text-sm h-full leading-3 ml-auto min-h-6"
-          padding="py-1 px-2"
-          disabled={justAdded}
-          svg={justAdded ? Check : Plus}
-          onClick={() => addItem(item)}
-        >
-          {justAdded ? "Added." : "Add to outline"}
-        </Button>
-        <Button
-          svg={Trash2}
-          variant="tertiary"
-          color="red"
-          onClick={() => setItemToBeDeleted(item)}
-        />
+        {canMutateLibrary && (
+          <>
+            <Button
+              color={justAdded ? "#84cc16" : "#22d3ee"}
+              variant="tertiary"
+              className="text-sm h-full leading-3 ml-auto min-h-6"
+              padding="py-1 px-2"
+              disabled={justAdded}
+              svg={justAdded ? Check : Plus}
+              onClick={() => addItem(item)}
+            >
+              {justAdded ? "Added." : "Add to outline"}
+            </Button>
+            <Button
+              svg={Trash2}
+              variant="tertiary"
+              color="red"
+              onClick={() => setItemToBeDeleted(item)}
+            />
+          </>
+        )}
       </div>
       <div>
         <HighlightWords

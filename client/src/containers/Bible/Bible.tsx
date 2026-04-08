@@ -32,6 +32,7 @@ import {
 import { createItemFromProps, createNewBible } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { resetCreateItem } from "../../store/createItemSlice";
 import { RootState } from "../../store/store";
@@ -101,6 +102,8 @@ const Bible = () => {
     bibleDbProgress,
     isMobile = false,
   } = useContext(ControllerInfoContext) || {};
+  const { access } = useContext(GlobalInfoContext) || {};
+  const canAddBibleToOutline = access !== "view";
 
   const bibleItemName = useMemo(() => {
     const bookName = books?.[book]?.name || "";
@@ -391,20 +394,22 @@ const Bible = () => {
           isStreamTransmitting
         }
       />
-      <Button
-        variant="cta"
-        padding="px-4 py-1"
-        className="ml-auto mt-auto mb-2"
-        onClick={submitVerses}
-        isLoading={isLoadingChapter}
-        disabled={
-          isLoadingChapter || justAdded || !hasRenderableVerses
-        }
-        color={justAdded ? "#67e8f9" : undefined}
-        svg={justAdded ? Check : Plus}
-      >
-        {justAdded ? "Added." : "Add to outline"}
-      </Button>
+      {canAddBibleToOutline && (
+        <Button
+          variant="cta"
+          padding="px-4 py-1"
+          className="ml-auto mt-auto mb-2"
+          onClick={submitVerses}
+          isLoading={isLoadingChapter}
+          disabled={
+            isLoadingChapter || justAdded || !hasRenderableVerses
+          }
+          color={justAdded ? "#67e8f9" : undefined}
+          svg={justAdded ? Check : Plus}
+        >
+          {justAdded ? "Added." : "Add to outline"}
+        </Button>
+      )}
     </div>
   );
 
@@ -440,6 +445,7 @@ const Bible = () => {
           <Input
             svg={search ? X : undefined}
             svgAction={() => handleSearch("")}
+            svgActionAriaLabel="Clear search"
             value={search}
             onChange={(val) => handleSearch(val as string)}
             onKeyDown={(e) => {

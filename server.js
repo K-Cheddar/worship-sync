@@ -2,6 +2,7 @@ import "./instrument.js";
 import { setupExpressErrorHandler } from "@sentry/node";
 import express from "express";
 import cors from "cors";
+import session from "express-session";
 import path from "path";
 import bodyParser from "body-parser";
 import fsPromise from "fs/promises";
@@ -12,6 +13,11 @@ import { readFileSync } from "node:fs";
 import { v2 as cloudinary } from "cloudinary";
 import Mux from "@mux/mux-node";
 import https from "https";
+import {
+  authHandlers,
+  authSessionConfig,
+  resolveRequestBootstrap,
+} from "./authService.js";
 import { fetchExcelFile } from "./getScheduleFunctions.js";
 import { createLyricsImportService } from "./lyricsImport.js";
 import {
@@ -57,9 +63,23 @@ const dirname = import.meta.dirname;
 const isDevelopment = process.env.NODE_ENV === "development";
 
 const port = process.env.PORT || 5000;
+
+/** Production browser origin derived from AUTH_APP_BASE_URL (canonical app URL). */
+const resolveProductionFrontEndHost = () => {
+  const raw = process.env.AUTH_APP_BASE_URL;
+  if (!raw) {
+    return "http://localhost:3000";
+  }
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return "http://localhost:3000";
+  }
+};
+
 const frontEndHost = isDevelopment
   ? "https://local.worshipsync.net:3000"
-  : "http://localhost:3000";
+  : resolveProductionFrontEndHost();
 const {
   getGeniusTrack,
   getLrclibRequestParams,
@@ -70,36 +90,56 @@ const {
   geniusAccessToken: process.env.GENIUS_ACCESS_TOKEN,
 });
 
-const BOARD_ADMIN_LOGGED_IN_HEADER = "x-worshipsync-logged-in";
-const BOARD_ADMIN_USER_HEADER = "x-worshipsync-user";
-const BOARD_ADMIN_DATABASE_HEADER = "x-worshipsync-database";
-const BOARD_ADMIN_ACCESS_HEADER = "x-worshipsync-access";
+const configuredAllowedOrigins = [
+  frontEndHost,
+  "https://local.worshipsync.net:3000",
+  "http://localhost:3000",
+  process.env.AUTH_APP_BASE_URL,
+  ...(process.env.AUTH_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+];
+/** Normalized browser origins allowed for credentialed CORS (see cors() below). */
+const corsAllowedOrigins = Array.from(
+  new Set(
+    configuredAllowedOrigins
+      .map((origin) => {
+        try {
+          return new URL(origin).origin;
+        } catch {
+          return origin;
+        }
+      })
+      .filter(Boolean),
+  ),
+);
 
-const getRequestHeaderValue = (headers, name) => {
-  const value = headers[name];
-  if (Array.isArray(value)) {
-    return String(value[0] || "").trim();
-  }
-  return String(value || "").trim();
-};
+const requireAppSession = async (req, res, next) => {
+  try {
+    const bootstrap = await resolveRequestBootstrap(req);
+    if (
+      bootstrap?.authenticated &&
+      bootstrap.sessionKind !== "display" &&
+      bootstrap.database
+    ) {
+      req.appSession = {
+        username:
+          bootstrap.user?.displayName ||
+          bootstrap.device?.operatorName ||
+          bootstrap.device?.label ||
+          "Operator",
+        database: bootstrap.database,
+        access: bootstrap.appAccess || "view",
+      };
+      return next();
+    }
 
-const requireAppSession = (req, res, next) => {
-  const loggedIn = getRequestHeaderValue(req.headers, BOARD_ADMIN_LOGGED_IN_HEADER);
-  const username = getRequestHeaderValue(req.headers, BOARD_ADMIN_USER_HEADER);
-  const database = getRequestHeaderValue(req.headers, BOARD_ADMIN_DATABASE_HEADER);
-  const access = getRequestHeaderValue(req.headers, BOARD_ADMIN_ACCESS_HEADER);
-
-  if (
-    loggedIn !== "true" ||
-    !username ||
-    username === "Demo" ||
-    !database
-  ) {
+    return res.status(401).json({ error: "Sign in to continue." });
+  } catch (error) {
+    console.error("Board auth error:", error);
     return res.status(401).json({ error: "Sign in to continue." });
   }
-
-  req.appSession = { username, database, access };
-  next();
 };
 
 const requireBoardDatabaseAccess = (req, res, database) => {
@@ -202,13 +242,7 @@ const runExclusiveBoardPostCreate = (boardId, fn) => {
   });
 };
 
-const boardDbRequest = async ({
-  method,
-  path = "",
-  params,
-  data,
-  headers,
-}) => {
+const boardDbRequest = async ({ method, path = "", params, data, headers }) => {
   await ensureBoardDbExists();
 
   const response = await axios({
@@ -357,45 +391,34 @@ if (process.env.MUX_TOKEN_ID && process.env.MUX_TOKEN_SECRET) {
   });
 }
 
-if (isDevelopment) {
-  const options = {
-    key: fs.readFileSync("./local.worshipsync.net-key.pem"),
-    cert: fs.readFileSync("./local.worshipsync.net.pem"),
-  };
+app.post(
+  "/api/webhooks/resend",
+  express.raw({ type: "application/json", limit: "1mb" }),
+  authHandlers.handleResendWebhook,
+);
 
-  https.createServer(options, app).listen(5000, "local.worshipsync.net", () => {
-    console.log("HTTPS server running at https://local.worshipsync.net:5000");
-  });
-} else {
-  app.listen(port, () => console.log(`Listening on port ${port}`));
-}
 app.use(bodyParser.json({ limit: "10mb" }));
 app.use(bodyParser.urlencoded({ limit: "10mb", extended: true }));
+app.use(session(authSessionConfig));
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests from web frontend, Electron, or no origin (like Electron)
-      const allowedOrigins = [
-        frontEndHost,
-        "https://local.worshipsync.net:3000",
-        "http://localhost:3000",
-        "file://", // Electron file:// protocol
-      ];
-
-      // Allow requests with no origin (like Electron or mobile apps)
-      if (
-        !origin ||
-        allowedOrigins.some(
-          (allowed) =>
-            origin.includes(allowed.replace(/https?:\/\//, "")) ||
-            origin.startsWith("file://"),
-        )
-      ) {
+      // No Origin: non-browser clients, Electron, curl, etc.
+      if (!origin || origin === "null") {
         callback(null, true);
-      } else {
-        callback(null, true); // Allow all for now, can be more restrictive if needed
+        return;
       }
+      if (origin.startsWith("file://")) {
+        callback(null, true);
+        return;
+      }
+      if (corsAllowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error("Origin not allowed by CORS"));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: [
@@ -403,16 +426,94 @@ app.use(
       "X-Requested-With",
       "Content-Type",
       "Accept",
-      "x-worshipsync-logged-in",
-      "x-worshipsync-user",
-      "x-worshipsync-database",
-      "x-worshipsync-access",
+      "x-workstation-token",
+      "x-display-token",
+      "x-support-token",
+      "x-csrf-token",
+      "Authorization",
     ],
     credentials: true,
   }),
 );
 
 // API calls
+app.get("/api/auth/me", authHandlers.getAuthMe);
+app.get("/api/auth/shared-data-token", authHandlers.createSharedDataToken);
+app.post("/api/auth/churches/create", authHandlers.createChurchAccount);
+app.post("/api/auth/session", authHandlers.createHumanSession);
+app.post("/api/auth/resend-email-code", authHandlers.resendEmailCode);
+app.post("/api/auth/verify-email-code", authHandlers.verifyEmailCode);
+app.post("/api/auth/logout", authHandlers.logout);
+app.post("/api/auth/forgot-password", authHandlers.forgotPassword);
+app.get("/api/devices/human", authHandlers.listTrustedHumanDevices);
+app.post(
+  "/api/devices/human/:deviceId/revoke",
+  authHandlers.revokeTrustedHumanDevice,
+);
+app.get("/api/churches/:churchId/members", authHandlers.listChurchMembers);
+app.get("/api/churches/:churchId/invites", authHandlers.listChurchInvites);
+app.post(
+  "/api/churches/:churchId/recovery-email",
+  authHandlers.updateRecoveryEmail,
+);
+app.post("/api/churches/:churchId/invites", authHandlers.createInvite);
+app.get("/api/invites/preview", authHandlers.getInvitePreview);
+app.post("/api/invites/accept", authHandlers.acceptInvite);
+app.post(
+  "/api/churches/:churchId/members/:userId/remove-admin",
+  authHandlers.removeAdmin,
+);
+app.post(
+  "/api/churches/:churchId/members/:userId/remove",
+  authHandlers.removeMember,
+);
+app.post(
+  "/api/churches/:churchId/members/:userId/access",
+  authHandlers.updateMemberAccess,
+);
+app.post(
+  "/api/churches/:churchId/request-admin-access",
+  authHandlers.requestAdminAccess,
+);
+app.post("/api/recovery/confirm", authHandlers.confirmRecovery);
+app.post(
+  "/api/support/churches/:churchId/recover-admin",
+  authHandlers.recoverAdmin,
+);
+app.post(
+  "/api/churches/:churchId/workstation-pairings",
+  authHandlers.createWorkstationPairing,
+);
+app.post(
+  "/api/workstation-pairings/redeem",
+  authHandlers.redeemWorkstationPairing,
+);
+app.get("/api/churches/:churchId/workstations", authHandlers.listWorkstations);
+app.post(
+  "/api/churches/:churchId/workstations/:deviceId/revoke",
+  authHandlers.revokeWorkstation,
+);
+app.post(
+  "/api/workstations/:deviceId/operator",
+  authHandlers.updateWorkstationOperator,
+);
+app.post(
+  "/api/churches/:churchId/display-pairings",
+  authHandlers.createDisplayPairing,
+);
+app.post(
+  "/api/churches/:churchId/pairing-code-email",
+  authHandlers.sendPairingCodeEmail,
+);
+app.post("/api/display-pairings/redeem", authHandlers.redeemDisplayPairing);
+app.get(
+  "/api/churches/:churchId/display-devices",
+  authHandlers.listDisplayDevices,
+);
+app.post(
+  "/api/churches/:churchId/display-devices/:deviceId/revoke",
+  authHandlers.revokeDisplayDevice,
+);
 app.use("/api/boards/admin", requireAppSession);
 
 app.get("/api/boards/stream/:aliasId", (req, res) => {
@@ -463,7 +564,9 @@ app.post("/api/boards/admin/aliases", async (req, res) => {
     const database = req.appSession.database;
     const existingAlias = await getBoardDoc(getAliasDocId(aliasId));
     if (existingAlias) {
-      return res.status(409).json({ error: "That link name is already in use." });
+      return res
+        .status(409)
+        .json({ error: "That link name is already in use." });
     }
 
     const boardDoc = createBoardDoc({ aliasId, database });
@@ -521,7 +624,9 @@ app.post("/api/boards/admin/aliases/:aliasId/hard-reset", async (req, res) => {
     }
     if (!requireBoardDatabaseAccess(req, res, aliasDoc.database)) return;
 
-    const currentBoardDoc = await getBoardDoc(`board:${aliasDoc.currentBoardId}`);
+    const currentBoardDoc = await getBoardDoc(
+      `board:${aliasDoc.currentBoardId}`,
+    );
     const nextBoardDoc = createBoardDoc({
       aliasId: aliasDoc.aliasId,
       database: aliasDoc.database,
@@ -600,7 +705,9 @@ app.delete("/api/boards/admin/aliases/:aliasId", async (req, res) => {
     const boardDocs = boardRows.flatMap((row) => (row.doc ? [row.doc] : []));
 
     const postRowsByBoard = await Promise.all(
-      boardIds.map((boardId) => getBoardDocsByRange(getBoardPostRange(boardId))),
+      boardIds.map((boardId) =>
+        getBoardDocsByRange(getBoardPostRange(boardId)),
+      ),
     );
     const postDocs = postRowsByBoard.flatMap((rows) =>
       rows.flatMap((row) => (row.doc ? [row.doc] : [])),
@@ -643,7 +750,9 @@ app.post(
       });
     } catch (error) {
       console.error("Error updating board presentation font scale:", error);
-      res.status(500).json({ error: "Could not update presentation text size." });
+      res
+        .status(500)
+        .json({ error: "Could not update presentation text size." });
     }
   },
 );
@@ -715,16 +824,25 @@ app.get("/api/boards/:aliasId/posts", async (req, res) => {
       return res.status(404).json({ error: "Discussion board not found." });
     }
 
-    const requestedBoardId = String(req.query.boardId || aliasDoc.currentBoardId);
-    const boardIds = new Set([aliasDoc.currentBoardId, ...(aliasDoc.history || [])]);
+    const requestedBoardId = String(
+      req.query.boardId || aliasDoc.currentBoardId,
+    );
+    const boardIds = new Set([
+      aliasDoc.currentBoardId,
+      ...(aliasDoc.history || []),
+    ]);
     if (!boardIds.has(requestedBoardId)) {
-      return res.status(404).json({ error: "That session was not found for this board." });
+      return res
+        .status(404)
+        .json({ error: "That session was not found for this board." });
     }
 
     const range = getBoardPostRange(requestedBoardId);
     const rows = await getBoardDocsByRange(range);
     const includeHidden = String(req.query.includeHidden || "") === "true";
-    const viewerAuthorId = normalizeBoardParticipantId(req.query.viewerAuthorId);
+    const viewerAuthorId = normalizeBoardParticipantId(
+      req.query.viewerAuthorId,
+    );
     const posts = rows
       .flatMap((row) => (row.doc ? [row.doc] : []))
       .filter((post) => {
@@ -732,7 +850,9 @@ app.get("/api/boards/:aliasId/posts", async (req, res) => {
         if (!post.hidden) return true;
 
         const postAuthorId = normalizeBoardParticipantId(post.authorId);
-        return Boolean(viewerAuthorId && postAuthorId && postAuthorId === viewerAuthorId);
+        return Boolean(
+          viewerAuthorId && postAuthorId && postAuthorId === viewerAuthorId,
+        );
       })
       .map((post) =>
         includeHidden
@@ -801,8 +921,7 @@ app.post("/api/boards/:aliasId/posts", async (req, res) => {
 
     if (outcome.kind === "conflict") {
       return res.status(409).json({
-        error:
-          "That display name is already in use for this discussion board.",
+        error: "That display name is already in use for this discussion board.",
       });
     }
 
@@ -1068,10 +1187,13 @@ app.post("/api/login", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Login error:", error);
+    console.error("Sign-in error:", error);
     res
       .status(500)
-      .json({ success: false, errorMessage: `Login failed: ${error.message}` });
+      .json({
+        success: false,
+        errorMessage: `Sign in failed: ${error.message}`,
+      });
   }
 });
 
@@ -1341,3 +1463,16 @@ app.get("*", (req, res) => {
   // Otherwise serve SPA index
   res.sendFile(path.join(dist, "index.html"));
 });
+
+if (isDevelopment) {
+  const options = {
+    key: fs.readFileSync("./local.worshipsync.net-key.pem"),
+    cert: fs.readFileSync("./local.worshipsync.net.pem"),
+  };
+
+  https.createServer(options, app).listen(5000, "local.worshipsync.net", () => {
+    console.log("HTTPS server running at https://local.worshipsync.net:5000");
+  });
+} else {
+  app.listen(port, () => console.log(`Listening on port ${port}`));
+}
