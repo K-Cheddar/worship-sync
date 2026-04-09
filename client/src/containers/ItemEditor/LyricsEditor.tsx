@@ -153,7 +153,6 @@ const LyricsEditor = () => {
       nextArrangements: Arrangment[],
       nextSelectedArrangement: number,
       nextSongMetadata?: SongMetadata,
-      nextItemName?: string,
     ) => {
       setLocalArrangements(nextArrangements);
       setLocalSelectedArrangement(nextSelectedArrangement);
@@ -164,7 +163,7 @@ const LyricsEditor = () => {
       setHasArrangementChanges(false);
       baselineSelectedArrangementRef.current = nextSelectedArrangement;
     },
-    [item.name]
+    []
   );
 
   const updateLocalArrangements = useCallback(
@@ -203,12 +202,7 @@ const LyricsEditor = () => {
       return;
     }
 
-    resetLocalEditorState(
-      arrangements,
-      selectedArrangement,
-      songMetadata,
-      item.name,
-    );
+    resetLocalEditorState(arrangements, selectedArrangement, songMetadata);
     syncedItemIdRef.current = item._id;
     wasEditModeRef.current = Boolean(isEditMode);
   }, [
@@ -497,22 +491,12 @@ const LyricsEditor = () => {
   const handleCloseWithConfirmation = useCallback(() => {
     if (hasPendingChanges) {
       setPendingAction(() => () => {
-        resetLocalEditorState(
-          arrangements,
-          selectedArrangement,
-          songMetadata,
-          item.name,
-        );
+        resetLocalEditorState(arrangements, selectedArrangement, songMetadata);
         dispatch(setIsEditMode(false));
       });
       setShowConfirmModal(true);
     } else {
-      resetLocalEditorState(
-        arrangements,
-        selectedArrangement,
-        songMetadata,
-        item.name,
-      );
+      resetLocalEditorState(arrangements, selectedArrangement, songMetadata);
       dispatch(setIsEditMode(false));
     }
   }, [
@@ -522,7 +506,6 @@ const LyricsEditor = () => {
     resetLocalEditorState,
     selectedArrangement,
     songMetadata,
-    item.name,
   ]);
 
   const handleKeepLocalEdits = useCallback(() => {
@@ -543,7 +526,6 @@ const LyricsEditor = () => {
       remoteItem.arrangements || [],
       nextArrangementIndex,
       remoteItem.songMetadata,
-      remoteItem.name,
     );
     dispatch(applyPendingRemoteItem());
   }, [dispatch, localSelectedArrangement, resetLocalEditorState]);
