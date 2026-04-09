@@ -352,11 +352,11 @@ const ServiceItems = () => {
     access === "full" && selectedListIds.size > 0
       ? true
       : access === "music" &&
-        selectedListIds.size > 0 &&
-        [...selectedListIds].every((id) => {
-          const row = serviceItems.find((i) => i.listId === id);
-          return row?.type === "song";
-        });
+      selectedListIds.size > 0 &&
+      [...selectedListIds].every((id) => {
+        const row = serviceItems.find((i) => i.listId === id);
+        return row?.type === "song";
+      });
 
   useEffect(() => {
     const itemElement = document.getElementById(
@@ -389,8 +389,8 @@ const ServiceItems = () => {
   return (
     <ErrorBoundary>
       <DndContext onDragEnd={onDragEnd} sensors={sensors}>
-        <h3 className="font-bold text-center p-1 text-base bg-gray-800">
-          {selectedList?.name || "Service Items"}
+        <h3 className="border-b-2 border-white/25 bg-black/55 px-3 py-2.5 text-center text-xs font-bold uppercase tracking-widest text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
+          Outline
         </h3>
         {selectedList && access === "full" && (
           <Button

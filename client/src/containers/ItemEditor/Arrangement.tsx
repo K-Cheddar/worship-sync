@@ -4,10 +4,14 @@ import { Check } from "lucide-react";
 import { Trash2 } from "lucide-react";
 import { Copy } from "lucide-react";
 import { X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import generateRandomId from "../../utils/generateRandomId";
+import {
+  INLINE_EDIT_CONFIRM_ICON_COLOR,
+  handleInlineTextInputKeyDown,
+} from "../../utils/inlineEdit";
 
 type ArrangementProps = {
   arrangement: Arrangment;
@@ -27,6 +31,28 @@ const Arrangement = ({
   const [isEditMode, setIsEditMode] = useState(false);
   const [value, setValue] = useState(arrangement.name);
 
+  useEffect(() => {
+    if (!isEditMode) {
+      setValue(arrangement.name);
+    }
+  }, [arrangement.name, isEditMode]);
+
+  const handleSave = () => {
+    const copiedArrangements = [...localArrangements];
+    const targetIndex = copiedArrangements.findIndex(
+      ({ name }) => name === arrangement.name
+    );
+    const updatedArrangement = { ...arrangement, name: value };
+    copiedArrangements[targetIndex] = updatedArrangement;
+    setLocalArrangements(copiedArrangements);
+    setIsEditMode(false);
+  };
+
+  const handleCancel = () => {
+    setValue(arrangement.name);
+    setIsEditMode(false);
+  };
+
   return (
     <>
       <li
@@ -37,21 +63,16 @@ const Arrangement = ({
       >
         <div className="flex justify-end w-full px-2 bg-black rounded-t-sm">
           {isEditMode && (
-            <Button svg={X} onClick={() => setIsEditMode(false)} />
+            <Button variant="tertiary" svg={X} onClick={handleCancel} />
           )}
           <Button
             svg={isEditMode ? Check : Pencil}
+            color={isEditMode ? INLINE_EDIT_CONFIRM_ICON_COLOR : undefined}
             onClick={() => {
               if (isEditMode) {
-                const copiedArrangements = [...localArrangements];
-                const index = copiedArrangements.findIndex(
-                  ({ name }) => name === arrangement.name
-                );
-                const updatedArrangement = { ...arrangement, name: value };
-                copiedArrangements[index] = updatedArrangement;
-                setLocalArrangements(copiedArrangements);
-                setIsEditMode(false);
+                handleSave();
               } else {
+                setValue(arrangement.name);
                 setIsEditMode(true);
               }
             }}
@@ -92,6 +113,12 @@ const Arrangement = ({
             hideLabel
             className="text-sm"
             data-ignore-undo="true"
+            onKeyDown={(e) =>
+              handleInlineTextInputKeyDown(e, {
+                onSave: handleSave,
+                onCancel: handleCancel,
+              })
+            }
           />
         ) : (
           <Button

@@ -25,7 +25,7 @@ test("normalizeChurchBrandingForStorage trims and preserves valid branding", () 
       vision: "  To lead clearly. ",
       logos: {
         square: {
-          url: "https://res.cloudinary.com/portable-media/image/upload/v1/logo.png",
+          url: "https://res.cloudinary.com/portable-media/image/upload/v1/branding/logo-square.png",
           publicId: "branding/logo-square",
           width: 600,
           height: 600,
@@ -43,7 +43,7 @@ test("normalizeChurchBrandingForStorage trims and preserves valid branding", () 
       vision: "To lead clearly.",
       logos: {
         square: {
-          url: "https://res.cloudinary.com/portable-media/image/upload/v1/logo.png",
+          url: "https://res.cloudinary.com/portable-media/image/upload/v1/branding/logo-square.png",
           publicId: "branding/logo-square",
           width: 600,
           height: 600,
@@ -116,6 +116,25 @@ test("normalizeChurchBrandingForStorage rejects non-cloudinary logos", () => {
   );
 });
 
+test("normalizeChurchBrandingForStorage derives publicId from the Cloudinary URL", () => {
+  assert.deepEqual(
+    normalizeChurchBrandingForStorage({
+      logos: {
+        square: {
+          url: "https://res.cloudinary.com/portable-media/image/upload/c_scale,w_200/v123/branding/logo-square.png",
+          publicId: "branding/not-the-real-id",
+          format: "png",
+        },
+      },
+    }).logos.square,
+    {
+      url: "https://res.cloudinary.com/portable-media/image/upload/c_scale,w_200/v123/branding/logo-square.png",
+      publicId: "branding/logo-square",
+      format: "png",
+    },
+  );
+});
+
 test("normalizeChurchBrandingForStorage rejects cloudinary substring hostnames", () => {
   assert.throws(
     () =>
@@ -129,6 +148,22 @@ test("normalizeChurchBrandingForStorage rejects cloudinary substring hostnames",
         },
       }),
     /Cloudinary URL/,
+  );
+});
+
+test("normalizeChurchBrandingForStorage rejects Cloudinary URLs without an asset path", () => {
+  assert.throws(
+    () =>
+      normalizeChurchBrandingForStorage({
+        logos: {
+          square: {
+            url: "https://res.cloudinary.com/portable-media/image/upload/",
+            publicId: "branding/logo-square",
+            format: "png",
+          },
+        },
+      }),
+    /valid Cloudinary asset path/,
   );
 });
 

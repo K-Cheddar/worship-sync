@@ -24,7 +24,7 @@ const PopOver = ({ children, TriggeringButton, onOpenChange }: PopOverProps) => 
         align="end"
         side="bottom"
         className={cn(
-          "w-auto max-w-[85vw] overflow-x-hidden rounded-lg border-2 border-gray-600 bg-gray-700 p-0 text-white shadow-2xl"
+          "w-auto max-w-[85vw] overflow-x-hidden rounded-md border border-gray-600 bg-gray-800 p-0 text-white shadow-md"
         )}
       >
         <div className="flex justify-end pr-2 pt-2">

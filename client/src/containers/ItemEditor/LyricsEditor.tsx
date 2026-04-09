@@ -1,5 +1,5 @@
 import { useSelector, useDispatch } from "../../hooks";
-import { Import, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Save, X, ZoomIn, ZoomOut } from "lucide-react";
 
 import Button from "../../components/Button/Button";
 import {
@@ -25,7 +25,6 @@ import {
 } from "../../store/preferencesSlice";
 
 import TextArea from "../../components/TextArea/TextArea";
-import Input from "../../components/Input/Input";
 import LyricBoxes from "./LyricBoxes";
 import SongSections from "./SongSections";
 import SectionPreview from "./SectionPreview";
@@ -36,7 +35,7 @@ import {
   SongOrder,
   SongMetadata,
 } from "../../types";
-import { sectionTypes } from "../../utils/slideColorMap";
+import { itemSectionBgColorMap, sectionTypes } from "../../utils/slideColorMap";
 import Arrangement from "./Arrangement";
 import { updateFormattedSections } from "../../utils/itemUtil";
 import { sortList } from "../../utils/sort";
@@ -51,23 +50,11 @@ import { RootState } from "../../store/store";
 import { ButtonGroup, ButtonGroupItem } from "../../components/Button";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import Modal from "../../components/Modal/Modal";
-import {
-  LyricsImportQuerySummary,
-  buildLyricsImportQueryEntries,
-} from "../../components/LyricsImportQuerySummary/LyricsImportQuerySummary";
-import { LyricsImportLyricsPreview } from "../../components/LyricsImportLyricsPreview/LyricsImportLyricsPreview";
 import { ToastContext } from "../../context/toastContext";
 import { createNewSlide, createBox } from "../../utils/slideCreation";
 import cn from "classnames";
 import { DEFAULT_FONT_PX } from "../../constants";
 import { getItemTypeLabel } from "../../utils/itemTypeMaps";
-import { resolveLrclibImport, type LrclibImportResolution } from "../../api/lrclib";
-import {
-  createSongMetadataFromLrclib,
-  getImportableLyricsFromTrack,
-  makeUniqueArrangementName,
-} from "../../utils/lrclib";
-import generateRandomId from "../../utils/generateRandomId";
 
 const LyricsEditor = () => {
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -114,20 +101,6 @@ const LyricsEditor = () => {
   const [localSongMetadata, setLocalSongMetadata] = useState<
     SongMetadata | undefined
   >(songMetadata);
-  const [lrclibTrackName, setLrclibTrackName] = useState(
-    songMetadata?.trackName ?? item.name,
-  );
-  const [lrclibArtistName, setLrclibArtistName] = useState(
-    songMetadata?.artistName ?? "",
-  );
-  const [lrclibAlbumName, setLrclibAlbumName] = useState(
-    songMetadata?.albumName ?? "",
-  );
-  const [isImportingLyrics, setIsImportingLyrics] = useState(false);
-  const [lrclibError, setLrclibError] = useState("");
-  const [lrclibCandidates, setLrclibCandidates] =
-    useState<LrclibImportResolution["candidates"]>([]);
-  const [isCandidateModalOpen, setIsCandidateModalOpen] = useState(false);
 
   const localFormattedLyrics = useMemo(
     () => localArrangements[localSelectedArrangement]?.formattedLyrics || [],
@@ -185,12 +158,6 @@ const LyricsEditor = () => {
       setLocalArrangements(nextArrangements);
       setLocalSelectedArrangement(nextSelectedArrangement);
       setLocalSongMetadata(nextSongMetadata);
-      setLrclibTrackName(nextSongMetadata?.trackName ?? nextItemName ?? item.name);
-      setLrclibArtistName(nextSongMetadata?.artistName ?? "");
-      setLrclibAlbumName(nextSongMetadata?.albumName ?? "");
-      setLrclibError("");
-      setLrclibCandidates([]);
-      setIsCandidateModalOpen(false);
       setUnformattedLyrics("");
       setSelectedSectionId(null);
       setRecentlyMovedSectionId(null);
@@ -355,13 +322,23 @@ const LyricsEditor = () => {
 
   const { availableSections, currentSections } = useMemo(() => {
     const sections = sortList(localFormattedLyrics.map(({ name }) => name));
+    const sectionOptionClassName = (name: string) =>
+      cn(
+        itemSectionBgColorMap.get(name.split(/\s+/)[0]) ?? "bg-gray-700",
+        "text-white rounded px-2 py-0.5 block w-full text-left"
+      );
     return {
       availableSections: Array.from(
         new Set([...sortList(sectionTypes), ...sections])
-      ).map((section) => ({ label: section, value: section })),
+      ).map((section) => ({
+        label: section,
+        value: section,
+        className: sectionOptionClassName(section),
+      })),
       currentSections: sections.map((section) => ({
         label: section,
         value: section,
+        className: sectionOptionClassName(section),
       })),
     };
   }, [localFormattedLyrics]);
@@ -387,103 +364,6 @@ const LyricsEditor = () => {
       return el;
     });
     updateLocalArrangements(updatedLocalArrangements);
-  };
-
-  const applyLrclibImport = (
-    candidate: LrclibImportResolution["candidates"][0],
-  ) => {
-    const lyricsText = getImportableLyricsFromTrack(candidate);
-
-    if (!lyricsText) {
-      setLrclibError("Lyrics were found, but there was no importable text.");
-      return;
-    }
-
-    const { formattedLyrics: createdLyrics, songOrder: createdSongOrder } =
-      createSectionsUtil({
-        unformattedLyrics: lyricsText,
-      });
-    const { formattedLyrics, songOrder } = updateFormattedSections({
-      formattedLyrics: createdLyrics,
-      songOrder: createdSongOrder,
-    });
-
-    const arrangementName = makeUniqueArrangementName(
-      "Lyrics import",
-      localArrangements.map((arrangement) => arrangement.name),
-    );
-    const nextArrangementIndex = localArrangements.length;
-    const templateSlides =
-      localArrangements[localSelectedArrangement]?.slides ||
-      localArrangements[0]?.slides ||
-      [];
-    const importedArrangement: Arrangment = {
-      id: generateRandomId(),
-      name: arrangementName,
-      formattedLyrics,
-      songOrder,
-      slides: templateSlides,
-    };
-    const nextSongMetadata = createSongMetadataFromLrclib(candidate);
-    const formattedItem = formatSong({
-      ...item,
-      arrangements: [...localArrangements, importedArrangement],
-      selectedArrangement: nextArrangementIndex,
-      songMetadata: nextSongMetadata,
-    });
-
-    updateLocalArrangements(formattedItem.arrangements);
-    setLocalSelectedArrangement(nextArrangementIndex);
-    setLocalSongMetadata(nextSongMetadata);
-    setLrclibTrackName(candidate.trackName);
-    setLrclibArtistName(candidate.artistName);
-    setLrclibAlbumName(candidate.albumName || "");
-    setSelectedSectionId(
-      formattedItem.arrangements[nextArrangementIndex]?.formattedLyrics?.[0]?.id ||
-      null,
-    );
-    setRecentlyMovedSectionId(null);
-    setLrclibError("");
-    setLrclibCandidates([]);
-    setIsCandidateModalOpen(false);
-  };
-
-  const importLyricsFromLrclib = async () => {
-    if (!lrclibTrackName.trim()) {
-      setLrclibError("Enter a song title before importing lyrics.");
-      return;
-    }
-
-    setIsImportingLyrics(true);
-    setLrclibError("");
-
-    try {
-      const result = await resolveLrclibImport({
-        trackName: lrclibTrackName.trim(),
-        artistName: lrclibArtistName.trim() || undefined,
-        albumName: lrclibAlbumName.trim() || undefined,
-      });
-
-      if (result.match) {
-        applyLrclibImport(result.match);
-        return;
-      }
-
-      if (result.candidates.length === 0) {
-        setLrclibError(
-          "No songs matched the title you entered, and artist and album when you added them.",
-        );
-        return;
-      }
-
-      setLrclibCandidates(result.candidates);
-      setIsCandidateModalOpen(true);
-    } catch (error) {
-      console.error("LRCLIB import failed:", error);
-      setLrclibError("Could not import lyrics right now. Try again.");
-    } finally {
-      setIsImportingLyrics(false);
-    }
   };
 
   // Debounce preview regeneration to avoid expensive formatting on every keystroke
@@ -776,65 +656,8 @@ const LyricsEditor = () => {
 
   return (
     <ErrorBoundary>
-      <div className="absolute left-0 bg-gray-700 z-15 lg:border-r-2 border-gray-500 flex flex-col gap-2 h-full w-full max-lg:z-2 max-lg:pb-6 pb-2">
-        <Modal
-          isOpen={isCandidateModalOpen}
-          onClose={() => setIsCandidateModalOpen(false)}
-          title="Choose song"
-          size="lg"
-        >
-          <div className="flex flex-col gap-3">
-            <LyricsImportQuerySummary
-              entries={buildLyricsImportQueryEntries({
-                primaryLabel: "Title",
-                primaryValue: lrclibTrackName,
-                artist: lrclibArtistName,
-                album: lrclibAlbumName,
-              })}
-            />
-            <p className="text-sm text-gray-200">
-              Select a result below to import as a new arrangement.
-            </p>
-            <ul className="flex flex-col gap-2">
-              {lrclibCandidates.map((candidate) => (
-                <li
-                  key={`${candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName
-                    }-${candidate.artistName}`}
-                  className="rounded-md border border-slate-500/90 bg-slate-800/95 p-3"
-                >
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="font-semibold text-gray-50">
-                        {candidate.trackName}
-                      </p>
-                      <span className="shrink-0 rounded-full border border-cyan-400/60 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-100">
-                        {candidate.source === "genius" ? "Genius" : "LRCLIB"}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-200">
-                      {candidate.artistName}
-                      {candidate.albumName ? ` • ${candidate.albumName}` : ""}
-                    </p>
-                    <LyricsImportLyricsPreview
-                      lyricsText={getImportableLyricsFromTrack(candidate)}
-                    />
-                    <div className="pt-2">
-                      <Button
-                        variant="cta"
-                        className="justify-center"
-                        svg={Import}
-                        onClick={() => applyLrclibImport(candidate)}
-                      >
-                        Use Lyrics
-                      </Button>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </Modal>
-        <div className="flex bg-gray-900 px-2 h-fit items-center">
+      <div className="absolute left-0 bg-homepage-canvas z-15 lg:border-r-2 border-gray-500 flex flex-col gap-2 h-full w-full max-lg:z-2 max-lg:pb-6 pb-2">
+        <div className="flex h-fit shrink-0 items-center border-b border-white/20 bg-black/60 px-2">
           <Button
             variant="tertiary"
             className="max-lg:hidden"
@@ -877,54 +700,10 @@ const LyricsEditor = () => {
               <Button className="text-sm mt-1 mx-auto" onClick={createSections}>
                 Format Lyrics
               </Button>
-              <div className="mt-4 rounded-md border border-gray-600 bg-gray-900 p-2">
-                <h3 className="text-sm font-semibold text-center">Import lyrics</h3>
-                <Input
-                  value={lrclibTrackName}
-                  onChange={(value) => setLrclibTrackName(value as string)}
-                  label="Title"
-                  className="mt-2"
-                  inputTextSize="text-xs"
-                  data-ignore-undo="true"
-                />
-                <Input
-                  value={lrclibArtistName}
-                  onChange={(value) => setLrclibArtistName(value as string)}
-                  label="Artist (optional)"
-                  className="mt-2"
-                  inputTextSize="text-xs"
-                  data-ignore-undo="true"
-                />
-                <Input
-                  value={lrclibAlbumName}
-                  onChange={(value) => setLrclibAlbumName(value as string)}
-                  label="Album (optional)"
-                  className="mt-2"
-                  inputTextSize="text-xs"
-                  data-ignore-undo="true"
-                />
-                <Button
-                  className="text-xs mt-2 w-full justify-center"
-                  svg={Import}
-                  iconSize="sm"
-                  onClick={importLyricsFromLrclib}
-                  disabled={!lrclibTrackName.trim() || isImportingLyrics}
-                >
-                  {isImportingLyrics ? "Importing..." : "Import Lyrics"}
-                </Button>
-                {localSongMetadata && (
-                  <p className="mt-2 text-xs text-cyan-300">
-                    Imported: {localSongMetadata.artistName}
-                  </p>
-                )}
-                {lrclibError && (
-                  <p className="mt-2 text-xs text-red-300">{lrclibError}</p>
-                )}
-              </div>
               <h3 className="text-base mt-4 mb-2 font-semibold">
                 Arrangements
               </h3>
-              <ul className="scrollbar-variable rounded-md flex-1 overflow-y-auto bg-gray-800 flex flex-col gap-2">
+              <ul className="scrollbar-variable flex-1 overflow-y-auto flex flex-col gap-2">
                 {localArrangements.map((arrangement, index) => (
                   <Arrangement
                     key={arrangement.name}
@@ -995,14 +774,18 @@ const LyricsEditor = () => {
                 <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-gray-600">
                   <Button
                     variant="secondary"
-                    className="flex-1 justify-center"
+                    className="flex-1 justify-center gap-2"
+                    svg={X}
+                    iconSize="sm"
                     onClick={() => onClose()}
                   >
                     Cancel
                   </Button>
                   <Button
                     variant="cta"
-                    className="flex-1 justify-center"
+                    className="flex-1 justify-center gap-2"
+                    svg={Save}
+                    iconSize="sm"
                     onClick={() => save()}
                   >
                     Save
@@ -1013,17 +796,21 @@ const LyricsEditor = () => {
           )}
         </div>
         {isMobile && (
-          <div className="flex justify-end h-8 mr-4 my-4">
+          <div className="flex justify-end h-8 mr-4 my-4 gap-4">
             <Button
               variant="secondary"
-              className="text-base"
+              className="text-base gap-2"
+              svg={X}
+              iconSize="sm"
               onClick={() => onClose()}
             >
               Cancel
             </Button>
             <Button
               variant="cta"
-              className="text-base ml-4"
+              className="text-base gap-2"
+              svg={Save}
+              iconSize="sm"
               onClick={() => save()}
             >
               Save

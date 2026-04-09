@@ -63,7 +63,7 @@ const SongSection = ({
         />
       </li>
       {selectedIndex === index && (
-        <li className="w-full border-b-2 border-white" />
+        <li className="w-full border-b-4 border-cyan-500" />
       )}
     </>
   );

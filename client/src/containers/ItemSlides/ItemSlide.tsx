@@ -133,7 +133,7 @@ const ItemSlide = ({
         "cursor-pointer w-full rounded-lg transition-[background-color,box-shadow] duration-150 ease-out",
         !isDragging &&
         "hover:bg-white/12 hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.28)]",
-        selectedSlide === index && !isTransmitting && "border-gray-300",
+        selectedSlide === index && !isTransmitting && "border-cyan-500",
         selectedSlide === index && isTransmitting && "border-green-500",
         selectedSlide !== index && "border-transparent",
         isInDraggedSection && "z-10"

@@ -40,6 +40,54 @@ const isAllowedCloudinaryHost = (hostname) => {
   );
 };
 
+const deriveCloudinaryPublicIdFromUrl = (value) => {
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(String(value || "").trim());
+  } catch {
+    return null;
+  }
+
+  if (
+    !/^https?:$/.test(parsedUrl.protocol) ||
+    !isAllowedCloudinaryHost(parsedUrl.hostname)
+  ) {
+    return null;
+  }
+
+  const segments = parsedUrl.pathname.split("/").filter(Boolean);
+  const uploadIndex = segments.indexOf("upload");
+  if (uploadIndex === -1) {
+    return null;
+  }
+
+  const tail = segments.slice(uploadIndex + 1);
+  if (tail.length === 0) {
+    return null;
+  }
+
+  const versionIndex = tail.findIndex((segment) => /^v\d+$/.test(segment));
+  const publicIdSegments =
+    versionIndex >= 0 ? tail.slice(versionIndex + 1) : tail;
+
+  if (publicIdSegments.length === 0) {
+    return null;
+  }
+
+  const lastSegment = publicIdSegments[publicIdSegments.length - 1];
+  const normalizedLastSegment = lastSegment.replace(/\.[^/.]+$/, "");
+  if (!normalizedLastSegment) {
+    return null;
+  }
+
+  const normalizedSegments = [
+    ...publicIdSegments.slice(0, -1),
+    normalizedLastSegment,
+  ].filter(Boolean);
+
+  return normalizedSegments.length > 0 ? normalizedSegments.join("/") : null;
+};
+
 const normalizeLogoAsset = (asset, slotName) => {
   if (asset == null) {
     return null;
@@ -49,12 +97,11 @@ const normalizeLogoAsset = (asset, slotName) => {
   }
 
   const url = String(asset.url || "").trim();
-  const publicId = String(asset.publicId || "").trim();
   const format = String(asset.format || "")
     .trim()
     .toLowerCase();
 
-  if (!url || !publicId) {
+  if (!url) {
     throw createBrandingError(`${slotName} logo is missing asset details.`);
   }
 
@@ -73,6 +120,13 @@ const normalizeLogoAsset = (asset, slotName) => {
     throw createBrandingError(`${slotName} logo must use a Cloudinary URL.`);
   }
 
+  const derivedPublicId = deriveCloudinaryPublicIdFromUrl(url);
+  if (!derivedPublicId) {
+    throw createBrandingError(
+      `${slotName} logo URL must include a valid Cloudinary asset path.`,
+    );
+  }
+
   if (format && !BRAND_LOGO_FORMATS.has(format)) {
     throw createBrandingError(`${slotName} logo format is not supported.`);
   }
@@ -82,7 +136,7 @@ const normalizeLogoAsset = (asset, slotName) => {
 
   return {
     url,
-    publicId,
+    publicId: derivedPublicId,
     ...(width ? { width } : {}),
     ...(height ? { height } : {}),
     ...(format ? { format } : {}),

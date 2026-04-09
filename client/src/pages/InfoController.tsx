@@ -59,7 +59,7 @@ const InfoController = () => {
 
   return (
     <main ref={infoControllerRef} className="flex flex-col h-dvh">
-      <div className="bg-gray-800 w-full px-4 py-1 flex gap-2 items-center">
+      <div className="w-full border-b-2 border-gray-500 bg-homepage-canvas px-4 py-1 flex gap-2 items-center">
         <Button
           variant="tertiary"
           className="w-fit"

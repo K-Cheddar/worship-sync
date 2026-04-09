@@ -48,6 +48,68 @@ const sizeMap: Map<number, string> = new Map([
   [2, "grid-cols-2"],
 ]);
 
+type MediaTypeFilter = "all" | "image" | "video";
+
+type MediaModalTypeFilterProps = {
+  typeFilter: MediaTypeFilter;
+  setTypeFilter: (value: MediaTypeFilter) => void;
+  className?: string;
+};
+
+/** Segmented All / Images / Videos control — taller touch targets on small screens; text labels from md up. */
+const MediaModalTypeFilter = ({
+  typeFilter,
+  setTypeFilter,
+  className,
+}: MediaModalTypeFilterProps) => (
+  <div
+    role="group"
+    aria-label="Filter by media type"
+    className={cn(
+      "flex min-h-11 min-w-0 items-stretch overflow-hidden rounded-md border border-gray-600 lg:min-h-10",
+      className
+    )}
+  >
+    <Button
+      variant={typeFilter === "all" ? "secondary" : "tertiary"}
+      onClick={(e) => {
+        e.stopPropagation();
+        setTypeFilter("all");
+      }}
+      className="flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-none border-0 px-3 py-2 text-sm font-medium leading-snug shadow-none lg:min-h-10 lg:py-0"
+      aria-pressed={typeFilter === "all"}
+    >
+      All
+    </Button>
+    <Button
+      variant={typeFilter === "image" ? "secondary" : "tertiary"}
+      svg={Image}
+      onClick={(e) => {
+        e.stopPropagation();
+        setTypeFilter("image");
+      }}
+      className="flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-none border-0 border-l border-gray-600 px-2 py-2 text-sm font-medium leading-snug shadow-none lg:min-h-10 lg:py-0"
+      aria-label="Images"
+      aria-pressed={typeFilter === "image"}
+    >
+      <span className="hidden lg:inline">Images</span>
+    </Button>
+    <Button
+      variant={typeFilter === "video" ? "secondary" : "tertiary"}
+      svg={Video}
+      onClick={(e) => {
+        e.stopPropagation();
+        setTypeFilter("video");
+      }}
+      className="flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-none border-0 border-l border-gray-600 px-2 py-2 text-sm font-medium leading-snug shadow-none lg:min-h-10 lg:py-0"
+      aria-label="Videos"
+      aria-pressed={typeFilter === "video"}
+    >
+      <span className="hidden lg:inline">Videos</span>
+    </Button>
+  </div>
+);
+
 type MediaModalProps = {
   isOpen: boolean;
   onClose: () => void;
@@ -103,7 +165,7 @@ const MediaModal = ({
   );
 
   const [modalZoomLevel, setModalZoomLevel] = useState(0);
-  const [typeFilter, setTypeFilter] = useState<"all" | "image" | "video">("all");
+  const [typeFilter, setTypeFilter] = useState<MediaTypeFilter>("all");
   const modalGridRef = useRef<HTMLUListElement>(null);
   const [calculatedGridCols, setCalculatedGridCols] = useState(8);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -334,12 +396,15 @@ const MediaModal = ({
       title="Media Library"
       size="full"
       contentPadding="p-0"
+      surfaceClassName="relative flex w-full min-h-0 flex-1 flex-col overflow-hidden bg-homepage-canvas shadow-2xl max-md:h-full max-md:max-h-[95vh] max-md:rounded-none rounded-lg"
+      headerClassName="bg-homepage-canvas px-4 pb-0 pt-2"
+      titleClassName="text-lg"
     >
       <div className="relative w-full overflow-hidden" style={{ height: isMobile ? "calc(100vh - 60px)" : "calc(90vh - 120px)" }}>
         {/* Expanded fullscreen view */}
         <div
           className={cn(
-            "absolute inset-0 bg-gray-900 transition-all duration-300 ease-in-out",
+            "absolute inset-0 bg-black/55 transition-all duration-300 ease-in-out",
             isExpanded && modalPreviewMedia && modalPreviewMedia.type === "image"
               ? "opacity-100 z-10"
               : "opacity-0 z-0 pointer-events-none"
@@ -379,7 +444,7 @@ const MediaModal = ({
         {/* Normal view */}
         <div
           className={cn(
-            "flex flex-col transition-all duration-300 ease-in-out h-full",
+            "flex h-full min-h-0 flex-col transition-all duration-300 ease-in-out",
             isExpanded && modalPreviewMedia && modalPreviewMedia.type === "image"
               ? "opacity-0 z-0 pointer-events-none"
               : "opacity-100 z-10"
@@ -387,7 +452,7 @@ const MediaModal = ({
         >
           <div
             className={cn(
-              "px-4 py-2 bg-gray-700 relative w-full flex flex-col items-center gap-2 overflow-hidden transition-all duration-300 ease-in-out",
+              "relative w-full flex flex-col items-center gap-2 overflow-hidden border-b border-gray-500 bg-homepage-canvas px-4 py-1 transition-all duration-300 ease-in-out",
               modalPreviewMedia
                 ? "h-[40vh] flex-1 min-h-[40vh] opacity-100"
                 : "h-0 opacity-0"
@@ -411,7 +476,7 @@ const MediaModal = ({
                     title="Hide Preview"
                   />
                 </div>
-                <div className="aspect-video flex items-center justify-center overflow-hidden bg-gray-800 rounded-md flex-1 max-h-full max-w-full">
+                <div className="aspect-video flex max-h-full w-full max-w-full flex-1 items-center justify-center overflow-hidden rounded-md bg-black/25">
                   {modalPreviewMedia.type === "video" ? (
                     <video
                       src={resolvedPreviewVideoUrl ?? modalPreviewMedia.background}
@@ -434,91 +499,138 @@ const MediaModal = ({
             )}
           </div>
 
-          {/* Zoom and Filter row */}
-          <div className="px-4 py-2 bg-gray-900 flex items-center gap-2 border-b border-gray-700 relative">
-            <div className="flex gap-2 items-center">
-              <Button
-                variant="tertiary"
-                svg={ZoomOut}
-                onClick={() => setModalZoomLevel((prev) => Math.max(0, prev - 1))}
-                title="Zoom Out (More Items)"
-              />
-              <Button
-                variant="tertiary"
-                svg={ZoomIn}
-                onClick={() => setModalZoomLevel((prev) => prev + 1)}
-                title="Zoom In (Fewer Items)"
-              />
+          {/* Zoom, filters, search — mobile: two rows; desktop: one row */}
+          <div className="border-b border-gray-500 bg-black/60 px-4 py-2">
+            <div className="flex flex-col gap-2 lg:hidden">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    variant="tertiary"
+                    svg={ZoomOut}
+                    onClick={() =>
+                      setModalZoomLevel((prev) => Math.max(0, prev - 1))
+                    }
+                    title="Zoom Out (More Items)"
+                  />
+                  <Button
+                    variant="tertiary"
+                    svg={ZoomIn}
+                    onClick={() => setModalZoomLevel((prev) => prev + 1)}
+                    title="Zoom In (Fewer Items)"
+                  />
+                </div>
+                <MediaModalTypeFilter
+                  typeFilter={typeFilter}
+                  setTypeFilter={setTypeFilter}
+                  className="min-w-0 w-full flex-1"
+                />
+                {mediaUploadInputRef && (
+                  <div className="shrink-0">
+                    <Button
+                      variant="tertiary"
+                      svg={Plus}
+                      onClick={() => mediaUploadInputRef.current?.openModal()}
+                      title={
+                        uploadProgress?.isUploading
+                          ? `Uploading... ${Math.round(uploadProgress.progress)}%`
+                          : "Add Media"
+                      }
+                      disabled={uploadProgress?.isUploading}
+                    >
+                      {uploadProgress?.isUploading
+                        ? `${Math.round(uploadProgress.progress)}%`
+                        : ""}
+                    </Button>
+                  </div>
+                )}
+              </div>
+              <div className="flex min-w-0 items-center gap-2">
+                <Input
+                  type="text"
+                  label="Search"
+                  value={searchTerm}
+                  onChange={(value) => onSearchChange(value as string)}
+                  placeholder="Name"
+                  className="flex min-w-0 flex-1 gap-4 items-center"
+                  inputWidth="w-full"
+                  inputTextSize="text-sm"
+                  svg={searchTerm ? X : undefined}
+                  svgAction={() => onSearchChange("")}
+                  svgActionAriaLabel="Clear search"
+                />
+                <Toggle
+                  icon={Eye}
+                  value={showName}
+                  onChange={onShowNameToggle}
+                />
+              </div>
             </div>
-            <div className="flex gap-1 items-center border border-gray-600 rounded-md absolute left-1/2 -translate-x-1/2">
-              <Button
-                variant={typeFilter === "all" ? "secondary" : "tertiary"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setTypeFilter("all");
-                }}
-                className="rounded-r-none"
-              >
-                All
-              </Button>
-              <Button
-                variant={typeFilter === "image" ? "secondary" : "tertiary"}
-                svg={Image}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setTypeFilter("image");
-                }}
-                className="rounded-none border-x border-gray-600"
-              >
-                <span className="max-md:hidden">Images</span>
-              </Button>
-              <Button
-                variant={typeFilter === "video" ? "secondary" : "tertiary"}
-                svg={Video}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setTypeFilter("video");
-                }}
-                className="rounded-l-none"
-              >
-                <span className="max-md:hidden">Videos</span>
-              </Button>
-            </div>
-            {mediaUploadInputRef && (
-              <div className="ml-auto">
+
+            {/* Single row on lg+: filters keep fixed width; search grows to fill remaining space */}
+            <div className="flex max-lg:hidden min-w-0 w-full flex-nowrap items-center gap-2">
+              <div className="flex shrink-0 items-center gap-1">
                 <Button
                   variant="tertiary"
-                  svg={Plus}
-                  onClick={() => mediaUploadInputRef.current?.openModal()}
-                  title={uploadProgress?.isUploading ? `Uploading... ${Math.round(uploadProgress.progress)}%` : "Add Media"}
-                  disabled={uploadProgress?.isUploading}
-                >
-                  {uploadProgress?.isUploading ? `${Math.round(uploadProgress.progress)}%` : ""}
-                </Button>
+                  svg={ZoomOut}
+                  onClick={() =>
+                    setModalZoomLevel((prev) => Math.max(0, prev - 1))
+                  }
+                  title="Zoom Out (More Items)"
+                />
+                <Button
+                  variant="tertiary"
+                  svg={ZoomIn}
+                  onClick={() => setModalZoomLevel((prev) => prev + 1)}
+                  title="Zoom In (Fewer Items)"
+                />
               </div>
-            )}
-          </div>
-
-          {/* Search and Toggle row */}
-          <div className="px-4 py-2 bg-gray-900 flex items-center gap-2 border-b border-gray-700">
-            <Input
-              type="text"
-              label="Search"
-              value={searchTerm}
-              onChange={(value) => onSearchChange(value as string)}
-              placeholder="Name"
-              className="flex gap-4 items-center flex-1"
-              inputWidth="w-full"
-              inputTextSize="text-sm"
-              svg={searchTerm ? X : undefined}
-              svgAction={() => onSearchChange("")}
-              svgActionAriaLabel="Clear search"
-            />
-            <Toggle
-              icon={Eye}
-              value={showName}
-              onChange={onShowNameToggle}
-            />
+              <MediaModalTypeFilter
+                typeFilter={typeFilter}
+                setTypeFilter={setTypeFilter}
+                className="w-[min(18rem,32vw)] shrink-0"
+              />
+              <div className="flex min-h-10 min-w-0 flex-1 basis-0 items-center gap-2">
+                <Input
+                  type="text"
+                  label="Search"
+                  hideLabel
+                  value={searchTerm}
+                  onChange={(value) => onSearchChange(value as string)}
+                  placeholder="Search by name"
+                  className="min-w-0 w-full max-w-full flex-1"
+                  inputWidth="w-full min-w-0"
+                  inputTextSize="text-sm"
+                  svg={searchTerm ? X : undefined}
+                  svgAction={() => onSearchChange("")}
+                  svgActionAriaLabel="Clear search"
+                  aria-label="Search media by name"
+                />
+                <Toggle
+                  icon={Eye}
+                  value={showName}
+                  onChange={onShowNameToggle}
+                />
+              </div>
+              {mediaUploadInputRef && (
+                <div className="shrink-0">
+                  <Button
+                    variant="tertiary"
+                    svg={Plus}
+                    onClick={() => mediaUploadInputRef.current?.openModal()}
+                    title={
+                      uploadProgress?.isUploading
+                        ? `Uploading... ${Math.round(uploadProgress.progress)}%`
+                        : "Add Media"
+                    }
+                    disabled={uploadProgress?.isUploading}
+                  >
+                    {uploadProgress?.isUploading
+                      ? `${Math.round(uploadProgress.progress)}%`
+                      : ""}
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Media grid */}
@@ -526,7 +638,7 @@ const MediaModal = ({
             <ul
               ref={modalGridRef}
               className={cn(
-                "scrollbar-variable grid overflow-y-auto p-4 gap-x-2 gap-y-1",
+                "scrollbar-variable grid min-h-0 flex-1 content-start items-start overflow-y-auto bg-black/30 p-4 gap-x-2 gap-y-1",
                 sizeMap.get(calculatedGridCols) || `grid-cols-${calculatedGridCols}`
               )}
               style={{
@@ -583,7 +695,7 @@ const MediaModal = ({
                         variant="none"
                         padding="p-0"
                         className={cn(
-                          "w-full h-full justify-center flex flex-col items-center border-2",
+                          "flex h-auto w-full flex-col items-center justify-center border-2",
                           isMultiSelected
                             ? "border-cyan-400 bg-cyan-400/10"
                             : isSelected
@@ -599,7 +711,7 @@ const MediaModal = ({
                           }
                         }}
                       >
-                        <div className="aspect-video flex items-center justify-center w-full flex-1 overflow-hidden border-b border-gray-500 relative">
+                        <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden border-b border-gray-500">
                           <CachedMediaImage
                             className="max-w-full max-h-full"
                             alt={id}
@@ -626,7 +738,7 @@ const MediaModal = ({
               })}
             </ul>
           ) : (
-            <div className="text-center py-8 px-2 flex-1 flex items-center justify-center">
+            <div className="flex flex-1 items-center justify-center bg-black/30 px-2 py-8 text-center">
               <p className="text-gray-400">
                 {searchTerm
                   ? `No media found matching "${searchTerm}"`

@@ -170,43 +170,43 @@ const ToolbarMenu = ({
       : access === "view"
         ? []
         : [
-            {
-              text: "Open Stage Monitor",
-              element: (
-                <div className="flex items-center gap-2 max-md:min-h-12">
-                  <Icon svg={Monitor} color="#d1d5dc" />
-                  Open Stage Monitor
-                </div>
-              ),
-              ...(isElectron && displays.length > 0
-                ? {
-                    subItems: buildDisplaySubItems("monitor"),
-                  }
-                : {
-                    onClick: async () => {
-                      await openWindowOnLastUsedDisplay("monitor");
-                    },
-                  }),
-            },
-            {
-              text: "Open Projector",
-              element: (
-                <div className="flex items-center gap-2 max-md:min-h-12">
-                  <Icon svg={Presentation} color="#d1d5dc" />
-                  Open Projector
-                </div>
-              ),
-              ...(isElectron && displays.length > 0
-                ? {
-                    subItems: buildDisplaySubItems("projector"),
-                  }
-                : {
-                    onClick: async () => {
-                      await openWindowOnLastUsedDisplay("projector");
-                    },
-                  }),
-            },
-          ]),
+          {
+            text: "Open Stage Monitor",
+            element: (
+              <div className="flex items-center gap-2 max-md:min-h-12">
+                <Icon svg={Monitor} color="#d1d5dc" />
+                Open Stage Monitor
+              </div>
+            ),
+            ...(isElectron && displays.length > 0
+              ? {
+                subItems: buildDisplaySubItems("monitor"),
+              }
+              : {
+                onClick: async () => {
+                  await openWindowOnLastUsedDisplay("monitor");
+                },
+              }),
+          },
+          {
+            text: "Open Projector",
+            element: (
+              <div className="flex items-center gap-2 max-md:min-h-12">
+                <Icon svg={Presentation} color="#d1d5dc" />
+                Open Projector
+              </div>
+            ),
+            ...(isElectron && displays.length > 0
+              ? {
+                subItems: buildDisplaySubItems("projector"),
+              }
+              : {
+                onClick: async () => {
+                  await openWindowOnLastUsedDisplay("projector");
+                },
+              }),
+          },
+        ]),
 
     {
       element: (

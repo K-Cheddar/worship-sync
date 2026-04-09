@@ -4,7 +4,10 @@ import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
 import TextArea from "../../components/TextArea/TextArea";
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
-import { FormattedLyrics as FormattedLyricsType } from "../../types";
+import type {
+  FormattedLyrics as FormattedLyricsType,
+  Option,
+} from "../../types";
 import cn from "classnames";
 
 export type LyrcisBoxProps = {
@@ -12,7 +15,7 @@ export type LyrcisBoxProps = {
   index: number;
   selected: boolean;
   justMoved: boolean;
-  availableSections: { value: string; label: string }[];
+  availableSections: Option[];
   availableSectionsKey: string;
   isMobile: boolean;
   onChangeSectionType: (name: string, index: number) => void;
@@ -55,7 +58,7 @@ const LyrcisBox = memo(({
           backgroundColor="bg-black/40"
           textColor="text-white"
           chevronColor="text-white"
-          contentBackgroundColor="bg-gray-800"
+          contentBackgroundColor="bg-gray-900"
           contentTextColor="text-white"
           className="min-w-[50%] max-w-full"
         />

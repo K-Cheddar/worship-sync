@@ -418,7 +418,7 @@ const Bible = () => {
       {bibleDbProgress !== 100 && (
         <div
           data-testid="loading-overlay"
-          className="absolute top-0 left-0 z-5 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8"
+          className="absolute top-0 left-0 z-5 w-full h-full bg-homepage-canvas/90 flex justify-center items-center flex-col text-white text-2xl gap-8"
         >
           <p>
             Setting up <span className="font-bold">Bible</span>

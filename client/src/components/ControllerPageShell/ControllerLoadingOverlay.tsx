@@ -40,7 +40,7 @@ const ControllerLoadingOverlay = ({
     );
 
   return (
-    <div className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8">
+    <div className="fixed top-0 left-0 z-50 w-full h-full bg-homepage-canvas/90 flex justify-center items-center flex-col text-white text-2xl gap-8">
       {connectionStatus?.status === "failed" ? (
         <>
           <p className="text-center">Unable to connect to the server</p>

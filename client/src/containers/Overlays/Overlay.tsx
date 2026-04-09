@@ -173,7 +173,7 @@ const Overlay = ({
       className={cn(
         "flex items-center rounded-lg w-full overflow-clip leading-3 border-l-4",
         borderColor,
-        isSelected ? "bg-gray-950" : "bg-gray-800"
+        isSelected ? "bg-black/50" : "bg-black/30"
       )}
       ref={(element) => {
         setNodeRef(element);

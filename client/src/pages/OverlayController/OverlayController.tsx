@@ -60,7 +60,7 @@ const OverlayController = () => {
           />
           <div
             className={cn(
-              "flex flex-col flex-2 h-full bg-gray-700 border-gray-500 transition-all border-l-2",
+              "flex flex-col flex-2 h-full bg-homepage-canvas border-gray-500 transition-all border-l-2",
               "lg:w-[min(46rem,46%)] lg:min-w-120 shrink-0",
               "max-lg:right-0 max-lg:absolute",
               isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
@@ -88,7 +88,7 @@ const OverlayController = () => {
         </>
       )}
       {access === "music" && (
-        <div className="flex flex-col h-full lg:w-[min(46rem,46%)] lg:min-w-120 shrink-0 border-l-2 border-gray-500 bg-gray-700">
+        <div className="flex flex-col h-full lg:w-[min(46rem,46%)] lg:min-w-120 shrink-0 border-l-2 border-gray-500 bg-homepage-canvas">
           <TransmitHandler
             visibleScreens={["stream"]}
             previewScale={1.875}

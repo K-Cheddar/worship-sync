@@ -96,7 +96,7 @@ const Controller = () => {
         onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
       />
       <div
-        className={`flex flex-col border-r-2 border-gray-500 bg-gray-700 h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
+        className={`flex flex-col border-r-2 border-gray-500 bg-homepage-canvas h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
           }`}
         ref={leftPanelRef}
       >
@@ -147,7 +147,7 @@ const Controller = () => {
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
           />
           <div
-            className={`flex flex-col h-full lg:w-[25%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:absolute ${isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
+            className={`flex flex-col h-full lg:w-[25%] bg-homepage-canvas border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:absolute ${isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
               }`}
             ref={rightPanelRef}
           >

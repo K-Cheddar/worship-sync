@@ -49,18 +49,65 @@ const isAllowedCloudinaryHost = (hostname: string): boolean => {
   );
 };
 
+const deriveCloudinaryPublicIdFromUrl = (value: string): string | null => {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(String(value || "").trim());
+  } catch {
+    return null;
+  }
+
+  if (
+    !/^https?:$/.test(parsedUrl.protocol) ||
+    !isAllowedCloudinaryHost(parsedUrl.hostname)
+  ) {
+    return null;
+  }
+
+  const segments = parsedUrl.pathname.split("/").filter(Boolean);
+  const uploadIndex = segments.indexOf("upload");
+  if (uploadIndex === -1) {
+    return null;
+  }
+
+  const tail = segments.slice(uploadIndex + 1);
+  if (tail.length === 0) {
+    return null;
+  }
+
+  const versionIndex = tail.findIndex((segment) => /^v\d+$/.test(segment));
+  const publicIdSegments =
+    versionIndex >= 0 ? tail.slice(versionIndex + 1) : tail;
+
+  if (publicIdSegments.length === 0) {
+    return null;
+  }
+
+  const lastSegment = publicIdSegments[publicIdSegments.length - 1];
+  const normalizedLastSegment = lastSegment.replace(/\.[^/.]+$/, "");
+  if (!normalizedLastSegment) {
+    return null;
+  }
+
+  const normalizedSegments = [
+    ...publicIdSegments.slice(0, -1),
+    normalizedLastSegment,
+  ].filter(Boolean);
+
+  return normalizedSegments.length > 0 ? normalizedSegments.join("/") : null;
+};
+
 const normalizeLogoAsset = (value: unknown): ChurchLogoAsset | null => {
   if (!isRecord(value)) {
     return null;
   }
 
   const url = String(value.url || "").trim();
-  const publicId = String(value.publicId || "").trim();
   const format = String(value.format || "")
     .trim()
     .toLowerCase();
 
-  if (!url || !publicId) {
+  if (!url) {
     return null;
   }
 
@@ -78,12 +125,17 @@ const normalizeLogoAsset = (value: unknown): ChurchLogoAsset | null => {
     return null;
   }
 
+  const derivedPublicId = deriveCloudinaryPublicIdFromUrl(url);
+  if (!derivedPublicId) {
+    return null;
+  }
+
   const width = normalizePositiveInteger(value.width);
   const height = normalizePositiveInteger(value.height);
 
   return {
     url,
-    publicId,
+    publicId: derivedPublicId,
     ...(width ? { width } : {}),
     ...(height ? { height } : {}),
     ...(format ? { format } : {}),

@@ -18,10 +18,10 @@ describe("authRedirectPath", () => {
   it("sanitizeAuthRedirectPathname allows known in-app routes", () => {
     expect(sanitizeAuthRedirectPathname("/account")).toBe("/account");
     expect(sanitizeAuthRedirectPathname("/controller/service")).toBe(
-      "/controller/service"
+      "/controller/service",
     );
     expect(sanitizeAuthRedirectPathname("/boards/present/abc123")).toBe(
-      "/boards/present/abc123"
+      "/boards/present/abc123",
     );
   });
 
@@ -35,15 +35,15 @@ describe("authRedirectPath", () => {
     expect(
       getAuthRedirectPathnameFromState({
         from: { pathname: "/account", search: "", hash: "", key: "x" },
-      })
+      }),
     ).toBe("/account");
   });
 
   it("getHumanPostAuthPath uses stored path when not root", () => {
     expect(
       getHumanPostAuthPath(
-        loc({ from: { pathname: "/account", search: "", hash: "", key: "x" } })
-      )
+        loc({ from: { pathname: "/account", search: "", hash: "", key: "x" } }),
+      ),
     ).toBe("/account");
   });
 
@@ -51,16 +51,21 @@ describe("authRedirectPath", () => {
     expect(getHumanPostAuthPath(loc(undefined))).toBe("/home");
     expect(
       getHumanPostAuthPath(
-        loc({ from: { pathname: "/", search: "", hash: "", key: "x" } })
-      )
+        loc({ from: { pathname: "/", search: "", hash: "", key: "x" } }),
+      ),
     ).toBe("/home");
   });
 
   it("getAuthRedirectPathnameFromState drops unknown redirect paths", () => {
     expect(
       getAuthRedirectPathnameFromState({
-        from: { pathname: "/unknown-destination", search: "", hash: "", key: "x" },
-      })
+        from: {
+          pathname: "/unknown-destination",
+          search: "",
+          hash: "",
+          key: "x",
+        },
+      }),
     ).toBeNull();
   });
 });

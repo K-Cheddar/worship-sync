@@ -16,7 +16,7 @@ const FreeForms = () => {
       <FilteredItems
         list={list}
         type="free"
-        heading="Custom Items"
+        heading="Custom"
         label="custom item"
         isLoading={isAllItemsLoading}
         allDocs={allFreeFormDocs}

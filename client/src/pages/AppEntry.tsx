@@ -70,7 +70,7 @@ const AppEntry = () => {
   }
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center overflow-hidden bg-gray-700 px-4 py-8 text-white">
+    <main className="flex min-h-dvh flex-col items-center justify-center overflow-hidden bg-homepage-canvas px-4 py-8 text-white">
       <div className="flex min-h-0 max-h-[calc(100dvh-4rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-500 bg-gray-800 p-6 sm:p-8">
         <div className="shrink-0">
           <h1 className="text-2xl font-semibold sm:text-3xl">Get started with WorshipSync</h1>

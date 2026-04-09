@@ -7,7 +7,17 @@ import {
   useState,
   type MutableRefObject,
 } from "react";
-import { X } from "lucide-react";
+import {
+  Copy,
+  ExternalLink,
+  KeyRound,
+  Mail,
+  RotateCcw,
+  Save,
+  Send,
+  Upload,
+  X,
+} from "lucide-react";
 import { Cloudinary } from "@cloudinary/url-gen";
 import Button from "../../components/Button/Button";
 import ColorField from "../../components/ColorField/ColorField";
@@ -46,6 +56,7 @@ import {
 import { cn } from "@/utils/cnHelper";
 
 const CLOUDINARY_CLOUD_NAME = "portable-media";
+const CLOUDINARY_UNSIGNED_UPLOAD_PRESET = "bpqu4ma5";
 const MAX_LOGO_FILE_BYTES = 5 * 1024 * 1024;
 const BRANDING_LOGO_ACCEPT = ".png,.jpg,.jpeg,.webp,.svg";
 const BRANDING_ALLOWED_LOGO_TYPES = new Set([
@@ -73,7 +84,6 @@ type BrandingFormProps = {
   churchId: string;
   branding: ChurchBranding;
   brandingStatus: "loading" | "ready";
-  uploadPreset: string;
 };
 
 type PendingLogoFiles = Record<BrandingLogoSlot, File | null>;
@@ -252,6 +262,9 @@ const displaySurfaceOptions: {
     { value: "credits", label: "Credits" },
   ];
 
+const ACCOUNT_CONTROL_INPUT_CLASSNAME = "h-10 max-md:min-h-14";
+const ACCOUNT_CONTROL_SELECT_CLASSNAME = "h-10 max-md:min-h-14";
+
 const formatAccountError = (error: unknown, fallback: string): string => {
   const raw = error instanceof Error ? error.message.trim() : String(error).trim();
   if (!raw) return fallback;
@@ -377,12 +390,16 @@ const PairingCodeBanner = ({
         <Button
           component="link"
           variant="tertiary"
+          svg={ExternalLink}
+          iconSize="sm"
           to={setupPath}
         >
           Link in this window
         </Button>
         <Button
           variant="tertiary"
+          svg={Copy}
+          iconSize="sm"
           onClick={() =>
             void copyText(setupUrl, `${title} device link copied.`)
           }
@@ -392,6 +409,8 @@ const PairingCodeBanner = ({
         </Button>
         <Button
           variant="tertiary"
+          svg={Copy}
+          iconSize="sm"
           onClick={() => void copyText(token, `${title} link code copied.`)}
         >
           Copy code
@@ -402,6 +421,8 @@ const PairingCodeBanner = ({
           <Button
             type="button"
             variant="tertiary"
+            svg={Mail}
+            iconSize="sm"
             disabled={!churchId}
             onClick={() => setEmailStepOpen(true)}
           >
@@ -417,6 +438,7 @@ const PairingCodeBanner = ({
                 type="email"
                 autoComplete="email"
                 value={emailTo}
+                inputClassName={ACCOUNT_CONTROL_INPUT_CLASSNAME}
                 disabled={emailSending || !churchId}
                 errorText={emailError}
                 onChange={(value) => {
@@ -432,6 +454,8 @@ const PairingCodeBanner = ({
               />
               <Button
                 variant="cta"
+                svg={Send}
+                iconSize="sm"
                 className="w-full shrink-0 justify-center sm:w-auto"
                 isLoading={emailSending}
                 disabled={emailSending || !churchId}
@@ -510,6 +534,7 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
             id="invite-email"
             label="Email"
             value={inviteEmail}
+            inputClassName={ACCOUNT_CONTROL_INPUT_CLASSNAME}
             errorText={inviteEmailError}
             onChange={(value) => {
               setInviteEmail(String(value));
@@ -528,12 +553,14 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
               setInviteAccess(value as InviteAccessOption)
             }
             options={inviteSelectOptions}
-            selectClassName="mt-1 w-full"
+            selectClassName={cn("mt-1 w-full", ACCOUNT_CONTROL_SELECT_CLASSNAME)}
           />
         </div>
         <Button
           className="shrink-0"
           variant="cta"
+          svg={Send}
+          iconSize="sm"
           isLoading={isSending}
           disabled={isSending}
           onClick={() => void handleSend()}
@@ -616,6 +643,7 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
           id="workstation-label"
           label="Label"
           value={pairLabel}
+          inputClassName={ACCOUNT_CONTROL_INPUT_CLASSNAME}
           errorText={labelError}
           onChange={(value) => {
             setPairLabel(String(value));
@@ -628,13 +656,16 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
           label="Access"
           value={workstationAccess}
           options={workstationAccessOptions}
+          selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
           onChange={(value) => {
             setWorkstationAccess(value as WorkstationAccessOption);
           }}
         />
         <Button
-          className="shrink-0"
+          className="w-full shrink-0 justify-center sm:w-auto"
           variant="cta"
+          svg={KeyRound}
+          iconSize="sm"
           isLoading={isGenerating}
           disabled={isGenerating}
           onClick={() => void handleGenerate()}
@@ -725,6 +756,7 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
           id="display-label"
           label="Label"
           value={displayLabel}
+          inputClassName={ACCOUNT_CONTROL_INPUT_CLASSNAME}
           errorText={labelError}
           onChange={(value) => {
             setDisplayLabel(String(value));
@@ -737,13 +769,16 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
           label="Surface"
           value={displaySurface}
           options={displaySurfaceOptions}
+          selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
           onChange={(value) => {
             setDisplaySurface(value as DisplaySurfaceOption);
           }}
         />
         <Button
-          className="shrink-0"
+          className="w-full shrink-0 justify-center sm:w-auto"
           variant="cta"
+          svg={KeyRound}
+          iconSize="sm"
           isLoading={isGenerating}
           disabled={isGenerating}
           onClick={() => void handleGenerate()}
@@ -811,6 +846,7 @@ export const RecoveryEmailForm = memo(function RecoveryEmailForm({
           id="recovery-email"
           label="Recovery Email"
           value={recoveryEmail}
+          inputClassName={ACCOUNT_CONTROL_INPUT_CLASSNAME}
           errorText={errorText}
           onChange={(value) => {
             setRecoveryEmail(String(value));
@@ -821,6 +857,8 @@ export const RecoveryEmailForm = memo(function RecoveryEmailForm({
       <Button
         className="w-full shrink-0 sm:w-auto"
         variant="cta"
+        svg={Save}
+        iconSize="sm"
         isLoading={isSaving}
         disabled={isSaving}
         onClick={() => void handleSave()}
@@ -927,7 +965,7 @@ const BrandingLogoSlotsSection = memo(function BrandingLogoSlotsSection({
                     type="button"
                     variant="tertiary"
                     svg={X}
-                    iconSize="sm"
+                    iconSize="xs"
                     aria-label={`Remove ${config.title}`}
                     title={`Remove ${config.title}`}
                     className="absolute top-2 right-2 h-8 w-8 min-h-0 shrink-0 rounded-full border border-gray-600/80 bg-gray-900/80 p-0 text-gray-100 hover:bg-gray-800/90"
@@ -960,6 +998,8 @@ const BrandingLogoSlotsSection = memo(function BrandingLogoSlotsSection({
                 <Button
                   type="button"
                   className="w-full justify-center"
+                  svg={Upload}
+                  iconSize="sm"
                   aria-label={`Choose file for ${config.title}`}
                   onClick={() => onChooseFileClick(slot)}
                 >
@@ -1045,6 +1085,8 @@ const BrandingColorSlotsSection = memo(function BrandingColorSlotsSection({
                 <Button
                   type="button"
                   variant="tertiary"
+                  svg={X}
+                  iconSize="sm"
                   tabIndex={filled ? 0 : -1}
                   aria-hidden={!filled}
                   className={cn(
@@ -1095,7 +1137,6 @@ export const BrandingForm = memo(function BrandingForm({
   churchId,
   branding,
   brandingStatus,
-  uploadPreset,
 }: BrandingFormProps) {
   const { showToast } = useToast();
   const [draftBranding, setDraftBranding] = useState<ChurchBranding>(() =>
@@ -1325,7 +1366,7 @@ export const BrandingForm = memo(function BrandingForm({
 
         const uploaded = await uploadImageToCloudinary(
           pendingFile,
-          uploadPreset,
+          CLOUDINARY_UNSIGNED_UPLOAD_PRESET,
           CLOUDINARY_CLOUD_NAME,
         );
         const asset = toChurchLogoAsset(uploaded);
@@ -1361,7 +1402,9 @@ export const BrandingForm = memo(function BrandingForm({
       void cleanupLogoAssets(replacedAssets);
     } catch (error) {
       await cleanupLogoAssets(uploadedAssets);
-      showToast(formatBrandingSaveError(error), "error");
+      const message = formatBrandingSaveError(error);
+      setFormError(message);
+      showToast(message, "error");
     } finally {
       setIsSaving(false);
     }
@@ -1372,7 +1415,6 @@ export const BrandingForm = memo(function BrandingForm({
     pendingLogoFiles,
     resetPendingLogos,
     showToast,
-    uploadPreset,
   ]);
 
   const patchBrandColorSlot = useCallback(
@@ -1435,6 +1477,8 @@ export const BrandingForm = memo(function BrandingForm({
         <div className="flex flex-wrap gap-2">
           <Button
             variant="tertiary"
+            svg={RotateCcw}
+            iconSize="sm"
             disabled={!isDirty || isSaving}
             onClick={resetDraft}
           >
@@ -1442,6 +1486,8 @@ export const BrandingForm = memo(function BrandingForm({
           </Button>
           <Button
             variant="cta"
+            svg={Save}
+            iconSize="sm"
             isLoading={isSaving}
             disabled={isSaving || !isDirty}
             onClick={() => void handleSave()}

@@ -14,6 +14,10 @@ import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import cn from "classnames";
 import { getOutlineRowSelectionState } from "../../utils/outlineRowSelection";
+import {
+  INLINE_EDIT_CONFIRM_ICON_COLOR,
+  handleInlineTextInputKeyDown,
+} from "../../utils/inlineEdit";
 
 type HeadingItemProps = {
   item: ServiceItemType;
@@ -99,12 +103,13 @@ const HeadingItem = ({
     setIsEditing(false);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleConfirm();
-    } else if (e.key === "Escape") {
-      handleDiscard();
-    }
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    handleInlineTextInputKeyDown(e, {
+      onSave: () => {
+        void handleConfirm();
+      },
+      onCancel: handleDiscard,
+    });
   };
 
   return (
@@ -115,9 +120,13 @@ const HeadingItem = ({
       style={style}
       onClick={(e) => onItemClick(item.listId, e)}
       className={cn(
-        "group flex items-center gap-1 border-b-2 border-r-4 overflow-hidden bg-gray-800/50",
+        "group flex items-center gap-1 border-b-2 overflow-hidden",
+        /* Section chrome: distinct from outline rows (transparent / selected darken on LeftPanelButton). */
+        "bg-black/40 border-t border-white/20 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]",
         isSelected ? "border-l-cyan-500" : "border-transparent",
-        isInsertPoint ? "border-b-white" : "border-b-transparent",
+        isSelected && "border-b-cyan-500",
+        !isSelected && isInsertPoint && "border-b-white",
+        !isSelected && !isInsertPoint && "border-b-transparent",
       )}
     >
       <div className="flex-1 min-w-0 flex items-center gap-1">
@@ -140,7 +149,7 @@ const HeadingItem = ({
               {...(canMutateOutline ? attributes : {})}
               {...(canMutateOutline ? listeners : {})}
               className={cn(
-                "text-xs truncate flex-1 px-1 text-center",
+                "truncate flex-1 px-2 py-2 text-center text-[11px] font-bold uppercase tracking-wider text-white",
                 canMutateOutline && "cursor-grab active:cursor-grabbing",
               )}
             >
@@ -183,7 +192,8 @@ const HeadingItem = ({
                 e.stopPropagation();
                 void handleConfirm();
               }}
-              className="shrink-0 p-1 min-w-6 text-green-500"
+              className="shrink-0 p-1 min-w-6"
+              color={INLINE_EDIT_CONFIRM_ICON_COLOR}
               title="Save"
               iconSize="sm"
             />

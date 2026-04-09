@@ -27,7 +27,7 @@ const ControllerPageShell = ({
   scrollbarWidth,
   toolbarVariant = "default",
   onRootClick,
-  mainClassName = "flex flex-1 relative min-h-0 bg-gray-700",
+  mainClassName = "flex flex-1 relative min-h-0 bg-homepage-canvas",
   layoutRef,
 }: ControllerPageShellProps) => {
   return (
@@ -40,7 +40,7 @@ const ControllerPageShell = ({
       />
       <div
         onClick={onRootClick}
-        className="bg-gray-700 w-dvw h-dvh flex flex-col text-white overflow-hidden list-none"
+        className="bg-homepage-canvas w-dvw h-dvh flex flex-col text-white overflow-hidden list-none"
         style={
           {
             "--scrollbar-width": scrollbarWidth,
@@ -49,7 +49,7 @@ const ControllerPageShell = ({
       >
         <Toolbar
           variant={toolbarVariant}
-          className="flex border-b-2 border-gray-500 text-sm min-h-fit bg-gray-700"
+          className="flex min-h-fit shrink-0 overflow-y-hidden border-b-2 border-gray-500 bg-homepage-canvas text-sm"
         />
         <div id="controller-main" className={mainClassName} ref={layoutRef}>
           {children}

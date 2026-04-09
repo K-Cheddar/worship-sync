@@ -483,9 +483,9 @@ describe("BoardControllerContent", () => {
     expect(await screen.findAllByRole("button", { name: /^Hide$/i })).toHaveLength(2);
 
     await openBoardToolsSheetIfMobile(user);
-    await user.selectOptions(
-      screen.getByLabelText(/Show posts from/i),
-      "board-old",
+    await user.click(screen.getByLabelText(/Show posts from/i));
+    await user.click(
+      screen.getByRole("option", { name: /Earlier session:/i }),
     );
 
     expect(await screen.findByText(/Archived session question/i)).toBeInTheDocument();

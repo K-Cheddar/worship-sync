@@ -3,7 +3,11 @@ import { Trash2, SquarePen, ListCheck, Copy, Check } from "lucide-react";
 import { ItemList } from "../../../types";
 import Input from "../../../components/Input/Input";
 import DeleteModal from "../../../components/Modal/DeleteModal";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  INLINE_EDIT_CONFIRM_ICON_COLOR,
+  handleInlineTextInputKeyDown,
+} from "../../../utils/inlineEdit";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import cn from "classnames";
@@ -49,6 +53,22 @@ const Service = ({
     transition,
   };
 
+  useEffect(() => {
+    if (!isEditing) {
+      setName(list.name);
+    }
+  }, [list.name, isEditing]);
+
+  const handleConfirmEdit = () => {
+    setIsEditing(false);
+    updateList({ ...list, name });
+  };
+
+  const handleCancelEdit = () => {
+    setName(list.name);
+    setIsEditing(false);
+  };
+
   return (
     <>
       <DeleteModal
@@ -90,6 +110,12 @@ const Service = ({
             hideLabel
             value={name}
             onChange={(val) => setName(val as string)}
+            onKeyDown={(e) =>
+              handleInlineTextInputKeyDown(e, {
+                onSave: handleConfirmEdit,
+                onCancel: handleCancelEdit,
+              })
+            }
           />
         )}
         {canEdit && (
@@ -97,11 +123,12 @@ const Service = ({
             <Button
               svg={isEditing ? Check : SquarePen}
               variant="tertiary"
+              color={isEditing ? INLINE_EDIT_CONFIRM_ICON_COLOR : undefined}
               onClick={() => {
                 if (isEditing) {
-                  setIsEditing(false);
-                  updateList({ ...list, name });
+                  handleConfirmEdit();
                 } else {
+                  setName(list.name);
                   setIsEditing(true);
                 }
               }}

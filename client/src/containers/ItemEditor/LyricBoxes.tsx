@@ -242,11 +242,15 @@ const LyricBoxes = ({
             setNewSectionType(val);
           }}
           value={newSectionType}
-          options={sectionTypes.map((type) => ({ value: type, label: type }))}
-          className={cn(
-            "flex font-semibold text-sm rounded-t-md",
-            itemSectionBgColorMap.get(newSectionType)
-          )}
+          options={sectionTypes.map((type) => ({
+            value: type,
+            label: type,
+            className: cn(
+              itemSectionBgColorMap.get(type) ?? "bg-gray-700",
+              "text-white rounded px-2 py-0.5 block w-full text-left"
+            ),
+          }))}
+          className="flex font-semibold text-sm rounded-t-md bg-gray-900/80"
           backgroundColor="bg-black/40"
           textColor="text-white"
           chevronColor="text-white"

@@ -584,8 +584,8 @@ const ItemSlides = () => {
         onDragEnd={canEdit ? onDragEnd : undefined}
         onDragStart={canEdit ? onDragStart : undefined}
       >
-        <div className="flex flex-col min-h-0 h-full overflow-hidden bg-gray-800">
-          <div className="flex w-full px-2 mb-2 gap-1 shrink-0 bg-gray-900">
+        <div className="flex h-full min-h-0 flex-col overflow-hidden bg-homepage-canvas">
+          <div className="mb-2 flex w-full shrink-0 gap-1 border-b border-white/20 bg-black/60 px-2">
             <Button
               variant="tertiary"
               svg={ZoomOut}
