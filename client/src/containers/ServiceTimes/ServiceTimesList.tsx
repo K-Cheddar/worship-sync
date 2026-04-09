@@ -21,14 +21,14 @@ const ServiceTimesList = ({
   const nextServiceTimer = timers.find((t) => t.id === "next-service");
 
   return (
-    <section className="bg-gray-800 rounded p-4 flex flex-col gap-2 flex-1 min-h-0">
+    <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-md border border-white/12 bg-black/30 p-4">
       <h2 className="text-xl font-semibold">Service Times</h2>
       {services.length === 0 ? (
         <p className="text-gray-300">No service times yet.</p>
       ) : (
-        <ul className="flex flex-col gap-2 overflow-y-auto flex-1 h">
+        <ul className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
           {upcomingService && (
-            <div className="flex flex-col gap-2 bg-slate-500 rounded p-3">
+            <div className="flex flex-col gap-2 rounded-md border border-cyan-400/45 bg-white/5 p-3">
               <p>Next service</p>
               <ServiceItem
                 service={upcomingService.service}

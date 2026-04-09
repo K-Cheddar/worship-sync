@@ -10,7 +10,7 @@ import {
   setMonitorClockFontSize,
   setMonitorTimerFontSize,
 } from "../../store/preferencesSlice";
-import RadioButton from "../../components/RadioButton/RadioButton";
+import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButton";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import { Plus, Minus } from "lucide-react";
@@ -121,16 +121,16 @@ const MonitorSettings = () => {
                 >
                   <p className="font-semibold text-center">{label}:</p>
                   <section className="flex gap-2 items-center px-2">
-                    <RadioButton
-                      label="Shown"
-                      value={value}
-                      onChange={() => dispatch(setValue(true))}
-                    />
-                    <RadioButton
-                      label="Hidden"
-                      value={!value}
-                      onChange={() => dispatch(setValue(false))}
-                    />
+                    <RadioGroup
+                      value={value ? "shown" : "hidden"}
+                      onValueChange={(v) =>
+                        dispatch(setValue(v === "shown"))
+                      }
+                      className="flex gap-2 items-center"
+                    >
+                      <RadioButton optionValue="shown" label="Shown" />
+                      <RadioButton optionValue="hidden" label="Hidden" />
+                    </RadioGroup>
                   </section>
                 </li>
               ))}

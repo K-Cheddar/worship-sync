@@ -86,7 +86,9 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
 
-const sanitizeTransientItemState = (item: RootState["undoable"]["present"]["item"]) => ({
+const sanitizeTransientItemState = (
+  item: RootState["undoable"]["present"]["item"],
+) => ({
   ...item,
   isLoading: false,
   isSectionLoading: false,
@@ -99,7 +101,9 @@ const getChangedOverlayIds = (
   currentList: OverlayInfo[],
   previousList: OverlayInfo[],
 ) => {
-  const currentMap = new Map(currentList.map((overlay) => [overlay.id, overlay]));
+  const currentMap = new Map(
+    currentList.map((overlay) => [overlay.id, overlay]),
+  );
   const previousMap = new Map(
     previousList.map((overlay) => [overlay.id, overlay]),
   );
@@ -135,8 +139,9 @@ const getOverlaySelectionForUndoRedo = (
     targetId = previousSelectedId;
   } else {
     targetId =
-      changedIds.find((id) => currentList.some((overlay) => overlay.id === id)) ||
-      changedIds[0];
+      changedIds.find((id) =>
+        currentList.some((overlay) => overlay.id === id),
+      ) || changedIds[0];
   }
 
   const targetOverlay = currentList.find((overlay) => overlay.id === targetId);
@@ -522,11 +527,11 @@ listenerMiddleware.startListening({
       new Set([
         ...previousState.allDocs.allTimerDocs.map((doc) => doc._id),
         ...action.payload.map((doc) => doc._id),
-      ])
+      ]),
     );
 
     listenerApi.dispatch(
-      reconcileTimersFromDocs({ timers: timersFromDocs, knownDocIds })
+      reconcileTimersFromDocs({ timers: timersFromDocs, knownDocIds }),
     );
   },
 });
@@ -553,7 +558,7 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: isAnyOf(
     timersSlice.actions.updateTimer,
-    timersSlice.actions.updateTimerColor
+    timersSlice.actions.updateTimerColor,
   ),
   effect: (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
@@ -576,7 +581,7 @@ listenerMiddleware.startListening({
     timersSlice.actions.addTimer,
     timersSlice.actions.syncTimers,
     timersSlice.actions.updateTimerFromRemote,
-    timersSlice.actions.tickTimers
+    timersSlice.actions.tickTimers,
   ),
   effect: (_action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
@@ -886,11 +891,7 @@ listenerMiddleware.startListening({
 
       // Merge timers, prioritizing own timers over remote ones.
       // Passing an empty ownTimers array removes this host's timers remotely.
-      const mergedTimers = mergeTimers(
-        currentTimers,
-        ownTimers,
-        globalHostId,
-      );
+      const mergedTimers = mergeTimers(currentTimers, ownTimers, globalHostId);
 
       set(timersRef, cleanObject(mergedTimers));
     }
@@ -946,8 +947,7 @@ listenerMiddleware.startListening({
     }
     if (!item?.slides?.length || item.slides.length < 2) return;
     const wrapUpSlide = item.slides[1];
-    const presentationType =
-      item.type === "timer" ? "timer" : monitorInfo.type;
+    const presentationType = item.type === "timer" ? "timer" : monitorInfo.type;
     listenerApi.dispatch(
       updateMonitor({
         slide: wrapUpSlide,
@@ -1007,28 +1007,44 @@ listenerMiddleware.startListening({
       set(
         ref(
           globalFireDbInfo.db,
-          getChurchDataPath(globalFireDbInfo.churchId, "credits", "publishedList"),
+          getChurchDataPath(
+            globalFireDbInfo.churchId,
+            "credits",
+            "publishedList",
+          ),
         ),
         cleanObject(publishedList),
       );
       set(
         ref(
           globalFireDbInfo.db,
-          getChurchDataPath(globalFireDbInfo.churchId, "credits", "transitionScene"),
+          getChurchDataPath(
+            globalFireDbInfo.churchId,
+            "credits",
+            "transitionScene",
+          ),
         ),
         transitionScene,
       );
       set(
         ref(
           globalFireDbInfo.db,
-          getChurchDataPath(globalFireDbInfo.churchId, "credits", "creditsScene"),
+          getChurchDataPath(
+            globalFireDbInfo.churchId,
+            "credits",
+            "creditsScene",
+          ),
         ),
         creditsScene,
       );
       set(
         ref(
           globalFireDbInfo.db,
-          getChurchDataPath(globalFireDbInfo.churchId, "credits", "scheduleName"),
+          getChurchDataPath(
+            globalFireDbInfo.churchId,
+            "credits",
+            "scheduleName",
+          ),
         ),
         scheduleName,
       );
@@ -1804,7 +1820,9 @@ listenerMiddleware.startListening({
         if (currentSelectedOverlay) {
           listenerApi.dispatch(overlaySlice.actions.selectOverlay(undefined));
         }
-      } else if (!_.isEqual(currentSelectedOverlay, reconciledOverlaySelection)) {
+      } else if (
+        !_.isEqual(currentSelectedOverlay, reconciledOverlaySelection)
+      ) {
         listenerApi.dispatch(
           overlaySlice.actions.selectOverlay(reconciledOverlaySelection),
         );

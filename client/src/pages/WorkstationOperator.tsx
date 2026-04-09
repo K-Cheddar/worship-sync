@@ -32,7 +32,7 @@ const WorkstationOperator = () => {
     loginState === "loading"
   ) {
     return (
-      <div className="flex min-h-dvh w-full items-center justify-center bg-gray-700 px-6 text-white">
+      <div className="flex min-h-dvh w-full items-center justify-center bg-homepage-canvas px-6 text-white">
         <div className="max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-8 text-center">
           <h1 className="text-2xl font-semibold">Preparing this workstation...</h1>
           <p className="mt-3 text-sm text-gray-200">
@@ -80,7 +80,7 @@ const WorkstationOperator = () => {
   };
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-gray-700 px-4 text-white">
+    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
       <form
         className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6"
         onSubmit={handleSubmit}
@@ -122,20 +122,20 @@ const WorkstationOperator = () => {
         <div className="mt-4 flex gap-2">
           <Button
             className="flex-1 justify-center"
+            type="button"
+            onClick={() => navigate("/")}
+            disabled={isSaving}
+          >
+            Cancel
+          </Button>
+          <Button
+            className="flex-1 justify-center"
             type="submit"
             variant="cta"
             isLoading={isSaving}
             disabled={isSaving}
           >
             Continue
-          </Button>
-          <Button
-            className="flex-1 justify-center"
-            type="button"
-            onClick={() => navigate("/")}
-            disabled={isSaving}
-          >
-            Cancel
           </Button>
         </div>
         {unlinkCurrentWorkstation ? (

@@ -463,6 +463,10 @@ app.post(
   "/api/churches/:churchId/recovery-email",
   authHandlers.updateRecoveryEmail,
 );
+app.post(
+  "/api/churches/:churchId/branding",
+  authHandlers.updateChurchBranding,
+);
 app.post("/api/churches/:churchId/invites", authHandlers.createInvite);
 app.get("/api/invites/preview", authHandlers.getInvitePreview);
 app.post("/api/invites/accept", authHandlers.acceptInvite);

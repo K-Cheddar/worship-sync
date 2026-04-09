@@ -91,7 +91,7 @@ const OverlayEditor = ({
   };
 
   const overlayPropertyHandler = () => (
-    <div className="bg-gray-800 p-4 border-t border-gray-700">
+    <div className="border-t border-white/10 bg-black/30 p-4">
       <h3 className="text-lg font-semibold text-white mb-4">
         Overlay Properties
       </h3>
@@ -264,7 +264,7 @@ const OverlayEditor = ({
         {showPreview ? "Hide" : "Show"} Preview
       </Button>
       <div className={cn("lg:block", !showPreview && "max-lg:hidden")}>
-        <div className="bg-gray-900 relative flex">
+        <div className="relative flex bg-black/40">
           <h2 className="font-semibold text-base text-white text-center flex-1">
             Preview
           </h2>
@@ -335,7 +335,7 @@ const OverlayEditor = ({
       </div>
       <section
         className={cn(
-          "scrollbar-variable flex flex-col gap-2 bg-gray-800 p-4 rounded-md items-stretch overflow-y-auto w-full min-w-0",
+          "scrollbar-variable flex min-w-0 w-full flex-col items-stretch gap-2 overflow-y-auto rounded-md border border-white/12 bg-black/30 p-4",
           !selectedOverlay.id && "hidden"
         )}
       >
@@ -522,7 +522,7 @@ const OverlayEditor = ({
           <div className="w-full lg:w-[70vw] flex flex-col">
             <div
               ref={desktopRef}
-              className="flex items-center justify-center bg-gray-600 lg:h-2/3"
+              className="flex items-center justify-center bg-black/30 lg:h-2/3"
             >
               <DisplayWindow
                 showBorder
@@ -582,7 +582,7 @@ const OverlayEditor = ({
             {!isMobile && overlayPropertyHandler()}
           </div>
 
-          <div className="w-full lg:w-[30vw] bg-gray-800 lg:border-l border-t lg:border-t-0 border-gray-700 flex flex-col max-lg:overflow-y-auto flex-1">
+          <div className="flex w-full max-lg:overflow-y-auto flex-1 flex-col border-t border-white/10 bg-black/30 lg:w-[30vw] lg:border-l lg:border-t-0">
             {isMobile && overlayPropertyHandler()}
             <h3 className="text-lg font-semibold text-white mb-4 p-2">
               Style Editor

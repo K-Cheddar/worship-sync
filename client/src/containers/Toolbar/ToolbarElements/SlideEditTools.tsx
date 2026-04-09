@@ -33,9 +33,10 @@ import Toggle from "../../../components/Toggle/Toggle";
 import { BibleFontMode, ItemState } from "../../../types";
 import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
-import { HexColorPicker, HexColorInput } from "react-colorful";
 import { updateTimerColor } from "../../../store/timersSlice";
-import RadioButton from "../../../components/RadioButton/RadioButton";
+import RadioButton, {
+  RadioGroup,
+} from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
 import { formatFree } from "../../../utils/overflow";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -44,6 +45,7 @@ import {
   cleanItemNewlines,
   itemHasCleanableNewlines,
 } from "../../../utils/itemNewlineCleanup";
+import { BrandAwareColorPicker } from "../../../components/ColorField/ColorField";
 
 const MIN_FONT_PX = 25;
 const MAX_FONT_PX = 500;
@@ -69,7 +71,9 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const fontSizeDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const fontSizeInputRef = useRef<string | number>("");
-  const { hostId } = useContext(GlobalInfoContext) || {};
+  const globalInfo = useContext(GlobalInfoContext);
+  const { hostId } = globalInfo || {};
+  const brandColors = globalInfo?.churchBranding.colors || [];
 
   const item = useSelector((state) => state.undoable.present.item);
   const { slides, selectedSlide, selectedBox, timerInfo, type } = item;
@@ -375,12 +379,10 @@ const SlideEditTools = ({ className }: { className?: string }) => {
             />
           }
         >
-          <HexColorPicker color={fontColor} onChange={_updateFontColor} />
-          <HexColorInput
+          <BrandAwareColorPicker
             color={fontColor}
-            prefixed
             onChange={_updateFontColor}
-            className="text-black w-full mt-2"
+            colors={brandColors}
           />
         </PopOver>
 
@@ -426,76 +428,68 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               />
             }
           >
-            <HexColorPicker color={timerColor} onChange={_updateTimerColor} />
-            <HexColorInput
+            <BrandAwareColorPicker
               color={timerColor}
-              prefixed
               onChange={_updateTimerColor}
-              className="text-black w-full mt-2"
+              colors={brandColors}
             />
           </PopOver>
         )}
         {type === "free" && (
           <>
             <p className="text-sm font-semibold">Overflow:</p>
-            <RadioButton
-              className="text-xs"
-              label="Fit"
-              value={slide.overflow === "fit"}
-              onChange={() => {
+            <RadioGroup
+              value={slide.overflow === "fit" ? "fit" : "separate"}
+              onValueChange={(v) => {
+                const overflow = v as "fit" | "separate";
                 runWithFormatting(() => {
                   const updatedItem = formatFree({
                     ...item,
                     slides: slides.map((s, index) =>
-                      index === selectedSlide ? { ...s, overflow: "fit" } : s
+                      index === selectedSlide ? { ...s, overflow } : s
                     ),
                   });
                   updateItem(updatedItem);
                 });
               }}
-            />
-            <RadioButton
-              className="text-xs"
-              label="Separate"
-              value={slide.overflow === "separate"}
-              onChange={() => {
-                runWithFormatting(() => {
-                  const updatedItem = formatFree({
-                    ...item,
-                    slides: slides.map((s, index) =>
-                      index === selectedSlide
-                        ? { ...s, overflow: "separate" }
-                        : s
-                    ),
-                  });
-                  updateItem(updatedItem);
-                });
-              }}
-            />
+              className="flex flex-wrap items-center gap-1"
+            >
+              <RadioButton
+                className="text-xs"
+                optionValue="fit"
+                label="Fit"
+              />
+              <RadioButton
+                className="text-xs"
+                optionValue="separate"
+                label="Separate"
+              />
+            </RadioGroup>
           </>
         )}
         {type === "bible" && (
           <>
             <Icon color={iconColorMap.get("bible")} svg={BookOpen} />
             <p className="text-sm font-semibold">Mode:</p>
-            <RadioButton
-              className="text-xs"
-              onChange={() => _updateBibleFontMode("fit")}
-              value={item.bibleInfo?.fontMode === "fit"}
-              label="Fit"
-            />
-            <RadioButton
-              className="text-xs"
-              onChange={() => _updateBibleFontMode("separate")}
-              value={item.bibleInfo?.fontMode === "separate"}
-              label="Separate"
-            />
-            <RadioButton
-              className="text-xs"
-              onChange={() => _updateBibleFontMode("multiple")}
-              value={item.bibleInfo?.fontMode === "multiple"}
-              label="Multiple"
-            />
+            <RadioGroup
+              value={item.bibleInfo?.fontMode ?? "fit"}
+              onValueChange={(v) =>
+                _updateBibleFontMode(v as BibleFontMode)
+              }
+              className="flex flex-wrap items-center gap-1"
+            >
+              <RadioButton className="text-xs" optionValue="fit" label="Fit" />
+              <RadioButton
+                className="text-xs"
+                optionValue="separate"
+                label="Separate"
+              />
+              <RadioButton
+                className="text-xs"
+                optionValue="multiple"
+                label="Multiple"
+              />
+            </RadioGroup>
           </>
         )}
       </div>

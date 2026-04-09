@@ -117,11 +117,10 @@ const FilteredItem = ({
         <HighlightWords
           searchValue={searchValue}
           string={matchedWords || ""}
-          className={`text-sm px-4 text-gray-300 transition-all ${
-            showWordsSection
+          className={`text-sm px-4 text-gray-300 transition-all ${showWordsSection
               ? "max-h-32 overflow-y-auto border-gray-400 border-t-2 py-2"
               : "max-h-0"
-          }`}
+            }`}
         />
       </div>
     </li>

@@ -20,6 +20,7 @@ import {
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { putCreditHistoryDoc, removeCreditHistoryDoc } from "../../utils/dbUtils";
 import { cn } from "../../utils/cnHelper";
+import { INLINE_EDIT_CONFIRM_ICON_COLOR } from "../../utils/inlineEdit";
 
 type CreditHistoryDrawerProps = {
   isOpen: boolean;
@@ -87,6 +88,15 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
     },
     [dispatch, db, editingDrafts, creditsHistory]
   );
+
+  const handleCancelEditItem = useCallback((headingKey: string) => {
+    setEditingDrafts((prev) => {
+      const next = { ...prev };
+      delete next[headingKey];
+      return next;
+    });
+    setEditingHeading(null);
+  }, []);
 
   return (
     <>
@@ -170,6 +180,17 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
                       autoResize
                       className="min-w-0"
                       textareaClassName="text-xs text-gray-300 bg-gray-900/50 border border-gray-600 rounded px-2 py-1 min-h-[2rem] resize-none"
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          handleCancelEditItem(heading);
+                          return;
+                        }
+                        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                          e.preventDefault();
+                          handleSaveItem(heading);
+                        }
+                      }}
                     />
                   ) : (
                     <div className="text-xs text-gray-300 wrap-break-word min-w-0 flex flex-col gap-0.5">
@@ -186,7 +207,7 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
                           className="text-xs"
                           svg={Save}
                           padding="px-2 py-1"
-                          color="#22d3ee"
+                          color={INLINE_EDIT_CONFIRM_ICON_COLOR}
                           onClick={() => handleSaveItem(heading)}
                         >
                           Save
@@ -197,14 +218,7 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
                           svg={X}
                           padding="px-2 py-1"
                           color="red"
-                          onClick={() => {
-                            setEditingDrafts((prev) => {
-                              const next = { ...prev };
-                              delete next[heading];
-                              return next;
-                            });
-                            setEditingHeading(null);
-                          }}
+                          onClick={() => handleCancelEditItem(heading)}
                         >
                           Cancel
                         </Button>

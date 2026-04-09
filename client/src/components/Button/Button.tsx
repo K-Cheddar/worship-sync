@@ -7,11 +7,12 @@ import React, {
   useRef,
 } from "react";
 import { FileQuestion } from "lucide-react";
+import { Link } from "react-router-dom";
+import ShadcnButton, { type ButtonVariantProps } from "@/components/ui/Button";
 import Icon from "../Icon/Icon";
-import cn from "classnames";
+import { cn } from "@/utils/cnHelper";
 import Spinner from "../Spinner/Spinner";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { Link } from "react-router-dom";
 
 export type ButtonProps = Omit<
   React.HTMLProps<HTMLButtonElement | HTMLAnchorElement>,
@@ -45,6 +46,21 @@ export type ButtonProps = Omit<
   state?: unknown;
 };
 
+type UiVariant = NonNullable<ButtonVariantProps["variant"]>;
+
+const variantToUi: Record<
+  NonNullable<ButtonProps["variant"]>,
+  UiVariant
+> = {
+  primary: "presentPrimary",
+  secondary: "presentSecondary",
+  tertiary: "presentTertiary",
+  cta: "presentCta",
+  destructive: "presentDestructive",
+  textLink: "presentTextLink",
+  none: "none",
+};
+
 const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
   (
     {
@@ -65,6 +81,9 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       image,
       position = "relative",
       component = "button",
+      to,
+      state,
+      onClick,
       ...rest
     },
     ref
@@ -98,32 +117,18 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
           ? "py-1 px-2"
           : "p-1";
 
-    const variantClasses: Record<
-      NonNullable<ButtonProps["variant"]>,
-      string
-    > = {
-      cta: "bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 border-2 border-cyan-600 hover:border-cyan-700 active:border-cyan-800 text-white",
-      destructive:
-        "bg-red-600 hover:bg-red-700 active:bg-red-800 border-2 border-red-600 hover:border-red-700 active:border-red-800 text-white",
-      primary:
-        "bg-black hover:bg-gray-900 active:bg-gray-800 border-2 border-black hover:border-gray-900 active:border-gray-800 text-white",
-      secondary:
-        "bg-white hover:bg-gray-200 active:bg-gray-300 border-2 border-white hover:border-gray-200 active:border-gray-300 text-black",
-      tertiary:
-        "bg-transparent hover:bg-gray-500 active:bg-gray-400 border-2 border-transparent hover:border-gray-500 active:border-gray-400 text-white",
-      textLink:
-        "min-h-0 max-md:min-h-0 border-0 bg-transparent text-sm text-cyan-400 underline underline-offset-2 hover:text-cyan-300 active:text-cyan-400 focus-visible:rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 disabled:cursor-not-allowed disabled:font-normal disabled:text-gray-500 disabled:no-underline disabled:hover:text-gray-500",
-      none: "",
-    };
+    const uiVariant: UiVariant = isSelected ? "none" : variantToUi[variant];
 
-    const commonClassName = cn(
+    const uiSize: NonNullable<ButtonVariantProps["size"]> =
+      variant === "textLink" ? "bare" : "present";
+
+    const layoutClassName = cn(
       variant === "textLink" ? "font-normal" : "font-semibold",
-      `rounded-md flex items-center max-w-full cursor-pointer disabled:pointer-events-none ${gap}`,
+      "max-w-full justify-start",
+      gap,
       variant !== "textLink" && "max-md:min-h-14",
       variant !== "textLink" && "disabled:opacity-65",
-      variant === "textLink" && "disabled:opacity-100",
       _padding,
-      !isSelected && variant && variantClasses[variant],
       wrap
         ? "text-wrap whitespace-normal text-left break-words"
         : "whitespace-nowrap",
@@ -148,37 +153,50 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       </>
     );
 
+    const refProp = buttonRef as React.Ref<HTMLButtonElement>;
+
     if (component === "link") {
-      const { onClick, ...linkRest } = rest;
       return (
-        <Link
-          className={commonClassName}
-          ref={buttonRef as React.Ref<HTMLAnchorElement>}
-          to={linkRest.to || "#"}
-          {...linkRest}
-          onClick={(e) => {
-            if (e.shiftKey || e.ctrlKey || e.metaKey) {
-              e.preventDefault();
-            }
-            onClick?.(e as React.MouseEvent<HTMLAnchorElement>);
-          }}
+        <ShadcnButton
+          ref={refProp}
+          asChild
+          variant={uiVariant}
+          size={uiSize}
+          className={layoutClassName}
         >
-          {commonContent}
-        </Link>
+          <Link
+            to={to || "#"}
+            state={state}
+            {...rest}
+            onClick={(e) => {
+              if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+              }
+              onClick?.(e as React.MouseEvent<HTMLAnchorElement>);
+            }}
+          >
+            {commonContent}
+          </Link>
+        </ShadcnButton>
       );
     }
 
     return (
-      <button
-        className={commonClassName}
+      <ShadcnButton
+        ref={refProp}
         type={type}
-        ref={buttonRef as React.Ref<HTMLButtonElement>}
+        variant={uiVariant}
+        size={uiSize}
+        className={layoutClassName}
+        onClick={onClick as React.ComponentProps<"button">["onClick"]}
         {...rest}
       >
         {commonContent}
-      </button>
+      </ShadcnButton>
     );
   }
 );
+
+Button.displayName = "Button";
 
 export default Button;

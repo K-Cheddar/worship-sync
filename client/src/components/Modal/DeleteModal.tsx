@@ -79,7 +79,7 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
         </Button>
         <Button
           className="flex-1 justify-center"
-          variant="cta"
+          variant="destructive"
           onClick={onConfirm}
           disabled={isConfirming}
           isLoading={isConfirming}

@@ -52,7 +52,7 @@ const SectionPreview = ({ selectedSection, previewSlides, isMinimized, onMinimiz
 
   return (
     <div className={cn(
-      "border-t border-gray-600 flex flex-col min-h-0 min-w-0",
+      "border-t border-gray-600 flex flex-col min-h-0 min-w-0 shrink-0",
       isMinimized ? "pt-2" : "pt-4"
     )}>
       <div className="flex items-center justify-between shrink-0">
@@ -67,7 +67,12 @@ const SectionPreview = ({ selectedSection, previewSlides, isMinimized, onMinimiz
         />
       </div>
       {!isMinimized && (
-        <div className={cn("grid gap-x-2 gap-y-0.5 overflow-y-auto overflow-x-hidden pb-2 scrollbar-variable min-w-0 mt-2", gridColsClass)}>
+        <div
+          className={cn(
+            "grid gap-x-2 gap-y-0.5 overflow-y-auto overflow-x-hidden pb-2 scrollbar-variable min-w-0 mt-2 max-h-[min(45vh,28rem)]",
+            gridColsClass,
+          )}
+        >
           {previewSlides.map((slide, index) => (
             <div key={slide.id} className="flex flex-col justify-start">
               <div className="w-full aspect-video shrink-0 relative">

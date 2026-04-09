@@ -17,7 +17,7 @@ const LoadingOverlay = ({
     {children}
     {!!isLoading && (
       <div
-        className="absolute inset-0 z-1 bg-gray-900/80 flex items-center justify-center"
+        className="absolute inset-0 z-1 flex items-center justify-center bg-homepage-canvas/90 ring-1 ring-inset ring-white/10"
         aria-hidden
       >
         <Spinner />

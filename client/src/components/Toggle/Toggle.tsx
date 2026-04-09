@@ -1,6 +1,6 @@
 import { useId, ReactNode } from "react";
-import { Switch } from "../ui/Switch";
-import { cn } from "../../utils/cnHelper";
+import { Switch } from "@/components/ui/Switch";
+import { cn } from "@/utils/cnHelper";
 import { LucideIcon } from "lucide-react";
 
 type ToggleProps = {
@@ -27,12 +27,15 @@ const Toggle = ({
   return (
     <div
       className={cn(
-        "flex gap-1 relative items-center cursor-pointer",
+        "group/toggle relative flex cursor-pointer items-center gap-1",
         className
       )}
     >
       {label && (
-        <label className="text-sm font-semibold cursor-pointer" htmlFor={id}>
+        <label
+          className="cursor-pointer text-sm font-semibold transition-colors duration-150 ease-out group-hover/toggle:text-white"
+          htmlFor={id}
+        >
           {typeof label === "string" ? `${label}:` : label}
         </label>
       )}

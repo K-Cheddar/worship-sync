@@ -39,9 +39,9 @@ const WorkstationPair = ({
   const lastAutoPairTokenRef = useRef("");
   const returnPath =
     typeof location.state === "object" &&
-    location.state &&
-    "from" in location.state &&
-    typeof (location.state as { from?: { pathname?: string } }).from?.pathname ===
+      location.state &&
+      "from" in location.state &&
+      typeof (location.state as { from?: { pathname?: string } }).from?.pathname ===
       "string"
       ? (location.state as { from: { pathname: string } }).from.pathname
       : "";
@@ -122,7 +122,7 @@ const WorkstationPair = ({
   }, [handlePair, isLoading, tokenFromQuery]);
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-gray-700 px-4 text-white">
+    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         <SetupScreenBackButton />
         <h1 className="text-2xl font-semibold">Link this device</h1>

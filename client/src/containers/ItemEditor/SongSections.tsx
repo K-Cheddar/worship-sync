@@ -1,3 +1,4 @@
+import { Plus } from "lucide-react";
 import Button from "../../components/Button/Button";
 import { SongOrder } from "../../types";
 import Select from "../../components/Select/Select";
@@ -95,8 +96,15 @@ const SongSections = ({
           options={currentSections}
           value={section}
           onChange={(value) => setSection(value)}
+          backgroundColor="bg-black/40"
+          textColor="text-white"
+          chevronColor="text-white"
+          contentBackgroundColor="bg-gray-900"
+          contentTextColor="text-white"
         />
         <Button
+          svg={Plus}
+          iconSize="sm"
           onClick={() => {
             const updatedSongOrder = [...songOrder];
             updatedSongOrder.splice(selectedIndex + 1, 0, {
@@ -106,7 +114,7 @@ const SongSections = ({
             setSongOrder(updatedSongOrder);
             setSelectedIndex(selectedIndex + 1);
           }}
-          className="text-base mt-2 w-full justify-center h-7"
+          className="text-base mt-2 w-full justify-center h-7 gap-2"
           disabled={!section}
         >
           Add Section

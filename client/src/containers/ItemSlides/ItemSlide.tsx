@@ -9,7 +9,7 @@ import ContextMenu from "../../components/ContextMenu/ContextMenu";
 import { ImageOff } from "lucide-react";
 import { useDispatch } from "../../hooks";
 import { updateSlideBackground } from "../../store/itemSlice";
-import { useContext } from "react";
+import { memo, useContext } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
@@ -18,13 +18,14 @@ type ItemSlideProps = {
   slide: ItemSlideType;
   index: number;
   selectSlide: (index: number) => void;
-  selectedSlide: number;
+  isSelected: boolean;
   size: number;
   itemType: string;
   isMobile: boolean;
   timerInfo?: TimerInfo;
   draggedSection: string | null;
-  isTransmitting: boolean;
+  /** True when this slide matches last-sent presentation for enabled outputs. */
+  isLive: boolean;
   isStreamFormat: boolean;
   getBibleInfo: (index: number) => { title: string; text: string };
   borderWidth: string;
@@ -33,11 +34,11 @@ type ItemSlideProps = {
 };
 
 const ItemSlide = ({
-  isTransmitting,
+  isLive,
   slide,
   index,
   selectSlide,
-  selectedSlide,
+  isSelected,
   size,
   itemType,
   isMobile,
@@ -51,8 +52,8 @@ const ItemSlide = ({
 }: ItemSlideProps) => {
   const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) || {};
-  const { isLoading } = useSelector(
-    (state: RootState) => state.undoable.present.item
+  const isLoading = useSelector(
+    (state: RootState) => state.undoable.present.item.isLoading
   );
 
   const {
@@ -90,21 +91,21 @@ const ItemSlide = ({
 
   const contextMenuItems = canEdit
     ? [
-        {
-          label: "Clear Background",
-          onClick: () => {
-            if (db) {
-              dispatch(
-                updateSlideBackground({
-                  background: "",
-                })
-              );
-            }
-          },
-          icon: <ImageOff className="w-4 h-4" />,
-          disabled: isLoading,
+      {
+        label: "Clear Background",
+        onClick: () => {
+          if (db) {
+            dispatch(
+              updateSlideBackground({
+                background: "",
+              })
+            );
+          }
         },
-      ]
+        icon: <ImageOff className="w-4 h-4" />,
+        disabled: isLoading,
+      },
+    ]
     : [];
 
   return (
@@ -130,10 +131,11 @@ const ItemSlide = ({
       {...(isFree && canEdit ? listeners : {})}
       key={slide.id}
       className={cn(
-        "cursor-pointer w-full rounded-lg",
-        selectedSlide === index && !isTransmitting && "border-gray-300",
-        selectedSlide === index && isTransmitting && "border-green-500",
-        selectedSlide !== index && "border-transparent",
+        "cursor-pointer w-full rounded-lg transition-[background-color,box-shadow] duration-150 ease-out",
+        !isDragging &&
+        "hover:bg-white/12 hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.28)]",
+        isSelected && "border-cyan-500",
+        !isSelected && "border-transparent",
         isInDraggedSection && "z-10"
       )}
       id={`item-slide-${index}`}
@@ -145,12 +147,20 @@ const ItemSlide = ({
           subtitle: "Item Slide",
         }}
         onOpen={() => {
-          if (selectedSlide !== index) {
+          if (!isSelected) {
             selectSlide(index);
           }
         }}
       >
-        <div onClick={() => selectSlide(index)}>
+        <div className="relative" onClick={() => selectSlide(index)}>
+          {isLive ? (
+            <span
+              className="pointer-events-none absolute bottom-1 right-1 z-20 rounded bg-green-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow"
+              aria-label="Live on output"
+            >
+              Live
+            </span>
+          ) : null}
           <h4
             className={cn(
               "rounded-t-md truncate px-2 text-center flex w-full",
@@ -213,4 +223,4 @@ const ItemSlide = ({
   );
 };
 
-export default ItemSlide;
+export default memo(ItemSlide);

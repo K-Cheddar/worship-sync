@@ -1,67 +1,46 @@
+import { ReactElement } from "react";
 import {
-  autoUpdate,
-  flip,
-  FloatingFocusManager,
-  shift,
-  useClick,
-  useDismiss,
-  useFloating,
-  useInteractions,
-  useRole,
-} from "@floating-ui/react";
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/Popover";
+import Button from "../Button/Button";
+import { X } from "lucide-react";
+import { cn } from "@/utils/cnHelper";
 import { ButtonProps } from "../Button/Button";
-import { cloneElement, ReactElement, useState } from "react";
-import PopOverContent from "./PopOverContent";
 
 type PopOverProps = {
   children: React.ReactNode;
   TriggeringButton: ReactElement<ButtonProps>;
+  onOpenChange?: (open: boolean) => void;
 };
 
-const PopOver = ({ children, TriggeringButton }: PopOverProps) => {
-  const [isOpen, setIsOpen] = useState(false);
-
-  const { refs, floatingStyles, context } = useFloating({
-    open: isOpen,
-    onOpenChange: setIsOpen,
-    placement: "bottom-end",
-    middleware: [flip({ fallbackAxisSideDirection: "end" }), shift()],
-    whileElementsMounted: autoUpdate,
-  });
-
-  const click = useClick(context);
-  const dismiss = useDismiss(context);
-  const role = useRole(context);
-
-  const { getReferenceProps, getFloatingProps } = useInteractions([
-    click,
-    dismiss,
-    role,
-  ]);
-
-  const triggeringButton = cloneElement(TriggeringButton, {
-    ref: refs.setReference,
-    onClick: () => setIsOpen((val) => !val),
-    ...getReferenceProps(),
-  });
-
+const PopOver = ({ children, TriggeringButton, onOpenChange }: PopOverProps) => {
   return (
-    <>
-      {triggeringButton}
-      {isOpen && (
-        <FloatingFocusManager context={context} modal>
-          <PopOverContent
-            floatingStyles={floatingStyles}
-            refs={refs}
-            getFloatingProps={getFloatingProps}
-            setIsOpen={setIsOpen}
-            isOpen={isOpen}
-          >
-            {children}
-          </PopOverContent>
-        </FloatingFocusManager>
-      )}
-    </>
+    <Popover onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>{TriggeringButton}</PopoverTrigger>
+      <PopoverContent
+        align="end"
+        side="bottom"
+        className={cn(
+          "w-auto max-w-[85vw] overflow-x-hidden rounded-md border border-gray-600 bg-gray-800 p-0 text-white shadow-md"
+        )}
+      >
+        <div className="flex justify-end pr-2 pt-2">
+          <PopoverClose asChild>
+            <Button
+              type="button"
+              variant="tertiary"
+              svg={X}
+              aria-label="Close popover"
+              className="shrink-0"
+            />
+          </PopoverClose>
+        </div>
+        <div className="relative px-4 pb-4">{children}</div>
+      </PopoverContent>
+    </Popover>
   );
 };
 

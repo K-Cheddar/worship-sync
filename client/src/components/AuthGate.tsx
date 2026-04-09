@@ -18,7 +18,7 @@ const ValidationScreen = ({
   description: string;
   actions?: ReactNode;
 }) => (
-  <div className="flex min-h-dvh w-full items-center justify-center bg-gray-700 px-6 text-white">
+  <div className="flex min-h-dvh w-full items-center justify-center bg-homepage-canvas px-6 text-white">
     <div className="max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-8 text-center">
       <h1 className="text-2xl font-semibold">{title}</h1>
       <p className="mt-3 text-sm text-gray-200" aria-live="polite">

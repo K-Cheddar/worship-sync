@@ -24,10 +24,7 @@ const AUTH_REDIRECT_EXACT_PATHS = new Set([
   "/boards/display",
 ]);
 
-const AUTH_REDIRECT_PREFIXES = [
-  "/controller",
-  "/boards/",
-];
+const AUTH_REDIRECT_PREFIXES = ["/controller", "/boards/"];
 
 export function sanitizeAuthRedirectPathname(pathname: unknown): string | null {
   if (typeof pathname !== "string") return null;
@@ -44,7 +41,9 @@ export function sanitizeAuthRedirectPathname(pathname: unknown): string | null {
 }
 
 /** Pathname from AuthGate/AppEntry `Navigate state={{ from: location }}` (React Router Location). */
-export function getAuthRedirectPathnameFromState(state: unknown): string | null {
+export function getAuthRedirectPathnameFromState(
+  state: unknown,
+): string | null {
   if (
     typeof state === "object" &&
     state &&
@@ -53,7 +52,7 @@ export function getAuthRedirectPathnameFromState(state: unknown): string | null 
       "string"
   ) {
     return sanitizeAuthRedirectPathname(
-      (state as { from: { pathname: string } }).from.pathname
+      (state as { from: { pathname: string } }).from.pathname,
     );
   }
   return null;

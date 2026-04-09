@@ -92,7 +92,7 @@ const TimeAdjuster = ({ serviceId }: Props) => {
           </Button>
         </div>
       </div>
-      <div className="flex items-center gap-2 md:border-l-2 md:border-gray-400 md:pl-4">
+      <div className="flex items-center gap-2 md:border-l-2 md:border-white/20 md:pl-4">
         <Input
           type="number"
           min={0}

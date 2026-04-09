@@ -135,7 +135,7 @@ const Toolbar = ({
             isEditMode && "invisible"
           )}
         >
-          <div className="flex gap-1 overflow-x-auto w-full scrollbar-variable">
+          <div className="flex gap-0 overflow-x-auto w-full scrollbar-variable">
             <ToolbarButton
               svg={Settings}
               onClick={() => setSection("settings")}

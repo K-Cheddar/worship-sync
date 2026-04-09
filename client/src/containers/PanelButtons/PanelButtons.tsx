@@ -26,7 +26,7 @@ const buttons: ButtonType[] = [
   },
   {
     type: "free",
-    title: "Custom Items",
+    title: "Custom",
     section: "free",
     access: ["full", "view"],
   },
@@ -53,26 +53,29 @@ const buttons: ButtonType[] = [
 const EditorButtons = ({ access }: { access?: AccessType }) => {
   const location = useLocation();
 
+  const canShow = (b: ButtonType) =>
+    Boolean(access && b.access?.includes(access));
+
+  const isSelected = (section: string) =>
+    location.pathname.replace("/controller/", "") === section;
+
   return (
     <ErrorBoundary>
       <div className="flex flex-col h-fit">
-        {buttons
-          .filter((button) => access && button.access?.includes(access))
-          .map(({ title, type, section }) => {
-            const id = `editor-button-${title}`;
-            return (
-              <LeftPanelButton
-                key={id}
-                title={title}
-                isSelected={
-                  location.pathname.replace("/controller/", "") === section
-                } // Remove controller route from path
-                to={section}
-                type={type}
-                id={id}
-              />
-            );
-          })}
+        {buttons.map((b) => {
+          if (!canShow(b)) return null;
+          const id = `editor-button-${b.title}`;
+          return (
+            <LeftPanelButton
+              key={id}
+              title={b.title}
+              isSelected={isSelected(b.section)}
+              to={b.section}
+              type={b.type}
+              id={id}
+            />
+          );
+        })}
       </div>
     </ErrorBoundary>
   );

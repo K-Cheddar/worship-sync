@@ -81,7 +81,7 @@ const ServiceTimesForm = ({
   const [activeTab, setActiveTab] = useState<"info" | "style">("info");
 
   return (
-    <article className="bg-gray-800 rounded p-4 w-fit">
+    <article className="w-fit rounded-md border border-white/12 bg-black/30 p-4">
       <h2 className="text-xl font-semibold">
         {editingId ? "Edit Service Timer" : "Create Service Timer"}
       </h2>
@@ -106,9 +106,8 @@ const ServiceTimesForm = ({
 
       {/* Info Tab Content */}
       <section
-        className={`grid grid-cols-2 gap-4 ${
-          activeTab !== "info" ? "hidden md:grid" : ""
-        }`}
+        className={`grid grid-cols-2 gap-4 ${activeTab !== "info" ? "hidden md:grid" : ""
+          }`}
       >
         <Input
           className="gap-1 w-full"
@@ -200,9 +199,8 @@ const ServiceTimesForm = ({
 
       {/* Style Tab Content */}
       <section
-        className={`grid grid-cols-2 gap-4 mt-4 ${
-          activeTab !== "style" ? "hidden md:grid" : ""
-        }`}
+        className={`grid grid-cols-2 gap-4 mt-4 ${activeTab !== "style" ? "hidden md:grid" : ""
+          }`}
       >
         <ColorField
           className="w-full"

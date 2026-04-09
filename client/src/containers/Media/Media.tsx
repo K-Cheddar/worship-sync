@@ -468,7 +468,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
       >
         <div
           className={cn(
-            "mx-2 bg-gray-900 flex items-center text-sm relative z-10 transition-all px-2",
+            "mx-2 flex items-center border-b border-gray-500 bg-black/60 text-sm relative z-10 transition-all px-2",
             isMediaExpanded ? "py-1 rounded-t-md" : "rounded-b-md py-0.5",
             "rounded-t-md mt-2"
           )}
@@ -525,7 +525,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           onUploadActiveChange={handleUploadActiveChange}
         />
         {!isMediaLoading && isMediaExpanded && (
-          <div className="px-4 py-2 bg-gray-900 mx-2 flex items-center gap-2">
+          <div className="mx-2 flex items-center gap-2 border-b border-gray-500 bg-black/60 px-4 py-2">
             <Input
               type="text"
               label="Search"
@@ -551,7 +551,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         {isMediaLoading && isMediaExpanded && (
           <h3
             className={cn(
-              "text-center font-lg pt-4 bg-gray-800 mx-2",
+              "text-center font-lg pt-4 bg-black/30 mx-2",
               isPanelVariant ? "flex-1 min-h-0" : "h-full"
             )}
           >
@@ -562,7 +562,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           <ul
             ref={mediaListRef}
             className={cn(
-              "scrollbar-variable grid overflow-y-auto p-4 bg-gray-800 mx-2 gap-x-2 gap-y-1 z-10 rounded-b-md min-h-0",
+              "scrollbar-variable grid content-start items-start overflow-y-auto p-4 bg-black/30 mx-2 gap-x-2 gap-y-1 z-10 rounded-b-md min-h-0",
               isPanelVariant && "flex-1",
               sizeMap.get(mediaItemsPerRow)
             )}
@@ -729,7 +729,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                       variant="none"
                       padding="p-0"
                       className={cn(
-                        "w-full h-full justify-center flex flex-col items-center border-2",
+                        "flex h-auto w-full flex-col items-center justify-center border-2",
                         isMultiSelected
                           ? "border-cyan-400 bg-cyan-400/10"
                           : isSelected
@@ -748,7 +748,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                     >
                       <div
                         className={cn(
-                          "aspect-video flex items-center justify-center w-full flex-1 overflow-hidden relative",
+                          "relative flex aspect-video w-full items-center justify-center overflow-hidden",
                           isMediaExpanded && "border-b border-gray-500"
                         )}
                       >
@@ -781,7 +781,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         {!isMediaLoading && isMediaExpanded && searchTerm && filteredList.length === 0 && (
           <div
             className={cn(
-              "text-center py-8 bg-gray-800 mx-2 px-2",
+              "text-center py-8 bg-black/30 mx-2 px-2",
               isPanelVariant && "flex-1 min-h-0"
             )}
           >

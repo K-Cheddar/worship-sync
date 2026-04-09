@@ -6,7 +6,9 @@ import { Maximize2 } from "lucide-react";
 import { ItemState } from "../../../types";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import RadioButton from "../../../components/RadioButton/RadioButton";
+import RadioButton, {
+  RadioGroup,
+} from "../../../components/RadioButton/RadioButton";
 import PopOver from "../../../components/PopOver/PopOver";
 import { updateBoxProperties } from "../../../utils/formatter";
 import { setItemFormatting } from "../../../store/itemSlice";
@@ -365,7 +367,8 @@ const BoxEditor = ({
           value={dimensions.x}
           onChange={(value) => handleInputChange("x", value.toString())}
           label="X"
-          labelClassName="mr-2 max-lg:mb-2"
+          labelLayout="inline"
+          labelFontSize="text-xs"
           min={0}
           max={100}
           inputWidth="w-16"
@@ -377,7 +380,8 @@ const BoxEditor = ({
           value={dimensions.y}
           onChange={(value) => handleInputChange("y", value.toString())}
           label="Y"
-          labelClassName="mr-2 max-lg:mb-2"
+          labelLayout="inline"
+          labelFontSize="text-xs"
           min={0}
           max={100}
           inputWidth="w-16"
@@ -389,7 +393,8 @@ const BoxEditor = ({
           value={dimensions.width}
           onChange={(value) => handleInputChange("width", value.toString())}
           label="Width"
-          labelClassName="mr-2 max-lg:mb-2"
+          labelLayout="inline"
+          labelFontSize="text-xs"
           min={0}
           max={100}
           inputWidth="w-16"
@@ -401,7 +406,8 @@ const BoxEditor = ({
           value={dimensions.height}
           onChange={(value) => handleInputChange("height", value.toString())}
           label="Height"
-          labelClassName="mr-2 max-lg:mb-2"
+          labelLayout="inline"
+          labelFontSize="text-xs"
           min={0}
           max={100}
           inputWidth="w-16"
@@ -567,20 +573,22 @@ const BoxEditor = ({
           />
         </Button>
       </div>
-      <div className="flex gap-2 items-center justify-center max-lg:pt-2">
+      <RadioGroup
+        value={shouldApplyToAll ? "all" : "selected"}
+        onValueChange={(v) => setShouldApplyToAll(v === "all")}
+        className="flex gap-2 items-center justify-center max-lg:pt-2"
+      >
         <RadioButton
           className="text-xs w-fit"
+          optionValue="selected"
           label="Apply to selected"
-          value={!shouldApplyToAll}
-          onChange={() => setShouldApplyToAll(false)}
         />
         <RadioButton
           label="Apply to all"
           className="text-xs w-fit"
-          value={shouldApplyToAll}
-          onChange={() => setShouldApplyToAll(true)}
+          optionValue="all"
         />
-      </div>
+      </RadioGroup>
     </>
   );
 

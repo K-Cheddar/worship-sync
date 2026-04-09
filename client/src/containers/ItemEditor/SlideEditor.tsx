@@ -2,9 +2,10 @@ import Button from "../../components/Button/Button";
 import cn from "classnames";
 import { ChevronsUpDown } from "lucide-react";
 import { ChevronsDownUp } from "lucide-react";
+import { Check } from "lucide-react";
+import { FileQuestion } from "lucide-react";
 import { Pencil } from "lucide-react";
 import { PencilLine } from "lucide-react";
-import { Check } from "lucide-react";
 import { X } from "lucide-react";
 
 import Input from "../../components/Input/Input";
@@ -18,8 +19,16 @@ import {
   useRef,
   useState,
 } from "react";
-import { borderColorMap } from "../../utils/itemTypeMaps";
-import { getItemTypeLabel } from "../../utils/itemTypeMaps";
+import {
+  borderColorMap,
+  getItemTypeLabel,
+  iconColorMap,
+  svgMap,
+} from "../../utils/itemTypeMaps";
+import {
+  INLINE_EDIT_CONFIRM_ICON_COLOR,
+  handleInlineTextInputKeyDown,
+} from "../../utils/inlineEdit";
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useDispatch, useSelector } from "../../hooks";
@@ -51,6 +60,7 @@ import { AccessType } from "../../context/globalInfo";
 import { ToastContext } from "../../context/toastContext";
 import SectionTextEditor from "../../components/SectionTextEditor/SectionTextEditor";
 import SlideBoxes from "../../components/SlideBoxes/SlideBoxes";
+import Icon from "../../components/Icon/Icon";
 import LoadingOverlay from "../../components/LoadingOverlay/LoadingOverlay";
 import TimerControls from "../../components/TimerControls/TimerControls";
 import type { DisplayEditorChangeInfo } from "../../components/DisplayWindow/DisplayEditor";
@@ -300,6 +310,11 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     () => (isLoading ? [] : _boxes),
     [isLoading, _boxes]
   );
+
+  const discardNameEdit = () => {
+    setLocalName(name || "");
+    setIsEditingName(false);
+  };
 
   const saveName = () => {
     setIsEditingName(false);
@@ -873,7 +888,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     // For other types, show the slide name with item type color
     const name = currentSlide.name || "Editing section text";
     const itemColor = borderColorMap.get(type) || "border-gray-500";
-    // Convert border color to background color (e.g., "border-orange-500" -> "bg-orange-500")
+    // Convert border color to background color (e.g., "border-cyan-500" -> "bg-cyan-500")
     const bgColor = itemColor.replace("border-", "bg-");
     return { sectionName: name, sectionColor: bgColor };
   }, [type, slides, selectedSlide, arrangement, item]);
@@ -1105,27 +1120,91 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     selectedSlide,
   ]);
 
+  const editorWrapperStyle = {
+    "--slide-editor-height": isMobile
+      ? "fit-content"
+      : `${isEmpty ? emptySlideHeight : editorHeight}`,
+  } as CSSProperties;
+
+  const mainEditorContent = (
+    <>
+      {!isEmpty ? (
+        <div className="flex flex-col lg:flex-row gap-2 w-full px-2">
+          <LoadingOverlay
+            isLoading={!!showLoadingOverlay}
+            className="lg:flex-[0_0_30%] w-full min-h-0"
+          >
+            {leftColumnContent}
+          </LoadingOverlay>
+
+          <LoadingOverlay
+            isLoading={!!showLoadingOverlay}
+            className="lg:max-h-[42vh] max-lg:max-h-[30vh] flex-1 min-w-0 min-h-0"
+          >
+            <DisplayWindow
+              className="lg:max-h-[42vh] max-lg:max-h-[30vh] h-full w-full"
+              showBorder
+              boxes={boxes}
+              boxCursorPositions={cursorPositionsRef.current}
+              selectBox={(val) => dispatch(setSelectedBox(val))}
+              ref={editorRef}
+              onChange={(onChangeInfo) => {
+                onChange(onChangeInfo);
+              }}
+              displayType="editor"
+              selectedBox={selectedBox}
+              isBoxLocked={isBoxLocked}
+              disabled={!canEdit}
+              shouldPlayVideo
+            />
+          </LoadingOverlay>
+        </div>
+      ) : (
+        <p
+          id="slide-editor-empty"
+          ref={emptySlideRef}
+          className="flex items-center justify-center text-gray-300 w-full h-[calc(42vw/(16/9))] max-lg:h-[calc(84vw/(16/9))]"
+        >
+          No slide selected
+        </p>
+      )}
+    </>
+  );
+
   return (
     <ErrorBoundary>
       <div>
-        <section className="flex justify-end w-full pr-2 bg-gray-900 mb-1 gap-1 overflow-hidden">
+        <section className="mb-1 flex w-full justify-end gap-1 overflow-hidden border-b border-white/20 bg-black/60 pr-2">
           <span
             className={cn(
               "flex mr-auto px-2 items-center gap-2 border-l-4 flex-1 max-w-[calc(100%-6rem)] max-lg:max-w-[calc(100%-4rem)]",
               borderColorMap.get(type)
             )}
           >
+            <span className="hidden shrink-0 lg:flex" aria-hidden>
+              <Icon
+                svg={svgMap.get(type) ?? FileQuestion}
+                color={iconColorMap.get(type)}
+                size="md"
+                overrideSmallMobile
+              />
+            </span>
             {type !== "song" && isEditingName && (
               <Button
                 variant="tertiary"
                 svg={X}
-                onClick={() => setIsEditingName(false)}
+                onClick={discardNameEdit}
               />
             )}
             <Button
               variant="tertiary"
               disabled={isLoading || !canEdit}
               svg={type === "song" ? Pencil : isEditingName ? Check : Pencil}
+              color={
+                type !== "song" && isEditingName
+                  ? INLINE_EDIT_CONFIRM_ICON_COLOR
+                  : undefined
+              }
               onClick={onNameEditButtonClick}
               aria-label={nameEditButtonAriaLabel}
             />
@@ -1146,11 +1225,19 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                 value={localName || ""}
                 onChange={(val) => setLocalName(val as string)}
                 data-ignore-undo="true"
+                onKeyDown={(e) =>
+                  handleInlineTextInputKeyDown(e, {
+                    onSave: saveName,
+                    onCancel: discardNameEdit,
+                  })
+                }
               />
             )}
           </span>
           {type === "song" && (
             <Button
+              variant="primary"
+              color="#22d3ee"
               className="text-sm"
               disabled={isLoading || !canEdit}
               onClick={() => dispatch(setIsEditMode(true))}
@@ -1169,62 +1256,40 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             className="text-xs"
           />
         </section>
-        <div
-          className={cn(
-            "flex transition-all relative max-lg:flex-col gap-2 max-lg:items-center",
-            shouldShowItemEditor && "mb-2 z-1",
-            !shouldShowItemEditor && "h-0 -z-1"
-          )}
-          data-show={shouldShowItemEditor}
-          style={
-            {
-              "--slide-editor-height": isMobile
-                ? "fit-content"
-                : `${isEmpty ? emptySlideHeight : editorHeight}`,
-            } as CSSProperties
-          }
-        >
-          {!isEmpty ? (
-            <div className="flex flex-col lg:flex-row gap-2 w-full px-2">
-              <LoadingOverlay
-                isLoading={!!showLoadingOverlay}
-                className="lg:flex-[0_0_30%] w-full min-h-0"
-              >
-                {leftColumnContent}
-              </LoadingOverlay>
-
-              <LoadingOverlay
-                isLoading={!!showLoadingOverlay}
-                className="lg:max-h-[42vh] max-lg:max-h-[30vh] flex-1 min-w-0 min-h-0"
-              >
-                <DisplayWindow
-                  className="lg:max-h-[42vh] max-lg:max-h-[30vh] h-full w-full"
-                  showBorder
-                  boxes={boxes}
-                  boxCursorPositions={cursorPositionsRef.current}
-                  selectBox={(val) => dispatch(setSelectedBox(val))}
-                  ref={editorRef}
-                  onChange={(onChangeInfo) => {
-                    onChange(onChangeInfo);
-                  }}
-                  displayType="editor"
-                  selectedBox={selectedBox}
-                  isBoxLocked={isBoxLocked}
-                  disabled={!canEdit}
-                  shouldPlayVideo
-                />
-              </LoadingOverlay>
-            </div>
-          ) : (
-            <p
-              id="slide-editor-empty"
-              ref={emptySlideRef}
-              className="flex items-center justify-center text-gray-300 w-full h-[calc(42vw/(16/9))] max-lg:h-[calc(84vw/(16/9))]"
-            >
-              No slide selected
-            </p>
-          )}
-        </div>
+        {shouldShowItemEditor ? (
+          <div
+            className={cn(
+              "flex transition-all relative max-lg:flex-col gap-2 max-lg:items-center",
+              "mb-2 z-1"
+            )}
+            data-show={true}
+            style={editorWrapperStyle}
+          >
+            {mainEditorContent}
+          </div>
+        ) : type === "timer" ? (
+          <div
+            className="mb-2 z-1 flex w-full justify-center px-2 pb-2"
+            data-show={false}
+            data-testid="timer-item-editor-collapsed-controls"
+          >
+            <TimerControls
+              variant="controlsOnly"
+              className="w-full max-w-md"
+            />
+          </div>
+        ) : (
+          <div
+            className={cn(
+              "flex transition-all relative max-lg:flex-col gap-2 max-lg:items-center",
+              "h-0 -z-1"
+            )}
+            data-show={false}
+            style={editorWrapperStyle}
+          >
+            {mainEditorContent}
+          </div>
+        )}
       </div>
       <SongItemMetadataModal
         isOpen={isSongMetadataModalOpen}

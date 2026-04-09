@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import RadioButton from "../../components/RadioButton/RadioButton";
+import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButton";
 import { FileQuestion, Import, Plus, Check } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
@@ -406,7 +406,7 @@ const CreateItem = () => {
             </ul>
           </div>
         </Modal>
-        <ul className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2">
           <Input
             value={itemName}
             onChange={(val) => updateCreateItemDraft({ name: val as string })}
@@ -429,22 +429,34 @@ const CreateItem = () => {
               </Button>
             </p>
           )}
-          {itemTypes.map((itemType) => (
-            <li key={itemType.type} className="flex gap-2 item-center">
-              <Icon
-                svg={svgMap.get(itemType.type) || FileQuestion}
-                color={iconColorMap.get(itemType.type)}
-              />
-              <RadioButton
-                label={itemType.label}
-                value={selectedType === itemType.type}
-                textSize="text-base"
-                className="w-24"
-                onChange={() => updateCreateItemDraft({ type: itemType.type })}
-              />
-            </li>
-          ))}
-        </ul>
+          <RadioGroup
+            value={selectedType}
+            onValueChange={(v) =>
+              updateCreateItemDraft({ type: v as ItemType })
+            }
+            className="flex flex-col gap-2"
+          >
+            {itemTypes.map((itemType) => (
+              <div
+                key={itemType.type}
+                className="flex w-full min-w-0 items-center gap-3"
+              >
+                <Icon
+                  className="size-6 shrink-0 self-center"
+                  svg={svgMap.get(itemType.type) || FileQuestion}
+                  color={iconColorMap.get(itemType.type)}
+                />
+                <RadioButton
+                  optionValue={itemType.type}
+                  label={itemType.label}
+                  textSize="text-base"
+                  className="min-w-0 flex-1"
+                  data-ignore-undo="true"
+                />
+              </div>
+            ))}
+          </RadioGroup>
+        </div>
 
         {selectedType === "song" && (
           <div className="mt-3 rounded-md border border-gray-600 bg-gray-900 p-3 space-y-3">
@@ -508,24 +520,28 @@ const CreateItem = () => {
 
         {selectedType === "timer" && (
           <div className="flex flex-col gap-2 mt-2">
-            <div className="flex gap-4">
+            <RadioGroup
+              value={timerType}
+              onValueChange={(v) =>
+                updateCreateItemDraft({
+                  timerType: v as "timer" | "countdown",
+                })
+              }
+              className="flex gap-4"
+            >
               <RadioButton
+                optionValue="timer"
                 label="Timer"
-                value={timerType === "timer"}
                 textSize="text-base"
-                onChange={() => updateCreateItemDraft({ timerType: "timer" })}
                 data-ignore-undo="true"
               />
               <RadioButton
+                optionValue="countdown"
                 label="Countdown"
-                value={timerType === "countdown"}
                 textSize="text-base"
-                onChange={() =>
-                  updateCreateItemDraft({ timerType: "countdown" })
-                }
                 data-ignore-undo="true"
               />
-            </div>
+            </RadioGroup>
             {timerType === "countdown" && (
               <div className="flex gap-2">
                 <Input

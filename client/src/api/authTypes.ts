@@ -9,6 +9,29 @@
 export type SessionKind = "human" | "workstation" | "display" | null;
 export type ChurchStatus = "active" | "needs-admin";
 
+export type ChurchLogoAsset = {
+  url: string;
+  publicId: string;
+  width?: number;
+  height?: number;
+  format?: string;
+};
+
+export type ChurchBrandColor = {
+  label?: string;
+  value: string;
+};
+
+export type ChurchBranding = {
+  mission: string;
+  vision: string;
+  logos: {
+    square?: ChurchLogoAsset | null;
+    wide?: ChurchLogoAsset | null;
+  };
+  colors: ChurchBrandColor[];
+};
+
 export type AuthBootstrap = {
   authenticated: boolean;
   sessionKind: SessionKind;

@@ -172,9 +172,11 @@ const ServiceItem = ({
       data-list-id={item.listId}
       title={item.name}
       className={cn(
-        "border-b-2 border-r-4 overflow-hidden",
+        "border-b-2 overflow-hidden",
         isSelected ? "border-l-cyan-500" : "border-transparent",
-        isInsertPoint ? "border-b-white" : "border-b-transparent"
+        isSelected && "border-b-cyan-500",
+        !isSelected && isInsertPoint && "border-b-white",
+        !isSelected && !isInsertPoint && "border-b-transparent"
       )}
       isSelected={isSelected}
       to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(

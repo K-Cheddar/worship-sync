@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { Ban, Eye, EyeOff, Save, ShieldPlus } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
 import Spinner from "../../components/Spinner/Spinner";
@@ -23,6 +24,7 @@ import {
   updateChurchMemberAccess,
 } from "../../api/auth";
 import {
+  BrandingForm,
   DisplayPairingForm,
   InvitePeopleForm,
   RecoveryEmailForm,
@@ -83,63 +85,67 @@ type InviteRecord = {
 
 type AccountDestructiveConfirm =
   | {
-      kind: "removeAdmin";
-      membershipId: string;
-      memberLabel: string;
-      targetUserId: string;
-    }
+    kind: "removeAdmin";
+    membershipId: string;
+    memberLabel: string;
+    targetUserId: string;
+  }
   | {
-      kind: "removeMember";
-      membershipId: string;
-      memberLabel: string;
-      targetUserId: string;
-    }
+    kind: "removeMember";
+    membershipId: string;
+    memberLabel: string;
+    targetUserId: string;
+  }
   | {
-      kind: "revokeWorkstation";
-      device: WorkstationDevice;
-    }
+    kind: "revokeWorkstation";
+    device: WorkstationDevice;
+  }
   | {
-      kind: "revokeDisplay";
-      device: DisplayDevice;
-    }
+    kind: "revokeDisplay";
+    device: DisplayDevice;
+  }
   | {
-      kind: "revokeTrusted";
-      device: HumanDevice;
-    };
+    kind: "revokeTrusted";
+    device: HumanDevice;
+  };
 
 const memberAccessOptions: {
   value: MemberAccessOption;
   label: string;
 }[] = [
-  { value: "full", label: "Full access" },
-  { value: "music", label: "Music access" },
-  { value: "view", label: "View access" },
-];
+    { value: "full", label: "Full access" },
+    { value: "music", label: "Music access" },
+    { value: "view", label: "View access" },
+  ];
 
-type AccountTabId = "people" | "setup" | "trust";
+const adminListRowStripe = (index: number) =>
+  index % 2 === 0 ? "bg-admin-row-a" : "bg-admin-row-b";
+const ACCOUNT_CONTROL_SELECT_CLASSNAME = "h-10 max-md:min-h-14";
+
+type AccountTabId = "people" | "setup" | "branding";
 
 const ACCOUNT_TABS: {
   id: AccountTabId;
   label: string;
   description: string;
 }[] = [
-  {
-    id: "people",
-    label: "People",
-    description: "Invite teammates and see who has access.",
-  },
-  {
-    id: "setup",
-    label: "Devices",
-    description:
-      "Create link codes here; enter the code on the workstation or display to connect.",
-  },
-  {
-    id: "trust",
-    label: "Trust & recovery",
-    description: "Trusted devices and where recovery requests are sent.",
-  },
-];
+    {
+      id: "people",
+      label: "People",
+      description: "Invite teammates and see who has access.",
+    },
+    {
+      id: "setup",
+      label: "Devices & security",
+      description:
+        "Create link codes, manage trusted devices, and update recovery email from one place.",
+    },
+    {
+      id: "branding",
+      label: "Branding",
+      description: "Mission, vision, logos, and brand colors for controllers.",
+    },
+  ];
 
 const formatLastSeenLabel = (value?: string | null) => {
   if (!value) return "Last seen unknown";
@@ -380,7 +386,7 @@ const AccountPage = () => {
           message: "Are you sure you want to remove this person from your church",
           itemName: destructiveConfirm.memberLabel,
           warningMessage: "They'll lose access to this church immediately.",
-          confirmText: "Remove member",
+          confirmText: "Remove",
         };
       case "revokeWorkstation":
         return {
@@ -541,7 +547,7 @@ const AccountPage = () => {
   if (!canManage) {
     return (
       <div className="px-2 py-1 text-white sm:px-4">
-        <div className="mx-auto max-w-lg rounded-xl border border-gray-600 bg-gray-900/30 p-6 text-center">
+        <div className="mx-auto max-w-lg rounded-xl border border-gray-700 bg-gray-950/50 p-6 text-center">
           <h2 className="text-2xl font-semibold">Account</h2>
           <p className="mt-3 text-sm leading-relaxed text-gray-200">
             {canRequestRecovery
@@ -552,6 +558,7 @@ const AccountPage = () => {
             <div className="mt-6">
               <Button
                 variant="cta"
+                svg={ShieldPlus}
                 onClick={() =>
                   void runAction(async () => {
                     await requestAdminAccess(churchId);
@@ -572,11 +579,11 @@ const AccountPage = () => {
 
   return (
     <div className="px-2 py-1 text-white sm:px-4">
-      <div className="mb-6 flex flex-col gap-3 border-b border-gray-600/60 pb-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="mb-6 flex flex-col gap-3 border-b border-gray-700/70 pb-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-2xl font-semibold">Overview</h2>
           <p className="mt-1 max-w-xl text-sm text-gray-300">
-            Invite people, link shared devices, and manage recovery for this church in one place.
+            Invite people, link shared devices, manage recovery, and save church branding in one place.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 sm:flex-nowrap">
@@ -594,7 +601,7 @@ const AccountPage = () => {
               <span>Refreshing…</span>
             </div>
           )}
-          <span className="rounded-full border border-gray-500 bg-gray-900/50 px-3 py-1 text-xs font-medium text-gray-200">
+          <span className="rounded-full border border-gray-600 bg-gray-950/45 px-3 py-1 text-xs font-medium text-gray-200">
             Status: {formatChurchStatusLabel(churchStatusRaw)}
           </span>
         </div>
@@ -603,8 +610,8 @@ const AccountPage = () => {
       <SectionTabs
         defaultValue="people"
         className="pb-2"
-        tabBarClassName="border-gray-600/80 bg-gray-800/95"
-        triggerClassName="group-data-[variant=line]/tabs-list:data-[state=inactive]:text-gray-200 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:text-white focus-visible:ring-cyan-400 focus-visible:ring-offset-gray-800"
+        tabBarClassName="border-gray-700/80 bg-gray-950/45"
+        triggerClassName="group-data-[variant=line]/tabs-list:data-[state=inactive]:text-gray-200 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:text-white focus-visible:ring-cyan-400 focus-visible:ring-offset-gray-900"
         descriptionClassName="text-gray-400"
         items={[
           {
@@ -613,207 +620,219 @@ const AccountPage = () => {
             description: ACCOUNT_TABS[0].description,
             content: (
               <>
-          <InvitePeopleForm
-            churchId={churchId}
-            onInvited={refresh}
-          />
+                <InvitePeopleForm
+                  churchId={churchId}
+                  onInvited={refresh}
+                />
 
-          <section
-            className="rounded-xl border border-gray-600 bg-gray-900/25 p-4"
-          >
-            <h3 className="text-lg font-semibold">Pending invites</h3>
-            <p className="mt-1 text-sm text-gray-400">
-              Waiting to be accepted. Unused invites expire on their own.
-            </p>
-            <div className="mt-4 space-y-2">
-              {sortedInvites.length === 0 && (
-                <p className="text-sm text-gray-300">No pending invites yet.</p>
-              )}
-              {sortedInvites.map((invite) => {
-                const accessLabel =
-                  invite.role === "admin" ? "Admin" : invite.appAccess;
-                const expiresLabel = invite.expiresAt
-                  ? new Date(invite.expiresAt).toLocaleString()
-                  : "Unknown";
-                const createdLabel = invite.createdAt
-                  ? new Date(invite.createdAt).toLocaleString()
-                  : "Unknown";
-
-                return (
-                  <div
-                    key={invite.inviteId}
-                    className="rounded-lg bg-gray-900/40 px-3 py-3"
-                  >
-                    <p className="font-semibold">{invite.email}</p>
-                    <p className="text-sm text-gray-300">
-                      {accessLabel} | Sent {createdLabel}
-                    </p>
-                    <p className="text-sm text-gray-400">Expires {expiresLabel}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          <section
-            className="rounded-xl border border-gray-600 bg-gray-900/25 p-4"
-          >
-            <h3 className="text-lg font-semibold">Church members</h3>
-            <p className="mt-1 text-sm text-gray-400">
-              Everyone with access here. Admins can edit member access, remove
-              members, or remove admin access.
-            </p>
-            <div className="mt-4 space-y-2">
-              {sortedMembers.length === 0 && (
-                <p className="text-sm text-gray-300">No members yet.</p>
-              )}
-              {sortedMembers.map((member) => {
-                const memberUser = member.user;
-                const memberLabel =
-                  memberUser?.displayName || memberUser?.email || "Unknown user";
-                const isSelf = memberUser?.uid === context?.userId;
-                const isAdminMember = member.role === "admin";
-                const targetUserId = memberUser?.uid || member.userId;
-                const currentAccess = toMemberAccessOption(member.appAccess);
-                const selectedAccess = getMemberAccessValue(member);
-                const accessChanged = selectedAccess !== currentAccess;
-                const saveAccessKey = `save-access:${member.membershipId}`;
-
-                return (
-                  <div
-                    key={member.membershipId}
-                    className={cn(
-                      "rounded-lg px-3 py-3",
-                      isSelf
-                        ? "border border-cyan-500/35 bg-gradient-to-r from-cyan-950/40 to-gray-900/50 shadow-[inset_3px_0_0_0] shadow-cyan-400/70"
-                        : "bg-gray-900/40"
+                <section
+                  className="rounded-xl border border-gray-700 bg-gray-950/50 p-4"
+                >
+                  <h3 className="text-lg font-semibold">Pending invites</h3>
+                  <p className="mt-1 text-sm text-gray-400">
+                    Waiting to be accepted. Unused invites expire on their own.
+                  </p>
+                  <div className="mt-4 space-y-2">
+                    {sortedInvites.length === 0 && (
+                      <p className="text-sm text-gray-300">No pending invites yet.</p>
                     )}
-                  >
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="flex flex-wrap items-center gap-2 font-semibold">
-                          <span>{memberLabel}</span>
-                          {isSelf && (
-                            <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-xs font-medium text-cyan-200">
-                              You
-                            </span>
-                          )}
-                        </p>
-                        <p
+                    {sortedInvites.map((invite, inviteIndex) => {
+                      const accessLabel =
+                        invite.role === "admin" ? "Admin" : invite.appAccess;
+                      const expiresLabel = invite.expiresAt
+                        ? new Date(invite.expiresAt).toLocaleString()
+                        : "Unknown";
+                      const createdLabel = invite.createdAt
+                        ? new Date(invite.createdAt).toLocaleString()
+                        : "Unknown";
+
+                      return (
+                        <div
+                          key={invite.inviteId}
                           className={cn(
-                            "text-sm",
-                            isSelf ? "text-cyan-100/90" : "text-gray-300"
+                            "rounded-lg px-3 py-3",
+                            adminListRowStripe(inviteIndex)
                           )}
                         >
-                          {isAdminMember ? "Admin" : "Member"} | {member.appAccess}
-                        </p>
-                      </div>
-                      {!isSelf && (
-                        <div className="flex flex-wrap gap-2">
-                          {isAdminMember && targetUserId && (
-                            <Button
-                              variant="tertiary"
-                              isLoading={
-                                destructiveConfirmRunning &&
-                                destructiveConfirm?.kind === "removeAdmin" &&
-                                destructiveConfirm.membershipId ===
-                                  member.membershipId
-                              }
-                              disabled={destructiveConfirmRunning}
-                              onClick={() =>
-                                setDestructiveConfirm({
-                                  kind: "removeAdmin",
-                                  membershipId: member.membershipId,
-                                  memberLabel,
-                                  targetUserId,
-                                })
-                              }
-                            >
-                              Remove admin
-                            </Button>
+                          <p className="font-semibold">{invite.email}</p>
+                          <p className="text-sm text-gray-300">
+                            {accessLabel} | Sent {createdLabel}
+                          </p>
+                          <p className="text-sm text-gray-400">Expires {expiresLabel}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section
+                  className="rounded-xl border border-gray-700 bg-gray-950/50 p-4"
+                >
+                  <h3 className="text-lg font-semibold">Church members</h3>
+                  <p className="mt-1 text-sm text-gray-400">
+                    Everyone with access here. Admins can edit member access, remove
+                    members, or remove admin access.
+                  </p>
+                  <div className="mt-4 space-y-2">
+                    {sortedMembers.length === 0 && (
+                      <p className="text-sm text-gray-300">No members yet.</p>
+                    )}
+                    {sortedMembers.map((member, memberIndex) => {
+                      const memberUser = member.user;
+                      const memberLabel =
+                        memberUser?.displayName || memberUser?.email || "Unknown user";
+                      const isSelf = memberUser?.uid === context?.userId;
+                      const isAdminMember = member.role === "admin";
+                      const targetUserId = memberUser?.uid || member.userId;
+                      const currentAccess = toMemberAccessOption(member.appAccess);
+                      const selectedAccess = getMemberAccessValue(member);
+                      const accessChanged = selectedAccess !== currentAccess;
+                      const saveAccessKey = `save-access:${member.membershipId}`;
+
+                      return (
+                        <div
+                          key={member.membershipId}
+                          className={cn(
+                            "rounded-lg px-3 py-2.5 sm:py-3",
+                            isSelf
+                              ? "border border-cyan-500/35 bg-linear-to-r from-cyan-950/40 to-gray-950/55 shadow-[inset_3px_0_0_0] shadow-cyan-400/70"
+                              : adminListRowStripe(memberIndex)
                           )}
-                          {targetUserId && (
-                            <Button
-                              variant="tertiary"
-                              isLoading={
-                                destructiveConfirmRunning &&
-                                destructiveConfirm?.kind === "removeMember" &&
-                                destructiveConfirm.membershipId ===
-                                  member.membershipId
-                              }
-                              disabled={destructiveConfirmRunning}
-                              onClick={() =>
-                                setDestructiveConfirm({
-                                  kind: "removeMember",
-                                  membershipId: member.membershipId,
-                                  memberLabel,
-                                  targetUserId,
-                                })
-                              }
-                            >
-                              Remove member
-                            </Button>
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
+                            <div className="min-w-0 flex-1">
+                              <p className="flex flex-wrap items-center gap-2 font-semibold">
+                                <span>{memberLabel}</span>
+                                {isSelf && (
+                                  <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-xs font-medium text-cyan-200">
+                                    You
+                                  </span>
+                                )}
+                              </p>
+                              <p
+                                className={cn(
+                                  "text-sm",
+                                  isSelf ? "text-cyan-100/90" : "text-gray-300"
+                                )}
+                              >
+                                {isAdminMember ? "Admin" : "Member"} | {member.appAccess}
+                              </p>
+                            </div>
+                            {!isSelf && (
+                              <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
+                                {!isAdminMember && targetUserId && (
+                                  <>
+                                    <Select
+                                      className="min-w-44 sm:min-w-48"
+                                      id={`member-access-${member.membershipId}`}
+                                      label="Access"
+                                      hideLabel
+                                      value={selectedAccess}
+                                      options={memberAccessOptions}
+                                      selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
+                                      onChange={(value) =>
+                                        setMemberAccessDrafts((prev) => ({
+                                          ...prev,
+                                          [member.membershipId]: value as MemberAccessOption,
+                                        }))
+                                      }
+                                    />
+                                    <Button
+                                      variant="cta"
+                                      svg={Save}
+                                      iconSize="sm"
+                                      isLoading={Boolean(memberActionLoading[saveAccessKey])}
+                                      disabled={
+                                        Boolean(memberActionLoading[saveAccessKey]) ||
+                                        !accessChanged
+                                      }
+                                      onClick={() =>
+                                        void runMemberAction(saveAccessKey, async () => {
+                                          await updateChurchMemberAccess(
+                                            churchId,
+                                            targetUserId,
+                                            selectedAccess
+                                          );
+                                          setMemberAccessDrafts((prev) => {
+                                            const next = { ...prev };
+                                            delete next[member.membershipId];
+                                            return next;
+                                          });
+                                          showStatus(`Updated access for ${memberLabel}.`);
+                                          await refresh();
+                                        })
+                                      }
+                                    >
+                                      Save
+                                    </Button>
+                                  </>
+                                )}
+                                {isAdminMember && targetUserId && (
+                                  <Button
+                                    variant="destructive"
+                                    svg={Ban}
+                                    iconSize="sm"
+                                    isLoading={
+                                      destructiveConfirmRunning &&
+                                      destructiveConfirm?.kind === "removeAdmin" &&
+                                      destructiveConfirm.membershipId ===
+                                      member.membershipId
+                                    }
+                                    disabled={destructiveConfirmRunning}
+                                    onClick={() =>
+                                      setDestructiveConfirm({
+                                        kind: "removeAdmin",
+                                        membershipId: member.membershipId,
+                                        memberLabel,
+                                        targetUserId,
+                                      })
+                                    }
+                                  >
+                                    Remove admin
+                                  </Button>
+                                )}
+                                {targetUserId && (
+                                  <Button
+                                    variant="destructive"
+                                    svg={Ban}
+                                    iconSize="sm"
+                                    isLoading={
+                                      destructiveConfirmRunning &&
+                                      destructiveConfirm?.kind === "removeMember" &&
+                                      destructiveConfirm.membershipId ===
+                                      member.membershipId
+                                    }
+                                    disabled={destructiveConfirmRunning}
+                                    onClick={() =>
+                                      setDestructiveConfirm({
+                                        kind: "removeMember",
+                                        membershipId: member.membershipId,
+                                        memberLabel,
+                                        targetUserId,
+                                      })
+                                    }
+                                  >
+                                    Remove
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {isAdminMember && !isSelf && (
+                            <p className="mt-2 text-xs text-gray-400">
+                              Admins keep full access while they are admins.
+                            </p>
+                          )}
+                          {isSelf && (
+                            <p className="mt-2 text-xs text-cyan-200/75">
+                              You can’t edit or remove your own membership here.
+                            </p>
                           )}
                         </div>
-                      )}
-                    </div>
-                    {!isAdminMember && !isSelf && targetUserId && (
-                      <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-gray-600/50 pt-3">
-                        <Select
-                          className="min-w-48"
-                          id={`member-access-${member.membershipId}`}
-                          label="Access"
-                          value={selectedAccess}
-                          options={memberAccessOptions}
-                          onChange={(value) =>
-                            setMemberAccessDrafts((prev) => ({
-                              ...prev,
-                              [member.membershipId]: value as MemberAccessOption,
-                            }))
-                          }
-                        />
-                        <Button
-                          variant="tertiary"
-                          isLoading={Boolean(memberActionLoading[saveAccessKey])}
-                          disabled={
-                            Boolean(memberActionLoading[saveAccessKey]) || !accessChanged
-                          }
-                          onClick={() =>
-                            void runMemberAction(saveAccessKey, async () => {
-                              await updateChurchMemberAccess(
-                                churchId,
-                                targetUserId,
-                                selectedAccess
-                              );
-                              setMemberAccessDrafts((prev) => {
-                                const next = { ...prev };
-                                delete next[member.membershipId];
-                                return next;
-                              });
-                              showStatus(`Updated access for ${memberLabel}.`);
-                              await refresh();
-                            })
-                          }
-                        >
-                          Save access
-                        </Button>
-                      </div>
-                    )}
-                    {isAdminMember && !isSelf && (
-                      <p className="mt-2 text-xs text-gray-400">
-                        Admins keep full access while they are admins.
-                      </p>
-                    )}
-                    {isSelf && (
-                      <p className="mt-2 text-xs text-cyan-200/75">
-                        You can’t edit or remove your own membership here.
-                      </p>
-                    )}
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-          </section>
+                </section>
               </>
             ),
           },
@@ -823,251 +842,284 @@ const AccountPage = () => {
             description: ACCOUNT_TABS[1].description,
             content: (
               <>
-          <section
-            className="rounded-xl border border-gray-600 bg-gray-900/25 p-4"
-          >
-            <h3 className="text-lg font-semibold">Shared workstations</h3>
-            <p className="mt-1 text-sm text-gray-400">
-              For shared computers when no one is signed in personally.
-            </p>
-            <WorkstationPairingForm
-              churchId={churchId}
-              formsResetSignal={workstationPairingResetSignal}
-              onGenerated={async () => {
-                setDisplayPairingResetSignal((n) => n + 1);
-                await refresh();
-              }}
-            />
-            <div className="mt-6 space-y-2 border-t border-gray-600/50 pt-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-                  Connected workstations
-                </p>
-                <Button
-                  variant="tertiary"
-                  className="shrink-0 self-start sm:self-auto"
-                  onClick={() =>
-                    setShowRevokedWorkstations((current) => !current)
-                  }
+                <section
+                  className="rounded-xl border border-gray-700 bg-gray-950/50 p-4"
                 >
-                  {showRevokedWorkstations
-                    ? "Hide revoked workstations"
-                    : "Show revoked workstations"}
-                </Button>
-              </div>
-              {workstations.length === 0 && (
-                <p className="text-sm text-gray-300">No shared workstations yet.</p>
-              )}
-              {workstations.length > 0 && visibleWorkstations.length === 0 && (
-                <p className="text-sm text-gray-300">
-                  No workstations match this filter.
-                </p>
-              )}
-              {visibleWorkstations.map((workstation) => {
-                const isThisRevokeLoading =
-                  destructiveConfirmRunning &&
-                  destructiveConfirm?.kind === "revokeWorkstation" &&
-                  destructiveConfirm.device.deviceId === workstation.deviceId;
-                return (
-                  <div
-                    key={workstation.deviceId}
-                    className="flex flex-col gap-2 rounded-lg bg-gray-900/40 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div>
-                      <p className="font-semibold">{workstation.label}</p>
-                      <p className="text-sm text-gray-300">
-                        {workstation.appAccess}
-                        {workstation.lastOperatorName
-                          ? ` | ${workstation.lastOperatorName}`
-                          : ""}
-                        {workstation.revokedAt ? " | revoked" : ""}
+                  <h3 className="text-lg font-semibold">Shared workstations</h3>
+                  <p className="mt-1 text-sm text-gray-400">
+                    For shared computers when no one is signed in personally.
+                  </p>
+                  <WorkstationPairingForm
+                    churchId={churchId}
+                    formsResetSignal={workstationPairingResetSignal}
+                    onGenerated={async () => {
+                      setDisplayPairingResetSignal((n) => n + 1);
+                      await refresh();
+                    }}
+                  />
+                  <div className="mt-6 space-y-2 border-t border-gray-700/60 pt-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                        Connected workstations
                       </p>
-                    </div>
-                    {!workstation.revokedAt && (
                       <Button
                         variant="tertiary"
-                        isLoading={isThisRevokeLoading}
-                        disabled={destructiveConfirmRunning}
+                        svg={showRevokedWorkstations ? EyeOff : Eye}
+                        iconSize="sm"
+                        className="shrink-0 self-start sm:self-auto"
                         onClick={() =>
-                          setDestructiveConfirm({
-                            kind: "revokeWorkstation",
-                            device: workstation,
-                          })
+                          setShowRevokedWorkstations((current) => !current)
                         }
                       >
-                        Revoke
+                        {showRevokedWorkstations
+                          ? "Hide revoked workstations"
+                          : "Show revoked workstations"}
                       </Button>
+                    </div>
+                    {workstations.length === 0 && (
+                      <p className="text-sm text-gray-300">No shared workstations yet.</p>
                     )}
+                    {workstations.length > 0 && visibleWorkstations.length === 0 && (
+                      <p className="text-sm text-gray-300">
+                        No workstations match this filter.
+                      </p>
+                    )}
+                    {visibleWorkstations.map((workstation, workstationIndex) => {
+                      const isThisRevokeLoading =
+                        destructiveConfirmRunning &&
+                        destructiveConfirm?.kind === "revokeWorkstation" &&
+                        destructiveConfirm.device.deviceId === workstation.deviceId;
+                      return (
+                        <div
+                          key={workstation.deviceId}
+                          className={cn(
+                            "flex items-start justify-between gap-3 rounded-lg px-3 py-3 sm:items-center",
+                            adminListRowStripe(workstationIndex)
+                          )}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold">{workstation.label}</p>
+                            <p className="text-sm text-gray-300">
+                              {workstation.appAccess}
+                              {workstation.lastOperatorName
+                                ? ` | ${workstation.lastOperatorName}`
+                                : ""}
+                              {workstation.revokedAt ? " | revoked" : ""}
+                            </p>
+                          </div>
+                          {!workstation.revokedAt && (
+                            <Button
+                              variant="destructive"
+                              svg={Ban}
+                              iconSize="sm"
+                              className="shrink-0 self-start sm:self-auto"
+                              isLoading={isThisRevokeLoading}
+                              disabled={destructiveConfirmRunning}
+                              onClick={() =>
+                                setDestructiveConfirm({
+                                  kind: "revokeWorkstation",
+                                  device: workstation,
+                                })
+                              }
+                            >
+                              Revoke
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-          </section>
+                </section>
 
-          <section
-            className="rounded-xl border border-gray-600 bg-gray-900/25 p-4"
-          >
-            <h3 className="text-lg font-semibold">Display screens</h3>
-            <p className="mt-1 text-sm text-gray-400">
-              Projector and other outputs you link without a personal sign-in.
-            </p>
-            <DisplayPairingForm
-              churchId={churchId}
-              formsResetSignal={displayPairingResetSignal}
-              onGenerated={async () => {
-                setWorkstationPairingResetSignal((n) => n + 1);
-                await refresh();
-              }}
-            />
-            <div className="mt-6 space-y-2 border-t border-gray-600/50 pt-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-                  Connected displays
-                </p>
-                <Button
-                  variant="tertiary"
-                  className="shrink-0 self-start sm:self-auto"
-                  onClick={() => setShowRevokedDisplays((current) => !current)}
+                <section
+                  className="rounded-xl border border-gray-700 bg-gray-950/50 p-4"
                 >
-                  {showRevokedDisplays
-                    ? "Hide revoked displays"
-                    : "Show revoked displays"}
-                </Button>
-              </div>
-              {displayDevices.length === 0 && (
-                <p className="text-sm text-gray-300">No display screens yet.</p>
-              )}
-              {displayDevices.length > 0 && visibleDisplayDevices.length === 0 && (
-                <p className="text-sm text-gray-300">
-                  No displays match this filter.
-                </p>
-              )}
-              {visibleDisplayDevices.map((display) => {
-                const isThisRevokeLoading =
-                  destructiveConfirmRunning &&
-                  destructiveConfirm?.kind === "revokeDisplay" &&
-                  destructiveConfirm.device.deviceId === display.deviceId;
-                return (
-                  <div
-                    key={display.deviceId}
-                    className="flex flex-col gap-2 rounded-lg bg-gray-900/40 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div>
-                      <p className="font-semibold">{display.label}</p>
-                      <p className="text-sm text-gray-300">
-                        {formatSurfaceTypeLabel(display.surfaceType)}
-                        {display.revokedAt ? " | revoked" : ""}
+                  <h3 className="text-lg font-semibold">Display screens</h3>
+                  <p className="mt-1 text-sm text-gray-400">
+                    Projector and other outputs you link without a personal sign-in.
+                  </p>
+                  <DisplayPairingForm
+                    churchId={churchId}
+                    formsResetSignal={displayPairingResetSignal}
+                    onGenerated={async () => {
+                      setWorkstationPairingResetSignal((n) => n + 1);
+                      await refresh();
+                    }}
+                  />
+                  <div className="mt-6 space-y-2 border-t border-gray-700/60 pt-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                        Connected displays
                       </p>
-                    </div>
-                    {!display.revokedAt && (
                       <Button
                         variant="tertiary"
-                        isLoading={isThisRevokeLoading}
-                        disabled={destructiveConfirmRunning}
-                        onClick={() =>
-                          setDestructiveConfirm({
-                            kind: "revokeDisplay",
-                            device: display,
-                          })
-                        }
+                        svg={showRevokedDisplays ? EyeOff : Eye}
+                        iconSize="sm"
+                        className="shrink-0 self-start sm:self-auto"
+                        onClick={() => setShowRevokedDisplays((current) => !current)}
                       >
-                        Revoke
+                        {showRevokedDisplays
+                          ? "Hide revoked displays"
+                          : "Show revoked displays"}
                       </Button>
+                    </div>
+                    {displayDevices.length === 0 && (
+                      <p className="text-sm text-gray-300">No display screens yet.</p>
                     )}
+                    {displayDevices.length > 0 && visibleDisplayDevices.length === 0 && (
+                      <p className="text-sm text-gray-300">
+                        No displays match this filter.
+                      </p>
+                    )}
+                    {visibleDisplayDevices.map((display, displayIndex) => {
+                      const isThisRevokeLoading =
+                        destructiveConfirmRunning &&
+                        destructiveConfirm?.kind === "revokeDisplay" &&
+                        destructiveConfirm.device.deviceId === display.deviceId;
+                      return (
+                        <div
+                          key={display.deviceId}
+                          className={cn(
+                            "flex items-start justify-between gap-3 rounded-lg px-3 py-3 sm:items-center",
+                            adminListRowStripe(displayIndex)
+                          )}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold">{display.label}</p>
+                            <p className="text-sm text-gray-300">
+                              {formatSurfaceTypeLabel(display.surfaceType)}
+                              {display.revokedAt ? " | revoked" : ""}
+                            </p>
+                          </div>
+                          {!display.revokedAt && (
+                            <Button
+                              variant="destructive"
+                              svg={Ban}
+                              iconSize="sm"
+                              className="shrink-0 self-start sm:self-auto"
+                              isLoading={isThisRevokeLoading}
+                              disabled={destructiveConfirmRunning}
+                              onClick={() =>
+                                setDestructiveConfirm({
+                                  kind: "revokeDisplay",
+                                  device: display,
+                                })
+                              }
+                            >
+                              Revoke
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-          </section>
+                </section>
+
+                <section
+                  className="rounded-xl border border-gray-700 bg-gray-950/50 p-4"
+                >
+                  <h3 className="text-lg font-semibold">Trusted devices</h3>
+                  <p className="mt-1 text-sm text-gray-400">
+                    Trusted sign-in devices across this church. Admins can revoke access when needed.
+                  </p>
+                  <div className="mt-4 flex justify-end">
+                    <Button
+                      variant="tertiary"
+                      svg={showRevokedDevices ? EyeOff : Eye}
+                      iconSize="sm"
+                      onClick={() => setShowRevokedDevices((current) => !current)}
+                    >
+                      {showRevokedDevices ? "Hide revoked devices" : "Show revoked devices"}
+                    </Button>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {visibleTrustedDevices.length === 0 && (
+                      <p className="text-sm text-gray-300">
+                        {trustedDevices.length === 0
+                          ? "No trusted devices yet."
+                          : "No devices match this filter."}
+                      </p>
+                    )}
+                    {visibleTrustedDevices.map((device, trustedIndex) => {
+                      const isThisRevokeLoading =
+                        destructiveConfirmRunning &&
+                        destructiveConfirm?.kind === "revokeTrusted" &&
+                        destructiveConfirm.device.deviceId === device.deviceId;
+                      return (
+                        <div
+                          key={device.deviceId}
+                          className={cn(
+                            "flex items-start justify-between gap-3 rounded-lg px-3 py-3 sm:items-center",
+                            adminListRowStripe(trustedIndex)
+                          )}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold">
+                              {formatTrustedDeviceTitle(device)}
+                            </p>
+                            <p className="text-sm text-gray-300">
+                              {getTrustedDeviceOwnerLabel(device)} |{" "}
+                              {getPlatformDisplayLabel(device.platformType)}
+                              {device.revokedAt ? " | revoked" : ""}
+                            </p>
+                            <p className="text-sm text-gray-400">
+                              {formatLastSeenLabel(device.lastSeenAt)}
+                            </p>
+                          </div>
+                          {!device.revokedAt && (
+                            <Button
+                              variant="destructive"
+                              svg={Ban}
+                              iconSize="sm"
+                              className="shrink-0 self-start sm:self-auto"
+                              isLoading={isThisRevokeLoading}
+                              disabled={destructiveConfirmRunning}
+                              onClick={() =>
+                                setDestructiveConfirm({
+                                  kind: "revokeTrusted",
+                                  device,
+                                })
+                              }
+                            >
+                              Revoke
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section
+                  className="rounded-xl border border-gray-700 bg-gray-950/50 p-4"
+                >
+                  <h3 className="text-lg font-semibold">Recovery email</h3>
+                  <p className="mt-1 text-sm text-gray-400">
+                    We send admin recovery requests here.
+                  </p>
+                  <RecoveryEmailForm
+                    churchId={churchId}
+                    recoveryEmailFromContext={context?.recoveryEmail}
+                  />
+                </section>
               </>
             ),
           },
           {
-            value: "trust",
+            value: "branding",
             label: ACCOUNT_TABS[2].label,
             description: ACCOUNT_TABS[2].description,
             content: (
-              <>
-          <section
-            className="rounded-xl border border-gray-600 bg-gray-900/25 p-4"
-          >
-            <h3 className="text-lg font-semibold">Trusted devices</h3>
-            <p className="mt-1 text-sm text-gray-400">
-              Trusted sign-in devices across this church. Admins can revoke access when needed.
-            </p>
-            <div className="mt-4 flex justify-end">
-              <Button
-                variant="tertiary"
-                onClick={() => setShowRevokedDevices((current) => !current)}
-              >
-                {showRevokedDevices ? "Hide revoked devices" : "Show revoked devices"}
-              </Button>
-            </div>
-            <div className="mt-4 space-y-2">
-              {visibleTrustedDevices.length === 0 && (
-                <p className="text-sm text-gray-300">
-                  {trustedDevices.length === 0
-                    ? "No trusted devices yet."
-                    : "No devices match this filter."}
-                </p>
-              )}
-              {visibleTrustedDevices.map((device) => {
-                const isThisRevokeLoading =
-                  destructiveConfirmRunning &&
-                  destructiveConfirm?.kind === "revokeTrusted" &&
-                  destructiveConfirm.device.deviceId === device.deviceId;
-                return (
-                  <div
-                    key={device.deviceId}
-                    className="flex flex-col gap-2 rounded-lg bg-gray-900/40 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div>
-                      <p className="font-semibold">
-                        {formatTrustedDeviceTitle(device)}
-                      </p>
-                      <p className="text-sm text-gray-300">
-                        {getTrustedDeviceOwnerLabel(device)} |{" "}
-                        {getPlatformDisplayLabel(device.platformType)}
-                        {device.revokedAt ? " | revoked" : ""}
-                      </p>
-                      <p className="text-sm text-gray-400">
-                        {formatLastSeenLabel(device.lastSeenAt)}
-                      </p>
-                    </div>
-                    {!device.revokedAt && (
-                      <Button
-                        variant="tertiary"
-                        isLoading={isThisRevokeLoading}
-                        disabled={destructiveConfirmRunning}
-                        onClick={() =>
-                          setDestructiveConfirm({
-                            kind: "revokeTrusted",
-                            device,
-                          })
-                        }
-                      >
-                        Revoke
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          <section
-            className="rounded-xl border border-gray-600 bg-gray-900/25 p-4"
-          >
-            <h3 className="text-lg font-semibold">Recovery email</h3>
-            <p className="mt-1 text-sm text-gray-400">
-              We send admin recovery requests here.
-            </p>
-            <RecoveryEmailForm
-              churchId={churchId}
-              recoveryEmailFromContext={context?.recoveryEmail}
-            />
-          </section>
-              </>
+              <BrandingForm
+                churchId={churchId}
+                branding={context?.churchBranding || {
+                  mission: "",
+                  vision: "",
+                  logos: { square: null, wide: null },
+                  colors: [],
+                }}
+                brandingStatus={context?.churchBrandingStatus || "loading"}
+              />
             ),
           },
         ]}

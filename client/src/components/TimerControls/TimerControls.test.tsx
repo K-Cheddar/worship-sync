@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import TimerControls from "./TimerControls";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -51,16 +52,17 @@ jest.mock("./DurationInputs", () => ({
 
 jest.mock("../RadioButton/RadioButton", () => ({
   __esModule: true,
+  RadioGroup: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
   default: ({
     label,
     disabled,
-    onChange,
   }: {
     label: string;
     disabled?: boolean;
-    onChange: () => void;
   }) => (
-    <button type="button" disabled={disabled} onClick={onChange}>
+    <button type="button" disabled={disabled}>
       {label}
     </button>
   ),
@@ -81,10 +83,13 @@ jest.mock("./TimerControlButtons", () => ({
   ),
 }));
 
-const renderWithAccess = (access: "full" | "music" | "view") => {
+const renderWithAccess = (
+  access: "full" | "music" | "view",
+  timerControlsProps?: { variant?: "full" | "controlsOnly" },
+) => {
   return render(
     <GlobalInfoContext.Provider value={{ access, hostId: "host-1" } as any}>
-      <TimerControls />
+      <TimerControls {...timerControlsProps} />
     </GlobalInfoContext.Provider>,
   );
 };
@@ -146,5 +151,14 @@ describe("TimerControls access gating", () => {
         }),
       }),
     );
+  });
+
+  it("controlsOnly variant renders only transport buttons, not settings", () => {
+    renderWithAccess("full", { variant: "controlsOnly" });
+
+    expect(
+      screen.queryByRole("button", { name: "Timer Type Selector" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
   });
 });

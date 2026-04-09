@@ -29,6 +29,16 @@ if (Object.getOwnPropertyDescriptor(HTMLElement.prototype, "innerText") == null)
 // jsdom does not implement window.scrollTo
 Object.defineProperty(window, "scrollTo", { value: jest.fn(), writable: true });
 
+// Radix Select (and other primitives) call Pointer Capture APIs; jsdom may omit or stub them badly.
+Element.prototype.hasPointerCapture = function hasPointerCapturePolyfill() {
+  return false;
+};
+Element.prototype.setPointerCapture = function setPointerCapturePolyfill() {};
+Element.prototype.releasePointerCapture = function releasePointerCapturePolyfill() {};
+if (typeof Element.prototype.scrollIntoView !== "function") {
+  Element.prototype.scrollIntoView = function scrollIntoViewPolyfill() {};
+}
+
 // ResizeObserver / IntersectionObserver (used by many components)
 global.ResizeObserver = jest.fn().mockImplementation(() => mockResizeObserver);
 Object.defineProperty(window, "IntersectionObserver", {

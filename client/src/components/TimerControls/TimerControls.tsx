@@ -7,15 +7,17 @@ import TimerTypeSelector from "./TimerTypeSelector";
 import CountdownTimeInput from "./CountdownTimeInput";
 import DurationInputs from "./DurationInputs";
 import TimerControlButtons from "./TimerControlButtons";
-import RadioButton from "../RadioButton/RadioButton";
+import RadioButton, { RadioGroup } from "../RadioButton/RadioButton";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import cn from "classnames";
 
 type TimerControlsProps = {
   className?: string;
+  /** When collapsed in the item editor, show only play/pause/stop/reset. */
+  variant?: "full" | "controlsOnly";
 };
 
-const TimerControls = ({ className }: TimerControlsProps) => {
+const TimerControls = ({ className, variant = "full" }: TimerControlsProps) => {
   const dispatch = useDispatch();
   const { hostId, access } = useContext(GlobalInfoContext) || {};
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -94,6 +96,30 @@ const TimerControls = ({ className }: TimerControlsProps) => {
     updateTimerState({ showMinutesOnly: checked });
   };
 
+  const controlButtons = (
+    <TimerControlButtons
+      status={timer?.status || "stopped"}
+      onPlay={handlePlay}
+      onPause={handlePause}
+      onStop={handleStop}
+      disabled={!canControlTimer}
+    />
+  );
+
+  if (variant === "controlsOnly") {
+    return (
+      <div
+        className={cn(
+          "flex items-center justify-center border border-gray-600 rounded-md w-full p-2",
+          className
+        )}
+        data-variant="controlsOnly"
+      >
+        {controlButtons}
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -124,28 +150,26 @@ const TimerControls = ({ className }: TimerControlsProps) => {
           />
         )}
 
-        <div className="flex gap-4 items-center justify-center">
+        <RadioGroup
+          value={showMinutesOnly ? "minutes" : "full"}
+          onValueChange={(v) =>
+            handleShowMinutesOnlyChange(v === "minutes")
+          }
+          className="flex gap-4 items-center justify-center"
+        >
           <RadioButton
+            optionValue="full"
             label="Full timer"
-            value={!showMinutesOnly}
-            onChange={() => handleShowMinutesOnlyChange(false)}
             disabled={!canControlTimer}
           />
           <RadioButton
+            optionValue="minutes"
             label="Minutes only"
-            value={showMinutesOnly}
-            onChange={() => handleShowMinutesOnlyChange(true)}
             disabled={!canControlTimer}
           />
-        </div>
+        </RadioGroup>
 
-        <TimerControlButtons
-          status={timer?.status || "stopped"}
-          onPlay={handlePlay}
-          onPause={handlePause}
-          onStop={handleStop}
-          disabled={!canControlTimer}
-        />
+        {controlButtons}
       </div>
     </div>
   );

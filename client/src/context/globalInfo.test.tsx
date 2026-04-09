@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { type ReactNode, useContext } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import GlobalInfoProvider from "./globalInfo";
@@ -12,6 +12,7 @@ import {
 
 const mockDispatch = jest.fn();
 const onValueCallbacks = new Map<string, (snapshot: any) => void>();
+const onValueErrorCallbacks = new Map<string, (error: unknown) => void>();
 
 const refMock = jest.fn(
   (_db: unknown, path: string) =>
@@ -20,8 +21,15 @@ const refMock = jest.fn(
     }) as { path: string }
 );
 const onValueMock = jest.fn(
-  (target: { path: string }, callback: (snapshot: any) => void) => {
+  (
+    target: { path: string },
+    callback: (snapshot: any) => void,
+    onError?: (error: unknown) => void
+  ) => {
     onValueCallbacks.set(target.path, callback);
+    if (onError) {
+      onValueErrorCallbacks.set(target.path, onError);
+    }
     return jest.fn();
   }
 );
@@ -178,6 +186,10 @@ const ContextProbe = () => {
       <div data-testid="operator-name">{context.operatorName || "none"}</div>
       <div data-testid="auth-status">{context.authServerStatus}</div>
       <div data-testid="user-name">{context.user || "none"}</div>
+      <div data-testid="branding-status">{context.churchBrandingStatus}</div>
+      <div data-testid="branding-mission">
+        {context.churchBranding.mission || "none"}
+      </div>
       <div data-testid="path">{location.pathname}</div>
       <button type="button" onClick={() => void context.refreshAuthBootstrap()}>
         Refresh bootstrap
@@ -204,6 +216,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     sessionStorage.clear();
     mockDispatch.mockClear();
     onValueCallbacks.clear();
+    onValueErrorCallbacks.clear();
     refMock.mockClear();
     onValueMock.mockClear();
     setMock.mockClear();
@@ -376,6 +389,74 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
         ])
       )
     );
+  });
+
+  it("subscribes to church branding and exposes live branding updates", async () => {
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem("user", "Test User");
+    localStorage.setItem("database", "main");
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+
+    renderProvider(<ContextProbe />);
+
+    await waitFor(() =>
+      expect(
+        onValueCallbacks.has("churches/church-1/data/branding"),
+      ).toBe(true),
+    );
+
+    act(() => {
+      onValueCallbacks.get("churches/church-1/data/branding")?.(
+        snapshotFor({
+          mission: "Serve faithfully.",
+          vision: "Lead clearly.",
+          colors: [{ label: "Primary", value: "#112233" }],
+          logos: {
+            square: {
+              url: "https://res.cloudinary.com/portable-media/image/upload/v1/logo.png",
+              publicId: "branding/logo-square",
+            },
+          },
+        }),
+      );
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("branding-status")).toHaveTextContent("ready"),
+    );
+    expect(screen.getByTestId("branding-mission")).toHaveTextContent(
+      "Serve faithfully.",
+    );
+  });
+
+  it("falls back to ready empty branding when the branding listener errors", async () => {
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem("user", "Test User");
+    localStorage.setItem("database", "main");
+
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+
+    renderProvider(<ContextProbe />);
+
+    await waitFor(() =>
+      expect(
+        onValueErrorCallbacks.has("churches/church-1/data/branding"),
+      ).toBe(true),
+    );
+
+    act(() => {
+      onValueErrorCallbacks
+        .get("churches/church-1/data/branding")
+        ?.(
+          new Error("permission-denied"),
+        );
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("branding-status")).toHaveTextContent("ready"),
+    );
+    expect(screen.getByTestId("branding-mission")).toHaveTextContent("none");
   });
 
   it("routes legacy stream subkeys from storage and Firebase to the current debounced actions", async () => {

@@ -27,7 +27,7 @@ import BoardDisplay from "./pages/BoardDisplay";
 import BoardPage from "./pages/BoardPage";
 import BoardPresent from "./pages/BoardPresent";
 import RoutePersistence from "./components/RoutePersistence/RoutePersistence";
-import { useContext, useEffect } from "react";
+import { useContext, useEffect, useLayoutEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { delay } from "./utils/generalUtils";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -62,6 +62,20 @@ const isBootstrapSplashRoute = (pathname: string) => {
   return false;
 };
 
+const isTransparentDisplayRoute = (pathname: string) => {
+  if (pathname === "/projector") return true;
+  if (pathname === "/projector-full") return true;
+  if (pathname === "/monitor") return true;
+  if (pathname === "/stream") return true;
+  if (pathname === "/stream-info") return true;
+  if (pathname === "/credits") return true;
+  if (pathname === "/boards/display") return true;
+  if (pathname.startsWith("/boards/present/")) return true;
+  return false;
+};
+
+const HOMEPAGE_CANVAS_COLOR = "#2b3544";
+
 const BootstrapSplash = () => {
   const context = useContext(GlobalInfoContext);
   const description = getAuthBootstrapLoadingDescription(
@@ -69,7 +83,7 @@ const BootstrapSplash = () => {
     { retryCount: context?.authServerRetryCount ?? 0 }
   );
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-gray-700 px-6 text-white">
+    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-6 text-white">
       <div className="flex max-w-md flex-col items-center gap-6">
         <img
           src={WorshipSyncIcon}
@@ -92,6 +106,20 @@ const BootstrapSplash = () => {
 const AppRoutes = () => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
+
+  useLayoutEffect(() => {
+    const routeNeedsTransparentCanvas = isTransparentDisplayRoute(location.pathname);
+    const canvasColor = routeNeedsTransparentCanvas
+      ? "transparent"
+      : HOMEPAGE_CANVAS_COLOR;
+    const root = document.getElementById("root");
+
+    document.body.style.backgroundColor = canvasColor;
+    if (root) {
+      root.style.backgroundColor = canvasColor;
+    }
+  }, [location.pathname]);
+
   const showBootstrapSplash =
     context?.bootstrapStatus === "loading" &&
     isBootstrapSplashRoute(location.pathname);

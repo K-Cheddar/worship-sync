@@ -7,7 +7,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../ui/Select";
+} from "@/components/ui/Select";
 
 export type SelectProps = {
   options: Option[];

@@ -185,7 +185,7 @@ const PresentationPreview = ({
 
   return (
     <div className="flex flex-col gap-2">
-      <section className="border border-gray-600 rounded-sm overflow-hidden relative bg-gray-800">
+      <section className="relative overflow-hidden rounded-sm border border-white/12 bg-black/30">
         <div
           className={cn(
             "flex gap-2",
@@ -203,7 +203,7 @@ const PresentationPreview = ({
                 ref={headerRef}
                 data-measure="presentation-header"
                 className={cn(
-                  "bg-gray-900 text-center font-semibold text-sm px-2 py-1",
+                  "border-b border-white/10 bg-black/25 text-center text-sm font-semibold px-2 py-1",
                   minimalHeader
                     ? "flex items-center justify-center"
                     : "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2"

@@ -20,12 +20,12 @@ import {
 } from "lucide-react";
 import PouchDB from "pouchdb-browser";
 import Button from "../components/Button/Button";
+import Select from "../components/Select/Select";
 import Menu from "../components/Menu/Menu";
 import DeleteModal from "../components/Modal/DeleteModal";
 import {
   Sheet,
   SheetContent,
-  SheetDescription,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -68,9 +68,22 @@ import {
   updateBoardPostHidden,
   updateBoardPostHighlighted,
 } from "../boards/api";
-import { DBBoard, DBBoardAlias, DBBoardPost, MenuItemType } from "../types";
+import {
+  BOARD_PANEL_BODY,
+  BOARD_PANEL_CARD,
+  BOARD_PANEL_HEADER,
+} from "../boards/boardPanelTheme";
+import {
+  DBBoard,
+  DBBoardAlias,
+  DBBoardPost,
+  MenuItemType,
+  Option,
+} from "../types";
 import type { WindowType } from "../types/electron";
 import { getDisplayLabel } from "../utils/displayUtils";
+
+const BOARD_COPY_LINK_ICON_COLOR = "#22d3ee";
 
 type AllDocsResult<T> = {
   rows: Array<{ doc?: T }>;
@@ -282,215 +295,238 @@ const BoardToolsPanelBody = ({
   runAction,
   isActing,
   showToast,
-}: BoardToolsPanelBodyProps) => (
-  <>
-    <div className="lg:hidden">
-      <p className="text-sm font-semibold text-gray-100" id="board-tools-share-label">
-        Share links
-      </p>
-      <p className="mt-1 text-xs text-gray-400">
-        Copy for attendees and the presentation screen. Links stay the same when you start a new session.
-      </p>
-      <div
-        className="mt-3 flex flex-col gap-2"
-        role="group"
-        aria-labelledby="board-tools-share-label"
-      >
-        <Button
-          className="w-full justify-center"
-          variant="tertiary"
-          svg={Copy}
-          onClick={() => handleCopy(publicBoardUrl, "Attendee link")}
-          disabled={!publicBoardUrl}
-        >
-          Copy Attendee Link
-        </Button>
-        <Button
-          className="w-full justify-center"
-          variant="tertiary"
-          svg={Copy}
-          onClick={() => handleCopy(publicPresentUrl, "Presentation link")}
-          disabled={!publicPresentUrl}
-        >
-          Copy View Board Link
-        </Button>
-      </div>
-    </div>
+}: BoardToolsPanelBodyProps) => {
+  const historyOptions: Option[] = useMemo(
+    () =>
+      archiveOptions.map((boardId) => ({
+        value: boardId,
+        label: `${boardId === selectedAlias.currentBoardId ? "Current session" : "Earlier session"}: ${getBoardLabel(boardsById[boardId])}`,
+      })),
+    [archiveOptions, boardsById, selectedAlias.currentBoardId],
+  );
 
-    <div
-      className={cn(
-        isMobileStack && "mt-6 border-t border-gray-600 pt-6",
-      )}
-    >
-      <label
-        className="text-sm font-semibold text-gray-100"
-        htmlFor="board-history-select"
-        id="board-tools-history-label"
-      >
-        Show posts from
-      </label>
-      <p className="mt-1 text-xs text-gray-400">
-        Choose which session appears in the list of posts.
-      </p>
-      <select
-        id="board-history-select"
-        className="mt-2 w-full rounded border-0 bg-white px-2 py-2 text-sm text-black shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
-        value={boardIdToView}
-        onChange={(event) =>
-          setSelectedBoardId(
-            event.target.value === selectedAlias.currentBoardId
-              ? ""
-              : event.target.value,
-          )
-        }
-        aria-labelledby="board-tools-history-label"
-      >
-        {archiveOptions.map((boardId) => (
-          <option key={boardId} value={boardId}>
-            {`${boardId === selectedAlias.currentBoardId ? "Current session" : "Earlier session"}: ${getBoardLabel(boardsById[boardId])}`}
-          </option>
-        ))}
-      </select>
-      {!isViewingCurrent && (
-        <Button
-          className="mt-3 w-full justify-center"
-          variant="tertiary"
-          onClick={() => setSelectedBoardId("")}
-        >
-          Return to current session
-        </Button>
-      )}
-    </div>
-
-    <div className="mt-6 border-t border-gray-600 pt-6">
-      <p className="text-sm font-semibold text-gray-100" id="board-tools-presentation-label">
-        Presentation text
-      </p>
-      <p className="mt-1 text-xs text-gray-400">
-        Size on the presentation screen when posts are highlighted.
-      </p>
-      <div
-        className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-gray-600 bg-gray-900/60 px-3 py-2"
-        role="group"
-        aria-labelledby="board-tools-presentation-label"
-      >
-        <Button
-          variant="tertiary"
-          svg={Minus}
-          padding="p-2"
-          className="min-h-0!"
-          onClick={() =>
-            runAction(async () => {
-              await updateBoardPresentationFontScale(
-                selectedAlias.aliasId,
-                presentationFontScale -
-                BOARD_PRESENTATION_FONT_SCALE_STEP,
-              );
-              showToast("Presentation text made smaller.", "success");
-            })
-          }
-          disabled={
-            isActing ||
-            presentationFontScale <= MIN_BOARD_PRESENTATION_FONT_SCALE
-          }
-        />
-        <span className="min-w-14 text-center text-sm font-semibold text-white">
-          {Math.round(presentationFontScale * 100)}%
-        </span>
-        <Button
-          variant="tertiary"
-          padding="px-3 py-2"
-          className="min-h-0!"
-          aria-label="Reset presentation text size"
-          onClick={() =>
-            runAction(async () => {
-              await updateBoardPresentationFontScale(
-                selectedAlias.aliasId,
-                DEFAULT_BOARD_PRESENTATION_FONT_SCALE,
-              );
-              showToast("Presentation text reset.", "success");
-            })
-          }
-          disabled={
-            isActing ||
-            presentationFontScale === DEFAULT_BOARD_PRESENTATION_FONT_SCALE
-          }
-        >
-          Reset
-        </Button>
-        <Button
-          variant="tertiary"
-          svg={Plus}
-          padding="p-2"
-          className="min-h-0!"
-          onClick={() =>
-            runAction(async () => {
-              await updateBoardPresentationFontScale(
-                selectedAlias.aliasId,
-                presentationFontScale +
-                BOARD_PRESENTATION_FONT_SCALE_STEP,
-              );
-              showToast("Presentation text made larger.", "success");
-            })
-          }
-          disabled={
-            isActing ||
-            presentationFontScale >= MAX_BOARD_PRESENTATION_FONT_SCALE
-          }
-        />
-      </div>
-    </div>
-
-    <div className="mt-6 border-t border-gray-600 pt-6">
-      <p className="text-sm font-semibold text-gray-100" id="board-tools-session-label">
-        Session actions
-      </p>
-      <p className="mt-1 text-xs text-gray-400">
-        Share links stay the same.
-      </p>
-      <div
-        className="mt-3 flex flex-col gap-2"
-        role="group"
-        aria-labelledby="board-tools-session-label"
-      >
-        <Button
-          className="w-full justify-center"
-          svg={RotateCcw}
-          title="Remove every post from this session. Share links stay the same."
-          onClick={() =>
-            runAction(async () => {
-              await softResetBoardAlias(selectedAlias.aliasId);
-              showToast("All posts removed.", "success");
-            })
-          }
-          disabled={isActing || !isViewingCurrent}
-        >
-          Clear all posts
-        </Button>
-        <Button
-          className="w-full justify-center"
-          svg={MessageSquarePlus}
-          title="Start a new empty session. Earlier sessions stay in the list above."
-          onClick={() =>
-            runAction(async () => {
-              await hardResetBoardAlias(selectedAlias.aliasId);
-              setSelectedBoardId("");
-              showToast("New session started.", "success");
-            })
-          }
-          disabled={isActing || !isViewingCurrent}
-        >
-          Start new session
-        </Button>
-      </div>
-      {!isViewingCurrent && (
-        <p className="mt-3 text-xs text-amber-100/90">
-          Switch to the current session to clear posts or start a new session.
+  return (
+    <>
+      <div className="lg:hidden">
+        <p className="text-sm font-semibold text-gray-100" id="board-tools-share-label">
+          Share links
         </p>
-      )}
-    </div>
-  </>
-);
+        <p className="mt-1 text-xs text-gray-400">
+          Copy for attendees and the presentation screen. Links stay the same when you start a new session.
+        </p>
+        <div
+          className="mt-3 flex flex-col gap-2"
+          role="group"
+          aria-labelledby="board-tools-share-label"
+        >
+          <Button
+            className="w-full justify-center"
+            variant="primary"
+            svg={Copy}
+            color={BOARD_COPY_LINK_ICON_COLOR}
+            onClick={() => handleCopy(publicBoardUrl, "Attendee link")}
+            disabled={!publicBoardUrl}
+          >
+            Copy Attendee Link
+          </Button>
+          <Button
+            className="w-full justify-center"
+            variant="primary"
+            svg={Copy}
+            color={BOARD_COPY_LINK_ICON_COLOR}
+            onClick={() => handleCopy(publicPresentUrl, "Presentation link")}
+            disabled={!publicPresentUrl}
+          >
+            Copy View Board Link
+          </Button>
+        </div>
+      </div>
+
+      <div
+        className={cn(
+          isMobileStack && "mt-6 border-t border-gray-600 pt-6",
+        )}
+      >
+        <label
+          className="text-sm font-semibold text-gray-100"
+          htmlFor="board-history-select"
+          id="board-tools-history-label"
+        >
+          Show posts from
+        </label>
+        <p className="mt-1 text-xs text-gray-400">
+          Choose which session appears in the list of posts.
+        </p>
+        <Select
+          className="mt-2 w-full"
+          id="board-history-select"
+          options={historyOptions}
+          value={boardIdToView}
+          onChange={(value) =>
+            setSelectedBoardId(
+              value === selectedAlias.currentBoardId ? "" : value,
+            )
+          }
+          selectClassName="w-full max-md:min-h-14"
+        />
+        {!isViewingCurrent && (
+          <Button
+            className="mt-3 w-full justify-center"
+            variant="tertiary"
+            onClick={() => setSelectedBoardId("")}
+          >
+            Return to current session
+          </Button>
+        )}
+      </div>
+
+      <div className="mt-6 border-t border-gray-600 pt-6">
+        <p className="text-sm font-semibold text-gray-100" id="board-tools-presentation-label">
+          Presentation text
+        </p>
+        <p className="mt-1 text-xs text-gray-400">
+          Size on the presentation screen when posts are highlighted.
+        </p>
+        <div
+          className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-gray-600 bg-gray-900/60 px-3 py-2"
+          role="group"
+          aria-labelledby="board-tools-presentation-label"
+        >
+          <Button
+            variant="tertiary"
+            svg={Minus}
+            padding="p-2"
+            className="min-h-0!"
+            onClick={() =>
+              runAction(async () => {
+                await updateBoardPresentationFontScale(
+                  selectedAlias.aliasId,
+                  presentationFontScale -
+                  BOARD_PRESENTATION_FONT_SCALE_STEP,
+                );
+                showToast("Presentation text made smaller.", "success");
+              })
+            }
+            disabled={
+              isActing ||
+              presentationFontScale <= MIN_BOARD_PRESENTATION_FONT_SCALE
+            }
+          />
+          <span className="min-w-14 text-center text-sm font-semibold text-white">
+            {Math.round(presentationFontScale * 100)}%
+          </span>
+          <Button
+            variant="tertiary"
+            padding="px-3 py-2"
+            className="min-h-0!"
+            aria-label="Reset presentation text size"
+            onClick={() =>
+              runAction(async () => {
+                await updateBoardPresentationFontScale(
+                  selectedAlias.aliasId,
+                  DEFAULT_BOARD_PRESENTATION_FONT_SCALE,
+                );
+                showToast("Presentation text reset.", "success");
+              })
+            }
+            disabled={
+              isActing ||
+              presentationFontScale === DEFAULT_BOARD_PRESENTATION_FONT_SCALE
+            }
+          >
+            Reset
+          </Button>
+          <Button
+            variant="tertiary"
+            svg={Plus}
+            padding="p-2"
+            className="min-h-0!"
+            onClick={() =>
+              runAction(async () => {
+                await updateBoardPresentationFontScale(
+                  selectedAlias.aliasId,
+                  presentationFontScale +
+                  BOARD_PRESENTATION_FONT_SCALE_STEP,
+                );
+                showToast("Presentation text made larger.", "success");
+              })
+            }
+            disabled={
+              isActing ||
+              presentationFontScale >= MAX_BOARD_PRESENTATION_FONT_SCALE
+            }
+          />
+        </div>
+      </div>
+
+      <div className="mt-6 border-t border-gray-600 pt-6">
+        <p className="text-sm font-semibold text-gray-100" id="board-tools-session-label">
+          Session actions
+        </p>
+        <p className="mt-1 text-xs text-gray-400">
+          Share links stay the same.
+        </p>
+        <div
+          className="mt-3 flex flex-col gap-4"
+          role="group"
+          aria-labelledby="board-tools-session-label"
+        >
+          <div className="flex flex-col gap-1">
+            <Button
+              className="w-full justify-center"
+              svg={RotateCcw}
+              aria-describedby="board-session-clear-hint"
+              onClick={() =>
+                runAction(async () => {
+                  await softResetBoardAlias(selectedAlias.aliasId);
+                  showToast("All posts removed.", "success");
+                })
+              }
+              disabled={isActing || !isViewingCurrent}
+            >
+              Clear all posts
+            </Button>
+            <p
+              id="board-session-clear-hint"
+              className="text-xs leading-snug text-gray-400"
+            >
+              Remove every post from this session. Share links stay the same.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Button
+              variant="cta"
+              className="w-full justify-center"
+              svg={MessageSquarePlus}
+              aria-describedby="board-session-new-hint"
+              onClick={() =>
+                runAction(async () => {
+                  await hardResetBoardAlias(selectedAlias.aliasId);
+                  setSelectedBoardId("");
+                  showToast("New session started.", "success");
+                })
+              }
+              disabled={isActing || !isViewingCurrent}
+            >
+              Start new session
+            </Button>
+            <p
+              id="board-session-new-hint"
+              className="text-xs leading-snug text-gray-400"
+            >
+              Start a new empty session with the same link. Earlier sessions and posts stay in the list above.
+            </p>
+          </div>
+        </div>
+        {!isViewingCurrent && (
+          <p className="mt-3 text-xs text-amber-100/90">
+            Switch to the current session to clear posts or start a new session.
+          </p>
+        )}
+      </div>
+    </>
+  );
+};
 
 export const BoardControllerContent = () => {
   const { db, status, pullFromRemote } = useBoardSync() || {};
@@ -696,7 +732,7 @@ export const BoardControllerContent = () => {
   return (
     <main
       id="controller-main"
-      className="flex h-dvh flex-col bg-gray-700 text-white"
+      className="flex h-dvh flex-col bg-homepage-canvas text-white"
     >
       <BoardRenameModal
         alias={renameAlias}
@@ -777,7 +813,7 @@ export const BoardControllerContent = () => {
               className={cn(
                 "min-h-11 flex-1 rounded-md px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400",
                 mobileBoardPanel === "manage"
-                  ? "bg-gray-700 text-white shadow"
+                  ? "bg-gray-800 text-white shadow"
                   : "text-gray-400 hover:text-white",
               )}
               onClick={() => setMobileBoardPanel("manage")}
@@ -792,7 +828,7 @@ export const BoardControllerContent = () => {
               className={cn(
                 "min-h-11 flex-1 rounded-md px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400",
                 mobileBoardPanel === "live"
-                  ? "bg-gray-700 text-white shadow"
+                  ? "bg-gray-800 text-white shadow"
                   : "text-gray-400 hover:text-white",
                 !selectedAliasId && "cursor-not-allowed opacity-50",
               )}
@@ -822,11 +858,16 @@ export const BoardControllerContent = () => {
             onCreated={handleBoardCreated}
           />
 
-          <div className="mt-4 overflow-hidden rounded-xl border border-gray-500 bg-gray-900/50">
-            <div className="border-b border-gray-500 px-4 py-3">
+          <div className={cn("mt-4", BOARD_PANEL_CARD)}>
+            <div className={BOARD_PANEL_HEADER}>
               <h2 className="text-base font-semibold">Discussion Boards</h2>
             </div>
-            <div className="max-h-[55dvh] overflow-x-hidden overflow-y-auto overscroll-contain lg:max-h-[40dvh]">
+            <div
+              className={cn(
+                "max-h-[55dvh] overflow-x-hidden overflow-y-auto overscroll-contain lg:max-h-[40dvh]",
+                BOARD_PANEL_BODY,
+              )}
+            >
               {aliases.length === 0 && (
                 <p className="px-4 py-4 text-sm text-gray-300">
                   No discussion boards yet.
@@ -836,14 +877,16 @@ export const BoardControllerContent = () => {
                 <div
                   key={alias.aliasId}
                   className={cn(
-                    "flex items-start gap-2 border-b border-gray-700 px-4 py-3 last:border-b-0",
-                    selectedAliasId === alias.aliasId && "bg-gray-700",
+                    "flex cursor-pointer items-start gap-2 border-b border-gray-600 border-l-4 px-4 py-3 transition-colors last:border-b-0",
+                    selectedAliasId === alias.aliasId
+                      ? "border-l-cyan-500 bg-gray-900/55 hover:bg-gray-900/70"
+                      : "border-l-transparent bg-gray-700/35 hover:bg-gray-700/50",
                   )}
                 >
                   <button
                     type="button"
                     aria-current={selectedAliasId === alias.aliasId ? "true" : undefined}
-                    className="min-w-0 flex-1 overflow-hidden text-left transition-colors hover:text-white"
+                    className="min-w-0 flex-1 cursor-pointer overflow-hidden text-left transition-colors hover:text-white"
                     title={`${alias.title} (${alias.aliasId})`}
                     onClick={() => {
                       setSelectedAliasId(alias.aliasId);
@@ -868,10 +911,10 @@ export const BoardControllerContent = () => {
                       disabled={isActing}
                     />
                     <Button
-                      variant="tertiary"
+                      variant="destructive"
                       svg={Trash2}
                       padding="p-2"
-                      className="min-h-0! text-red-200 hover:text-white"
+                      className="min-h-0!"
                       aria-label={`Delete ${alias.title}`}
                       onClick={() => setDeleteAlias(alias)}
                       disabled={isActing}
@@ -917,7 +960,7 @@ export const BoardControllerContent = () => {
 
           {db && selectedAlias && (
             <>
-              <div className="border-b-2 border-gray-500 bg-gray-700 px-4 py-3">
+              <div className="border-b-2 border-gray-500 bg-homepage-canvas px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                   <h2 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight">
                     {selectedAlias.title}
@@ -941,14 +984,20 @@ export const BoardControllerContent = () => {
                             More tools
                           </Button>
                         </SheetTrigger>
-                        <SheetContent side="right" className="flex flex-col p-0">
+                        <SheetContent
+                          side="right"
+                          className="flex flex-col p-0"
+                          aria-describedby={undefined}
+                        >
                           <SheetHeader>
                             <SheetTitle>Board tools</SheetTitle>
-                            <SheetDescription>
-                              Share links, session history, presentation text size, and session actions.
-                            </SheetDescription>
                           </SheetHeader>
-                          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+                          <div
+                            className={cn(
+                              "min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4",
+                              BOARD_PANEL_BODY,
+                            )}
+                          >
                             <BoardToolsPanelBody
                               isMobileStack={isMobileStack}
                               handleCopy={handleCopy}
@@ -989,16 +1038,18 @@ export const BoardControllerContent = () => {
                   )}
                   <div className="mt-3 hidden flex-wrap gap-2 lg:flex">
                     <Button
-                      variant="tertiary"
+                      variant="primary"
                       svg={Copy}
+                      color={BOARD_COPY_LINK_ICON_COLOR}
                       onClick={() => handleCopy(publicBoardUrl, "Attendee link")}
                       disabled={!publicBoardUrl}
                     >
                       Copy Attendee Link
                     </Button>
                     <Button
-                      variant="tertiary"
+                      variant="primary"
                       svg={Copy}
+                      color={BOARD_COPY_LINK_ICON_COLOR}
                       onClick={() => handleCopy(publicPresentUrl, "Presentation link")}
                       disabled={!publicPresentUrl}
                     >
@@ -1116,14 +1167,16 @@ export const BoardControllerContent = () => {
             className="flex w-88 min-h-0 shrink-0 flex-col border-l-2 border-gray-500 bg-gray-800 p-4"
             aria-label="Board tools"
           >
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-500 bg-gray-900/50">
-              <div className="shrink-0 border-b border-gray-500 px-4 py-3">
+            <div className={cn("flex min-h-0 flex-1 flex-col", BOARD_PANEL_CARD)}>
+              <div className={BOARD_PANEL_HEADER}>
                 <h2 className="text-base font-semibold">Board tools</h2>
-                <p className="mt-1 text-xs text-gray-400">
-                  Session history, presentation text size, and session actions.
-                </p>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+              <div
+                className={cn(
+                  "min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4",
+                  BOARD_PANEL_BODY,
+                )}
+              >
                 <BoardToolsPanelBody
                   isMobileStack={false}
                   handleCopy={handleCopy}

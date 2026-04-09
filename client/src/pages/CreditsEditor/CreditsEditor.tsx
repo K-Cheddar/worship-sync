@@ -492,25 +492,25 @@ const CreditsEditor = () => {
       },
       ...(canEditCredits
         ? [
-            {
-              element: (
-                <div className="flex items-center gap-2 max-md:min-h-12">
-                  <Icon svg={Settings} color="#d1d5dc" />
-                  Settings
-                </div>
-              ),
-              onClick: () => setIsSettingsDrawerOpen(true),
-            },
-            {
-              element: (
-                <>
-                  <Icon svg={History} color="#d1d5dc" />
-                  History
-                </>
-              ),
-              onClick: () => setIsHistoryDrawerOpen(true),
-            },
-          ]
+          {
+            element: (
+              <div className="flex items-center gap-2 max-md:min-h-12">
+                <Icon svg={Settings} color="#d1d5dc" />
+                Settings
+              </div>
+            ),
+            onClick: () => setIsSettingsDrawerOpen(true),
+          },
+          {
+            element: (
+              <>
+                <Icon svg={History} color="#d1d5dc" />
+                History
+              </>
+            ),
+            onClick: () => setIsHistoryDrawerOpen(true),
+          },
+        ]
         : []),
     ],
     [handleBack, navigate, canEditCredits]
@@ -536,7 +536,7 @@ const CreditsEditor = () => {
   return (
     <div
       ref={editorRef}
-      className="w-dvw h-dvh bg-gray-700 text-white flex flex-col gap-2 overflow-hidden"
+      className="w-dvw h-dvh bg-homepage-canvas text-white flex flex-col gap-2 overflow-hidden"
     >
       <div className="min-h-0">
         <div className="bg-gray-800 w-full px-4 py-1 flex gap-2 items-center">

@@ -198,14 +198,14 @@ const TransmitHandler = ({
           {showFocusedStreamControls && (
             <div
               className={cn(
-                "rounded-md border border-gray-600 bg-gray-800 px-3 py-3",
+                "rounded-md border border-white/12 bg-black/30 px-3 py-3",
                 variant === "overlayStreamFocus"
                   ? "flex flex-col gap-4"
                   : "flex items-center gap-3"
               )}
             >
               {variant === "overlayStreamFocus" && (
-                <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-gray-600 pb-4">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-white/10 pb-4">
                   <Button
                     onClick={() => dispatch(clearStream())}
                     className="text-sm shrink-0 justify-self-start"
@@ -282,7 +282,7 @@ const TransmitHandler = ({
                 />
                 {variant === "overlayStreamFocus" &&
                   overlayStreamQuickLinksBelowPreview.length > 0 && (
-                    <ul className="grid grid-cols-4 gap-2 py-1 w-full shrink-0 border-t border-gray-600 pt-2">
+                    <ul className="grid w-full shrink-0 grid-cols-4 gap-2 border-t border-white/12 py-1 pt-2">
                       {overlayStreamQuickLinksBelowPreview.map((link) => (
                         <QuickLink
                           key={link.id}

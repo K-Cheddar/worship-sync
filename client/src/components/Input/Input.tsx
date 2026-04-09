@@ -1,12 +1,18 @@
 import { FunctionComponent, HTMLProps, SVGProps, useId } from "react";
 import { cn } from "@/utils/cnHelper";
 import Button from "../Button/Button";
+import UIInput from "@/components/ui/Input";
+import Label from "@/components/ui/Label";
+
+export type InputLabelLayout = "stacked" | "inline";
 
 export type InputProps = HTMLProps<HTMLInputElement> & {
   className?: string;
   type?: string;
   value: string | number;
   label?: string;
+  /** `stacked`: label above the field (default). `inline`: label to the left of the field on one row. */
+  labelLayout?: InputLabelLayout;
   hideLabel?: boolean;
   onChange: (value: string | number) => void;
   labelClassName?: string;
@@ -38,6 +44,7 @@ const Input = ({
   value,
   onChange,
   label,
+  labelLayout = "stacked",
   hideLabel = false,
   labelClassName,
   labelFontSize = "text-sm",
@@ -80,6 +87,24 @@ const Input = ({
 
   let endAdornment = _endAdornment;
 
+  const showLabel = label != null;
+  const isInlineLabel = labelLayout === "inline" && showLabel;
+
+  const labelEl = showLabel ? (
+    <Label
+      htmlFor={inputId}
+      className={cn(
+        labelFontSize,
+        "font-semibold",
+        isInlineLabel ? "shrink-0 py-0 pl-0 pr-0" : "p-1",
+        hideLabel && "sr-only",
+        labelClassName
+      )}
+    >
+      {label}:
+    </Label>
+  ) : null;
+
   if (svg) {
     endAdornment = (
       <Button
@@ -100,54 +125,61 @@ const Input = ({
     );
   }
 
-  return (
-    <div className={cn("h-fit relative", className)}>
-      <label
-        htmlFor={inputId}
+  const inputWrapClassName = cn(
+    "relative",
+    isInlineLabel ? "min-w-0 shrink-0" : "w-full"
+  );
+
+  const inputControl = (
+    <span className={inputWrapClassName}>
+      <UIInput
         className={cn(
-          `${labelFontSize} font-semibold p-1`,
-          hideLabel && "sr-only",
-          labelClassName
+          "peer py-1 pl-2 text-black shadow-none",
+          hasTrailingAction ? "pr-10" : "pr-2",
+          inputTextSize,
+          inputWidth,
+          hideSpinButtons &&
+          "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]",
+          inputClassName
         )}
-      >
-        {label}:
-      </label>
-      <span className="relative w-full">
-        <input
-          className={cn(
-            "rounded py-1 pl-2 text-black",
-            hasTrailingAction ? "pr-10" : "pr-2",
-            disabled && "opacity-50",
-            inputTextSize,
-            inputWidth,
-            errorText && "border-2 border-red-500",
-            hideSpinButtons &&
-            "appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]",
-            inputClassName,
-          )}
-          type={type}
-          value={value ?? ""}
-          disabled={disabled}
-          data-ignore-undo="true"
-          aria-invalid={Boolean(errorText)}
-          aria-describedby={describedByIds || undefined}
-          onChange={(e) => {
-            const val = e.target.value;
-            if (type === "number") {
-              onChange(Number(val));
-            } else {
-              onChange(val as string);
-            }
-          }}
-          id={inputId}
-          {...restForInput}
-        />
-        {endAdornment && (
-          <div className="pointer-events-none absolute top-0 bottom-0 right-1.5 flex items-center">
-            <span className="pointer-events-auto">{endAdornment}</span>
-          </div>
-        )}
-      </span>
+        type={type}
+        value={value ?? ""}
+        disabled={disabled}
+        data-ignore-undo="true"
+        aria-invalid={Boolean(errorText)}
+        aria-describedby={describedByIds || undefined}
+        onChange={(e) => {
+          const val = e.target.value;
+          if (type === "number") {
+            onChange(Number(val));
+          } else {
+            onChange(val as string);
+          }
+        }}
+        id={inputId}
+        {...restForInput}
+      />
+      {endAdornment && (
+        <div className="pointer-events-none absolute top-0 bottom-0 right-1.5 flex items-center">
+          <span className="pointer-events-auto">{endAdornment}</span>
+        </div>
+      )}
+    </span>
+  );
+
+  return (
+    <div className={cn("group relative h-fit", className)}>
+      {isInlineLabel ? (
+        <div className="flex min-w-0 flex-row flex-wrap items-center gap-x-2 gap-y-1">
+          {labelEl}
+          {inputControl}
+        </div>
+      ) : (
+        <>
+          {labelEl}
+          {inputControl}
+        </>
+      )}
       {helperText ? (
         <p
           id={helperId}

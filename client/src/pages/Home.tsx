@@ -58,9 +58,9 @@ const secondaryControllers: CardLink[] = [
 
 const adminLinks: CardLink[] = [
   {
-    title: "Account management",
+    title: "Church administration",
     description:
-      "Manage admins, recovery settings, trusted devices, and linked workstations for this church.",
+      "Invite teammates, manage access, pair workstations and displays, recovery and trusted devices, and branding for this church.",
     to: "/account",
   },
 ];
@@ -108,7 +108,7 @@ const HomeLinkCard = ({ title, description, to }: CardLink) => {
       variant="none"
       to={to}
       component="link"
-      className="h-full w-full flex-col items-start gap-3 rounded-2xl border border-gray-500 bg-gray-800 p-5 text-left hover:border-gray-300 hover:bg-gray-700"
+      className="h-full w-full flex-col items-start gap-3 rounded-2xl border border-gray-600 border-l-4 border-l-orange-400 bg-gray-900 p-5 text-left hover:border-gray-500 hover:border-l-orange-300 hover:bg-gray-800"
       wrap
     >
       <span className="text-xl font-semibold">{title}</span>
@@ -129,10 +129,10 @@ const DisplayLinkGroup = ({
   links,
 }: DisplayLinkGroupProps) => {
   return (
-    <div className="rounded-xl border border-gray-600 bg-gray-900/40 p-4">
+    <div className="space-y-3">
       <h3 className="text-base font-semibold text-white">{heading}</h3>
-      <p className="mt-1.5 text-sm leading-relaxed text-gray-300">{description}</p>
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
+      <p className="text-sm leading-relaxed text-gray-300">{description}</p>
+      <div className="grid gap-4 pt-1 md:grid-cols-2">
         {links.map((link) => (
           <HomeLinkCard key={link.to} {...link} />
         ))}
@@ -195,13 +195,13 @@ const Welcome = () => {
     ? []
     : isLoggedIn
       ? secondaryControllers.filter((link) => {
-          if (access === "view") {
-            return (
-              link.to !== "/boards/controller" && link.to !== "/info-controller"
-            );
-          }
-          return true;
-        })
+        if (access === "view") {
+          return (
+            link.to !== "/boards/controller" && link.to !== "/info-controller"
+          );
+        }
+        return true;
+      })
       : secondaryControllers.filter((link) => link.to !== "/boards/controller");
   const { canShowInstall, installPwa } = usePwaInstallPrompt();
   const [windowsDownloadHref, setWindowsDownloadHref] = useState(() =>
@@ -255,9 +255,9 @@ const Welcome = () => {
     "w-80 max-w-[min(100vw-2rem,20rem)] border border-gray-500 bg-gray-800 p-4 text-gray-100 shadow-xl";
 
   return (
-    <main className="h-dvh overflow-y-auto bg-gray-700 text-white">
-      <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col px-4 pb-10">
-        <div className="flex w-full items-center justify-between gap-4 py-3 text-lg">
+    <main className="h-dvh overflow-y-auto bg-homepage-canvas text-white">
+      <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col gap-4 px-4 pb-8">
+        <div className="flex w-full items-center justify-between gap-4 border-b border-gray-700 py-3 text-lg">
           <div className="flex flex-wrap items-center gap-2">
             {showWindowsAppMenu && (
               <div className="relative inline-flex">
@@ -363,7 +363,7 @@ const Welcome = () => {
           </div>
         </div>
 
-        <section className="mx-auto flex w-full max-w-5xl flex-col items-center gap-6 pt-4 text-center">
+        <section className="mx-auto flex w-full max-w-5xl flex-col items-center gap-5 pt-4 text-center">
           <img
             src={WorshipSyncImage}
             alt="WorshipSync"
@@ -384,24 +384,25 @@ const Welcome = () => {
           </div>
         </section>
 
-        <section className="mx-auto mt-6 w-full max-w-5xl space-y-6">
-          {isAdmin && (
-            <div className="space-y-4">
-              <div className="space-y-2 text-center">
-                <h2 className="text-2xl font-semibold">Account management</h2>
-                <p className="text-sm text-gray-200">
-                  Admin tools for church access, recovery, and device setup.
-                </p>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                {adminLinks.map((link) => (
-                  <HomeLinkCard key={link.to} {...link} />
-                ))}
-              </div>
+        {isAdmin && (
+          <section className="mx-auto w-full max-w-5xl space-y-3 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
+            <div className="space-y-2 text-center">
+              <h2 className="text-2xl font-semibold">Church administration</h2>
+              <p className="text-sm text-gray-200">
+                People, devices, pairing, recovery, trust, and branding for
+                this church.
+              </p>
             </div>
-          )}
 
+            <div className="grid gap-4 md:grid-cols-2">
+              {adminLinks.map((link) => (
+                <HomeLinkCard key={link.to} {...link} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section className="mx-auto w-full max-w-5xl space-y-4 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
           <div className="space-y-2 text-center">
             <h2 className="text-2xl font-semibold">Controllers</h2>
             <p className="text-sm text-gray-200">
@@ -416,8 +417,8 @@ const Welcome = () => {
           </div>
 
           {visibleSecondaryControllers.length > 0 && (
-            <>
-              <p className="pt-2 text-center text-sm font-medium text-gray-300 md:text-left">
+            <div className="space-y-3 border-t border-gray-700 pt-4">
+              <p className="text-center text-sm font-medium text-gray-300 md:text-left">
                 Credits and info
               </p>
               <div className="grid gap-4 md:grid-cols-2">
@@ -425,12 +426,12 @@ const Welcome = () => {
                   <HomeLinkCard key={link.to} {...link} />
                 ))}
               </div>
-            </>
+            </div>
           )}
         </section>
 
         {isLoggedIn && access === "full" ? (
-          <details className="mx-auto mt-8 w-full max-w-5xl rounded-2xl border border-gray-500 px-5 py-4">
+          <details className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
             <summary className="cursor-pointer list-none">
               <div className="flex flex-col gap-2 text-left md:flex-row md:items-center md:justify-between">
                 <div>
@@ -445,22 +446,24 @@ const Welcome = () => {
               </div>
             </summary>
 
-            <div className="mt-6 space-y-5 border-t border-gray-600 pt-6">
+            <div className="mt-4 space-y-4 border-t border-gray-700 pt-4">
               <DisplayLinkGroup
                 heading="Fullscreen in the browser"
                 description="For a computer wired to a projector or monitor. Open the page on that machine, then click the button to enter fullscreen."
                 links={standaloneDisplays}
               />
-              <DisplayLinkGroup
-                heading="Browser sources (streaming)"
-                description="Add each URL as a browser source or browser input in OBS, vMix, or other streaming tools."
-                links={obsDisplays}
-              />
+              <div className="border-t border-gray-700 pt-4">
+                <DisplayLinkGroup
+                  heading="Browser sources (streaming)"
+                  description="Add each URL as a browser source or browser input in OBS, vMix, or other streaming tools."
+                  links={obsDisplays}
+                />
+              </div>
             </div>
           </details>
         ) : !isLoggedIn ? (
           <section
-            className="mx-auto mt-8 w-full max-w-5xl rounded-2xl border border-gray-500 px-5 py-4"
+            className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5"
             aria-labelledby="display-outputs-heading"
           >
             <h2 id="display-outputs-heading" className="text-2xl font-semibold">
@@ -469,7 +472,7 @@ const Welcome = () => {
             <p className="mt-1.5 text-sm text-gray-200">
               URLs for room screens or browser sources in streaming software.
             </p>
-            <p className="mt-4 rounded-xl border border-gray-600 bg-gray-900/40 p-4 text-sm leading-relaxed text-gray-200">
+            <p className="mt-4 text-sm leading-relaxed text-gray-300">
               Sign in to show display links. Projector, monitor, and stream pages
               require a signed-in account or a linked display device, so those
               URLs are available after you authenticate.

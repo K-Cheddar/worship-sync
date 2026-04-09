@@ -67,14 +67,14 @@ export function SectionTabs<T extends string>({
     >
       <div
         className={cn(
-          "sticky top-0 z-10 -mx-1 border-b border-border/80 bg-background/95 px-0 pb-0 backdrop-blur-sm",
+          "sticky top-0 z-10 -mx-1 overflow-hidden rounded-xl bg-background/95 px-0 pb-0 backdrop-blur-sm",
           tabBarClassName
         )}
       >
         <TabsList
           variant="line"
           className={cn(
-            "p-0! h-auto min-h-0 w-full min-w-0 flex-nowrap items-stretch justify-start gap-0 overflow-x-auto overflow-y-hidden rounded-md border border-gray-400 bg-transparent scrollbar-thin group-data-[orientation=horizontal]/tabs:h-auto",
+            "scrollbar-thin group-data-[orientation=horizontal]/tabs:h-auto h-auto min-h-0 min-w-0 w-full flex-nowrap items-stretch justify-start gap-0 overflow-x-auto overflow-y-hidden rounded-xl border border-white/35 bg-transparent p-0!",
             tabsListClassName
           )}
         >
@@ -83,15 +83,13 @@ export function SectionTabs<T extends string>({
               key={item.value}
               value={item.value}
               className={cn(
-                "relative inline-flex h-full min-h-0 min-w-0 shrink-0 flex-1 items-center justify-center self-stretch rounded-none border-0 border-r border-gray-400 px-4 py-2.5 text-sm font-semibold shadow-none last:border-r-0",
-                // Match group/tabs-list specificity from ui/tabs so we override line-variant defaults (otherwise active stays transparent).
+                "relative inline-flex h-full min-h-0 min-w-0 shrink-0 flex-1 items-center justify-center self-stretch rounded-none border-r border-white/25 px-4 py-2.5 text-sm font-semibold shadow-none transition-colors duration-150 first:rounded-l-xl last:rounded-r-xl last:border-r-0",
+                // Match group/tabs-list specificity from ui/tabs; hide default line underline (we use border-b accent instead).
                 "after:hidden group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0",
-                "group-data-[variant=line]/tabs-list:data-[state=active]:bg-white group-data-[variant=line]/tabs-list:data-[state=active]:text-black",
-                "group-data-[variant=line]/tabs-list:data-[state=active]:hover:bg-white",
-                "dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-white dark:group-data-[variant=line]/tabs-list:data-[state=active]:text-black",
-                "group-data-[variant=line]/tabs-list:data-[state=inactive]:bg-transparent",
-                "group-data-[variant=line]/tabs-list:data-[state=inactive]:text-zinc-600 dark:group-data-[variant=line]/tabs-list:data-[state=inactive]:text-zinc-200",
-                "group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:bg-gray-500/25 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:text-foreground",
+                // Active — darker surface + cyan bottom (clearly above inactive tint).
+                "group-data-[variant=line]/tabs-list:data-[state=active]:border-b-2 group-data-[variant=line]/tabs-list:data-[state=active]:border-b-cyan-500 group-data-[variant=line]/tabs-list:data-[state=active]:bg-gray-950 group-data-[variant=line]/tabs-list:data-[state=active]:text-white group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]",
+                // Inactive — light tint so selected reads clearly darker.
+                "group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-2 group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-transparent group-data-[variant=line]/tabs-list:data-[state=inactive]:bg-white/6 group-data-[variant=line]/tabs-list:data-[state=inactive]:text-white group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:bg-gray-600/45",
                 "focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 triggerClassName
               )}
