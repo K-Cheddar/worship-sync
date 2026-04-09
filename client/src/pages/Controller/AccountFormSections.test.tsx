@@ -27,7 +27,7 @@ const renderBrandingForm = (brandingOverride?: any) => {
     vision: "",
     logos: {
       square: {
-        url: "https://res.cloudinary.com/portable-media/image/upload/v1/old-square.png",
+        url: "https://res.cloudinary.com/portable-media/image/upload/v1/branding/old-square.png",
         publicId: "branding/old-square",
         format: "png",
       },
@@ -87,8 +87,8 @@ describe("BrandingForm", () => {
     (cloudinaryUpload.uploadImageToCloudinary as jest.Mock).mockResolvedValue({
       public_id: "branding/new-square",
       secure_url:
-        "https://res.cloudinary.com/portable-media/image/upload/v1/new-square.png",
-      url: "https://res.cloudinary.com/portable-media/image/upload/v1/new-square.png",
+        "https://res.cloudinary.com/portable-media/image/upload/v1/branding/new-square.png",
+      url: "https://res.cloudinary.com/portable-media/image/upload/v1/branding/new-square.png",
       width: 640,
       height: 640,
       format: "png",
@@ -145,8 +145,8 @@ describe("BrandingForm", () => {
     (cloudinaryUpload.uploadImageToCloudinary as jest.Mock).mockResolvedValue({
       public_id: "branding/unsaved-square",
       secure_url:
-        "https://res.cloudinary.com/portable-media/image/upload/v1/unsaved-square.png",
-      url: "https://res.cloudinary.com/portable-media/image/upload/v1/unsaved-square.png",
+        "https://res.cloudinary.com/portable-media/image/upload/v1/branding/unsaved-square.png",
+      url: "https://res.cloudinary.com/portable-media/image/upload/v1/branding/unsaved-square.png",
       width: 640,
       height: 640,
       format: "png",
