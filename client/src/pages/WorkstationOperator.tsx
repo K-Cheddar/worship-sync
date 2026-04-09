@@ -122,20 +122,20 @@ const WorkstationOperator = () => {
         <div className="mt-4 flex gap-2">
           <Button
             className="flex-1 justify-center"
+            type="button"
+            onClick={() => navigate("/")}
+            disabled={isSaving}
+          >
+            Cancel
+          </Button>
+          <Button
+            className="flex-1 justify-center"
             type="submit"
             variant="cta"
             isLoading={isSaving}
             disabled={isSaving}
           >
             Continue
-          </Button>
-          <Button
-            className="flex-1 justify-center"
-            type="button"
-            onClick={() => navigate("/")}
-            disabled={isSaving}
-          >
-            Cancel
           </Button>
         </div>
         {unlinkCurrentWorkstation ? (

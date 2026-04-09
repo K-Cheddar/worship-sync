@@ -12,7 +12,13 @@ import {
 } from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  createReadStream,
+  existsSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { Readable } from "node:stream";
 import updaterPkg from "electron-updater";
 
@@ -424,7 +430,7 @@ app.whenReady().then(() => {
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app https://apis.google.com https://www.gstatic.com; " +
     "style-src 'self' 'unsafe-inline' data:; " +
     "font-src 'self' data:; " +
-    "img-src 'self' data: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com; " +
+    "img-src 'self' data: blob: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com; " +
     "media-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com; " +
     "connect-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com https://*.cloudinary.com " +
     devConnectSrc +
@@ -440,7 +446,9 @@ app.whenReady().then(() => {
     "child-src 'self' blob:; " +
     "object-src 'none'; " +
     "base-uri 'self';";
-  const appBrowserSession = session.fromPartition(WORSHIPSYNC_SESSION_PARTITION);
+  const appBrowserSession = session.fromPartition(
+    WORSHIPSYNC_SESSION_PARTITION,
+  );
   const attachCspHeaders = (targetSession: Electron.Session) => {
     targetSession.webRequest.onHeadersReceived((details, callback) => {
       callback({
@@ -521,8 +529,7 @@ app.whenReady().then(() => {
       startStr === ""
         ? fileSize - Math.min(Number(endStr) || 0, fileSize)
         : parseInt(startStr, 10);
-    let end =
-      endStr === "" ? fileSize - 1 : parseInt(endStr, 10);
+    let end = endStr === "" ? fileSize - 1 : parseInt(endStr, 10);
     if (Number.isNaN(start) || Number.isNaN(end) || start > end || start < 0)
       return null;
     end = Math.min(end, fileSize - 1);
@@ -588,7 +595,9 @@ app.whenReady().then(() => {
     }
   };
 
-  const registerMediaCacheProtocol = async (targetSession: Electron.Session) => {
+  const registerMediaCacheProtocol = async (
+    targetSession: Electron.Session,
+  ) => {
     const protocolHandler = targetSession.protocol;
     try {
       if (protocolHandler.isProtocolHandled("media-cache")) {

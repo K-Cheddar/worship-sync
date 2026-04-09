@@ -2,6 +2,7 @@ import { getApiBasePath } from "../utils/environment";
 import { getCsrfToken } from "../utils/authStorage";
 import type {
   AuthBootstrap,
+  ChurchBranding,
   ChurchInviteRow,
   ChurchMemberRow,
   DisplayDeviceClient,
@@ -192,6 +193,18 @@ export const updateRecoveryEmail = async (
   }>(`api/churches/${churchId}/recovery-email`, {
     method: "POST",
     body: JSON.stringify({ recoveryEmail }),
+  });
+
+export const updateChurchBranding = async (
+  churchId: string,
+  branding: ChurchBranding,
+) =>
+  apiFetch<{
+    success: boolean;
+    branding: ChurchBranding;
+  }>(`api/churches/${churchId}/branding`, {
+    method: "POST",
+    body: JSON.stringify(branding),
   });
 
 export const createAdminInvite = async (churchId: string, body: JsonBody) =>

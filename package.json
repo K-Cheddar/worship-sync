@@ -5,7 +5,7 @@
   "scripts": {
     "start": "tsx server.js",
     "test": "npm run test:server",
-    "test:server": "node --test server/boardService.test.js server/authResponseSanitize.test.js server/authSessionRecovery.test.js server/inviteMembershipGuards.test.js",
+    "test:server": "node --test server/boardService.test.js server/authResponseSanitize.test.js server/authSessionRecovery.test.js server/inviteMembershipGuards.test.js server/churchBranding.test.js",
     "migrate:auth": "node scripts/migrate-auth.js",
     "migrate:auth:dry-run": "node scripts/migrate-auth.js --dry-run",
     "migrate:rtdb": "node scripts/migrate-rtdb.js",

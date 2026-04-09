@@ -2,6 +2,7 @@ import "dotenv/config";
 import crypto from "node:crypto";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { getDatabase } from "firebase-admin/database";
 import { getFirestore } from "firebase-admin/firestore";
 import { Resend } from "resend";
 import {
@@ -20,6 +21,10 @@ import {
 } from "./server/authResponseSanitize.js";
 import { isRecoverableInvalidHumanSessionError } from "./server/authSessionRecovery.js";
 import { getInviteMembershipConflict } from "./server/inviteMembershipGuards.js";
+import {
+  getChurchBrandingPath,
+  normalizeChurchBrandingForStorage,
+} from "./server/churchBranding.js";
 
 const SESSION_KIND_HUMAN = "human";
 const SESSION_KIND_WORKSTATION = "workstation";
@@ -147,12 +152,23 @@ const firebaseRuntime = (() => {
   if (!credential) {
     return null;
   }
-  const app = getApps()[0] || initializeApp({ credential });
+  const databaseURL =
+    process.env.FIREBASE_DATABASE_URL ||
+    process.env.VITE_FIREBASE_DATABASE_URL ||
+    undefined;
+  const app =
+    getApps()[0] ||
+    initializeApp({
+      credential,
+      ...(databaseURL ? { databaseURL } : {}),
+    });
   const db = getFirestore(app);
   db.settings({ ignoreUndefinedProperties: true });
+  const rtdb = databaseURL ? getDatabase(app) : null;
   return {
     auth: getAuth(app),
     db,
+    rtdb,
   };
 })();
 
@@ -198,6 +214,7 @@ export const authSessionConfig = {
 export const authRuntimeInfo = {
   hasFirebaseAdmin: Boolean(firebaseRuntime?.auth),
   hasFirestore: Boolean(firebaseRuntime?.db),
+  hasRealtimeDatabase: Boolean(firebaseRuntime?.rtdb),
   hasResend: Boolean(resendClient),
 };
 
@@ -2113,6 +2130,16 @@ const requireAdminSession = async (req, churchId) => {
   return bootstrap;
 };
 
+const requireRealtimeDatabase = () => {
+  if (!firebaseRuntime?.rtdb) {
+    throw httpError(
+      503,
+      "Realtime Database is not configured on the server.",
+    );
+  }
+  return firebaseRuntime.rtdb;
+};
+
 const resolveAuthenticatedWorkstation = async (req) => {
   const fromSession = await resolveWorkstationFromSession(req);
   if (fromSession) {
@@ -2802,6 +2829,32 @@ export const authHandlers = {
     }
   },
 
+  async updateChurchBranding(req, res) {
+    try {
+      assertCsrf(req);
+      const admin = await requireAdminSession(req, req.params.churchId);
+      const branding = normalizeChurchBrandingForStorage(req.body);
+      const rtdb = requireRealtimeDatabase();
+
+      await rtdb.ref(getChurchBrandingPath(req.params.churchId)).set(branding);
+      await addSecurityEvent({
+        type: "church_branding_updated",
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+      });
+
+      return res.json({
+        success: true,
+        branding,
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message,
+      });
+    }
+  },
+
   async createInvite(req, res) {
     try {
       assertCsrf(req);
@@ -3406,6 +3459,7 @@ export const authHandlers = {
         });
         return res.json({
           success: true,
+          credential,
           sessionEstablished: true,
           bootstrap,
           device: sanitizeWorkstationDeviceForClient({

@@ -42,6 +42,7 @@ import {
   verifyEmailCode as verifyEmailCodeRequest,
   resendEmailCode as resendEmailCodeRequest,
 } from "../api/auth";
+import type { ChurchBranding } from "../api/authTypes";
 
 import {
   BibleDisplayInfo,
@@ -81,10 +82,15 @@ import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
 import { backoff } from "../utils/generalUtils";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
 import { getHumanPostAuthPath } from "../utils/authRedirectPath";
+import {
+  emptyChurchBranding,
+  normalizeChurchBranding,
+} from "../utils/churchBranding";
 
 type LoginStateType = "idle" | "loading" | "error" | "success" | "guest";
 type BootstrapStatus = "loading" | "ready";
 type AuthServerStatus = "checking" | "online" | "offline";
+type ChurchBrandingStatus = "loading" | "ready";
 
 export type AccessType = "full" | "music" | "view";
 type GlobalInfoContextType = {
@@ -145,6 +151,8 @@ type GlobalInfoContextType = {
   churchName: string;
   churchStatus: string;
   recoveryEmail: string;
+  churchBranding: ChurchBranding;
+  churchBrandingStatus: ChurchBrandingStatus;
   role: string;
   authError: string;
   /** Set when session restore needs email verification; Login should open the code step. */
@@ -227,6 +235,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [churchName, setChurchName] = useState("");
   const [churchStatus, setChurchStatus] = useState("active");
   const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [churchBranding, setChurchBranding] = useState<ChurchBranding>(
+    emptyChurchBranding()
+  );
+  const [churchBrandingStatus, setChurchBrandingStatus] =
+    useState<ChurchBrandingStatus>("loading");
   const [role, setRole] = useState("");
   const [authError, setAuthError] = useState("");
   const [pendingEmailVerificationId, setPendingEmailVerificationId] =
@@ -440,12 +453,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const toolbarDisplayName =
       bootstrap.sessionKind === "workstation"
         ? workstationSessionOperator ||
-          bootstrap.device?.label?.trim() ||
-          "Operator"
+        bootstrap.device?.label?.trim() ||
+        "Operator"
         : humanToolbarLabel ||
-          bootstrap.device?.operatorName ||
-          bootstrap.device?.label ||
-          "Operator";
+        bootstrap.device?.operatorName ||
+        bootstrap.device?.label ||
+        "Operator";
     setUser(toolbarDisplayName);
     setDatabase(bootstrap.database || "demo");
     setUploadPreset(bootstrap.uploadPreset || "bpqu4ma5");
@@ -959,6 +972,42 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     sessionKind,
   ]);
 
+  useEffect(() => {
+    if (loginState !== "success" || !churchId) {
+      setChurchBranding(emptyChurchBranding());
+      setChurchBrandingStatus("ready");
+      return;
+    }
+
+    if (!firebaseDb || !isSharedDataReady) {
+      setChurchBrandingStatus("loading");
+      return;
+    }
+
+    setChurchBrandingStatus("loading");
+    const brandingRef = ref(firebaseDb, getChurchDataPath(churchId, "branding"));
+    const unsubscribe = onValue(
+      brandingRef,
+      (snapshot) => {
+        setChurchBranding(
+          snapshot.exists()
+            ? normalizeChurchBranding(snapshot.val())
+            : emptyChurchBranding()
+        );
+        setChurchBrandingStatus("ready");
+      },
+      (error) => {
+        console.error("Could not subscribe to church branding:", error);
+        setChurchBranding(emptyChurchBranding());
+        setChurchBrandingStatus("ready");
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [churchId, firebaseDb, isSharedDataReady, loginState]);
+
   // Handle navigation away from the app - set up once when component mounts
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -1348,6 +1397,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       churchName,
       churchStatus,
       recoveryEmail,
+      churchBranding,
+      churchBrandingStatus,
       role,
       authError,
       pendingEmailVerificationId,
@@ -1388,6 +1439,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       churchName,
       churchStatus,
       recoveryEmail,
+      churchBranding,
+      churchBrandingStatus,
       role,
       authError,
       pendingEmailVerificationId,

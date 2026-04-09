@@ -23,6 +23,7 @@ import {
   updateChurchMemberAccess,
 } from "../../api/auth";
 import {
+  BrandingForm,
   DisplayPairingForm,
   InvitePeopleForm,
   RecoveryEmailForm,
@@ -116,7 +117,7 @@ const memberAccessOptions: {
   { value: "view", label: "View access" },
 ];
 
-type AccountTabId = "people" | "setup" | "trust";
+type AccountTabId = "people" | "setup" | "trust" | "branding";
 
 const ACCOUNT_TABS: {
   id: AccountTabId;
@@ -138,6 +139,11 @@ const ACCOUNT_TABS: {
     id: "trust",
     label: "Trust & recovery",
     description: "Trusted devices and where recovery requests are sent.",
+  },
+  {
+    id: "branding",
+    label: "Branding",
+    description: "Mission, vision, logos, and brand colors for controllers.",
   },
 ];
 
@@ -576,7 +582,7 @@ const AccountPage = () => {
         <div>
           <h2 className="text-2xl font-semibold">Overview</h2>
           <p className="mt-1 max-w-xl text-sm text-gray-300">
-            Invite people, link shared devices, and manage recovery for this church in one place.
+            Invite people, link shared devices, manage recovery, and save church branding in one place.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 sm:flex-nowrap">
@@ -1068,6 +1074,24 @@ const AccountPage = () => {
             />
           </section>
               </>
+            ),
+          },
+          {
+            value: "branding",
+            label: ACCOUNT_TABS[3].label,
+            description: ACCOUNT_TABS[3].description,
+            content: (
+              <BrandingForm
+                churchId={churchId}
+                branding={context?.churchBranding || {
+                  mission: "",
+                  vision: "",
+                  logos: { square: null, wide: null },
+                  colors: [],
+                }}
+                brandingStatus={context?.churchBrandingStatus || "loading"}
+                uploadPreset={context?.uploadPreset || "bpqu4ma5"}
+              />
             ),
           },
         ]}

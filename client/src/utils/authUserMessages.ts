@@ -46,7 +46,7 @@ const SESSION_API_MESSAGES: Record<string, string> = {
 };
 
 export const isFirebaseAuthError = (
-  error: unknown
+  error: unknown,
 ): error is { code: string } =>
   typeof error === "object" &&
   error !== null &&
@@ -80,7 +80,11 @@ export const getSessionApiErrorMessage = (error: unknown): string => {
   if (SESSION_API_MESSAGES[raw]) {
     return SESSION_API_MESSAGES[raw];
   }
-  if (raw.length < 160 && !raw.includes("at ") && !raw.toLowerCase().includes("stack")) {
+  if (
+    raw.length < 160 &&
+    !raw.includes("at ") &&
+    !raw.toLowerCase().includes("stack")
+  ) {
     return raw;
   }
   return DEFAULT_FINISH_SIGN_IN;
@@ -94,7 +98,11 @@ export const getVerifyEmailCodeErrorMessage = (error: unknown): string => {
   if (VERIFY_CODE_API_MESSAGES[raw]) {
     return VERIFY_CODE_API_MESSAGES[raw];
   }
-  if (raw.length < 160 && !raw.includes("at ") && !raw.toLowerCase().includes("stack")) {
+  if (
+    raw.length < 160 &&
+    !raw.includes("at ") &&
+    !raw.toLowerCase().includes("stack")
+  ) {
     return raw;
   }
   return DEFAULT_VERIFY_CODE;
@@ -108,7 +116,11 @@ export const getForgotPasswordErrorMessage = (error: unknown): string => {
   if (raw === "Email is required.") {
     return "Enter your email address first.";
   }
-  if (raw.length < 160 && !raw.includes("at ") && !raw.toLowerCase().includes("stack")) {
+  if (
+    raw.length < 160 &&
+    !raw.includes("at ") &&
+    !raw.toLowerCase().includes("stack")
+  ) {
     return raw;
   }
   return DEFAULT_FORGOT_PASSWORD;
@@ -129,7 +141,7 @@ export type AuthServerConnectionStatus = "checking" | "online" | "offline";
  */
 export const getAuthBootstrapLoadingDescription = (
   authServerStatus: AuthServerConnectionStatus,
-  options?: { retryCount?: number }
+  options?: { retryCount?: number },
 ): string => {
   if (authServerStatus === "offline") {
     const n = options?.retryCount ?? 0;

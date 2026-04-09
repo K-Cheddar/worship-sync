@@ -2,7 +2,7 @@ import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import { useDispatch, useSelector } from "../../../hooks";
 import { updateSlides } from "../../../store/itemSlice";
-import { useMemo, useRef, useState } from "react";
+import { useContext, useMemo, useRef, useState } from "react";
 import RadioButton, {
   RadioGroup,
 } from "../../../components/RadioButton/RadioButton";
@@ -19,14 +19,11 @@ import { Bold } from "lucide-react";
 import { Italic } from "lucide-react";
 import PopOver from "../../../components/PopOver/PopOver";
 import { updateFormattedTextDisplayInfo } from "../../../utils/formatter";
-import {
-  HexColorInput,
-  HexColorPicker,
-  HexAlphaColorPicker,
-} from "react-colorful";
 import cn from "classnames";
 import Icon from "../../../components/Icon/Icon";
 import { FONT_SIZE_BUTTON_STEP } from "../../../constants";
+import { GlobalInfoContext } from "../../../context/globalInfo";
+import { BrandAwareColorPicker } from "../../../components/ColorField/ColorField";
 
 type fieldType =
   | "paddingX"
@@ -59,6 +56,8 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
   });
 
   const dispatch = useDispatch();
+  const globalInfo = useContext(GlobalInfoContext);
+  const brandColors = globalInfo?.churchBranding.colors || [];
 
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -178,15 +177,10 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
             />
           }
         >
-          <HexColorPicker
+          <BrandAwareColorPicker
             color={formattedTextState.textColor}
             onChange={(val) => handleChange("textColor", val)}
-          />
-          <HexColorInput
-            color={formattedTextState.textColor}
-            prefixed
-            onChange={(val) => handleChange("textColor", val)}
-            className="text-black w-full mt-2"
+            colors={brandColors}
           />
         </PopOver>
         <Button
@@ -239,15 +233,11 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
             />
           }
         >
-          <HexAlphaColorPicker
+          <BrandAwareColorPicker
             color={formattedTextState.backgroundColor}
             onChange={(val) => handleChange("backgroundColor", val)}
-          />
-          <HexColorInput
-            color={formattedTextState.backgroundColor}
-            prefixed
-            onChange={(val) => handleChange("backgroundColor", val)}
-            className="text-black w-full mt-2"
+            colors={brandColors}
+            alpha
           />
         </PopOver>
         <Input

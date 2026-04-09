@@ -13,11 +13,12 @@ import { ButtonProps } from "../Button/Button";
 type PopOverProps = {
   children: React.ReactNode;
   TriggeringButton: ReactElement<ButtonProps>;
+  onOpenChange?: (open: boolean) => void;
 };
 
-const PopOver = ({ children, TriggeringButton }: PopOverProps) => {
+const PopOver = ({ children, TriggeringButton, onOpenChange }: PopOverProps) => {
   return (
-    <Popover>
+    <Popover onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>{TriggeringButton}</PopoverTrigger>
       <PopoverContent
         align="end"

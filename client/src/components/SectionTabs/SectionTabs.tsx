@@ -67,14 +67,14 @@ export function SectionTabs<T extends string>({
     >
       <div
         className={cn(
-          "sticky top-0 z-10 -mx-1 border-b border-border/80 bg-background/95 px-0 pb-0 backdrop-blur-sm",
+          "sticky top-0 z-10 -mx-1 overflow-hidden rounded-2xl bg-background/95 px-0 pb-0 backdrop-blur-sm",
           tabBarClassName
         )}
       >
         <TabsList
           variant="line"
           className={cn(
-            "p-0! h-auto min-h-0 w-full min-w-0 flex-nowrap items-stretch justify-start gap-0 overflow-x-auto overflow-y-hidden rounded-md border border-gray-400 bg-transparent scrollbar-thin group-data-[orientation=horizontal]/tabs:h-auto",
+            "p-0! h-auto min-h-0 w-full min-w-0 flex-nowrap items-stretch justify-start gap-0 overflow-x-auto overflow-y-hidden rounded-2xl border border-gray-400 bg-transparent scrollbar-thin group-data-[orientation=horizontal]/tabs:h-auto",
             tabsListClassName
           )}
         >

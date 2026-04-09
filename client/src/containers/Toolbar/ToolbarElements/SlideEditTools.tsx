@@ -33,7 +33,6 @@ import Toggle from "../../../components/Toggle/Toggle";
 import { BibleFontMode, ItemState } from "../../../types";
 import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
-import { HexColorPicker, HexColorInput } from "react-colorful";
 import { updateTimerColor } from "../../../store/timersSlice";
 import RadioButton, {
   RadioGroup,
@@ -46,6 +45,7 @@ import {
   cleanItemNewlines,
   itemHasCleanableNewlines,
 } from "../../../utils/itemNewlineCleanup";
+import { BrandAwareColorPicker } from "../../../components/ColorField/ColorField";
 
 const MIN_FONT_PX = 25;
 const MAX_FONT_PX = 500;
@@ -71,7 +71,9 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const fontSizeDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const fontSizeInputRef = useRef<string | number>("");
-  const { hostId } = useContext(GlobalInfoContext) || {};
+  const globalInfo = useContext(GlobalInfoContext);
+  const { hostId } = globalInfo || {};
+  const brandColors = globalInfo?.churchBranding.colors || [];
 
   const item = useSelector((state) => state.undoable.present.item);
   const { slides, selectedSlide, selectedBox, timerInfo, type } = item;
@@ -377,12 +379,10 @@ const SlideEditTools = ({ className }: { className?: string }) => {
             />
           }
         >
-          <HexColorPicker color={fontColor} onChange={_updateFontColor} />
-          <HexColorInput
+          <BrandAwareColorPicker
             color={fontColor}
-            prefixed
             onChange={_updateFontColor}
-            className="text-black w-full mt-2"
+            colors={brandColors}
           />
         </PopOver>
 
@@ -428,12 +428,10 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               />
             }
           >
-            <HexColorPicker color={timerColor} onChange={_updateTimerColor} />
-            <HexColorInput
+            <BrandAwareColorPicker
               color={timerColor}
-              prefixed
               onChange={_updateTimerColor}
-              className="text-black w-full mt-2"
+              colors={brandColors}
             />
           </PopOver>
         )}

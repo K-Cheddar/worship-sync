@@ -28,6 +28,7 @@ describe("WorkstationPair", () => {
     const refreshAuthBootstrap = jest.fn(() => Promise.resolve());
     (authApi.redeemWorkstationPairing as jest.Mock).mockResolvedValue({
       success: true,
+      credential: "workstation-token-1",
       device: {
         deviceId: "workstation-1",
         churchId: "church-1",
@@ -72,6 +73,9 @@ describe("WorkstationPair", () => {
     await screen.findByTestId("operator-page");
     expect(refreshAuthBootstrap).toHaveBeenCalled();
     expect(localStorage.getItem("worshipsync_display_token")).toBeNull();
+    expect(localStorage.getItem("worshipsync_workstation_token")).toBe(
+      "workstation-token-1"
+    );
     await waitFor(() =>
       expect(authApi.redeemWorkstationPairing).toHaveBeenCalledWith({
         token: "ABC123",

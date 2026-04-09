@@ -1,6 +1,7 @@
 import { Database } from "firebase/database";
 import { Cloudinary } from "@cloudinary/url-gen";
 import type PouchDB from "pouchdb-browser";
+import { emptyChurchBranding } from "../utils/churchBranding";
 
 /** Mock EventTarget for testing (broadcast, updater, etc.) */
 export class MockEventTarget implements EventTarget {
@@ -108,6 +109,8 @@ export function createMockGlobalContext(
     churchName: "",
     churchStatus: "active",
     recoveryEmail: "admin@example.com",
+    churchBranding: emptyChurchBranding(),
+    churchBrandingStatus: "ready" as const,
     role: "admin",
     authError: "",
     pendingEmailVerificationId: null,
@@ -152,6 +155,8 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     churchName: "",
     churchStatus: "active",
     recoveryEmail: "admin@example.com",
+    churchBranding: emptyChurchBranding(),
+    churchBrandingStatus: "ready" as const,
     role: "admin",
     authError: "",
     pendingEmailVerificationId: null,
