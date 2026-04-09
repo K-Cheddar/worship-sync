@@ -36,7 +36,7 @@ const Service = ({
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
   const nameClasses =
-    "text-base flex-1 mr-2 pl-2 max-w-64 max-lg:max-w-48 truncate";
+    "text-base min-w-0 flex-1 shrink mr-2 pl-2 max-w-64 max-lg:max-w-48 truncate";
 
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({

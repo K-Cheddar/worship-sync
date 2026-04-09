@@ -35,7 +35,9 @@ import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
 import { HexColorPicker, HexColorInput } from "react-colorful";
 import { updateTimerColor } from "../../../store/timersSlice";
-import RadioButton from "../../../components/RadioButton/RadioButton";
+import RadioButton, {
+  RadioGroup,
+} from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
 import { formatFree } from "../../../utils/overflow";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -438,64 +440,58 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         {type === "free" && (
           <>
             <p className="text-sm font-semibold">Overflow:</p>
-            <RadioButton
-              className="text-xs"
-              label="Fit"
-              value={slide.overflow === "fit"}
-              onChange={() => {
+            <RadioGroup
+              value={slide.overflow === "fit" ? "fit" : "separate"}
+              onValueChange={(v) => {
+                const overflow = v as "fit" | "separate";
                 runWithFormatting(() => {
                   const updatedItem = formatFree({
                     ...item,
                     slides: slides.map((s, index) =>
-                      index === selectedSlide ? { ...s, overflow: "fit" } : s
+                      index === selectedSlide ? { ...s, overflow } : s
                     ),
                   });
                   updateItem(updatedItem);
                 });
               }}
-            />
-            <RadioButton
-              className="text-xs"
-              label="Separate"
-              value={slide.overflow === "separate"}
-              onChange={() => {
-                runWithFormatting(() => {
-                  const updatedItem = formatFree({
-                    ...item,
-                    slides: slides.map((s, index) =>
-                      index === selectedSlide
-                        ? { ...s, overflow: "separate" }
-                        : s
-                    ),
-                  });
-                  updateItem(updatedItem);
-                });
-              }}
-            />
+              className="flex flex-wrap items-center gap-1"
+            >
+              <RadioButton
+                className="text-xs"
+                optionValue="fit"
+                label="Fit"
+              />
+              <RadioButton
+                className="text-xs"
+                optionValue="separate"
+                label="Separate"
+              />
+            </RadioGroup>
           </>
         )}
         {type === "bible" && (
           <>
             <Icon color={iconColorMap.get("bible")} svg={BookOpen} />
             <p className="text-sm font-semibold">Mode:</p>
-            <RadioButton
-              className="text-xs"
-              onChange={() => _updateBibleFontMode("fit")}
-              value={item.bibleInfo?.fontMode === "fit"}
-              label="Fit"
-            />
-            <RadioButton
-              className="text-xs"
-              onChange={() => _updateBibleFontMode("separate")}
-              value={item.bibleInfo?.fontMode === "separate"}
-              label="Separate"
-            />
-            <RadioButton
-              className="text-xs"
-              onChange={() => _updateBibleFontMode("multiple")}
-              value={item.bibleInfo?.fontMode === "multiple"}
-              label="Multiple"
-            />
+            <RadioGroup
+              value={item.bibleInfo?.fontMode ?? "fit"}
+              onValueChange={(v) =>
+                _updateBibleFontMode(v as BibleFontMode)
+              }
+              className="flex flex-wrap items-center gap-1"
+            >
+              <RadioButton className="text-xs" optionValue="fit" label="Fit" />
+              <RadioButton
+                className="text-xs"
+                optionValue="separate"
+                label="Separate"
+              />
+              <RadioButton
+                className="text-xs"
+                optionValue="multiple"
+                label="Multiple"
+              />
+            </RadioGroup>
           </>
         )}
       </div>

@@ -7,7 +7,7 @@ import TimerTypeSelector from "./TimerTypeSelector";
 import CountdownTimeInput from "./CountdownTimeInput";
 import DurationInputs from "./DurationInputs";
 import TimerControlButtons from "./TimerControlButtons";
-import RadioButton from "../RadioButton/RadioButton";
+import RadioButton, { RadioGroup } from "../RadioButton/RadioButton";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import cn from "classnames";
 
@@ -124,20 +124,24 @@ const TimerControls = ({ className }: TimerControlsProps) => {
           />
         )}
 
-        <div className="flex gap-4 items-center justify-center">
+        <RadioGroup
+          value={showMinutesOnly ? "minutes" : "full"}
+          onValueChange={(v) =>
+            handleShowMinutesOnlyChange(v === "minutes")
+          }
+          className="flex gap-4 items-center justify-center"
+        >
           <RadioButton
+            optionValue="full"
             label="Full timer"
-            value={!showMinutesOnly}
-            onChange={() => handleShowMinutesOnlyChange(false)}
             disabled={!canControlTimer}
           />
           <RadioButton
+            optionValue="minutes"
             label="Minutes only"
-            value={showMinutesOnly}
-            onChange={() => handleShowMinutesOnlyChange(true)}
             disabled={!canControlTimer}
           />
-        </div>
+        </RadioGroup>
 
         <TimerControlButtons
           status={timer?.status || "stopped"}

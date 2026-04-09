@@ -1,5 +1,5 @@
 import React from "react";
-import RadioButton from "../RadioButton/RadioButton";
+import RadioButton, { RadioGroup } from "../RadioButton/RadioButton";
 
 interface TimerTypeSelectorProps {
   timerType: "timer" | "countdown";
@@ -15,20 +15,18 @@ const TimerTypeSelector: React.FC<TimerTypeSelectorProps> = ({
   disabled = false,
 }) => {
   return (
-    <div className={`flex gap-4 items-center border-b-2 pt-2 pb-4 border-gray-600 w-full justify-center ${className}`}>
+    <RadioGroup
+      value={timerType}
+      onValueChange={(v) => onTypeChange(v as "timer" | "countdown")}
+      className={`flex gap-4 items-center border-b-2 pt-2 pb-4 border-gray-600 w-full justify-center ${className}`}
+    >
+      <RadioButton optionValue="timer" label="Timer" disabled={disabled} />
       <RadioButton
-        label="Timer"
-        value={timerType === "timer"}
-        onChange={() => onTypeChange("timer")}
-        disabled={disabled}
-      />
-      <RadioButton
+        optionValue="countdown"
         label="Countdown"
-        value={timerType === "countdown"}
-        onChange={() => onTypeChange("countdown")}
         disabled={disabled}
       />
-    </div>
+    </RadioGroup>
   );
 };
 

@@ -8,6 +8,7 @@ import ControllerLoadingOverlay from "./ControllerLoadingOverlay";
 type ControllerPageShellProps = {
   children: ReactNode;
   user?: string;
+  churchName?: string;
   dbProgress?: number;
   connectionStatus?: ConnectionStatus;
   scrollbarWidth?: string | number;
@@ -20,6 +21,7 @@ type ControllerPageShellProps = {
 const ControllerPageShell = ({
   children,
   user,
+  churchName,
   dbProgress,
   connectionStatus,
   scrollbarWidth,
@@ -34,6 +36,7 @@ const ControllerPageShell = ({
         dbProgress={dbProgress}
         connectionStatus={connectionStatus}
         user={user}
+        churchName={churchName}
       />
       <div
         onClick={onRootClick}

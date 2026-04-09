@@ -53,18 +53,22 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         id={displayId}
         ref={ref}
         style={style}
-        className={cn(
-          "flex min-h-8",
-          !isSelected && "hover:bg-gray-500 active:bg-gray-400",
-          isSelected && "bg-gray-900",
-          className
-        )}
+        className={cn("group relative flex min-h-8", className)}
         {...rest}
       >
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-0 z-0 transition-colors duration-150 ease-out",
+            isSelected && "bg-gray-900",
+            !isSelected &&
+            "bg-gray-700 group-hover:bg-gray-500 group-active:bg-gray-400"
+          )}
+        />
         <Button
           variant="none"
           className={cn(
-            "relative w-full text-sm border-l-3 rounded-tl-none rounded-bl-none",
+            "relative z-10 min-h-8 min-w-0 flex-1 shrink self-stretch bg-transparent text-sm border-l-3 rounded-tl-none rounded-bl-none",
             borderColorMap.get(type)
           )}
           iconSize="md"
@@ -95,7 +99,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
               key={action.id}
               onClick={() => action.action(id)}
               variant="tertiary"
-              className="hover:bg-gray-800 active:bg-gray-900"
+              className="relative z-10 shrink-0 transition-colors duration-150 ease-out hover:bg-black/20 active:bg-black/30"
             />
           ))}
       </li>

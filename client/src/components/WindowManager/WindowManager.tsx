@@ -1,6 +1,6 @@
 import { useElectronWindows } from "../../hooks/useElectronWindows";
 import Button from "../Button/Button";
-import RadioButton from "../RadioButton/RadioButton";
+import RadioButton, { RadioGroup } from "../RadioButton/RadioButton";
 import { useState, useEffect } from "react";
 import { Focus } from "lucide-react";
 import { getDisplayLabel } from "../../utils/displayUtils";
@@ -69,17 +69,16 @@ const WindowManager = () => {
           <h4 className="font-medium text-slate-900 dark:text-slate-100">
             Projector Window
           </h4>
-          
+
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-600 dark:text-slate-400">
               Status:
             </span>
             <span
-              className={`text-sm font-medium ${
-                windowStates?.projectorOpen
+              className={`text-sm font-medium ${windowStates?.projectorOpen
                   ? "text-green-600 dark:text-green-400"
                   : "text-red-600 dark:text-red-400"
-              }`}
+                }`}
             >
               {windowStates?.projectorOpen ? "Open" : "Closed"}
             </span>
@@ -89,17 +88,20 @@ const WindowManager = () => {
             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
               Display:
             </label>
-            <div className="flex flex-col gap-2 ml-2">
+            <RadioGroup
+              value={selectedProjectorDisplay}
+              onValueChange={(id) => void handleProjectorDisplayChange(id)}
+              className="flex flex-col gap-2 ml-2"
+            >
               {displays.map((display, index) => (
                 <RadioButton
                   key={display.id}
+                  optionValue={display.id.toString()}
                   label={getDisplayLabel(display, index)}
-                  value={selectedProjectorDisplay === display.id.toString()}
-                  onChange={() => handleProjectorDisplayChange(display.id.toString())}
                   disabled={!windowStates?.projectorOpen}
                 />
               ))}
-            </div>
+            </RadioGroup>
           </div>
 
           <div className="flex flex-col gap-2">
@@ -134,17 +136,16 @@ const WindowManager = () => {
           <h4 className="font-medium text-slate-900 dark:text-slate-100">
             Stage Monitor Window
           </h4>
-          
+
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-600 dark:text-slate-400">
               Status:
             </span>
             <span
-              className={`text-sm font-medium ${
-                windowStates?.monitorOpen
+              className={`text-sm font-medium ${windowStates?.monitorOpen
                   ? "text-green-600 dark:text-green-400"
                   : "text-red-600 dark:text-red-400"
-              }`}
+                }`}
             >
               {windowStates?.monitorOpen ? "Open" : "Closed"}
             </span>
@@ -154,17 +155,20 @@ const WindowManager = () => {
             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
               Display:
             </label>
-            <div className="flex flex-col gap-2 ml-2">
+            <RadioGroup
+              value={selectedMonitorDisplay}
+              onValueChange={(id) => void handleMonitorDisplayChange(id)}
+              className="flex flex-col gap-2 ml-2"
+            >
               {displays.map((display, index) => (
                 <RadioButton
                   key={display.id}
+                  optionValue={display.id.toString()}
                   label={getDisplayLabel(display, index)}
-                  value={selectedMonitorDisplay === display.id.toString()}
-                  onChange={() => handleMonitorDisplayChange(display.id.toString())}
                   disabled={!windowStates?.monitorOpen}
                 />
               ))}
-            </div>
+            </RadioGroup>
           </div>
 
           <div className="flex flex-col gap-2">

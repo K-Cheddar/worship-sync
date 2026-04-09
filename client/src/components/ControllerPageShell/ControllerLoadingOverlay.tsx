@@ -6,14 +6,38 @@ type ControllerLoadingOverlayProps = {
   dbProgress?: number;
   connectionStatus?: ConnectionStatus;
   user?: string;
+  churchName?: string;
 };
 
 const ControllerLoadingOverlay = ({
   dbProgress = 0,
   connectionStatus,
   user,
+  churchName,
 }: ControllerLoadingOverlayProps) => {
   if (dbProgress === 100) return null;
+
+  const displayName = user?.trim() ?? "";
+  const displayChurch = churchName?.trim() ?? "";
+
+  const welcomeLead =
+    displayName.length > 0 ? (
+      <>
+        Welcome, <span className="font-semibold">{displayName}</span>.
+      </>
+    ) : (
+      <>Welcome.</>
+    );
+
+  const readinessLead =
+    displayChurch.length > 0 ? (
+      <>
+        is setting the stage for{" "}
+        <span className="font-semibold">{displayChurch}</span> now.
+      </>
+    ) : (
+      <>is setting the stage for you now.</>
+    );
 
   return (
     <div className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8">
@@ -34,9 +58,10 @@ const ControllerLoadingOverlay = ({
       ) : (
         <>
           <p className="max-w-lg px-4 text-center">
-            Setting up <span className="font-bold">Worship</span>
-            <span className="text-orange-500 font-semibold">Sync</span> for{" "}
-            <span className="font-semibold">{user}</span>
+            {welcomeLead}{" "}
+            <span className="font-bold">Worship</span>
+            <span className="text-orange-500 font-semibold">Sync</span>{" "}
+            {readinessLead}
           </p>
           {connectionStatus?.status === "retrying" && (
             <p className="text-center text-lg text-yellow-400">

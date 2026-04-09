@@ -20,6 +20,18 @@ const buttonVariants = cva(
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
         none: "",
+        presentPrimary:
+          "border-2 border-black bg-black font-semibold text-white hover:border-gray-900 hover:bg-gray-900 active:border-gray-800 active:bg-gray-800",
+        presentSecondary:
+          "border-2 border-white bg-white font-semibold text-black hover:border-gray-200 hover:bg-gray-200 active:border-gray-300 active:bg-gray-300",
+        presentTertiary:
+          "border-2 border-transparent bg-transparent font-semibold text-white hover:border-gray-500 hover:bg-gray-500 active:border-gray-400 active:bg-gray-400",
+        presentCta:
+          "border-2 border-cyan-600 bg-cyan-600 font-semibold text-white hover:border-cyan-700 hover:bg-cyan-700 active:border-cyan-800 active:bg-cyan-800",
+        presentDestructive:
+          "border-2 border-red-600 bg-red-600 font-semibold text-white hover:border-red-700 hover:bg-red-700 active:border-red-800 active:bg-red-800",
+        presentTextLink:
+          "h-auto min-h-0 max-md:min-h-0 border-0 bg-transparent p-0 font-normal text-sm text-cyan-400 underline underline-offset-2 shadow-none hover:text-cyan-300 active:text-cyan-400 focus-visible:rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 disabled:cursor-not-allowed disabled:font-normal disabled:text-gray-500 disabled:no-underline disabled:opacity-100 disabled:hover:text-gray-500",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",
@@ -28,6 +40,9 @@ const buttonVariants = cva(
         icon: "size-9",
         "icon-sm": "size-8",
         "icon-lg": "size-10",
+        present:
+          "h-auto min-h-0 w-auto max-w-full rounded-md",
+        bare: "h-auto min-h-0 p-0 shadow-none",
       },
     },
     defaultVariants: {
@@ -37,27 +52,35 @@ const buttonVariants = cva(
   }
 );
 
-const Button = ({
-  className,
-  variant = "default",
-  size = "default",
-  asChild = false,
-  ...props
-}: React.ComponentProps<"button"> &
-  VariantProps<typeof buttonVariants> & {
-    asChild?: boolean;
-  }) => {
-  const Comp = asChild ? Slot : "button";
+export type ButtonVariantProps = VariantProps<typeof buttonVariants>;
 
-  return (
-    <Comp
-      data-slot="button"
-      data-variant={variant}
-      data-size={size}
-      className={cn(buttonVariants({ variant, size, className }))}
-      {...props}
-    />
-  );
-};
+export { buttonVariants };
+
+type ShadcnButtonProps = React.ComponentProps<"button"> &
+  ButtonVariantProps & {
+    asChild?: boolean;
+  };
+
+const Button = React.forwardRef<HTMLButtonElement, ShadcnButtonProps>(
+  (
+    { className, variant = "default", size = "default", asChild = false, ...props },
+    ref
+  ) => {
+    const Comp = asChild ? Slot : "button";
+
+    return (
+      <Comp
+        ref={ref}
+        data-slot="button"
+        data-variant={variant}
+        data-size={size}
+        className={cn(buttonVariants({ variant, size, className }))}
+        {...props}
+      />
+    );
+  }
+);
+
+Button.displayName = "Button";
 
 export default Button;

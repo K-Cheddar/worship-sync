@@ -7,7 +7,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Eye, EyeOff, LoaderCircle } from "lucide-react";
 import Input from "../components/Input/Input";
 import Button from "../components/Button/Button";
@@ -39,7 +39,6 @@ const FORGOT_PASSWORD_EMAIL_HELPER =
 let emailCodeVerificationInFlight: string | null = null;
 
 const Login = () => {
-  const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const context = useContext(GlobalInfoContext);

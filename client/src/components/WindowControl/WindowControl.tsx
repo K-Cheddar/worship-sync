@@ -1,6 +1,6 @@
 import { useElectronWindows } from "../../hooks/useElectronWindows";
 import Button from "../Button/Button";
-import RadioButton from "../RadioButton/RadioButton";
+import RadioButton, { RadioGroup } from "../RadioButton/RadioButton";
 import { useState, useEffect } from "react";
 import { Focus, LucideIcon } from "lucide-react";
 import cn from "classnames";
@@ -36,8 +36,8 @@ const WindowControl = ({
 
   const [selectedDisplay, setSelectedDisplay] = useState<string>("");
 
-  const isOpen = windowType === "projector" 
-    ? windowStates?.projectorOpen 
+  const isOpen = windowType === "projector"
+    ? windowStates?.projectorOpen
     : windowStates?.monitorOpen;
 
   const windowState = windowType === "projector"
@@ -53,7 +53,7 @@ const WindowControl = ({
   const handleDisplayChange = async (displayId: string) => {
     setSelectedDisplay(displayId);
     const displayIdNum = parseInt(displayId);
-    
+
     if (isOpen) {
       // Window is open, move it to the selected display
       await moveWindowToDisplay(windowType, displayIdNum);
@@ -85,17 +85,20 @@ const WindowControl = ({
 
       <div className="flex flex-col gap-2">
         <label className="text-sm font-medium text-gray-300">Display:</label>
-        <div className="flex flex-col gap-2 ml-2">
+        <RadioGroup
+          value={selectedDisplay}
+          onValueChange={(id) => void handleDisplayChange(id)}
+          className="flex flex-col gap-2 ml-2"
+        >
           {displays.map((display, index) => (
             <RadioButton
               key={display.id}
-              name={`${windowType}-display`}
+              optionValue={display.id.toString()}
               label={getDisplayLabel(display, index)}
-              value={selectedDisplay === display.id.toString()}
-              onChange={() => handleDisplayChange(display.id.toString())}
+              disabled={!isOpen}
             />
           ))}
-        </div>
+        </RadioGroup>
       </div>
 
       <div className="flex flex-col gap-2 mt-2">

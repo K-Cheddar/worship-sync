@@ -20,7 +20,7 @@ const OverlayController = () => {
 
   const { dbProgress, connectionStatus } =
     useContext(ControllerInfoContext) || {};
-  const { user, access } = useContext(GlobalInfoContext) || {};
+  const { user, churchName, access } = useContext(GlobalInfoContext) || {};
   const { scrollbarWidth } = useSelector(
     (state) => state.undoable.present.preferences
   );
@@ -40,6 +40,7 @@ const OverlayController = () => {
   return (
     <ControllerPageShell
       user={user}
+      churchName={churchName}
       dbProgress={dbProgress}
       connectionStatus={connectionStatus}
       scrollbarWidth={scrollbarWidth}

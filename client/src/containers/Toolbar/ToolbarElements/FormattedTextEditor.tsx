@@ -3,7 +3,9 @@ import Input from "../../../components/Input/Input";
 import { useDispatch, useSelector } from "../../../hooks";
 import { updateSlides } from "../../../store/itemSlice";
 import { useMemo, useRef, useState } from "react";
-import RadioButton from "../../../components/RadioButton/RadioButton";
+import RadioButton, {
+  RadioGroup,
+} from "../../../components/RadioButton/RadioButton";
 import { PaintBucket } from "lucide-react";
 import { ChevronsUpDown } from "lucide-react";
 import { Image } from "lucide-react";
@@ -254,7 +256,8 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           inputTextSize="text-xs"
           onChange={(value) => handleChange("paddingX", value.toString())}
           label="Padding X"
-          labelClassName="mr-2 text-xs"
+          labelLayout="inline"
+          labelFontSize="text-xs"
           min={0}
           max={100}
           step={0.5}
@@ -267,7 +270,8 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           inputTextSize="text-xs"
           onChange={(value) => handleChange("paddingY", value.toString())}
           label="Padding Y"
-          labelClassName="mr-2 text-xs"
+          labelLayout="inline"
+          labelFontSize="text-xs"
           min={0}
           max={100}
           step={0.5}
@@ -277,18 +281,22 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
       </section>
 
       <section className="flex gap-1 items-center">
-        <RadioButton
-          className="text-xs w-fit"
-          label="Apply to selected"
-          value={!shouldApplyToAll}
-          onChange={() => setShouldApplyToAll(false)}
-        />
-        <RadioButton
-          label="Apply to all"
-          className="text-xs w-fit"
-          value={shouldApplyToAll}
-          onChange={() => setShouldApplyToAll(true)}
-        />
+        <RadioGroup
+          value={shouldApplyToAll ? "all" : "selected"}
+          onValueChange={(v) => setShouldApplyToAll(v === "all")}
+          className="flex gap-1 items-center"
+        >
+          <RadioButton
+            className="text-xs w-fit"
+            optionValue="selected"
+            label="Apply to selected"
+          />
+          <RadioButton
+            label="Apply to all"
+            className="text-xs w-fit"
+            optionValue="all"
+          />
+        </RadioGroup>
         {/* Keep the height the same as other sections */}
         <Button svg={ALargeSmall} iconSize="lg" className="invisible" />
       </section>

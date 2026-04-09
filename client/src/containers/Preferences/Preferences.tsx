@@ -21,7 +21,7 @@ import {
 import cn from "classnames";
 import Icon from "../../components/Icon/Icon";
 import Input from "../../components/Input/Input";
-import RadioButton from "../../components/RadioButton/RadioButton";
+import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButton";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
@@ -313,20 +313,18 @@ const Preferences = () => {
               >
                 <p className="font-semibold text-right">{label}:</p>
                 <section className="flex gap-2 items-center px-2">
-                  <RadioButton
-                    label="Shown"
-                    value={value}
-                    onChange={() =>
-                      dispatch(setDefaultPreferences({ [property]: true }))
+                  <RadioGroup
+                    value={value ? "shown" : "hidden"}
+                    onValueChange={(v) =>
+                      dispatch(
+                        setDefaultPreferences({ [property]: v === "shown" })
+                      )
                     }
-                  />
-                  <RadioButton
-                    label="Hidden"
-                    value={!value}
-                    onChange={() =>
-                      dispatch(setDefaultPreferences({ [property]: false }))
-                    }
-                  />
+                    className="flex gap-2 items-center"
+                  >
+                    <RadioButton optionValue="shown" label="Shown" />
+                    <RadioButton optionValue="hidden" label="Hidden" />
+                  </RadioGroup>
                 </section>
               </li>
             ))}
@@ -344,17 +342,22 @@ const Preferences = () => {
               >
                 <p className="font-semibold text-right">{label}:</p>
                 <section className="flex gap-2 items-center px-2">
-                  {options.map((option) => (
-                    <RadioButton
-                      key={option}
-                      label={option}
-                      labelClassName="capitalize"
-                      value={value === option}
-                      onChange={() =>
-                        dispatch(setDefaultPreferences({ [property]: option }))
-                      }
-                    />
-                  ))}
+                  <RadioGroup
+                    value={value}
+                    onValueChange={(v) =>
+                      dispatch(setDefaultPreferences({ [property]: v }))
+                    }
+                    className="flex flex-wrap gap-2 items-center"
+                  >
+                    {options.map((option) => (
+                      <RadioButton
+                        key={option}
+                        optionValue={option}
+                        label={option}
+                        labelClassName="capitalize"
+                      />
+                    ))}
+                  </RadioGroup>
                 </section>
               </li>
             ))}
@@ -364,29 +367,19 @@ const Preferences = () => {
       <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
         Scrollbar Width
       </h2>
-      <ul className="flex gap-6 items-center justify-center">
-        <li>
-          <RadioButton
-            label="Thin"
-            value={scrollbarWidth === "thin"}
-            onChange={() => dispatch(setScrollbarWidth("thin"))}
-          />
-        </li>
-        <li>
-          <RadioButton
-            label="Auto"
-            value={scrollbarWidth === "auto"}
-            onChange={() => dispatch(setScrollbarWidth("auto"))}
-          />
-        </li>
-        <li>
-          <RadioButton
-            label="None"
-            value={scrollbarWidth === "none"}
-            onChange={() => dispatch(setScrollbarWidth("none"))}
-          />
-        </li>
-      </ul>
+      <RadioGroup
+        value={scrollbarWidth}
+        onValueChange={(v) =>
+          dispatch(
+            setScrollbarWidth(v as "thin" | "auto" | "none")
+          )
+        }
+        className="flex gap-6 items-center justify-center"
+      >
+        <RadioButton optionValue="thin" label="Thin" />
+        <RadioButton optionValue="auto" label="Auto" />
+        <RadioButton optionValue="none" label="None" />
+      </RadioGroup>
     </ErrorBoundary>
   );
 };

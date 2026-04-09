@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import TimerControls from "./TimerControls";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -51,16 +52,17 @@ jest.mock("./DurationInputs", () => ({
 
 jest.mock("../RadioButton/RadioButton", () => ({
   __esModule: true,
+  RadioGroup: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
   default: ({
     label,
     disabled,
-    onChange,
   }: {
     label: string;
     disabled?: boolean;
-    onChange: () => void;
   }) => (
-    <button type="button" disabled={disabled} onClick={onChange}>
+    <button type="button" disabled={disabled}>
       {label}
     </button>
   ),

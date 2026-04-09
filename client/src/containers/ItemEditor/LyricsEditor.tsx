@@ -440,7 +440,7 @@ const LyricsEditor = () => {
     setLrclibAlbumName(candidate.albumName || "");
     setSelectedSectionId(
       formattedItem.arrangements[nextArrangementIndex]?.formattedLyrics?.[0]?.id ||
-        null,
+      null,
     );
     setRecentlyMovedSectionId(null);
     setLrclibError("");
@@ -798,9 +798,8 @@ const LyricsEditor = () => {
             <ul className="flex flex-col gap-2">
               {lrclibCandidates.map((candidate) => (
                 <li
-                  key={`${
-                    candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName
-                  }-${candidate.artistName}`}
+                  key={`${candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName
+                    }-${candidate.artistName}`}
                   className="rounded-md border border-slate-500/90 bg-slate-800/95 p-3"
                 >
                   <div className="flex flex-col gap-1">
@@ -939,15 +938,25 @@ const LyricsEditor = () => {
               </ul>
             </div>
           )}
-          <section className={`flex-1 flex flex-col min-w-0 ${!showLeftSection ? "pl-4" : "pr-4"}`}>
+          <section
+            className={`flex-1 flex flex-col min-h-0 min-w-0 ${!showLeftSection ? "pl-4" : "pr-4"}`}
+          >
             <h2 className="text-2xl mb-2 text-center font-semibold shrink-0">
               {arrangementName}
             </h2>
             <div className="flex-1 flex flex-col min-h-0 min-w-0">
-              <div className={cn(
-                "shrink min-h-0",
-                !isMobile && selectedSectionIndex !== null && !isPreviewMinimized && "max-h-[75%] overflow-hidden flex-1"
-              )}>
+              <div
+                className={cn(
+                  "min-h-0",
+                  !isMobile &&
+                  selectedSectionIndex !== null &&
+                  "flex-1 overflow-hidden",
+                  !isMobile &&
+                  selectedSectionIndex !== null &&
+                  !isPreviewMinimized &&
+                  "max-h-[75%]",
+                )}
+              >
                 <LyricBoxes
                   formattedLyrics={localFormattedLyrics}
                   reformatLyrics={updateFormattedLyricsAndSongOrder}

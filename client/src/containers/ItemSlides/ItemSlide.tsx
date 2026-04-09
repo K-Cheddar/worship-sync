@@ -90,21 +90,21 @@ const ItemSlide = ({
 
   const contextMenuItems = canEdit
     ? [
-        {
-          label: "Clear Background",
-          onClick: () => {
-            if (db) {
-              dispatch(
-                updateSlideBackground({
-                  background: "",
-                })
-              );
-            }
-          },
-          icon: <ImageOff className="w-4 h-4" />,
-          disabled: isLoading,
+      {
+        label: "Clear Background",
+        onClick: () => {
+          if (db) {
+            dispatch(
+              updateSlideBackground({
+                background: "",
+              })
+            );
+          }
         },
-      ]
+        icon: <ImageOff className="w-4 h-4" />,
+        disabled: isLoading,
+      },
+    ]
     : [];
 
   return (
@@ -130,7 +130,9 @@ const ItemSlide = ({
       {...(isFree && canEdit ? listeners : {})}
       key={slide.id}
       className={cn(
-        "cursor-pointer w-full rounded-lg",
+        "cursor-pointer w-full rounded-lg transition-[background-color,box-shadow] duration-150 ease-out",
+        !isDragging &&
+        "hover:bg-white/12 hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.28)]",
         selectedSlide === index && !isTransmitting && "border-gray-300",
         selectedSlide === index && isTransmitting && "border-green-500",
         selectedSlide !== index && "border-transparent",

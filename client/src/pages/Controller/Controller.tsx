@@ -38,7 +38,7 @@ const Controller = () => {
   const { dbProgress, connectionStatus } =
     useContext(ControllerInfoContext) || {};
 
-  const { user } = useContext(GlobalInfoContext) || {};
+  const { user, churchName } = useContext(GlobalInfoContext) || {};
 
   const isEditMode = useSelector(
     (state: RootState) => state.undoable.present.item.isEditMode
@@ -82,6 +82,7 @@ const Controller = () => {
   return (
     <ControllerPageShell
       user={user}
+      churchName={churchName}
       dbProgress={dbProgress}
       connectionStatus={connectionStatus}
       scrollbarWidth={scrollbarWidth}
