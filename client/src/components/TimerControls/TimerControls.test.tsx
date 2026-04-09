@@ -83,10 +83,13 @@ jest.mock("./TimerControlButtons", () => ({
   ),
 }));
 
-const renderWithAccess = (access: "full" | "music" | "view") => {
+const renderWithAccess = (
+  access: "full" | "music" | "view",
+  timerControlsProps?: { variant?: "full" | "controlsOnly" },
+) => {
   return render(
     <GlobalInfoContext.Provider value={{ access, hostId: "host-1" } as any}>
-      <TimerControls />
+      <TimerControls {...timerControlsProps} />
     </GlobalInfoContext.Provider>,
   );
 };
@@ -148,5 +151,14 @@ describe("TimerControls access gating", () => {
         }),
       }),
     );
+  });
+
+  it("controlsOnly variant renders only transport buttons, not settings", () => {
+    renderWithAccess("full", { variant: "controlsOnly" });
+
+    expect(
+      screen.queryByRole("button", { name: "Timer Type Selector" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
   });
 });

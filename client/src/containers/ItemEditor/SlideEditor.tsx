@@ -1120,6 +1120,57 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     selectedSlide,
   ]);
 
+  const editorWrapperStyle = {
+    "--slide-editor-height": isMobile
+      ? "fit-content"
+      : `${isEmpty ? emptySlideHeight : editorHeight}`,
+  } as CSSProperties;
+
+  const mainEditorContent = (
+    <>
+      {!isEmpty ? (
+        <div className="flex flex-col lg:flex-row gap-2 w-full px-2">
+          <LoadingOverlay
+            isLoading={!!showLoadingOverlay}
+            className="lg:flex-[0_0_30%] w-full min-h-0"
+          >
+            {leftColumnContent}
+          </LoadingOverlay>
+
+          <LoadingOverlay
+            isLoading={!!showLoadingOverlay}
+            className="lg:max-h-[42vh] max-lg:max-h-[30vh] flex-1 min-w-0 min-h-0"
+          >
+            <DisplayWindow
+              className="lg:max-h-[42vh] max-lg:max-h-[30vh] h-full w-full"
+              showBorder
+              boxes={boxes}
+              boxCursorPositions={cursorPositionsRef.current}
+              selectBox={(val) => dispatch(setSelectedBox(val))}
+              ref={editorRef}
+              onChange={(onChangeInfo) => {
+                onChange(onChangeInfo);
+              }}
+              displayType="editor"
+              selectedBox={selectedBox}
+              isBoxLocked={isBoxLocked}
+              disabled={!canEdit}
+              shouldPlayVideo
+            />
+          </LoadingOverlay>
+        </div>
+      ) : (
+        <p
+          id="slide-editor-empty"
+          ref={emptySlideRef}
+          className="flex items-center justify-center text-gray-300 w-full h-[calc(42vw/(16/9))] max-lg:h-[calc(84vw/(16/9))]"
+        >
+          No slide selected
+        </p>
+      )}
+    </>
+  );
+
   return (
     <ErrorBoundary>
       <div>
@@ -1205,62 +1256,40 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
             className="text-xs"
           />
         </section>
-        <div
-          className={cn(
-            "flex transition-all relative max-lg:flex-col gap-2 max-lg:items-center",
-            shouldShowItemEditor && "mb-2 z-1",
-            !shouldShowItemEditor && "h-0 -z-1"
-          )}
-          data-show={shouldShowItemEditor}
-          style={
-            {
-              "--slide-editor-height": isMobile
-                ? "fit-content"
-                : `${isEmpty ? emptySlideHeight : editorHeight}`,
-            } as CSSProperties
-          }
-        >
-          {!isEmpty ? (
-            <div className="flex flex-col lg:flex-row gap-2 w-full px-2">
-              <LoadingOverlay
-                isLoading={!!showLoadingOverlay}
-                className="lg:flex-[0_0_30%] w-full min-h-0"
-              >
-                {leftColumnContent}
-              </LoadingOverlay>
-
-              <LoadingOverlay
-                isLoading={!!showLoadingOverlay}
-                className="lg:max-h-[42vh] max-lg:max-h-[30vh] flex-1 min-w-0 min-h-0"
-              >
-                <DisplayWindow
-                  className="lg:max-h-[42vh] max-lg:max-h-[30vh] h-full w-full"
-                  showBorder
-                  boxes={boxes}
-                  boxCursorPositions={cursorPositionsRef.current}
-                  selectBox={(val) => dispatch(setSelectedBox(val))}
-                  ref={editorRef}
-                  onChange={(onChangeInfo) => {
-                    onChange(onChangeInfo);
-                  }}
-                  displayType="editor"
-                  selectedBox={selectedBox}
-                  isBoxLocked={isBoxLocked}
-                  disabled={!canEdit}
-                  shouldPlayVideo
-                />
-              </LoadingOverlay>
-            </div>
-          ) : (
-            <p
-              id="slide-editor-empty"
-              ref={emptySlideRef}
-              className="flex items-center justify-center text-gray-300 w-full h-[calc(42vw/(16/9))] max-lg:h-[calc(84vw/(16/9))]"
-            >
-              No slide selected
-            </p>
-          )}
-        </div>
+        {shouldShowItemEditor ? (
+          <div
+            className={cn(
+              "flex transition-all relative max-lg:flex-col gap-2 max-lg:items-center",
+              "mb-2 z-1"
+            )}
+            data-show={true}
+            style={editorWrapperStyle}
+          >
+            {mainEditorContent}
+          </div>
+        ) : type === "timer" ? (
+          <div
+            className="mb-2 z-1 flex w-full justify-center px-2 pb-2"
+            data-show={false}
+            data-testid="timer-item-editor-collapsed-controls"
+          >
+            <TimerControls
+              variant="controlsOnly"
+              className="w-full max-w-md"
+            />
+          </div>
+        ) : (
+          <div
+            className={cn(
+              "flex transition-all relative max-lg:flex-col gap-2 max-lg:items-center",
+              "h-0 -z-1"
+            )}
+            data-show={false}
+            style={editorWrapperStyle}
+          >
+            {mainEditorContent}
+          </div>
+        )}
       </div>
       <SongItemMetadataModal
         isOpen={isSongMetadataModalOpen}

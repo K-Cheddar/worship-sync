@@ -875,9 +875,9 @@ describe("presentationSlice", () => {
           time: 500,
         } as never),
       );
-      expect(store.getState().presentation.streamInfo.slide?.boxes?.[0]?.words).toBe(
-        "Lyrics",
-      );
+      expect(
+        store.getState().presentation.streamInfo.slide?.boxes?.[0]?.words,
+      ).toBe("Lyrics");
       expect(
         store.getState().presentation.streamInfo.bibleDisplayInfo?.title,
       ).toBe("Psalm 23");
@@ -973,7 +973,9 @@ describe("presentationSlice", () => {
         presentationSlice.actions.setStreamItemContentBlockedFromRemote(false),
       );
 
-      expect(store.getState().presentation.streamItemContentBlocked).toBe(false);
+      expect(store.getState().presentation.streamItemContentBlocked).toBe(
+        false,
+      );
       expect(
         store.getState().presentation.streamInfo.participantOverlayInfo?.name,
       ).toBe("Live");
@@ -998,7 +1000,9 @@ describe("presentationSlice", () => {
         },
       });
 
-      store.dispatch(presentationSlice.actions.setStreamItemContentBlocked(true));
+      store.dispatch(
+        presentationSlice.actions.setStreamItemContentBlocked(true),
+      );
 
       expect(store.getState().presentation.streamItemContentBlocked).toBe(true);
       expect(
@@ -1285,9 +1289,9 @@ describe("presentationSlice", () => {
         name: "song",
         boxes: [],
       });
-      expect(store.getState().presentation.streamInfo.bibleDisplayInfo?.title).toBe(
-        "",
-      );
+      expect(
+        store.getState().presentation.streamInfo.bibleDisplayInfo?.title,
+      ).toBe("");
       expect(
         store.getState().presentation.streamInfo.formattedTextDisplayInfo?.text,
       ).toBe("");
@@ -1350,9 +1354,9 @@ describe("presentationSlice", () => {
         ),
       );
 
-      expect(store.getState().presentation.streamInfo.bibleDisplayInfo?.title).toBe(
-        "Jn 3",
-      );
+      expect(
+        store.getState().presentation.streamInfo.bibleDisplayInfo?.title,
+      ).toBe("Jn 3");
       expect(store.getState().presentation.streamInfo.type).toBe("bible");
     });
 

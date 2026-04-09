@@ -520,6 +520,60 @@ describe("SlideEditor", () => {
     jest.useRealTimers();
   });
 
+  describe("collapsed item editor", () => {
+    it("shows timer control strip when timer item and editor is collapsed", () => {
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "timer",
+              slides: [
+                {
+                  id: "t1",
+                  type: "Media",
+                  name: "Timer",
+                  boxes: [
+                    { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                    { width: 100, height: 100, words: "00:00", x: 0, y: 0 },
+                  ],
+                },
+              ],
+            },
+            preferences: {
+              shouldShowItemEditor: false,
+              toolbarSection: "settings",
+            },
+          },
+        },
+      });
+
+      renderWithToastContext();
+      expect(
+        screen.getByTestId("timer-item-editor-collapsed-controls"),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("display-window")).not.toBeInTheDocument();
+    });
+
+    it("keeps hidden editor mounted when collapsed for non-timer items", () => {
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            preferences: {
+              shouldShowItemEditor: false,
+              toolbarSection: "settings",
+            },
+          },
+        },
+      });
+
+      renderWithToastContext();
+      expect(
+        screen.queryByTestId("timer-item-editor-collapsed-controls"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("display-window")).toBeInTheDocument();
+    });
+  });
+
   describe("onChange (display editor)", () => {
     it("dispatches updateBoxes when type is timer", () => {
       mockState = makeBaseState({

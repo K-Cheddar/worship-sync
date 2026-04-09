@@ -15,8 +15,7 @@ import {
   setSlidesMobile,
   setMonitorTimerId,
 } from "../../store/preferencesSlice";
-import { useSelector } from "../../hooks";
-import { useDispatch } from "../../hooks";
+import { useDispatch, useSelector } from "../../hooks";
 import {
   updateBibleDisplayInfo,
   updateFormattedTextDisplayInfo,
@@ -76,20 +75,9 @@ const ItemSlides = () => {
     isEditMode,
   } = useSelector((state: RootState) => state.undoable.present.item);
 
-  const isMonitorTransmitting = useSelector(
-    (state) => state.presentation.isMonitorTransmitting
+  const { projectorInfo, monitorInfo, streamInfo } = useSelector(
+    (state: RootState) => state.presentation
   );
-  const isProjectorTransmitting = useSelector(
-    (state) => state.presentation.isProjectorTransmitting
-  );
-  const isStreamTransmitting = useSelector(
-    (state) => state.presentation.isStreamTransmitting
-  );
-
-  const isTransmitting =
-    (shouldSendTo.monitor && isMonitorTransmitting) ||
-    (shouldSendTo.projector && isProjectorTransmitting) ||
-    (shouldSendTo.stream && isStreamTransmitting);
 
   const timers = useSelector((state: RootState) => state.timers.timers);
   const timerInfo = timers.find((timer) => timer.id === _id);
@@ -121,6 +109,40 @@ const ItemSlides = () => {
       ? ensureSlidesHaveMonitorBandFormatting(slides)
       : slides;
   }, [slides, shouldPrepareFreeMonitorSlides]);
+
+  /** Slide ids currently on outputs for this item (last pushed payload per surface). */
+  const liveSlideIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (shouldSendTo.projector && projectorInfo.slide?.id) {
+      ids.add(projectorInfo.slide.id);
+    }
+    if (shouldSendTo.monitor) {
+      const mid = monitorInfo.slide?.id;
+      const monitorItemId = monitorInfo.itemId;
+      if (mid && (!monitorItemId || monitorItemId === _id)) {
+        ids.add(mid);
+      }
+    }
+    if (
+      shouldSendTo.stream &&
+      type !== "bible" &&
+      type !== "free" &&
+      streamInfo.slide?.id
+    ) {
+      ids.add(streamInfo.slide.id);
+    }
+    return ids;
+  }, [
+    _id,
+    shouldSendTo.projector,
+    shouldSendTo.monitor,
+    shouldSendTo.stream,
+    type,
+    projectorInfo.slide?.id,
+    monitorInfo.slide?.id,
+    monitorInfo.itemId,
+    streamInfo.slide?.id,
+  ]);
 
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
   const size = type === "timer" ? Math.min(_size, 3) : _size;
@@ -171,6 +193,10 @@ const ItemSlides = () => {
   const dispatch = useDispatch();
   const location = useLocation();
 
+  /** Latest selected slide; read in selectSlide before dispatch so transitionDirection uses the prior index. */
+  const selectedSlideRef = useRef(selectedSlide);
+  selectedSlideRef.current = selectedSlide;
+
   const [debouncedSlides, setDebouncedSlides] = useState(slides);
   const [draggedSection, setDraggedSection] = useState<string | null>(null);
 
@@ -202,6 +228,7 @@ const ItemSlides = () => {
 
   const selectSlide = useCallback(
     (index: number) => {
+      const prevSelected = selectedSlideRef.current;
       dispatch(setSelectedSlide(index));
       const slide = slides[index];
 
@@ -270,8 +297,8 @@ const ItemSlides = () => {
 
       if (shouldSendTo.monitor) {
         let transitionDirection: "next" | "prev" | "jump";
-        if (index === selectedSlide + 1) transitionDirection = "next";
-        else if (index === selectedSlide - 1) transitionDirection = "prev";
+        if (index === prevSelected + 1) transitionDirection = "next";
+        else if (index === prevSelected - 1) transitionDirection = "prev";
         else transitionDirection = "jump";
         const monitorSlide = monitorReadySlides[index] ?? slide;
         const canShowNextSlide =
@@ -327,7 +354,6 @@ const ItemSlides = () => {
       getBibleInfo,
       slides,
       _id,
-      selectedSlide,
       monitorReadySlides,
     ]
   );
@@ -653,13 +679,13 @@ const ItemSlides = () => {
               >
                 {debouncedSlides.map((slide, index) => (
                   <ItemSlide
-                    isTransmitting={isTransmitting}
                     timerInfo={timerInfo}
                     key={slide.id}
                     slide={slide}
                     index={index}
                     selectSlide={selectSlide}
-                    selectedSlide={selectedSlide}
+                    isSelected={index === selectedSlide}
+                    isLive={liveSlideIds.has(slide.id)}
                     size={size}
                     itemType={type}
                     isMobile={isMobile || false}

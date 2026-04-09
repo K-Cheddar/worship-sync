@@ -13,9 +13,11 @@ import cn from "classnames";
 
 type TimerControlsProps = {
   className?: string;
+  /** When collapsed in the item editor, show only play/pause/stop/reset. */
+  variant?: "full" | "controlsOnly";
 };
 
-const TimerControls = ({ className }: TimerControlsProps) => {
+const TimerControls = ({ className, variant = "full" }: TimerControlsProps) => {
   const dispatch = useDispatch();
   const { hostId, access } = useContext(GlobalInfoContext) || {};
   const item = useSelector((state: RootState) => state.undoable.present.item);
@@ -94,6 +96,30 @@ const TimerControls = ({ className }: TimerControlsProps) => {
     updateTimerState({ showMinutesOnly: checked });
   };
 
+  const controlButtons = (
+    <TimerControlButtons
+      status={timer?.status || "stopped"}
+      onPlay={handlePlay}
+      onPause={handlePause}
+      onStop={handleStop}
+      disabled={!canControlTimer}
+    />
+  );
+
+  if (variant === "controlsOnly") {
+    return (
+      <div
+        className={cn(
+          "flex items-center justify-center border border-gray-600 rounded-md w-full p-2",
+          className
+        )}
+        data-variant="controlsOnly"
+      >
+        {controlButtons}
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -143,13 +169,7 @@ const TimerControls = ({ className }: TimerControlsProps) => {
           />
         </RadioGroup>
 
-        <TimerControlButtons
-          status={timer?.status || "stopped"}
-          onPlay={handlePlay}
-          onPause={handlePause}
-          onStop={handleStop}
-          disabled={!canControlTimer}
-        />
+        {controlButtons}
       </div>
     </div>
   );
