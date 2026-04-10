@@ -53,16 +53,19 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         id={displayId}
         ref={ref}
         style={style}
-        className={cn("group relative flex min-h-8", className)}
+        className={cn(
+          "group relative flex min-h-8",
+          isSelected && "ring-1 ring-inset ring-cyan-500/30",
+          className
+        )}
         {...rest}
       >
         <span
           aria-hidden
           className={cn(
             "pointer-events-none absolute inset-0 z-0 transition-colors duration-150 ease-out",
-            /* Rest: canvas; hover: darken slightly; selected: clearly darker than bg-homepage-canvas. */
             isSelected
-              ? "bg-black/48 group-hover:bg-black/58 group-active:bg-black/65"
+              ? "bg-cyan-500/12 group-hover:bg-cyan-500/18 group-active:bg-cyan-500/24"
               : "bg-transparent group-hover:bg-black/22 group-active:bg-black/32"
           )}
         />

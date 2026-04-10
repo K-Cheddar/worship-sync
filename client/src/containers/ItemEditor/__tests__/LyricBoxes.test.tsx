@@ -1,8 +1,18 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import LyricBoxes from "../LyricBoxes";
 
 const mockKeepElementInView = jest.fn();
 let mockState: any;
+
+const flushDoubleRaf = () =>
+  new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  });
 
 jest.mock("../../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) => selector(mockState),
@@ -14,7 +24,14 @@ jest.mock("../../../utils/generalUtils", () => ({
 
 jest.mock("../LyrcisBox", () => ({
   __esModule: true,
-  default: ({ lyric, index, selected, justMoved, onChangeSectionType }: any) => (
+  default: ({
+    lyric,
+    index,
+    selected,
+    justMoved,
+    onChangeSectionType,
+    onDelete,
+  }: any) => (
     <li
       id={`lyric-box-${lyric.id}`}
       data-testid={`lyric-box-${lyric.id}`}
@@ -23,6 +40,13 @@ jest.mock("../LyrcisBox", () => ({
     >
       <button onClick={() => onChangeSectionType("Verse 4", index)}>
         Change {lyric.id}
+      </button>
+      <button
+        type="button"
+        data-testid={`delete-${lyric.id}`}
+        onClick={() => onDelete?.(index)}
+      >
+        Delete {lyric.id}
       </button>
       {lyric.name}
     </li>
@@ -59,9 +83,8 @@ describe("LyricBoxes", () => {
     jest.useRealTimers();
   });
 
-  it("waits until scrolling settles before glowing the moved section", async () => {
-    jest.useFakeTimers();
-    mockKeepElementInView.mockReturnValue(true);
+  it("glows the moved section after reposition without scrolling the list", async () => {
+    mockKeepElementInView.mockReturnValue(false);
     const onMovedSectionTracked = jest.fn();
 
     render(
@@ -98,33 +121,19 @@ describe("LyricBoxes", () => {
     );
 
     const selectedBox = screen.getByTestId("lyric-box-chorus-1");
-    const lyricsList = screen.getByTestId("lyrics-boxes-list");
 
     expect(selectedBox).toHaveAttribute("data-selected", "true");
-    expect(selectedBox).toHaveAttribute("data-moved", "false");
-
-    await waitFor(() => {
-      expect(mockKeepElementInView).toHaveBeenCalledWith(
-        expect.objectContaining({
-          child: selectedBox,
-          parent: lyricsList,
-        })
-      );
-    });
-
-    fireEvent.scroll(lyricsList);
-
-    act(() => {
-      jest.advanceTimersByTime(120);
-    });
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
 
     await waitFor(() => {
       expect(selectedBox).toHaveAttribute("data-moved", "true");
     });
     expect(onMovedSectionTracked).toHaveBeenCalledWith("chorus-1");
 
-    act(() => {
-      jest.advanceTimersByTime(1000);
+    await act(async () => {
+      await new Promise((r) => {
+        setTimeout(r, 1000);
+      });
     });
 
     await waitFor(() => {
@@ -132,7 +141,7 @@ describe("LyricBoxes", () => {
     });
   });
 
-  it("inserts a renamed section before the requested target when moving downward", () => {
+  it("inserts a renamed section before the requested target when moving downward", async () => {
     mockKeepElementInView.mockReturnValue(false);
     const reformatLyrics = jest.fn();
 
@@ -206,9 +215,15 @@ describe("LyricBoxes", () => {
     expect(
       reformatLyrics.mock.calls[0][0].map((section: { id: string }) => section.id)
     ).toEqual(["verse-1", "verse-2", "verse-3", "bridge-1", "verse-4"]);
+
+    await act(async () => {
+      await flushDoubleRaf();
+    });
+
+    expect(mockKeepElementInView).toHaveBeenCalled();
   });
 
-  it("keeps the requested number when moving a section downward within the same type", () => {
+  it("keeps the requested number when moving a section downward within the same type", async () => {
     mockKeepElementInView.mockReturnValue(false);
     const reformatLyrics = jest.fn();
 
@@ -264,9 +279,15 @@ describe("LyricBoxes", () => {
     expect(
       reformatLyrics.mock.calls[0][0].map((section: { id: string }) => section.id)
     ).toEqual(["verse-1", "verse-3", "verse-4", "verse-2"]);
+
+    await act(async () => {
+      await flushDoubleRaf();
+    });
+
+    expect(mockKeepElementInView).toHaveBeenCalled();
   });
 
-  it("does not rerun keepElementInView when only words change", async () => {
+  it("does not call keepElementInView when only words change", () => {
     mockKeepElementInView.mockReturnValue(false);
     const sharedProps = {
       setFormattedLyrics: jest.fn(),
@@ -303,9 +324,7 @@ describe("LyricBoxes", () => {
       />
     );
 
-    await waitFor(() => {
-      expect(mockKeepElementInView).toHaveBeenCalledTimes(1);
-    });
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
 
     rerender(
       <LyricBoxes
@@ -329,6 +348,109 @@ describe("LyricBoxes", () => {
       />
     );
 
-    expect(mockKeepElementInView).toHaveBeenCalledTimes(1);
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
+  });
+
+  it("does not scroll the selected section into view after a section delete", async () => {
+    mockKeepElementInView.mockReturnValue(false);
+
+    const initialLyrics = [
+      {
+        id: "verse-1",
+        type: "Verse",
+        name: "Verse 1",
+        words: "Verse 1 words",
+        slideSpan: 1,
+      },
+      {
+        id: "verse-2",
+        type: "Verse",
+        name: "Verse 2",
+        words: "Verse 2 words",
+        slideSpan: 1,
+      },
+    ];
+
+    const LyricBoxesDeleteHarness = () => {
+      const [formattedLyrics, setFormattedLyrics] = useState(initialLyrics);
+      return (
+        <LyricBoxes
+          formattedLyrics={formattedLyrics}
+          setFormattedLyrics={jest.fn()}
+          reformatLyrics={jest.fn()}
+          availableSections={[
+            { label: "Verse 1", value: "Verse 1" },
+            { label: "Verse 2", value: "Verse 2" },
+          ]}
+          onFormattedLyricsDelete={(index) => {
+            setFormattedLyrics((prev) => prev.filter((_, i) => i !== index));
+          }}
+          isMobile={false}
+          selectedSectionId="verse-2"
+          onSectionSelect={jest.fn()}
+        />
+      );
+    };
+
+    render(<LyricBoxesDeleteHarness />);
+
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("delete-verse-1"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("lyric-box-verse-1")).toBeNull();
+    });
+
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
+  });
+
+  it("scrolls the selected section into view when scrollSelectedIntoViewToken increases", async () => {
+    mockKeepElementInView.mockReturnValue(false);
+
+    const ScrollTokenHarness = () => {
+      const [token, setToken] = useState(0);
+      return (
+        <>
+          <button type="button" onClick={() => setToken((t) => t + 1)}>
+            bump-scroll
+          </button>
+          <LyricBoxes
+            formattedLyrics={[
+              {
+                id: "verse-1",
+                type: "Verse",
+                name: "Verse 1",
+                words: "words",
+                slideSpan: 1,
+              },
+            ]}
+            setFormattedLyrics={jest.fn()}
+            reformatLyrics={jest.fn()}
+            availableSections={[{ label: "Verse 1", value: "Verse 1" }]}
+            onFormattedLyricsDelete={jest.fn()}
+            isMobile={false}
+            selectedSectionId="verse-1"
+            scrollSelectedIntoViewToken={token}
+            onSectionSelect={jest.fn()}
+          />
+        </>
+      );
+    };
+
+    render(<ScrollTokenHarness />);
+
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "bump-scroll" }));
+
+    await waitFor(() => {
+      expect(mockKeepElementInView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          child: screen.getByTestId("lyric-box-verse-1"),
+          parent: screen.getByTestId("lyrics-boxes-list"),
+        })
+      );
+    });
   });
 });

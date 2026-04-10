@@ -27,6 +27,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { createNewHeading, updateHeadingName } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
 import HeadingItem from "./HeadingItem";
+import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
 import { ServiceItem as ServiceItemType } from "../../types";
 
 /** Matches LeftPanelButton link target (`/controller/${to}`) so keyboard nav is not relative to bible/songs/etc. */
@@ -413,7 +414,7 @@ const ServiceItems = () => {
           </p>
         )}
         {isLoading ? (
-          <div className="text-lg text-center mt-2">Loading items...</div>
+          <ServiceOutlineSkeleton />
         ) : (
           <ContextMenu
             className="flex-1 min-h-0 flex flex-col overflow-hidden"

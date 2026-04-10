@@ -121,8 +121,8 @@ const HeadingItem = ({
       onClick={(e) => onItemClick(item.listId, e)}
       className={cn(
         "group flex items-center gap-1 border-b-2 overflow-hidden",
-        /* Section chrome: distinct from outline rows (transparent / selected darken on LeftPanelButton). */
         "bg-black/40 border-t border-white/20 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]",
+        isSelected && "ring-1 ring-inset ring-cyan-500/30",
         isSelected ? "border-l-cyan-500" : "border-transparent",
         isSelected && "border-b-cyan-500",
         !isSelected && isInsertPoint && "border-b-white",

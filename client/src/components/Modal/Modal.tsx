@@ -2,6 +2,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { useCallback } from "react";
 import {
   Dialog,
+  DialogDescription,
   DialogOverlay,
   DialogPortal,
   DialogTitle,
@@ -28,6 +29,8 @@ interface ModalProps {
   headerClassName?: string;
   /** Merged onto the title element. */
   titleClassName?: string;
+  /** Accessible description for screen readers; hidden visually by default. */
+  description?: string;
 }
 
 const sizeClasses = {
@@ -58,6 +61,7 @@ const Modal = ({
   surfaceClassName,
   headerClassName,
   titleClassName,
+  description,
 }: ModalProps) => {
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -85,6 +89,9 @@ const Modal = ({
           {!(title || showCloseButton || headerAction) && (
             <DialogTitle className="sr-only">Dialog</DialogTitle>
           )}
+          <DialogDescription className="sr-only">
+            {description || "Dialog content"}
+          </DialogDescription>
           <div
             className={cn(
               "relative flex w-full min-h-0 flex-1 flex-col overflow-hidden shadow-2xl",

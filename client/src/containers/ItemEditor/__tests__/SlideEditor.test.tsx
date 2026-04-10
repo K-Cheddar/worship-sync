@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import SlideEditor from "../SlideEditor";
 import { ToastContext } from "../../../context/toastContext";
 
@@ -132,11 +132,6 @@ jest.mock("../../../components/SectionTextEditor/SectionTextEditor", () => ({
 jest.mock("../../../components/SlideBoxes/SlideBoxes", () => ({
   __esModule: true,
   default: () => <div data-testid="slide-boxes" />,
-}));
-
-jest.mock("../../../components/LoadingOverlay/LoadingOverlay", () => ({
-  __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
 jest.mock("../BibleItemActions", () => ({
@@ -290,7 +285,7 @@ describe("SlideEditor", () => {
     expect(screen.queryByTestId("section-text-editor")).not.toBeInTheDocument();
   });
 
-  it("dispatches edit-mode action when song Edit Lyrics is clicked", () => {
+  it("dispatches edit-mode action when song Edit Lyrics is clicked", async () => {
     mockState = makeBaseState({
       undoable: {
         present: {
@@ -305,7 +300,9 @@ describe("SlideEditor", () => {
     render(<SlideEditor access="full" />);
     fireEvent.click(screen.getByRole("button", { name: /edit lyrics/i }));
 
-    expect(mockSetIsEditMode).toHaveBeenCalledWith(true);
+    await waitFor(() => {
+      expect(mockSetIsEditMode).toHaveBeenCalledWith(true);
+    });
     expect(mockDispatch).toHaveBeenCalledWith({
       type: "item/setIsEditMode",
       payload: true,

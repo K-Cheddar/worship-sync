@@ -353,10 +353,10 @@ export const formatBibleItemForVersion = ({
             ? {
                 ...slide,
                 boxes: slide.boxes.map((b, j) =>
-                  j === 1 ? { ...b, words: newName } : b
+                  j === 1 ? { ...b, words: newName } : b,
                 ),
               }
-            : slide
+            : slide,
         )
       : [];
   return formatBibleFromScratch({

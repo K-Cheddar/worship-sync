@@ -16,6 +16,7 @@ import { useDispatch } from "../hooks";
 import { backoff } from "../utils/generalUtils";
 import { getApiBasePath } from "../utils/environment";
 import { MAX_INITIAL_SESSION_RETRIES, MAX_REPLICATION_AUTH_RETRIES } from "../constants";
+import { seedOfflineGuestDatabase } from "../utils/offlineGuestSeed";
 
 export type ConnectionStatus = {
   status: "connecting" | "retrying" | "failed" | "connected";
@@ -290,7 +291,21 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     const attemptSession = async () => {
-      if (shouldInitializeControllerData && !hasCheckedSession) {
+      if (isGuestSession && shouldInitializeControllerData) {
+        if (
+          !hasCheckedSession ||
+          !hasCouchSession ||
+          connectionStatus.status !== "connected"
+        ) {
+          initialSessionRetryRef.current = 0;
+          setHasCouchSession(true);
+          setConnectionStatus({ status: "connected", retryCount: 0 });
+          setHasCheckedSession(true);
+        }
+        return;
+      }
+
+      if (shouldInitializeControllerData && !hasCheckedSession && !isGuestSession) {
         setConnectionStatus({ status: "connecting", retryCount: 0 });
         const success = await getCouchSession();
 
@@ -325,15 +340,23 @@ const ControllerInfoProvider = ({ children }: any) => {
     };
 
     attemptSession();
-  }, [getCouchSession, shouldInitializeControllerData, hasCheckedSession]);
+  }, [
+    connectionStatus.status,
+    getCouchSession,
+    hasCheckedSession,
+    hasCouchSession,
+    isGuestSession,
+    shouldInitializeControllerData,
+  ]);
 
   // Reset retry counter when login state or database changes
   useEffect(() => {
+    if (isGuestSession) return;
     initialSessionRetryRef.current = 0;
     setHasCheckedSession(false);
     setHasCouchSession(false);
     setConnectionStatus({ status: "connecting", retryCount: 0 });
-  }, [loginState, activeDatabaseKey]);
+  }, [loginState, activeDatabaseKey, isGuestSession]);
 
   useEffect(() => {
     const setupDb = async () => {
@@ -342,14 +365,24 @@ const ControllerInfoProvider = ({ children }: any) => {
           ? GUEST_DATABASE_NAME
           : `worship-sync-${activeDatabaseKey}`;
 
-        // Guest mode should always start from a clean local demo database.
-        // We recreate it before replication so old local edits do not persist.
         if (isGuestSession) {
+          setDbProgress(0);
           try {
             await new PouchDB(GUEST_DATABASE_NAME).destroy();
           } catch (error) {
             // Ignore "missing database" and continue with a fresh setup.
           }
+
+          const localDb = new PouchDB(dbName);
+          await seedOfflineGuestDatabase(localDb);
+          setDbProgress(100);
+          setDb(localDb);
+          setIsDbSetup(true);
+          globalDb = localDb;
+          if (broadcastDatabaseKey) {
+            updateGlobalBroadcast(broadcastDatabaseKey);
+          }
+          return;
         }
 
         // Wrap PouchDB initialization in try-catch to handle IndexedDB errors
@@ -482,6 +515,20 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     const setupBibleDb = async () => {
+      if (isGuestSession) {
+        try {
+          await new PouchDB("worship-sync-bibles-guest").destroy();
+        } catch {
+          // Ignore missing local guest Bible DB.
+        }
+        const localDb = new PouchDB("worship-sync-bibles-guest");
+        setBibleDbProgress(100);
+        setBibleDb(localDb);
+        setIsBibleDbSetup(true);
+        globalBibleDb = localDb;
+        return;
+      }
+
       const dbName = "worship-sync-bibles";
       const localDb = new PouchDB(dbName);
       const remoteUrl = `${import.meta.env.VITE_COUCHDB_HOST}/${dbName}`;

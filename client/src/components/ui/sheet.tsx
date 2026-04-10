@@ -36,7 +36,7 @@ function SheetOverlay({
     <DialogPrimitive.Overlay
       data-slot="sheet-overlay"
       className={cn(
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50 duration-400 ease-out",
+        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/25 duration-400 ease-out",
         className
       )}
       {...props}
@@ -71,12 +71,12 @@ function SheetContent({
       <DialogPrimitive.Content
         data-slot="sheet-content"
         className={cn(
-          "fixed z-50 flex min-h-0 w-full flex-col overflow-hidden border-gray-600 bg-gray-800 text-white shadow-xl outline-none duration-400 ease-out",
+          "fixed z-50 flex min-h-0 w-full flex-col overflow-hidden border-gray-500/35 bg-sheet-surface text-neutral-100 shadow-xl outline-none duration-400 ease-out",
           "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           side === "right" &&
-          "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right inset-y-0 right-0 h-full max-h-[100dvh] max-w-md border-l",
+          "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right inset-y-0 right-0 h-full max-h-dvh max-w-md border-l",
           side === "left" &&
-          "data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left inset-y-0 left-0 h-full max-h-[100dvh] max-w-md border-r",
+          "data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left inset-y-0 left-0 h-full max-h-dvh max-w-md border-r",
           side === "top" &&
           "data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top inset-x-0 top-0 max-h-[85dvh] border-b",
           side === "bottom" &&
@@ -91,7 +91,7 @@ function SheetContent({
             className="ring-offset-background focus:ring-ring absolute top-4 right-4 rounded-md opacity-80 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:size-5 [&_svg]:shrink-0"
             aria-label="Close"
           >
-            <XIcon className="text-white" />
+            <XIcon className="text-neutral-200" />
           </DialogPrimitive.Close>
         ) : null}
       </DialogPrimitive.Content>
@@ -120,7 +120,7 @@ function SheetTitle({
     <DialogPrimitive.Title
       data-slot="sheet-title"
       className={cn(
-        "text-lg font-semibold tracking-tight text-white",
+        "text-lg font-semibold tracking-tight text-neutral-100",
         className
       )}
       {...props}
@@ -135,7 +135,7 @@ function SheetDescription({
   return (
     <DialogPrimitive.Description
       data-slot="sheet-description"
-      className={cn("text-sm text-gray-400", className)}
+      className={cn("text-sm text-neutral-300", className)}
       {...props}
     />
   );

@@ -8,6 +8,10 @@ export type SectionTabItem<T extends string = string> = {
   label: string;
   description?: string;
   content: React.ReactNode;
+  /** When true, the tab cannot be activated (e.g. prerequisite not met). */
+  disabled?: boolean;
+  /** Merged into `TabsContent`; default is `space-y-4` when omitted. */
+  contentClassName?: string;
 };
 
 export type SectionTabsProps<T extends string> = {
@@ -67,7 +71,7 @@ export function SectionTabs<T extends string>({
     >
       <div
         className={cn(
-          "sticky top-0 z-10 -mx-1 overflow-hidden rounded-xl bg-background/95 px-0 pb-0 backdrop-blur-sm",
+          "sticky top-0 z-10 -mx-1 overflow-hidden rounded-xl border border-gray-700/80 bg-gray-950/45 px-0 pb-0",
           tabBarClassName
         )}
       >
@@ -82,15 +86,16 @@ export function SectionTabs<T extends string>({
             <TabsTrigger
               key={item.value}
               value={item.value}
+              disabled={item.disabled}
               className={cn(
                 "relative inline-flex h-full min-h-0 min-w-0 shrink-0 flex-1 items-center justify-center self-stretch rounded-none border-r border-white/25 px-4 py-2.5 text-sm font-semibold shadow-none transition-colors duration-150 first:rounded-l-xl last:rounded-r-xl last:border-r-0",
                 // Match group/tabs-list specificity from ui/tabs; hide default line underline (we use border-b accent instead).
                 "after:hidden group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0",
                 // Active — darker surface + cyan bottom (clearly above inactive tint).
                 "group-data-[variant=line]/tabs-list:data-[state=active]:border-b-2 group-data-[variant=line]/tabs-list:data-[state=active]:border-b-cyan-500 group-data-[variant=line]/tabs-list:data-[state=active]:bg-gray-950 group-data-[variant=line]/tabs-list:data-[state=active]:text-white group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]",
-                // Inactive — light tint so selected reads clearly darker.
-                "group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-2 group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-transparent group-data-[variant=line]/tabs-list:data-[state=inactive]:bg-white/6 group-data-[variant=line]/tabs-list:data-[state=inactive]:text-white group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:bg-gray-600/45",
-                "focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                // Inactive — light tint (matches Account management overview tabs).
+                "group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-2 group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-transparent group-data-[variant=line]/tabs-list:data-[state=inactive]:bg-white/6 group-data-[variant=line]/tabs-list:data-[state=inactive]:text-gray-200 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:bg-gray-600/45 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:text-white",
+                "focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900",
                 triggerClassName
               )}
             >
@@ -102,7 +107,7 @@ export function SectionTabs<T extends string>({
 
       {descriptionText ? (
         <p
-          className={cn("mt-3 text-sm text-muted-foreground", descriptionClassName)}
+          className={cn("mt-3 text-sm text-gray-400", descriptionClassName)}
         >
           {descriptionText}
         </p>
@@ -113,7 +118,10 @@ export function SectionTabs<T extends string>({
           <TabsContent
             key={item.value}
             value={item.value}
-            className="space-y-4 outline-none"
+            className={cn(
+              "outline-none",
+              item.contentClassName ?? "space-y-4",
+            )}
           >
             {item.content}
           </TabsContent>

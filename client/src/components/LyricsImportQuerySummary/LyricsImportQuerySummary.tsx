@@ -37,15 +37,15 @@ export const LyricsImportQuerySummary = ({
   }
 
   return (
-    <div className="rounded-md border border-slate-500/90 bg-slate-800/95 p-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-gray-300 mb-2">
+    <div className="rounded-md border border-neutral-600/90 bg-neutral-950/35 p-3">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
         Your search
       </p>
       <dl className="flex flex-col gap-1.5 text-sm">
         {entries.map(({ label, value }) => (
           <div key={label} className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
-            <dt className="shrink-0 text-gray-300">{label}</dt>
-            <dd className="min-w-0 wrap-break-word text-gray-50">{value}</dd>
+            <dt className="shrink-0 text-neutral-400">{label}</dt>
+            <dd className="min-w-0 wrap-break-word text-neutral-100">{value}</dd>
           </div>
         ))}
       </dl>

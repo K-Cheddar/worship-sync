@@ -26,6 +26,7 @@ import {
 import { createNewSlide } from "../../utils/slideCreation";
 import { addSlide as addSlideAction } from "../../store/itemSlice";
 import ItemSlide from "./ItemSlide";
+import ItemSlidesSkeleton from "./ItemSlidesSkeleton";
 import {
   DndContext,
   useDroppable,
@@ -188,6 +189,15 @@ const ItemSlides = () => {
     return configs[size] || configs[7];
   }, [size, isMusic]);
 
+  const slidesListClassName = useMemo(
+    () =>
+      cn(
+        "scrollbar-variable max-h-full px-2 overflow-y-auto grid pb-2 focus-visible:outline-none",
+        sizeConfig.cols,
+      ),
+    [sizeConfig.cols],
+  );
+
   const debounceTime = useRef(0);
 
   const dispatch = useDispatch();
@@ -201,6 +211,9 @@ const ItemSlides = () => {
   const [draggedSection, setDraggedSection] = useState<string | null>(null);
 
   const hasSlides = slides.length > 0;
+  /** Avoid one paint with an empty list after load: debounced state clears while loading and syncs in an effect. */
+  const slidesToRender =
+    hasSlides && debouncedSlides.length === 0 ? slides : debouncedSlides;
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -465,7 +478,7 @@ const ItemSlides = () => {
     requestAnimationFrame(() => {
       requestAnimationFrame(runScroll);
     });
-  }, [selectedSlide, isMobile, debouncedSlides.length]);
+  }, [selectedSlide, isMobile, slidesToRender.length]);
 
   const addSlide = () => {
     // Find the highest section number among existing slides
@@ -601,8 +614,6 @@ const ItemSlides = () => {
     dispatch(updateSlides({ slides: updatedSlides }));
   };
 
-  // if (!arrangement && !hasSlides && type !== "free") return null;
-
   return (
     <ErrorBoundary>
       <DndContext
@@ -663,21 +674,23 @@ const ItemSlides = () => {
               </>
             )}
           </div>
-          {hasSlides ? (
+          {isLoading ? (
+            <ItemSlidesSkeleton
+              className={slidesListClassName}
+              placeholderCount={Math.min(size * 2, 16)}
+            />
+          ) : hasSlides ? (
             <ul
               ref={setNodeRef}
               tabIndex={0}
               id="item-slides-container"
-              className={cn(
-                "scrollbar-variable max-h-full px-2 overflow-y-auto grid pb-2 focus-visible:outline-none",
-                sizeConfig.cols
-              )}
+              className={slidesListClassName}
             >
               <SortableContext
                 items={slides.map((slide) => slide.id || "")}
                 strategy={rectSortingStrategy}
               >
-                {debouncedSlides.map((slide, index) => (
+                {slidesToRender.map((slide, index) => (
                   <ItemSlide
                     timerInfo={timerInfo}
                     key={slide.id}

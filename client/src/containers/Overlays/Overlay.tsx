@@ -17,6 +17,10 @@ import { useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import { cn } from "../../utils/cnHelper";
 import { overlayBorderColorMap } from "../../utils/itemTypeMaps";
+import {
+  songOrderSectionSelectedClass,
+  songOrderSectionUnselectedClass,
+} from "../../utils/sortableRowStyles";
 
 type OverlayProps = {
   overlay: OverlayInfo;
@@ -171,9 +175,10 @@ const Overlay = ({
   return (
     <li
       className={cn(
-        "flex items-center rounded-lg w-full overflow-clip leading-3 border-l-4 border-b-4",
-        borderColor,
-        isSelected ? "bg-black/60 border-b-cyan-500" : "bg-black/40 border-b-transparent"
+        "flex w-full items-center overflow-clip rounded-md leading-3 border-l-4 transition-colors",
+        isSelected
+          ? cn(songOrderSectionSelectedClass, borderColor)
+          : cn(songOrderSectionUnselectedClass, borderColor),
       )}
       ref={(element) => {
         setNodeRef(element);

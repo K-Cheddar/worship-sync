@@ -91,7 +91,7 @@ const OverlayEditor = ({
   };
 
   const overlayPropertyHandler = () => (
-    <div className="border-t border-white/10 bg-black/30 p-4">
+    <div className="border-t border-white/10 bg-transparent p-4">
       <h3 className="text-lg font-semibold text-white mb-4">
         Overlay Properties
       </h3>
@@ -278,64 +278,66 @@ const OverlayEditor = ({
             disabled={isDisabled}
           />
         </div>
-        <DisplayWindow
-          showBorder
-          width={isMobile ? 70 : 25}
-          displayType="stream"
-          participantOverlayInfo={
-            selectedOverlay.type === "participant"
-              ? {
-                name: selectedOverlay.name,
-                title: selectedOverlay.title,
-                event: selectedOverlay.event,
-                duration: selectedOverlay.duration,
-                type: selectedOverlay.type,
-                id: selectedOverlay.id,
-                formatting: selectedOverlay.formatting,
-              }
-              : undefined
-          }
-          stbOverlayInfo={
-            selectedOverlay.type === "stick-to-bottom"
-              ? {
-                heading: selectedOverlay.heading,
-                subHeading: selectedOverlay.subHeading,
-                duration: selectedOverlay.duration,
-                type: selectedOverlay.type,
-                id: selectedOverlay.id,
-                formatting: selectedOverlay.formatting,
-              }
-              : undefined
-          }
-          qrCodeOverlayInfo={
-            selectedOverlay.type === "qr-code"
-              ? {
-                url: selectedOverlay.url,
-                description: selectedOverlay.description,
-                duration: selectedOverlay.duration,
-                type: selectedOverlay.type,
-                id: selectedOverlay.id,
-                formatting: selectedOverlay.formatting,
-              }
-              : undefined
-          }
-          imageOverlayInfo={
-            selectedOverlay.type === "image"
-              ? {
-                imageUrl: selectedOverlay.imageUrl,
-                name: selectedOverlay.name,
-                duration: selectedOverlay.duration,
-                type: selectedOverlay.type,
-                id: selectedOverlay.id,
-                formatting: selectedOverlay.formatting,
-              }
-              : undefined
-          }
-        />
+        <div className="bg-gray-500/35">
+          <DisplayWindow
+            showBorder
+            width={isMobile ? 70 : 25}
+            displayType="stream"
+            participantOverlayInfo={
+              selectedOverlay.type === "participant"
+                ? {
+                  name: selectedOverlay.name,
+                  title: selectedOverlay.title,
+                  event: selectedOverlay.event,
+                  duration: selectedOverlay.duration,
+                  type: selectedOverlay.type,
+                  id: selectedOverlay.id,
+                  formatting: selectedOverlay.formatting,
+                }
+                : undefined
+            }
+            stbOverlayInfo={
+              selectedOverlay.type === "stick-to-bottom"
+                ? {
+                  heading: selectedOverlay.heading,
+                  subHeading: selectedOverlay.subHeading,
+                  duration: selectedOverlay.duration,
+                  type: selectedOverlay.type,
+                  id: selectedOverlay.id,
+                  formatting: selectedOverlay.formatting,
+                }
+                : undefined
+            }
+            qrCodeOverlayInfo={
+              selectedOverlay.type === "qr-code"
+                ? {
+                  url: selectedOverlay.url,
+                  description: selectedOverlay.description,
+                  duration: selectedOverlay.duration,
+                  type: selectedOverlay.type,
+                  id: selectedOverlay.id,
+                  formatting: selectedOverlay.formatting,
+                }
+                : undefined
+            }
+            imageOverlayInfo={
+              selectedOverlay.type === "image"
+                ? {
+                  imageUrl: selectedOverlay.imageUrl,
+                  name: selectedOverlay.name,
+                  duration: selectedOverlay.duration,
+                  type: selectedOverlay.type,
+                  id: selectedOverlay.id,
+                  formatting: selectedOverlay.formatting,
+                }
+                : undefined
+            }
+          />
+        </div>
       </div>
       <section
         className={cn(
-          "scrollbar-variable flex min-w-0 w-full flex-col items-stretch gap-2 overflow-y-auto rounded-md border border-white/12 bg-black/30 p-4",
+          "scrollbar-variable flex min-w-0 w-full flex-col items-stretch gap-2 overflow-y-auto rounded-md border border-white/12 bg-transparent p-4",
           !selectedOverlay.id && "hidden"
         )}
       >
@@ -522,7 +524,7 @@ const OverlayEditor = ({
           <div className="w-full lg:w-[70vw] flex flex-col">
             <div
               ref={desktopRef}
-              className="flex items-center justify-center bg-black/30 lg:h-2/3"
+              className="flex items-center justify-center bg-gray-500/35 lg:h-2/3"
             >
               <DisplayWindow
                 showBorder

@@ -131,7 +131,7 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
             color={color}
             prefixed
             onChange={onChange}
-            className="mt-3 h-9 w-full rounded-md border border-white/20 bg-white px-2 text-sm font-medium text-black"
+            className="mt-3 h-9 w-full rounded-md border border-neutral-700 bg-neutral-900 px-2 text-sm font-medium text-neutral-100 placeholder:text-neutral-400"
             {...inputProps}
           />
         </div>

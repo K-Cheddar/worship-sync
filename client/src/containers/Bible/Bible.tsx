@@ -102,8 +102,9 @@ const Bible = () => {
     bibleDbProgress,
     isMobile = false,
   } = useContext(ControllerInfoContext) || {};
-  const { access } = useContext(GlobalInfoContext) || {};
+  const { access, loginState } = useContext(GlobalInfoContext) || {};
   const canAddBibleToOutline = access !== "view";
+  const isOfflineGuest = loginState === "guest";
 
   const bibleItemName = useMemo(() => {
     const bookName = books?.[book]?.name || "";
@@ -126,6 +127,12 @@ const Bible = () => {
 
   useDebouncedEffect(
     () => {
+      if (isOfflineGuest) {
+        dispatch(setVerses([]));
+        dispatch(setLoadingChapter(false));
+        return;
+      }
+
       const getChapter = async () => {
         try {
           const bookName = books[book]?.name || "";
@@ -220,7 +227,7 @@ const Bible = () => {
       };
       getChapter();
     },
-    [chapter, dispatch, bibleDb, version, books, book],
+    [chapter, dispatch, bibleDb, version, books, book, isOfflineGuest],
     500,
     true
   );
@@ -433,6 +440,16 @@ const Bible = () => {
         </div>
       )}
       <div className="text-base px-2 pt-2 h-full flex flex-col gap-2">
+        {isOfflineGuest && (
+          <div className="rounded-lg border border-yellow-400/40 bg-yellow-500/10 p-3 text-sm text-yellow-50">
+            <p className="font-semibold">
+              Bible lookup is not available in the offline demo.
+            </p>
+            <p className="mt-1 text-yellow-100/90">
+              Use songs, custom items, and timers to explore the controller.
+            </p>
+          </div>
+        )}
         <div className="flex gap-4 items-end flex-wrap">
           <Select
             value={version}

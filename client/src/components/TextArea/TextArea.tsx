@@ -57,12 +57,30 @@ const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(({
     }
   }, [value, autoResize, resize]);
 
+  // Mobile auto-resize sets inline height; clear it when switching to fixed-height layout
+  // (e.g. resize to desktop) so classes like h-full / min-h-* apply again.
+  useEffect(() => {
+    const el = textAreaRef.current;
+    if (!el) {
+      return;
+    }
+    if (autoResize) {
+      requestAnimationFrame(() => {
+        if (textAreaRef.current) {
+          resize(textAreaRef.current);
+        }
+      });
+    } else {
+      el.style.height = "";
+    }
+  }, [autoResize, resize]);
+
   return (
-    <div className={cn("scrollbar-variable", className)}>
+    <div className={cn("scrollbar-variable flex min-h-0 flex-col", className)}>
       <label
         htmlFor={id}
         className={cn(
-          "text-sm font-semibold",
+          "shrink-0 text-sm font-semibold",
           hideLabel && "sr-only",
           labelClassName
         )}
@@ -72,7 +90,10 @@ const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(({
       <textarea
         id={id}
         ref={setTextAreaRef}
-        className={cn("w-full h-full rounded px-2 py-1 select text-black resize-none text-sm", textareaClassName)}
+        className={cn(
+          "min-h-0 w-full flex-1 resize-none rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100 placeholder:text-neutral-400 select-text",
+          textareaClassName
+        )}
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
         onInput={(e) => {

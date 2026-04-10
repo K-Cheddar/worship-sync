@@ -113,10 +113,10 @@ const VerificationCodeInput = ({
   };
 
   const inputClassName =
-    "h-12 w-10 sm:w-11 rounded-md border-2 bg-white text-center text-lg font-semibold tabular-nums text-gray-900 " +
+    "h-12 w-10 sm:w-11 rounded-md border-2 bg-neutral-900 text-center text-lg font-semibold tabular-nums text-neutral-100 " +
     (errorText
       ? "border-red-500 "
-      : "border-gray-400 ") +
+      : "border-neutral-600 ") +
     "outline-none transition-colors focus-visible:border-cyan-500 focus-visible:ring-2 focus-visible:ring-cyan-500/40 " +
     "disabled:cursor-not-allowed disabled:opacity-50";
 

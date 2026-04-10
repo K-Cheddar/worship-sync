@@ -26,6 +26,13 @@ export type SelectProps = {
   contentTextColor?: string;
   disabled?: boolean;
   id?: string;
+  /** Skip Radix focus restore to the trigger when the menu closes. */
+  suppressCloseAutoFocus?: boolean;
+  /** Extra classes for the dropdown panel (for example max height). */
+  contentClassName?: string;
+  /** Controlled open state (forwarded to Radix Select root). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 const Select = ({
@@ -38,13 +45,17 @@ const Select = ({
   labelClassName,
   labelFontSize = "text-sm",
   selectClassName,
-  textColor = "text-black",
-  backgroundColor = "bg-white",
+  textColor = "text-neutral-100",
+  backgroundColor = "bg-neutral-900",
   chevronColor,
   contentBackgroundColor,
   contentTextColor,
   disabled = false,
   id: idProp,
+  suppressCloseAutoFocus = false,
+  contentClassName,
+  open,
+  onOpenChange,
   ...rest
 }: SelectProps) => {
   const generatedId = useId();
@@ -73,6 +84,8 @@ const Select = ({
         value={selectValue}
         onValueChange={onChange}
         disabled={disabled}
+        open={open}
+        onOpenChange={onOpenChange}
         {...rest}
       >
         <SelectTrigger
@@ -83,8 +96,12 @@ const Select = ({
           <SelectValue placeholder="Select..." />
         </SelectTrigger>
         <SelectContent
+          className={contentClassName}
           contentBackgroundColor={contentBackgroundColor}
           contentTextColor={contentTextColor}
+          onCloseAutoFocus={
+            suppressCloseAutoFocus ? (e) => e.preventDefault() : undefined
+          }
         >
           {options.map((option) => (
             <SelectItem key={option.value} value={option.value}>
