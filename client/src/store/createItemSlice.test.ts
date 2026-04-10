@@ -49,6 +49,8 @@ describe("createItemSlice", () => {
       seconds: 3,
       time: "09:30",
       timerType: "countdown",
+      lyricsImportCandidates: [],
+      lyricsImportError: "",
     });
   });
 
@@ -66,6 +68,8 @@ describe("createItemSlice", () => {
         seconds: 3,
         time: "09:30",
         timerType: "countdown",
+        lyricsImportCandidates: [],
+        lyricsImportError: "",
       },
     });
 

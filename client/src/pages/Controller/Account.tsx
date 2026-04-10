@@ -8,6 +8,7 @@ import DeleteModal from "../../components/Modal/DeleteModal";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useToast } from "../../context/toastContext";
 import { cn } from "@/utils/cnHelper";
+import { alternatingAdminListRowBg } from "../../utils/listRowStripes";
 import { getPlatformDisplayLabel } from "../../utils/deviceInfo";
 import {
   listChurchInvites,
@@ -118,8 +119,6 @@ const memberAccessOptions: {
     { value: "view", label: "View access" },
   ];
 
-const adminListRowStripe = (index: number) =>
-  index % 2 === 0 ? "bg-admin-row-a" : "bg-admin-row-b";
 const ACCOUNT_CONTROL_SELECT_CLASSNAME = "h-10 max-md:min-h-14";
 
 type AccountTabId = "people" | "setup" | "branding";
@@ -610,9 +609,6 @@ const AccountPage = () => {
       <SectionTabs
         defaultValue="people"
         className="pb-2"
-        tabBarClassName="border-gray-700/80 bg-gray-950/45"
-        triggerClassName="group-data-[variant=line]/tabs-list:data-[state=inactive]:text-gray-200 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:text-white focus-visible:ring-cyan-400 focus-visible:ring-offset-gray-900"
-        descriptionClassName="text-gray-400"
         items={[
           {
             value: "people",
@@ -651,7 +647,7 @@ const AccountPage = () => {
                           key={invite.inviteId}
                           className={cn(
                             "rounded-lg px-3 py-3",
-                            adminListRowStripe(inviteIndex)
+                            alternatingAdminListRowBg(inviteIndex)
                           )}
                         >
                           <p className="font-semibold">{invite.email}</p>
@@ -696,7 +692,7 @@ const AccountPage = () => {
                             "rounded-lg px-3 py-2.5 sm:py-3",
                             isSelf
                               ? "border border-cyan-500/35 bg-linear-to-r from-cyan-950/40 to-gray-950/55 shadow-[inset_3px_0_0_0] shadow-cyan-400/70"
-                              : adminListRowStripe(memberIndex)
+                              : alternatingAdminListRowBg(memberIndex)
                           )}
                         >
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
@@ -894,7 +890,7 @@ const AccountPage = () => {
                           key={workstation.deviceId}
                           className={cn(
                             "flex items-start justify-between gap-3 rounded-lg px-3 py-3 sm:items-center",
-                            adminListRowStripe(workstationIndex)
+                            alternatingAdminListRowBg(workstationIndex)
                           )}
                         >
                           <div className="min-w-0 flex-1">
@@ -981,7 +977,7 @@ const AccountPage = () => {
                           key={display.deviceId}
                           className={cn(
                             "flex items-start justify-between gap-3 rounded-lg px-3 py-3 sm:items-center",
-                            adminListRowStripe(displayIndex)
+                            alternatingAdminListRowBg(displayIndex)
                           )}
                         >
                           <div className="min-w-0 flex-1">
@@ -1050,7 +1046,7 @@ const AccountPage = () => {
                           key={device.deviceId}
                           className={cn(
                             "flex items-start justify-between gap-3 rounded-lg px-3 py-3 sm:items-center",
-                            adminListRowStripe(trustedIndex)
+                            alternatingAdminListRowBg(trustedIndex)
                           )}
                         >
                           <div className="min-w-0 flex-1">

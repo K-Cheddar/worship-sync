@@ -16,6 +16,8 @@ const RUNTIME_SESSION_ID_KEY = "worshipsync_runtime_session_id";
 const WORKSTATION_OPERATOR_BINDING_KEY = "worshipsync_workstation_operator_binding";
 let csrfToken = "";
 
+export type StoredServerSessionHint = "human" | "workstation" | "display" | null;
+
 const readStorage = (key: string) => {
   if (typeof window === "undefined") return "";
   return localStorage.getItem(key) || "";
@@ -126,6 +128,13 @@ export const getDisplayToken = () => readStorage(DISPLAY_TOKEN_KEY);
 export const setDisplayToken = (value: string) =>
   writeStorage(DISPLAY_TOKEN_KEY, value);
 export const clearDisplayToken = () => writeStorage(DISPLAY_TOKEN_KEY, "");
+
+export const getStoredServerSessionHint = (): StoredServerSessionHint => {
+  if (getWorkstationToken()) return "workstation";
+  if (getDisplayToken()) return "display";
+  if (readStorage("loggedIn") === "true") return "human";
+  return null;
+};
 
 export const getOperatorName = () => readStorage(OPERATOR_NAME_KEY);
 export const setOperatorNameStorage = (value: string) =>

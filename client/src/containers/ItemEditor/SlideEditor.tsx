@@ -61,8 +61,8 @@ import { ToastContext } from "../../context/toastContext";
 import SectionTextEditor from "../../components/SectionTextEditor/SectionTextEditor";
 import SlideBoxes from "../../components/SlideBoxes/SlideBoxes";
 import Icon from "../../components/Icon/Icon";
-import LoadingOverlay from "../../components/LoadingOverlay/LoadingOverlay";
 import TimerControls from "../../components/TimerControls/TimerControls";
+import SlideEditorSkeleton from "./SlideEditorSkeleton";
 import type { DisplayEditorChangeInfo } from "../../components/DisplayWindow/DisplayEditor";
 import { SongItemMetadataModal } from "../../components/SongItemMetadataModal/SongItemMetadataModal";
 
@@ -112,7 +112,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     hasRemoteUpdate,
     songMetadata,
   } = item;
-  const showLoadingOverlay = isLoading || isSectionLoading;
+  const showEditorSkeleton = isLoading || isSectionLoading;
 
   const arrangement = arrangements[selectedArrangement];
 
@@ -129,6 +129,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [isSongMetadataModalOpen, setIsSongMetadataModalOpen] = useState(false);
+  const [isOpeningLyricsEditor, setIsOpeningLyricsEditor] = useState(false);
 
   const [isBoxLocked, setIsBoxLocked] = useState<boolean[]>([]);
 
@@ -192,6 +193,12 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   useEffect(() => {
     setLocalName(name || "");
   }, [name]);
+
+  useEffect(() => {
+    if (isEditMode) {
+      setIsOpeningLyricsEditor(false);
+    }
+  }, [isEditMode]);
 
   const handleKeepLocalEdits = useCallback(() => {
     dispatch(discardPendingRemoteItem());
@@ -1128,19 +1135,15 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
 
   const mainEditorContent = (
     <>
-      {!isEmpty ? (
+      {showEditorSkeleton ? (
+        <SlideEditorSkeleton />
+      ) : !isEmpty ? (
         <div className="flex flex-col lg:flex-row gap-2 w-full px-2">
-          <LoadingOverlay
-            isLoading={!!showLoadingOverlay}
-            className="lg:flex-[0_0_30%] w-full min-h-0"
-          >
+          <div className="lg:flex-[0_0_30%] w-full min-h-0">
             {leftColumnContent}
-          </LoadingOverlay>
+          </div>
 
-          <LoadingOverlay
-            isLoading={!!showLoadingOverlay}
-            className="lg:max-h-[42vh] max-lg:max-h-[30vh] flex-1 min-w-0 min-h-0"
-          >
+          <div className="lg:max-h-[42vh] max-lg:max-h-[30vh] flex-1 min-w-0 min-h-0">
             <DisplayWindow
               className="lg:max-h-[42vh] max-lg:max-h-[30vh] h-full w-full"
               showBorder
@@ -1157,7 +1160,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               disabled={!canEdit}
               shouldPlayVideo
             />
-          </LoadingOverlay>
+          </div>
         </div>
       ) : (
         <p
@@ -1239,8 +1242,17 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
               variant="primary"
               color="#22d3ee"
               className="text-sm"
-              disabled={isLoading || !canEdit}
-              onClick={() => dispatch(setIsEditMode(true))}
+              disabled={
+                isLoading || !canEdit || (isOpeningLyricsEditor && !isEditMode)
+              }
+              isLoading={isOpeningLyricsEditor && !isEditMode}
+              onClick={() => {
+                setIsOpeningLyricsEditor(true);
+                // Defer so React can paint the button loading state before Redux + lyrics panel work.
+                window.setTimeout(() => {
+                  dispatch(setIsEditMode(true));
+                }, 0);
+              }}
               svg={PencilLine}
             >
               {isMobile ? "" : "Edit Lyrics"}

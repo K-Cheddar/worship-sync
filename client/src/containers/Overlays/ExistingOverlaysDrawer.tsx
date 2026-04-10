@@ -647,7 +647,7 @@ const AddExistingOverlayDrawer = ({
         zIndexLevel={2}
       >
         {previewOverlay && (
-          <div className="bg-gray-600 rounded-lg overflow-hidden">
+          <div className="rounded-lg overflow-hidden bg-gray-500/35">
             <DisplayWindow
               showBorder
               displayType="stream"

@@ -3,12 +3,21 @@ import { Navigate, useLocation } from "react-router-dom";
 import Button from "../components/Button/Button";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { getAuthRedirectPathnameFromState } from "../utils/authRedirectPath";
+import { getStoredServerSessionHint } from "../utils/authStorage";
 import { getAllowedRouteOrDefault } from "../utils/sessionRouteAccess";
 
 const AppEntry = () => {
   const location = useLocation();
   const context = useContext(GlobalInfoContext);
   const requestedPath = getAuthRedirectPathnameFromState(location.state) ?? "";
+  const authServerStatus = context?.authServerStatus;
+  const isAuthConnectionNoticeVisible =
+    authServerStatus === "offline" || authServerStatus === "checking";
+  const isServerBackedModeDisabled = authServerStatus === "offline";
+  const storedServerSessionHint = getStoredServerSessionHint();
+  const hasStoredServerSession = storedServerSessionHint !== null;
+  const isStoredServerSessionBlocked =
+    isServerBackedModeDisabled && hasStoredServerSession;
 
   const nextState = useMemo(
     () => ({
@@ -73,10 +82,47 @@ const AppEntry = () => {
     <main className="flex min-h-dvh flex-col items-center justify-center overflow-hidden bg-homepage-canvas px-4 py-8 text-white">
       <div className="flex min-h-0 max-h-[calc(100dvh-4rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-500 bg-gray-800 p-6 sm:p-8">
         <div className="shrink-0">
-          <h1 className="text-2xl font-semibold sm:text-3xl">Get started with WorshipSync</h1>
+          <h1 className="text-2xl font-semibold sm:text-3xl">
+            {isStoredServerSessionBlocked
+              ? "Reconnect to continue"
+              : "Get started with WorshipSync"}
+          </h1>
           <p className="mt-2 max-w-xl text-sm text-gray-200 sm:text-base">
-            Choose how to use this device.
+            {isStoredServerSessionBlocked
+              ? "This device has a saved sign-in or link."
+              : "Choose how to use this device."}
           </p>
+          {isAuthConnectionNoticeVisible ? (
+            <div
+              className="mt-4 rounded-lg border border-yellow-400/40 bg-yellow-500/10 p-3 text-sm text-yellow-50"
+              role="status"
+            >
+              <p className="font-semibold">
+                {authServerStatus === "checking"
+                  ? "Connecting to WorshipSync..."
+                  : hasStoredServerSession
+                    ? "Could not verify this device."
+                    : "Could not reach WorshipSync."}
+              </p>
+              <p className="mt-1 text-yellow-100/90">
+                {hasStoredServerSession
+                  ? "This device may already be signed in or linked, but WorshipSync needs a connection to confirm it. You can retry or use the offline demo on this device."
+                  : "Sign-in and device linking need a connection. You can still use the offline demo on this device."}
+              </p>
+              {authServerStatus === "offline" ? (
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  className="mt-3 border border-yellow-300/40 bg-yellow-400/10 text-yellow-50 hover:bg-yellow-400/20"
+                  onClick={() => {
+                    void context?.refreshAuthBootstrap();
+                  }}
+                >
+                  Try again
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-8 min-h-0 flex-1 space-y-8 overflow-y-auto overscroll-y-contain">
@@ -94,6 +140,7 @@ const AppEntry = () => {
                 variant="cta"
                 className="min-h-[5.5rem] w-full flex-col items-start justify-center gap-2 rounded-xl border border-cyan-500/40 bg-cyan-700/30 p-4 text-left sm:min-h-24"
                 state={nextState}
+                disabled={isServerBackedModeDisabled}
                 wrap
               >
                 <span className="text-lg font-semibold">Sign in</span>
@@ -101,6 +148,11 @@ const AppEntry = () => {
                   Sign in to your church with your email and password.
                 </span>
               </Button>
+              {isServerBackedModeDisabled ? (
+                <p className="mt-2 text-sm text-yellow-100/90">
+                  Connection required to verify this device.
+                </p>
+              ) : null}
             </div>
           </section>
 
@@ -125,6 +177,7 @@ const AppEntry = () => {
                 variant="tertiary"
                 className="min-h-[5.5rem] flex-col items-start justify-center gap-2 rounded-xl border border-gray-500 bg-gray-900/50 p-4 text-left sm:min-h-24"
                 state={nextState}
+                disabled={isServerBackedModeDisabled}
                 wrap
               >
                 <span className="text-lg font-semibold">Link as workstation</span>
@@ -139,6 +192,7 @@ const AppEntry = () => {
                 variant="tertiary"
                 className="min-h-[5.5rem] flex-col items-start justify-center gap-2 rounded-xl border border-gray-500 bg-gray-900/50 p-4 text-left sm:min-h-24"
                 state={nextState}
+                disabled={isServerBackedModeDisabled}
                 wrap
               >
                 <span className="text-lg font-semibold">Link as display</span>
@@ -148,6 +202,11 @@ const AppEntry = () => {
                 </span>
               </Button>
             </div>
+            {isServerBackedModeDisabled ? (
+              <p className="mt-2 text-sm text-yellow-100/90">
+                Connection required to verify this device.
+              </p>
+            ) : null}
           </section>
 
           <div className="border-t border-gray-600/80" role="presentation" />

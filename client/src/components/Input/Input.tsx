@@ -51,7 +51,7 @@ const Input = ({
   svg,
   svgAction,
   svgActionAriaLabel,
-  color = "#1f2937",
+  color = "#a3a3a3",
   disabled = false,
   svgPadding = "p-0.5",
   svgClassName = "right-px",
@@ -134,7 +134,7 @@ const Input = ({
     <span className={inputWrapClassName}>
       <UIInput
         className={cn(
-          "peer py-1 pl-2 text-black shadow-none",
+          "peer py-1 pl-2 shadow-none",
           hasTrailingAction ? "pr-10" : "pr-2",
           inputTextSize,
           inputWidth,

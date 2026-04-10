@@ -31,7 +31,7 @@ const tabsListVariants = cva(
         default:
           "border border-border/70 bg-muted dark:border-border",
         line:
-          "gap-1 rounded-xl border border-border/70 bg-transparent dark:border-border",
+          "gap-1 rounded-xl border border-gray-700/80 bg-transparent",
       },
     },
     defaultVariants: {

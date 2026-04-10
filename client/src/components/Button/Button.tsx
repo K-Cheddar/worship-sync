@@ -84,6 +84,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       to,
       state,
       onClick,
+      disabled = false,
       ...rest
     },
     ref
@@ -101,7 +102,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
     }, [isMobile, _iconSize]);
 
     const iconColor =
-      variant === "cta" || variant === "destructive"
+      variant === "cta" || variant === "destructive" || variant === "secondary"
         ? (color ?? "#ffffff")
         : color;
 
@@ -128,6 +129,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       gap,
       variant !== "textLink" && "max-md:min-h-14",
       variant !== "textLink" && "disabled:opacity-65",
+      disabled && "pointer-events-none cursor-not-allowed opacity-65",
       _padding,
       wrap
         ? "text-wrap whitespace-normal text-left break-words"
@@ -165,10 +167,16 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
           className={layoutClassName}
         >
           <Link
-            to={to || "#"}
+            to={disabled ? "#" : to || "#"}
             state={state}
             {...rest}
+            aria-disabled={disabled || undefined}
+            tabIndex={disabled ? -1 : rest.tabIndex}
             onClick={(e) => {
+              if (disabled) {
+                e.preventDefault();
+                return;
+              }
               if (e.shiftKey || e.ctrlKey || e.metaKey) {
                 e.preventDefault();
               }
@@ -185,6 +193,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       <ShadcnButton
         ref={refProp}
         type={type}
+        disabled={disabled}
         variant={uiVariant}
         size={uiSize}
         className={layoutClassName}

@@ -292,7 +292,13 @@ const PresentationPreview = ({
                 </div>
               </>
             )}
-            <DisplayWindow {...displayWindowProps} />
+            <div
+              className={cn(
+                info.displayType === "stream" && "bg-gray-500/35"
+              )}
+            >
+              <DisplayWindow {...displayWindowProps} />
+            </div>
           </div>
           {!hideQuickLinks && filteredQuickLinks.length > 0 && (
             <ul className="grid grid-cols-2 gap-2 py-2 w-full pr-2">

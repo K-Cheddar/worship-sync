@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import generateRandomId from "../../utils/generateRandomId";
+import { cn } from "../../utils/cnHelper";
 import {
   INLINE_EDIT_CONFIRM_ICON_COLOR,
   handleInlineTextInputKeyDown,
@@ -17,8 +18,9 @@ type ArrangementProps = {
   arrangement: Arrangment;
   setLocalArrangements: React.Dispatch<React.SetStateAction<Arrangment[]>>;
   localArrangements: Arrangment[];
-  setSelectedArrangement: () => void;
+  setSelectedArrangement: (arrangementId?: string | null) => void;
   index: number;
+  isSelected: boolean;
 };
 
 const Arrangement = ({
@@ -27,6 +29,7 @@ const Arrangement = ({
   localArrangements,
   setSelectedArrangement,
   index,
+  isSelected,
 }: ArrangementProps) => {
   const [isEditMode, setIsEditMode] = useState(false);
   const [value, setValue] = useState(arrangement.name);
@@ -39,11 +42,14 @@ const Arrangement = ({
 
   const handleSave = () => {
     const copiedArrangements = [...localArrangements];
-    const targetIndex = copiedArrangements.findIndex(
-      ({ name }) => name === arrangement.name
-    );
+    const targetIndex = copiedArrangements.findIndex(({ id }) => id === arrangement.id);
+    const resolvedIndex = targetIndex !== -1 ? targetIndex : index;
+    if (!copiedArrangements[resolvedIndex]) {
+      setIsEditMode(false);
+      return;
+    }
     const updatedArrangement = { ...arrangement, name: value };
-    copiedArrangements[targetIndex] = updatedArrangement;
+    copiedArrangements[resolvedIndex] = updatedArrangement;
     setLocalArrangements(copiedArrangements);
     setIsEditMode(false);
   };
@@ -56,10 +62,12 @@ const Arrangement = ({
   return (
     <>
       <li
-        key={arrangement.name}
-        className={
-          "flex flex-col items-center rounded-md bg-gray-900 border border-transparent hover:border-gray-500 p-1"
-        }
+        className={cn(
+          "flex flex-col items-stretch rounded-md border-2 p-1 transition-colors",
+          isSelected
+            ? "border-cyan-400 bg-cyan-950/25 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.45)]"
+            : "border-black/25 bg-gray-900 hover:border-white/30",
+        )}
       >
         <div className="flex justify-end w-full px-2 bg-black rounded-t-sm">
           {isEditMode && (
@@ -88,9 +96,20 @@ const Arrangement = ({
                 ...arrangement,
                 name: arrangement.name + " copy",
                 id: generateRandomId(),
+                formattedLyrics: arrangement.formattedLyrics.map((section) => ({
+                  ...section,
+                })),
+                songOrder: arrangement.songOrder.map((section) => ({
+                  ...section,
+                })),
+                slides: arrangement.slides.map((slide) => ({
+                  ...slide,
+                  boxes: slide.boxes.map((box) => ({ ...box })),
+                })),
               };
               copiedArrangements.push(newArrangement);
               setLocalArrangements(copiedArrangements);
+              setSelectedArrangement(newArrangement.id);
             }}
           />
           {index !== 0 && (
@@ -99,7 +118,8 @@ const Arrangement = ({
               variant="tertiary"
               onClick={() => {
                 const copiedArrangements = [...localArrangements].filter(
-                  (_, i) => i !== index
+                  (item, i) =>
+                    arrangement.id ? item.id !== arrangement.id : i !== index
                 );
                 setLocalArrangements(copiedArrangements);
               }}
@@ -113,6 +133,10 @@ const Arrangement = ({
             hideLabel
             className="text-sm"
             data-ignore-undo="true"
+            autoFocus
+            onFocus={(event) => {
+              event.currentTarget.select();
+            }}
             onKeyDown={(e) =>
               handleInlineTextInputKeyDown(e, {
                 onSave: handleSave,
@@ -123,8 +147,9 @@ const Arrangement = ({
         ) : (
           <Button
             variant="tertiary"
-            className="px-2 py-1 rounded-b-sm mt-1"
-            onClick={() => setSelectedArrangement()}
+            className={`mt-1 w-full justify-center rounded-b-sm px-2 py-1 ${isSelected ? "text-cyan-200" : ""
+              }`}
+            onClick={() => setSelectedArrangement(arrangement.id)}
           >
             <p className="min-w-0 text-center wrap-break-word whitespace-normal max-h-12 overflow-hidden w-full">{arrangement.name}</p>
           </Button>

@@ -1200,6 +1200,7 @@ listenerMiddleware.startListening({
       preferencesSlice.actions.setShouldShowItemEditor,
       preferencesSlice.actions.setIsMediaExpanded,
       preferencesSlice.actions.setShouldShowStreamFormat,
+      preferencesSlice.actions.setToolbarSection,
       preferencesSlice.actions.setIsLoading,
       preferencesSlice.actions.setSelectedPreference,
       preferencesSlice.actions.setSelectedQuickLink,

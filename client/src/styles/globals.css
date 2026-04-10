@@ -122,9 +122,11 @@
   --color-sidebar-ring: var(--sidebar-ring);
   /* Midpoint between Tailwind gray-700 (#374151) and gray-800 (#1f2937); large empty canvases (e.g. home). */
   --color-homepage-canvas: #2b3544;
-  /* Alternating list rows on church admin panels (invites, members, workstations, displays, trusted devices). */
-  --color-admin-row-a: rgb(255 255 255 / 0.075);
-  --color-admin-row-b: rgb(255 255 255 / 0.13);
+  /* Side sheets / drawers: same hue as homepage canvas, slightly darker for elevation. */
+  --color-sheet-surface: color-mix(in oklab, var(--color-homepage-canvas) 90%, black);
+  /* Alternating list rows: admin panels, library search, import-section picker (see listRowStripes). */
+  --color-admin-row-a: rgb(255 255 255 / 0.055);
+  --color-admin-row-b: rgb(255 255 255 / 0.2);
 }
 
 @layer base {
