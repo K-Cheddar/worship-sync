@@ -2,7 +2,7 @@ import Button from "../../components/Button/Button";
 import { Plus, Save, Check } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { selectCredit, updateList } from "../../store/creditsSlice";
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import Credit from "./Credit";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import cn from "classnames";
@@ -14,13 +14,20 @@ import {
 } from "@dnd-kit/sortable";
 import {
   addCredit,
+  applyRemoveLineFromCreditsHistoryMap,
+  flattenCreditsHistoryLines,
   mergePublishedCreditsIntoHistory,
+  removeCreditsHistoryLineEverywhere,
   updatePublishedCreditsList,
 } from "../../store/creditsSlice";
 import { broadcastCreditsUpdate } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { putCreditHistoryDocs } from "../../utils/dbUtils";
+import {
+  putCreditHistoryDoc,
+  putCreditHistoryDocs,
+  removeCreditHistoryDoc,
+} from "../../utils/dbUtils";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import generateRandomId from "../../utils/generateRandomId";
@@ -43,7 +50,36 @@ const CreditsEditor = ({ className }: { className?: string }) => {
 
   const sensors = useSensors();
 
-  const hasUnpublishedChanges = () => {
+  const allHistoryLines = useMemo(
+    () => flattenCreditsHistoryLines(creditsHistory),
+    [creditsHistory],
+  );
+
+  const handleSelectCredit = useCallback((creditId: string) => {
+    dispatch(selectCredit(creditId));
+  }, [dispatch]);
+
+  const removeGlobalHistoryLine = useCallback(
+    (line: string) => {
+      const before = creditsHistory;
+      const after = applyRemoveLineFromCreditsHistoryMap(before, line);
+      if (after === before) return;
+      dispatch(removeCreditsHistoryLineEverywhere(line));
+      if (!db) return;
+      for (const h of Object.keys(before)) {
+        const prevL = before[h];
+        const nextL = after[h];
+        if (nextL === undefined) {
+          removeCreditHistoryDoc(db, h).catch(console.error);
+        } else if (JSON.stringify(prevL) !== JSON.stringify(nextL)) {
+          putCreditHistoryDoc(db, h, nextL).catch(console.error);
+        }
+      }
+    },
+    [creditsHistory, db, dispatch],
+  );
+
+  const hasUnpublishedChanges = useMemo(() => {
     const visibleList = list
       .filter((credit) => !credit.hidden)
       .map((credit) => ({
@@ -57,7 +93,12 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         text: credit.text,
       }));
     return JSON.stringify(visiblePublishedList) !== JSON.stringify(visibleList);
-  };
+  }, [list, publishedList]);
+
+  const listOrderKey = useMemo(
+    () => list.map((c) => c.id).join(","),
+    [list],
+  );
 
   const onDragEnd = (event: DragEndEvent) => {
     if (readOnly) return;
@@ -94,7 +135,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         });
       }
     }
-  }, [selectedCreditId, list]);
+  }, [selectedCreditId, listOrderKey]);
 
   const handlePublish = useCallback(() => {
     setJustPublished(true);
@@ -135,7 +176,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
       >
         <h2 className="text-xl font-semibold text-center h-fit">
           Credits
-          {hasUnpublishedChanges() ? (
+          {hasUnpublishedChanges ? (
             <span className="text-yellow-500 ml-2">(Draft)</span>
           ) : (
             <span className="text-green-500 ml-2">(Published)</span>
@@ -165,7 +206,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                 {list.map((credit) => {
                   return (
                     <Credit
-                      selectCredit={() => dispatch(selectCredit(credit.id))}
+                      onSelectCredit={handleSelectCredit}
                       selectedCreditId={selectedCreditId}
                       key={credit.id}
                       initialList={initialList}
@@ -173,7 +214,10 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                       text={credit.text}
                       hidden={credit.hidden}
                       id={credit.id}
-                      historyLines={creditsHistory[credit.heading] ?? []}
+                      historyLines={allHistoryLines}
+                      onRemoveHistoryLine={
+                        readOnly ? undefined : removeGlobalHistoryLine
+                      }
                       readOnly={readOnly}
                     />
                   );

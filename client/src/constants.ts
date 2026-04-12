@@ -28,8 +28,14 @@ export const MONITOR_BAND_NEXT_PX =
 // Font size: stored as pixels. Default when box.fontSize is unset (legacy ~44px).
 export const DEFAULT_FONT_PX = 108;
 export const DEFAULT_TITLE_FONT_PX = 150;
-/** Step for +/- font size toolbar buttons (px / formatted-text scale). */
-export const FONT_SIZE_BUTTON_STEP = 5;
+/** Step for +/- font size toolbar buttons (px for slide boxes; formatted-text display scale). */
+export const FONT_SIZE_BUTTON_STEP = 1;
+
+/** Slide Tools font size presets (px): 50–250 in 5px steps. */
+export const FONT_SIZE_PRESETS: readonly number[] = Array.from(
+  { length: (250 - 50) / 5 + 1 },
+  (_, i) => 50 + i * 5,
+);
 
 // ============================================================================
 // Time Picker Constants

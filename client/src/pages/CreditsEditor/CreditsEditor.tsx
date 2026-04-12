@@ -9,6 +9,7 @@ import {
   Home,
   Layers,
   Menu as MenuIcon,
+  Presentation,
   RefreshCcw,
   Settings,
 } from "lucide-react";
@@ -480,6 +481,15 @@ const CreditsEditor = () => {
           </div>
         ),
         onClick: () => navigate("/"),
+      },
+      {
+        element: (
+          <div className="flex items-center gap-2 max-md:min-h-12">
+            <Icon svg={Presentation} color="#d1d5dc" />
+            Presentation Controller
+          </div>
+        ),
+        to: "/controller",
       },
       {
         element: (

@@ -154,4 +154,49 @@ describe("DisplayImageOverlay", () => {
     ).toBe(true);
     expect(gsapToMock).toHaveBeenCalled();
   });
+
+  it("keeps a previous video overlay visible when switching away to a different overlay type", () => {
+    const containerRef = { current: document.createElement("div") };
+    render(
+      <DisplayImageOverlay
+        ref={containerRef as any}
+        width={30}
+        shouldAnimate
+        imageOverlayInfo={{}}
+        prevImageOverlayInfo={{
+          id: "video-prev",
+          name: "Previous Video",
+          imageUrl: "https://cdn/previous.mp4",
+        }}
+      />,
+    );
+
+    gsapCallbacks.forEach((cb) => cb());
+
+    expect(
+      gsapSetMock.mock.calls.some(([, props]) => props?.opacity === 1),
+    ).toBe(true);
+    expect(gsapToMock).toHaveBeenCalled();
+  });
+
+  it("keeps current overlay dependencies stable when no previous overlay is provided", () => {
+    const overlayInfo = {
+      id: "img-stable",
+      name: "Stable",
+      imageUrl: "https://cdn/stable.jpg",
+    };
+
+    const { rerender } = render(
+      <DisplayImageOverlay width={30} imageOverlayInfo={overlayInfo} />,
+    );
+
+    const firstCurrentConfig = (useGSAP as jest.Mock).mock.calls[0][1];
+
+    rerender(<DisplayImageOverlay width={30} imageOverlayInfo={overlayInfo} />);
+
+    const secondCurrentConfig = (useGSAP as jest.Mock).mock.calls[2][1];
+
+    expect(firstCurrentConfig.dependencies).toEqual([overlayInfo]);
+    expect(secondCurrentConfig.dependencies).toEqual([overlayInfo]);
+  });
 });

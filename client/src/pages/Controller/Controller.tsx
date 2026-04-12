@@ -110,7 +110,7 @@ const Controller = () => {
         <EditorButtons access={access} />
         <ServiceItems />
       </div>
-      <div className="flex flex-col flex-1 relative w-[60%] h-full">
+      <div className="relative flex h-full min-h-0 w-[60%] flex-1 flex-col overflow-hidden">
         <ControllerViewRouteGuard>
           <Routes>
             <Route

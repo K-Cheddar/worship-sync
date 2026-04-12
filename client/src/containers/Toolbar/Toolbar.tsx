@@ -22,7 +22,6 @@ import {
   useState,
   useCallback,
 } from "react";
-import Button from "../../components/Button/Button";
 import Drawer from "../../components/Drawer/Drawer";
 import QuickLinksPage from "../../pages/Controller/QuickLinks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -183,39 +182,38 @@ const Toolbar = ({
           <hr className="border-gray-500 w-full border-t-2 sticky left-0" />
           <div
             className={cn(
-              "px-2 py-1 flex gap-1 items-center flex-1 overflow-x-auto w-full",
+              "px-2 py-1 flex items-center flex-1 overflow-x-auto w-full",
               isEditMode && "hidden"
             )}
           >
-            <Outlines className={cn(section !== "settings" && "hidden")} />
+            {variant === "overlay" && (
+              <Outlines
+                className={cn(section !== "settings" && "hidden")}
+                matchToolbarTabs
+              />
+            )}
             {variant !== "overlay" && access !== "view" && (
-              <Button
-                className={cn(
-                  section !== "settings" && "hidden",
-                  location.pathname.includes("preferences") &&
-                  !location.pathname.includes("quick-links") &&
-                  "outline-2 outline-white",
-                )}
-                variant="tertiary"
+              <ToolbarButton
                 svg={Settings}
-                component="link"
                 to="/controller/preferences"
+                hidden={section !== "settings"}
+                isActive={
+                  location.pathname.includes("preferences") &&
+                  !location.pathname.includes("quick-links")
+                }
               >
                 Preferences
-              </Button>
+              </ToolbarButton>
             )}
             {access === "full" && (
-              <Button
-                className={cn(
-                  section !== "settings" && "hidden",
-                  (variant === "overlay"
-                    ? quickLinksDrawerOpen
-                    : location.pathname.includes("quick-links")) &&
-                  "outline-2 outline-white",
-                )}
-                variant="tertiary"
+              <ToolbarButton
                 svg={RectangleEllipsis}
-                component={variant === "overlay" ? "button" : "link"}
+                hidden={section !== "settings"}
+                isActive={
+                  variant === "overlay"
+                    ? quickLinksDrawerOpen
+                    : location.pathname.includes("quick-links")
+                }
                 to={
                   variant === "overlay" ? undefined : "/controller/quick-links"
                 }
@@ -226,22 +224,17 @@ const Toolbar = ({
                 }
               >
                 Quick Links
-              </Button>
+              </ToolbarButton>
             )}
             {variant !== "overlay" && access === "full" && (
-              <Button
-                className={cn(
-                  section !== "settings" && "hidden",
-                  location.pathname.includes("monitor-settings") &&
-                  "outline-2 outline-white",
-                )}
-                variant="tertiary"
+              <ToolbarButton
                 svg={Monitor}
-                component="link"
                 to="/controller/monitor-settings"
+                hidden={section !== "settings"}
+                isActive={location.pathname.includes("monitor-settings")}
               >
                 Monitor Settings
-              </Button>
+              </ToolbarButton>
             )}
             <SlideEditTools
               className={cn(section !== "slide-tools" && "hidden")}

@@ -28,6 +28,43 @@ export function mergePublishedCreditsIntoHistory(
   return next;
 }
 
+/** Unique lines from all headings in `creditsHistory`, sorted and deduped by trimmed lowercase text. */
+export function flattenCreditsHistoryLines(
+  creditsHistory: Record<string, string[]>,
+): string[] {
+  const byKey = new Map<string, string>();
+  for (const lines of Object.values(creditsHistory)) {
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t) continue;
+      const key = t.toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, t);
+    }
+  }
+  return sortHistoryLines([...byKey.values()]);
+}
+
+/** Remove one line (trimmed) from every heading that contains it. */
+export function applyRemoveLineFromCreditsHistoryMap(
+  creditsHistory: Record<string, string[]>,
+  line: string,
+): Record<string, string[]> {
+  const trimmed = line.trim();
+  if (!trimmed) return creditsHistory;
+  const next: Record<string, string[]> = {};
+  let changed = false;
+  for (const [h, lines] of Object.entries(creditsHistory)) {
+    const filtered = lines.filter((l) => l.trim() !== trimmed);
+    if (filtered.length === lines.length) {
+      next[h] = lines;
+    } else {
+      changed = true;
+      if (filtered.length > 0) next[h] = sortHistoryLines(filtered);
+    }
+  }
+  return changed ? next : creditsHistory;
+}
+
 const dummyList = [
   {
     id: "1ii2lhhaa5vngn4rnt1",
@@ -414,6 +451,12 @@ export const creditsSlice = createSlice({
       const { heading, lines } = action.payload;
       state.creditsHistory[heading] = sortHistoryLines(lines);
     },
+    removeCreditsHistoryLineEverywhere: (state, action: PayloadAction<string>) => {
+      state.creditsHistory = applyRemoveLineFromCreditsHistoryMap(
+        state.creditsHistory,
+        action.payload,
+      );
+    },
     forceUpdate: () => {},
   },
 });
@@ -433,6 +476,7 @@ export const {
   initiateCreditsHistory,
   deleteCreditsHistoryEntry,
   updateCreditsHistoryEntry,
+  removeCreditsHistoryLineEverywhere,
   initiatePublishedCreditsList,
   updateCreditsListFromRemote,
   updatePublishedCreditsListFromRemote,

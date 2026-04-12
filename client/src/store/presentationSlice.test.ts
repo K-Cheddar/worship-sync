@@ -1454,6 +1454,129 @@ describe("presentationSlice", () => {
       );
     });
 
+    it("keeps a cross-type outgoing image overlay in prevStreamInfo when remote updates arrive clear-first", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            imageOverlayInfo: {
+              id: "img-live",
+              imageUrl: "https://img.example/current.jpg",
+              name: "Current image",
+              time: 5,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateImageOverlayInfoFromRemote({
+          id: "img-cleared",
+          imageUrl: "",
+          name: "",
+          time: 10,
+        }),
+      );
+
+      store.dispatch(
+        presentationSlice.actions.updateParticipantOverlayInfoFromRemote({
+          id: "participant-next",
+          name: "Alex",
+          time: 10,
+        }),
+      );
+
+      const state = store.getState().presentation;
+      expect(state.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe(
+        "https://img.example/current.jpg",
+      );
+      expect(state.streamInfo.imageOverlayInfo?.imageUrl).toBe("");
+      expect(state.streamInfo.participantOverlayInfo?.name).toBe("Alex");
+    });
+
+    it("keeps a cross-type outgoing image overlay in prevStreamInfo when remote updates arrive clear-last", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            imageOverlayInfo: {
+              id: "img-live",
+              imageUrl: "https://img.example/current.jpg",
+              name: "Current image",
+              time: 5,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateParticipantOverlayInfoFromRemote({
+          id: "participant-next",
+          name: "Alex",
+          time: 10,
+        }),
+      );
+
+      store.dispatch(
+        presentationSlice.actions.updateImageOverlayInfoFromRemote({
+          id: "img-cleared",
+          imageUrl: "",
+          name: "",
+          time: 10,
+        }),
+      );
+
+      const state = store.getState().presentation;
+      expect(state.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe(
+        "https://img.example/current.jpg",
+      );
+      expect(state.streamInfo.imageOverlayInfo?.imageUrl).toBe("");
+      expect(state.streamInfo.participantOverlayInfo?.name).toBe("Alex");
+    });
+
+    it("keeps a cross-type outgoing QR overlay in prevStreamInfo when remote updates arrive clear-last", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            qrCodeOverlayInfo: {
+              id: "qr-live",
+              url: "https://example.com",
+              description: "Scan here",
+              time: 5,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateParticipantOverlayInfoFromRemote({
+          id: "participant-next",
+          name: "Alex",
+          time: 10,
+        }),
+      );
+
+      store.dispatch(
+        presentationSlice.actions.updateQrCodeOverlayInfoFromRemote({
+          id: "qr-cleared",
+          url: "",
+          description: "",
+          time: 10,
+        }),
+      );
+
+      const state = store.getState().presentation;
+      expect(state.prevStreamInfo.qrCodeOverlayInfo?.description).toBe(
+        "Scan here",
+      );
+      expect(state.streamInfo.qrCodeOverlayInfo?.description).toBe("");
+      expect(state.streamInfo.participantOverlayInfo?.name).toBe("Alex");
+    });
+
     it("clearMonitor and clearStream keep previous values and reset active payloads", () => {
       const currentSlide = {
         id: "current-slide",

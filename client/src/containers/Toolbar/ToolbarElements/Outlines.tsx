@@ -28,8 +28,22 @@ import {
 import { useGlobalBroadcast } from "../../../hooks/useGlobalBroadcast";
 import { ActionCreators } from "redux-undo";
 import { GlobalInfoContext } from "../../../context/globalInfo";
+import { cn } from "../../../utils/cnHelper";
+import { toolbarTabClassName } from "./ToolbarButton";
 
-const Services = ({ className }: { className: string }) => {
+type OutlinesProps = {
+  className?: string;
+  /** Full-width header-style trigger for the service outline column (vs compact toolbar). */
+  servicePanel?: boolean;
+  /** Use the same tab styling as the main toolbar row (overlay controller). */
+  matchToolbarTabs?: boolean;
+};
+
+const Services = ({
+  className,
+  servicePanel = false,
+  matchToolbarTabs = false,
+}: OutlinesProps) => {
   const { currentLists, activeList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
@@ -44,6 +58,7 @@ const Services = ({ className }: { className: string }) => {
   const { db, updater } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const [justAdded, setJustAdded] = useState(false);
+  const [outlinePopoverOpen, setOutlinePopoverOpen] = useState(false);
 
   const { setNodeRef } = useDroppable({
     id: "items-lists",
@@ -129,18 +144,54 @@ const Services = ({ className }: { className: string }) => {
     }
   };
 
+  const triggerIconSize = servicePanel ? "sm" : matchToolbarTabs ? "md" : "lg";
+  const triggerVariant = servicePanel
+    ? "tertiary"
+    : matchToolbarTabs
+      ? outlinePopoverOpen
+        ? "none"
+        : "tertiary"
+      : "primary";
+  const triggerClass = cn(
+    servicePanel
+      ? "w-full max-w-none justify-center gap-2 border-0 px-3 py-2.5 text-xs font-bold uppercase tracking-widest text-white shadow-none hover:bg-white/10 active:bg-white/[0.12]"
+      : matchToolbarTabs
+        ? cn(toolbarTabClassName(outlinePopoverOpen, false), "max-w-64")
+        : "max-w-64",
+    access === "music" && "cursor-default",
+  );
+  const triggerColor =
+    matchToolbarTabs && !servicePanel && outlinePopoverOpen
+      ? "#ffffff"
+      : undefined;
+
   return (
     <DndContext
       onDragEnd={access === "full" ? onDragEnd : undefined}
       sensors={sensors}
     >
-      <div className={`flex gap-2 items-center ${className || ""}`}>
+      <div
+        className={cn(
+          "flex min-w-0 items-center gap-2",
+          servicePanel && "w-full",
+          className,
+        )}
+      >
         {access === "music" ? (
           <Button
             svg={List}
-            iconSize="lg"
-            variant="primary"
-            className="max-w-64 cursor-default"
+            iconSize={triggerIconSize}
+            variant={
+              matchToolbarTabs && !servicePanel ? "tertiary" : triggerVariant
+            }
+            className={
+              matchToolbarTabs && !servicePanel
+                ? cn(
+                  toolbarTabClassName(false, false),
+                  "max-w-64 cursor-default",
+                )
+                : triggerClass
+            }
             truncate
             disabled
             title="Outline is managed by a full-access operator"
@@ -149,27 +200,62 @@ const Services = ({ className }: { className: string }) => {
           </Button>
         ) : (
           <PopOver
+            onOpenChange={matchToolbarTabs ? setOutlinePopoverOpen : undefined}
             TriggeringButton={
               <Button
                 svg={List}
-                iconSize="lg"
-                variant="primary"
-                className="max-w-64"
+                iconSize={triggerIconSize}
+                variant={triggerVariant}
+                color={triggerColor}
+                className={triggerClass}
                 truncate
               >
                 {selectedList?.name}
               </Button>
             }
+            align={servicePanel ? "start" : "end"}
+            contentClassName={
+              servicePanel
+                ? "min-w-[18rem] max-w-[min(26rem,calc(100vw-1.5rem))] overflow-x-visible border-gray-600 bg-gray-800 text-white shadow-md"
+                : undefined
+            }
+            headerRowClassName={
+              servicePanel ? "px-5 pt-2 pb-1.5" : undefined
+            }
+            bodyClassName={
+              servicePanel ? "px-5 pb-3 pt-1.5" : undefined
+            }
           >
-            <div className="flex flex-col gap-2">
-              <div className="flex gap-4 flex-1">
-                <section className="flex-1 h-full p-1 flex flex-col">
-                  <h3 className="text-lg font-semibold mb-2 text-center">
+            <div
+              className={cn(
+                "flex flex-col gap-2",
+                servicePanel && "min-w-0 gap-1.5",
+              )}
+            >
+              <div className={cn("flex flex-1 gap-4", servicePanel && "min-w-0")}>
+                <section
+                  className={cn(
+                    "flex h-full flex-1 flex-col p-1",
+                    servicePanel && "min-w-0 p-0",
+                  )}
+                >
+                  <h3
+                    className={cn(
+                      "mb-2 text-center text-lg font-semibold",
+                      servicePanel &&
+                      "mb-1.5 border-b border-gray-600 pb-2 text-[11px] font-bold uppercase tracking-widest text-gray-100",
+                    )}
+                  >
                     {heading}
                   </h3>
                   <ul
                     ref={setNodeRef}
-                    className="scrollbar-variable flex-1 overflow-y-auto max-h-64 overflow-x-hidden"
+                    className={cn(
+                      "scrollbar-variable max-h-64 flex-1 overflow-y-auto",
+                      servicePanel
+                        ? "min-w-0 max-h-[min(18rem,50vh)] overflow-x-visible"
+                        : "overflow-x-hidden",
+                    )}
                   >
                     <SortableContext
                       items={currentLists.map((list) => list._id)}
@@ -179,6 +265,7 @@ const Services = ({ className }: { className: string }) => {
                         <Outline
                           key={list._id}
                           list={list}
+                          panel={servicePanel}
                           canEdit={access === "full"}
                           isSelected={list._id === selectedList?._id}
                           selectList={(listId: string) =>
@@ -204,24 +291,24 @@ const Services = ({ className }: { className: string }) => {
                             index === 0
                               ? undefined
                               : async (id) => {
-                                  dispatch(removeFromItemLists(id));
-                                  if (db) {
-                                    const existingList: DBItemListDetails =
-                                      await db.get(id);
-                                    db.remove(existingList);
-                                    if (selectedList?._id === id) {
-                                      dispatch(
-                                        selectItemList(currentLists[0]._id)
-                                      );
-                                    }
-                                    if (activeList?._id === id) {
-                                      dispatch(
-                                        setActiveItemList(currentLists[0]._id)
-                                      );
-                                    }
+                                dispatch(removeFromItemLists(id));
+                                if (db) {
+                                  const existingList: DBItemListDetails =
+                                    await db.get(id);
+                                  db.remove(existingList);
+                                  if (selectedList?._id === id) {
+                                    dispatch(
+                                      selectItemList(currentLists[0]._id)
+                                    );
                                   }
-                                  dispatch(ActionCreators.clearHistory());
+                                  if (activeList?._id === id) {
+                                    dispatch(
+                                      setActiveItemList(currentLists[0]._id)
+                                    );
+                                  }
                                 }
+                                dispatch(ActionCreators.clearHistory());
+                              }
                           }
                           updateList={(list) => {
                             _updateItemLists(list);
@@ -236,7 +323,12 @@ const Services = ({ className }: { className: string }) => {
                 <Button
                   svg={justAdded ? Check : Plus}
                   color={justAdded ? "#84cc16" : "#22d3ee"}
-                  className="w-full justify-center text-base"
+                  className={cn(
+                    "w-full justify-center text-base",
+                    servicePanel &&
+                    "border border-gray-600 bg-gray-700/80 py-2 text-xs font-semibold uppercase tracking-wider shadow-none hover:bg-gray-600",
+                  )}
+                  variant={servicePanel ? "tertiary" : "primary"}
                   disabled={justAdded}
                   onClick={async () => {
                     const newList = await createNewItemList({

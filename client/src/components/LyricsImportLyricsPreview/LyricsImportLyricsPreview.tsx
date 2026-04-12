@@ -16,7 +16,7 @@ export const LyricsImportLyricsPreview = ({
   const display = lyricsText.trim() ? lyricsText : emptyLabel;
 
   return (
-    <div className="mt-2 rounded-md border border-neutral-700 bg-neutral-900/90 p-2">
+    <div className="mt-2 rounded-md bg-neutral-900/90 p-2">
       <p className="mb-1 text-xs font-semibold text-neutral-200">Lyrics Preview</p>
       <div
         className={

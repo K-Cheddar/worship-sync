@@ -35,7 +35,19 @@ jest.mock("../DisplayStreamBible", () => ({
 }));
 jest.mock("../DisplayParticipantOverlay", () => ({
   __esModule: true,
-  default: () => <div data-testid="display-participant-overlay-mock" />,
+  default: ({
+    participantOverlayInfo,
+    prevParticipantOverlayInfo,
+  }: {
+    participantOverlayInfo?: { name?: string };
+    prevParticipantOverlayInfo?: { name?: string };
+  }) => (
+    <div
+      data-testid="display-participant-overlay-mock"
+      data-current-name={participantOverlayInfo?.name || ""}
+      data-prev-name={prevParticipantOverlayInfo?.name || ""}
+    />
+  ),
 }));
 jest.mock("../DisplayStbOverlay", () => ({
   __esModule: true,
@@ -359,6 +371,36 @@ describe("DisplayWindow core paths", () => {
     );
 
     expect(screen.getByTestId("stream-item-layer")).toHaveStyle({ opacity: "1" });
+  });
+
+  it("keeps the previous participant overlay mounted during a same-type replacement so it can exit", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-03-19T12:00:00.000Z"));
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p2-current",
+          type: "participant",
+          name: "Bob",
+          time: Date.now(),
+          duration: 0,
+        }}
+        prevParticipantOverlayInfo={{
+          id: "p1-prev",
+          type: "participant",
+          name: "Alice",
+          time: Date.now() - 1000,
+          duration: 0,
+        }}
+      />,
+    );
+
+    const overlay = screen.getByTestId("display-participant-overlay-mock");
+    expect(overlay).toHaveAttribute("data-current-name", "Bob");
+    expect(overlay).toHaveAttribute("data-prev-name", "Alice");
   });
 
   it("renders editor mode with DisplayEditor boxes", () => {

@@ -1,4 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import _ from "lodash";
 import {
   Arrangment,
   BibleInfo,
@@ -95,6 +96,51 @@ const createItemSnapshot = (
   };
 };
 
+const defaultBibleInfoForCompare: BibleInfo = {
+  book: "",
+  chapter: "",
+  version: "",
+  verses: [],
+  fontMode: "separate",
+};
+
+/** Align optional fields so DB docs missing nested objects match in-memory item state. */
+function normalizeSnapshotForEditorCompare(snap: DBItem): DBItem {
+  return {
+    ...snap,
+    shouldSkipTitle: snap.shouldSkipTitle ?? false,
+    background: snap.background ?? "",
+    bibleInfo: snap.bibleInfo ?? defaultBibleInfoForCompare,
+    arrangements: snap.arrangements ?? [],
+    slides: snap.slides ?? [],
+    shouldSendTo: snap.shouldSendTo ?? defaultShouldSendTo,
+  };
+}
+
+/** Strips Couch metadata so echo/sync round-trips match the editor despite new `_rev` / timestamps. */
+const omitItemSyncMetadata = (snap: DBItem) => {
+  const { _rev, updatedAt, createdAt, ...rest } = snap;
+  return rest;
+};
+
+/**
+ * True when `doc` matches what the user already has in the editor (persisted shape), ignoring
+ * `_rev` / `updatedAt` / `createdAt`. Used to avoid false "remote update" conflicts when sync
+ * replays the user's own pending edits.
+ */
+export function itemDocMatchesEditorState(
+  doc: DBItem,
+  currentItem: ItemState,
+): boolean {
+  const snapDoc = createItemSnapshot(doc);
+  const snapState = createItemSnapshot(currentItem);
+  if (!snapDoc || !snapState) return false;
+  return _.isEqual(
+    omitItemSyncMetadata(normalizeSnapshotForEditorCompare(snapDoc)),
+    omitItemSyncMetadata(normalizeSnapshotForEditorCompare(snapState)),
+  );
+}
+
 const getSlideCount = (
   item: Partial<ItemState> | DBItem,
   arrangementIndex: number,
@@ -141,12 +187,13 @@ const applyItemDataToState = (
     ? Math.min(state.selectedSlide ?? 0, Math.max(0, slideCount - 1))
     : (nextSelectedSlide ?? 0);
   state.selectedBox = preserveSelection
-    ? state.selectedBox ?? 1
+    ? (state.selectedBox ?? 1)
     : (nextSelectedBox ?? 1);
   state.shouldSkipTitle = payload.shouldSkipTitle || false;
   state.arrangements = payload.arrangements || [];
   state.slides = payload.slides || [];
-  state.formattedSections = payload.formattedSections || state.formattedSections;
+  state.formattedSections =
+    payload.formattedSections || state.formattedSections;
   state.bibleInfo = payload.bibleInfo || {
     book: "",
     chapter: "",
@@ -248,7 +295,7 @@ export const itemSlice = createSlice({
     },
     setRestoreFocusToBox: (
       state,
-      action: PayloadAction<number | null | undefined>
+      action: PayloadAction<number | null | undefined>,
     ) => {
       state.restoreFocusToBox = action.payload ?? null;
     },
@@ -384,8 +431,7 @@ export const updateArrangements = createAsyncThunk(
     const { selectedArrangement, arrangements } = args;
     const newSlides =
       arrangements[selectedArrangement ?? currentArrangement]?.slides ?? [];
-    const oldSlides =
-      item.arrangements[currentArrangement]?.slides ?? [];
+    const oldSlides = item.arrangements[currentArrangement]?.slides ?? [];
 
     dispatch(_updateArrangements(arrangements));
     if (selectedArrangement !== undefined) {
@@ -397,10 +443,7 @@ export const updateArrangements = createAsyncThunk(
       ),
     );
 
-    if (
-      item.type === "song" &&
-      oldSlides.length !== newSlides.length
-    ) {
+    if (item.type === "song" && oldSlides.length !== newSlides.length) {
       const hint = getSelectionHint(oldSlides, item.selectedSlide);
       const maxSlideIndex = Math.max(0, newSlides.length - 2);
       const fromHint = hint ? getIndexFromSelectionHint(newSlides, hint) : null;
@@ -578,10 +621,7 @@ export const updateSlides = createAsyncThunk(
       dispatch(_updateFormattedSections(args.formattedSections));
     }
 
-    if (
-      item.type !== "song" &&
-      oldSlides.length !== newSlides.length
-    ) {
+    if (item.type !== "song" && oldSlides.length !== newSlides.length) {
       const hint = getSelectionHint(oldSlides, item.selectedSlide);
       const maxSlideIndex = Math.max(0, newSlides.length - 1);
       const fromHint = hint ? getIndexFromSelectionHint(newSlides, hint) : null;

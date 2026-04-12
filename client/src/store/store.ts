@@ -21,7 +21,7 @@ import {
   updateStreamFromRemote,
   updateFormattedTextDisplayInfoFromRemote,
 } from "./presentationSlice";
-import { itemSlice } from "./itemSlice";
+import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
@@ -68,6 +68,7 @@ import serviceTimesSliceReducer, {
 } from "./serviceTimesSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
+import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
 
@@ -287,6 +288,10 @@ const excludedActions: string[] = [
   overlaySlice.actions.setHasPendingUpdate.toString(),
   overlaySlice.actions.forceUpdate.toString(),
   overlaySlice.actions.selectOverlay.toString(),
+  overlaySlice.actions.markOverlayPersisted.toString(),
+  overlaySlice.actions.bufferRemoteOverlayUpdate.toString(),
+  overlaySlice.actions.discardPendingRemoteOverlay.toString(),
+  overlaySlice.actions.applyPendingRemoteOverlay.toString(),
   timersSlice.actions.setShouldUpdateTimers.toString(),
   allDocsSlice.actions.updateAllBibleDocs.toString(),
   allDocsSlice.actions.updateAllFreeFormDocs.toString(),
@@ -467,11 +472,15 @@ listenerMiddleware.startListening({
 
       const docMatchesBase =
         !!currentItem.baseItem && _.isEqual(doc, currentItem.baseItem);
+      const docMatchesCurrent = itemDocMatchesEditorState(doc, currentItem);
       const shouldBufferRemote =
         !!(currentItem.hasPendingUpdate || currentItem.isEditMode) &&
         !docMatchesBase;
 
       if (shouldBufferRemote) {
+        if (docMatchesCurrent) {
+          return;
+        }
         if (!_.isEqual(doc, currentItem.pendingRemoteItem)) {
           listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(doc));
         }
@@ -479,6 +488,10 @@ listenerMiddleware.startListening({
       }
 
       if (docMatchesBase && !currentItem.hasRemoteUpdate) {
+        return;
+      }
+
+      if (docMatchesCurrent) {
         return;
       }
 
@@ -753,6 +766,8 @@ listenerMiddleware.startListening({
     const excluded = isAnyOf(
       overlaySlice.actions.setHasPendingUpdate,
       overlaySlice.actions.setIsOverlayLoading,
+      overlaySlice.actions.markOverlayPersisted,
+      overlaySlice.actions.bufferRemoteOverlayUpdate,
     );
     return (
       (currentState as RootState).undoable.present.overlay !==
@@ -772,18 +787,33 @@ listenerMiddleware.startListening({
       await listenerApi.delay(1500);
     }
 
-    listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
-
     // update overlay
     const { selectedOverlay } = state.undoable.present.overlay;
 
-    if (!db || !selectedOverlay) return;
-    const db_overlay: DBOverlay = await db.get(`overlay-${selectedOverlay.id}`);
-    db.put({
+    if (!selectedOverlay?.id) {
+      listenerApi.throwIfCancelled();
+      listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
+      return;
+    }
+    if (!db) return;
+    const db_overlay: DBOverlay = await listenerApi.pause(
+      db.get(`overlay-${selectedOverlay.id}`),
+    );
+    const merged: DBOverlay = {
       ...db_overlay,
       ...selectedOverlay,
       updatedAt: new Date().toISOString(),
-    });
+    };
+    const result = await listenerApi.pause(db.put(merged));
+    const persisted: DBOverlay = { ...merged, _rev: result.rev };
+
+    listenerApi.throwIfCancelled();
+    listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
+    listenerApi.dispatch(
+      overlaySlice.actions.markOverlayPersisted(
+        normalizeOverlayForSync(persisted),
+      ),
+    );
   },
 });
 
@@ -982,6 +1012,7 @@ listenerMiddleware.startListening({
       creditsSlice.actions.deleteCredit,
       creditsSlice.actions.deleteCreditsHistoryEntry,
       creditsSlice.actions.updateCreditsHistoryEntry,
+      creditsSlice.actions.removeCreditsHistoryLineEverywhere,
     );
     return (
       (currentState as RootState).undoable.present.credits !==

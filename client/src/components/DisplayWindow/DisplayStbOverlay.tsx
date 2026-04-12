@@ -5,6 +5,8 @@ import { useGSAP } from "@gsap/react";
 import { defaultStbOverlayStyles } from "./defaultOverlayStyles";
 import SharedOverlay from "./SharedOverlay";
 
+const EMPTY_OVERLAY_INFO: OverlayInfo = {} as OverlayInfo;
+
 type DisplayStbOverlayProps = {
   width: number;
   stbOverlayInfo?: OverlayInfo;
@@ -17,8 +19,8 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
   (
     {
       width,
-      stbOverlayInfo = {},
-      prevStbOverlayInfo = {},
+      stbOverlayInfo = EMPTY_OVERLAY_INFO,
+      prevStbOverlayInfo = EMPTY_OVERLAY_INFO,
       shouldAnimate = false,
       shouldFillContainer = false,
     },
@@ -97,7 +99,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
       },
       {
         scope: stbOverlayRef,
-        dependencies: [stbOverlayInfo, prevStbOverlayInfo],
+        dependencies: [stbOverlayInfo],
       }
     );
 

@@ -1,6 +1,6 @@
 import Preferences from "../../containers/Preferences/Preferences";
+import { PreferencesPageSkeleton } from "../../containers/Preferences/preferencesPageSkeletons";
 import { useSelector } from "../../hooks";
-import Spinner from "../../components/Spinner/Spinner";
 
 const PreferencesPage = () => {
   const { isLoading } = useSelector(
@@ -9,9 +9,9 @@ const PreferencesPage = () => {
 
   if (isLoading)
     return (
-      <div className="flex flex-col gap-4 h-full w-full items-center justify-center">
-        <p className="text-xl font-semibold">Loading preferences...</p>
-        <Spinner />
+      <div className="scrollbar-variable flex h-full w-full flex-col items-center overflow-y-auto px-4 py-2">
+        <h2 className="mb-4 text-center text-2xl font-semibold">Preferences</h2>
+        <PreferencesPageSkeleton />
       </div>
     );
 

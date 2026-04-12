@@ -113,7 +113,8 @@ const VerificationCodeInput = ({
   };
 
   const inputClassName =
-    "h-12 w-10 sm:w-11 rounded-md border-2 bg-neutral-900 text-center text-lg font-semibold tabular-nums text-neutral-100 " +
+    "box-border h-18 w-16 rounded-lg border-[3px] bg-neutral-900 p-0 text-center text-2xl font-semibold tabular-nums leading-none text-neutral-100 " +
+    "md:h-12 md:w-11 md:rounded-md md:border-2 md:text-lg " +
     (errorText
       ? "border-red-500 "
       : "border-neutral-600 ") +
@@ -126,7 +127,7 @@ const VerificationCodeInput = ({
         Verification code
       </legend>
       <div
-        className="flex flex-wrap justify-center gap-2"
+        className="flex max-w-full flex-wrap justify-center gap-3 md:gap-2"
         role="group"
         aria-label="Verification code digits"
       >

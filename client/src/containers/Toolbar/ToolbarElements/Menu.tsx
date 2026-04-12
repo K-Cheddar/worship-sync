@@ -155,18 +155,17 @@ const ToolbarMenu = ({
       ),
       to: "/",
     },
+    {
+      element: (
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={SquarePen} color="#d1d5dc" />
+          Credits Editor
+        </div>
+      ),
+      to: "/credits-editor",
+    },
     ...(variant === "overlay"
-      ? [
-        {
-          element: (
-            <div className="flex items-center gap-2 max-md:min-h-12">
-              <Icon svg={SquarePen} color="#d1d5dc" />
-              Credits Editor
-            </div>
-          ),
-          to: "/credits-editor",
-        },
-      ]
+      ? []
       : access === "view"
         ? []
         : [

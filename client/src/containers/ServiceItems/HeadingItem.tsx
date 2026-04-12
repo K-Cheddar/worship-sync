@@ -120,7 +120,7 @@ const HeadingItem = ({
       style={style}
       onClick={(e) => onItemClick(item.listId, e)}
       className={cn(
-        "group flex items-center gap-1 border-b-2 overflow-hidden",
+        "flex items-center gap-1 border-b-2 overflow-hidden",
         "bg-black/40 border-t border-white/20 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]",
         isSelected && "ring-1 ring-inset ring-cyan-500/30",
         isSelected ? "border-l-cyan-500" : "border-transparent",
@@ -139,9 +139,6 @@ const HeadingItem = ({
                 e.stopPropagation();
                 onToggleCollapse();
               }}
-              className={cn(
-                "opacity-0 group-hover:opacity-100 transition-opacity",
-              )}
               title={isCollapsed ? "Expand" : "Collapse"}
               iconSize="sm"
             />
@@ -149,7 +146,7 @@ const HeadingItem = ({
               {...(canMutateOutline ? attributes : {})}
               {...(canMutateOutline ? listeners : {})}
               className={cn(
-                "truncate flex-1 px-2 py-2 text-center text-[11px] font-bold uppercase tracking-wider text-white",
+                "truncate flex-1 px-2 py-2 text-center text-[11px] font-semibold text-white",
                 canMutateOutline && "cursor-grab active:cursor-grabbing",
               )}
             >
@@ -163,9 +160,6 @@ const HeadingItem = ({
                   e.stopPropagation();
                   handleStartEdit();
                 }}
-                className={cn(
-                  "opacity-0 group-hover:opacity-100 transition-opacity",
-                )}
                 iconSize="sm"
                 title="Edit heading name"
               />

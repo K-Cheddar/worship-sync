@@ -28,6 +28,7 @@ import { createNewHeading, updateHeadingName } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
 import HeadingItem from "./HeadingItem";
 import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
+import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
 
 /** Matches LeftPanelButton link target (`/controller/${to}`) so keyboard nav is not relative to bible/songs/etc. */
@@ -390,9 +391,9 @@ const ServiceItems = () => {
   return (
     <ErrorBoundary>
       <DndContext onDragEnd={onDragEnd} sensors={sensors}>
-        <h3 className="border-b-2 border-white/25 bg-black/55 px-3 py-2.5 text-center text-xs font-bold uppercase tracking-widest text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
-          Outline
-        </h3>
+        <div className="min-h-0 border-b-2 border-white/25 bg-black/55 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
+          <Outlines servicePanel className="w-full min-w-0" />
+        </div>
         {selectedList && access === "full" && (
           <Button
             svg={Plus}

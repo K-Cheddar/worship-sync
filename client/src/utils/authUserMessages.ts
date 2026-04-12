@@ -3,6 +3,8 @@
  * Maps Firebase and API errors to calm, actionable messages.
  */
 
+import { INVALID_EMAIL_FORMAT_MESSAGE } from "./emailFormat";
+
 const DEFAULT_SIGN_IN =
   "Could not sign in. Check your email and password, then try again.";
 
@@ -18,8 +20,7 @@ const DEFAULT_FORGOT_PASSWORD =
   "Could not send the reset email. Try again in a moment.";
 
 const FIREBASE_AUTH_MESSAGES: Record<string, string> = {
-  "auth/invalid-email":
-    "That email address does not look valid. Check it and try again.",
+  "auth/invalid-email": INVALID_EMAIL_FORMAT_MESSAGE,
   "auth/invalid-credential": DEFAULT_SIGN_IN,
   "auth/wrong-password": DEFAULT_SIGN_IN,
   "auth/user-not-found": DEFAULT_SIGN_IN,

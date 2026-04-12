@@ -14,9 +14,20 @@ import {
   Bold,
   Italic,
   Eraser,
+  ChevronDown,
 } from "lucide-react";
 import Input from "../../../components/Input/Input";
-import { useEffect, useState, useCallback, useRef, useContext } from "react";
+import {
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useContext,
+  useMemo,
+  memo,
+  type CSSProperties,
+  type MutableRefObject,
+} from "react";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useLocation } from "react-router-dom";
 import {
@@ -40,19 +51,165 @@ import RadioButton, {
 import { iconColorMap } from "../../../utils/itemTypeMaps";
 import { formatFree } from "../../../utils/overflow";
 import { GlobalInfoContext } from "../../../context/globalInfo";
-import { DEFAULT_FONT_PX, FONT_SIZE_BUTTON_STEP } from "../../../constants";
+import {
+  DEFAULT_FONT_PX,
+  FONT_SIZE_BUTTON_STEP,
+  FONT_SIZE_PRESETS,
+} from "../../../constants";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../../components/ui/DropdownMenu";
 import {
   cleanItemNewlines,
   itemHasCleanableNewlines,
 } from "../../../utils/itemNewlineCleanup";
 import { BrandAwareColorPicker } from "../../../components/ColorField/ColorField";
+import { cn } from "../../../utils/cnHelper";
 
 const MIN_FONT_PX = 25;
 const MAX_FONT_PX = 500;
+/** Radix aligns the menu to the chevron trigger; Input places it at `right-1.5` (6px) inset from the field edge. Negative offset shifts the menu toward the end (right) to match the input box. */
+const FONT_PRESET_MENU_ALIGN_OFFSET_PX = -6;
 
 function clampFontSize(n: number): number {
   return Math.round(Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, n)));
 }
+
+function nearestPresetFontSize(px: number): number {
+  const clamped = clampFontSize(px);
+  let best = FONT_SIZE_PRESETS[0]!;
+  let bestDist = Infinity;
+  for (const p of FONT_SIZE_PRESETS) {
+    const d = Math.abs(p - clamped);
+    if (d < bestDist) {
+      bestDist = d;
+      best = p;
+    }
+  }
+  return best;
+}
+
+type SlideToolbarFontSizeFieldProps = {
+  value: number | string;
+  fontPresetHighlight: number;
+  scrollbarWidth: string;
+  fontSizeDebounceRef: MutableRefObject<NodeJS.Timeout | null>;
+  onChange: (val: string) => void;
+  onBlur: () => void;
+  onPresetSelect: (px: number) => void;
+};
+
+/** Isolated state for preset menu open/scroll so opening the menu does not re-render all of SlideEditTools. */
+const SlideToolbarFontSizeField = memo(function SlideToolbarFontSizeField({
+  value,
+  fontPresetHighlight,
+  scrollbarWidth,
+  fontSizeDebounceRef,
+  onChange,
+  onBlur,
+  onPresetSelect,
+}: SlideToolbarFontSizeFieldProps) {
+  const fontPresetListScrollRef = useRef<HTMLDivElement>(null);
+
+  /** No React state on open — avoids re-rendering this tree when the menu opens (Radix sets `data-state` on the trigger). */
+  const handleFontPresetMenuOpenChange = useCallback((open: boolean) => {
+    if (!open) return;
+    requestAnimationFrame(() => {
+      fontPresetListScrollRef.current
+        ?.querySelector<HTMLElement>("[data-preset-selected=\"true\"]")
+        ?.scrollIntoView({ block: "center", behavior: "auto" });
+    });
+  }, []);
+
+  const handlePresetSelect = useCallback(
+    (px: number) => {
+      if (fontSizeDebounceRef.current) {
+        clearTimeout(fontSizeDebounceRef.current);
+        fontSizeDebounceRef.current = null;
+      }
+      onPresetSelect(px);
+    },
+    [fontSizeDebounceRef, onPresetSelect],
+  );
+
+  return (
+    <Input
+      label="Font Size"
+      type="text"
+      inputMode="numeric"
+      value={typeof value === "string" ? value : String(value)}
+      onChange={(val) => onChange(val as string)}
+      onBlur={onBlur}
+      className={cn(
+        "w-20 shrink-0 max-md:w-24",
+        "[&:has([data-state=open])_input]:rounded-t-md [&:has([data-state=open])_input]:rounded-b-none",
+      )}
+      inputTextSize="text-sm"
+      hideLabel
+      data-ignore-undo="true"
+      min={MIN_FONT_PX}
+      max={MAX_FONT_PX}
+      numericArrowStep={FONT_SIZE_BUTTON_STEP}
+      numericArrowEmptyBase={DEFAULT_FONT_PX}
+      endAdornment={
+        <DropdownMenu
+          modal={false}
+          onOpenChange={handleFontPresetMenuOpenChange}
+        >
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="tertiary"
+              className="inline-flex h-7 w-7 min-h-0 max-md:min-h-0 shrink-0 items-center justify-center"
+              padding="p-0.5"
+              svg={ChevronDown}
+              iconSize="sm"
+              aria-label="Font size presets"
+            />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            sideOffset={0}
+            alignOffset={FONT_PRESET_MENU_ALIGN_OFFSET_PX}
+            className="box-border flex max-h-[min(18rem,55vh)] w-20 max-w-20 min-w-0 flex-col overflow-hidden rounded-b-md rounded-t-none border border-neutral-700 border-t-neutral-600 bg-neutral-900 p-0 text-neutral-100 shadow-none max-md:w-24 max-md:max-w-24"
+          >
+            <div
+              ref={fontPresetListScrollRef}
+              className="scrollbar-portal min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1"
+              style={
+                {
+                  "--scrollbar-width": scrollbarWidth,
+                } as CSSProperties
+              }
+            >
+              {FONT_SIZE_PRESETS.map((px) => {
+                const isSelected = px === fontPresetHighlight;
+                return (
+                  <DropdownMenuItem
+                    key={px}
+                    data-preset-selected={isSelected || undefined}
+                    className={cn(
+                      "justify-center px-1.5 py-1 text-xs tabular-nums",
+                      isSelected
+                        ? "bg-cyan-950/70 font-medium text-cyan-50 ring-1 ring-cyan-500/35 ring-inset hover:bg-cyan-950/80 focus:bg-cyan-950/80 data-highlighted:bg-cyan-950/80 data-highlighted:text-cyan-50"
+                        : "text-neutral-100 hover:bg-neutral-800 hover:text-neutral-100 focus:bg-neutral-800 focus:text-neutral-100 data-highlighted:bg-neutral-800 data-highlighted:text-neutral-100",
+                    )}
+                    onSelect={() => handlePresetSelect(px)}
+                  >
+                    {px}
+                  </DropdownMenuItem>
+                );
+              })}
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      }
+    />
+  );
+});
 
 const SlideEditTools = ({ className }: { className?: string }) => {
   const location = useLocation();
@@ -76,6 +233,10 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const brandColors = globalInfo?.churchBranding.colors || [];
 
   const item = useSelector((state) => state.undoable.present.item);
+  const scrollbarWidth = useSelector(
+    (state) =>
+      state.undoable.present.preferences?.scrollbarWidth ?? "thin"
+  );
   const { slides, selectedSlide, selectedBox, timerInfo, type } = item;
   const { timers } = useSelector((state) => state.timers);
 
@@ -322,6 +483,20 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     });
   }, [item, runWithFormatting, updateItem]);
 
+  const currentFontPx = useMemo(() => {
+    const raw =
+      typeof fontSize === "number"
+        ? fontSize
+        : parseInt(String(fontSize).trim(), 10);
+    if (Number.isFinite(raw)) return clampFontSize(raw);
+    return slide?.boxes?.[selectedBox]?.fontSize ?? DEFAULT_FONT_PX;
+  }, [fontSize, slide, selectedBox]);
+
+  const fontPresetHighlight = useMemo(
+    () => nearestPresetFontSize(currentFontPx),
+    [currentFontPx]
+  );
+
   if (!location.pathname.includes("controller/item") || !slide) {
     return null;
   }
@@ -343,19 +518,14 @@ const SlideEditTools = ({ className }: { className?: string }) => {
             _updateFontSize(num - FONT_SIZE_BUTTON_STEP);
           }}
         />
-        <Input
-          label="Font Size"
-          type="text"
-          inputMode="numeric"
-          value={
-            typeof fontSize === "string" ? fontSize : String(fontSize)
-          }
-          onChange={(val) => handleFontSizeChange(val as string)}
+        <SlideToolbarFontSizeField
+          value={fontSize}
+          fontPresetHighlight={fontPresetHighlight}
+          scrollbarWidth={scrollbarWidth}
+          fontSizeDebounceRef={fontSizeDebounceRef}
+          onChange={handleFontSizeChange}
           onBlur={handleFontSizeBlur}
-          className="w-10 max-md:w-12"
-          inputTextSize="text-xs"
-          hideLabel
-          data-ignore-undo="true"
+          onPresetSelect={applyFontSize}
         />
         <Button
           svg={Plus}
@@ -539,7 +709,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           isLoading={isCleaningNewlines}
           disabled={isCleaningNewlines}
         >
-          Clean Newlines
+          Remove Blank Lines
         </Button>
       )}
       <Button svg={ALargeSmall} iconSize="lg" className="invisible" />

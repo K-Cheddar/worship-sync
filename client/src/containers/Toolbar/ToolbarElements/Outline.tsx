@@ -22,6 +22,8 @@ type ServiceProps = {
   isSelected: boolean;
   isActive: boolean;
   canEdit: boolean;
+  /** Service-column popover list styling (vs toolbar popover). */
+  panel?: boolean;
 };
 
 const Service = ({
@@ -34,13 +36,16 @@ const Service = ({
   isSelected,
   isActive,
   canEdit,
+  panel = false,
 }: ServiceProps) => {
   const [name, setName] = useState<string>(list.name);
   const [isCopying, setIsCopying] = useState(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
-  const nameClasses =
-    "text-base min-w-0 flex-1 shrink mr-2 pl-2 max-w-64 max-lg:max-w-48 truncate";
+  const nameClasses = cn(
+    "min-w-0 flex-1 shrink mr-2 pl-2 max-w-64 max-lg:max-w-48 truncate",
+    panel ? "text-sm" : "text-base",
+  );
 
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
@@ -84,9 +89,12 @@ const Service = ({
       />
       <li
         className={cn(
-          "p-1 hover:bg-gray-800 rounded-md flex gap-1 items-center border-2",
-          isSelected && "bg-gray-800",
-          isActive ? "border-cyan-500" : "border-transparent"
+          "flex min-w-0 items-center gap-1 rounded-md border-2 p-1",
+          panel
+            ? "hover:bg-gray-700/90"
+            : "hover:bg-gray-800",
+          isSelected && (panel ? "bg-gray-700" : "bg-gray-800"),
+          isActive ? "border-cyan-500" : "border-transparent",
         )}
         {...attributes}
         {...listeners}
@@ -119,7 +127,7 @@ const Service = ({
           />
         )}
         {canEdit && (
-          <>
+          <span className="flex shrink-0 items-center gap-0.5">
             <Button
               svg={isEditing ? Check : SquarePen}
               variant="tertiary"
@@ -159,7 +167,7 @@ const Service = ({
               svg={Trash2}
               onClick={() => setShowDeleteModal(true)}
             />
-          </>
+          </span>
         )}
       </li>
     </>

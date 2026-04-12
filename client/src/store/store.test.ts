@@ -23,7 +23,10 @@ const createScreenPresentation = (
   displayType,
   name: `${displayType}-presentation`,
   type: "slide",
-  slide: createScreenSlide(`${displayType}-slide-${time}`, `${displayType}-${time}`),
+  slide: createScreenSlide(
+    `${displayType}-slide-${time}`,
+    `${displayType}-${time}`,
+  ),
   time,
   ...overrides,
 });
@@ -40,7 +43,11 @@ const loadStoreWithPresentationSync = () => {
       globalBroadcastRef: undefined,
     }));
     jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: { db: "firebase-db", database: "main", churchId: "church-main" },
+      globalFireDbInfo: {
+        db: "firebase-db",
+        database: "main",
+        churchId: "church-main",
+      },
       globalHostId: "host-123",
     }));
     jest.doMock("firebase/database", () => ({
@@ -390,7 +397,9 @@ describe("store module", () => {
     store.dispatch({ type: storeModule.CREDITS_EDITOR_PAGE_READY });
     jest.runAllTimers();
 
-    store.dispatch(overlaysSlice.actions.initiateOverlayList([overlayA, overlayB]));
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([overlayA, overlayB]),
+    );
     store.dispatch({ type: "@@redux-undo/CLEAR_HISTORY" });
     store.dispatch(overlaySlice.actions.selectOverlay(overlayA));
 
@@ -514,7 +523,9 @@ describe("store module", () => {
     store.dispatch({ type: storeModule.CREDITS_EDITOR_PAGE_READY });
     jest.runAllTimers();
 
-    store.dispatch(overlaysSlice.actions.initiateOverlayList([overlayA, overlayB]));
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([overlayA, overlayB]),
+    );
     store.dispatch({ type: "@@redux-undo/CLEAR_HISTORY" });
     store.dispatch(overlaySlice.actions.selectOverlay(overlayB));
 
@@ -544,6 +555,60 @@ describe("store module", () => {
     expect(state.overlays.list).toEqual([
       expect.objectContaining({ id: "overlay-a", name: "Alpha" }),
     ]);
+  });
+
+  it("clears overlay pending-update after deleting the currently selected overlay", async () => {
+    jest.useFakeTimers();
+
+    let storeModule: any;
+    let overlaySliceModule: any;
+    let overlaysSliceModule: any;
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: undefined,
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      overlaySliceModule = require("./overlaySlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      overlaysSliceModule = require("./overlaysSlice");
+    });
+
+    const store = storeModule.default;
+    const { overlaySlice } = overlaySliceModule;
+    const { overlaysSlice } = overlaysSliceModule;
+
+    const overlayA = createOverlay("overlay-a", "Alpha");
+    const overlayB = createOverlay("overlay-b", "Beta");
+
+    store.dispatch({ type: storeModule.CREDITS_EDITOR_PAGE_READY });
+    jest.runAllTimers();
+
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([overlayA, overlayB]),
+    );
+    store.dispatch(overlaySlice.actions.selectOverlay(overlayB));
+    store.dispatch(overlaysSlice.actions.deleteOverlayFromList("overlay-b"));
+    store.dispatch(overlaySlice.actions.deleteOverlay("overlay-b"));
+
+    jest.runAllTimers();
+    await flushListenerEffects();
+
+    const state = store.getState().undoable.present.overlay;
+    expect(state.selectedOverlay).toBeUndefined();
+    expect(state.hasPendingUpdate).toBe(false);
   });
 
   it("keeps the selected overlay current when undoing a multi-overlay formatting change", async () => {
@@ -585,11 +650,14 @@ describe("store module", () => {
     store.dispatch({ type: storeModule.CREDITS_EDITOR_PAGE_READY });
     jest.runAllTimers();
 
-    store.dispatch(overlaysSlice.actions.initiateOverlayList([overlayA, overlayB]));
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([overlayA, overlayB]),
+    );
     store.dispatch({ type: "@@redux-undo/CLEAR_HISTORY" });
     store.dispatch(overlaySlice.actions.selectOverlay(overlayB));
 
-    const selectedBeforeUpdate = store.getState().undoable.present.overlay.selectedOverlay;
+    const selectedBeforeUpdate =
+      store.getState().undoable.present.overlay.selectedOverlay;
     const updatedFormatting = {
       ...selectedBeforeUpdate.formatting,
       backgroundColor: "#123456",
@@ -622,9 +690,9 @@ describe("store module", () => {
     expect(state.overlay.selectedOverlay).toEqual(
       expect.objectContaining({ id: "overlay-b" }),
     );
-    expect(
-      state.overlay.selectedOverlay?.formatting?.backgroundColor,
-    ).not.toBe("#123456");
+    expect(state.overlay.selectedOverlay?.formatting?.backgroundColor).not.toBe(
+      "#123456",
+    );
     expect(
       state.overlays.list.find((overlay: any) => overlay.id === "overlay-a")
         ?.formatting?.backgroundColor,
@@ -682,7 +750,9 @@ describe("store module", () => {
       },
     });
 
-    store.dispatch(itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }));
+    store.dispatch(
+      itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }),
+    );
     store.dispatch(itemSlice.actions.setIsEditMode(true));
     store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
     await flushListenerEffects();
@@ -698,6 +768,58 @@ describe("store module", () => {
         background: "background-b.jpg",
       }),
     );
+  });
+
+  it("does not buffer when refreshed doc matches local editor state (sync echo)", async () => {
+    let storeModule: any;
+    let itemSliceModule: any;
+    let allDocsSliceModule: any;
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: undefined,
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemSliceModule = require("./itemSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      allDocsSliceModule = require("./allDocsSlice");
+    });
+
+    const store = storeModule.default;
+    const { itemSlice } = itemSliceModule;
+    const { allDocsSlice } = allDocsSliceModule;
+
+    const baseDoc = createSongDoc();
+    const remoteDoc = createSongDoc({
+      background: "background-b.jpg",
+      _rev: "2-rev",
+      updatedAt: "2026-04-01T12:00:00.000Z",
+    });
+
+    store.dispatch(
+      itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }),
+    );
+    store.dispatch(itemSlice.actions.setBackground("background-b.jpg"));
+    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    await flushListenerEffects();
+
+    const state = store.getState().undoable.present.item;
+    expect(state.background).toBe("background-b.jpg");
+    expect(state.hasRemoteUpdate).toBe(false);
+    expect(state.pendingRemoteItem).toBeNull();
   });
 
   it("applies refreshed remote docs immediately when the active item is not dirty", async () => {
@@ -992,11 +1114,7 @@ describe("store module", () => {
     });
 
     store.dispatch(itemSlice.actions.setActiveItem(timerItem));
-    store.dispatch(
-      timersSlice.actions.syncTimers([
-        timerItem.timerInfo,
-      ]),
-    );
+    store.dispatch(timersSlice.actions.syncTimers([timerItem.timerInfo]));
     await flushListenerEffects();
 
     jest.setSystemTime(new Date("2026-04-05T12:00:02.000Z"));
@@ -1045,7 +1163,7 @@ describe("store module", () => {
             showMinutesOnly: false,
           },
         ],
-      })
+      }),
     );
     const refMock = jest.fn((_db: unknown, path: string) => path);
     const removeItemSpy = jest.spyOn(Storage.prototype, "removeItem");
@@ -1056,7 +1174,11 @@ describe("store module", () => {
         globalBroadcastRef: undefined,
       }));
       jest.doMock("../context/globalInfo", () => ({
-        globalFireDbInfo: { db: "firebase-db", database: "main", churchId: "church-main" },
+        globalFireDbInfo: {
+          db: "firebase-db",
+          database: "main",
+          churchId: "church-main",
+        },
         globalHostId: "host-123",
       }));
       jest.doMock("firebase/database", () => ({
@@ -1102,7 +1224,7 @@ describe("store module", () => {
           endTime: new Date(0).toISOString(),
           showMinutesOnly: false,
         },
-      ])
+      ]),
     );
     await waitForListenerDelay();
 
@@ -1113,17 +1235,14 @@ describe("store module", () => {
     expect(getMock).toHaveBeenCalled();
     expect(refMock).toHaveBeenCalledWith(
       "firebase-db",
-      "churches/church-main/data/timers"
-    );
-    expect(setMock).toHaveBeenCalledWith(
       "churches/church-main/data/timers",
-      [
-        expect.objectContaining({
-          id: "timer-2",
-          hostId: "remote-host",
-        }),
-      ]
     );
+    expect(setMock).toHaveBeenCalledWith("churches/church-main/data/timers", [
+      expect.objectContaining({
+        id: "timer-2",
+        hostId: "remote-host",
+      }),
+    ]);
   });
 
   it("writes projector, monitor, and stream snapshots to Firebase and localStorage", () => {
@@ -1199,7 +1318,8 @@ describe("store module", () => {
   });
 
   it("pushes a presentation snapshot after a local projector update", async () => {
-    const { store, presentationSlice, setMock } = loadStoreWithPresentationSync();
+    const { store, presentationSlice, setMock } =
+      loadStoreWithPresentationSync();
 
     store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
     setMock.mockClear();
@@ -1223,7 +1343,8 @@ describe("store module", () => {
   });
 
   it("pushes the current stream snapshot when stream transmission turns on", async () => {
-    const { store, presentationSlice, setMock } = loadStoreWithPresentationSync();
+    const { store, presentationSlice, setMock } =
+      loadStoreWithPresentationSync();
 
     store.dispatch(
       presentationSlice.actions.updateStreamFromRemote(

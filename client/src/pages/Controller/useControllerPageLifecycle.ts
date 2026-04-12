@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useRef } from "react";
+import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   initiateAllItemsList,
@@ -33,6 +34,11 @@ import {
   getOverlaysByIds,
   updateAllDocs,
 } from "../../utils/dbUtils";
+import {
+  mergeRemoteOverlayListWithLocalBuffer,
+  syncSelectedOverlayFromRemote,
+  type OverlaySyncRootSlice,
+} from "../../utils/overlayRemoteSync";
 import { useMediaCache } from "../../hooks/useMediaCache";
 import { getMediaUrlsFromMediaDoc } from "../../utils/mediaCacheUtils";
 import {
@@ -65,28 +71,29 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
  */
 export const useControllerPageLifecycle = () => {
   const dispatch = useDispatch();
+  const store = useStore();
   const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
   const { access, refreshPresentationListeners } =
     useContext(GlobalInfoContext) || {};
 
   const selectedList = useSelector(
-    (state) => state.undoable.present.itemLists.selectedList
+    (state) => state.undoable.present.itemLists.selectedList,
   );
   const activeList = useSelector(
-    (state) => state.undoable.present.itemLists.activeList
+    (state) => state.undoable.present.itemLists.activeList,
   );
   const allControllerSlicesInitialized = useSelector((state: RootState) =>
     Boolean(
       state.allItems.isInitialized &&
-        state.undoable.present.preferences.isInitialized &&
-        state.undoable.present.itemList.isInitialized &&
-        state.undoable.present.overlays.isInitialized &&
-        state.undoable.present.itemLists.isInitialized &&
-        state.media.isInitialized &&
-        (state.undoable.present.overlayTemplates as { isInitialized: boolean })
-          .isInitialized
-    )
+      state.undoable.present.preferences.isInitialized &&
+      state.undoable.present.itemList.isInitialized &&
+      state.undoable.present.overlays.isInitialized &&
+      state.undoable.present.itemLists.isInitialized &&
+      state.media.isInitialized &&
+      (state.undoable.present.overlayTemplates as { isInitialized: boolean })
+        .isInitialized,
+    ),
   );
 
   const hasDispatchedControllerPageReady = useRef(false);
@@ -105,11 +112,28 @@ export const useControllerPageLifecycle = () => {
             const overlaysIds = update.overlays || [];
             if (cloud) {
               dispatch(
-                updateItemListFromRemote(formatItemList(itemList, cloud))
+                updateItemListFromRemote(formatItemList(itemList, cloud)),
               );
             }
             const formattedOverlays = await getOverlaysByIds(db!, overlaysIds);
-            dispatch(updateOverlayListFromRemote(formattedOverlays));
+            const mergedList = mergeRemoteOverlayListWithLocalBuffer(
+              formattedOverlays,
+              store.getState as () => OverlaySyncRootSlice,
+            );
+            dispatch(updateOverlayListFromRemote(mergedList));
+            const selectedOverlayId =
+              (store.getState() as OverlaySyncRootSlice).undoable.present.overlay
+                .selectedOverlay?.id;
+            if (selectedOverlayId) {
+              const match = mergedList.find((o) => o.id === selectedOverlayId);
+              if (match) {
+                syncSelectedOverlayFromRemote(
+                  dispatch,
+                  store.getState as () => OverlaySyncRootSlice,
+                  match,
+                );
+              }
+            }
           }
           if (_update._id === "allItems") {
             const update = _update as DBAllItems;
@@ -128,7 +152,7 @@ export const useControllerPageLifecycle = () => {
         console.error(e);
       }
     },
-    [dispatch, cloud, selectedList, db]
+    [dispatch, cloud, selectedList, db, store],
   );
 
   useGlobalBroadcast(updateAllItemsAndListFromExternal);
@@ -147,7 +171,7 @@ export const useControllerPageLifecycle = () => {
         console.error(e);
       }
     },
-    [dispatch]
+    [dispatch],
   );
 
   useGlobalBroadcast(updatePreferencesFromExternal);
@@ -171,7 +195,7 @@ export const useControllerPageLifecycle = () => {
       });
       resizeObserver.observe(node);
     },
-    [setIsMobile, setIsPhone]
+    [setIsMobile, setIsPhone],
   );
 
   useEffect(() => {
@@ -213,7 +237,7 @@ export const useControllerPageLifecycle = () => {
           initiatePreferences({
             preferences: preferences.preferences,
             isMusic: access === "music",
-          })
+          }),
         );
         dispatch(initiateQuickLinks(preferences.quickLinks));
         dispatch(initiateMonitorSettings(preferences.monitorSettings));
@@ -281,7 +305,7 @@ export const useControllerPageLifecycle = () => {
         if (urlArray.length > 0) {
           const result = await electronAPI.syncMediaCache(urlArray);
           console.log(
-            `Media cache sync: ${result.downloaded} downloaded, ${result.cleaned} cleaned`
+            `Media cache sync: ${result.downloaded} downloaded, ${result.cleaned} cleaned`,
           );
         } else {
           await electronAPI.syncMediaCache([]);
@@ -302,7 +326,7 @@ export const useControllerPageLifecycle = () => {
       dispatch(setItemListIsLoading(true));
       try {
         const response: DBItemListDetails | undefined = await db.get(
-          selectedList._id
+          selectedList._id,
         );
         const itemList = response?.items || [];
         const overlayIds = response?.overlays || [];

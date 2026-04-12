@@ -1,5 +1,9 @@
 import { configureStore } from "@reduxjs/toolkit";
-import { creditsSlice } from "./creditsSlice";
+import {
+  applyRemoveLineFromCreditsHistoryMap,
+  creditsSlice,
+  flattenCreditsHistoryLines,
+} from "./creditsSlice";
 import { createCreditsInfo } from "../test/fixtures";
 import type { CreditsInfo } from "../types";
 
@@ -33,6 +37,38 @@ const createStore = (preloadedState?: Partial<CreditsSliceState>) =>
   });
 
 describe("creditsSlice", () => {
+  describe("flattenCreditsHistoryLines and applyRemoveLineFromCreditsHistoryMap", () => {
+    it("flattenCreditsHistoryLines merges all headings and dedupes by trimmed case", () => {
+      expect(
+        flattenCreditsHistoryLines({
+          A: ["  Zed ", "Bob"],
+          B: ["bob", "Ann"],
+        }),
+      ).toEqual(["Ann", "Bob", "Zed"]);
+    });
+
+    it("applyRemoveLineFromCreditsHistoryMap removes a line from every heading", () => {
+      const before = {
+        A: ["X", "Shared"],
+        B: ["Shared", "Y"],
+      };
+      const after = applyRemoveLineFromCreditsHistoryMap(before, "Shared");
+      expect(after).toEqual({ A: ["X"], B: ["Y"] });
+    });
+
+    it("applyRemoveLineFromCreditsHistoryMap drops a heading when it becomes empty", () => {
+      const before = { Only: ["gone"] };
+      const after = applyRemoveLineFromCreditsHistoryMap(before, "gone");
+      expect(after).toEqual({});
+    });
+
+    it("applyRemoveLineFromCreditsHistoryMap returns same reference when nothing matches", () => {
+      const before = { A: ["X"] };
+      const after = applyRemoveLineFromCreditsHistoryMap(before, "Nope");
+      expect(after).toBe(before);
+    });
+  });
+
   describe("reducer only", () => {
     it("selectCredit sets selectedCreditId", () => {
       const store = createStore();
@@ -171,6 +207,21 @@ describe("creditsSlice", () => {
       expect(store.getState().credits.creditsHistory).toEqual({
         Sermon: ["X", "Y", "Z"],
         Invocation: ["B"],
+      });
+    });
+
+    it("removeCreditsHistoryLineEverywhere removes a line from all headings", () => {
+      const store = createStore({
+        credits: {
+          ...creditsSlice.getInitialState(),
+          creditsHistory: { "Sermon": ["Dup"], "Invocation": ["Dup", "Keep"] },
+        },
+      });
+      store.dispatch(
+        creditsSlice.actions.removeCreditsHistoryLineEverywhere("Dup"),
+      );
+      expect(store.getState().credits.creditsHistory).toEqual({
+        Invocation: ["Keep"],
       });
     });
 

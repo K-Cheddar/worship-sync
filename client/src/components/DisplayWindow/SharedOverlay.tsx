@@ -333,6 +333,7 @@ const SharedOverlay = forwardRef<HTMLDivElement, SharedOverlayProps>(
         className={cn(getContainerClass())}
         style={{
           position: "absolute",
+          zIndex: isPrev ? 2 : undefined,
           ...getSharedStyles(styles as OverlayChild, "left", true),
           ...positionOverrides,
           // Override specific properties for container

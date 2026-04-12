@@ -106,7 +106,7 @@ const AppEntry = () => {
               </p>
               <p className="mt-1 text-yellow-100/90">
                 {hasStoredServerSession
-                  ? "This device may already be signed in or linked, but WorshipSync needs a connection to confirm it. You can retry or use the offline demo on this device."
+                  ? "WorshipSync can't verify this device with your church right now. You can retry or use the offline demo on this device."
                   : "Sign-in and device linking need a connection. You can still use the offline demo on this device."}
               </p>
               {authServerStatus === "offline" ? (

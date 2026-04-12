@@ -179,7 +179,33 @@ if (process.env.NODE_ENV === "production" && !firebaseRuntime?.db) {
   );
 }
 
-const resendFromEmail = process.env.RESEND_FROM_EMAIL || null;
+/** Display name for Resend "from" when RESEND_FROM_EMAIL is a bare address. Set to "" to omit. */
+const formatResendDisplayName = (name) => {
+  const s = String(name).trim();
+  if (!s) return "";
+  if (/[",<>]/.test(s)) {
+    return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+  return s;
+};
+
+const buildResendFrom = () => {
+  const addr = process.env.RESEND_FROM_EMAIL?.trim();
+  if (!addr) return null;
+  if (addr.includes("<") && addr.includes(">")) {
+    return addr;
+  }
+  const nameRaw = process.env.RESEND_FROM_NAME;
+  const display = formatResendDisplayName(
+    nameRaw === undefined ? "WorshipSync" : nameRaw,
+  );
+  if (!display) {
+    return addr;
+  }
+  return `${display} <${addr}>`;
+};
+
+const resendFromEmail = buildResendFrom();
 const resendWebhookSecret = process.env.RESEND_WEBHOOK_SECRET || null;
 const resendClient =
   process.env.RESEND_API_KEY && resendFromEmail
@@ -2132,10 +2158,7 @@ const requireAdminSession = async (req, churchId) => {
 
 const requireRealtimeDatabase = () => {
   if (!firebaseRuntime?.rtdb) {
-    throw httpError(
-      503,
-      "Realtime Database is not configured on the server.",
-    );
+    throw httpError(503, "Realtime Database is not configured on the server.");
   }
   return firebaseRuntime.rtdb;
 };

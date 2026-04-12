@@ -155,14 +155,14 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Invited User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
     await user.click(screen.getByRole("button", { name: /^accept invite$/i }));
 
     await waitFor(() => {
       expect(createUserWithEmailAndPasswordMock).toHaveBeenCalledWith(
         mockAuth,
         "invited@example.com",
-        "secret-pass",
+        "Secret-pass1!",
       );
     });
     await waitFor(() => {
@@ -205,7 +205,7 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Wrong User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
     await user.click(
       screen.getByRole("button", { name: /^accept invite$/i }),
     );
@@ -214,7 +214,7 @@ describe("InviteAccept", () => {
       expect(createUserWithEmailAndPasswordMock).toHaveBeenCalledWith(
         mockAuth,
         "invited@example.com",
-        "secret-pass",
+        "Secret-pass1!",
       );
     });
     await waitFor(() => {
@@ -249,7 +249,7 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Invited User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
     await user.click(
       screen.getByRole("button", { name: /^accept invite$/i }),
     );
@@ -294,7 +294,7 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Invited User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
     await user.click(
       screen.getByRole("button", { name: /^accept invite$/i }),
     );
@@ -387,7 +387,7 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Invited User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
     await user.click(
       screen.getByRole("button", { name: /^accept invite$/i }),
     );
@@ -427,7 +427,7 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Invited User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass{Enter}");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!{Enter}");
 
     await waitFor(() => {
       expect(createUserWithEmailAndPasswordMock).toHaveBeenCalled();

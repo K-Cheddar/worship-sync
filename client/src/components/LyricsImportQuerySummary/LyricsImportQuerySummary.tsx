@@ -37,7 +37,7 @@ export const LyricsImportQuerySummary = ({
   }
 
   return (
-    <div className="rounded-md border border-neutral-600/90 bg-neutral-950/35 p-3">
+    <div className="rounded-md bg-neutral-950/35 p-3">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
         Your search
       </p>
