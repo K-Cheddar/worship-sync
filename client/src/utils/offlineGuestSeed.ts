@@ -317,6 +317,7 @@ export const createOfflineGuestSeedDocs = (now = new Date().toISOString()) => {
       preferences: defaultPreferences,
       quickLinks: [],
       monitorSettings: defaultMonitorSettings,
+      mediaRouteFolders: {},
       createdAt: now,
       updatedAt: now,
       docType: "preferences",
@@ -324,6 +325,7 @@ export const createOfflineGuestSeedDocs = (now = new Date().toISOString()) => {
     {
       _id: "media",
       list: [],
+      folders: [],
       createdAt: now,
       updatedAt: now,
       docType: "media",

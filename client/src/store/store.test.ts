@@ -358,6 +358,79 @@ describe("store module", () => {
     expect(state.isSectionLoading).toBe(false);
   });
 
+  it("preserves slide selection but clears background-target UI on item undo/redo", async () => {
+    jest.useFakeTimers();
+
+    let storeModule: any;
+    let itemSliceModule: any;
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: { db: undefined, database: undefined },
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemSliceModule = require("./itemSlice");
+    });
+
+    const store = storeModule.default;
+    const { itemSlice } = itemSliceModule;
+
+    store.dispatch({ type: storeModule.CREDITS_EDITOR_PAGE_READY });
+    jest.runAllTimers();
+
+    const slides = [
+      { id: "s1", name: "V1", type: "Verse", boxes: [{ words: "a" }] },
+      { id: "s2", name: "C", type: "Chorus", boxes: [{ words: "b" }] },
+      { id: "s3", name: "V2", type: "Verse", boxes: [{ words: "c" }] },
+    ];
+    store.dispatch(
+      itemSlice.actions.setActiveItem({
+        ...createSongDoc(),
+        arrangements: [{ name: "A", slides }],
+        slides: [],
+      }),
+    );
+    store.dispatch(itemSlice.actions._setName("Edited Name"));
+    store.dispatch(itemSlice.actions.setSelectedSlide(2));
+    store.dispatch(itemSlice.actions.toggleBackgroundTargetSlideId("s2"));
+    store.dispatch(itemSlice.actions.setBackgroundTargetRangeAnchorId("s1"));
+    store.dispatch(itemSlice.actions.setMobileBackgroundTargetSelectMode(true));
+
+    expect(store.getState().undoable.past).toHaveLength(1);
+
+    store.dispatch({ type: "@@redux-undo/UNDO" });
+    await Promise.resolve();
+
+    let item = store.getState().undoable.present.item;
+    expect(item.name).toBe("Song 1");
+    expect(item.selectedSlide).toBe(2);
+    expect(item.backgroundTargetSlideIds).toEqual([]);
+    expect(item.backgroundTargetRangeAnchorId).toBeNull();
+    expect(item.mobileBackgroundTargetSelectMode).toBe(false);
+
+    store.dispatch({ type: "@@redux-undo/REDO" });
+    await Promise.resolve();
+
+    item = store.getState().undoable.present.item;
+    expect(item.name).toBe("Edited Name");
+    expect(item.selectedSlide).toBe(2);
+    expect(item.backgroundTargetSlideIds).toEqual([]);
+    expect(item.backgroundTargetRangeAnchorId).toBeNull();
+    expect(item.mobileBackgroundTargetSelectMode).toBe(false);
+  });
+
   it("keeps overlay undo focused on the overlay whose edit was undone", async () => {
     jest.useFakeTimers();
 

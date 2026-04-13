@@ -21,6 +21,7 @@ import {
   migrateFontSizesToDefaults,
   migrateFontSizesToPixels,
   migrateLegacyCreditsToActiveOutlineIfNeeded,
+  migrateMediaLibraryFoldersFieldIfNeeded,
   putCreditDoc,
   putCreditHistoryDocs,
   putOverlayHistoryDoc,
@@ -649,5 +650,40 @@ describe("dbUtils", () => {
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "list-1", docType: "itemListDetails" }),
     );
+  });
+
+  it("migrateMediaLibraryFoldersFieldIfNeeded adds folders and normalizes orphan folderId", async () => {
+    const db = createDb();
+    db.get.mockResolvedValue({
+      _id: "media",
+      _rev: "1-abc",
+      list: [{ id: "m1", folderId: "ghost" }],
+    });
+    db.put.mockResolvedValue({});
+    const changed = await migrateMediaLibraryFoldersFieldIfNeeded(
+      db as unknown as PouchDB.Database,
+    );
+    expect(changed).toBe(true);
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        folders: [],
+        list: [expect.objectContaining({ id: "m1", folderId: null })],
+      }),
+    );
+  });
+
+  it("migrateMediaLibraryFoldersFieldIfNeeded is a no-op when shape is already valid", async () => {
+    const db = createDb();
+    db.get.mockResolvedValue({
+      _id: "media",
+      _rev: "1-abc",
+      list: [],
+      folders: [],
+    });
+    const changed = await migrateMediaLibraryFoldersFieldIfNeeded(
+      db as unknown as PouchDB.Database,
+    );
+    expect(changed).toBe(false);
+    expect(db.put).not.toHaveBeenCalled();
   });
 });

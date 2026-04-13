@@ -8,8 +8,10 @@ import {
   QuickLinkType,
   DBPreferences,
   MediaType,
+  MediaRouteKey,
 } from "../types";
 import generateRandomId from "../utils/generateRandomId";
+import { migrateLegacyMediaRouteFolders } from "../utils/mediaRouteKey";
 
 export type PreferencesTabType = "defaults" | "quickLinks";
 
@@ -56,6 +58,8 @@ type PreferencesState = {
   isInitialized: boolean;
   /** Overlay controller main column: overlays list vs embedded credits editor (not persisted). */
   overlayControllerPanel: "overlays" | "credits";
+  /** Last-selected media library folder per controller route; `null` = All media */
+  mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
 };
 
 const initialState: PreferencesState = {
@@ -120,6 +124,7 @@ const initialState: PreferencesState = {
   scrollbarWidth: "thin",
   isInitialized: false,
   overlayControllerPanel: "overlays",
+  mediaRouteFolders: {},
 };
 
 export const preferencesSlice = createSlice({
@@ -266,11 +271,25 @@ export const preferencesSlice = createSlice({
 
     // Initiate Preferences
 
+    setMediaRouteFolder: (
+      state,
+      action: PayloadAction<{ key: MediaRouteKey; folderId: string | null }>,
+    ) => {
+      state.mediaRouteFolders = {
+        ...state.mediaRouteFolders,
+        [action.payload.key]: action.payload.folderId,
+      };
+    },
+
     initiatePreferences: (
       state,
-      action: PayloadAction<{ preferences: PreferencesType; isMusic: boolean }>,
+      action: PayloadAction<{
+        preferences: PreferencesType;
+        isMusic: boolean;
+        mediaRouteFolders?: Partial<Record<MediaRouteKey, string | null>>;
+      }>,
     ) => {
-      const { preferences, isMusic } = action.payload;
+      const { preferences, isMusic, mediaRouteFolders } = action.payload;
 
       state.preferences = {
         defaultSongBackground: {
@@ -363,6 +382,9 @@ export const preferencesSlice = createSlice({
       state.shouldShowItemEditor = preferences.defaultShouldShowItemEditor;
       state.isMediaExpanded = preferences.defaultIsMediaExpanded;
       state.bibleFontMode = preferences.defaultBibleFontMode;
+      state.mediaRouteFolders = migrateLegacyMediaRouteFolders(
+        mediaRouteFolders ?? {},
+      );
     },
 
     updatePreferencesFromRemote: (
@@ -376,6 +398,11 @@ export const preferencesSlice = createSlice({
       // Accept quickLinks from remote - sync-before-save ensures DB is always correct
       if (action.payload.quickLinks !== undefined) {
         state.quickLinks = action.payload.quickLinks;
+      }
+      if (action.payload.mediaRouteFolders !== undefined) {
+        state.mediaRouteFolders = migrateLegacyMediaRouteFolders(
+          action.payload.mediaRouteFolders,
+        );
       }
     },
 
@@ -518,6 +545,7 @@ export const preferencesSlice = createSlice({
 });
 
 export const {
+  setMediaRouteFolder,
   setDefaultPreferences,
   setDefaultSongBackgroundBrightness,
   setDefaultTimerBackgroundBrightness,

@@ -56,7 +56,7 @@ const ContextMenuSubTrigger = ({
   <ContextMenuPrimitive.SubTrigger
     data-slot="context-menu-sub-trigger"
     className={cn(
-      "flex cursor-default items-center rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-gray-600 data-[state=open]:bg-gray-600",
+      "flex cursor-pointer items-center rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-gray-600 data-disabled:cursor-not-allowed data-[state=open]:bg-gray-600",
       inset && "pl-8",
       className
     )}
@@ -108,7 +108,7 @@ const ContextMenuItem = ({
   <ContextMenuPrimitive.Item
     data-slot="context-menu-item"
     className={cn(
-      "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-gray-600 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-gray-600 data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50",
       inset && "pl-8",
       className
     )}
@@ -125,7 +125,7 @@ const ContextMenuCheckboxItem = ({
   <ContextMenuPrimitive.CheckboxItem
     data-slot="context-menu-checkbox-item"
     className={cn(
-      "relative flex cursor-default items-center rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none focus:bg-gray-600 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-pointer items-center rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none focus:bg-gray-600 data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50",
       className
     )}
     checked={checked}
@@ -148,7 +148,7 @@ const ContextMenuRadioItem = ({
   <ContextMenuPrimitive.RadioItem
     data-slot="context-menu-radio-item"
     className={cn(
-      "relative flex cursor-default items-center rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none focus:bg-gray-600 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-pointer items-center rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none focus:bg-gray-600 data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50",
       className
     )}
     {...props}

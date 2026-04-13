@@ -31,7 +31,9 @@ import {
   getOverlayHistoryDocId,
   OVERLAY_HISTORY_ID_PREFIX,
   DBDoc,
+  DBMedia,
 } from "../types";
+import { normalizeMediaDoc } from "./mediaDocUtils";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
 
@@ -1052,5 +1054,38 @@ export const migrateDocTypes = async (
   } catch (error) {
     console.error("migrateDocTypes failed", error);
     throw error;
+  }
+};
+
+/**
+ * Legacy `media` docs may omit `folders`. Persist `folders: []` and normalized list
+ * so replication and older clients stay consistent.
+ */
+export const migrateMediaLibraryFoldersFieldIfNeeded = async (
+  db: PouchDB.Database,
+): Promise<boolean> => {
+  if (!db) return false;
+  try {
+    const media = (await db.get("media")) as DBMedia;
+    let changed = false;
+    if (!Array.isArray(media.folders)) {
+      media.folders = [];
+      changed = true;
+    }
+    const { list, folders } = normalizeMediaDoc(media);
+    if (JSON.stringify(media.list) !== JSON.stringify(list)) {
+      media.list = list;
+      changed = true;
+    }
+    if (JSON.stringify(media.folders) !== JSON.stringify(folders)) {
+      media.folders = folders;
+      changed = true;
+    }
+    if (!changed) return false;
+    media.updatedAt = new Date().toISOString();
+    await db.put(media);
+    return true;
+  } catch {
+    return false;
   }
 };

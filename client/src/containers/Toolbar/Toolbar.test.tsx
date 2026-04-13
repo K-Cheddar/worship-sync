@@ -6,6 +6,9 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { preferencesSlice } from "../../store/preferencesSlice";
 
 const mockDispatch = jest.fn();
+const mockNavigate = jest.fn();
+let mockPathname = "/controller/item/item-id/list-id";
+
 let mockState: {
   undoable: {
     present: {
@@ -20,7 +23,8 @@ let mockState: {
 
 jest.mock("react-router-dom", () => ({
   ...jest.requireActual("react-router-dom"),
-  useLocation: () => ({ pathname: "/controller/item/item-id/list-id" }),
+  useLocation: () => ({ pathname: mockPathname }),
+  useNavigate: () => mockNavigate,
 }));
 
 jest.mock("../../hooks", () => ({
@@ -190,6 +194,7 @@ const renderToolbarOverlay = ({
 describe("Toolbar", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPathname = "/controller/item/item-id/list-id";
   });
 
   it("hides slide and box tools for music access on non-song items", () => {
@@ -219,6 +224,33 @@ describe("Toolbar", () => {
     expect(
       screen.queryByRole("button", { name: "Monitor Settings" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("navigates to preferences when Settings is clicked from another settings sub-route", () => {
+    mockPathname = "/controller/quick-links";
+    renderToolbar({ access: "full", itemType: "song" });
+
+    screen.getByRole("button", { name: "Settings" }).click();
+
+    expect(mockNavigate).toHaveBeenCalledWith("/controller/preferences");
+  });
+
+  it("navigates to preferences when Settings is clicked from an item route", () => {
+    mockPathname = "/controller/item/item-id/list-id";
+    renderToolbar({ access: "full", itemType: "song" });
+
+    screen.getByRole("button", { name: "Settings" }).click();
+
+    expect(mockNavigate).toHaveBeenCalledWith("/controller/preferences");
+  });
+
+  it("does not navigate to preferences when Settings is clicked for view access", () => {
+    mockPathname = "/controller/quick-links";
+    renderToolbar({ access: "view", itemType: "song" });
+
+    screen.getByRole("button", { name: "Settings" }).click();
+
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("overlay variant shows Overlays and Credits Editor tabs", () => {

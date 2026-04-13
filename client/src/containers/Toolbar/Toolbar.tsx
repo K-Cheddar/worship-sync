@@ -1,4 +1,4 @@
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Settings,
   SquarePen,
@@ -58,6 +58,7 @@ const Toolbar = ({
   variant?: ToolbarVariant;
 }) => {
   const location = useLocation();
+  const navigate = useNavigate();
   /** Quick Links drawer (overlay controller only; state unused when variant is default). */
   const [quickLinksDrawerOpen, setQuickLinksDrawerOpen] = useState(false);
   const { isEditMode, type: itemType } = useSelector(
@@ -95,6 +96,13 @@ const Toolbar = ({
     () => access === "full" || (access === "music" && itemType === "song"),
     [access, itemType]
   );
+
+  const selectSettingsSection = useCallback(() => {
+    setSection("settings");
+    if (access === "view") return;
+    if (location.pathname.includes("/controller/preferences")) return;
+    navigate("/controller/preferences");
+  }, [access, location.pathname, navigate]);
 
   useEffect(() => {
     if (onItemPage) {
@@ -145,7 +153,7 @@ const Toolbar = ({
               <div className="flex gap-0 overflow-x-auto w-full scrollbar-variable">
                 <ToolbarButton
                   svg={Settings}
-                  onClick={() => setSection("settings")}
+                  onClick={selectSettingsSection}
                   isActive={section === "settings"}
                 >
                   Settings

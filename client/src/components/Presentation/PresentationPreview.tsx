@@ -195,7 +195,12 @@ const PresentationPreview = ({
           <div
             className={cn(
               "flex flex-col",
-              hideQuickLinks && "w-full items-center min-w-0"
+              hideQuickLinks && "w-full items-center min-w-0",
+              // Without an adjacent quick-link column, a sole flex-row child stretches to full
+              // width; keep the header + preview the same width as when quick links are present.
+              !hideQuickLinks &&
+              filteredQuickLinks.length === 0 &&
+              "w-fit max-w-full shrink-0 min-w-0"
             )}
           >
             {!hideHeader && (

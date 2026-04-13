@@ -534,7 +534,11 @@ const OverlayEditor = ({
               label="Image URL"
               value={draft.imageUrl || ""}
               onChange={(val) => patchDraft({ imageUrl: val as string })}
-              onClick={() => showToast(`Select from the available media. ${isMobile ? "Long press and Set Image Overlay." : "Right click and Set Image Overlay."}`)}
+              onClick={() =>
+                showToast(
+                  "Pick an image in Media, then Set Image Overlay.",
+                )
+              }
             />
           </>
         )}

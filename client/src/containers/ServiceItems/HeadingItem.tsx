@@ -145,8 +145,9 @@ const HeadingItem = ({
             <p
               {...(canMutateOutline ? attributes : {})}
               {...(canMutateOutline ? listeners : {})}
+              title={item.name}
               className={cn(
-                "truncate flex-1 px-2 py-2 text-center text-[11px] font-semibold text-white",
+                "line-clamp-3 min-w-0 flex-1 wrap-break-word px-2 py-2 text-center text-[11px] font-semibold text-white",
                 canMutateOutline && "cursor-grab active:cursor-grabbing",
               )}
             >

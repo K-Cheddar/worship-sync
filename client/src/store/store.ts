@@ -96,14 +96,54 @@ const cleanObject = (obj: Object) =>
 
 const sanitizeTransientItemState = (
   item: RootState["undoable"]["present"]["item"],
+) => {
+  const {
+    selectedSlide: _selectedSlide,
+    selectedBox: _selectedBox,
+    backgroundTargetSlideIds: _backgroundTargetSlideIds,
+    backgroundTargetRangeAnchorId: _backgroundTargetRangeAnchorId,
+    mobileBackgroundTargetSelectMode: _mobileBackgroundTargetSelectMode,
+    ...rest
+  } = item;
+
+  return {
+    ...rest,
+    isLoading: false,
+    isSectionLoading: false,
+    isItemFormatting: false,
+    hasPendingUpdate: false,
+    restoreFocusToBox: null,
+  };
+};
+
+/** Editor selection kept across undo/redo (not part of undo snapshots). */
+const getItemSelectionForUndoRedo = (
+  item: RootState["undoable"]["present"]["item"],
 ) => ({
-  ...item,
-  isLoading: false,
-  isSectionLoading: false,
-  isItemFormatting: false,
-  hasPendingUpdate: false,
-  restoreFocusToBox: null,
+  selectedSlide: item.selectedSlide,
+  selectedBox: item.selectedBox,
 });
+
+const reconcileItemSelectionAfterUndoRedo = (
+  listenerApi: {
+    dispatch: (action: Action) => unknown;
+    getState: () => RootState;
+  },
+  preserved: ReturnType<typeof getItemSelectionForUndoRedo>,
+) => {
+  const item = (listenerApi.getState() as RootState).undoable.present.item;
+
+  if (item.selectedSlide !== preserved.selectedSlide) {
+    listenerApi.dispatch(
+      itemSlice.actions.setSelectedSlide(preserved.selectedSlide),
+    );
+  }
+  if (item.selectedBox !== preserved.selectedBox) {
+    listenerApi.dispatch(
+      itemSlice.actions.setSelectedBox(preserved.selectedBox),
+    );
+  }
+};
 
 const getChangedOverlayIds = (
   currentList: OverlayInfo[],
@@ -240,6 +280,13 @@ const excludedActions: string[] = [
   itemSlice.actions.setSelectedBox.toString(),
   itemSlice.actions.setActiveItem.toString(),
   itemSlice.actions.clearTransientState.toString(),
+  itemSlice.actions.toggleBackgroundTargetSlideId.toString(),
+  itemSlice.actions.setBackgroundTargetSlideIds.toString(),
+  itemSlice.actions.setBackgroundTargetRangeAnchorId.toString(),
+  itemSlice.actions.setMobileBackgroundTargetSelectMode.toString(),
+  itemSlice.actions.clearBackgroundTargetSelection.toString(),
+  itemSlice.actions.clearBackgroundTargetSlideIdsOnly.toString(),
+  itemSlice.actions.setRestoreFocusToBox.toString(),
   overlaysSlice.actions.initiateOverlayList.toString(),
   overlaysSlice.actions.updateOverlayListFromRemote.toString(),
   overlaysSlice.actions.setHasPendingUpdate.toString(),
@@ -1239,6 +1286,8 @@ listenerMiddleware.startListening({
 
     const excluded = isAnyOf(
       mediaItemsSlice.actions.initiateMediaList,
+      mediaItemsSlice.actions.initiateMediaFromDoc,
+      mediaItemsSlice.actions.syncMediaFromRemote,
       mediaItemsSlice.actions.updateMediaListFromRemote,
       mediaItemsSlice.actions.setIsInitialized,
     );
@@ -1255,61 +1304,72 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     // update ItemList
-    const { list } = (listenerApi.getState() as RootState).media;
+    const { list, folders } = (listenerApi.getState() as RootState).media;
 
     if (!db) return;
-    const db_media: DBMedia = await db.get("media");
-    db_media.list = [...list];
-    db_media.updatedAt = new Date().toISOString();
-    db.put(db_media);
+    try {
+      const db_media: DBMedia = await db.get("media");
+      db_media.list = [...list];
+      db_media.folders = [...folders];
+      db_media.updatedAt = new Date().toISOString();
+      await db.put(db_media);
 
-    // Local machine updates
-    safePostMessage({
-      type: "update",
-      data: {
-        docs: db_media,
-        hostId: globalHostId,
-      },
-    });
+      // Local machine updates — only after Pouch reports success so `_rev` matches other tabs.
+      safePostMessage({
+        type: "update",
+        data: {
+          docs: db_media,
+          hostId: globalHostId,
+        },
+      });
 
-    // Sync media cache to match the saved media list (Electron only)
-    if (window.electronAPI) {
-      try {
-        const urlArray = extractMediaUrlsFromBackgrounds(list);
-        const electronAPI = window.electronAPI as unknown as {
-          syncMediaCache: (
-            urls: string[],
-          ) => Promise<{ downloaded: number; cleaned: number }>;
-          getMediaCacheMap: () => Promise<Record<string, string>>;
-        };
-        if (urlArray.length > 0) {
-          await electronAPI.syncMediaCache(urlArray);
-        } else {
-          await electronAPI.syncMediaCache([]);
+      // Sync media cache to match the saved media list (Electron only)
+      if (window.electronAPI) {
+        try {
+          const urlArray = extractMediaUrlsFromBackgrounds(list);
+          const electronAPI = window.electronAPI as unknown as {
+            syncMediaCache: (
+              urls: string[],
+            ) => Promise<{ downloaded: number; cleaned: number }>;
+            getMediaCacheMap: () => Promise<Record<string, string>>;
+          };
+          if (urlArray.length > 0) {
+            await electronAPI.syncMediaCache(urlArray);
+          } else {
+            await electronAPI.syncMediaCache([]);
+          }
+          const map = await electronAPI.getMediaCacheMap();
+          listenerApi.dispatch(setMediaCacheMap(map));
+        } catch (error) {
+          console.error(
+            "Error syncing media cache after media list save:",
+            error,
+          );
         }
-        const map = await electronAPI.getMediaCacheMap();
-        listenerApi.dispatch(setMediaCacheMap(map));
-      } catch (error) {
-        console.error(
-          "Error syncing media cache after media list save:",
-          error,
-        );
       }
+    } catch (error) {
+      console.error(
+        "Failed to persist media library to PouchDB (debounced listener):",
+        error,
+      );
     }
   },
 });
 
 // Sync media cache when media list is updated from remote (media doc)
 listenerMiddleware.startListening({
-  predicate: mediaItemsSlice.actions.updateMediaListFromRemote.match,
+  predicate: (action) =>
+    mediaItemsSlice.actions.syncMediaFromRemote.match(action) ||
+    mediaItemsSlice.actions.updateMediaListFromRemote.match(action),
   effect: async (action, listenerApi) => {
-    if (!window.electronAPI || !action.payload) return;
+    if (!window.electronAPI) return;
 
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(2000);
 
     try {
-      const urlArray = extractMediaUrlsFromBackgrounds(action.payload);
+      const list = (listenerApi.getState() as RootState).media.list;
+      const urlArray = extractMediaUrlsFromBackgrounds(list);
       const electronAPI = window.electronAPI as unknown as {
         syncMediaCache: (
           urls: string[],
@@ -1378,7 +1438,7 @@ listenerMiddleware.startListening({
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
 
-    const { preferences, monitorSettings, quickLinks } = (
+    const { preferences, monitorSettings, quickLinks, mediaRouteFolders } = (
       listenerApi.getState() as RootState
     ).undoable.present.preferences;
 
@@ -1400,6 +1460,7 @@ listenerMiddleware.startListening({
       db_preferences.preferences = preferences;
       db_preferences.quickLinks = quickLinks;
       db_preferences.monitorSettings = monitorSettings;
+      db_preferences.mediaRouteFolders = { ...mediaRouteFolders };
       db_preferences.updatedAt = new Date().toISOString();
       db.put(db_preferences);
       // Local machine updates
@@ -1417,6 +1478,7 @@ listenerMiddleware.startListening({
         preferences: preferences,
         quickLinks: quickLinks,
         monitorSettings: monitorSettings,
+        mediaRouteFolders: { ...mediaRouteFolders },
         _id: "preferences",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -1970,6 +2032,12 @@ listenerMiddleware.startListening({
 
     listenerApi.dispatch(itemSlice.actions.clearTransientState());
 
+    const preservedItemSelection = getItemSelectionForUndoRedo(
+      previousState.undoable.present.item,
+    );
+
+    listenerApi.dispatch(itemSlice.actions.clearBackgroundTargetSelection());
+
     if (reconciledOverlaySelection !== undefined) {
       const currentSelectedOverlay =
         currentState.undoable.present.overlay.selectedOverlay;
@@ -1986,6 +2054,8 @@ listenerMiddleware.startListening({
         );
       }
     }
+
+    reconcileItemSelectionAfterUndoRedo(listenerApi, preservedItemSelection);
 
     // Only force update for slices that actually changed during undo/redo
     if (

@@ -457,6 +457,8 @@ type CreateNewFreeFormType = {
   brightness: number;
   mediaInfo?: MediaType;
   overflow?: OverflowMode;
+  /** When true, first slide body stays empty (no `text || name` fallback). */
+  emptyBodyText?: boolean;
 };
 
 export const createNewFreeForm = async ({
@@ -468,8 +470,12 @@ export const createNewFreeForm = async ({
   mediaInfo,
   brightness,
   overflow = "fit",
+  emptyBodyText = false,
 }: CreateNewFreeFormType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
+  const bodyWords: [string, string] = emptyBodyText
+    ? ["", ""]
+    : ["", text || name];
   const newItem: ItemState = {
     name: _name,
     type: "free",
@@ -484,7 +490,7 @@ export const createNewFreeForm = async ({
         type: "Section",
         name: "Section 1",
         fontSize: DEFAULT_FONT_PX,
-        words: ["", text || name],
+        words: bodyWords,
         background,
         mediaInfo,
         brightness,

@@ -239,6 +239,12 @@ export type ItemState = ItemProperties & {
   pendingRemoteItem?: DBItem | null;
   /** When set, SlideEditor should focus this box index then clear. Used after format when slide count changes. */
   restoreFocusToBox?: number | null;
+  /** Editor-only: slide ids selected for subset background apply/clear (media actions). */
+  backgroundTargetSlideIds?: string[];
+  /** Anchor for Shift+click range selection on the slide rail. */
+  backgroundTargetRangeAnchorId?: string | null;
+  /** Mobile: taps toggle background targets instead of changing the active slide. */
+  mobileBackgroundTargetSelectMode?: boolean;
 };
 
 export type Arrangment = {
@@ -609,6 +615,8 @@ export type DBPreferences = {
   preferences: PreferencesType;
   quickLinks: QuickLinkType[];
   monitorSettings: MonitorSettingsType;
+  /** Last-selected media folder id per route; `null` = All media */
+  mediaRouteFolders?: Partial<Record<MediaRouteKey, string | null>>;
   createdAt?: string;
   updatedAt?: string;
   docType?: DocType;
@@ -700,12 +708,41 @@ export type MediaType = {
   source?: "cloudinary" | "mux";
   muxPlaybackId?: string;
   muxAssetId?: string;
+  /** App media library folder; root / unset = null */
+  folderId?: string | null;
 };
+
+export type MediaFolder = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Last media folder when editing a specific item kind on `/controller/item/...`. */
+export type ControllerItemMediaRouteKey =
+  | "controller-item-song"
+  | "controller-item-free"
+  | "controller-item-bible"
+  | "controller-item-timer"
+  | "controller-item-image"
+  | "controller-item-heading"
+  | "controller-item-unknown";
+
+/** Keys for persisting last-selected media folder per controller surface. */
+export type MediaRouteKey =
+  | "controller-default"
+  | ControllerItemMediaRouteKey
+  | "controller-overlays"
+  | "controller-settings"
+  | "overlay-controller";
 
 export type DBMedia = {
   _id: string;
   _rev: string;
   list: MediaType[];
+  folders?: MediaFolder[];
   createdAt?: string;
   updatedAt?: string;
   docType?: DocType;

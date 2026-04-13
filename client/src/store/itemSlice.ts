@@ -21,6 +21,7 @@ import {
 import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
 import { updateItemInList } from "../utils/itemUtil";
+import { mapSlidesUpdateBox0ById } from "../utils/slideBackgroundSubset";
 import { AppDispatch, RootState } from "./store";
 
 const defaultShouldSendTo: ShouldSendTo = {
@@ -60,6 +61,15 @@ const initialState: ItemState = {
   shouldSendTo: defaultShouldSendTo,
   restoreFocusToBox: null,
   songMetadata: undefined,
+  backgroundTargetSlideIds: [],
+  backgroundTargetRangeAnchorId: null,
+  mobileBackgroundTargetSelectMode: false,
+};
+
+const resetBackgroundTargetUi = (state: ItemState) => {
+  state.backgroundTargetSlideIds = [];
+  state.backgroundTargetRangeAnchorId = null;
+  state.mobileBackgroundTargetSelectMode = false;
 };
 
 const resetTransientItemState = (state: ItemState) => {
@@ -213,6 +223,7 @@ export const itemSlice = createSlice({
   reducers: {
     setActiveItem: (state, action: PayloadAction<Partial<ItemState>>) => {
       applyItemDataToState(state, action.payload);
+      resetBackgroundTargetUi(state);
       state.baseItem = createItemSnapshot(action.payload);
       state.pendingRemoteItem = null;
       state.hasRemoteUpdate = false;
@@ -228,7 +239,11 @@ export const itemSlice = createSlice({
       state.selectedSlide = action.payload;
     },
     _setSelectedArrangement: (state, action: PayloadAction<number>) => {
-      state.selectedArrangement = action.payload;
+      const next = action.payload;
+      if (state.selectedArrangement !== next) {
+        resetBackgroundTargetUi(state);
+      }
+      state.selectedArrangement = next;
       state.hasPendingUpdate = true;
     },
     _updateArrangements: (state, action: PayloadAction<Arrangment[]>) => {
@@ -322,9 +337,41 @@ export const itemSlice = createSlice({
       applyItemDataToState(state, state.pendingRemoteItem, {
         preserveSelection: true,
       });
+      resetBackgroundTargetUi(state);
       state.baseItem = createItemSnapshot(state.pendingRemoteItem);
       state.pendingRemoteItem = null;
       state.hasRemoteUpdate = false;
+    },
+    toggleBackgroundTargetSlideId: (state, action: PayloadAction<string>) => {
+      if (!state.backgroundTargetSlideIds) state.backgroundTargetSlideIds = [];
+      const id = action.payload;
+      const i = state.backgroundTargetSlideIds.indexOf(id);
+      if (i >= 0) {
+        state.backgroundTargetSlideIds.splice(i, 1);
+      } else {
+        state.backgroundTargetSlideIds.push(id);
+      }
+    },
+    setBackgroundTargetSlideIds: (state, action: PayloadAction<string[]>) => {
+      state.backgroundTargetSlideIds = [...action.payload];
+    },
+    setBackgroundTargetRangeAnchorId: (
+      state,
+      action: PayloadAction<string | null>,
+    ) => {
+      state.backgroundTargetRangeAnchorId = action.payload;
+    },
+    setMobileBackgroundTargetSelectMode: (
+      state,
+      action: PayloadAction<boolean>,
+    ) => {
+      state.mobileBackgroundTargetSelectMode = action.payload;
+    },
+    clearBackgroundTargetSelection: (state) => {
+      resetBackgroundTargetUi(state);
+    },
+    clearBackgroundTargetSlideIdsOnly: (state) => {
+      state.backgroundTargetSlideIds = [];
     },
   },
 });
@@ -513,6 +560,7 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
       state,
       dispatch,
     });
+    dispatch(itemSlice.actions.clearBackgroundTargetSelection());
   },
 );
 
@@ -585,6 +633,109 @@ export const updateSlideBackground = createAsyncThunk(
         dispatch,
       });
     }
+    dispatch(itemSlice.actions.clearBackgroundTargetSelection());
+  },
+);
+
+export const updateSlideBackgroundsOnSubset = createAsyncThunk(
+  "item/updateSlideBackgroundsOnSubset",
+  async (
+    args: { slideIds: string[]; background: string; mediaInfo?: MediaType },
+    { dispatch, getState },
+  ) => {
+    const state = getState();
+    const item = state.undoable.present.item;
+    const idSet = new Set(args.slideIds);
+    if (idSet.size === 0) {
+      dispatch(itemSlice.actions.clearBackgroundTargetSelection());
+      return;
+    }
+
+    const arrangementSlides =
+      item.arrangements[item.selectedArrangement]?.slides;
+    let arrangements = [...item.arrangements];
+    const patch = { background: args.background, mediaInfo: args.mediaInfo };
+
+    if (arrangementSlides?.length) {
+      arrangements = arrangements.map((arrangement, index) => {
+        if (index !== item.selectedArrangement) return arrangement;
+        return {
+          ...arrangement,
+          slides: mapSlidesUpdateBox0ById(arrangement.slides, idSet, patch),
+        };
+      });
+    }
+    const slides = mapSlidesUpdateBox0ById(item.slides, idSet, patch);
+
+    dispatch(_updateSlides(slides));
+    dispatch(_updateArrangements(arrangements));
+
+    const firstSlideId = item.slides[0]?.id;
+    const targetsIncludeIndex0 =
+      firstSlideId !== undefined && idSet.has(firstSlideId);
+    if (targetsIncludeIndex0) {
+      dispatch(setBackground(args.background));
+      _updateItemInLists({
+        value:
+          args.mediaInfo?.type === "video"
+            ? args.mediaInfo?.placeholderImage
+            : args.background,
+        property: "background",
+        state,
+        dispatch,
+      });
+    }
+
+    dispatch(itemSlice.actions.clearBackgroundTargetSelection());
+  },
+);
+
+export const clearSlideBackgroundsOnSubset = createAsyncThunk(
+  "item/clearSlideBackgroundsOnSubset",
+  async (args: { slideIds: string[] }, { dispatch, getState }) => {
+    const state = getState();
+    const item = state.undoable.present.item;
+    const idSet = new Set(args.slideIds);
+    if (idSet.size === 0) {
+      dispatch(itemSlice.actions.clearBackgroundTargetSelection());
+      return;
+    }
+    const patch = {
+      background: "",
+      mediaInfo: undefined as MediaType | undefined,
+    };
+
+    const arrangementSlides =
+      item.arrangements[item.selectedArrangement]?.slides;
+    let arrangements = [...item.arrangements];
+    if (arrangementSlides?.length) {
+      arrangements = arrangements.map((arrangement, index) => {
+        if (index !== item.selectedArrangement) return arrangement;
+        return {
+          ...arrangement,
+          slides: mapSlidesUpdateBox0ById(arrangement.slides, idSet, patch),
+        };
+      });
+    }
+    const slides = mapSlidesUpdateBox0ById(item.slides, idSet, patch);
+
+    dispatch(_updateSlides(slides));
+    dispatch(_updateArrangements(arrangements));
+
+    const firstSlideId = item.slides[0]?.id;
+    const targetsIncludeIndex0 =
+      firstSlideId !== undefined && idSet.has(firstSlideId);
+    if (targetsIncludeIndex0) {
+      dispatch(setBackground(""));
+      _updateItemInLists({
+        value: "",
+        property: "background",
+        state,
+        dispatch,
+      });
+    }
+
+    dispatch(itemSlice.actions.clearBackgroundTargetSelection());
   },
 );
 
@@ -669,6 +820,12 @@ export const {
   discardPendingRemoteItem,
   applyPendingRemoteItem,
   markItemPersisted,
+  toggleBackgroundTargetSlideId,
+  setBackgroundTargetSlideIds,
+  setBackgroundTargetRangeAnchorId,
+  setMobileBackgroundTargetSelectMode,
+  clearBackgroundTargetSelection,
+  clearBackgroundTargetSlideIdsOnly,
 } = itemSlice.actions;
 
 export default itemSlice.reducer;

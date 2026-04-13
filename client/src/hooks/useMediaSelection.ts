@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { MediaType } from "../types";
 
 const emptyMedia: MediaType = {
@@ -19,6 +19,7 @@ const emptyMedia: MediaType = {
   duration: 0,
   hasAudio: false,
   source: "cloudinary",
+  folderId: null,
 };
 
 interface UseMediaSelectionOptions {
@@ -33,13 +34,15 @@ interface UseMediaSelectionReturn {
   previewMedia: MediaType | null;
   lastSelectedIndex: number;
   setSelectedMedia: (media: MediaType) => void;
-  setSelectedMediaIds: (ids: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
+  setSelectedMediaIds: (
+    ids: Set<string> | ((prev: Set<string>) => Set<string>),
+  ) => void;
   setPreviewMedia: (media: MediaType | null) => void;
   setLastSelectedIndex: (index: number) => void;
   handleMediaClick: (
     e: React.MouseEvent,
     mediaItem: MediaType,
-    index: number
+    index: number,
   ) => void;
   clearSelection: () => void;
 }
@@ -50,45 +53,55 @@ export const useMediaSelection = ({
   enableRangeSelection = true,
 }: UseMediaSelectionOptions): UseMediaSelectionReturn => {
   const [selectedMedia, setSelectedMedia] = useState<MediaType>(emptyMedia);
-  const [selectedMediaIds, setSelectedMediaIds] = useState<Set<string>>(new Set());
+  const [selectedMediaIds, setSelectedMediaIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [previewMedia, setPreviewMedia] = useState<MediaType | null>(null);
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number>(-1);
 
+  // Replace stale object references when the library updates (e.g. rename in Redux).
+  useEffect(() => {
+    setSelectedMedia((prev) => {
+      if (!prev.id || !selectedMediaIds.has(prev.id)) return prev;
+      const fresh = mediaList.find((item) => item.id === prev.id);
+      return fresh && fresh !== prev ? fresh : prev;
+    });
+    setPreviewMedia((prev) => {
+      if (!prev || !selectedMediaIds.has(prev.id)) return prev;
+      const fresh = mediaList.find((item) => item.id === prev.id);
+      return fresh && fresh !== prev ? fresh : prev;
+    });
+  }, [mediaList, selectedMediaIds]);
+
   const handleMediaClick = useCallback(
-    (
-      e: React.MouseEvent,
-      mediaItem: MediaType,
-      index: number
-    ) => {
+    (e: React.MouseEvent, mediaItem: MediaType, index: number) => {
       const isCtrlOrCmd = e.ctrlKey || e.metaKey;
       const isShift = e.shiftKey;
       const listToUse = filteredList || mediaList;
 
       if (isCtrlOrCmd) {
-        // Toggle selection with Ctrl/Cmd
-        setSelectedMediaIds((prev) => {
-          const newSet = new Set(prev);
-          if (newSet.has(mediaItem.id)) {
-            newSet.delete(mediaItem.id);
-            if (newSet.size === 0) {
-              setSelectedMedia(emptyMedia);
-              setPreviewMedia(null);
-            } else if (selectedMedia.id === mediaItem.id) {
-              // If we're deselecting the currently selected media, select the first remaining
-              const firstId = Array.from(newSet)[0];
-              const firstItem = mediaList.find((item) => item.id === firstId);
-              if (firstItem) {
-                setSelectedMedia(firstItem);
-                setPreviewMedia(firstItem);
-              }
+        // Toggle selection with Ctrl/Cmd — compute next ids, then update related state from the handler (not inside setState updaters).
+        const newSet = new Set(selectedMediaIds);
+        if (newSet.has(mediaItem.id)) {
+          newSet.delete(mediaItem.id);
+          setSelectedMediaIds(newSet);
+          if (newSet.size === 0) {
+            setSelectedMedia(emptyMedia);
+            setPreviewMedia(null);
+          } else if (selectedMedia.id === mediaItem.id) {
+            const firstId = Array.from(newSet)[0];
+            const firstItem = mediaList.find((item) => item.id === firstId);
+            if (firstItem) {
+              setSelectedMedia(firstItem);
+              setPreviewMedia(firstItem);
             }
-          } else {
-            newSet.add(mediaItem.id);
-            setSelectedMedia(mediaItem);
-            setPreviewMedia(mediaItem);
           }
-          return newSet;
-        });
+        } else {
+          newSet.add(mediaItem.id);
+          setSelectedMediaIds(newSet);
+          setSelectedMedia(mediaItem);
+          setPreviewMedia(mediaItem);
+        }
         setLastSelectedIndex(index);
       } else if (isShift && enableRangeSelection && lastSelectedIndex >= 0) {
         // Range selection with Shift
@@ -119,7 +132,7 @@ export const useMediaSelection = ({
       selectedMediaIds,
       lastSelectedIndex,
       enableRangeSelection,
-    ]
+    ],
   );
 
   const clearSelection = useCallback(() => {

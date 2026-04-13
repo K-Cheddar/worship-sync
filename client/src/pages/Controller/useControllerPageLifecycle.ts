@@ -8,6 +8,7 @@ import {
 import {
   DBAllItems,
   DBItemListDetails,
+  DBMedia,
   DBPreferences,
   DBOverlayTemplates,
   TemplatesByType,
@@ -33,6 +34,7 @@ import {
   getAllOverlayHistory,
   getOverlaysByIds,
   updateAllDocs,
+  migrateMediaLibraryFoldersFieldIfNeeded,
 } from "../../utils/dbUtils";
 import {
   mergeRemoteOverlayListWithLocalBuffer,
@@ -55,8 +57,10 @@ import {
 } from "../../store/overlayTemplatesSlice";
 import {
   initiateMediaList,
+  initiateMediaFromDoc,
   setIsInitialized as setMediaIsInitialized,
 } from "../../store/mediaSlice";
+import { normalizeMediaDoc } from "../../utils/mediaDocUtils";
 import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
 import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemListsSlice";
@@ -121,9 +125,8 @@ export const useControllerPageLifecycle = () => {
               store.getState as () => OverlaySyncRootSlice,
             );
             dispatch(updateOverlayListFromRemote(mergedList));
-            const selectedOverlayId =
-              (store.getState() as OverlaySyncRootSlice).undoable.present.overlay
-                .selectedOverlay?.id;
+            const selectedOverlayId = (store.getState() as OverlaySyncRootSlice)
+              .undoable.present.overlay.selectedOverlay?.id;
             if (selectedOverlayId) {
               const match = mergedList.find((o) => o.id === selectedOverlayId);
               if (match) {
@@ -237,6 +240,7 @@ export const useControllerPageLifecycle = () => {
           initiatePreferences({
             preferences: preferences.preferences,
             isMusic: access === "music",
+            mediaRouteFolders: preferences.mediaRouteFolders ?? {},
           }),
         );
         dispatch(initiateQuickLinks(preferences.quickLinks));
@@ -270,6 +274,20 @@ export const useControllerPageLifecycle = () => {
     if (db && access !== "full") {
       dispatch(initiateMediaList([]));
     }
+  }, [dispatch, db, access]);
+
+  useEffect(() => {
+    if (!db || access !== "full") return;
+    (async () => {
+      try {
+        await migrateMediaLibraryFoldersFieldIfNeeded(db);
+        const raw = (await db.get("media")) as DBMedia;
+        const { list, folders } = normalizeMediaDoc(raw);
+        dispatch(initiateMediaFromDoc({ list, folders }));
+      } catch {
+        dispatch(initiateMediaFromDoc({ list: [], folders: [] }));
+      }
+    })();
   }, [dispatch, db, access]);
 
   useEffect(() => {
