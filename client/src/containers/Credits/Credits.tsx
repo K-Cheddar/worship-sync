@@ -78,9 +78,9 @@ const Credits = ({
         ref={containerRef}
         className={cn(
           !isPreview &&
-            "bg-black/75 h-dvh [scrollbar-width:none] flex flex-col gap-[7.5vh] w-full text-white text-center overflow-y-auto pb-[10%]",
+          "bg-black/75 h-dvh [scrollbar-width:none] flex flex-col gap-[7.5vh] w-full text-white text-center overflow-y-auto pb-[10%]",
           isPreview &&
-            "h-full max-h-full scrollbar-thin flex flex-col gap-[7.5vh] w-full text-white text-center overflow-y-auto pb-[10%]"
+          "h-full max-h-full scrollbar-variable flex flex-col gap-[7.5vh] w-full text-white text-center overflow-y-auto overflow-x-hidden pb-[10%] pr-2"
         )}
       >
         {adjustedCredits.map(({ heading, id, text }) => {

@@ -1,3 +1,4 @@
+import { getCreditsDocId } from "../types";
 import { createOfflineGuestSeedDocs } from "./offlineGuestSeed";
 
 describe("offlineGuestSeed", () => {
@@ -11,7 +12,7 @@ describe("offlineGuestSeed", () => {
     expect(byId.has("preferences")).toBe(true);
     expect(byId.has("media")).toBe(true);
     expect(byId.has("overlay-templates")).toBe(true);
-    expect(byId.has("credits")).toBe(true);
+    expect(byId.has(getCreditsDocId("offline-demo-outline"))).toBe(true);
   });
 
   it("keeps the seeded outline, library, and item docs in sync", () => {

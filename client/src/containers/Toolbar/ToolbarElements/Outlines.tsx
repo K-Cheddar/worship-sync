@@ -31,6 +31,12 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { cn } from "../../../utils/cnHelper";
 import { toolbarTabClassName } from "./ToolbarButton";
 
+/** Shared popover chrome (matches service outlines left column). */
+const OUTLINE_POPOVER_CONTENT =
+  "min-w-[18rem] max-w-[min(26rem,calc(100vw-1.5rem))] overflow-x-visible border-gray-600 bg-gray-800 text-white shadow-md";
+const OUTLINE_POPOVER_HEADER = "px-5 pt-2 pb-1.5";
+const OUTLINE_POPOVER_BODY = "px-5 pb-3 pt-1.5";
+
 type OutlinesProps = {
   className?: string;
   /** Full-width header-style trigger for the service outline column (vs compact toolbar). */
@@ -44,12 +50,8 @@ const Services = ({
   servicePanel = false,
   matchToolbarTabs = false,
 }: OutlinesProps) => {
-  const { currentLists, activeList } = useSelector(
-    (state) => state.undoable.present.itemLists
-  );
-  const { selectedList } = useSelector(
-    (state) => state.undoable.present.itemLists
-  );
+  const { currentLists, activeList, selectedList, isInitialized: itemListsReady } =
+    useSelector((state) => state.undoable.present.itemLists);
 
   const heading = `Current Outlines (${currentLists.length})`;
 
@@ -90,20 +92,21 @@ const Services = ({
         const response: ItemLists | undefined = await db?.get("ItemLists");
         const _itemLists = response?.itemLists || [];
         const _activeList = response?.activeList;
-        dispatch(initiateItemLists(_itemLists));
-        if (_activeList) {
-          dispatch(setInitialItemList(_activeList._id));
+        if (!itemListsReady) {
+          dispatch(initiateItemLists(_itemLists));
+          if (_activeList) {
+            dispatch(setInitialItemList(_activeList._id));
+          }
+        } else {
+          dispatch(updateItemListsFromRemote(_itemLists));
         }
-
-        // Note: Video cache sync is handled in Controller.tsx when database is ready
-        // No need to sync here as it would be redundant
       } catch (e) {
         console.error(e);
       }
     };
 
     getItemLists();
-  }, [db, dispatch, updater]);
+  }, [db, dispatch, itemListsReady]);
 
   const updateItemListsFromExternal = useCallback(
     async (event: CustomEventInit) => {
@@ -144,7 +147,7 @@ const Services = ({
     }
   };
 
-  const triggerIconSize = servicePanel ? "sm" : matchToolbarTabs ? "md" : "lg";
+  const triggerIconSize = servicePanel ? "sm" : "md";
   const triggerVariant = servicePanel
     ? "tertiary"
     : matchToolbarTabs
@@ -154,7 +157,7 @@ const Services = ({
       : "primary";
   const triggerClass = cn(
     servicePanel
-      ? "w-full max-w-none justify-center gap-2 border-0 px-3 py-2.5 text-xs font-bold uppercase tracking-widest text-white shadow-none hover:bg-white/10 active:bg-white/[0.12]"
+      ? "w-full max-w-none justify-center gap-2 border-0 px-3 py-2.5 text-xs font-bold text-white shadow-none hover:bg-white/10 active:bg-white/[0.12]"
       : matchToolbarTabs
         ? cn(toolbarTabClassName(outlinePopoverOpen, false), "max-w-64")
         : "max-w-64",
@@ -200,7 +203,7 @@ const Services = ({
           </Button>
         ) : (
           <PopOver
-            onOpenChange={matchToolbarTabs ? setOutlinePopoverOpen : undefined}
+            onOpenChange={setOutlinePopoverOpen}
             TriggeringButton={
               <Button
                 svg={List}
@@ -213,49 +216,20 @@ const Services = ({
                 {selectedList?.name}
               </Button>
             }
-            align={servicePanel ? "start" : "end"}
-            contentClassName={
-              servicePanel
-                ? "min-w-[18rem] max-w-[min(26rem,calc(100vw-1.5rem))] overflow-x-visible border-gray-600 bg-gray-800 text-white shadow-md"
-                : undefined
-            }
-            headerRowClassName={
-              servicePanel ? "px-5 pt-2 pb-1.5" : undefined
-            }
-            bodyClassName={
-              servicePanel ? "px-5 pb-3 pt-1.5" : undefined
-            }
+            align="start"
+            contentClassName={OUTLINE_POPOVER_CONTENT}
+            headerRowClassName={OUTLINE_POPOVER_HEADER}
+            bodyClassName={OUTLINE_POPOVER_BODY}
           >
-            <div
-              className={cn(
-                "flex flex-col gap-2",
-                servicePanel && "min-w-0 gap-1.5",
-              )}
-            >
-              <div className={cn("flex flex-1 gap-4", servicePanel && "min-w-0")}>
-                <section
-                  className={cn(
-                    "flex h-full flex-1 flex-col p-1",
-                    servicePanel && "min-w-0 p-0",
-                  )}
-                >
-                  <h3
-                    className={cn(
-                      "mb-2 text-center text-lg font-semibold",
-                      servicePanel &&
-                      "mb-1.5 border-b border-gray-600 pb-2 text-[11px] font-bold uppercase tracking-widest text-gray-100",
-                    )}
-                  >
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <div className="flex min-w-0 flex-1 gap-4">
+                <section className="flex h-full min-w-0 flex-1 flex-col p-0">
+                  <h3 className="mb-1.5 border-b border-gray-600 pb-2 text-center text-sm font-bold text-gray-100">
                     {heading}
                   </h3>
                   <ul
                     ref={setNodeRef}
-                    className={cn(
-                      "scrollbar-variable max-h-64 flex-1 overflow-y-auto",
-                      servicePanel
-                        ? "min-w-0 max-h-[min(18rem,50vh)] overflow-x-visible"
-                        : "overflow-x-hidden",
-                    )}
+                    className="scrollbar-variable max-h-[min(18rem,50vh)] min-w-0 flex-1 overflow-x-visible overflow-y-auto"
                   >
                     <SortableContext
                       items={currentLists.map((list) => list._id)}
@@ -265,8 +239,9 @@ const Services = ({
                         <Outline
                           key={list._id}
                           list={list}
-                          panel={servicePanel}
+                          panel
                           canEdit={access === "full"}
+                          disableDrag={access !== "full"}
                           isSelected={list._id === selectedList?._id}
                           selectList={(listId: string) =>
                             dispatch(selectItemList(listId))
@@ -323,12 +298,8 @@ const Services = ({
                 <Button
                   svg={justAdded ? Check : Plus}
                   color={justAdded ? "#84cc16" : "#22d3ee"}
-                  className={cn(
-                    "w-full justify-center text-base",
-                    servicePanel &&
-                    "border border-gray-600 bg-gray-700/80 py-2 text-xs font-semibold uppercase tracking-wider shadow-none hover:bg-gray-600",
-                  )}
-                  variant={servicePanel ? "tertiary" : "primary"}
+                  className="w-full justify-center py-2 text-xs font-semibold"
+                  variant="primary"
                   disabled={justAdded}
                   onClick={async () => {
                     const newList = await createNewItemList({

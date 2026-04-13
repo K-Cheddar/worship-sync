@@ -1,4 +1,12 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import Credits from "../../containers/Credits/Credits";
 import { default as CreditsEditorContainer } from "../../containers/Credits/CreditsEditor";
@@ -22,49 +30,92 @@ import {
   DBCredit,
   DBItemListDetails,
   DocType,
+  getCreditDocId,
+  getCreditsDocId,
   ItemLists,
 } from "../../types";
-import { getAllCreditsHistory, getCreditsByIds, getOverlaysByIds, putCreditDoc } from "../../utils/dbUtils";
+import {
+  ensureCreditsIndexDoc,
+  getAllCreditsHistory,
+  getCreditsByIds,
+  getOverlaysByIds,
+} from "../../utils/dbUtils";
 import {
   initiateCreditsHistory,
   initiateCreditsList,
   initiateCreditsScene,
-  initiatePublishedCreditsList,
+  initiateLiveCredits,
   initiateTransitionScene,
   setIsInitialized as setCreditsIsInitialized,
   setIsLoading,
   setScheduleName,
+  syncVisibleCreditsMirrorAndHistory,
   updateCredit,
   updateCreditsListFromRemote,
-  updateList,
 } from "../../store/creditsSlice";
+import {
+  initiateItemLists,
+  setInitialItemList,
+  updateItemListsFromRemote,
+} from "../../store/itemListsSlice";
 import Spinner from "../../components/Spinner/Spinner";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import Button from "../../components/Button/Button";
 import cn from "classnames";
-import { onValue, ref } from "firebase/database";
+import { onValue, ref, set } from "firebase/database";
 import Menu from "../../components/Menu/Menu";
+import Outlines from "../../containers/Toolbar/ToolbarElements/Outlines";
 import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import Undo from "../../containers/Toolbar/ToolbarElements/Undo";
-import getScheduleFromExcel from "../../utils/getScheduleFromExcel";
 import { setItemListIsLoading } from "../../store/itemListSlice";
 import { initiateOverlayList } from "../../store/overlaysSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
 import { getChurchDataPath } from "../../utils/firebasePaths";
-import { broadcastCreditsUpdate, CREDITS_EDITOR_PAGE_READY } from "../../store/store";
+import { CREDITS_EDITOR_PAGE_READY, type RootState } from "../../store/store";
 import CreditHistoryDrawer from "../../containers/Credits/CreditHistoryDrawer";
 import CreditsSettingsDrawer from "../../containers/Credits/CreditsSettingsDrawer";
+import { CreditsPreviewSkeleton } from "../../containers/Credits/CreditsEditorSkeleton";
+import { useGenerateCreditsFromOverlays } from "../../hooks/useGenerateCreditsFromOverlays";
 
-const CreditsEditor = () => {
+const cleanForRtdb = (obj: object) =>
+  JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
+
+export type CreditsEditorProps = {
+  /** Render inside overlay controller shell (no duplicate menu, outlines, or full-page loading). */
+  embeddedInOverlayController?: boolean;
+};
+
+const CreditsEditor = ({
+  embeddedInOverlayController = false,
+}: CreditsEditorProps) => {
   const navigate = useNavigate();
-  const { list, scheduleName, isInitialized: creditsInitialized } = useSelector(
-    (state) => state.undoable.present.credits
+  const { list, isInitialized: creditsInitialized, isLoading: creditsLoading } =
+    useSelector((state) => state.undoable.present.credits);
+  /** Which outline's credits we edit (Outlines dropdown updates `selectedList`). */
+  const outlineIdForCredits = useSelector(
+    (state) =>
+      state.undoable.present.itemLists.selectedList?._id ??
+      state.undoable.present.itemLists.activeList?._id,
+  );
+  /** RTDB live credits (`publishedList` key) follow the active outline only (Set Active). */
+  const activeOutlineId = useSelector(
+    (state) => state.undoable.present.itemLists.activeList?._id,
+  );
+  const itemListsReady = useSelector(
+    (state) => state.undoable.present.itemLists.isInitialized,
   );
   const hasDispatchedPageReady = useRef(false);
 
-  const { list: overlays } = useSelector(
-    (state) => state.undoable.present.overlays
+  const {
+    generateFromOverlays,
+    isGenerating,
+    justGenerated,
+    hasOverlays,
+  } = useGenerateCreditsFromOverlays();
+  const scrollbarWidth = useSelector(
+    (state: RootState) =>
+      state.undoable.present.preferences?.scrollbarWidth ?? "thin",
   );
 
   const { db, dbProgress, isMobile = false, setIsMobile, updater, pullFromRemote } =
@@ -74,28 +125,46 @@ const CreditsEditor = () => {
   const dispatch = useDispatch();
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [justGenerated, setJustGenerated] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
   const [isSettingsDrawerOpen, setIsSettingsDrawerOpen] = useState(false);
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
 
   useEffect(() => {
+    if (embeddedInOverlayController) return;
     return () => {
       dispatch(setCreditsIsInitialized(false));
       dispatch(setIsLoading(true));
     };
-  }, [dispatch]);
+  }, [dispatch, embeddedInOverlayController]);
 
   useEffect(() => {
-    const getItemList = async () => {
-      if (!db) return;
-      dispatch(setItemListIsLoading(true));
+    if (!db) return;
+    (async () => {
       try {
-        const itemListsResponse: ItemLists | undefined =
-          await db?.get("ItemLists");
-        const activeList = itemListsResponse?.activeList;
-        const response: DBItemListDetails | undefined = await db?.get(
-          activeList._id
+        const response: ItemLists | undefined = await db.get("ItemLists");
+        const lists = response?.itemLists ?? [];
+        if (lists.length) {
+          if (!itemListsReady) {
+            dispatch(initiateItemLists(lists));
+            if (response?.activeList) {
+              dispatch(setInitialItemList(response.activeList._id));
+            }
+          } else {
+            dispatch(updateItemListsFromRemote(lists));
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+  }, [db, dispatch, itemListsReady]);
+
+  useEffect(() => {
+    if (!db || !outlineIdForCredits) return;
+    dispatch(setItemListIsLoading(true));
+    (async () => {
+      try {
+        const response: DBItemListDetails | undefined = await db.get(
+          outlineIdForCredits,
         );
         const overlaysIds = response?.overlays || [];
         const formattedOverlays = await getOverlaysByIds(db, overlaysIds);
@@ -104,45 +173,79 @@ const CreditsEditor = () => {
         console.error(e);
       }
       dispatch(setItemListIsLoading(false));
-    };
-    if (overlays.length === 0) {
-      getItemList();
-    }
-  }, [overlays.length, dispatch, db]);
-
+    })();
+  }, [db, outlineIdForCredits, dispatch]);
 
   useEffect(() => {
-    const getCredits = async () => {
-      if (!db) return;
+    if (!db || !outlineIdForCredits) return;
 
+    let cancelled = false;
+    const outlineId = outlineIdForCredits;
+
+    const loadCreditsForOutline = async () => {
+      dispatch(setIsLoading(true));
+      dispatch(setCreditsIsInitialized(false));
       try {
-        const creditsDoc = (await db.get("credits")) as DBCredits;
+        if (cancelled) return;
+
+        await ensureCreditsIndexDoc(db, outlineId);
+        if (cancelled) return;
+
+        const creditsDoc = (await db.get(
+          getCreditsDocId(outlineId),
+        )) as DBCredits;
         const creditIds = creditsDoc.creditIds ?? [];
-        const credits = await getCreditsByIds(db, creditIds);
+        const credits = await getCreditsByIds(db, outlineId, creditIds);
+        if (cancelled) return;
+
         dispatch(initiateCreditsList(credits));
 
         const historyMap = await getAllCreditsHistory(db);
+        if (cancelled) return;
+
         dispatch(initiateCreditsHistory(historyMap));
+
+        dispatch(syncVisibleCreditsMirrorAndHistory());
+
+        if (
+          firebaseDb &&
+          churchId &&
+          activeOutlineId &&
+          outlineId === activeOutlineId
+        ) {
+          const visible = credits.filter((c) => !c.hidden);
+          set(
+            ref(
+              firebaseDb,
+              getChurchDataPath(churchId, "credits", "publishedList"),
+            ),
+            cleanForRtdb(visible as unknown as object),
+          );
+        }
       } catch (error: unknown) {
+        if (cancelled) return;
         console.error(error);
         dispatch(initiateCreditsList([]));
         dispatch(initiateCreditsHistory({}));
-        if (error && typeof error === "object" && "name" in error && (error as { name: string }).name === "not_found") {
-          await db.put({
-            _id: "credits",
-            creditIds: [],
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            docType: "credits",
-          });
-        }
       } finally {
-        dispatch(setIsLoading(false));
+        if (!cancelled) {
+          dispatch(setIsLoading(false));
+        }
       }
     };
 
-    getCredits();
-  }, [db, dispatch]);
+    loadCreditsForOutline();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    db,
+    outlineIdForCredits,
+    activeOutlineId,
+    dispatch,
+    firebaseDb,
+    churchId,
+  ]);
 
   useEffect(() => {
     if (creditsInitialized && !hasDispatchedPageReady.current) {
@@ -154,18 +257,20 @@ const CreditsEditor = () => {
   const updateCreditsListFromExternal = useCallback(
     async (event: CustomEventInit) => {
       if (!db) return;
+      const outlineId = outlineIdForCredits;
+      if (!outlineId) return;
+      const expectedIndexId = getCreditsDocId(outlineId);
       try {
         const updates = event.detail as { _id?: string; docType?: DocType }[] | undefined;
         if (!Array.isArray(updates)) return;
         const indexFromUpdates = updates.find(
-          (u): u is DBCredits => u.docType === "credits" || u._id === "credits"
+          (u): u is DBCredits => u._id === expectedIndexId,
         );
         if (!indexFromUpdates) return;
 
         const creditIds = indexFromUpdates.creditIds ?? [];
-        if (!creditIds.length) return;
 
-        const creditsFromDb = await getCreditsByIds(db, creditIds);
+        const creditsFromDb = await getCreditsByIds(db, outlineId, creditIds);
         const creditsFromUpdates = updates
           .filter((d): d is DBCredit => d.docType === "credit")
           .map((d) => ({
@@ -180,14 +285,12 @@ const CreditsEditor = () => {
           .map((id) => byIdFromUpdates.get(id) ?? creditsFromDb.find((c) => c.id === id))
           .filter((c): c is NonNullable<typeof c> => c != null);
 
-        if (!credits.length) return;
-
         dispatch(updateCreditsListFromRemote(credits));
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch, db]
+    [dispatch, db, outlineIdForCredits]
   );
 
   const updateCreditFromExternal = useCallback(
@@ -196,9 +299,15 @@ const CreditsEditor = () => {
         const updates = event.detail as (DBCredit | { docType?: DocType })[] | undefined;
         if (!Array.isArray(updates)) return;
 
-        const creditDocs = updates.filter(
-          (u): u is DBCredit => u.docType === "credit"
-        );
+        const outlineId = outlineIdForCredits;
+        if (!outlineId) return;
+
+        const creditDocs = updates
+          .filter((u): u is DBCredit => u.docType === "credit")
+          .filter((doc) => {
+            if (doc.outlineId) return doc.outlineId === outlineId;
+            return doc._id === getCreditDocId(outlineId, doc.id);
+          });
         if (!creditDocs.length) return;
 
         creditDocs.forEach((doc) => {
@@ -215,7 +324,7 @@ const CreditsEditor = () => {
         console.error(e);
       }
     },
-    [dispatch]
+    [dispatch, outlineIdForCredits]
   );
 
   const updateHistoryFromExternal = useCallback(
@@ -295,14 +404,14 @@ const CreditsEditor = () => {
         }
       });
 
-      const getPublishedRef = ref(
+      const liveCreditsRtdbRef = ref(
         firebaseDb,
         getChurchDataPath(churchId, "credits", "publishedList")
       );
-      onValue(getPublishedRef, (snapshot) => {
+      onValue(liveCreditsRtdbRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-          dispatch(initiatePublishedCreditsList(data));
+          dispatch(initiateLiveCredits(data));
         }
       });
     };
@@ -327,126 +436,6 @@ const CreditsEditor = () => {
     },
     [setIsMobile]
   );
-
-  const generateFromOverlays = useCallback(async () => {
-    setIsGenerating(true);
-    try {
-      const eventNameMapping: { [key: string]: string } = {
-        "sabbath school": overlays
-          .filter((overlay) =>
-            overlay.event?.toLowerCase().includes("sabbath school")
-          )
-          .map((overlay) => overlay.name)
-          .join("\n")
-          .trim(),
-        welcome:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("welcome")
-          )?.name || "",
-        "call to praise":
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("call to praise")
-          )?.name || "",
-        invocation:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("invocation")
-          )?.name || "",
-        reading:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("reading")
-          )?.name || "",
-        intercessor:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("intercessor")
-          )?.name || "",
-        offertory:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("offertory")
-          )?.name || "",
-        special: overlays
-          .filter((overlay) => overlay.event?.toLowerCase().includes("special"))
-          .map((overlay) => overlay.name)
-          .join("\n")
-          .trim(),
-        sermon:
-          overlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("sermon")
-          )?.name || "",
-      };
-
-      // Dynamically determine the fallback schedule name as '3rd Quarter 2025 - Schedule' (or similar)
-      const now = new Date();
-      const year = now.getFullYear();
-      const quarter = Math.floor(now.getMonth() / 3) + 1;
-      const quarterNames = ["1st", "2nd", "3rd", "4th"];
-      const fallbackScheduleName = `${quarterNames[quarter - 1]
-        } Quarter ${year} - Schedule`;
-
-      const schedule = await getScheduleFromExcel(
-        `${scheduleName || fallbackScheduleName}.xlsx`,
-        "/Media Team Positions.xlsx"
-      );
-
-      let updatedList = list.map((credit) => {
-        // Find matching schedule entry
-        const scheduleEntry = schedule.find(
-          (entry) =>
-            entry.heading.toLowerCase() === credit.heading.toLowerCase()
-        );
-
-        if (scheduleEntry) {
-          return {
-            ...credit,
-            text: scheduleEntry.names,
-          };
-        }
-
-        // If no schedule match, try overlay mapping
-        const eventKey = Object.keys(eventNameMapping).find((key) =>
-          credit.heading.toLowerCase().includes(key)
-        );
-
-        if (eventKey) {
-          return {
-            ...credit,
-            text: eventNameMapping[eventKey],
-          };
-        }
-
-        return credit;
-      });
-
-      // Replace & and , with new lines, then trim spaces
-      updatedList = updatedList.map((credit) => {
-        return {
-          ...credit,
-          text: credit.text
-            .split(/,|&/)
-            .map((item: string) => item.trim())
-            .join("\n"),
-        };
-      });
-
-      dispatch(updateList(updatedList));
-
-      // Persist all updated credits to the db immediately (shared putCreditDoc helper)
-      if (db) {
-        const docsToBroadcast = (
-          await Promise.all(updatedList.map((c) => putCreditDoc(db!, c)))
-        ).filter((doc): doc is NonNullable<typeof doc> => doc != null);
-        if (docsToBroadcast.length > 0) {
-          broadcastCreditsUpdate(docsToBroadcast);
-        }
-      }
-
-      setJustGenerated(true);
-      setTimeout(() => setJustGenerated(false), 2000);
-    } catch (error) {
-      console.error("Error generating from overlays:", error);
-    } finally {
-      setIsGenerating(false);
-    }
-  }, [overlays, list, dispatch, scheduleName, db]);
 
   const handleBack = useCallback(() => {
     const historyIndex =
@@ -528,9 +517,8 @@ const CreditsEditor = () => {
 
   const generateCreditsButton = (
     <Button
-      className="text-xs px-2 py-1"
       data-testid="generate-credits-button"
-      disabled={overlays.length === 0 || isGenerating}
+      disabled={!hasOverlays || isGenerating}
       onClick={() => generateFromOverlays()}
       color={justGenerated ? "#84cc16" : "#22d3ee"}
       svg={justGenerated ? Check : RefreshCcw}
@@ -543,59 +531,77 @@ const CreditsEditor = () => {
     </Button>
   );
 
+  const mobilePreviewToggle = (
+    <div className="flex w-full items-center md:hidden">
+      <Button
+        variant={isPreviewOpen ? "secondary" : "primary"}
+        onClick={() => setIsPreviewOpen(false)}
+        className="flex-1 justify-center rounded-r-none"
+      >
+        Show Editor
+      </Button>
+      <Button
+        variant={isPreviewOpen ? "primary" : "secondary"}
+        onClick={() => setIsPreviewOpen(true)}
+        className="flex-1 justify-center rounded-l-none"
+      >
+        Show Preview
+      </Button>
+    </div>
+  );
+
   return (
     <div
       ref={editorRef}
-      className="w-dvw h-dvh bg-homepage-canvas text-white flex flex-col gap-2 overflow-hidden"
+      className={cn(
+        embeddedInOverlayController
+          ? "flex min-h-0 flex-1 flex-col gap-2 overflow-hidden bg-homepage-canvas text-white"
+          : "flex h-dvh w-dvw flex-col gap-2 overflow-hidden bg-homepage-canvas text-white",
+      )}
+      style={{ "--scrollbar-width": scrollbarWidth } as CSSProperties}
     >
-      <div className="min-h-0">
-        <div className="bg-gray-800 w-full px-4 py-1 flex gap-2 items-center">
-          <Menu
-            menuItems={creditsMenuItems}
-            align="start"
-            TriggeringButton={
-              <Button
-                variant="tertiary"
-                className="w-fit p-1"
-                padding="p-1"
-                aria-label="Open menu"
-                svg={MenuIcon}
-              />
-            }
-          />
-          {canEditCredits && (
-            <div className="border-l-2 border-gray-400 pl-4">
-              <Undo />
+      {!embeddedInOverlayController && (
+        <div className="min-h-0">
+          <div className="flex w-full items-center gap-2 bg-gray-800 px-4 py-1">
+            <Menu
+              menuItems={creditsMenuItems}
+              align="start"
+              TriggeringButton={
+                <Button
+                  variant="tertiary"
+                  className="w-fit p-1"
+                  padding="p-1"
+                  aria-label="Open menu"
+                  svg={MenuIcon}
+                />
+              }
+            />
+            {canEditCredits && (
+              <div className="border-l-2 border-gray-400 pl-4">
+                <Undo />
+              </div>
+            )}
+            <div className="flex max-w-xl min-w-0 flex-1 items-center gap-2 border-l-2 border-gray-400 pl-4">
+              <Outlines className="min-w-0" />
+              {canEditCredits && (
+                <div className="shrink-0">{generateCreditsButton}</div>
+              )}
             </div>
-          )}
-          {canEditCredits && (
-            <div className="flex items-center gap-2 border-l-2 border-gray-400 pl-4">
-              {generateCreditsButton}
+            <div className="ml-auto">
+              <UserSection />
             </div>
-          )}
-          <div className="ml-auto">
-            <UserSection />
           </div>
+          <div className="mt-2 flex items-center md:hidden">{mobilePreviewToggle}</div>
         </div>
-        <div className="md:hidden flex items-center mt-2">
-          <Button
-            variant={isPreviewOpen ? "secondary" : "primary"}
-            onClick={() => setIsPreviewOpen(false)}
-            className="flex-1 justify-center rounded-r-none"
-          >
-            Show Editor
-          </Button>
-          <Button
-            variant={isPreviewOpen ? "primary" : "secondary"}
-            onClick={() => setIsPreviewOpen(true)}
-            className="flex-1 justify-center rounded-l-none"
-          >
-            Show Preview
-          </Button>
-        </div>
-      </div>
+      )}
 
-      {dbProgress !== 100 && (
+      {embeddedInOverlayController && (
+        <div className="flex shrink-0 flex-col gap-2 border-b border-gray-700 px-4 pb-3 pt-1 md:hidden">
+          {mobilePreviewToggle}
+        </div>
+      )}
+
+      {!embeddedInOverlayController && dbProgress !== 100 && (
         <div
           data-testid="loading-overlay"
           className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8"
@@ -612,7 +618,7 @@ const CreditsEditor = () => {
         </div>
       )}
 
-      <div className="flex gap-2 px-4 pb-4 flex-1 min-h-0">
+      <div className="flex min-h-0 flex-1 gap-2 px-4 pb-4">
         <CreditsEditorContainer
           className={isPreviewOpen ? "max-md:hidden" : ""}
         />
@@ -625,7 +631,11 @@ const CreditsEditor = () => {
           )}
         >
           <h2 className="text-lg font-semibold min-h-0">Preview</h2>
-          <Credits isPreview credits={list} />
+          {creditsLoading ? (
+            <CreditsPreviewSkeleton />
+          ) : (
+            <Credits isPreview credits={list} />
+          )}
         </section>
       </div>
       <CreditsSettingsDrawer

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import Toolbar from "./Toolbar";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { preferencesSlice } from "../../store/preferencesSlice";
 
 const mockDispatch = jest.fn();
 let mockState: {
@@ -12,6 +13,7 @@ let mockState: {
         isEditMode: boolean;
         type: string;
       };
+      preferences: ReturnType<typeof preferencesSlice.getInitialState>;
     };
   };
 };
@@ -117,6 +119,15 @@ jest.mock("../../components/ErrorBoundary/ErrorBoundary", () => ({
   default: ({ children }: { children?: ReactNode }) => <>{children}</>,
 }));
 
+jest.mock("../../hooks/useGenerateCreditsFromOverlays", () => ({
+  useGenerateCreditsFromOverlays: () => ({
+    generateFromOverlays: jest.fn(),
+    isGenerating: false,
+    justGenerated: false,
+    hasOverlays: true,
+  }),
+}));
+
 const renderToolbar = ({
   access,
   itemType,
@@ -131,6 +142,7 @@ const renderToolbar = ({
           isEditMode: false,
           type: itemType,
         },
+        preferences: preferencesSlice.getInitialState(),
       },
     },
   };
@@ -139,6 +151,37 @@ const renderToolbar = ({
     <GlobalInfoContext.Provider value={{ access } as any}>
       <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
         <Toolbar className="toolbar" />
+      </ControllerInfoContext.Provider>
+    </GlobalInfoContext.Provider>,
+  );
+};
+
+const renderToolbarOverlay = ({
+  access,
+  overlayPanel = "overlays",
+}: {
+  access: "full" | "music" | "view";
+  overlayPanel?: "overlays" | "credits";
+}) => {
+  mockState = {
+    undoable: {
+      present: {
+        item: {
+          isEditMode: false,
+          type: "song",
+        },
+        preferences: {
+          ...preferencesSlice.getInitialState(),
+          overlayControllerPanel: overlayPanel,
+        },
+      },
+    },
+  };
+
+  return render(
+    <GlobalInfoContext.Provider value={{ access } as any}>
+      <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
+        <Toolbar className="toolbar" variant="overlay" />
       </ControllerInfoContext.Provider>
     </GlobalInfoContext.Provider>,
   );
@@ -176,5 +219,62 @@ describe("Toolbar", () => {
     expect(
       screen.queryByRole("button", { name: "Monitor Settings" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("overlay variant shows Overlays and Credits Editor tabs", () => {
+    renderToolbarOverlay({ access: "full" });
+
+    expect(
+      screen.getByRole("button", { name: "Overlays" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Credits Editor" }),
+    ).toBeInTheDocument();
+  });
+
+  it("overlay variant hides Credits Editor tab for view access", () => {
+    renderToolbarOverlay({ access: "view" });
+
+    expect(
+      screen.queryByRole("button", { name: "Credits Editor" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("overlay variant hides Quick Links for non-full access", () => {
+    renderToolbarOverlay({ access: "music" });
+
+    expect(
+      screen.queryByRole("button", { name: "Quick Links" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("overlay variant dispatches when Credits Editor is clicked", () => {
+    renderToolbarOverlay({ access: "full" });
+
+    screen.getByRole("button", { name: "Credits Editor" }).click();
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "preferences/setOverlayControllerPanel",
+        payload: "credits",
+      }),
+    );
+  });
+
+  it("overlay variant shows Generate Credits instead of Quick Links on credits tab", () => {
+    renderToolbarOverlay({ access: "full", overlayPanel: "credits" });
+
+    expect(
+      screen.getByRole("button", { name: "Generate Credits" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Quick Links" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("overlay variant shows Quick Links on overlays tab when full access", () => {
+    renderToolbarOverlay({ access: "full", overlayPanel: "overlays" });
+
+    expect(screen.getByRole("button", { name: "Quick Links" })).toBeInTheDocument();
   });
 });

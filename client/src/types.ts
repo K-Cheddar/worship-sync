@@ -614,10 +614,29 @@ export type DBPreferences = {
   docType?: DocType;
 };
 
+/** Prefix for outline-scoped credits index docs. Legacy global index uses `_id: "credits"`. */
+export const CREDITS_OUTLINE_INDEX_PREFIX = "credits-outline-";
+
+export function getCreditsDocId(outlineId: string): string {
+  return CREDITS_OUTLINE_INDEX_PREFIX + encodeURIComponent(outlineId);
+}
+
+/** Pouch _id for a credit row scoped to an outline (logical `id` is still `CreditsInfo.id`). */
+export function getCreditDocId(outlineId: string, creditId: string): string {
+  return `${CREDITS_OUTLINE_INDEX_PREFIX}${encodeURIComponent(outlineId)}-credit-${creditId}`;
+}
+
+/** True if _id is an outline-scoped credit row (not the legacy `credit-${id}` format). */
+export function isOutlineScopedCreditDocId(id: string): boolean {
+  return id.startsWith(CREDITS_OUTLINE_INDEX_PREFIX) && id.includes("-credit-");
+}
+
 /** Index doc for credits: ordered credit ids. Each credit is stored as a separate doc (DBCredit). */
 export type DBCredits = {
   _id: string;
   _rev: string;
+  /** Set for outline-scoped index docs; omit on legacy `_id: "credits"`. */
+  outlineId?: string;
   creditIds: string[];
   createdAt?: string;
   updatedAt?: string;
@@ -641,10 +660,12 @@ export type DBCreditHistory = {
   docType?: DocType;
 };
 
-/** Single credit document. _id = `credit-${id}`. */
+/** Single credit document. Scoped: _id from getCreditDocId; legacy: `credit-${id}`. */
 export type DBCredit = CreditsInfo & {
   _id: string;
   _rev?: string;
+  /** Set for outline-scoped credit docs. */
+  outlineId?: string;
   createdAt?: string;
   updatedAt?: string;
   docType?: DocType;

@@ -9,7 +9,7 @@ import type { CreditsInfo } from "../types";
 
 type CreditsState = {
   list: CreditsInfo[];
-  publishedList: CreditsInfo[];
+  liveCredits: CreditsInfo[];
   creditsHistory: Record<string, string[]>;
   initialList: string[];
   isLoading: boolean;
@@ -95,7 +95,7 @@ describe("creditsSlice", () => {
       expect(store.getState().credits.list[0].heading).toBe("H1");
     });
 
-    it("updatePublishedCreditsList copies non-hidden from list", () => {
+    it("syncVisibleCreditsMirrorAndHistory copies non-hidden from list", () => {
       const store = createStore({
         credits: {
           list: [
@@ -112,7 +112,7 @@ describe("creditsSlice", () => {
               hidden: true,
             }),
           ],
-          publishedList: [],
+          liveCredits: [],
           creditsHistory: {},
           initialList: [],
           isLoading: false,
@@ -123,13 +123,13 @@ describe("creditsSlice", () => {
           isInitialized: true,
         },
       });
-      store.dispatch(creditsSlice.actions.updatePublishedCreditsList());
+      store.dispatch(creditsSlice.actions.syncVisibleCreditsMirrorAndHistory());
       const state = store.getState().credits;
-      expect(state.publishedList).toHaveLength(1);
-      expect(state.publishedList[0].heading).toBe("A");
+      expect(state.liveCredits).toHaveLength(1);
+      expect(state.liveCredits[0].heading).toBe("A");
     });
 
-    it("updatePublishedCreditsList merges unique lines into creditsHistory by heading", () => {
+    it("syncVisibleCreditsMirrorAndHistory merges unique lines into creditsHistory by heading", () => {
       const store = createStore({
         credits: {
           list: [
@@ -146,7 +146,7 @@ describe("creditsSlice", () => {
               hidden: false,
             }),
           ],
-          publishedList: [],
+          liveCredits: [],
           creditsHistory: {},
           initialList: [],
           isLoading: false,
@@ -157,7 +157,7 @@ describe("creditsSlice", () => {
           isInitialized: true,
         },
       });
-      store.dispatch(creditsSlice.actions.updatePublishedCreditsList());
+      store.dispatch(creditsSlice.actions.syncVisibleCreditsMirrorAndHistory());
       const state = store.getState().credits;
       expect(state.creditsHistory["Reading of the Word"]).toEqual([
         "Alice",
@@ -170,11 +170,11 @@ describe("creditsSlice", () => {
       const store = createStore();
       store.dispatch(
         creditsSlice.actions.initiateCreditsHistory({
-          "Sermon": ["Pastor A", "Pastor B"],
+          Sermon: ["Pastor A", "Pastor B"],
         }),
       );
       expect(store.getState().credits.creditsHistory).toEqual({
-        "Sermon": ["Pastor A", "Pastor B"],
+        Sermon: ["Pastor A", "Pastor B"],
       });
     });
 
@@ -182,7 +182,7 @@ describe("creditsSlice", () => {
       const store = createStore({
         credits: {
           ...creditsSlice.getInitialState(),
-          creditsHistory: { "Sermon": ["A"], "Invocation": ["B"] },
+          creditsHistory: { Sermon: ["A"], Invocation: ["B"] },
         },
       });
       store.dispatch(creditsSlice.actions.deleteCreditsHistoryEntry("Sermon"));
@@ -195,14 +195,14 @@ describe("creditsSlice", () => {
       const store = createStore({
         credits: {
           ...creditsSlice.getInitialState(),
-          creditsHistory: { "Sermon": ["A"], "Invocation": ["B"] },
+          creditsHistory: { Sermon: ["A"], Invocation: ["B"] },
         },
       });
       store.dispatch(
         creditsSlice.actions.updateCreditsHistoryEntry({
           heading: "Sermon",
           lines: ["X", "Y", "Z"],
-        })
+        }),
       );
       expect(store.getState().credits.creditsHistory).toEqual({
         Sermon: ["X", "Y", "Z"],
@@ -214,7 +214,7 @@ describe("creditsSlice", () => {
       const store = createStore({
         credits: {
           ...creditsSlice.getInitialState(),
-          creditsHistory: { "Sermon": ["Dup"], "Invocation": ["Dup", "Keep"] },
+          creditsHistory: { Sermon: ["Dup"], Invocation: ["Dup", "Keep"] },
         },
       });
       store.dispatch(

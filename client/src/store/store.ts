@@ -50,12 +50,13 @@ import {
   DBPreferences,
   DBServices,
   FormattedTextDisplayInfo,
+  getCreditsDocId,
   OverlayInfo,
   Presentation,
   TimerInfo,
 } from "../types";
 import { allDocsSlice, upsertItemInAllDocs } from "./allDocsSlice";
-import { creditsSlice } from "./creditsSlice";
+import { creditsSlice, mergeVisibleCreditsIntoHistory } from "./creditsSlice";
 import {
   timersSlice,
   reconcileTimersFromDocs,
@@ -71,6 +72,12 @@ import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
+import {
+  ensureCreditsIndexDoc,
+  getCreditsByIds,
+  migrateLegacyCreditsToActiveOutlineIfNeeded,
+  putCreditHistoryDocs,
+} from "../utils/dbUtils";
 
 // Helper function to safely post messages to the broadcast channel
 const safePostMessage = (message: any) => {
@@ -244,9 +251,9 @@ const excludedActions: string[] = [
   creditsSlice.actions.initiateCreditsList.toString(),
   creditsSlice.actions.initiateTransitionScene.toString(),
   creditsSlice.actions.initiateCreditsScene.toString(),
-  creditsSlice.actions.initiatePublishedCreditsList.toString(),
+  creditsSlice.actions.initiateLiveCredits.toString(),
   creditsSlice.actions.updateCreditsListFromRemote.toString(),
-  creditsSlice.actions.updatePublishedCreditsListFromRemote.toString(),
+  creditsSlice.actions.updateLiveCreditsFromRemote.toString(),
   creditsSlice.actions.updateInitialList.toString(),
   creditsSlice.actions.setIsLoading.toString(),
   creditsSlice.actions.selectCredit.toString(),
@@ -268,6 +275,7 @@ const excludedActions: string[] = [
   preferencesSlice.actions.setSelectedPreference.toString(),
   preferencesSlice.actions.setShouldShowItemEditor.toString(),
   preferencesSlice.actions.setShouldShowStreamFormat.toString(),
+  preferencesSlice.actions.setOverlayControllerPanel.toString(),
   preferencesSlice.actions.setIsMediaExpanded.toString(),
   preferencesSlice.actions.increaseSlides.toString(),
   preferencesSlice.actions.decreaseSlides.toString(),
@@ -1000,7 +1008,7 @@ listenerMiddleware.startListening({
     const excluded = isAnyOf(
       creditsSlice.actions.initiateCreditsList,
       creditsSlice.actions.initiateCreditsHistory,
-      creditsSlice.actions.initiatePublishedCreditsList,
+      creditsSlice.actions.initiateLiveCredits,
       creditsSlice.actions.updateCreditsListFromRemote,
       creditsSlice.actions.updateInitialList,
       creditsSlice.actions.setIsLoading,
@@ -1008,11 +1016,10 @@ listenerMiddleware.startListening({
       creditsSlice.actions.initiateCreditsScene,
       creditsSlice.actions.selectCredit,
       creditsSlice.actions.setIsInitialized,
-      creditsSlice.actions.updateCredit,
-      creditsSlice.actions.deleteCredit,
       creditsSlice.actions.deleteCreditsHistoryEntry,
       creditsSlice.actions.updateCreditsHistoryEntry,
       creditsSlice.actions.removeCreditsHistoryLineEverywhere,
+      creditsSlice.actions.syncVisibleCreditsMirrorAndHistory,
     );
     return (
       (currentState as RootState).undoable.present.credits !==
@@ -1022,30 +1029,92 @@ listenerMiddleware.startListening({
     );
   },
 
-  effect: async (action, listenerApi) => {
-    const state = listenerApi.getState() as RootState;
+  effect: async (_action, listenerApi) => {
+    const preDelay = listenerApi.getState() as RootState;
+    const snapshotCredits = preDelay.undoable.present.credits;
+    if (!snapshotCredits.isInitialized) return;
+
+    const snapshotOutlineId =
+      preDelay.undoable.present.itemLists.selectedList?._id ??
+      preDelay.undoable.present.itemLists.activeList?._id;
+    if (!snapshotOutlineId) return;
+
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
+    listenerApi.throwIfCancelled();
 
-    const { list, publishedList, transitionScene, creditsScene, scheduleName } =
-      state.undoable.present.credits;
+    const afterDelay = listenerApi.getState() as RootState;
+    const currentOutlineId =
+      afterDelay.undoable.present.itemLists.selectedList?._id ??
+      afterDelay.undoable.present.itemLists.activeList?._id;
 
-    if (
-      creditsSlice.actions.updatePublishedCreditsList.match(action) &&
-      globalFireDbInfo.db &&
-      globalFireDbInfo.churchId
-    ) {
-      set(
-        ref(
-          globalFireDbInfo.db,
-          getChurchDataPath(
-            globalFireDbInfo.churchId,
-            "credits",
-            "publishedList",
-          ),
-        ),
-        cleanObject(publishedList),
+    const afterDelayCredits = afterDelay.undoable.present.credits;
+    /** Same outline: use latest Redux (e.g. after updateCreditsListFromRemote). Switched outline: only snapshot still matches this Pouch doc. */
+    const creditsForPersist =
+      currentOutlineId === snapshotOutlineId && afterDelayCredits.isInitialized
+        ? afterDelayCredits
+        : snapshotCredits;
+
+    const { list, creditsHistory } = creditsForPersist;
+
+    const visible = list.filter((c) => !c.hidden);
+    const prevHistory = creditsHistory ?? {};
+    const merged = mergeVisibleCreditsIntoHistory(prevHistory, visible);
+    const uniqueHeadings = [
+      ...new Set(visible.map((c) => c.heading.trim()).filter(Boolean)),
+    ];
+    const headingsToSave = uniqueHeadings.filter(
+      (h) => JSON.stringify(merged[h]) !== JSON.stringify(prevHistory[h]),
+    );
+
+    if (currentOutlineId === snapshotOutlineId) {
+      listenerApi.dispatch(
+        creditsSlice.actions.syncVisibleCreditsMirrorAndHistory(),
       );
+    }
+
+    if (headingsToSave.length > 0 && db) {
+      try {
+        await putCreditHistoryDocs(db, merged, headingsToSave);
+      } catch (e) {
+        console.error("putCreditHistoryDocs failed", e);
+      }
+    }
+
+    const shouldSyncGlobalRtdbCredits =
+      globalFireDbInfo.db &&
+      globalFireDbInfo.churchId &&
+      currentOutlineId === snapshotOutlineId &&
+      creditsForPersist.isInitialized;
+
+    if (shouldSyncGlobalRtdbCredits) {
+      const {
+        list: rtdbList,
+        transitionScene,
+        creditsScene,
+        scheduleName,
+      } = creditsForPersist;
+      const activeOutlineId =
+        afterDelay.undoable.present.itemLists.activeList?._id;
+      const isEditingLiveOutline =
+        activeOutlineId != null && currentOutlineId === activeOutlineId;
+      const liveCreditsForRtdb = rtdbList
+        .filter((c) => !c.hidden)
+        .map((credit) => ({ ...credit }));
+
+      if (isEditingLiveOutline) {
+        set(
+          ref(
+            globalFireDbInfo.db,
+            getChurchDataPath(
+              globalFireDbInfo.churchId,
+              "credits",
+              "publishedList",
+            ),
+          ),
+          cleanObject(liveCreditsForRtdb),
+        );
+      }
       set(
         ref(
           globalFireDbInfo.db,
@@ -1087,14 +1156,19 @@ listenerMiddleware.startListening({
     const creditIds = list.map((c) => c.id);
     const docsToBroadcast: DBCredits[] = [];
 
-    // List order changed (e.g. drag-and-drop). Update only the index; credit docs are managed by components.
-    const db_credits: DBCredits = await db.get("credits");
-    db_credits.creditIds = creditIds;
-    db_credits.updatedAt = now;
-    await db.put(db_credits);
-    docsToBroadcast.push(db_credits);
+    try {
+      await ensureCreditsIndexDoc(db, snapshotOutlineId);
+      const db_credits: DBCredits = await db.get(
+        getCreditsDocId(snapshotOutlineId),
+      );
+      db_credits.creditIds = creditIds;
+      db_credits.updatedAt = now;
+      await db.put(db_credits);
+      docsToBroadcast.push(db_credits);
+    } catch (e) {
+      console.error("credits index save failed", e);
+    }
 
-    // Credit history docs (per heading) are written by components: on Publish and when deleting from the history drawer.
     safePostMessage({
       type: "update",
       data: {
@@ -1102,6 +1176,57 @@ listenerMiddleware.startListening({
         hostId: globalHostId,
       },
     });
+  },
+});
+
+/** When the active outline changes, push that outline's credits from Pouch to RTDB live display. */
+listenerMiddleware.startListening({
+  predicate: (action, currentState, previousState) => {
+    const prevId = (previousState as RootState).undoable.present.itemLists
+      .activeList?._id;
+    const nextId = (currentState as RootState).undoable.present.itemLists
+      .activeList?._id;
+    return prevId !== nextId;
+  },
+  effect: async (_action, listenerApi) => {
+    const stateBefore = listenerApi.getState() as RootState;
+    const outlineId = stateBefore.undoable.present.itemLists.activeList?._id;
+
+    if (!globalFireDbInfo.db || !globalFireDbInfo.churchId) return;
+
+    const publishedRef = ref(
+      globalFireDbInfo.db,
+      getChurchDataPath(globalFireDbInfo.churchId, "credits", "publishedList"),
+    );
+
+    if (!outlineId) {
+      set(publishedRef, []);
+      return;
+    }
+
+    if (!db) return;
+
+    try {
+      await migrateLegacyCreditsToActiveOutlineIfNeeded(db, outlineId);
+      await ensureCreditsIndexDoc(db, outlineId);
+      const creditsDoc = (await db.get(
+        getCreditsDocId(outlineId),
+      )) as DBCredits;
+      const creditIds = creditsDoc.creditIds ?? [];
+      const credits = await getCreditsByIds(db, outlineId, creditIds);
+      const visible = credits.filter((c) => !c.hidden).map((c) => ({ ...c }));
+
+      const stillActive =
+        listenerApi.getState().undoable.present.itemLists.activeList?._id;
+      if (stillActive !== outlineId) return;
+
+      set(publishedRef, cleanObject(visible as unknown as object));
+    } catch (e) {
+      console.error(
+        "Failed to sync published credits to RTDB after active outline change",
+        e,
+      );
+    }
   },
 });
 
@@ -1232,6 +1357,7 @@ listenerMiddleware.startListening({
       preferencesSlice.actions.setIsMediaExpanded,
       preferencesSlice.actions.setShouldShowStreamFormat,
       preferencesSlice.actions.setToolbarSection,
+      preferencesSlice.actions.setOverlayControllerPanel,
       preferencesSlice.actions.setIsLoading,
       preferencesSlice.actions.setSelectedPreference,
       preferencesSlice.actions.setSelectedQuickLink,

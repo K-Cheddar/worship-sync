@@ -3,7 +3,7 @@ import HistorySuggestField from "../../components/HistorySuggestField";
 type CreditHistoryTextAreaProps = {
   value: string;
   onChange: (value: string) => void;
-  /** History lines (typically all published headings), used for suggestions. */
+  /** History lines from saved credits history, used for suggestions. */
   historyLines: string[];
   /** Optional callback to remove a history line from the underlying history store. */
   onRemoveHistoryLine?: (line: string) => void;

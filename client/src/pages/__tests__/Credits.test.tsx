@@ -38,7 +38,7 @@ const createMockStore = (initialState = {}) => {
 
 describe("Credits Component", () => {
   const mockUser = "testUser";
-  const mockPublishedList = [
+  const mockLiveCredits = [
     { id: "1", heading: "Test Heading", text: "Test Text", hidden: false },
   ];
   const mockTransitionScene = "transition";
@@ -62,7 +62,7 @@ describe("Credits Component", () => {
 
   it("should not fetch data when login state is guest", () => {
     const store = createMockStore({
-      publishedList: [],
+      liveCredits: [],
       transitionScene: "",
       creditsScene: "",
     });
@@ -86,7 +86,7 @@ describe("Credits Component", () => {
 
   it("should fetch data from Firebase when user is not Demo", () => {
     const store = createMockStore({
-      publishedList: mockPublishedList,
+      liveCredits: mockLiveCredits,
       transitionScene: mockTransitionScene,
       creditsScene: mockCreditsScene,
     });
@@ -110,7 +110,7 @@ describe("Credits Component", () => {
 
   it("should check current OBS scene on mount", () => {
     const store = createMockStore({
-      publishedList: mockPublishedList,
+      liveCredits: mockLiveCredits,
       transitionScene: mockTransitionScene,
       creditsScene: mockCreditsScene,
     });
@@ -122,7 +122,7 @@ describe("Credits Component", () => {
 
   it("should set transition scene when active", async () => {
     const store = createMockStore({
-      publishedList: mockPublishedList,
+      liveCredits: mockLiveCredits,
       transitionScene: mockTransitionScene,
       creditsScene: mockCreditsScene,
     });
@@ -145,7 +145,7 @@ describe("Credits Component", () => {
 
   it("should render credits list with correct props", () => {
     const store = createMockStore({
-      publishedList: mockPublishedList,
+      liveCredits: mockLiveCredits,
       transitionScene: mockTransitionScene,
       creditsScene: mockCreditsScene,
     });

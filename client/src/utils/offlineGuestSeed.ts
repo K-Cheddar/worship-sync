@@ -15,6 +15,7 @@ import type {
   TemplatesByType,
   TimerInfo,
 } from "../types";
+import { getCreditsDocId } from "../types";
 import { DEFAULT_FONT_PX, DEFAULT_TITLE_FONT_PX } from "../constants";
 
 const SOLID_BACKGROUND = "";
@@ -335,7 +336,8 @@ export const createOfflineGuestSeedDocs = (now = new Date().toISOString()) => {
       docType: "overlayTemplates",
     } satisfies Omit<DBOverlayTemplates, "_rev">,
     {
-      _id: "credits",
+      _id: getCreditsDocId(outline._id),
+      outlineId: outline._id,
       creditIds: [],
       createdAt: now,
       updatedAt: now,

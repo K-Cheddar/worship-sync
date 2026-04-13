@@ -780,6 +780,105 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, [loginState, sharedDataSessionScope]);
 
+  // Track active instances (must run before the connection monitor below so
+  // instanceRef points at the current church before .info/connected fires).
+  useEffect(() => {
+    if (!firebaseDb || !isSharedDataReady || loginState !== "success") return;
+
+    const activeInstancesRef = ref(
+      firebaseDb,
+      getChurchDataPath(churchId, "activeInstances")
+    );
+
+    // Listen for changes in active instances
+    const unsubscribe = onValue(activeInstancesRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        // Clean up stale instances (older than 1 hour)
+        const now = Date.now();
+        const staleInstances = Object.entries(data).filter(
+          ([_, instance]: [string, any]) => {
+            const lastActive = new Date(instance.lastActive).getTime();
+            return now - lastActive > 60 * 60 * 1000; // 1 hour
+          }
+        );
+
+        // Remove stale instances
+        staleInstances.forEach(([staleHostId]) => {
+          const staleRef = ref(
+            firebaseDb,
+            getChurchDataPath(churchId, "activeInstances", staleHostId)
+          );
+          void set(staleRef, null).catch(() => undefined);
+        });
+        const _activeInstances = Object.values(data).filter(
+          (instance: any): instance is Instance =>
+            instance.isOnController &&
+            now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
+        );
+        setActiveInstances(_activeInstances);
+      } else {
+        setActiveInstances([]);
+      }
+    });
+
+    // Set this instance as active only if on controller page
+    instanceRef.current = ref(
+      firebaseDb,
+      getChurchDataPath(churchId, "activeInstances", hostId)
+    );
+
+    // Function to update the instance
+    const updateInstance = () => {
+      if (instanceRef.current) {
+        void set(instanceRef.current, {
+          lastActive: new Date().toISOString(),
+          user: activeInstanceName,
+          name: activeInstanceName,
+          database: database,
+          hostId: hostId,
+          isOnController,
+          sessionKind,
+          deviceLabel: device?.label || null,
+        }).catch(() => undefined);
+      }
+    };
+
+    // Initial setup
+    updateInstance();
+
+    // Set up periodic updates while the component is mounted
+    const updateInterval = setInterval(updateInstance, 30 * 60 * 1000); // Update every 30 minutes
+
+    // Remove this instance when the user disconnects
+    if (instanceRef.current) {
+      onDisconnect(instanceRef.current).remove();
+    }
+
+    // Cleanup function
+    return () => {
+      unsubscribe();
+      clearInterval(updateInterval);
+      const staleInstanceRef = instanceRef.current;
+      instanceRef.current = null;
+      if (staleInstanceRef) {
+        void onDisconnect(staleInstanceRef).cancel().catch(() => undefined);
+        void set(staleInstanceRef, null).catch(() => undefined);
+      }
+    };
+  }, [
+    activeInstanceName,
+    churchId,
+    database,
+    device?.label,
+    firebaseDb,
+    hostId,
+    isSharedDataReady,
+    isOnController,
+    loginState,
+    sessionKind,
+  ]);
+
   // Monitor connection state and handle reconnection
   useEffect(() => {
     if (!firebaseDb || !isSharedDataReady || loginState !== "success") return;
@@ -789,7 +888,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       if (snap.val() === true) {
         // When we reconnect, re-establish the active instance if we're on the controller page
         if (isOnController && instanceRef.current) {
-          set(instanceRef.current, {
+          void set(instanceRef.current, {
             lastActive: new Date().toISOString(),
             user: activeInstanceName,
             name: activeInstanceName,
@@ -798,7 +897,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             isOnController,
             sessionKind,
             deviceLabel: device?.label || null,
-          });
+          }).catch(() => undefined);
         }
       }
     });
@@ -877,101 +976,6 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     refreshPresentationListeners();
   }, [refreshPresentationListeners]);
 
-  // Track active instances
-  useEffect(() => {
-    if (!firebaseDb || !isSharedDataReady || loginState !== "success") return;
-
-    const activeInstancesRef = ref(
-      firebaseDb,
-      getChurchDataPath(churchId, "activeInstances")
-    );
-
-    // Listen for changes in active instances
-    const unsubscribe = onValue(activeInstancesRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        // Clean up stale instances (older than 1 hour)
-        const now = Date.now();
-        const staleInstances = Object.entries(data).filter(
-          ([_, instance]: [string, any]) => {
-            const lastActive = new Date(instance.lastActive).getTime();
-            return now - lastActive > 60 * 60 * 1000; // 1 hour
-          }
-        );
-
-        // Remove stale instances
-        staleInstances.forEach(([hostId]) => {
-          const staleRef = ref(
-            firebaseDb,
-            getChurchDataPath(churchId, "activeInstances", hostId)
-          );
-          set(staleRef, null);
-        });
-        const _activeInstances = Object.values(data).filter(
-          (instance: any): instance is Instance =>
-            instance.isOnController &&
-            now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
-        );
-        setActiveInstances(_activeInstances);
-      } else {
-        setActiveInstances([]);
-      }
-    });
-
-    // Set this instance as active only if on controller page
-    instanceRef.current = ref(
-      firebaseDb,
-      getChurchDataPath(churchId, "activeInstances", hostId)
-    );
-
-    // Function to update the instance
-    const updateInstance = () => {
-      if (instanceRef.current) {
-        set(instanceRef.current, {
-          lastActive: new Date().toISOString(),
-          user: activeInstanceName,
-          name: activeInstanceName,
-          database: database,
-          hostId: hostId,
-          isOnController,
-          sessionKind,
-          deviceLabel: device?.label || null,
-        });
-      }
-    };
-
-    // Initial setup
-    updateInstance();
-
-    // Set up periodic updates while the component is mounted
-    const updateInterval = setInterval(updateInstance, 30 * 60 * 1000); // Update every 30 minutes
-
-    // Remove this instance when the user disconnects
-    if (instanceRef.current) {
-      onDisconnect(instanceRef.current).remove();
-    }
-
-    // Cleanup function
-    return () => {
-      unsubscribe();
-      clearInterval(updateInterval);
-      if (instanceRef.current) {
-        set(instanceRef.current, null);
-      }
-    };
-  }, [
-    activeInstanceName,
-    churchId,
-    database,
-    device?.label,
-    firebaseDb,
-    hostId,
-    isSharedDataReady,
-    isOnController,
-    loginState,
-    sessionKind,
-  ]);
-
   useEffect(() => {
     if (loginState !== "success" || !churchId) {
       setChurchBranding(emptyChurchBranding());
@@ -1012,7 +1016,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (instanceRef.current) {
-        set(instanceRef.current, null);
+        void set(instanceRef.current, null).catch(() => undefined);
       }
     };
 

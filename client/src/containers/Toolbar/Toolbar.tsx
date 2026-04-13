@@ -5,10 +5,10 @@ import {
   Monitor,
   RectangleEllipsis,
   Pencil,
-  MonitorPlay
+  MonitorPlay,
 } from "lucide-react";
 import Menu from "./ToolbarElements/Menu";
-import Outlines from "./ToolbarElements/Outlines";
+import ToolbarOverlay from "./ToolbarElements/ToolbarOverlay";
 import SlideEditTools from "./ToolbarElements/SlideEditTools";
 import ItemEditTools from "./ToolbarElements/ItemEditTools";
 import Undo from "./ToolbarElements/Undo";
@@ -58,6 +58,7 @@ const Toolbar = ({
   variant?: ToolbarVariant;
 }) => {
   const location = useLocation();
+  /** Quick Links drawer (overlay controller only; state unused when variant is default). */
   const [quickLinksDrawerOpen, setQuickLinksDrawerOpen] = useState(false);
   const { isEditMode, type: itemType } = useSelector(
     (state) => state.undoable.present.item
@@ -65,7 +66,6 @@ const Toolbar = ({
   const [section, setSection] = useState<sections>("settings");
   const { isPhone, isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
-
   const dispatch = useDispatch();
 
   const updateItem = useCallback(
@@ -134,123 +134,116 @@ const Toolbar = ({
             isEditMode && "invisible"
           )}
         >
-          <div className="flex gap-0 overflow-x-auto w-full scrollbar-variable">
-            <ToolbarButton
-              svg={Settings}
-              onClick={() => setSection("settings")}
-              isActive={section === "settings"}
-            >
-              Settings
-            </ToolbarButton>
-            <ToolbarButton
-              svg={SquarePen}
-              onClick={() => setSection("slide-tools")}
-              hidden={!onItemPage || access === "view" || !canShowSlideAndBoxTools}
-              isActive={section === "slide-tools"}
-            >
-              Slide Tools
-            </ToolbarButton>
-            <ToolbarButton
-              svg={Pencil}
-              onClick={() => setSection("box-tools")}
-              hidden={!onItemPage || access === "view" || !canShowSlideAndBoxTools}
-              isActive={section === "box-tools"}
-            >
-              Box Tools
-            </ToolbarButton>
-            {access === "full" && (
-              <>
+          {variant === "overlay" ? (
+            <ToolbarOverlay
+              isEditMode={!!isEditMode}
+              quickLinksDrawerOpen={quickLinksDrawerOpen}
+              onQuickLinksOpenChange={setQuickLinksDrawerOpen}
+            />
+          ) : (
+            <>
+              <div className="flex gap-0 overflow-x-auto w-full scrollbar-variable">
                 <ToolbarButton
-                  svg={MonitorPlay}
-                  onClick={() => setSection("stream-format")}
-                  hidden={!onItemPage}
-                  isActive={section === "stream-format"}
+                  svg={Settings}
+                  onClick={() => setSection("settings")}
+                  isActive={section === "settings"}
                 >
-                  Stream Format
+                  Settings
                 </ToolbarButton>
                 <ToolbarButton
                   svg={SquarePen}
-                  onClick={() => setSection("item-tools")}
-                  hidden={!onItemPage}
-                  isActive={section === "item-tools"}
+                  onClick={() => setSection("slide-tools")}
+                  hidden={!onItemPage || access === "view" || !canShowSlideAndBoxTools}
+                  isActive={section === "slide-tools"}
                 >
-                  Item Tools
+                  Slide Tools
                 </ToolbarButton>
-              </>
-            )}
-          </div>
-          <hr className="border-gray-500 w-full border-t-2 sticky left-0" />
-          <div
-            className={cn(
-              "px-2 py-1 flex items-center flex-1 overflow-x-auto w-full",
-              isEditMode && "hidden"
-            )}
-          >
-            {variant === "overlay" && (
-              <Outlines
-                className={cn(section !== "settings" && "hidden")}
-                matchToolbarTabs
-              />
-            )}
-            {variant !== "overlay" && access !== "view" && (
-              <ToolbarButton
-                svg={Settings}
-                to="/controller/preferences"
-                hidden={section !== "settings"}
-                isActive={
-                  location.pathname.includes("preferences") &&
-                  !location.pathname.includes("quick-links")
-                }
+                <ToolbarButton
+                  svg={Pencil}
+                  onClick={() => setSection("box-tools")}
+                  hidden={!onItemPage || access === "view" || !canShowSlideAndBoxTools}
+                  isActive={section === "box-tools"}
+                >
+                  Box Tools
+                </ToolbarButton>
+                {access === "full" && (
+                  <>
+                    <ToolbarButton
+                      svg={MonitorPlay}
+                      onClick={() => setSection("stream-format")}
+                      hidden={!onItemPage}
+                      isActive={section === "stream-format"}
+                    >
+                      Stream Format
+                    </ToolbarButton>
+                    <ToolbarButton
+                      svg={SquarePen}
+                      onClick={() => setSection("item-tools")}
+                      hidden={!onItemPage}
+                      isActive={section === "item-tools"}
+                    >
+                      Item Tools
+                    </ToolbarButton>
+                  </>
+                )}
+              </div>
+              <hr className="border-gray-500 w-full border-t-2 sticky left-0" />
+              <div
+                className={cn(
+                  "px-2 py-1 flex items-center flex-1 overflow-x-auto w-full",
+                  isEditMode && "hidden"
+                )}
               >
-                Preferences
-              </ToolbarButton>
-            )}
-            {access === "full" && (
-              <ToolbarButton
-                svg={RectangleEllipsis}
-                hidden={section !== "settings"}
-                isActive={
-                  variant === "overlay"
-                    ? quickLinksDrawerOpen
-                    : location.pathname.includes("quick-links")
-                }
-                to={
-                  variant === "overlay" ? undefined : "/controller/quick-links"
-                }
-                onClick={
-                  variant === "overlay"
-                    ? () => setQuickLinksDrawerOpen(true)
-                    : undefined
-                }
-              >
-                Quick Links
-              </ToolbarButton>
-            )}
-            {variant !== "overlay" && access === "full" && (
-              <ToolbarButton
-                svg={Monitor}
-                to="/controller/monitor-settings"
-                hidden={section !== "settings"}
-                isActive={location.pathname.includes("monitor-settings")}
-              >
-                Monitor Settings
-              </ToolbarButton>
-            )}
-            <SlideEditTools
-              className={cn(section !== "slide-tools" && "hidden")}
-            />
-            <FormattedTextEditor
-              className={cn(section !== "stream-format" && "hidden")}
-            />
-            <ItemEditTools
-              className={cn(section !== "item-tools" && "hidden")}
-            />
-            <BoxEditor
-              className={cn(section !== "box-tools" && "hidden")}
-              updateItem={updateItem}
-              isMobile={isMobile}
-            />
-          </div>
+                {access !== "view" && (
+                  <ToolbarButton
+                    svg={Settings}
+                    to="/controller/preferences"
+                    hidden={section !== "settings"}
+                    isActive={
+                      location.pathname.includes("preferences") &&
+                      !location.pathname.includes("quick-links")
+                    }
+                  >
+                    Preferences
+                  </ToolbarButton>
+                )}
+                {access === "full" && (
+                  <ToolbarButton
+                    svg={RectangleEllipsis}
+                    hidden={section !== "settings"}
+                    isActive={location.pathname.includes("quick-links")}
+                    to="/controller/quick-links"
+                  >
+                    Quick Links
+                  </ToolbarButton>
+                )}
+                {access === "full" && (
+                  <ToolbarButton
+                    svg={Monitor}
+                    to="/controller/monitor-settings"
+                    hidden={section !== "settings"}
+                    isActive={location.pathname.includes("monitor-settings")}
+                  >
+                    Monitor Settings
+                  </ToolbarButton>
+                )}
+                <SlideEditTools
+                  className={cn(section !== "slide-tools" && "hidden")}
+                />
+                <FormattedTextEditor
+                  className={cn(section !== "stream-format" && "hidden")}
+                />
+                <ItemEditTools
+                  className={cn(section !== "item-tools" && "hidden")}
+                />
+                <BoxEditor
+                  className={cn(section !== "box-tools" && "hidden")}
+                  updateItem={updateItem}
+                  isMobile={isMobile}
+                />
+              </div>
+            </>
+          )}
         </div>
         <div className="px-2 py-1 flex gap-1 items-center border-l-2 border-gray-500">
           <UserSection />

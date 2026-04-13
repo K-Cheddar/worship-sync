@@ -1,5 +1,5 @@
 import Button from "../../components/Button/Button";
-import { Plus, Save, Check } from "lucide-react";
+import { Plus, Check, FolderOpen } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { selectCredit, updateList } from "../../store/creditsSlice";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
@@ -16,33 +16,40 @@ import {
   addCredit,
   applyRemoveLineFromCreditsHistoryMap,
   flattenCreditsHistoryLines,
-  mergePublishedCreditsIntoHistory,
   removeCreditsHistoryLineEverywhere,
-  updatePublishedCreditsList,
 } from "../../store/creditsSlice";
 import { broadcastCreditsUpdate } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
   putCreditHistoryDoc,
-  putCreditHistoryDocs,
   removeCreditHistoryDoc,
 } from "../../utils/dbUtils";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import generateRandomId from "../../utils/generateRandomId";
-import type { DBCredit } from "../../types";
+import { getCreditDocId, type DBCredit } from "../../types";
+import CreditsEditorSkeleton from "./CreditsEditorSkeleton";
+import ExistingCreditsDrawer from "./ExistingCreditsDrawer";
 
 const CreditsEditor = ({ className }: { className?: string }) => {
-  const { list, publishedList, initialList, isLoading, selectedCreditId, creditsHistory } =
+  const { list, initialList, isLoading, selectedCreditId, creditsHistory } =
     useSelector((state: RootState) => state.undoable.present.credits);
+  /** Pouch / UI: edit whichever outline is selected in Outlines; fall back to active. */
+  const outlineId = useSelector(
+    (state: RootState) =>
+      state.undoable.present.itemLists.selectedList?._id ??
+      state.undoable.present.itemLists.activeList?._id,
+  );
   const dispatch = useDispatch();
-  const { db } = useContext(ControllerInfoContext) ?? {};
+  const { db, isMobile } = useContext(ControllerInfoContext) ?? {
+    isMobile: false,
+  };
   const { access } = useContext(GlobalInfoContext) ?? {};
   const readOnly = access === "view";
 
   const [justAdded, setJustAdded] = useState(false);
-  const [justPublished, setJustPublished] = useState(false);
+  const [isAddExistingOpen, setIsAddExistingOpen] = useState(false);
 
   const { setNodeRef } = useDroppable({
     id: "credits-list",
@@ -79,22 +86,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     [creditsHistory, db, dispatch],
   );
 
-  const hasUnpublishedChanges = useMemo(() => {
-    const visibleList = list
-      .filter((credit) => !credit.hidden)
-      .map((credit) => ({
-        heading: credit.heading,
-        text: credit.text,
-      }));
-    const visiblePublishedList = publishedList
-      .filter((credit) => !credit.hidden)
-      .map((credit) => ({
-        heading: credit.heading,
-        text: credit.text,
-      }));
-    return JSON.stringify(visiblePublishedList) !== JSON.stringify(visibleList);
-  }, [list, publishedList]);
-
   const listOrderKey = useMemo(
     () => list.map((c) => c.id).join(","),
     [list],
@@ -110,7 +101,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     const updatedCredits = [...list];
     const newIndex = updatedCredits.findIndex((credit) => credit.id === overId);
     const oldIndex = updatedCredits.findIndex(
-      (credit) => credit.id === activeId
+      (credit) => credit.id === activeId,
     );
     const element = list[oldIndex];
     updatedCredits.splice(oldIndex, 1);
@@ -137,34 +128,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     }
   }, [selectedCreditId, listOrderKey]);
 
-  const handlePublish = useCallback(() => {
-    setJustPublished(true);
-    const visible = list.filter((c) => !c.hidden);
-    const mergedHistory = mergePublishedCreditsIntoHistory(
-      creditsHistory,
-      visible
-    );
-    const uniqueHeadings = [
-      ...new Set(
-        visible
-          .map((c) => c.heading.trim())
-          .filter(Boolean)
-      ),
-    ];
-    const headingsToSave = uniqueHeadings.filter(
-      (h) =>
-        JSON.stringify(mergedHistory[h]) !==
-        JSON.stringify(creditsHistory[h])
-    );
-    dispatch(updatePublishedCreditsList());
-    if (db && headingsToSave.length > 0) {
-      putCreditHistoryDocs(db, mergedHistory, headingsToSave).catch(
-        console.error
-      );
-    }
-    setTimeout(() => setJustPublished(false), 5000);
-  }, [list, creditsHistory, db, dispatch]);
-
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>
       <div
@@ -174,14 +137,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
           className
         )}
       >
-        <h2 className="text-xl font-semibold text-center h-fit">
-          Credits
-          {hasUnpublishedChanges ? (
-            <span className="text-yellow-500 ml-2">(Draft)</span>
-          ) : (
-            <span className="text-green-500 ml-2">(Published)</span>
-          )}
-        </h2>
+        <h2 className="text-xl font-semibold text-center h-fit">Credits</h2>
         {!isLoading && list.length === 0 && (
           <p className="text-sm px-2">
             {readOnly
@@ -189,13 +145,11 @@ const CreditsEditor = ({ className }: { className?: string }) => {
               : "This credits list is empty. Click the button below to add some credits."}
           </p>
         )}
-        {isLoading && (
-          <h3 className="text-lg text-center">Loading credits...</h3>
-        )}
+        {isLoading && <CreditsEditorSkeleton readOnly={readOnly} />}
         {!isLoading && (
           <>
             <ul
-              className="scrollbar-thin flex flex-col gap-2 w-full overflow-y-auto flex-1 min-h-0"
+              className="scrollbar-variable flex flex-col gap-2 w-full overflow-y-auto overflow-x-hidden flex-1 min-h-0 pr-2"
               id="credits-list"
               ref={setNodeRef}
             >
@@ -209,6 +163,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
                       onSelectCredit={handleSelectCredit}
                       selectedCreditId={selectedCreditId}
                       key={credit.id}
+                      outlineId={outlineId}
                       initialList={initialList}
                       heading={credit.heading}
                       text={credit.text}
@@ -226,43 +181,51 @@ const CreditsEditor = ({ className }: { className?: string }) => {
             </ul>
             {!readOnly && (
               <section className="flex min-h-0 flex-col gap-2">
-                <Button
-                  className="mt-2 w-full justify-center text-sm"
-                  svg={justAdded ? Check : Plus}
-                  color={justAdded ? "#84cc16" : "#22d3ee"}
-                  disabled={justAdded}
-                  onClick={async () => {
-                    if (!db) return;
-                    setJustAdded(true);
-                    const newId = generateRandomId();
-                    const newCredit: DBCredit = {
-                      _id: `credit-${newId}`,
-                      id: newId,
-                      heading: "",
-                      text: "",
-                      updatedAt: new Date().toISOString(),
-                      docType: "credit",
-                    };
-                    await db.put(newCredit);
-                    broadcastCreditsUpdate([newCredit]);
-                    dispatch(addCredit({ id: newId, heading: "", text: "" }));
-                    setTimeout(() => setJustAdded(false), 500);
-                  }}
-                >
-                  {justAdded ? "Added." : "Add Credit"}
-                </Button>
-                <Button
-                  className="mt-2 w-full justify-center text-sm"
-                  svg={justPublished ? Check : Save}
-                  color={justPublished ? "#84cc16" : undefined}
-                  variant="cta"
-                  disabled={justPublished}
-                  onClick={handlePublish}
-                >
-                  {justPublished
-                    ? "Published credits and scenes"
-                    : "Publish Credits and Scenes"}
-                </Button>
+                <div className="mt-2 flex gap-2">
+                  <Button
+                    className="flex-1 justify-center text-sm"
+                    svg={justAdded ? Check : Plus}
+                    color={justAdded ? "#84cc16" : "#22d3ee"}
+                    disabled={justAdded}
+                    onClick={async () => {
+                      if (!db || !outlineId) return;
+                      setJustAdded(true);
+                      const newId = generateRandomId();
+                      const newCredit: DBCredit = {
+                        _id: getCreditDocId(outlineId, newId),
+                        outlineId,
+                        id: newId,
+                        heading: "",
+                        text: "",
+                        updatedAt: new Date().toISOString(),
+                        docType: "credit",
+                      };
+                      await db.put(newCredit);
+                      broadcastCreditsUpdate([newCredit]);
+                      dispatch(addCredit({ id: newId, heading: "", text: "" }));
+                      setTimeout(() => setJustAdded(false), 500);
+                    }}
+                  >
+                    {justAdded ? "Added." : "Add Credit"}
+                  </Button>
+                  <Button
+                    className="flex-1 justify-center text-sm"
+                    svg={FolderOpen}
+                    color="#a78bfa"
+                    disabled={!db || !outlineId}
+                    onClick={() => setIsAddExistingOpen(true)}
+                  >
+                    Existing credits
+                  </Button>
+                </div>
+                <ExistingCreditsDrawer
+                  isOpen={isAddExistingOpen}
+                  onClose={() => setIsAddExistingOpen(false)}
+                  db={db}
+                  outlineId={outlineId}
+                  currentListIds={list.map((c) => c.id)}
+                  isMobile={isMobile ?? false}
+                />
               </section>
             )}
           </>

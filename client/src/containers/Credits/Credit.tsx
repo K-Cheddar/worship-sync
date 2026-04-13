@@ -24,7 +24,7 @@ import { broadcastCreditsUpdate } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { putCreditDoc } from "../../utils/dbUtils";
 import Input from "../../components/Input/Input";
-import type { DBCredits } from "../../types";
+import { getCreditsDocId, type DBCredits } from "../../types";
 import CreditHistoryTextArea from "./CreditHistoryTextArea";
 import {
   creditRowSelectedClass,
@@ -36,10 +36,12 @@ const PERSIST_DEBOUNCE_MS = 500;
 const REDUX_DEBOUNCE_MS = 200;
 
 type CreditProps = CreditsInfo & {
+  /** Active service outline id for scoped Pouch docs. */
+  outlineId: string | undefined;
   initialList: string[];
   onSelectCredit: (id: string) => void;
   selectedCreditId: string;
-  /** History lines from all published headings, used for suggestions. */
+  /** History lines from saved credits history, used for suggestions. */
   historyLines: string[];
   /** Remove a line from history everywhere (all headings). */
   onRemoveHistoryLine?: (line: string) => void;
@@ -50,6 +52,7 @@ const Credit = ({
   heading,
   text,
   id,
+  outlineId,
   initialList: _initialList,
   hidden,
   onSelectCredit,
@@ -84,11 +87,11 @@ const Credit = ({
 
   const persistCredit = useCallback(
     async (payload: { heading: string; text: string; hidden?: boolean }) => {
-      if (!db) return;
-      const doc = await putCreditDoc(db, { id, ...payload });
+      if (!db || !outlineId) return;
+      const doc = await putCreditDoc(db, outlineId, { id, ...payload });
       if (doc) broadcastCreditsUpdate([doc]);
     },
-    [db, id]
+    [db, id, outlineId]
   );
 
   const flushDraftToRedux = useCallback(() => {
@@ -175,9 +178,11 @@ const Credit = ({
     }
     setIsDeleting(true);
     setTimeout(async () => {
-      if (db) {
+      if (db && outlineId) {
         try {
-          const existingCredits: DBCredits = await db.get("credits");
+          const existingCredits: DBCredits = await db.get(
+            getCreditsDocId(outlineId),
+          );
           const creditIds = existingCredits.creditIds.filter((x) => x !== id);
           existingCredits.creditIds = creditIds;
           existingCredits.updatedAt = new Date().toISOString();

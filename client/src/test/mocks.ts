@@ -120,6 +120,7 @@ export function createMockGlobalContext(
     setOperatorName: jest.fn(),
     refreshAuthBootstrap: jest.fn(),
     refreshPresentationListeners: jest.fn(),
+    endWorkstationOperatorSession: jest.fn(),
     ...overrides,
   };
 }

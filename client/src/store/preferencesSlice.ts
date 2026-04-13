@@ -54,6 +54,8 @@ type PreferencesState = {
   bibleFontMode: BibleFontMode;
   scrollbarWidth: ScrollbarWidth;
   isInitialized: boolean;
+  /** Overlay controller main column: overlays list vs embedded credits editor (not persisted). */
+  overlayControllerPanel: "overlays" | "credits";
 };
 
 const initialState: PreferencesState = {
@@ -117,6 +119,7 @@ const initialState: PreferencesState = {
   bibleFontMode: "separate",
   scrollbarWidth: "thin",
   isInitialized: false,
+  overlayControllerPanel: "overlays",
 };
 
 export const preferencesSlice = createSlice({
@@ -435,6 +438,12 @@ export const preferencesSlice = createSlice({
     setToolbarSection: (state, action: PayloadAction<string>) => {
       state.toolbarSection = action.payload;
     },
+    setOverlayControllerPanel: (
+      state,
+      action: PayloadAction<"overlays" | "credits">,
+    ) => {
+      state.overlayControllerPanel = action.payload;
+    },
     setIsMediaExpanded: (state, action: PayloadAction<boolean>) => {
       state.isMediaExpanded = action.payload;
     },
@@ -539,6 +548,7 @@ export const {
   setShouldShowItemEditor,
   setShouldShowStreamFormat,
   setToolbarSection,
+  setOverlayControllerPanel,
   setIsMediaExpanded,
   increaseMediaItems,
   decreaseMediaItems,
