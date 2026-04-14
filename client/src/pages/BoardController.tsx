@@ -1136,9 +1136,14 @@ export const BoardControllerContent = () => {
                         key={post._id}
                         className={cn(
                           "rounded-xl border p-4",
-                          post.hidden
-                            ? "border-gray-600 bg-gray-800/60 opacity-70"
-                            : "border-gray-500 bg-gray-800/90",
+                          post.deleted &&
+                          "border-rose-900/50 bg-rose-950/25 ring-1 ring-rose-500/15",
+                          !post.deleted &&
+                          post.hidden &&
+                          "border-gray-600 bg-gray-800/60 opacity-70",
+                          !post.deleted &&
+                          !post.hidden &&
+                          "border-gray-500 bg-gray-800/90",
                         )}
                       >
                         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
@@ -1146,8 +1151,10 @@ export const BoardControllerContent = () => {
                             <span
                               className={cn(
                                 "font-semibold",
-                                post.hidden && "text-gray-400",
-                                !post.hidden && getBoardAuthorNameColorClass(post),
+                                (post.hidden || post.deleted) && "text-gray-400",
+                                !post.hidden &&
+                                !post.deleted &&
+                                getBoardAuthorNameColorClass(post),
                               )}
                             >
                               {post.author}
@@ -1155,7 +1162,12 @@ export const BoardControllerContent = () => {
                             <span className="text-xs text-gray-300">
                               {formatBoardTimestamp(post.timestamp)}
                             </span>
-                            {post.highlighted && (
+                            {post.deleted && (
+                              <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-xs font-semibold text-rose-100">
+                                Deleted by author
+                              </span>
+                            )}
+                            {post.highlighted && !post.deleted && (
                               <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-semibold text-amber-200">
                                 Highlighted
                               </span>
@@ -1191,14 +1203,19 @@ export const BoardControllerContent = () => {
                                     );
                                   })
                                 }
-                                disabled={isActing || post.hidden}
+                                disabled={isActing || post.hidden || post.deleted}
                               >
                                 {post.highlighted ? "Unhighlight" : "Highlight"}
                               </Button>
                             </div>
                           )}
                         </div>
-                        <div className="mt-3 min-w-0">
+                        <div
+                          className={cn(
+                            "mt-3 min-w-0",
+                            post.deleted && "opacity-80",
+                          )}
+                        >
                           <BoardPostMessage
                             text={post.text}
                             isMine={false}

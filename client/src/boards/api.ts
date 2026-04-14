@@ -119,6 +119,32 @@ export const createBoardPost = (
     },
   );
 
+export const updateOwnBoardPost = (
+  aliasId: string,
+  postDocId: string,
+  payload: { authorId: string; text: string },
+) =>
+  fetchJson<{ post: DBBoardPost }>(
+    `api/boards/${encodeURIComponent(aliasId)}/posts/${encodeURIComponent(postDocId)}`,
+    {
+      method: "PUT",
+      body: payload,
+    },
+  );
+
+export const deleteOwnBoardPost = (
+  aliasId: string,
+  postDocId: string,
+  payload: { authorId: string },
+) =>
+  fetchJson<{ ok: boolean; post?: DBBoardPost }>(
+    `api/boards/${encodeURIComponent(aliasId)}/posts/${encodeURIComponent(postDocId)}`,
+    {
+      method: "DELETE",
+      body: payload,
+    },
+  );
+
 export const createBoardAlias = (payload: {
   aliasId: string;
   title: string;

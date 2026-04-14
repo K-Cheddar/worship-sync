@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   archiveBoardDoc,
+  assertAttendeeCanMutateBoardPost,
   containsBoardProfanity,
   createAliasDoc,
   createBoardDoc,
@@ -17,6 +18,7 @@ import {
   updateAliasPresentationFontScale,
   validateAliasInput,
   validateBoardPostInput,
+  validateBoardPostTextUpdate,
 } from "./boardService.js";
 
 test("normalizeAliasId keeps board aliases URL safe", () => {
@@ -90,6 +92,101 @@ test("validateBoardPostInput blocks profanity in names and messages", () => {
   );
 });
 
+test("validateBoardPostTextUpdate validates message edits", () => {
+  assert.deepEqual(validateBoardPostTextUpdate({ text: "  Updated.  " }), {
+    ok: true,
+    value: { text: "Updated." },
+  });
+
+  assert.deepEqual(validateBoardPostTextUpdate({ text: "   " }), {
+    ok: false,
+    error: "Post text is required.",
+  });
+
+  assert.deepEqual(validateBoardPostTextUpdate({ text: "This is shit rude" }), {
+    ok: false,
+    error: "Posts with profanity are not allowed.",
+  });
+});
+
+test("assertAttendeeCanMutateBoardPost enforces alias, session, and author id", () => {
+  const aliasDoc = {
+    aliasId: "sunday",
+    currentBoardId: "board-a",
+  };
+  const postDoc = createBoardPostDoc({
+    aliasId: "sunday",
+    boardId: "board-a",
+    database: "demo",
+    author: "Alex",
+    authorId: "p1",
+    text: "Hi",
+    postId: "post-1",
+  });
+
+  assert.deepEqual(
+    assertAttendeeCanMutateBoardPost({
+      aliasDoc,
+      postDoc,
+      requestAuthorId: "p1",
+    }),
+    { ok: true },
+  );
+
+  assert.deepEqual(
+    assertAttendeeCanMutateBoardPost({
+      aliasDoc,
+      postDoc,
+      requestAuthorId: "other",
+    }),
+    {
+      ok: false,
+      status: 403,
+      error: "You can only edit or delete your own posts.",
+    },
+  );
+
+  assert.deepEqual(
+    assertAttendeeCanMutateBoardPost({
+      aliasDoc,
+      postDoc: { ...postDoc, boardId: "old-board" },
+      requestAuthorId: "p1",
+    }),
+    {
+      ok: false,
+      status: 410,
+      error: "This post is from a past session and cannot be changed.",
+    },
+  );
+
+  const legacyPost = { ...postDoc, authorId: "" };
+  assert.deepEqual(
+    assertAttendeeCanMutateBoardPost({
+      aliasDoc,
+      postDoc: legacyPost,
+      requestAuthorId: "p1",
+    }),
+    {
+      ok: false,
+      status: 403,
+      error: "This post cannot be changed from the discussion board.",
+    },
+  );
+
+  assert.deepEqual(
+    assertAttendeeCanMutateBoardPost({
+      aliasDoc,
+      postDoc: { ...postDoc, deleted: true },
+      requestAuthorId: "p1",
+    }),
+    {
+      ok: false,
+      status: 404,
+      error: "Post not found.",
+    },
+  );
+});
+
 test("isBoardAuthorInUse blocks duplicate names from different devices only", () => {
   const existingPost = createBoardPostDoc({
     aliasId: "sunday",
@@ -133,6 +230,14 @@ test("isBoardAuthorInUse blocks duplicate names from different devices only", ()
     ),
     true,
   );
+
+  assert.equal(
+    isBoardAuthorInUse([{ ...existingPost, deleted: true }], {
+      author: "Alex",
+      authorId: "device-2",
+    }),
+    false,
+  );
 });
 
 test("rotateAliasDoc preserves board history order", () => {
@@ -152,7 +257,10 @@ test("rotateAliasDoc preserves board history order", () => {
 
   assert.equal(rotated.currentBoardId, "board-b");
   assert.deepEqual(rotated.history, ["board-a"]);
-  assert.equal(rotated.presentationFontScale, DEFAULT_BOARD_PRESENTATION_FONT_SCALE);
+  assert.equal(
+    rotated.presentationFontScale,
+    DEFAULT_BOARD_PRESENTATION_FONT_SCALE,
+  );
   assert.equal(rotated.updatedAt, 200);
 });
 
@@ -226,6 +334,17 @@ test("post helpers build deterministic prefixes and public filters", () => {
     timestamp: 3,
   });
 
+  const softDeleted = createBoardPostDoc({
+    aliasId: "sunday",
+    boardId: "board-1",
+    database: "demo",
+    postId: "post-4",
+    author: "D",
+    text: "Gone",
+    timestamp: 4,
+  });
+  softDeleted.deleted = true;
+
   assert.deepEqual(getBoardPostRange("board-1"), {
     startkey: "post:board-1:",
     endkey: "post:board-1:\ufff0",
@@ -235,6 +354,7 @@ test("post helpers build deterministic prefixes and public filters", () => {
       visiblePlain,
       hiddenHighlighted,
       visibleHighlighted,
+      softDeleted,
     ]).map((post) => post.id),
     ["post-1", "post-3"],
   );
@@ -243,6 +363,7 @@ test("post helpers build deterministic prefixes and public filters", () => {
       visiblePlain,
       hiddenHighlighted,
       visibleHighlighted,
+      softDeleted,
     ]).map((post) => post.id),
     ["post-1"],
   );

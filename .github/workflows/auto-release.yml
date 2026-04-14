@@ -169,6 +169,7 @@ jobs:
           files: |
             client/dist/*.dmg
             client/dist/*.dmg.blockmap
+            client/dist/*.zip
             client/dist/latest-mac.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}

@@ -7,10 +7,8 @@ export const BOARD_POST_ID_PREFIX = "post:";
 export const BOARD_LOCAL_NAME_STORAGE_KEY = "worshipsyncBoardName";
 export const BOARD_LOCAL_PARTICIPANT_ID_STORAGE_KEY =
   "worshipsyncBoardParticipantId";
-export const BOARD_DISPLAY_ALIAS_STORAGE_KEY =
-  "worshipsyncBoardDisplayAliasId";
-export const BOARD_DISPLAY_ALIAS_CHANNEL_NAME =
-  "worshipsync-board-display";
+export const BOARD_DISPLAY_ALIAS_STORAGE_KEY = "worshipsyncBoardDisplayAliasId";
+export const BOARD_DISPLAY_ALIAS_CHANNEL_NAME = "worshipsync-board-display";
 
 const trimString = (value: string) => value.trim();
 
@@ -34,8 +32,9 @@ export const BOARD_PRESENTATION_FONT_SCALE_STEP = 0.1;
 export const normalizeBoardAuthorKey = (value: string): string =>
   trimString(value).slice(0, MAX_BOARD_AUTHOR_LENGTH).toLowerCase();
 
-export const normalizeBoardParticipantId = (value: string | undefined): string =>
-  (typeof value === "string" ? value.trim() : "").slice(0, 120);
+export const normalizeBoardParticipantId = (
+  value: string | undefined,
+): string => (typeof value === "string" ? value.trim() : "").slice(0, 120);
 
 export const normalizeBoardPresentationFontScale = (value?: number): number => {
   if (typeof value !== "number" || Number.isNaN(value)) {
@@ -64,6 +63,10 @@ export const isBoardAuthorInUse = (
   if (!normalizedAuthorKey) return false;
 
   return posts.some((post) => {
+    if (post.deleted) {
+      return false;
+    }
+
     const postAuthorKey = normalizeBoardAuthorKey(post.author);
     if (postAuthorKey !== normalizedAuthorKey) {
       return false;
@@ -96,9 +99,7 @@ export const getBoardPostRange = (boardId: string) => ({
   endkey: `${BOARD_POST_ID_PREFIX}${boardId}:\ufff0`,
 });
 
-export const sortBoardPostsAscending = (
-  posts: DBBoardPost[],
-): DBBoardPost[] =>
+export const sortBoardPostsAscending = (posts: DBBoardPost[]): DBBoardPost[] =>
   [...posts].sort((a, b) => {
     if (a.timestamp !== b.timestamp) {
       return a.timestamp - b.timestamp;
@@ -106,9 +107,10 @@ export const sortBoardPostsAscending = (
     return a._id.localeCompare(b._id);
   });
 
-export const filterVisibleBoardPosts = (
-  posts: DBBoardPost[],
-): DBBoardPost[] => sortBoardPostsAscending(posts).filter((post) => !post.hidden);
+export const filterVisibleBoardPosts = (posts: DBBoardPost[]): DBBoardPost[] =>
+  sortBoardPostsAscending(posts).filter(
+    (post) => !post.hidden && !post.deleted,
+  );
 
 /**
  * True when the post was written by this participant (stable `authorId` match).
@@ -132,6 +134,9 @@ export const getBoardPostsForAttendeeView = (
   viewer: { authorId: string },
 ): DBBoardPost[] =>
   sortBoardPostsAscending(posts).filter((post) => {
+    if (post.deleted) {
+      return false;
+    }
     if (!post.hidden) return true;
     return isBoardPostOwnedByParticipant(post, viewer);
   });
@@ -177,7 +182,8 @@ export const filterHighlightedBoardPosts = (
 ): DBBoardPost[] =>
   filterVisibleBoardPosts(posts).filter((post) => post.highlighted);
 
-export const buildBoardRoute = (aliasId: string): string => `/boards/${aliasId}`;
+export const buildBoardRoute = (aliasId: string): string =>
+  `/boards/${aliasId}`;
 
 export const buildBoardPresentRoute = (aliasId: string): string =>
   `/boards/present/${aliasId}`;

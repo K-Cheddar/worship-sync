@@ -143,4 +143,5 @@ jobs:
           name: electron-mac
           path: |
             client/dist/*.dmg
+            client/dist/*.zip
           retention-days: 30
