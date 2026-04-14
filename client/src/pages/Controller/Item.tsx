@@ -72,7 +72,10 @@ const Item = () => {
     <ErrorBoundary>
       <div className="flex-1 min-h-0 flex flex-col">
         <SlideEditor access={access} />
-        <LoadingOverlay isLoading={showSlidesLoadingOverlay} className="flex-1 min-h-0">
+        <LoadingOverlay
+          isLoading={Boolean(showSlidesLoadingOverlay)}
+          className="flex-1 min-h-0"
+        >
           <ItemSlides />
         </LoadingOverlay>
       </div>

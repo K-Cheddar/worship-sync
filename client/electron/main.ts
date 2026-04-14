@@ -832,6 +832,20 @@ const getWindowByType = (windowType: WindowType): BrowserWindow | null => {
   return getDisplayWindow(windowType) as BrowserWindow | null;
 };
 
+const DISPLAY_WINDOW_TYPES: WindowType[] = ["projector", "monitor", "board"];
+
+ipcMain.handle("refresh-display-windows", () => {
+  let reloaded = 0;
+  for (const windowType of DISPLAY_WINDOW_TYPES) {
+    const win = getWindowByType(windowType);
+    if (win && !win.isDestroyed()) {
+      win.webContents.reload();
+      reloaded++;
+    }
+  }
+  return reloaded;
+});
+
 const moveWindowToDisplay = (
   window: BrowserWindow | null,
   windowType: WindowType,

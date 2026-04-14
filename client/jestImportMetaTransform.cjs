@@ -6,7 +6,8 @@ const { transformSync } = require("@babel/core");
 const tsJest = require("ts-jest").default;
 
 const tsJestTransformer = tsJest.createTransformer({
-  tsconfig: "tsconfig.json",
+  // ts-jest defaults pair CommonJS with deprecated node10; keep bundler resolution (TS 6+).
+  tsconfig: "tsconfig.jest.json",
 });
 
 module.exports = {

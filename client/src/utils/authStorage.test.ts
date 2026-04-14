@@ -1,12 +1,16 @@
 import {
   clearLegacyWorkstationOperatorName,
   clearWorkstationSessionOperatorName,
+  consumePendingEmailCodeSignInMethod,
   getWorkstationSessionOperatorName,
+  inferLastSignInMethodFromProviderIds,
+  setPendingEmailCodeSignInMethod,
   setWorkstationSessionOperatorName,
 } from "./authStorage";
 
 const RUNTIME_SESSION_ID_KEY = "worshipsync_runtime_session_id";
-const WORKSTATION_OPERATOR_BINDING_KEY = "worshipsync_workstation_operator_binding";
+const WORKSTATION_OPERATOR_BINDING_KEY =
+  "worshipsync_workstation_operator_binding";
 const OPERATOR_NAME_KEY = "worshipsync_operator_name";
 
 const memoryStorage = () => {
@@ -91,7 +95,9 @@ describe("authStorage workstation session operator", () => {
     clearWorkstationSessionOperatorName();
     expect(getWorkstationSessionOperatorName()).toBe("");
     expect(localMock.getItem(WORKSTATION_OPERATOR_BINDING_KEY)).toBeNull();
-    expect(sessionMock.getItem("worshipsync_workstation_operator_session")).toBeNull();
+    expect(
+      sessionMock.getItem("worshipsync_workstation_operator_session"),
+    ).toBeNull();
   });
 
   it("clearLegacyWorkstationOperatorName removes legacy operator key", () => {
@@ -103,5 +109,40 @@ describe("authStorage workstation session operator", () => {
   it("rejects malformed binding JSON", () => {
     localMock.setItem(WORKSTATION_OPERATOR_BINDING_KEY, "not-json");
     expect(getWorkstationSessionOperatorName()).toBe("");
+  });
+});
+
+describe("authStorage pending email code sign-in method", () => {
+  let sessionMock: ReturnType<typeof memoryStorage>;
+
+  beforeEach(() => {
+    sessionMock = memoryStorage();
+    Object.defineProperty(window, "sessionStorage", {
+      value: sessionMock,
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  it("stores and consumes a pending method", () => {
+    setPendingEmailCodeSignInMethod("google");
+    expect(consumePendingEmailCodeSignInMethod()).toBe("google");
+    expect(consumePendingEmailCodeSignInMethod()).toBeNull();
+  });
+
+  it("clears pending method when set to null", () => {
+    setPendingEmailCodeSignInMethod("microsoft");
+    setPendingEmailCodeSignInMethod(null);
+    expect(consumePendingEmailCodeSignInMethod()).toBeNull();
+  });
+
+  it("maps Firebase provider ids to stored method keys", () => {
+    expect(inferLastSignInMethodFromProviderIds(["password"])).toBe("password");
+    expect(
+      inferLastSignInMethodFromProviderIds(["google.com", "password"]),
+    ).toBe("google");
+    expect(inferLastSignInMethodFromProviderIds(["microsoft.com"])).toBe(
+      "microsoft",
+    );
   });
 });

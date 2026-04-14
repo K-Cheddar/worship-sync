@@ -54,43 +54,70 @@ interface ElectronAPI {
   getPlatform: () => Promise<string>;
   isElectron: () => Promise<boolean>;
   isDev: () => Promise<boolean>;
-  
+
   // Window management - all generic handlers
   openWindow: (windowType: WindowType) => Promise<boolean>;
   closeWindow: (windowType: WindowType) => Promise<boolean>;
   focusWindow: (windowType: WindowType) => Promise<boolean>;
   toggleWindowFullscreen: (windowType: WindowType) => Promise<boolean>;
-  moveWindowToDisplay: (windowType: WindowType, displayId: number) => Promise<boolean>;
-  setDisplayPreference: (windowType: WindowType, displayId: number) => Promise<boolean>;
+  moveWindowToDisplay: (
+    windowType: WindowType,
+    displayId: number,
+  ) => Promise<boolean>;
+  setDisplayPreference: (
+    windowType: WindowType,
+    displayId: number,
+  ) => Promise<boolean>;
   getDisplays: () => Promise<Display[]>;
   getWindowStates: () => Promise<WindowStatesInfo>;
-  
+  /** Reload open projector/monitor/board windows (e.g. after sign-in). */
+  refreshDisplayWindows: () => Promise<number>;
+
   // Event listeners
   onWindowStateChanged: (callback: () => void) => () => void;
-  
+
   // Auto-updater
-  checkForUpdates: () => Promise<{ available: boolean; updateInfo?: any; error?: string; message?: string }>;
+  checkForUpdates: () => Promise<{
+    available: boolean;
+    updateInfo?: any;
+    error?: string;
+    message?: string;
+  }>;
   downloadUpdate: () => Promise<boolean>;
   installUpdate: () => Promise<void>;
-  
+
   // Update event listeners
-  onUpdateAvailable?: (callback: (info: { version: string; releaseDate?: string }) => void) => () => void;
+  onUpdateAvailable?: (
+    callback: (info: { version: string; releaseDate?: string }) => void,
+  ) => () => void;
   onUpdateNotAvailable?: (callback: () => void) => () => void;
-  onUpdateDownloaded?: (callback: (info: { version: string; releaseDate?: string }) => void) => () => void;
-  onUpdateDownloadProgress?: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => () => void;
-  onUpdateError?: (callback: (error: { message: string }) => void) => () => void;
-  
+  onUpdateDownloaded?: (
+    callback: (info: { version: string; releaseDate?: string }) => void,
+  ) => () => void;
+  onUpdateDownloadProgress?: (
+    callback: (progress: {
+      percent: number;
+      transferred: number;
+      total: number;
+    }) => void,
+  ) => () => void;
+  onUpdateError?: (
+    callback: (error: { message: string }) => void,
+  ) => () => void;
+
   // Media cache
   downloadMedia: (url: string) => Promise<string | null>;
   getMediaCacheMap: () => Promise<Record<string, string>>;
   getLocalMediaPath: (url: string) => Promise<string | null>;
   cleanupUnusedMedia: (usedUrls: string[]) => Promise<void>;
-  syncMediaCache: (mediaUrls: string[]) => Promise<{ downloaded: number; cleaned: number }>;
-  
+  syncMediaCache: (
+    mediaUrls: string[],
+  ) => Promise<{ downloaded: number; cleaned: number }>;
+
   // Route persistence
   saveLastRoute: (route: string) => Promise<boolean>;
   getLastRoute: () => Promise<string | null>;
-  
+
   // Upload status
   setUploadInProgress: (inProgress: boolean) => Promise<boolean>;
   setTaskbarUploadProgress: (progress: number | null) => Promise<boolean>;

@@ -878,6 +878,11 @@ export type DBBoardPost = {
   /** Stable id for this device/session; used to allow reusing the same display name across own posts. */
   authorId?: string;
   timestamp: number;
+  /** Present when the author edited the message after posting. */
+  editedAt?: number;
+  /** Soft-removed by author; still visible to moderators. */
+  deleted?: boolean;
+  deletedAt?: number;
   hidden: boolean;
   highlighted: boolean;
 };

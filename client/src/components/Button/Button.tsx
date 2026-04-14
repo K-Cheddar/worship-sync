@@ -85,6 +85,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       state,
       onClick,
       disabled = false,
+      size: _htmlSize,
       ...rest
     },
     ref
@@ -120,7 +121,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
 
     const uiVariant: UiVariant = isSelected ? "none" : variantToUi[variant];
 
-    const uiSize: NonNullable<ButtonVariantProps["size"]> =
+    const uiSize: "bare" | "present" =
       variant === "textLink" ? "bare" : "present";
 
     const layoutClassName = cn(

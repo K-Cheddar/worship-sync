@@ -57,7 +57,7 @@ describe("DisplayQrCodeOverlay", () => {
         ref={containerRef as any}
         width={30}
         shouldAnimate
-        qrCodeOverlayInfo={{}}
+        qrCodeOverlayInfo={{ id: "qr-current" }}
         prevQrCodeOverlayInfo={{
           id: "qr-prev",
           type: "qr-code",

@@ -1003,6 +1003,7 @@ const BrandingLogoSlotsSection = memo(function BrandingLogoSlotsSection({
                   className="w-full justify-center"
                   svg={Upload}
                   iconSize="sm"
+                  color="#22d3ee"
                   aria-label={`Choose file for ${config.title}`}
                   onClick={() => onChooseFileClick(slot)}
                 >

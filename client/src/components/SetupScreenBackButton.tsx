@@ -5,11 +5,13 @@ import Button from "./Button/Button";
 type SetupScreenBackButtonProps = {
   label?: string;
   to?: string;
+  disabled?: boolean;
 };
 
 const SetupScreenBackButton = ({
   label = "Back to start",
   to = "/",
+  disabled = false,
 }: SetupScreenBackButtonProps) => {
   const navigate = useNavigate();
   return (
@@ -21,7 +23,11 @@ const SetupScreenBackButton = ({
         iconSize="sm"
         gap="gap-1.5"
         className="-ml-2 whitespace-nowrap px-2 py-1.5 text-sm"
-        onClick={() => navigate(to)}
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          navigate(to);
+        }}
       >
         {label}
       </Button>

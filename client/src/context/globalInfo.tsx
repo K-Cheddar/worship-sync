@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { FirebaseError } from "firebase/app";
 import {
   GoogleAuthProvider,
   OAuthProvider,
@@ -79,7 +80,11 @@ import {
   getPendingLinkState,
   getWorkstationSessionOperatorName,
   getWorkstationToken,
+  type PendingLinkCredentialState,
+  consumePendingEmailCodeSignInMethod,
+  inferLastSignInMethodFromProviderIds,
   setLastSignInMethod,
+  setPendingEmailCodeSignInMethod,
   setPendingLinkCredentialState,
   setPendingLinkState,
   setOperatorNameStorage,
@@ -93,6 +98,7 @@ import {
 import { getChurchDataPath } from "../utils/firebasePaths";
 import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
 import { backoff } from "../utils/generalUtils";
+import { reloadElectronDisplayWindows } from "../utils/environment";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
 import { getHumanPostAuthPath } from "../utils/authRedirectPath";
 import { resolveAccountDisplayNameForAudit } from "../utils/displayName";
@@ -108,7 +114,38 @@ function signOutFirebaseAuth(auth: Auth): Promise<void> {
 }
 
 function settleFirebaseWrite<T>(value: T | PromiseLike<T>): Promise<void> {
-  return Promise.resolve(value).catch(() => undefined);
+  return Promise.resolve(value)
+    .then(() => { })
+    .catch(() => { });
+}
+
+const CHURCH_BRANDING_PERMISSION_LISTEN_RETRY_MAX = 12;
+const CHURCH_BRANDING_SHARED_TOKEN_REMINT_MAX = 2;
+
+const brandingListenRetryDelayMs = (zeroBasedAttempt: number) =>
+  Math.min(2500, 100 * 2 ** Math.min(zeroBasedAttempt, 6));
+
+const isFirebasePermissionDenied = (error: unknown) => {
+  if (!error || typeof error !== "object") return false;
+  const maybe = error as { code?: string; message?: string };
+  const code = maybe.code?.toLowerCase();
+  if (code === "permission_denied") return true;
+  const msg = String(maybe.message || "").toLowerCase();
+  if (msg.includes("permission_denied")) return true;
+  if (msg.includes("permission to access")) return true;
+  return false;
+};
+
+async function awaitSharedRealtimeAuthReady(auth: Auth) {
+  try {
+    await auth.authStateReady?.();
+    const user = auth.currentUser;
+    if (user) {
+      await user.getIdToken(true);
+    }
+  } catch {
+    // Tests stub `getSharedDataAuth()` with a partial object; production Auth is full-featured.
+  }
 }
 
 type HumanFirebaseAuthResult =
@@ -131,21 +168,21 @@ const getCredentialJsonValue = (
 const serializePendingLinkCredential = (
   providerId: "google.com" | "microsoft.com",
   credential: AuthCredential,
-) => {
+): PendingLinkCredentialState | null => {
   const credentialJson =
     typeof (credential as { toJSON?: () => unknown }).toJSON === "function"
       ? (credential as { toJSON: () => unknown }).toJSON()
       : null;
-  if (
-    typeof credentialJson !== "string" &&
-    (typeof credentialJson !== "object" || credentialJson === null)
-  ) {
+  if (typeof credentialJson === "string") {
+    return { providerId, credentialJson };
+  }
+  if (typeof credentialJson !== "object" || credentialJson === null) {
     return null;
   }
   return {
     providerId,
-    credentialJson,
-  } as const;
+    credentialJson: credentialJson as Record<string, unknown>,
+  };
 };
 
 const restorePendingLinkCredential = (
@@ -350,6 +387,10 @@ export const globalHostId = getStableHostId();
 const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
   const [isSharedDataReady, setIsSharedDataReady] = useState(false);
+  const [authenticatedSharedDataScope, setAuthenticatedSharedDataScope] =
+    useState<string | null>(null);
+  const [sharedDataTokenRemintNonce, setSharedDataTokenRemintNonce] =
+    useState(0);
   const [loginState, setLoginState] = useState<LoginStateType>("loading");
   const [bootstrapStatus, setBootstrapStatus] =
     useState<BootstrapStatus>("loading");
@@ -378,6 +419,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   );
   const [churchBrandingStatus, setChurchBrandingStatus] =
     useState<ChurchBrandingStatus>("loading");
+  const [churchBrandingListenGeneration, setChurchBrandingListenGeneration] =
+    useState(0);
   const [role, setRole] = useState("");
   const [authError, setAuthError] = useState("");
   const [pendingEmailVerificationId, setPendingEmailVerificationId] =
@@ -393,6 +436,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const hasRehydratedTimersRef = useRef(false);
   const sharedDataAuthRequestIdRef = useRef(0);
   const sharedDataAuthChainRef = useRef<Promise<void>>(Promise.resolve());
+  const churchBrandingGateKeyRef = useRef("");
+  const churchBrandingPermissionRetryRef = useRef(0);
+  const churchBrandingRemintAttemptsRef = useRef(0);
   const location = useLocation();
   const isOnController = useMemo(() => {
     const path = location.pathname;
@@ -428,6 +474,22 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }),
     [access, churchId, database, device?.deviceId, loginState, sessionKind, userId]
   );
+  const isSharedDataScopeReady = useMemo(
+    () =>
+      loginState === "success" &&
+      isSharedDataReady &&
+      authenticatedSharedDataScope === sharedDataSessionScope,
+    [
+      authenticatedSharedDataScope,
+      isSharedDataReady,
+      loginState,
+      sharedDataSessionScope,
+    ]
+  );
+
+  useEffect(() => {
+    churchBrandingRemintAttemptsRef.current = 0;
+  }, [sharedDataSessionScope]);
 
   useEffect(() => {
     setAuditSnapshot({
@@ -479,6 +541,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   });
 
   const storageListenerCleanupRef = useRef<(() => void) | undefined>(undefined);
+
+  const clearPresentationFirebaseListeners = useCallback(() => {
+    const subs = onValueRef.current;
+    if (subs) {
+      (Object.keys(subs) as (keyof typeof subs)[]).forEach((key) => {
+        subs[key]?.();
+        subs[key] = undefined;
+      });
+    }
+    storageListenerCleanupRef.current?.();
+    storageListenerCleanupRef.current = undefined;
+  }, []);
   const refreshAuthBootstrapPromiseRef = useRef<Promise<void> | null>(null);
 
   const navigate = useNavigate();
@@ -597,8 +671,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         method === "google" ? "google.com" : "microsoft.com";
       const nextCredential =
         method === "google"
-          ? GoogleAuthProvider.credentialFromError(error as Error)
-          : OAuthProvider.credentialFromError(error as Error);
+          ? GoogleAuthProvider.credentialFromError(error as FirebaseError)
+          : OAuthProvider.credentialFromError(error as FirebaseError);
 
       if (!nextCredential) {
         clearPendingLinkState();
@@ -1006,6 +1080,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             restoredSession.requiresEmailCode &&
             restoredSession.pendingAuthId
           ) {
+            setPendingEmailCodeSignInMethod(
+              inferLastSignInMethodFromProviderIds(
+                (persistedUser.providerData ?? []).map((p) => p.providerId),
+              ),
+            );
             setPendingEmailVerificationId(restoredSession.pendingAuthId);
           } else if (restoredSession.requiresEmailCode) {
             setAuthError("Verify this device to continue.");
@@ -1084,6 +1163,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       sharedDataAuthRequestIdRef.current += 1;
       setFirebaseDb(undefined);
       setIsSharedDataReady(false);
+      setAuthenticatedSharedDataScope(null);
+      setSharedDataTokenRemintNonce(0);
       globalFireDbInfo.db = undefined;
       sharedDataAuthChainRef.current = Promise.resolve(
         sharedDataAuthChainRef.current ?? Promise.resolve()
@@ -1097,10 +1178,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
     const requestId = ++sharedDataAuthRequestIdRef.current;
     const _db = getSharedDataDatabase();
+    const targetSharedDataScope = sharedDataSessionScope;
     let cancelled = false;
 
     setFirebaseDb(undefined);
     setIsSharedDataReady(false);
+    setAuthenticatedSharedDataScope(null);
     globalFireDbInfo.db = undefined;
 
     void getSharedDataToken({
@@ -1120,11 +1203,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               return;
             }
             await signInWithCustomToken(auth, response.token);
+            await awaitSharedRealtimeAuthReady(auth);
             if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
               return;
             }
             setFirebaseDb(_db);
             setIsSharedDataReady(true);
+            setAuthenticatedSharedDataScope(targetSharedDataScope);
             globalFireDbInfo.db = _db;
           })
           .catch((error) => {
@@ -1134,6 +1219,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             console.error("Shared realtime sign-in error:", error);
             setFirebaseDb(undefined);
             setIsSharedDataReady(false);
+            setAuthenticatedSharedDataScope(null);
             globalFireDbInfo.db = undefined;
             setAuthError("Could not connect live data.");
           });
@@ -1145,6 +1231,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         console.error("Shared realtime sign-in error:", error);
         setFirebaseDb(undefined);
         setIsSharedDataReady(false);
+        setAuthenticatedSharedDataScope(null);
         globalFireDbInfo.db = undefined;
         setAuthError("Could not connect live data.");
       });
@@ -1152,12 +1239,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     return () => {
       cancelled = true;
     };
-  }, [loginState, sharedDataSessionScope]);
+  }, [loginState, sharedDataSessionScope, sharedDataTokenRemintNonce]);
 
   // Track active instances (must run before the connection monitor below so
   // instanceRef points at the current church before .info/connected fires).
   useEffect(() => {
-    if (!firebaseDb || !isSharedDataReady || loginState !== "success") return;
+    if (!firebaseDb || !isSharedDataScopeReady) return;
 
     const activeInstancesRef = ref(
       firebaseDb,
@@ -1249,15 +1336,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     device?.label,
     firebaseDb,
     hostId,
-    isSharedDataReady,
+    isSharedDataScopeReady,
     isOnController,
-    loginState,
     sessionKind,
   ]);
 
   // Monitor connection state and handle reconnection
   useEffect(() => {
-    if (!firebaseDb || !isSharedDataReady || loginState !== "success") return;
+    if (!firebaseDb || !isSharedDataScopeReady) return;
 
     const connectedRef = ref(firebaseDb, ".info/connected");
     const unsubscribe = onValue(connectedRef, (snap) => {
@@ -1290,14 +1376,16 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     firebaseDb,
     hostId,
     isOnController,
-    isSharedDataReady,
-    loginState,
+    isSharedDataScopeReady,
     sessionKind,
   ]);
 
   // Function to set up Firebase listeners
   const setupFirebaseListeners = useCallback(() => {
-    if (!firebaseDb || !isSharedDataReady) return;
+    if (!firebaseDb || !isSharedDataScopeReady) {
+      clearPresentationFirebaseListeners();
+      return;
+    }
 
     if (onValueRef.current) {
       const keys = Object.keys(onValueRef.current);
@@ -1318,7 +1406,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         });
       }
     }
-  }, [churchId, firebaseDb, isSharedDataReady, updateFromRemote]);
+  }, [
+    churchId,
+    firebaseDb,
+    isSharedDataScopeReady,
+    updateFromRemote,
+    clearPresentationFirebaseListeners,
+  ]);
 
   // Function to set up storage listener
   const setupStorageListener = useCallback(() => {
@@ -1352,7 +1446,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   // get updates from firebase - realtime changes from others
   useEffect(() => {
     refreshPresentationListeners();
-  }, [refreshPresentationListeners]);
+    return () => {
+      clearPresentationFirebaseListeners();
+    };
+  }, [refreshPresentationListeners, clearPresentationFirebaseListeners]);
 
   useEffect(() => {
     if (loginState !== "success" || !churchId) {
@@ -1361,16 +1458,27 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
 
-    if (!firebaseDb || !isSharedDataReady) {
+    if (!firebaseDb || !isSharedDataScopeReady) {
       setChurchBrandingStatus("loading");
       return;
     }
 
+    const brandingGateKey = `${sharedDataSessionScope}|${sharedDataTokenRemintNonce}`;
+    if (churchBrandingGateKeyRef.current !== brandingGateKey) {
+      churchBrandingGateKeyRef.current = brandingGateKey;
+      churchBrandingPermissionRetryRef.current = 0;
+    }
+
     setChurchBrandingStatus("loading");
+    let cancelled = false;
+    let permissionDeniedRetryTimeout: ReturnType<typeof setTimeout> | undefined;
+
     const brandingRef = ref(firebaseDb, getChurchDataPath(churchId, "branding"));
     const unsubscribe = onValue(
       brandingRef,
       (snapshot) => {
+        churchBrandingPermissionRetryRef.current = 0;
+        churchBrandingRemintAttemptsRef.current = 0;
         setChurchBranding(
           snapshot.exists()
             ? normalizeChurchBranding(snapshot.val())
@@ -1379,6 +1487,27 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         setChurchBrandingStatus("ready");
       },
       (error) => {
+        if (cancelled) return;
+        if (isFirebasePermissionDenied(error)) {
+          const listenAttempt = churchBrandingPermissionRetryRef.current;
+          if (listenAttempt < CHURCH_BRANDING_PERMISSION_LISTEN_RETRY_MAX) {
+            churchBrandingPermissionRetryRef.current += 1;
+            permissionDeniedRetryTimeout = setTimeout(() => {
+              if (!cancelled) {
+                setChurchBrandingListenGeneration((g) => g + 1);
+              }
+            }, brandingListenRetryDelayMs(listenAttempt));
+            return;
+          }
+          if (
+            churchBrandingRemintAttemptsRef.current <
+            CHURCH_BRANDING_SHARED_TOKEN_REMINT_MAX
+          ) {
+            churchBrandingRemintAttemptsRef.current += 1;
+            setSharedDataTokenRemintNonce((n) => n + 1);
+            return;
+          }
+        }
         console.error("Could not subscribe to church branding:", error);
         setChurchBranding(emptyChurchBranding());
         setChurchBrandingStatus("ready");
@@ -1386,9 +1515,21 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     );
 
     return () => {
+      cancelled = true;
+      if (permissionDeniedRetryTimeout) {
+        clearTimeout(permissionDeniedRetryTimeout);
+      }
       unsubscribe();
     };
-  }, [churchId, firebaseDb, isSharedDataReady, loginState]);
+  }, [
+    churchId,
+    firebaseDb,
+    isSharedDataScopeReady,
+    loginState,
+    sharedDataSessionScope,
+    sharedDataTokenRemintNonce,
+    churchBrandingListenGeneration,
+  ]);
 
   // Handle navigation away from the app - set up once when component mounts
   useEffect(() => {
@@ -1448,15 +1589,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
       if (response.bootstrap) {
         setPendingEmailVerificationId(null);
+        setPendingEmailCodeSignInMethod(null);
         setLastSignInMethod(method);
         dispatch({ type: "RESET" });
         applyBootstrap(response.bootstrap);
+        reloadElectronDisplayWindows();
         setAuthServerStatus("online");
         navigate(getHumanPostAuthPath(location));
         return {};
       }
 
       if (response.requiresEmailCode && response.pendingAuthId) {
+        setPendingEmailCodeSignInMethod(method);
+        setPendingEmailVerificationId(response.pendingAuthId);
         setLoginState("idle");
         return {
           requiresEmailCode: true,
@@ -1538,9 +1683,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         deviceLabel: getTrustedDeviceLabel(),
       });
       setPendingEmailVerificationId(null);
-      setLastSignInMethod("password");
+      const completedMethod =
+        consumePendingEmailCodeSignInMethod() ?? "password";
+      setLastSignInMethod(completedMethod);
       dispatch({ type: "RESET" });
       applyBootstrap(response.bootstrap);
+      reloadElectronDisplayWindows();
       setAuthServerStatus("online");
       navigate(getHumanPostAuthPath(location));
       return true;
@@ -1597,9 +1745,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (response.bootstrap) {
           setPendingEmailVerificationId(null);
-          setLastSignInMethod("password");
+          const completedMethod =
+            consumePendingEmailCodeSignInMethod() ?? "password";
+          setLastSignInMethod(completedMethod);
           dispatch({ type: "RESET" });
           applyBootstrap(response.bootstrap);
+          reloadElectronDisplayWindows();
           setAuthServerStatus("online");
           navigate(getHumanPostAuthPath(location));
           return {};
@@ -1690,6 +1841,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         platform: navigator.platform,
         deviceLabel: getTrustedDeviceLabel(),
       });
+      if (response.requiresEmailCode && response.pendingAuthId) {
+        setPendingEmailCodeSignInMethod(method);
+      }
       setLoginState("idle");
       return {
         requiresEmailCode: response.requiresEmailCode,
@@ -1793,11 +1947,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     }
     await signOutFirebaseAuth(getSharedDataAuth());
     setPendingEmailVerificationId(null);
+    setPendingEmailCodeSignInMethod(null);
     clearPendingLinkState();
     setAccess("full");
     dispatch({ type: "RESET" });
     dispatch(ActionCreators.clearHistory());
     applyBootstrap(null);
+    reloadElectronDisplayWindows();
     navigate(nextPath, { replace: true });
     setFirebaseDb(undefined);
     globalFireDbInfo.db = undefined;

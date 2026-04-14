@@ -138,7 +138,7 @@ describe("DisplayImageOverlay", () => {
         ref={containerRef as any}
         width={30}
         shouldAnimate
-        imageOverlayInfo={{}}
+        imageOverlayInfo={{ id: "img-current" }}
         prevImageOverlayInfo={{
           id: "img-prev",
           name: "Previous",
@@ -162,7 +162,7 @@ describe("DisplayImageOverlay", () => {
         ref={containerRef as any}
         width={30}
         shouldAnimate
-        imageOverlayInfo={{}}
+        imageOverlayInfo={{ id: "video-current" }}
         prevImageOverlayInfo={{
           id: "video-prev",
           name: "Previous Video",

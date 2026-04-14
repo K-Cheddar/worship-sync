@@ -675,8 +675,9 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const _logout = useCallback(async () => {
     setLoginState?.("loading");
+    await tearDownLocalDatabases();
     await logout?.();
-  }, [logout, setLoginState]);
+  }, [logout, setLoginState, tearDownLocalDatabases]);
 
   const _login = useCallback(
     async ({

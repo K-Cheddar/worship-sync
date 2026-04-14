@@ -249,6 +249,8 @@ describe("CreateItem", () => {
         seconds: 6,
         time: "10:45",
         timerType: "countdown",
+        lyricsImportCandidates: [],
+        lyricsImportError: "",
       },
     });
 

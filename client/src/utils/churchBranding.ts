@@ -222,3 +222,12 @@ export const getChurchBrandColorLabel = (
 
 export const serializeChurchBranding = (branding: ChurchBranding) =>
   JSON.stringify(branding);
+
+/** Prefer square logo for compact chrome; fall back to wide. */
+export const resolveChurchToolbarLogoUrl = (
+  branding: ChurchBranding | null | undefined,
+): string => {
+  const square = branding?.logos?.square?.url?.trim();
+  const wide = branding?.logos?.wide?.url?.trim();
+  return square || wide || "";
+};

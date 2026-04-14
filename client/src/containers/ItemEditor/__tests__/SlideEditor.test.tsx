@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import SlideEditor from "../SlideEditor";
 import { ToastContext } from "../../../context/toastContext";
@@ -31,7 +32,7 @@ const mockSetShouldShowItemEditor = jest.fn((value: boolean) => ({
   type: "preferences/setShouldShowItemEditor",
   payload: value,
 }));
-let mockShowToast = jest.fn(() => "toast-1");
+let mockShowToast = jest.fn<any, any[]>(() => "toast-1");
 let mockRemoveToast = jest.fn();
 
 const mockFormatFree = jest.fn((item: any) => item);
@@ -252,7 +253,7 @@ describe("SlideEditor", () => {
     jest.clearAllMocks();
     displayWindowCapture.onChange = null;
     mockState = makeBaseState();
-    mockShowToast = jest.fn(() => "toast-1");
+    mockShowToast = jest.fn<any, any[]>(() => "toast-1");
     mockRemoveToast = jest.fn();
   });
 
@@ -343,7 +344,11 @@ describe("SlideEditor", () => {
 
     expect(mockShowToast).toHaveBeenCalled();
 
-    const { children: renderToastChildren } = mockShowToast.mock.calls[0][0];
+    const firstToastCall = mockShowToast.mock.calls[0]?.[0];
+    expect(firstToastCall).toBeDefined();
+    const { children: renderToastChildren } = firstToastCall as {
+      children: (toastId: string) => ReactNode;
+    };
     render(<>{renderToastChildren("toast-1")}</>);
 
     fireEvent.click(screen.getByRole("button", { name: "Use Their Changes" }));

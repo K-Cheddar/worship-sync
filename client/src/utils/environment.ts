@@ -10,8 +10,19 @@ export const isElectron = (): boolean => {
   return (
     typeof window !== "undefined" &&
     (window.__ELECTRON__ === true ||
-      (window.electronAPI !== undefined && window.electronAPI.isElectron !== undefined))
+      (window.electronAPI !== undefined &&
+        window.electronAPI.isElectron !== undefined))
   );
+};
+
+/** Reload open projector/monitor/board windows (Electron only). Use after auth changes. */
+export const reloadElectronDisplayWindows = (): void => {
+  if (typeof window === "undefined" || !isElectron()) return;
+  const api = window.electronAPI;
+  if (!api?.refreshDisplayWindows) return;
+  void api.refreshDisplayWindows().catch(() => {
+    // ignore — non-fatal if main process is unavailable
+  });
 };
 
 /**
@@ -34,6 +45,31 @@ export const isWindowsBrowser = (): boolean => {
 };
 
 /**
+ * True when running in a normal browser on macOS (not Electron).
+ * Used to show macOS desktop installer actions on the web home page.
+ */
+export const isMacBrowser = (): boolean => {
+  if (typeof window === "undefined" || isElectron()) {
+    return false;
+  }
+  if (isWindowsBrowser()) {
+    return false;
+  }
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/i.test(ua)) {
+    return false;
+  }
+  const uaDataPlatform = (
+    navigator as Navigator & { userAgentData?: { platform?: string } }
+  ).userAgentData?.platform;
+  return (
+    /Mac/i.test(navigator.platform) ||
+    uaDataPlatform === "macOS" ||
+    /Mac OS X|Macintosh/i.test(ua)
+  );
+};
+
+/**
  * Get the API base path based on the environment
  * In Electron, we'll use the production server or localhost
  * In web, we'll use the environment variable
@@ -44,16 +80,21 @@ export const getApiBasePath = (): string => {
     // file:// protocol means we're in a packaged app (production)
     // https:// protocol means we're loading from dev server (development)
     const isDev = window.location.protocol === "https:";
-    
+
     if (isDev) {
       // Development: use local HTTPS server
-      return import.meta.env.VITE_ELECTRON_API_URL || "https://local.worshipsync.net:5000/";
+      return (
+        import.meta.env.VITE_ELECTRON_API_URL ||
+        "https://local.worshipsync.net:5000/"
+      );
     } else {
       // Production: use production API server (packaged app loads from file://)
-      return import.meta.env.VITE_ELECTRON_API_URL || "https://www.worshipsync.net/";
+      return (
+        import.meta.env.VITE_ELECTRON_API_URL || "https://www.worshipsync.net/"
+      );
     }
   }
-  
+
   // In web, use the configured base path or default to relative path
   return import.meta.env.VITE_API_BASE_PATH || "/";
 };

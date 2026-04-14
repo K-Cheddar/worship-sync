@@ -24,6 +24,7 @@ import { getInviteMembershipConflict } from "./server/inviteMembershipGuards.js"
 import {
   getChurchBrandingPath,
   normalizeChurchBrandingForStorage,
+  pickPublicBoardHeaderLogoUrl,
 } from "./server/churchBranding.js";
 
 const SESSION_KIND_HUMAN = "human";
@@ -242,6 +243,26 @@ export const authRuntimeInfo = {
   hasFirestore: Boolean(firebaseRuntime?.db),
   hasRealtimeDatabase: Boolean(firebaseRuntime?.rtdb),
   hasResend: Boolean(resendClient),
+};
+
+/** Logo URL for public board attendee / presentation views (RTDB branding by church id). */
+export const readChurchPublicBoardHeaderLogoUrl = async (churchId) => {
+  const trimmed = String(churchId || "").trim();
+  if (!trimmed || !firebaseRuntime?.rtdb) {
+    return "";
+  }
+  try {
+    const snap = await firebaseRuntime.rtdb
+      .ref(getChurchBrandingPath(trimmed))
+      .once("value");
+    return pickPublicBoardHeaderLogoUrl(snap.val());
+  } catch (error) {
+    logAuthEvent("warn", "board.public_header_logo.read_failed", {
+      churchId: trimmed,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return "";
+  }
 };
 
 const memoryState = {

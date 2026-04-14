@@ -181,4 +181,39 @@ describe("setupSharedSessionWindowOpenHandler", () => {
     );
     expect(shell.openExternal).not.toHaveBeenCalled();
   });
+
+  it("allows custom auth domain popups inside Electron with hardened options", () => {
+    const setWindowOpenHandler = jest.fn();
+    const webContents = {
+      getURL: () => "file:///C:/app/index.html#/home",
+      setWindowOpenHandler,
+      on: jest.fn(),
+    } as any;
+
+    setupSharedSessionWindowOpenHandler(
+      webContents,
+      "C:/app/dist-electron/main",
+    );
+
+    const handler = setWindowOpenHandler.mock.calls[0][0];
+    const result = handler({
+      url: "https://auth.worshipsync.net/__/auth/handler",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        action: "allow",
+        overrideBrowserWindowOptions: expect.objectContaining({
+          webPreferences: expect.objectContaining({
+            partition: "persist:worshipsync",
+            preload: undefined,
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+          }),
+        }),
+      }),
+    );
+    expect(shell.openExternal).not.toHaveBeenCalled();
+  });
 });

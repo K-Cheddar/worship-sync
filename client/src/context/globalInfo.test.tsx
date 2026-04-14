@@ -39,14 +39,14 @@ const onValueMock = jest.fn(
 );
 const setMock = jest.fn();
 const getDatabaseMock = jest.fn(() => ({ name: "firebase-db" }));
-const signInWithCustomTokenMock = jest.fn(() => Promise.resolve({}));
-const signOutMock = jest.fn(() => Promise.resolve());
-const signInWithEmailAndPasswordMock = jest.fn(() => Promise.resolve({}));
-const signInWithPopupMock = jest.fn(() => Promise.resolve({}));
-const fetchSignInMethodsForEmailMock = jest.fn(() => Promise.resolve([]));
-const linkWithCredentialMock = jest.fn(() => Promise.resolve({}));
-const updateProfileMock = jest.fn(() => Promise.resolve());
-const googleCredentialFromErrorMock = jest.fn();
+const signInWithCustomTokenMock = jest.fn<any, any[]>(() => Promise.resolve({}));
+const signOutMock = jest.fn<any, any[]>(() => Promise.resolve());
+const signInWithEmailAndPasswordMock = jest.fn<any, any[]>(() => Promise.resolve({}));
+const signInWithPopupMock = jest.fn<any, any[]>(() => Promise.resolve({}));
+const fetchSignInMethodsForEmailMock = jest.fn<any, any[]>(() => Promise.resolve([]));
+const linkWithCredentialMock = jest.fn<any, any[]>(() => Promise.resolve({}));
+const updateProfileMock = jest.fn<any, any[]>(() => Promise.resolve());
+const googleCredentialFromErrorMock = jest.fn<any, any[]>();
 const googleCredentialFactoryMock = jest.fn(
   (idToken?: string | null, accessToken?: string | null) => ({
     providerId: "google.com",
@@ -59,7 +59,7 @@ const googleCredentialFactoryMock = jest.fn(
     }),
   }),
 );
-const microsoftCredentialFromErrorMock = jest.fn();
+const microsoftCredentialFromErrorMock = jest.fn<any, any[]>();
 const mockHumanAuth = {
   currentUser: null as any,
 };
@@ -105,8 +105,12 @@ jest.mock("firebase/auth", () => ({
       providerId: "google.com",
     })),
     {
-      credentialFromError: (...args: any[]) => googleCredentialFromErrorMock(...args),
-      credential: (...args: any[]) => googleCredentialFactoryMock(...args),
+      credentialFromError: (...args: unknown[]) =>
+        googleCredentialFromErrorMock(...args),
+      credential: (
+        idToken?: string | null,
+        accessToken?: string | null,
+      ) => googleCredentialFactoryMock(idToken, accessToken),
     },
   ),
   OAuthProvider: Object.assign(
@@ -134,7 +138,7 @@ jest.mock("firebase/auth", () => ({
       }),
     })),
     {
-      credentialFromError: (...args: any[]) =>
+      credentialFromError: (...args: unknown[]) =>
         microsoftCredentialFromErrorMock(...args),
     },
   ),
@@ -143,23 +147,33 @@ jest.mock("firebase/auth", () => ({
     Promise.resolve().then(() => callback(mockHumanAuth.currentUser));
     return unsubscribe;
   },
-  fetchSignInMethodsForEmail: (...args: any[]) =>
-    fetchSignInMethodsForEmailMock(...args),
-  linkWithCredential: (...args: any[]) => linkWithCredentialMock(...args),
-  signInWithCustomToken: (...args: any[]) =>
-    signInWithCustomTokenMock(...args),
-  signInWithEmailAndPassword: (...args: any[]) =>
-    signInWithEmailAndPasswordMock(...args),
-  signInWithPopup: (...args: any[]) => signInWithPopupMock(...args),
-  signOut: (...args: any[]) => signOutMock(...args),
+  fetchSignInMethodsForEmail: (auth: unknown, email: string) =>
+    fetchSignInMethodsForEmailMock(auth, email),
+  linkWithCredential: (user: unknown, credential: unknown) =>
+    linkWithCredentialMock(user, credential),
+  signInWithCustomToken: (auth: unknown, token: string) =>
+    signInWithCustomTokenMock(auth, token),
+  signInWithEmailAndPassword: (
+    auth: unknown,
+    email: string,
+    password: string,
+  ) => signInWithEmailAndPasswordMock(auth, email, password),
+  signInWithPopup: (auth: unknown, provider: unknown) =>
+    signInWithPopupMock(auth, provider),
+  signOut: (auth?: unknown) => signOutMock(auth),
   createUserWithEmailAndPassword: jest.fn(() => Promise.resolve({ user: {} })),
-  updateProfile: (...args: any[]) => updateProfileMock(...args),
+  updateProfile: (user: unknown, profile: unknown) =>
+    updateProfileMock(user, profile),
 }));
 
 jest.mock("firebase/database", () => ({
-  ref: (...args: any[]) => refMock(...args),
-  onValue: (...args: any[]) => onValueMock(...args),
-  set: (...args: any[]) => setMock(...args),
+  ref: (db: unknown, path: string) => refMock(db, path),
+  onValue: (
+    target: { path: string },
+    callback: (snapshot: unknown) => void,
+    onError?: (error: unknown) => void,
+  ) => onValueMock(target, callback, onError),
+  set: (target: unknown, value: unknown) => setMock(target, value),
   onDisconnect: jest.fn(() => ({
     remove: jest.fn(),
     cancel: jest.fn(() => Promise.resolve()),
@@ -289,6 +303,9 @@ const AuthActionsProbe = () => {
     <div>
       <div data-testid="probe-auth-status">{context.authServerStatus}</div>
       <div data-testid="probe-auth-error">{context.authError || "none"}</div>
+      <div data-testid="pending-email-verification-id">
+        {context.pendingEmailVerificationId || "none"}
+      </div>
       <div data-testid="pending-link-provider">
         {context.pendingLinkState?.providerId || "none"}
       </div>
@@ -816,6 +833,13 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     await waitFor(() =>
       expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(2)
     );
+    expect(onValueCallbacks.has("churches/church-2/data/branding")).toBe(false);
+    expect(onValueCallbacks.has("churches/church-2/data/activeInstances")).toBe(
+      false
+    );
+    expect(
+      onValueCallbacks.has("churches/church-2/data/presentation/projectorInfo")
+    ).toBe(false);
 
     staleSharedToken.resolve({
       success: true,
@@ -825,6 +849,10 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
 
     await waitFor(() =>
       expect(signInWithCustomTokenMock).toHaveBeenCalledTimes(0)
+    );
+    expect(onValueCallbacks.has("churches/church-2/data/branding")).toBe(false);
+    expect(onValueCallbacks.has("churches/church-2/data/activeInstances")).toBe(
+      false
     );
 
     freshSharedToken.resolve({
@@ -840,6 +868,15 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       expect.anything(),
       "fresh-token"
     );
+    await waitFor(() =>
+      expect(onValueCallbacks.has("churches/church-2/data/branding")).toBe(true)
+    );
+    expect(onValueCallbacks.has("churches/church-2/data/activeInstances")).toBe(
+      true
+    );
+    expect(
+      onValueCallbacks.has("churches/church-2/data/presentation/projectorInfo")
+    ).toBe(true);
   });
 
   it("navigates to operator handoff immediately even when the server clear fails", async () => {
@@ -1089,6 +1126,34 @@ describe("GlobalInfoProvider auth regression coverage", () => {
       );
     });
     expect(authApi.createHumanSession).not.toHaveBeenCalled();
+  });
+
+  it("stores the pending verification id when provider login requires an email code", async () => {
+    const providerUser = {
+      uid: "provider-user",
+      getIdToken: jest.fn(() => Promise.resolve("provider-id-token")),
+    };
+    mockHumanAuth.currentUser = providerUser;
+    signInWithPopupMock.mockResolvedValue({ user: providerUser });
+    (authApi.createHumanSession as jest.Mock).mockResolvedValue({
+      success: true,
+      requiresEmailCode: true,
+      pendingAuthId: "pending-provider-code",
+    });
+
+    renderProvider(<AuthActionsProbe />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Google sign in" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pending-email-verification-id")).toHaveTextContent(
+        "pending-provider-code",
+      );
+    });
   });
 
   it("does not delete or rename a provider user when church creation fails", async () => {

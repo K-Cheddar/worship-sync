@@ -177,6 +177,7 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     refreshAuthBootstrap: jest.fn(() => Promise.resolve()),
     refreshPresentationListeners: jest.fn(),
     updateSelfDisplayName: jest.fn(() => Promise.resolve(true)),
+    endWorkstationOperatorSession: jest.fn(() => Promise.resolve()),
     setUser: jest.fn(),
     setDatabase: jest.fn(),
     ...overrides,

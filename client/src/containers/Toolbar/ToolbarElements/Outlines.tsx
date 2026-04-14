@@ -30,6 +30,7 @@ import { ActionCreators } from "redux-undo";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { cn } from "../../../utils/cnHelper";
 import { toolbarTabClassName } from "./ToolbarButton";
+import OutlinesPickerSkeleton from "./OutlinesPickerSkeleton";
 
 /** Shared popover chrome (matches service outlines left column). */
 const OUTLINE_POPOVER_CONTENT =
@@ -147,7 +148,7 @@ const Services = ({
     }
   };
 
-  const triggerIconSize = servicePanel ? "sm" : "md";
+  const triggerIconSize = "md";
   const triggerVariant = servicePanel
     ? "tertiary"
     : matchToolbarTabs
@@ -167,6 +168,24 @@ const Services = ({
     matchToolbarTabs && !servicePanel && outlinePopoverOpen
       ? "#ffffff"
       : undefined;
+
+  if (!itemListsReady) {
+    return (
+      <div
+        className={cn(
+          "flex min-w-0 items-center gap-2",
+          servicePanel && "w-full",
+          className,
+        )}
+      >
+        <OutlinesPickerSkeleton
+          servicePanel={servicePanel}
+          matchToolbarTabs={matchToolbarTabs}
+          className={servicePanel ? "w-full min-w-0" : undefined}
+        />
+      </div>
+    );
+  }
 
   return (
     <DndContext

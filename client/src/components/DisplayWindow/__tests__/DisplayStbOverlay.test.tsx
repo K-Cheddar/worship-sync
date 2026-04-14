@@ -58,7 +58,7 @@ describe("DisplayStbOverlay", () => {
         ref={containerRef as any}
         width={30}
         shouldAnimate
-        stbOverlayInfo={{}}
+        stbOverlayInfo={{ id: "stb-current" }}
         prevStbOverlayInfo={{
           id: "stb-prev",
           type: "stick-to-bottom",

@@ -19,13 +19,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest]
+        os: [windows-latest, macos-latest]
         # os: [ubuntu-latest, windows-latest]  # Linux commented out for now
         include:
           # - os: ubuntu-latest
           #   platform: linux
           - os: windows-latest
             platform: win
+          - os: macos-latest
+            platform: mac
 
     steps:
       # Commented out - checking out release tag uses old code
@@ -104,6 +106,14 @@ jobs:
           DEBUG: electron-builder
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
+      - name: Build Electron app (macOS, unsigned)
+        if: matrix.platform == 'mac'
+        run: cd client && npx electron-builder --mac --publish never --config electron-builder.config.js
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=4096
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
       - name: Debug - Verify built executable (Windows)
         if: matrix.platform == 'win'
         run: |
@@ -117,12 +127,21 @@ jobs:
         shell: pwsh
         continue-on-error: true
 
-      - name: Upload artifacts
+      - name: Upload Windows artifacts
+        if: matrix.platform == 'win'
         uses: actions/upload-artifact@v4
         with:
-          name: electron-${{ matrix.platform }}
+          name: electron-win
           path: |
             client/dist/*.exe
-            # client/dist/*.AppImage  # Linux commented out
-            # client/dist/*.deb       # Linux commented out
+          retention-days: 30
+
+      - name: Upload macOS artifacts
+        if: matrix.platform == 'mac'
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-mac
+          path: |
+            client/dist/*.dmg
+            client/dist/*.zip
           retention-days: 30

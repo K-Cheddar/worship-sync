@@ -13,6 +13,7 @@ import {
   firstNameFromDisplayName,
   resolveAccountDisplayNameForAudit,
 } from "../../../utils/displayName";
+import { resolveChurchToolbarLogoUrl } from "../../../utils/churchBranding";
 import type { Instance } from "../../../types";
 
 const ACCOUNT_TRIGGER_MAX_W = "max-w-[10rem]";
@@ -26,6 +27,7 @@ const UserSection = () => {
     sessionKind,
     loginState,
     churchName,
+    churchBranding,
     linkedAuthMethods,
     updateSelfDisplayName,
     exitGuestMode,
@@ -63,6 +65,10 @@ const UserSection = () => {
 
   const toolbarFirstName = firstNameFromDisplayName(fullDisplayName);
   const churchLine = churchName?.trim() ?? "";
+  const churchLogoUrl = useMemo(
+    () => resolveChurchToolbarLogoUrl(churchBranding),
+    [churchBranding],
+  );
   const emailLine = userEmail?.trim() ?? "";
   const linkedMethodsLine = (linkedAuthMethods || []).join(", ");
 
@@ -161,7 +167,7 @@ const UserSection = () => {
         </Button>
       }
     >
-      <div className="flex min-w-[150px] max-w-xs flex-col gap-3 pt-1">
+      <div className="flex min-w-[220px] max-w-sm flex-col gap-3 pt-1">
         <div className="flex flex-col gap-1">
           <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
             User
@@ -232,9 +238,20 @@ const UserSection = () => {
           <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
             Church
           </span>
-          <span className="wrap-break-word text-sm text-gray-300">
-            {churchLine || "—"}
-          </span>
+          <div className="flex min-w-0 items-center gap-2.5">
+            {churchLogoUrl ? (
+              <img
+                src={churchLogoUrl}
+                alt=""
+                width={36}
+                height={36}
+                className="size-9 shrink-0 rounded-md border border-gray-600/80 bg-gray-900 object-contain"
+              />
+            ) : null}
+            <span className="min-w-0 flex-1 wrap-break-word text-sm leading-snug text-gray-300">
+              {churchLine || "—"}
+            </span>
+          </div>
         </div>
         {activeInstanceRows.length > 0 ? (
           <div className="border-t border-gray-600 pt-3">

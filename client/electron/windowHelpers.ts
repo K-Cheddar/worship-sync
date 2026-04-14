@@ -19,6 +19,7 @@ const sharedChildWindowWebPreferences = (
 const EXTERNAL_CHILD_WINDOW_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 const OAUTH_POPUP_HOST_PATTERNS = [
   /\.firebaseapp\.com$/i,
+  /^auth\.worshipsync\.net$/i,
   /\.google\.com$/i,
   /^login\.microsoftonline\.com$/i,
   /^login\.live\.com$/i,

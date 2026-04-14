@@ -16,6 +16,7 @@ import https from "https";
 import {
   authHandlers,
   authSessionConfig,
+  readChurchPublicBoardHeaderLogoUrl,
   resolveRequestBootstrap,
 } from "./authService.js";
 import { fetchExcelFile } from "./getScheduleFunctions.js";
@@ -34,8 +35,10 @@ import {
   normalizeBoardTitle,
   rotateAliasDoc,
   updateAliasPresentationFontScale,
+  assertAttendeeCanMutateBoardPost,
   validateAliasInput,
   validateBoardPostInput,
+  validateBoardPostTextUpdate,
 } from "./server/boardService.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
@@ -367,6 +370,13 @@ const serializeBoardPost = (postDoc) => ({
   timestamp: postDoc.timestamp,
   hidden: Boolean(postDoc.hidden),
   highlighted: Boolean(postDoc.highlighted),
+  deleted: Boolean(postDoc.deleted),
+  ...(typeof postDoc.editedAt === "number"
+    ? { editedAt: postDoc.editedAt }
+    : {}),
+  ...(typeof postDoc.deletedAt === "number"
+    ? { deletedAt: postDoc.deletedAt }
+    : {}),
 });
 
 const serializeBoardPostForViewer = (postDoc, viewerAuthorId) => {
@@ -856,6 +866,9 @@ app.get("/api/boards/:aliasId/posts", async (req, res) => {
     const posts = rows
       .flatMap((row) => (row.doc ? [row.doc] : []))
       .filter((post) => {
+        if (post.deleted) {
+          return false;
+        }
         if (includeHidden) return true;
         if (!post.hidden) return true;
 
@@ -944,6 +957,122 @@ app.post("/api/boards/:aliasId/posts", async (req, res) => {
   }
 });
 
+app.put("/api/boards/:aliasId/posts/:postDocId", async (req, res) => {
+  try {
+    const aliasId = normalizeAliasId(req.params.aliasId || "");
+    const postDocId = decodeURIComponent(req.params.postDocId || "");
+    const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+    if (!aliasDoc) {
+      return res.status(404).json({ error: "Discussion board not found." });
+    }
+
+    const postDoc = await getBoardDoc(postDocId);
+    const authz = assertAttendeeCanMutateBoardPost({
+      aliasDoc,
+      postDoc,
+      requestAuthorId: req.body?.authorId,
+    });
+    if (!authz.ok) {
+      return res.status(authz.status).json({ error: authz.error });
+    }
+
+    const validation = validateBoardPostTextUpdate(req.body || {});
+    if (!validation.ok) {
+      return res.status(400).json({ error: validation.error });
+    }
+
+    const nextPost = {
+      ...postDoc,
+      text: validation.value.text,
+      editedAt: Date.now(),
+    };
+
+    try {
+      const response = await putBoardDoc(nextPost);
+      nextPost._rev = response.rev;
+    } catch (error) {
+      if (error?.response?.status === 409) {
+        return res.status(409).json({
+          error: "This post was updated elsewhere. Refresh and try again.",
+        });
+      }
+      throw error;
+    }
+
+    emitBoardEvent(aliasId, "post-updated");
+
+    res.json({ post: serializeBoardPost(nextPost) });
+  } catch (error) {
+    console.error("Error updating board post:", error);
+    res.status(500).json({ error: "Could not update post." });
+  }
+});
+
+app.delete("/api/boards/:aliasId/posts/:postDocId", async (req, res) => {
+  try {
+    const aliasId = normalizeAliasId(req.params.aliasId || "");
+    const postDocId = decodeURIComponent(req.params.postDocId || "");
+    const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+    if (!aliasDoc) {
+      return res.status(404).json({ error: "Discussion board not found." });
+    }
+
+    const postDoc = await getBoardDoc(postDocId);
+    if (!postDoc || postDoc.docType !== "board-post") {
+      return res.status(404).json({ error: "Post not found." });
+    }
+
+    if (postDoc.deleted) {
+      const postAuthorId = normalizeBoardParticipantId(postDoc.authorId);
+      const normalizedRequest = normalizeBoardParticipantId(req.body?.authorId);
+      const sameOwner =
+        Boolean(postAuthorId && normalizedRequest) &&
+        postAuthorId === normalizedRequest;
+      const sameAlias = postDoc.aliasId === aliasDoc.aliasId;
+      const sameSession = postDoc.boardId === aliasDoc.currentBoardId;
+      if (sameOwner && sameAlias && sameSession) {
+        return res.json({ ok: true, post: serializeBoardPost(postDoc) });
+      }
+      return res.status(404).json({ error: "Post not found." });
+    }
+
+    const authz = assertAttendeeCanMutateBoardPost({
+      aliasDoc,
+      postDoc,
+      requestAuthorId: req.body?.authorId,
+    });
+    if (!authz.ok) {
+      return res.status(authz.status).json({ error: authz.error });
+    }
+
+    const nextPost = {
+      ...postDoc,
+      deleted: true,
+      deletedAt: Date.now(),
+      highlighted: false,
+    };
+
+    try {
+      const response = await putBoardDoc(nextPost);
+      nextPost._rev = response.rev;
+    } catch (error) {
+      if (error?.response?.status === 409) {
+        return res.status(409).json({
+          error: "This post was updated elsewhere. Refresh and try again.",
+        });
+      }
+      throw error;
+    }
+
+    emitBoardEvent(aliasId, "post-updated");
+
+    res.json({ ok: true, post: serializeBoardPost(nextPost) });
+  } catch (error) {
+    console.error("Error deleting board post:", error);
+    res.status(500).json({ error: "Could not delete post." });
+  }
+});
+
 app.get("/api/boards/:aliasId", async (req, res) => {
   try {
     const aliasId = normalizeAliasId(req.params.aliasId || "");
@@ -957,9 +1086,14 @@ app.get("/api/boards/:aliasId", async (req, res) => {
       return res.status(404).json({ error: "Current session was not found." });
     }
 
+    const churchLogoUrl = await readChurchPublicBoardHeaderLogoUrl(
+      aliasDoc.database,
+    );
+
     res.json({
       alias: serializeBoardAlias(aliasDoc),
       board: serializeBoardDoc(boardDoc),
+      ...(churchLogoUrl ? { churchLogoUrl } : {}),
     });
   } catch (error) {
     console.error("Error resolving board alias:", error);
@@ -1449,7 +1583,8 @@ app.use(
   }),
 );
 
-app.get("*", (req, res) => {
+// Express 5 / path-to-regexp v8+: bare "*" is invalid; use a named wildcard.
+app.get("/{*path}", (req, res) => {
   const pathname = req.path;
 
   // Don’t serve index.html for these

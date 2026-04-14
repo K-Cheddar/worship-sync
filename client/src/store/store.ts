@@ -135,7 +135,7 @@ const getItemSelectionForUndoRedo = (
 const reconcileItemSelectionAfterUndoRedo = (
   listenerApi: {
     dispatch: (action: Action) => unknown;
-    getState: () => RootState;
+    getState: () => RootState | unknown;
   },
   preserved: ReturnType<typeof getItemSelectionForUndoRedo>,
 ) => {
@@ -1145,13 +1145,15 @@ listenerMiddleware.startListening({
       }
     }
 
+    const fireDb = globalFireDbInfo.db;
+    const fireChurchId = globalFireDbInfo.churchId;
     const shouldSyncGlobalRtdbCredits =
-      globalFireDbInfo.db &&
-      globalFireDbInfo.churchId &&
+      Boolean(fireDb) &&
+      Boolean(fireChurchId) &&
       currentOutlineId === snapshotOutlineId &&
       creditsForPersist.isInitialized;
 
-    if (shouldSyncGlobalRtdbCredits) {
+    if (shouldSyncGlobalRtdbCredits && fireDb && fireChurchId) {
       const {
         list: rtdbList,
         transitionScene,
@@ -1169,47 +1171,25 @@ listenerMiddleware.startListening({
       if (isEditingLiveOutline) {
         set(
           ref(
-            globalFireDbInfo.db,
-            getChurchDataPath(
-              globalFireDbInfo.churchId,
-              "credits",
-              "publishedList",
-            ),
+            fireDb,
+            getChurchDataPath(fireChurchId, "credits", "publishedList"),
           ),
           cleanObject(liveCreditsForRtdb),
         );
       }
       set(
         ref(
-          globalFireDbInfo.db,
-          getChurchDataPath(
-            globalFireDbInfo.churchId,
-            "credits",
-            "transitionScene",
-          ),
+          fireDb,
+          getChurchDataPath(fireChurchId, "credits", "transitionScene"),
         ),
         transitionScene,
       );
       set(
-        ref(
-          globalFireDbInfo.db,
-          getChurchDataPath(
-            globalFireDbInfo.churchId,
-            "credits",
-            "creditsScene",
-          ),
-        ),
+        ref(fireDb, getChurchDataPath(fireChurchId, "credits", "creditsScene")),
         creditsScene,
       );
       set(
-        ref(
-          globalFireDbInfo.db,
-          getChurchDataPath(
-            globalFireDbInfo.churchId,
-            "credits",
-            "scheduleName",
-          ),
-        ),
+        ref(fireDb, getChurchDataPath(fireChurchId, "credits", "scheduleName")),
         scheduleName,
       );
     }
@@ -1280,8 +1260,8 @@ listenerMiddleware.startListening({
       const credits = await getCreditsByIds(db, outlineId, creditIds);
       const visible = credits.filter((c) => !c.hidden).map((c) => ({ ...c }));
 
-      const stillActive =
-        listenerApi.getState().undoable.present.itemLists.activeList?._id;
+      const stillActive = (listenerApi.getState() as RootState).undoable.present
+        .itemLists.activeList?._id;
       if (stillActive !== outlineId) return;
 
       set(publishedRef, cleanObject(visible as unknown as object));

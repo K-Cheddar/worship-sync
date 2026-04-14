@@ -4,6 +4,7 @@ import {
   createEmptyChurchBranding,
   getChurchBrandingPath,
   normalizeChurchBrandingForStorage,
+  pickPublicBoardHeaderLogoUrl,
 } from "./churchBranding.js";
 
 test("createEmptyChurchBranding returns empty branding defaults", () => {
@@ -171,5 +172,43 @@ test("getChurchBrandingPath returns the shared branding RTDB path", () => {
   assert.equal(
     getChurchBrandingPath("church-42"),
     "churches/church-42/data/branding",
+  );
+});
+
+test("pickPublicBoardHeaderLogoUrl prefers square over wide", () => {
+  const square =
+    "https://res.cloudinary.com/portable-media/image/upload/v1/branding/sq.png";
+  const wide =
+    "https://res.cloudinary.com/portable-media/image/upload/v1/branding/wide.png";
+  assert.equal(
+    pickPublicBoardHeaderLogoUrl({
+      logos: {
+        square: { url: square },
+        wide: { url: wide },
+      },
+    }),
+    square,
+  );
+});
+
+test("pickPublicBoardHeaderLogoUrl falls back to wide", () => {
+  const wide =
+    "https://res.cloudinary.com/portable-media/image/upload/v1/branding/wide.png";
+  assert.equal(
+    pickPublicBoardHeaderLogoUrl({
+      logos: { square: null, wide: { url: wide } },
+    }),
+    wide,
+  );
+});
+
+test("pickPublicBoardHeaderLogoUrl rejects non-Cloudinary URLs", () => {
+  assert.equal(
+    pickPublicBoardHeaderLogoUrl({
+      logos: {
+        square: { url: "https://evil.example/x.png" },
+      },
+    }),
+    "",
   );
 });

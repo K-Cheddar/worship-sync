@@ -2,7 +2,7 @@ import { getApiBasePath } from "../utils/environment";
 import { DBBoard, DBBoardAlias, DBBoardPost } from "../types";
 import { getWorkstationToken } from "../utils/authStorage";
 
-type JsonRequestInit = RequestInit & {
+type JsonRequestInit = Omit<RequestInit, "body"> & {
   body?: Record<string, unknown> | string;
 };
 
@@ -20,6 +20,8 @@ export const createBoardRequestHeaders = (initHeaders?: HeadersInit) => {
 export type BoardAliasResponse = {
   alias: DBBoardAlias;
   board: DBBoard;
+  /** Set on public GET alias for attendee / presentation headers. */
+  churchLogoUrl?: string;
 };
 
 export type BoardPostsResponse = {
@@ -28,11 +30,17 @@ export type BoardPostsResponse = {
   posts: DBBoardPost[];
 };
 
-const fetchJson = async <T>(path: string, init?: JsonRequestInit): Promise<T> => {
+const fetchJson = async <T>(
+  path: string,
+  init?: JsonRequestInit,
+): Promise<T> => {
   const headers = createBoardRequestHeaders(init?.headers);
   let body = init?.body as BodyInit | undefined;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), BOARD_REQUEST_TIMEOUT_MS);
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    BOARD_REQUEST_TIMEOUT_MS,
+  );
 
   if (init?.body && typeof init.body !== "string") {
     headers.set("Content-Type", "application/json");
@@ -107,6 +115,32 @@ export const createBoardPost = (
     `api/boards/${encodeURIComponent(aliasId)}/posts`,
     {
       method: "POST",
+      body: payload,
+    },
+  );
+
+export const updateOwnBoardPost = (
+  aliasId: string,
+  postDocId: string,
+  payload: { authorId: string; text: string },
+) =>
+  fetchJson<{ post: DBBoardPost }>(
+    `api/boards/${encodeURIComponent(aliasId)}/posts/${encodeURIComponent(postDocId)}`,
+    {
+      method: "PUT",
+      body: payload,
+    },
+  );
+
+export const deleteOwnBoardPost = (
+  aliasId: string,
+  postDocId: string,
+  payload: { authorId: string },
+) =>
+  fetchJson<{ ok: boolean; post?: DBBoardPost }>(
+    `api/boards/${encodeURIComponent(aliasId)}/posts/${encodeURIComponent(postDocId)}`,
+    {
+      method: "DELETE",
       body: payload,
     },
   );

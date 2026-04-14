@@ -189,6 +189,35 @@ export const createEmptyChurchBranding = () => ({
 export const getChurchBrandingPath = (churchId) =>
   `churches/${churchId}/data/branding`;
 
+/**
+ * Read-only pick for public discussion board headers: square logo URL, else wide.
+ * Validates https + Cloudinary host only (same policy as stored branding).
+ */
+const trimPublicLogoUrlFromAsset = (asset) => {
+  if (!isRecord(asset)) return "";
+  const url = String(asset.url || "").trim();
+  if (!url) return "";
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return "";
+  }
+  if (!/^https?:$/.test(parsedUrl.protocol)) return "";
+  if (!isAllowedCloudinaryHost(parsedUrl.hostname)) return "";
+  return url;
+};
+
+export const pickPublicBoardHeaderLogoUrl = (brandingValue) => {
+  if (!isRecord(brandingValue)) return "";
+  const logos = isRecord(brandingValue.logos) ? brandingValue.logos : {};
+  return (
+    trimPublicLogoUrlFromAsset(logos.square) ||
+    trimPublicLogoUrlFromAsset(logos.wide) ||
+    ""
+  );
+};
+
 export const normalizeChurchBrandingForStorage = (input) => {
   const source =
     isRecord(input) && isRecord(input.branding) ? input.branding : input;
