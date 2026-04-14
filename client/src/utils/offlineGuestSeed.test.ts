@@ -1,4 +1,10 @@
-import { getCreditsDocId } from "../types";
+import {
+  getCreditsDocId,
+  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  MONITOR_SETTINGS_POUCH_ID,
+  PREFERENCES_POUCH_ID,
+  QUICK_LINKS_POUCH_ID,
+} from "../types";
 import { createOfflineGuestSeedDocs } from "./offlineGuestSeed";
 
 describe("offlineGuestSeed", () => {
@@ -9,7 +15,10 @@ describe("offlineGuestSeed", () => {
     expect(byId.has("allItems")).toBe(true);
     expect(byId.has("ItemLists")).toBe(true);
     expect(byId.has("offline-demo-outline")).toBe(true);
-    expect(byId.has("preferences")).toBe(true);
+    expect(byId.has(PREFERENCES_POUCH_ID)).toBe(true);
+    expect(byId.has(QUICK_LINKS_POUCH_ID)).toBe(true);
+    expect(byId.has(MONITOR_SETTINGS_POUCH_ID)).toBe(true);
+    expect(byId.has(MEDIA_ROUTE_FOLDERS_POUCH_ID)).toBe(true);
     expect(byId.has("media")).toBe(true);
     expect(byId.has("overlay-templates")).toBe(true);
     expect(byId.has(getCreditsDocId("offline-demo-outline"))).toBe(true);
@@ -18,10 +27,10 @@ describe("offlineGuestSeed", () => {
   it("keeps the seeded outline, library, and item docs in sync", () => {
     const docs = createOfflineGuestSeedDocs("2026-01-01T00:00:00.000Z");
     const byId = new Map(docs.map((doc) => [doc._id, doc]));
-    const allItems = byId.get("allItems") as {
+    const allItems = byId.get("allItems") as unknown as {
       items: { _id: string; listId: string }[];
     };
-    const outline = byId.get("offline-demo-outline") as {
+    const outline = byId.get("offline-demo-outline") as unknown as {
       items: { _id: string; listId: string }[];
       overlays: string[];
     };

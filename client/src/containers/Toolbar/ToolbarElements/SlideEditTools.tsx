@@ -44,6 +44,7 @@ import Toggle from "../../../components/Toggle/Toggle";
 import { BibleFontMode, ItemState } from "../../../types";
 import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
+import { Slider } from "../../../components/ui/Slider";
 import { updateTimerColor } from "../../../store/timersSlice";
 import RadioButton, {
   RadioGroup,
@@ -670,10 +671,16 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         }
       >
         <Icon size="xl" svg={SunMedium} color="#fbbf24" />
-        <Button
-          svg={Minus}
-          variant="tertiary"
-          onClick={() => _updateBrightness(brightness - 10)}
+        <Slider
+          className="w-24 shrink-0 md:w-28"
+          value={[brightness]}
+          min={10}
+          max={100}
+          step={1}
+          onValueChange={(v: number[]) =>
+            _updateBrightness(v[0] ?? brightness)
+          }
+          aria-label="Background brightness"
         />
         <Input
           label="Brightness"
@@ -685,12 +692,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           hideLabel
           data-ignore-undo="true"
           max={100}
-          min={1}
-        />
-        <Button
-          svg={Plus}
-          variant="tertiary"
-          onClick={() => _updateBrightness(brightness + 10)}
+          min={10}
         />
       </div>
       {canChangeAspectRatio && (

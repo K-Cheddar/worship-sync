@@ -59,6 +59,11 @@ import {
   updateItemListsFromRemote,
 } from "../../store/itemListsSlice";
 import Spinner from "../../components/Spinner/Spinner";
+import { useStuckDbProgress } from "../../hooks/useStuckDbProgress";
+import {
+  DbStartupConnectionFailedPanel,
+  DbStartupStuckRecoveryPanel,
+} from "../../components/ControllerPageShell/DbProgressStartupRecoveryUi";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import Button from "../../components/Button/Button";
 import cn from "classnames";
@@ -118,8 +123,19 @@ const CreditsEditor = ({
       state.undoable.present.preferences?.scrollbarWidth ?? "thin",
   );
 
-  const { db, dbProgress, isMobile = false, setIsMobile, updater, pullFromRemote } =
-    useContext(ControllerInfoContext) ?? {};
+  const {
+    db,
+    dbProgress,
+    connectionStatus,
+    isMobile = false,
+    setIsMobile,
+    updater,
+    pullFromRemote,
+  } = useContext(ControllerInfoContext) ?? {};
+
+  const dbProgressValue = dbProgress ?? 0;
+  const isConnectionFailed = connectionStatus?.status === "failed";
+  const isStartupStuck = useStuckDbProgress(dbProgressValue, isConnectionFailed);
   const { churchId, firebaseDb, user, access } = useContext(GlobalInfoContext) || {};
   const canEditCredits = access !== "view";
   const dispatch = useDispatch();
@@ -601,20 +617,45 @@ const CreditsEditor = ({
         </div>
       )}
 
-      {!embeddedInOverlayController && dbProgress !== 100 && (
+      {!embeddedInOverlayController && dbProgressValue !== 100 && (
         <div
           data-testid="loading-overlay"
           className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8"
         >
-          <p>
-            Setting up <span className="font-bold">Worship</span>
-            <span className="text-orange-500 font-semibold">Sync</span> for{" "}
-            <span className="font-semibold">{user}</span>
-          </p>
-          <Spinner />
-          <p>
-            Progress: <span className="text-orange-500">{dbProgress}%</span>
-          </p>
+          {isConnectionFailed ? (
+            <DbStartupConnectionFailedPanel />
+          ) : isStartupStuck ? (
+            <>
+              <DbStartupStuckRecoveryPanel
+                dbProgress={dbProgressValue}
+                connectionStatus={connectionStatus}
+              />
+              {connectionStatus?.status === "retrying" && (
+                <p className="text-center text-lg text-yellow-400">
+                  Connection failed. Retrying...
+                </p>
+              )}
+              <Spinner />
+            </>
+          ) : (
+            <>
+              <p>
+                Setting up <span className="font-bold">Worship</span>
+                <span className="text-orange-500 font-semibold">Sync</span> for{" "}
+                <span className="font-semibold">{user}</span>
+              </p>
+              {connectionStatus?.status === "retrying" && (
+                <p className="text-center text-lg text-yellow-400">
+                  Connection failed. Retrying...
+                </p>
+              )}
+              <Spinner />
+              <p>
+                Progress:{" "}
+                <span className="text-orange-500">{dbProgressValue}%</span>
+              </p>
+            </>
+          )}
         </div>
       )}
 

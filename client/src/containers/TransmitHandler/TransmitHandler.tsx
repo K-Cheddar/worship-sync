@@ -23,6 +23,7 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import QuickLink from "../../components/QuickLink/QuickLink";
 import cn from "classnames";
 import { MonitorUp, MonitorX } from "lucide-react";
+import { CLEAR_ACTION_ICON_COLOR } from "../../constants";
 import ProjectorPresentationPreview from "./ProjectorPresentationPreview";
 import MonitorPresentationPreview from "./MonitorPresentationPreview";
 import StreamPresentationPreview from "./StreamPresentationPreview";
@@ -182,6 +183,7 @@ const TransmitHandler = ({
                 className="text-sm"
                 padding="py-1 px-2"
                 svg={MonitorX}
+                color={CLEAR_ACTION_ICON_COLOR}
               >
                 Clear All
               </Button>
@@ -211,6 +213,7 @@ const TransmitHandler = ({
                     className="text-sm shrink-0 justify-self-start"
                     padding="py-1 px-2"
                     svg={MonitorX}
+                    color={CLEAR_ACTION_ICON_COLOR}
                   >
                     Clear All
                   </Button>

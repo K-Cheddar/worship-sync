@@ -2,13 +2,10 @@ import Button from "../../components/Button/Button";
 import cn from "classnames";
 import { ChevronsUpDown } from "lucide-react";
 import { ChevronsDownUp } from "lucide-react";
-import { Check } from "lucide-react";
 import { FileQuestion } from "lucide-react";
 import { Pencil } from "lucide-react";
 import { PencilLine } from "lucide-react";
-import { X } from "lucide-react";
 
-import Input from "../../components/Input/Input";
 import {
   CSSProperties,
   startTransition,
@@ -25,10 +22,6 @@ import {
   iconColorMap,
   svgMap,
 } from "../../utils/itemTypeMaps";
-import {
-  INLINE_EDIT_CONFIRM_ICON_COLOR,
-  handleInlineTextInputKeyDown,
-} from "../../utils/inlineEdit";
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import { useDispatch, useSelector } from "../../hooks";
@@ -64,13 +57,24 @@ import Icon from "../../components/Icon/Icon";
 import TimerControls from "../../components/TimerControls/TimerControls";
 import SlideEditorSkeleton from "./SlideEditorSkeleton";
 import type { DisplayEditorChangeInfo } from "../../components/DisplayWindow/DisplayEditor";
-import { SongItemMetadataModal } from "../../components/SongItemMetadataModal/SongItemMetadataModal";
+import {
+  ItemDetailsEditorFields,
+  ItemDetailsModal,
+} from "../../components/ItemDetailsModal/ItemDetailsModal";
+import { LastUpdatedByline } from "../../components/LastUpdatedByline/LastUpdatedByline";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../../components/ui/Popover";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
   slideName.startsWith(lyricName) && !/^\d/.test(slideName.slice(lyricName.length));
 
 const BOX_EDIT_DEBOUNCE_MS = 200;
+const ITEM_DETAILS_POPOVER_CLASS =
+  "w-80 border border-gray-600 bg-gray-900 p-3 text-white";
 
 const resolveFormattedSlideIndex = ({
   oldSlides,
@@ -111,6 +115,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     restoreFocusToBox,
     hasRemoteUpdate,
     songMetadata,
+    baseItem,
   } = item;
   const showEditorSkeleton = isLoading || isSectionLoading;
 
@@ -127,8 +132,8 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     (state: RootState) => state.undoable.present.preferences
   );
 
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [isSongMetadataModalOpen, setIsSongMetadataModalOpen] = useState(false);
+  const [isItemDetailsModalOpen, setIsItemDetailsModalOpen] = useState(false);
+  const [isSongDetailsPopoverOpen, setIsSongDetailsPopoverOpen] = useState(false);
   const [isOpeningLyricsEditor, setIsOpeningLyricsEditor] = useState(false);
 
   const [isBoxLocked, setIsBoxLocked] = useState<boolean[]>([]);
@@ -140,8 +145,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   useEffect(() => {
     setIsBoxLocked(Array(numBoxes).fill(true));
   }, [numBoxes]);
-
-  const [localName, setLocalName] = useState(name || "");
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const toastContext = useContext(ToastContext);
@@ -189,10 +192,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
       resizeObserver.observe(node);
     }
   }, []);
-
-  useEffect(() => {
-    setLocalName(name || "");
-  }, [name]);
 
   useEffect(() => {
     if (isEditMode) {
@@ -318,18 +317,6 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     [isLoading, _boxes]
   );
 
-  const discardNameEdit = () => {
-    setLocalName(name || "");
-    setIsEditingName(false);
-  };
-
-  const saveName = () => {
-    setIsEditingName(false);
-    if (db) {
-      dispatch(setName({ name: localName }));
-    }
-  };
-
   const saveSongDetails = ({
     name: nextName,
     songMetadataPatch,
@@ -345,22 +332,13 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   };
 
   const onNameEditButtonClick = () => {
-    if (type === "song") {
-      setIsSongMetadataModalOpen(true);
-      return;
-    }
-    if (isEditingName) {
-      saveName();
-      return;
-    }
-    setIsEditingName(true);
+    if (!canEdit) return;
+    if (type === "song") return;
+    setIsItemDetailsModalOpen(true);
   };
 
-  const nameEditButtonAriaLabel = (() => {
-    if (type === "song") return "Song details";
-    if (isEditingName) return "Save item name";
-    return "Edit item name";
-  })();
+  const nameEditButtonAriaLabel =
+    type === "song" ? "Song details" : "Item details";
 
   const applyBoxChange = useCallback(({
     index,
@@ -1082,6 +1060,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     if (toolbarSection === "box-tools") {
       return (
         <SlideBoxes
+          className="lg:flex-[0_0_30%] w-full"
           canEdit={canEdit}
           canDeleteBox={canDeleteBox}
           isBoxLocked={isBoxLocked}
@@ -1139,8 +1118,15 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         <SlideEditorSkeleton />
       ) : !isEmpty ? (
         <div className="flex flex-col lg:flex-row gap-2 w-full px-2">
-          <div className="lg:flex-[0_0_30%] w-full min-h-0">
-            {leftColumnContent}
+          <div className="lg:flex-[0_0_30%] w-full min-h-0 min-w-0">
+            <div className="flex h-full min-h-0 w-full flex-col gap-1">
+              <LastUpdatedByline
+                updatedBy={baseItem?.updatedBy}
+                updatedAt={baseItem?.updatedAt}
+                className="px-1"
+              />
+              <div className="min-h-0 flex-1">{leftColumnContent}</div>
+            </div>
           </div>
 
           <div className="lg:max-h-[42vh] max-lg:max-h-[30vh] flex-1 min-w-0 min-h-0">
@@ -1192,50 +1178,50 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
                 overrideSmallMobile
               />
             </span>
-            {type !== "song" && isEditingName && (
+            {type === "song" ? (
+              <Popover
+                open={isSongDetailsPopoverOpen}
+                onOpenChange={setIsSongDetailsPopoverOpen}
+              >
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="tertiary"
+                    disabled={isLoading || !canEdit}
+                    svg={Pencil}
+                    aria-label={nameEditButtonAriaLabel}
+                  />
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  className={ITEM_DETAILS_POPOVER_CLASS}
+                >
+                  <ItemDetailsEditorFields
+                    isOpen={isSongDetailsPopoverOpen}
+                    onClose={() => setIsSongDetailsPopoverOpen(false)}
+                    itemType={type}
+                    itemName={name}
+                    songMetadata={songMetadata}
+                    onSave={saveSongDetails}
+                  />
+                </PopoverContent>
+              </Popover>
+            ) : (
               <Button
                 variant="tertiary"
-                svg={X}
-                onClick={discardNameEdit}
+                disabled={isLoading || !canEdit}
+                svg={Pencil}
+                onClick={onNameEditButtonClick}
+                aria-label={nameEditButtonAriaLabel}
               />
             )}
-            <Button
-              variant="tertiary"
-              disabled={isLoading || !canEdit}
-              svg={type === "song" ? Pencil : isEditingName ? Check : Pencil}
-              color={
-                type !== "song" && isEditingName
-                  ? INLINE_EDIT_CONFIRM_ICON_COLOR
-                  : undefined
-              }
-              onClick={onNameEditButtonClick}
-              aria-label={nameEditButtonAriaLabel}
-            />
-            {!isEditingName && (
-              <span className="text-base font-semibold flex-1 truncate flex items-center gap-2 max-w-[calc(100%-2rem)]">
-                <h2>{isLoading ? "" : name}</h2>
-                {arrangement && (
-                  <p className="text-sm">
-                    {isLoading ? "" : `(${arrangement?.name})`}
-                  </p>
-                )}
-              </span>
-            )}
-            {type !== "song" && isEditingName && (
-              <Input
-                hideLabel
-                className="text-base font-semibold flex-1 truncate flex items-center gap-2 max-w-[calc(100%-2rem)]"
-                value={localName || ""}
-                onChange={(val) => setLocalName(val as string)}
-                data-ignore-undo="true"
-                onKeyDown={(e) =>
-                  handleInlineTextInputKeyDown(e, {
-                    onSave: saveName,
-                    onCancel: discardNameEdit,
-                  })
-                }
-              />
-            )}
+            <span className="text-base font-semibold flex-1 truncate flex items-center gap-2 max-w-[calc(100%-2rem)]">
+              <h2>{isLoading ? "" : name}</h2>
+              {arrangement && (
+                <p className="text-sm">
+                  {isLoading ? "" : `(${arrangement?.name})`}
+                </p>
+              )}
+            </span>
           </span>
           {type === "song" && (
             <Button
@@ -1303,13 +1289,16 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
           </div>
         )}
       </div>
-      <SongItemMetadataModal
-        isOpen={isSongMetadataModalOpen}
-        onClose={() => setIsSongMetadataModalOpen(false)}
-        itemName={name}
-        songMetadata={songMetadata}
-        onSave={saveSongDetails}
-      />
+      {type !== "song" && (
+        <ItemDetailsModal
+          isOpen={isItemDetailsModalOpen}
+          onClose={() => setIsItemDetailsModalOpen(false)}
+          itemType={type}
+          itemName={name}
+          songMetadata={songMetadata}
+          onSave={saveSongDetails}
+        />
+      )}
     </ErrorBoundary>
   );
 };

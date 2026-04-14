@@ -43,5 +43,9 @@ export function normalizeOverlayForSync(
       ...getDefaultFormatting(type),
       ...overlay.formatting,
     },
+    createdAt: overlay.createdAt,
+    updatedAt: overlay.updatedAt,
+    createdBy: overlay.createdBy,
+    updatedBy: overlay.updatedBy,
   };
 }

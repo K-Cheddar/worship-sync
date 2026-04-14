@@ -124,27 +124,27 @@ const Toast: React.FC<ToastProps> = ({
   const variantConfig = {
     info: {
       icon: Info,
-      iconColor: "#3b82f6", // blue-500
-      borderColor: "#3b82f6",
-      textColor: "text-gray-900",
+      iconColor: "#60a5fa", // blue-400
+      borderColor: "#60a5fa",
+      textColor: "text-zinc-100",
     },
     success: {
       icon: CheckCircle2,
-      iconColor: "#10b981", // green-500
-      borderColor: "#10b981",
-      textColor: "text-gray-900",
+      iconColor: "#34d399", // emerald-400
+      borderColor: "#34d399",
+      textColor: "text-zinc-100",
     },
     error: {
       icon: CircleAlert,
-      iconColor: "#ef4444", // red-500
-      borderColor: "#ef4444",
-      textColor: "text-gray-900",
+      iconColor: "#f87171", // red-400
+      borderColor: "#f87171",
+      textColor: "text-zinc-100",
     },
     neutral: {
       icon: Info,
-      iconColor: "#6b7280", // gray-500
-      borderColor: "#6b7280",
-      textColor: "text-gray-900",
+      iconColor: "#a1a1aa", // zinc-400
+      borderColor: "#a1a1aa",
+      textColor: "text-zinc-100",
     },
   };
 
@@ -163,7 +163,7 @@ const Toast: React.FC<ToastProps> = ({
     <div
       role="status"
       className={cn(
-        "fixed z-9999 min-w-[300px] max-w-[50vw] px-4 py-3 rounded-lg border-2 shadow-md pointer-events-auto bg-white",
+        "fixed z-9999 min-w-[300px] max-w-[50vw] px-4 py-3 rounded-lg border-2 shadow-lg shadow-black/30 pointer-events-auto bg-zinc-900",
         config.textColor,
         positionStyles[position],
         isVisible && !isExiting && "opacity-100 translate-y-0",
@@ -207,6 +207,7 @@ const Toast: React.FC<ToastProps> = ({
             variant="none"
             padding="p-1"
             className="w-6"
+            color="#d4d4d8"
             aria-label="Close toast"
           />
         )}

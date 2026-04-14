@@ -37,7 +37,7 @@ const SlideBoxes = ({
     <section
       className={cn(
         // Match `SectionTextEditor`: bordered card + horizontal inset (`p-3` on textarea).
-        "flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md border border-gray-600 max-lg:max-h-[25vh]",
+        "flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden rounded-md border border-gray-600 max-lg:max-h-[25vh]",
         className
       )}
     >
@@ -51,15 +51,15 @@ const SlideBoxes = ({
             <span
               key={box.id}
               className={`flex gap-1 bg-gray-600 border-gray-300 ${index !== boxes.length - 1 && "border-b"
-                } ${selectedBox === index && "bg-gray-800"}`}
+                } ${selectedBox === index && "bg-gray-800"} min-w-0`}
             >
               <Button
                 truncate
-                className="flex-1 text-xs hover:bg-gray-500"
+                className="min-w-0 flex-1 text-xs hover:bg-gray-500"
                 variant="none"
                 onClick={() => dispatch(setSelectedBox(index))}
               >
-                <p>
+                <p className="truncate">
                   {box.label ||
                     box.words?.trim() ||
                     box.background?.replace(

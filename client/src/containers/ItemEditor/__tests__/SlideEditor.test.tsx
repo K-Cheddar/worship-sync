@@ -309,7 +309,7 @@ describe("SlideEditor", () => {
     });
   });
 
-  it("opens song details modal when song name edit button is clicked", () => {
+  it("opens song details popover when song name edit button is clicked", () => {
     mockState = makeBaseState({
       undoable: {
         present: {
@@ -324,7 +324,7 @@ describe("SlideEditor", () => {
     render(<SlideEditor access="full" />);
     fireEvent.click(screen.getByRole("button", { name: /song details/i }));
 
-    expect(screen.getByRole("dialog", { name: /song details/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Song name:")).toBeInTheDocument();
   });
 
   it("offers toast actions for remote updates outside lyrics edit mode", async () => {

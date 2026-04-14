@@ -27,6 +27,7 @@ import {
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import generateRandomId from "../../utils/generateRandomId";
+import { applyPouchAudit } from "../../utils/pouchAudit";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import Drawer from "../../components/Drawer";
@@ -298,9 +299,13 @@ const Overlays = () => {
       for (const overlay of overlaysOfType) {
         try {
           const db_overlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
-          db_overlay.formatting = formatting;
-          db_overlay.updatedAt = new Date().toISOString();
-          await db.put(db_overlay);
+          const updatedAt = new Date().toISOString();
+          const toSave = applyPouchAudit(
+            db_overlay,
+            { ...db_overlay, formatting, updatedAt },
+            { isNew: false },
+          );
+          await db.put(toSave);
         } catch (e) {
           console.error("Failed to update overlay in db", overlay.id, e);
         }
@@ -504,11 +509,16 @@ const Overlays = () => {
             const dbOverlay = await db.get(`overlay-${bestOverlay.id}`);
 
             // Update with new name and timestamp
-            const updatedOverlay = {
-              ...dbOverlay,
-              name: eventData.leader,
-              updatedAt: new Date().toISOString(),
-            };
+            const updatedAt = new Date().toISOString();
+            const updatedOverlay = applyPouchAudit(
+              dbOverlay,
+              {
+                ...dbOverlay,
+                name: eventData.leader,
+                updatedAt,
+              },
+              { isNew: false },
+            );
 
             // Save back to database
             await db.put(updatedOverlay);

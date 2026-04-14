@@ -123,6 +123,9 @@ export type DocType =
   | "overlay"
   | "overlayTemplates"
   | "preferences"
+  | "quickLinks"
+  | "monitorSettings"
+  | "mediaRouteFolders"
   | "credits"
   | "credit"
   | "credit-history"
@@ -138,6 +141,8 @@ export type DBItem = ItemProperties & {
   _rev?: string;
   createdAt?: string;
   updatedAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
   docType?: DocType;
 };
 
@@ -439,6 +444,10 @@ export type OverlayInfo = {
   time?: number;
   id: string;
   formatting?: OverlayFormatting;
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
 };
 
 export type DBOverlay = OverlayInfo & {
@@ -609,18 +618,61 @@ export type DBItemListDetails = ItemListDetails & {
   docType?: DocType;
 };
 
+/** Pouch `_id` for the slim defaults doc (backgrounds, grid defaults, etc.). */
+export const PREFERENCES_POUCH_ID = "preferences" as const;
+
+/** Pouch `_id` for quick links only. */
+export const QUICK_LINKS_POUCH_ID = "quickLinks" as const;
+
+/** Pouch `_id` for monitor band / clock settings only. */
+export const MONITOR_SETTINGS_POUCH_ID = "monitorSettings" as const;
+
+/** Pouch `_id` for last-selected media library folder per route. */
+export const MEDIA_ROUTE_FOLDERS_POUCH_ID = "mediaRouteFolders" as const;
+
+/** Slim preferences document (split layout). */
 export type DBPreferences = {
-  _id: string;
+  _id: typeof PREFERENCES_POUCH_ID;
   _rev: string;
   preferences: PreferencesType;
-  quickLinks: QuickLinkType[];
-  monitorSettings: MonitorSettingsType;
-  /** Last-selected media folder id per route; `null` = All media */
-  mediaRouteFolders?: Partial<Record<MediaRouteKey, string | null>>;
   createdAt?: string;
   updatedAt?: string;
   docType?: DocType;
 };
+
+export type DBQuickLinksDoc = {
+  _id: typeof QUICK_LINKS_POUCH_ID;
+  _rev: string;
+  quickLinks: QuickLinkType[];
+  createdAt?: string;
+  updatedAt?: string;
+  docType?: DocType;
+};
+
+export type DBMonitorSettingsDoc = {
+  _id: typeof MONITOR_SETTINGS_POUCH_ID;
+  _rev: string;
+  monitorSettings: MonitorSettingsType;
+  createdAt?: string;
+  updatedAt?: string;
+  docType?: DocType;
+};
+
+export type DBMediaRouteFoldersDoc = {
+  _id: typeof MEDIA_ROUTE_FOLDERS_POUCH_ID;
+  _rev: string;
+  mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
+  createdAt?: string;
+  updatedAt?: string;
+  docType?: DocType;
+};
+
+/** Any Pouch doc that can update the preferences slice from local sync. */
+export type PreferencesClusterRemoteDoc =
+  | DBPreferences
+  | DBQuickLinksDoc
+  | DBMonitorSettingsDoc
+  | DBMediaRouteFoldersDoc;
 
 /** Prefix for outline-scoped credits index docs. Legacy global index uses `_id: "credits"`. */
 export const CREDITS_OUTLINE_INDEX_PREFIX = "credits-outline-";
@@ -839,6 +891,9 @@ export type DBDoc =
   | DBMedia
   | DBOverlay
   | DBPreferences
+  | DBQuickLinksDoc
+  | DBMonitorSettingsDoc
+  | DBMediaRouteFoldersDoc
   | DBCredits
   | DBCredit
   | DBCreditHistory

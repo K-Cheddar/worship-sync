@@ -5,6 +5,9 @@
 export const MAX_INITIAL_SESSION_RETRIES = 5;
 export const MAX_REPLICATION_AUTH_RETRIES = 3;
 
+/** No `dbProgress` change while below 100% → show stuck-recovery UI (wall-clock). */
+export const STUCK_DB_PROGRESS_MS = 15_000;
+
 // ============================================================================
 // Display Window Constants
 // ============================================================================
@@ -53,3 +56,13 @@ export const SECONDS = Array.from({ length: 12 }, (_, i) =>
 );
 
 export const pad2 = (v: string | number) => String(v).padStart(2, "0");
+
+// ============================================================================
+// UI accents
+// ============================================================================
+
+/**
+ * Lucide MonitorX (clear display) in transmit handler and preview headers.
+ * Pale amber (~`#f59e0b` at 58% + white) — softer than full amber-500, distinct from Live green.
+ */
+export const CLEAR_ACTION_ICON_COLOR = "#f9c771";

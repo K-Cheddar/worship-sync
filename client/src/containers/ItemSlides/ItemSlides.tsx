@@ -1,4 +1,4 @@
-import { ListChecks, Plus, ZoomIn, ZoomOut, Trash2, Copy } from "lucide-react";
+import { ListChecks, Plus, Trash2, Copy, ZoomIn, ZoomOut } from "lucide-react";
 import Button from "../../components/Button/Button";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import {
@@ -13,11 +13,7 @@ import {
   updateSlides,
 } from "../../store/itemSlice";
 import {
-  increaseSlides,
-  decreaseSlides,
   setSlides,
-  increaseSlidesMobile,
-  decreaseSlidesMobile,
   setSlidesMobile,
   setMonitorTimerId,
 } from "../../store/preferencesSlice";
@@ -62,6 +58,8 @@ import { updateTimer } from "../../store/timersSlice";
 import { DEFAULT_FONT_PX } from "../../constants";
 import { ensureSlidesHaveMonitorBandFormatting } from "../../utils/overflow";
 import { inclusiveRangeIndicesFromAnchor } from "../../utils/backgroundTargetResolution";
+import { Slider } from "../../components/ui/Slider";
+import Icon from "../../components/Icon/Icon";
 
 type SizeConfig = {
   borderWidth: string;
@@ -160,6 +158,12 @@ const ItemSlides = () => {
 
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
   const size = type === "timer" ? Math.min(_size, 3) : _size;
+
+  const slidesGridColsMin = 1;
+  const slidesGridColsMax = type === "timer" ? 3 : 7;
+  /** Slider is inverted so moving right = zoom in (fewer columns, larger thumbnails). */
+  const slideZoomSliderValue =
+    slidesGridColsMax + slidesGridColsMin - size;
 
   const sizeConfig: SizeConfig = useMemo(() => {
     const configs: Record<number, SizeConfig> = {
@@ -688,41 +692,36 @@ const ItemSlides = () => {
       >
         <div className="flex h-full min-h-0 flex-col overflow-hidden bg-homepage-canvas">
           <div className="mb-2 flex w-full shrink-0 flex-col border-b border-white/20 bg-black/60">
-            <div className="flex gap-1 px-2">
-              <Button
-                variant="tertiary"
-                svg={ZoomOut}
-                onClick={() => {
-                  if (isMobile) {
-                    dispatch(increaseSlidesMobile());
-                    if (type === "timer") {
-                      dispatch(setSlidesMobile(size + 1));
-                    }
-                  } else {
-                    dispatch(increaseSlides());
-                    if (type === "timer") {
-                      dispatch(setSlides(size + 1));
-                    }
-                  }
-                }}
-              />
-              <Button
-                variant="tertiary"
-                svg={ZoomIn}
-                onClick={() => {
-                  if (isMobile) {
-                    dispatch(decreaseSlidesMobile());
-                    if (type === "timer") {
-                      dispatch(setSlidesMobile(size - 1));
-                    }
-                  } else {
-                    dispatch(decreaseSlides());
-                    if (type === "timer") {
-                      dispatch(setSlides(size - 1));
-                    }
-                  }
-                }}
-              />
+            <div className="flex min-w-0 flex-1 items-center gap-2 px-2">
+              <div className="flex shrink-0 items-center gap-1">
+                <span className="shrink-0 text-gray-300" aria-hidden>
+                  <Icon svg={ZoomOut} size="sm" color="currentColor" />
+                </span>
+                <div className="w-36 shrink-0">
+                  <Slider
+                    className="w-full"
+                    value={[slideZoomSliderValue]}
+                    min={slidesGridColsMin}
+                    max={slidesGridColsMax}
+                    step={1}
+                    onValueChange={(v: number[]) => {
+                      const raw = v[0];
+                      if (raw == null) return;
+                      const next =
+                        slidesGridColsMax + slidesGridColsMin - raw;
+                      if (isMobile) {
+                        dispatch(setSlidesMobile(next));
+                      } else {
+                        dispatch(setSlides(next));
+                      }
+                    }}
+                    aria-label="Slide thumbnail zoom"
+                  />
+                </div>
+                <span className="shrink-0 text-gray-300" aria-hidden>
+                  <Icon svg={ZoomIn} size="sm" color="currentColor" />
+                </span>
+              </div>
               {type === "free" && canEdit && (
                 <>
                   <Button

@@ -6,7 +6,11 @@ import {
   ScrollbarWidth,
   Presentation,
   QuickLinkType,
-  DBPreferences,
+  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  MONITOR_SETTINGS_POUCH_ID,
+  PREFERENCES_POUCH_ID,
+  PreferencesClusterRemoteDoc,
+  QUICK_LINKS_POUCH_ID,
   MediaType,
   MediaRouteKey,
 } from "../types";
@@ -125,6 +129,14 @@ const initialState: PreferencesState = {
   isInitialized: false,
   overlayControllerPanel: "overlays",
   mediaRouteFolders: {},
+};
+
+/** Defaults when `loadPreferencesBundle` fails so controller surfaces can finish init. */
+export const preferencesClusterLoadFallback = {
+  preferences: initialState.preferences,
+  quickLinks: initialState.quickLinks,
+  monitorSettings: initialState.monitorSettings,
+  mediaRouteFolders: initialState.mediaRouteFolders,
 };
 
 export const preferencesSlice = createSlice({
@@ -389,19 +401,39 @@ export const preferencesSlice = createSlice({
 
     updatePreferencesFromRemote: (
       state,
-      action: PayloadAction<DBPreferences>,
+      action: PayloadAction<PreferencesClusterRemoteDoc>,
     ) => {
-      state.preferences = {
-        ...state.preferences,
-        ...action.payload.preferences,
-      };
-      // Accept quickLinks from remote - sync-before-save ensures DB is always correct
-      if (action.payload.quickLinks !== undefined) {
-        state.quickLinks = action.payload.quickLinks;
-      }
-      if (action.payload.mediaRouteFolders !== undefined) {
+      const d = action.payload;
+      if (d._id === PREFERENCES_POUCH_ID) {
+        state.preferences = {
+          ...state.preferences,
+          ...d.preferences,
+        };
+      } else if (d._id === QUICK_LINKS_POUCH_ID) {
+        state.quickLinks = d.quickLinks;
+      } else if (d._id === MONITOR_SETTINGS_POUCH_ID) {
+        state.monitorSettings = {
+          showClock:
+            d.monitorSettings.showClock ??
+            initialState.monitorSettings.showClock,
+          showTimer:
+            d.monitorSettings.showTimer ??
+            initialState.monitorSettings.showTimer,
+          showNextSlide:
+            d.monitorSettings.showNextSlide ??
+            initialState.monitorSettings.showNextSlide,
+          clockFontSize:
+            d.monitorSettings.clockFontSize ??
+            initialState.monitorSettings.clockFontSize,
+          timerFontSize:
+            d.monitorSettings.timerFontSize ??
+            initialState.monitorSettings.timerFontSize,
+          timerId:
+            d.monitorSettings.timerId ?? initialState.monitorSettings.timerId,
+        };
+      } else if (d._id === MEDIA_ROUTE_FOLDERS_POUCH_ID) {
         state.mediaRouteFolders = migrateLegacyMediaRouteFolders(
-          action.payload.mediaRouteFolders,
+          d.mediaRouteFolders,
         );
       }
     },

@@ -16,6 +16,7 @@ import {
 } from "../../store/presentationSlice";
 import Button from "../Button/Button";
 import cn from "classnames";
+import { CLEAR_ACTION_ICON_COLOR } from "../../constants";
 
 type PresentationPreviewProps = {
   name: string;
@@ -196,19 +197,22 @@ const PresentationPreview = ({
             className={cn(
               "flex flex-col",
               hideQuickLinks && "w-full items-center min-w-0",
-              // Without an adjacent quick-link column, a sole flex-row child stretches to full
-              // width; keep the header + preview the same width as when quick links are present.
-              !hideQuickLinks &&
-              filteredQuickLinks.length === 0 &&
-              "w-fit max-w-full shrink-0 min-w-0"
+              // Match DisplayWindow width so the header never exceeds the preview (w-fit used the
+              // header’s intrinsic width and could overflow past the aspect-video box below).
+              !hideQuickLinks && "shrink-0 min-w-0"
             )}
+            style={
+              !hideQuickLinks
+                ? { width: `${previewWidthVw}vw`, maxWidth: "100%" }
+                : undefined
+            }
           >
             {!hideHeader && (
               <h2
                 ref={headerRef}
                 data-measure="presentation-header"
                 className={cn(
-                  "border-b border-white/10 bg-black/25 text-center text-sm font-semibold px-2 py-1",
+                  "border-b border-white/10 bg-black/25 text-center text-xs font-semibold px-2 py-1",
                   minimalHeader
                     ? "flex items-center justify-center"
                     : "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2"
@@ -229,15 +233,17 @@ const PresentationPreview = ({
                     <Button
                       data-measure="presentation-clear-button"
                       svg={MonitorX}
+                      color={CLEAR_ACTION_ICON_COLOR}
                       onClick={handleClear}
                       iconSize="md"
-                      className="justify-self-center"
+                      className="justify-self-center text-xs"
                     >
                       {shouldShowClearLabel ? "Clear" : undefined}
                     </Button>
                     <div className="flex items-center justify-self-end shrink-0">
                       <Toggle
                         label={shouldShowTransmitLabel ? "Live" : undefined}
+                        labelClassName="text-xs"
                         icon={MonitorUp}
                         value={isTransmitting}
                         onChange={toggleIsTransmitting}
@@ -256,7 +262,12 @@ const PresentationPreview = ({
                   className="pointer-events-none absolute invisible whitespace-nowrap"
                   aria-hidden="true"
                 >
-                  <Button svg={MonitorX} iconSize="md" />
+                  <Button
+                    svg={MonitorX}
+                    iconSize="md"
+                    color={CLEAR_ACTION_ICON_COLOR}
+                    className="text-xs"
+                  />
                 </div>
                 <div
                   ref={labeledClearMeasureRef}
@@ -264,7 +275,12 @@ const PresentationPreview = ({
                   className="pointer-events-none absolute invisible whitespace-nowrap"
                   aria-hidden="true"
                 >
-                  <Button svg={MonitorX} iconSize="md">
+                  <Button
+                    svg={MonitorX}
+                    iconSize="md"
+                    color={CLEAR_ACTION_ICON_COLOR}
+                    className="text-xs"
+                  >
                     Clear
                   </Button>
                 </div>
@@ -289,6 +305,7 @@ const PresentationPreview = ({
                 >
                   <Toggle
                     label="Live"
+                    labelClassName="text-xs"
                     icon={MonitorUp}
                     value={isTransmitting}
                     onChange={() => undefined}

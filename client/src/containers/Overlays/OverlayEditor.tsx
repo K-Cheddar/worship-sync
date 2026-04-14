@@ -22,7 +22,10 @@ import { putOverlayHistoryDoc } from "../../utils/dbUtils";
 import { useStore } from "react-redux";
 import { useWindowWidth, useDispatch, useSelector } from "../../hooks";
 import { useOverlayDraft } from "../../hooks/useOverlayDraft";
-import { updateOverlayHistoryEntry } from "../../store/overlaysSlice";
+import {
+  updateOverlayHistoryEntry,
+  updateOverlayInList,
+} from "../../store/overlaysSlice";
 import {
   applyPendingRemoteOverlay,
   discardPendingRemoteOverlay,
@@ -33,6 +36,7 @@ import {
   overlayTypeLabelMap,
 } from "../../utils/itemTypeMaps";
 import { RootState } from "../../store/store";
+import { LastUpdatedByline } from "../../components/LastUpdatedByline/LastUpdatedByline";
 
 type OverlayEditorProps = {
   selectedOverlay: OverlayInfo;
@@ -568,26 +572,33 @@ const OverlayEditor = ({
           selectClassName="flex-1"
           labelClassName="w-20"
         />
-        <div className="flex gap-2 w-full">
-          <Button
-            className="flex-1 justify-center text-sm"
-            svg={SquarePen}
-            color="#22d3ee"
-            onClick={() => setIsStyleDrawerOpen(true)}
-            disabled={isDisabled}
-          >
-            Edit Style
-          </Button>
-          <Button
-            className="flex-1 justify-center text-sm"
-            variant="secondary"
-            svg={Sparkles}
-            color="#22d3ee"
-            onClick={() => setIsTemplateDrawerOpen(true)}
-            disabled={isDisabled}
-          >
-            Templates
-          </Button>
+        <div className="flex w-full flex-col gap-2">
+          <div className="flex w-full gap-2">
+            <Button
+              className="flex-1 justify-center text-sm"
+              svg={SquarePen}
+              color="#22d3ee"
+              onClick={() => setIsStyleDrawerOpen(true)}
+              disabled={isDisabled}
+            >
+              Edit Style
+            </Button>
+            <Button
+              className="flex-1 justify-center text-sm"
+              variant="secondary"
+              svg={Sparkles}
+              color="#22d3ee"
+              onClick={() => setIsTemplateDrawerOpen(true)}
+              disabled={isDisabled}
+            >
+              Templates
+            </Button>
+          </div>
+          <LastUpdatedByline
+            className="text-white/60"
+            updatedBy={selectedOverlay.updatedBy}
+            updatedAt={selectedOverlay.updatedAt}
+          />
         </div>
       </section>
 

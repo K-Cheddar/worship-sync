@@ -3,6 +3,7 @@ import type {
   DBItem,
   DBOverlay,
   DBPreferences,
+  DBQuickLinksDoc,
   ItemSlideType,
   ItemType,
   MediaType,
@@ -10,7 +11,15 @@ import type {
   PreferenceBackground,
   PreferencesType,
   Presentation,
+  QuickLinkType,
 } from "../types";
+import {
+  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  MONITOR_SETTINGS_POUCH_ID,
+  PREFERENCES_POUCH_ID,
+  QUICK_LINKS_POUCH_ID,
+} from "../types";
+import { isLegacyPreferencesDoc } from "./dbUtils";
 import type { allDocsType } from "../types";
 
 /** Canonical defaults when stripping a deleted asset from preference fields (matches preferencesSlice seeds). */
@@ -240,9 +249,12 @@ export async function sweepMediaReferencesBeforeDelete(
   const deletedUrls = buildDeletedUrlSet(deletedRows);
   const failedDocIds: string[] = [];
 
-  let prefsDoc: DBPreferences;
+  let prefsRaw: Record<string, unknown>;
   try {
-    prefsDoc = (await db.get("preferences")) as DBPreferences;
+    prefsRaw = (await db.get(PREFERENCES_POUCH_ID)) as unknown as Record<
+      string,
+      unknown
+    >;
   } catch {
     return {
       ok: false,
@@ -251,7 +263,9 @@ export async function sweepMediaReferencesBeforeDelete(
     };
   }
 
-  const prefs = { ...prefsDoc.preferences };
+  const prefs = {
+    ...((prefsRaw.preferences ?? {}) as PreferencesType),
+  };
   let prefsDirty = false;
   prefsDirty =
     sweepPreferenceBackground(
@@ -282,7 +296,20 @@ export async function sweepMediaReferencesBeforeDelete(
       deletedUrls,
     ) || prefsDirty;
 
-  const nextQuickLinks = prefsDoc.quickLinks.map((ql) => {
+  const legacy = isLegacyPreferencesDoc(prefsRaw);
+  let quickLinksSource: QuickLinkType[] = [];
+  if (legacy) {
+    quickLinksSource = (prefsRaw.quickLinks as QuickLinkType[]) ?? [];
+  } else {
+    try {
+      const ql = (await db.get(QUICK_LINKS_POUCH_ID)) as DBQuickLinksDoc;
+      quickLinksSource = ql.quickLinks ?? [];
+    } catch {
+      quickLinksSource = [];
+    }
+  }
+
+  const nextQuickLinks = quickLinksSource.map((ql) => {
     if (!ql.presentationInfo) return ql;
     const nextPres = sweepPresentation(
       ql.presentationInfo,
@@ -293,14 +320,16 @@ export async function sweepMediaReferencesBeforeDelete(
     return { ...ql, presentationInfo: nextPres };
   });
   const quickLinksDirty =
-    JSON.stringify(nextQuickLinks) !== JSON.stringify(prefsDoc.quickLinks);
+    JSON.stringify(nextQuickLinks) !== JSON.stringify(quickLinksSource);
 
-  if (prefsDirty || quickLinksDirty) {
-    const toPut: DBPreferences = {
-      ...prefsDoc,
+  const now = new Date().toISOString();
+
+  if (legacy && (prefsDirty || quickLinksDirty)) {
+    const toPut = {
+      ...prefsRaw,
       preferences: prefs,
-      quickLinks: quickLinksDirty ? nextQuickLinks : prefsDoc.quickLinks,
-      updatedAt: new Date().toISOString(),
+      quickLinks: quickLinksDirty ? nextQuickLinks : quickLinksSource,
+      updatedAt: now,
     };
     try {
       await db.put(toPut);
@@ -308,9 +337,44 @@ export async function sweepMediaReferencesBeforeDelete(
       console.error(e);
       return {
         ok: false,
-        failedDocIds: ["preferences"],
+        failedDocIds: [PREFERENCES_POUCH_ID],
         message: "Failed to save preferences after reference cleanup.",
       };
+    }
+  } else if (!legacy) {
+    if (prefsDirty) {
+      const slim = {
+        ...prefsRaw,
+        preferences: prefs,
+        updatedAt: now,
+      } as DBPreferences;
+      try {
+        await db.put(slim);
+      } catch (e) {
+        console.error(e);
+        return {
+          ok: false,
+          failedDocIds: [PREFERENCES_POUCH_ID],
+          message: "Failed to save preferences after reference cleanup.",
+        };
+      }
+    }
+    if (quickLinksDirty) {
+      try {
+        const qlDoc = (await db.get(QUICK_LINKS_POUCH_ID)) as DBQuickLinksDoc;
+        await db.put({
+          ...qlDoc,
+          quickLinks: nextQuickLinks,
+          updatedAt: now,
+        });
+      } catch (e) {
+        console.error(e);
+        return {
+          ok: false,
+          failedDocIds: [QUICK_LINKS_POUCH_ID],
+          message: "Failed to save quick links after reference cleanup.",
+        };
+      }
     }
   }
 
@@ -323,7 +387,14 @@ export async function sweepMediaReferencesBeforeDelete(
     if (!doc || !doc._id) continue;
     const id = doc._id as string;
 
-    if (id === "preferences" || id === "media") continue;
+    if (
+      id === PREFERENCES_POUCH_ID ||
+      id === QUICK_LINKS_POUCH_ID ||
+      id === MONITOR_SETTINGS_POUCH_ID ||
+      id === MEDIA_ROUTE_FOLDERS_POUCH_ID ||
+      id === "media"
+    )
+      continue;
 
     const dtype = doc.type as string | undefined;
     if (dtype && ITEM_TYPES.includes(dtype as ItemType)) {

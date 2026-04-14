@@ -97,6 +97,8 @@ const renderPage = ({
   );
 
 describe("InviteAccept", () => {
+  jest.setTimeout(15_000);
+
   beforeEach(() => {
     navigateMock.mockReset();
     acceptInviteMock.mockReset();

@@ -102,6 +102,8 @@ const createItemSnapshot = (
     _rev: (item as DBItem)._rev,
     createdAt: (item as DBItem).createdAt,
     updatedAt: (item as DBItem).updatedAt,
+    createdBy: (item as DBItem).createdBy,
+    updatedBy: (item as DBItem).updatedBy,
     docType: (item as DBItem).docType,
   };
 };
@@ -129,7 +131,7 @@ function normalizeSnapshotForEditorCompare(snap: DBItem): DBItem {
 
 /** Strips Couch metadata so echo/sync round-trips match the editor despite new `_rev` / timestamps. */
 const omitItemSyncMetadata = (snap: DBItem) => {
-  const { _rev, updatedAt, createdAt, ...rest } = snap;
+  const { _rev, updatedAt, createdAt, createdBy, updatedBy, ...rest } = snap;
   return rest;
 };
 

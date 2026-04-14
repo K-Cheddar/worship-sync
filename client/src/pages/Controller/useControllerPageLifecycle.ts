@@ -9,8 +9,12 @@ import {
   DBAllItems,
   DBItemListDetails,
   DBMedia,
-  DBPreferences,
   DBOverlayTemplates,
+  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  MONITOR_SETTINGS_POUCH_ID,
+  PREFERENCES_POUCH_ID,
+  PreferencesClusterRemoteDoc,
+  QUICK_LINKS_POUCH_ID,
   TemplatesByType,
 } from "../../types";
 import {
@@ -35,6 +39,7 @@ import {
   getOverlaysByIds,
   updateAllDocs,
   migrateMediaLibraryFoldersFieldIfNeeded,
+  loadPreferencesBundle,
 } from "../../utils/dbUtils";
 import {
   mergeRemoteOverlayListWithLocalBuffer,
@@ -47,6 +52,7 @@ import {
   initiateMonitorSettings,
   initiatePreferences,
   initiateQuickLinks,
+  preferencesClusterLoadFallback,
   setIsLoading,
   updatePreferencesFromRemote,
   setIsInitialized as setPreferencesIsInitialized,
@@ -68,6 +74,7 @@ import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
 import { CONTROLLER_PAGE_READY, RootState } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { useToast } from "../../context/toastContext";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -76,6 +83,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 export const useControllerPageLifecycle = () => {
   const dispatch = useDispatch();
   const store = useStore();
+  const { showToast } = useToast();
   const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
   const { access, refreshPresentationListeners } =
@@ -165,9 +173,17 @@ export const useControllerPageLifecycle = () => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
-          if (_update._id === "preferences") {
-            const update = _update as DBPreferences;
-            dispatch(updatePreferencesFromRemote(update));
+          if (
+            _update._id === PREFERENCES_POUCH_ID ||
+            _update._id === QUICK_LINKS_POUCH_ID ||
+            _update._id === MONITOR_SETTINGS_POUCH_ID ||
+            _update._id === MEDIA_ROUTE_FOLDERS_POUCH_ID
+          ) {
+            dispatch(
+              updatePreferencesFromRemote(
+                _update as PreferencesClusterRemoteDoc,
+              ),
+            );
           }
         }
       } catch (e) {
@@ -234,26 +250,39 @@ export const useControllerPageLifecycle = () => {
     if (!db) return;
     const getPreferences = async () => {
       try {
-        const preferences: DBPreferences | undefined =
-          await db.get("preferences");
+        const bundle = await loadPreferencesBundle(db);
         dispatch(
           initiatePreferences({
-            preferences: preferences.preferences,
+            preferences: bundle.preferences,
             isMusic: access === "music",
-            mediaRouteFolders: preferences.mediaRouteFolders ?? {},
+            mediaRouteFolders: bundle.mediaRouteFolders,
           }),
         );
-        dispatch(initiateQuickLinks(preferences.quickLinks));
-        dispatch(initiateMonitorSettings(preferences.monitorSettings));
-        dispatch(setPreferencesIsInitialized(true));
+        dispatch(initiateQuickLinks(bundle.quickLinks));
+        dispatch(initiateMonitorSettings(bundle.monitorSettings));
       } catch (e) {
         console.error(e);
+        const fb = preferencesClusterLoadFallback;
+        dispatch(
+          initiatePreferences({
+            preferences: fb.preferences,
+            isMusic: access === "music",
+            mediaRouteFolders: fb.mediaRouteFolders,
+          }),
+        );
+        dispatch(initiateQuickLinks(fb.quickLinks));
+        dispatch(initiateMonitorSettings(fb.monitorSettings));
+        showToast(
+          "Could not load saved preferences. Default settings are in use for this session. Try reloading the page if this continues.",
+          "error",
+        );
       } finally {
         dispatch(setIsLoading(false));
+        dispatch(setPreferencesIsInitialized(true));
       }
     };
     getPreferences();
-  }, [dispatch, db, access]);
+  }, [dispatch, db, access, showToast]);
 
   useEffect(() => {
     if (!db) return;

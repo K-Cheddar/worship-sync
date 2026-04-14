@@ -48,6 +48,13 @@ import {
   DBOverlay,
   DBOverlayTemplates,
   DBPreferences,
+  DBQuickLinksDoc,
+  DBMonitorSettingsDoc,
+  DBMediaRouteFoldersDoc,
+  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  MONITOR_SETTINGS_POUCH_ID,
+  PREFERENCES_POUCH_ID,
+  QUICK_LINKS_POUCH_ID,
   DBServices,
   FormattedTextDisplayInfo,
   getCreditsDocId,
@@ -70,6 +77,7 @@ import serviceTimesSliceReducer, {
 import { mergeTimers } from "../utils/timerUtils";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
+import { applyPouchAudit } from "../utils/pouchAudit";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
 import {
@@ -450,7 +458,8 @@ listenerMiddleware.startListening({
     if (!db) return;
     let db_item: DBItem = await db.get(item._id);
 
-    db_item = {
+    const updatedAt = new Date().toISOString();
+    const nextItem: DBItem = {
       ...db_item,
       name: item.name,
       background: item.background,
@@ -461,8 +470,12 @@ listenerMiddleware.startListening({
       timerInfo: item.timerInfo,
       songMetadata: item.songMetadata,
       shouldSendTo: item.shouldSendTo,
-      updatedAt: new Date().toISOString(),
+      updatedAt,
     };
+    db_item = applyPouchAudit(db_item, nextItem, {
+      // Doc came from db.get — always an update (legacy rows may lack createdAt).
+      isNew: false,
+    });
     const result = await db.put(db_item);
     db_item = {
       ...db_item,
@@ -854,11 +867,15 @@ listenerMiddleware.startListening({
     const db_overlay: DBOverlay = await listenerApi.pause(
       db.get(`overlay-${selectedOverlay.id}`),
     );
-    const merged: DBOverlay = {
-      ...db_overlay,
-      ...selectedOverlay,
-      updatedAt: new Date().toISOString(),
-    };
+    const merged: DBOverlay = applyPouchAudit(
+      db_overlay,
+      {
+        ...db_overlay,
+        ...selectedOverlay,
+        updatedAt: new Date().toISOString(),
+      },
+      { isNew: false },
+    );
     const result = await listenerApi.pause(db.put(merged));
     const persisted: DBOverlay = { ...merged, _rev: result.rev };
 
@@ -1455,35 +1472,126 @@ listenerMiddleware.startListening({
     }
 
     if (!db) return;
+    const pouchDb = db;
+    const now = new Date().toISOString();
+
+    const getDoc = async (id: string) => {
+      try {
+        return await pouchDb.get(id);
+      } catch (e) {
+        if ((e as { status?: number }).status === 404) return null;
+        throw e;
+      }
+    };
+
     try {
-      const db_preferences: DBPreferences = await db.get("preferences");
-      db_preferences.preferences = preferences;
-      db_preferences.quickLinks = quickLinks;
-      db_preferences.monitorSettings = monitorSettings;
-      db_preferences.mediaRouteFolders = { ...mediaRouteFolders };
-      db_preferences.updatedAt = new Date().toISOString();
-      db.put(db_preferences);
-      // Local machine updates
+      const p0 = (await getDoc(PREFERENCES_POUCH_ID)) as DBPreferences | null;
+      const prefsToPut = (
+        p0
+          ? {
+              ...p0,
+              preferences,
+              updatedAt: now,
+              docType: "preferences" as const,
+            }
+          : {
+              _id: PREFERENCES_POUCH_ID,
+              preferences,
+              createdAt: now,
+              updatedAt: now,
+              docType: "preferences" as const,
+            }
+      ) as DBPreferences;
+      const prefsRes = await pouchDb.put(prefsToPut);
+      const prefsOut = {
+        ...prefsToPut,
+        _rev: (prefsRes as { rev: string }).rev,
+      } as DBPreferences;
+
+      const ql0 = (await getDoc(
+        QUICK_LINKS_POUCH_ID,
+      )) as DBQuickLinksDoc | null;
+      const qlToPut = (
+        ql0
+          ? {
+              ...ql0,
+              quickLinks,
+              updatedAt: now,
+              docType: "quickLinks" as const,
+            }
+          : {
+              _id: QUICK_LINKS_POUCH_ID,
+              quickLinks,
+              createdAt: now,
+              updatedAt: now,
+              docType: "quickLinks" as const,
+            }
+      ) as DBQuickLinksDoc;
+      const qlRes = await pouchDb.put(qlToPut);
+      const qlOut = {
+        ...qlToPut,
+        _rev: (qlRes as { rev: string }).rev,
+      } as DBQuickLinksDoc;
+
+      const m0 = (await getDoc(
+        MONITOR_SETTINGS_POUCH_ID,
+      )) as DBMonitorSettingsDoc | null;
+      const monToPut = (
+        m0
+          ? {
+              ...m0,
+              monitorSettings,
+              updatedAt: now,
+              docType: "monitorSettings" as const,
+            }
+          : {
+              _id: MONITOR_SETTINGS_POUCH_ID,
+              monitorSettings,
+              createdAt: now,
+              updatedAt: now,
+              docType: "monitorSettings" as const,
+            }
+      ) as DBMonitorSettingsDoc;
+      const monRes = await pouchDb.put(monToPut);
+      const monOut = {
+        ...monToPut,
+        _rev: (monRes as { rev: string }).rev,
+      } as DBMonitorSettingsDoc;
+
+      const f0 = (await getDoc(
+        MEDIA_ROUTE_FOLDERS_POUCH_ID,
+      )) as DBMediaRouteFoldersDoc | null;
+      const foldToPut = (
+        f0
+          ? {
+              ...f0,
+              mediaRouteFolders: { ...mediaRouteFolders },
+              updatedAt: now,
+              docType: "mediaRouteFolders" as const,
+            }
+          : {
+              _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
+              mediaRouteFolders: { ...mediaRouteFolders },
+              createdAt: now,
+              updatedAt: now,
+              docType: "mediaRouteFolders" as const,
+            }
+      ) as DBMediaRouteFoldersDoc;
+      const foldRes = await pouchDb.put(foldToPut);
+      const foldOut = {
+        ...foldToPut,
+        _rev: (foldRes as { rev: string }).rev,
+      } as DBMediaRouteFoldersDoc;
+
       safePostMessage({
         type: "update",
         data: {
-          docs: db_preferences,
+          docs: [prefsOut, qlOut, monOut, foldOut],
           hostId: globalHostId,
         },
       });
     } catch (error) {
-      // if the preferences are not found, create a new one
       console.error(error);
-      const db_preferences = {
-        preferences: preferences,
-        quickLinks: quickLinks,
-        monitorSettings: monitorSettings,
-        mediaRouteFolders: { ...mediaRouteFolders },
-        _id: "preferences",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      db.put(db_preferences);
     }
   },
 });

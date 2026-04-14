@@ -6,7 +6,6 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { preferencesSlice } from "../../store/preferencesSlice";
 
 const mockDispatch = jest.fn();
-const mockNavigate = jest.fn();
 let mockPathname = "/controller/item/item-id/list-id";
 
 let mockState: {
@@ -24,7 +23,6 @@ let mockState: {
 jest.mock("react-router-dom", () => ({
   ...jest.requireActual("react-router-dom"),
   useLocation: () => ({ pathname: mockPathname }),
-  useNavigate: () => mockNavigate,
 }));
 
 jest.mock("../../hooks", () => ({
@@ -56,12 +54,16 @@ jest.mock("./ToolbarElements/ToolbarButton", () => ({
     children,
     hidden,
     onClick,
+    to,
   }: {
     children?: ReactNode;
     hidden?: boolean;
     onClick?: () => void;
+    to?: string;
   }) =>
-    hidden ? null : (
+    hidden ? null : to ? (
+      <a href={to}>{children}</a>
+    ) : (
       <button type="button" onClick={onClick}>
         {children}
       </button>
@@ -226,31 +228,20 @@ describe("Toolbar", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("navigates to preferences when Settings is clicked from another settings sub-route", () => {
-    mockPathname = "/controller/quick-links";
+  it("renders Settings as a link to preferences for non-view access", () => {
     renderToolbar({ access: "full", itemType: "song" });
 
-    screen.getByRole("button", { name: "Settings" }).click();
-
-    expect(mockNavigate).toHaveBeenCalledWith("/controller/preferences");
+    const settings = screen.getByRole("link", { name: "Settings" });
+    expect(settings).toHaveAttribute("href", "/controller/preferences");
   });
 
-  it("navigates to preferences when Settings is clicked from an item route", () => {
-    mockPathname = "/controller/item/item-id/list-id";
-    renderToolbar({ access: "full", itemType: "song" });
-
-    screen.getByRole("button", { name: "Settings" }).click();
-
-    expect(mockNavigate).toHaveBeenCalledWith("/controller/preferences");
-  });
-
-  it("does not navigate to preferences when Settings is clicked for view access", () => {
-    mockPathname = "/controller/quick-links";
+  it("renders Settings as a button for view access", () => {
     renderToolbar({ access: "view", itemType: "song" });
 
-    screen.getByRole("button", { name: "Settings" }).click();
-
-    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("link", { name: "Settings" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 
   it("overlay variant shows Overlays and Credits Editor tabs", () => {

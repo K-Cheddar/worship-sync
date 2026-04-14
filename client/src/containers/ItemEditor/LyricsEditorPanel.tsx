@@ -20,10 +20,7 @@ import {
   updateArrangements,
 } from "../../store/itemSlice";
 
-import {
-  increaseFormattedLyrics,
-  decreaseFormattedLyrics,
-} from "../../store/preferencesSlice";
+import { setFormattedLyrics } from "../../store/preferencesSlice";
 
 import LyricBoxes from "./LyricBoxes";
 import LyricSectionTools from "./LyricSectionTools";
@@ -50,6 +47,8 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Slider } from "../../components/ui/Slider";
+import Icon from "../../components/Icon/Icon";
 import Modal from "../../components/Modal/Modal";
 import { ToastContext } from "../../context/toastContext";
 import { createNewSlide, createBox } from "../../utils/slideCreation";
@@ -89,6 +88,15 @@ const LyricsEditorPanel = () => {
   const item = useSelector((state: RootState) => state.undoable.present.item);
   const { allSongDocs } = useSelector((state: RootState) => state.allDocs);
   const { isAllItemsLoading } = useSelector((state: RootState) => state.allItems);
+  const formattedLyricsPerRow = useSelector(
+    (state: RootState) =>
+      state.undoable.present.preferences.formattedLyricsPerRow ?? 3,
+  );
+  const lyricsDensityMin = 1;
+  const lyricsDensityMax = 6;
+  /** Right = fewer sections per row (larger); left = more per row (smaller). */
+  const lyricsDensitySliderValue =
+    lyricsDensityMax + lyricsDensityMin - formattedLyricsPerRow;
   const {
     isEditMode,
     type,
@@ -849,19 +857,34 @@ const LyricsEditorPanel = () => {
   return (
     <ErrorBoundary>
       <div className="absolute left-0 z-30 bg-homepage-canvas lg:border-r-2 border-gray-500 flex flex-col gap-2 h-full w-full max-lg:pb-6 pb-2">
-        <div className="flex h-fit shrink-0 items-center border-b border-white/20 bg-black/60 px-2">
-          <Button
-            variant="tertiary"
-            className="max-lg:hidden"
-            svg={ZoomOut}
-            onClick={() => dispatch(increaseFormattedLyrics())}
-          />
-          <Button
-            variant="tertiary"
-            className="max-lg:hidden"
-            svg={ZoomIn}
-            onClick={() => dispatch(decreaseFormattedLyrics())}
-          />
+        <div className="flex h-fit shrink-0 items-center border-b border-white/20 bg-black/60 px-2 gap-2">
+          <div className="max-lg:hidden flex shrink-0 items-center gap-1">
+            <span className="shrink-0 text-gray-300" aria-hidden>
+              <Icon svg={ZoomOut} size="sm" color="currentColor" />
+            </span>
+            <div className="w-36 shrink-0">
+              <Slider
+                className="w-full"
+                value={[lyricsDensitySliderValue]}
+                min={lyricsDensityMin}
+                max={lyricsDensityMax}
+                step={1}
+                onValueChange={(v: number[]) => {
+                  const raw = v[0];
+                  if (raw == null) return;
+                  dispatch(
+                    setFormattedLyrics(
+                      lyricsDensityMax + lyricsDensityMin - raw,
+                    ),
+                  );
+                }}
+                aria-label="Lyrics section density"
+              />
+            </div>
+            <span className="shrink-0 text-gray-300" aria-hidden>
+              <Icon svg={ZoomIn} size="sm" color="currentColor" />
+            </span>
+          </div>
           <p className="mx-auto font-semibold text-lg">{item.name}</p>
           <Button variant="tertiary" svg={X} onClick={() => onClose()} />
         </div>

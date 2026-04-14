@@ -8,7 +8,10 @@ import Button from "../../../components/Button/Button";
 import PopOver from "../../../components/PopOver/PopOver";
 import { WORKSTATION_END_SESSION_LABEL } from "../../../components/WorkstationUnpairConfirmModal/WorkstationUnpairConfirmModal";
 import { getHumanAuth } from "../../../firebase/apps";
-import { firstNameFromDisplayName } from "../../../utils/displayName";
+import {
+  firstNameFromDisplayName,
+  resolveAccountDisplayNameForAudit,
+} from "../../../utils/displayName";
 import type { Instance } from "../../../types";
 
 const ACCOUNT_TRIGGER_MAX_W = "max-w-[10rem]";
@@ -43,12 +46,15 @@ const UserSection = () => {
     return () => unsub();
   }, [sessionKind]);
 
-  const fullDisplayName = useMemo(() => {
-    if (sessionKind === "human" && firebaseDisplayName) {
-      return firebaseDisplayName;
-    }
-    return user ?? "";
-  }, [sessionKind, firebaseDisplayName, user]);
+  const fullDisplayName = useMemo(
+    () =>
+      resolveAccountDisplayNameForAudit({
+        sessionKind: sessionKind ?? null,
+        user: user ?? "",
+        firebaseHumanDisplayName: firebaseDisplayName,
+      }),
+    [sessionKind, firebaseDisplayName, user],
+  );
 
   const toolbarFirstName = firstNameFromDisplayName(fullDisplayName);
   const churchLine = churchName?.trim() ?? "";
@@ -204,29 +210,29 @@ const UserSection = () => {
           </div>
         ) : null}
         {isLoggedIn &&
-        (sessionKind === "workstation" && endWorkstationOperatorSession ? (
-          <div className="border-t border-gray-600 pt-3">
-            <Button
-              type="button"
-              variant="secondary"
-              className="w-full justify-center text-sm"
-              onClick={() => void endWorkstationOperatorSession()}
-            >
-              {WORKSTATION_END_SESSION_LABEL}
-            </Button>
-          </div>
-        ) : logout ? (
-          <div className="border-t border-gray-600 pt-3">
-            <Button
-              type="button"
-              variant="secondary"
-              className="w-full justify-center text-sm"
-              onClick={() => void logout()}
-            >
-              Sign out
-            </Button>
-          </div>
-        ) : null)}
+          (sessionKind === "workstation" && endWorkstationOperatorSession ? (
+            <div className="border-t border-gray-600 pt-3">
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full justify-center text-sm"
+                onClick={() => void endWorkstationOperatorSession()}
+              >
+                {WORKSTATION_END_SESSION_LABEL}
+              </Button>
+            </div>
+          ) : logout ? (
+            <div className="border-t border-gray-600 pt-3">
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full justify-center text-sm"
+                onClick={() => void logout()}
+              >
+                Sign out
+              </Button>
+            </div>
+          ) : null)}
         {isDemo && exitGuestMode ? (
           <div className="border-t border-gray-600 pt-3">
             <Button

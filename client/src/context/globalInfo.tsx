@@ -13,6 +13,7 @@ import {
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
+  type Auth,
 } from "firebase/auth";
 import {
   Database,
@@ -82,10 +83,21 @@ import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
 import { backoff } from "../utils/generalUtils";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
 import { getHumanPostAuthPath } from "../utils/authRedirectPath";
+import { resolveAccountDisplayNameForAudit } from "../utils/displayName";
+import { setAuditSnapshot } from "../utils/pouchAudit";
 import {
   emptyChurchBranding,
   normalizeChurchBranding,
 } from "../utils/churchBranding";
+
+/** Firebase client calls are Promise-like in production but may return void in tests. */
+function signOutFirebaseAuth(auth: Auth): Promise<void> {
+  return Promise.resolve(signOut(auth)).catch(() => undefined);
+}
+
+function settleFirebaseWrite<T>(value: T | PromiseLike<T>): Promise<void> {
+  return Promise.resolve(value).catch(() => undefined);
+}
 
 type LoginStateType = "idle" | "loading" | "error" | "success" | "guest";
 type BootstrapStatus = "loading" | "ready";
@@ -246,6 +258,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     useState<string | null>(null);
   const [operatorName, setOperatorNameState] = useState("");
   const [device, setDevice] = useState<AuthBootstrap["device"] | null>(null);
+  /** Firebase Auth profile display name; kept in sync for audit + toolbar (see UserSection). */
+  const [humanAuthDisplayName, setHumanAuthDisplayName] = useState("");
 
   const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
@@ -261,6 +275,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   }, [location.pathname]);
 
   const hostId = useMemo(() => globalHostId, []);
+
+  useEffect(() => {
+    if (sessionKind !== "human") {
+      setHumanAuthDisplayName("");
+      return;
+    }
+    const auth = getHumanAuth();
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setHumanAuthDisplayName(u?.displayName?.trim() || "");
+    });
+    return () => unsub();
+  }, [sessionKind]);
+
   const sharedDataSessionScope = useMemo(
     () =>
       JSON.stringify({
@@ -274,6 +301,29 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }),
     [access, churchId, database, device?.deviceId, loginState, sessionKind, userId]
   );
+
+  useEffect(() => {
+    setAuditSnapshot({
+      userId,
+      sessionKind,
+      operatorName,
+      deviceLabel: device?.label?.trim() || "",
+      userEmail,
+      displayName: resolveAccountDisplayNameForAudit({
+        sessionKind,
+        user,
+        firebaseHumanDisplayName: humanAuthDisplayName,
+      }),
+    });
+  }, [
+    userId,
+    sessionKind,
+    operatorName,
+    device?.label,
+    userEmail,
+    user,
+    humanAuthDisplayName,
+  ]);
 
   const onValueRef = useRef<{
     projectorInfo: Unsubscribe | undefined;
@@ -715,10 +765,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setFirebaseDb(undefined);
       setIsSharedDataReady(false);
       globalFireDbInfo.db = undefined;
-      sharedDataAuthChainRef.current = sharedDataAuthChainRef.current
+      sharedDataAuthChainRef.current = Promise.resolve(
+        sharedDataAuthChainRef.current ?? Promise.resolve()
+      )
         .catch(() => undefined)
         .then(async () => {
-          await signOut(auth).catch(() => undefined);
+          await signOutFirebaseAuth(auth);
         });
       return;
     }
@@ -739,7 +791,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
           return;
         }
-        sharedDataAuthChainRef.current = sharedDataAuthChainRef.current
+        sharedDataAuthChainRef.current = Promise.resolve(
+          sharedDataAuthChainRef.current ?? Promise.resolve()
+        )
           .catch(() => undefined)
           .then(async () => {
             if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
@@ -809,7 +863,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             firebaseDb,
             getChurchDataPath(churchId, "activeInstances", staleHostId)
           );
-          void set(staleRef, null).catch(() => undefined);
+          void settleFirebaseWrite(set(staleRef, null));
         });
         const _activeInstances = Object.values(data).filter(
           (instance: any): instance is Instance =>
@@ -831,16 +885,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     // Function to update the instance
     const updateInstance = () => {
       if (instanceRef.current) {
-        void set(instanceRef.current, {
-          lastActive: new Date().toISOString(),
-          user: activeInstanceName,
-          name: activeInstanceName,
-          database: database,
-          hostId: hostId,
-          isOnController,
-          sessionKind,
-          deviceLabel: device?.label || null,
-        }).catch(() => undefined);
+        void settleFirebaseWrite(
+          set(instanceRef.current, {
+            lastActive: new Date().toISOString(),
+            user: activeInstanceName,
+            name: activeInstanceName,
+            database: database,
+            hostId: hostId,
+            isOnController,
+            sessionKind,
+            deviceLabel: device?.label || null,
+          })
+        );
       }
     };
 
@@ -862,8 +918,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       const staleInstanceRef = instanceRef.current;
       instanceRef.current = null;
       if (staleInstanceRef) {
-        void onDisconnect(staleInstanceRef).cancel().catch(() => undefined);
-        void set(staleInstanceRef, null).catch(() => undefined);
+        void settleFirebaseWrite(onDisconnect(staleInstanceRef).cancel());
+        void settleFirebaseWrite(set(staleInstanceRef, null));
       }
     };
   }, [
@@ -888,16 +944,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       if (snap.val() === true) {
         // When we reconnect, re-establish the active instance if we're on the controller page
         if (isOnController && instanceRef.current) {
-          void set(instanceRef.current, {
-            lastActive: new Date().toISOString(),
-            user: activeInstanceName,
-            name: activeInstanceName,
-            database,
-            hostId,
-            isOnController,
-            sessionKind,
-            deviceLabel: device?.label || null,
-          }).catch(() => undefined);
+          void settleFirebaseWrite(
+            set(instanceRef.current, {
+              lastActive: new Date().toISOString(),
+              user: activeInstanceName,
+              name: activeInstanceName,
+              database,
+              hostId,
+              isOnController,
+              sessionKind,
+              deviceLabel: device?.label || null,
+            })
+          );
         }
       }
     });
@@ -1016,7 +1074,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (instanceRef.current) {
-        void set(instanceRef.current, null).catch(() => undefined);
+        void settleFirebaseWrite(set(instanceRef.current, null));
       }
     };
 
@@ -1267,7 +1325,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       };
     } catch (error) {
       if (createdUserCredential) {
-        await createdUserCredential.user.delete().catch(() => undefined);
+        await settleFirebaseWrite(createdUserCredential.user.delete());
       }
       console.error("Create church error:", error);
       setAuthError(error instanceof Error ? error.message : "Could not create church");
@@ -1338,7 +1396,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     if (sessionKind === "display") {
       clearDisplayToken();
     }
-    await signOut(getSharedDataAuth()).catch(() => undefined);
+    await signOutFirebaseAuth(getSharedDataAuth());
     setPendingEmailVerificationId(null);
     setAccess("full");
     dispatch({ type: "RESET" });
@@ -1355,14 +1413,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     }
     const token = getWorkstationToken();
     await unlinkWorkstationRequest(device.deviceId, token);
-    await signOut(getHumanAuth()).catch(() => undefined);
+    await signOutFirebaseAuth(getHumanAuth());
     await clearLocalSessionState("/");
   }, [clearLocalSessionState, device, sessionKind]);
 
   const logout = useCallback(async () => {
     try {
       await logoutSession();
-      await signOut(getHumanAuth()).catch(() => undefined);
+      await signOutFirebaseAuth(getHumanAuth());
     } catch (error) {
       console.error("Sign-out error:", error);
     } finally {

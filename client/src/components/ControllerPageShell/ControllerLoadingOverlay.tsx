@@ -1,6 +1,10 @@
-import Button from "../Button/Button";
 import Spinner from "../Spinner/Spinner";
 import { ConnectionStatus } from "../../context/controllerInfo";
+import { useStuckDbProgress } from "../../hooks/useStuckDbProgress";
+import {
+  DbStartupConnectionFailedPanel,
+  DbStartupStuckRecoveryPanel,
+} from "./DbProgressStartupRecoveryUi";
 
 type ControllerLoadingOverlayProps = {
   dbProgress?: number;
@@ -15,6 +19,9 @@ const ControllerLoadingOverlay = ({
   user,
   churchName,
 }: ControllerLoadingOverlayProps) => {
+  const isFailed = connectionStatus?.status === "failed";
+  const isStuck = useStuckDbProgress(dbProgress, isFailed);
+
   if (dbProgress === 100) return null;
 
   const displayName = user?.trim() ?? "";
@@ -41,19 +48,20 @@ const ControllerLoadingOverlay = ({
 
   return (
     <div className="fixed top-0 left-0 z-50 w-full h-full bg-homepage-canvas/90 flex justify-center items-center flex-col text-white text-2xl gap-8">
-      {connectionStatus?.status === "failed" ? (
+      {isFailed ? (
+        <DbStartupConnectionFailedPanel />
+      ) : isStuck ? (
         <>
-          <p className="text-center">Unable to connect to the server</p>
-          <p className="text-lg text-gray-300 text-center max-w-md">
-            Check your network connection, then reload or try again.
-          </p>
-          <Button
-            onClick={() => window.location.reload()}
-            variant="cta"
-            padding="px-4 py-2"
-          >
-            Try Again
-          </Button>
+          <DbStartupStuckRecoveryPanel
+            dbProgress={dbProgress}
+            connectionStatus={connectionStatus}
+          />
+          {connectionStatus?.status === "retrying" && (
+            <p className="text-center text-lg text-yellow-400">
+              Connection failed. Retrying...
+            </p>
+          )}
+          <Spinner />
         </>
       ) : (
         <>

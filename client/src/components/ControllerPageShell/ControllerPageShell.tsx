@@ -31,31 +31,29 @@ const ControllerPageShell = ({
   layoutRef,
 }: ControllerPageShellProps) => {
   return (
-    <>
+    <div
+      onClick={onRootClick}
+      className="dark bg-homepage-canvas flex h-dvh w-dvw list-none flex-col overflow-hidden text-white"
+      style={
+        {
+          "--scrollbar-width": scrollbarWidth,
+        } as CSSProperties
+      }
+    >
       <ControllerLoadingOverlay
         dbProgress={dbProgress}
         connectionStatus={connectionStatus}
         user={user}
         churchName={churchName}
       />
-      <div
-        onClick={onRootClick}
-        className="bg-homepage-canvas w-dvw h-dvh flex flex-col text-white overflow-hidden list-none"
-        style={
-          {
-            "--scrollbar-width": scrollbarWidth,
-          } as CSSProperties
-        }
-      >
-        <Toolbar
-          variant={toolbarVariant}
-          className="flex min-h-fit shrink-0 overflow-y-hidden border-b-2 border-gray-500 bg-homepage-canvas text-sm"
-        />
-        <div id="controller-main" className={mainClassName} ref={layoutRef}>
-          {children}
-        </div>
+      <Toolbar
+        variant={toolbarVariant}
+        className="flex min-h-fit shrink-0 overflow-y-hidden border-b-2 border-gray-500 bg-homepage-canvas text-sm"
+      />
+      <div id="controller-main" className={mainClassName} ref={layoutRef}>
+        {children}
       </div>
-    </>
+    </div>
   );
 };
 

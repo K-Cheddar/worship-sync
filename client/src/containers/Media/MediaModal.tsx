@@ -14,8 +14,6 @@ import Input from "../../components/Input/Input";
 import Modal from "../../components/Modal/Modal";
 import Toggle from "../../components/Toggle/Toggle";
 import {
-  ZoomIn,
-  ZoomOut,
   Eye,
   X,
   Minus,
@@ -25,6 +23,8 @@ import {
   Folder,
   FolderInput,
   FolderPlus,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import {
   Popover,
@@ -47,6 +47,8 @@ import {
   MEDIA_LIBRARY_MOVE_TO_NEW_FOLDER,
 } from "../../utils/mediaLibraryFolderOptions";
 import MediaLibraryToolbar from "./MediaLibraryToolbar";
+import { Slider } from "../../components/ui/Slider";
+import Icon from "../../components/Icon/Icon";
 import MediaLibraryFolderGridItems from "./MediaLibraryFolderGridItems";
 import MediaLibraryActionBar, {
   MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
@@ -75,6 +77,45 @@ const sizeMap: Map<number, string> = new Map([
   [3, "grid-cols-3"],
   [2, "grid-cols-2"],
 ]);
+
+type MediaModalGridZoomSliderProps = {
+  modalZoomLevel: number;
+  modalZoomSliderMax: number;
+  disabled: boolean;
+  onZoomChange: (next: number) => void;
+};
+
+function MediaModalGridZoomSlider({
+  modalZoomLevel,
+  modalZoomSliderMax,
+  disabled,
+  onZoomChange,
+}: MediaModalGridZoomSliderProps) {
+  const safeMax = Math.max(modalZoomSliderMax, 1);
+  const value = Math.min(modalZoomLevel, modalZoomSliderMax);
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <span className="shrink-0 text-gray-300" aria-hidden>
+        <Icon svg={ZoomOut} size="sm" color="currentColor" />
+      </span>
+      <div className="w-36 shrink-0">
+        <Slider
+          className="w-full"
+          value={[value]}
+          min={0}
+          max={safeMax}
+          step={1}
+          onValueChange={(v: number[]) => onZoomChange(v[0] ?? 0)}
+          disabled={disabled}
+          aria-label="Media grid zoom"
+        />
+      </div>
+      <span className="shrink-0 text-gray-300" aria-hidden>
+        <Icon svg={ZoomIn} size="sm" color="currentColor" />
+      </span>
+    </div>
+  );
+}
 
 type MediaModalProps = {
   isOpen: boolean;
@@ -185,9 +226,17 @@ const MediaModal = ({
   );
 
   const [modalZoomLevel, setModalZoomLevel] = useState(0);
+  const [modalLayoutBaseCols, setModalLayoutBaseCols] = useState(8);
   const modalGridRef = useRef<HTMLUListElement>(null);
-  const [calculatedGridCols, setCalculatedGridCols] = useState(8);
   const [isExpanded, setIsExpanded] = useState(false);
+
+  const calculatedGridCols = useMemo(() => {
+    const maxZ = Math.max(0, modalLayoutBaseCols - 2);
+    const z = Math.min(modalZoomLevel, maxZ);
+    return Math.max(2, modalLayoutBaseCols - z);
+  }, [modalLayoutBaseCols, modalZoomLevel]);
+
+  const modalZoomSliderMax = Math.max(0, modalLayoutBaseCols - 2);
 
   const filteredList = mediaList;
 
@@ -529,25 +578,26 @@ const MediaModal = ({
   };
 
   useEffect(() => {
-    if (isOpen && modalGridRef.current) {
-      const updateGridCols = () => {
-        if (modalGridRef.current) {
-          const width = modalGridRef.current.offsetWidth;
-          const baseCols = calculateGridColumns(width);
-          // Zoom out increases items per row, zoom in decreases
-          setCalculatedGridCols(Math.max(2, baseCols - modalZoomLevel));
-        }
-      };
-      updateGridCols();
-      const resizeObserver = new ResizeObserver(updateGridCols);
-      resizeObserver.observe(modalGridRef.current);
-      window.addEventListener("resize", updateGridCols);
-      return () => {
-        window.removeEventListener("resize", updateGridCols);
-        resizeObserver.disconnect();
-      };
-    }
-  }, [isOpen, modalZoomLevel]);
+    if (!isOpen || !modalGridRef.current) return;
+    const el = modalGridRef.current;
+    const updateLayoutBaseCols = () => {
+      const width = el.offsetWidth;
+      setModalLayoutBaseCols(calculateGridColumns(width));
+    };
+    updateLayoutBaseCols();
+    const resizeObserver = new ResizeObserver(updateLayoutBaseCols);
+    resizeObserver.observe(el);
+    window.addEventListener("resize", updateLayoutBaseCols);
+    return () => {
+      window.removeEventListener("resize", updateLayoutBaseCols);
+      resizeObserver.disconnect();
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    const maxZ = Math.max(0, modalLayoutBaseCols - 2);
+    setModalZoomLevel((z) => Math.min(z, maxZ));
+  }, [modalLayoutBaseCols]);
 
   // Initialize modal selection from the parent only on open; avoid snapping back when parent props refresh while open.
   useEffect(() => {
@@ -692,25 +742,15 @@ const MediaModal = ({
             )}
           </div>
 
-          <div className="border-b border-gray-500 bg-black/60 px-4 py-2">
+          <div className="bg-black/60 px-4 py-2">
             <div className="flex flex-col gap-2 lg:hidden">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <div className="flex shrink-0 items-center gap-1">
-                  <Button
-                    variant="tertiary"
-                    svg={ZoomOut}
-                    onClick={() =>
-                      setModalZoomLevel((prev) => Math.max(0, prev - 1))
-                    }
-                    title="Zoom Out (More Items)"
-                  />
-                  <Button
-                    variant="tertiary"
-                    svg={ZoomIn}
-                    onClick={() => setModalZoomLevel((prev) => prev + 1)}
-                    title="Zoom In (Fewer Items)"
-                  />
-                </div>
+                <MediaModalGridZoomSlider
+                  modalZoomLevel={modalZoomLevel}
+                  modalZoomSliderMax={modalZoomSliderMax}
+                  disabled={modalZoomSliderMax <= 0}
+                  onZoomChange={(next) => setModalZoomLevel(next)}
+                />
                 <MediaLibraryToolbar
                   showAll={showAll}
                   onShowAllChange={handleShowAllChange}
@@ -761,22 +801,12 @@ const MediaModal = ({
             </div>
 
             <div className="flex max-lg:hidden min-w-0 w-full flex-nowrap items-center gap-2">
-              <div className="flex shrink-0 items-center gap-1">
-                <Button
-                  variant="tertiary"
-                  svg={ZoomOut}
-                  onClick={() =>
-                    setModalZoomLevel((prev) => Math.max(0, prev - 1))
-                  }
-                  title="Zoom Out (More Items)"
-                />
-                <Button
-                  variant="tertiary"
-                  svg={ZoomIn}
-                  onClick={() => setModalZoomLevel((prev) => prev + 1)}
-                  title="Zoom In (Fewer Items)"
-                />
-              </div>
+              <MediaModalGridZoomSlider
+                modalZoomLevel={modalZoomLevel}
+                modalZoomSliderMax={modalZoomSliderMax}
+                disabled={modalZoomSliderMax <= 0}
+                onZoomChange={(next) => setModalZoomLevel(next)}
+              />
               <MediaLibraryToolbar
                 showAll={showAll}
                 onShowAllChange={handleShowAllChange}

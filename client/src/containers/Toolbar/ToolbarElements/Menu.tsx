@@ -10,9 +10,9 @@ import {
   SquarePen,
   Presentation,
   ScrollText,
+  RotateCcw,
   ZoomIn,
   ZoomOut,
-  RotateCcw,
 } from "lucide-react";
 import Icon from "../../../components/Icon/Icon";
 import { MenuItemType } from "../../../types";
@@ -24,6 +24,7 @@ import { useElectronWindows } from "../../../hooks/useElectronWindows";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { getDisplayLabel } from "../../../utils/displayUtils";
 import type { WindowType } from "../../../types/electron";
+import { Slider } from "../../../components/ui/Slider";
 
 const ToolbarMenu = ({
   isPhone,
@@ -63,14 +64,6 @@ const ToolbarMenu = ({
       document.documentElement.style.fontSize = `${baseFontSize}%`;
     };
   }, [zoomLevel]);
-
-  const handleZoomIn = () => {
-    setZoomLevel((prev) => Math.min(prev + 10, 200)); // Max 200%
-  };
-
-  const handleZoomOut = () => {
-    setZoomLevel((prev) => Math.max(prev - 10, 50)); // Min 50%
-  };
 
   const handleReset = () => {
     setZoomLevel(100);
@@ -227,7 +220,7 @@ const ToolbarMenu = ({
     },
     {
       element: (
-        <div className="flex flex-col gap-2 w-full py-1.5 px-2">
+        <div className="flex flex-col gap-2 w-full py-1.5 px-2 min-w-52">
           <div className="flex items-center justify-center gap-2">
             <span className="text-xs font-semibold min-w-12 text-center">
               {zoomLevel}%
@@ -240,21 +233,24 @@ const ToolbarMenu = ({
               variant="secondary"
             ></Button>
           </div>
-          <div className="flex items-center gap-2 w-full">
-            <Button
-              svg={ZoomOut}
-              onClick={handleZoomOut}
-              className="flex-1 justify-center"
-              disabled={zoomLevel <= 50}
-              variant="secondary"
-            ></Button>
-            <Button
-              svg={ZoomIn}
-              onClick={handleZoomIn}
-              className="flex-1 justify-center"
-              disabled={zoomLevel >= 200}
-              variant="secondary"
-            ></Button>
+          <div className="flex w-full items-center justify-center gap-1 px-0.5">
+            <span className="shrink-0 text-gray-300" aria-hidden>
+              <Icon svg={ZoomOut} size="sm" color="currentColor" />
+            </span>
+            <div className="w-36 shrink-0">
+              <Slider
+                value={[zoomLevel]}
+                onValueChange={(v: number[]) => setZoomLevel(v[0] ?? 100)}
+                min={50}
+                max={200}
+                step={10}
+                className="w-full"
+                aria-label="Interface zoom"
+              />
+            </div>
+            <span className="shrink-0 text-gray-300" aria-hidden>
+              <Icon svg={ZoomIn} size="sm" color="currentColor" />
+            </span>
           </div>
         </div>
       ),

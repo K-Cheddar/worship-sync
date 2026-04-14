@@ -90,6 +90,10 @@ export const overlaySlice = createSlice({
       }
       state.pendingRemoteOverlay = null;
       state.hasRemoteUpdate = false;
+      state.selectedOverlay = {
+        ...state.selectedOverlay,
+        ...committed,
+      };
     },
     bufferRemoteOverlayUpdate: (state, action: PayloadAction<OverlayInfo>) => {
       if (

@@ -31,7 +31,9 @@ export const useGlobalBroadcast = (
       timeoutRef.current = setTimeout(() => {
         console.log("Updating from local machine", msg.data);
 
-        callbackRef.current({ detail: [msg.data.data.docs] });
+        const raw = msg.data?.data?.docs;
+        const detail = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
+        callbackRef.current({ detail });
       }, delay);
     };
 

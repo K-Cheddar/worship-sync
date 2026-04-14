@@ -21,6 +21,7 @@ import {
   SongMetadata,
 } from "../types";
 import generateRandomId from "./generateRandomId";
+import { applyPouchAudit } from "./pouchAudit";
 import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
@@ -646,11 +647,13 @@ export const createNewItemInDb = async ({
       slides: response.slides,
     };
   } catch (error) {
-    db.put({
-      ...item,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+    const now = new Date().toISOString();
+    const doc = applyPouchAudit(
+      null,
+      { ...item, createdAt: now, updatedAt: now },
+      { isNew: true },
+    );
+    db.put(doc);
     return item;
   }
 };

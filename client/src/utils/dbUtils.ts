@@ -32,6 +32,18 @@ import {
   OVERLAY_HISTORY_ID_PREFIX,
   DBDoc,
   DBMedia,
+  DBMediaRouteFoldersDoc,
+  DBMonitorSettingsDoc,
+  DBPreferences,
+  DBQuickLinksDoc,
+  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  MONITOR_SETTINGS_POUCH_ID,
+  PREFERENCES_POUCH_ID,
+  QUICK_LINKS_POUCH_ID,
+  MediaRouteKey,
+  MonitorSettingsType,
+  PreferencesType,
+  QuickLinkType,
 } from "../types";
 import { normalizeMediaDoc } from "./mediaDocUtils";
 import { formatItemInfo } from "./formatItemInfo";
@@ -970,6 +982,290 @@ export const migrateFontSizesToDefaults = async (
 
 const ITEM_TYPES = ["song", "free", "bible", "timer", "image"] as const;
 
+function isPouchNotFound(e: unknown): boolean {
+  return (e as { status?: number })?.status === 404;
+}
+
+const DEFAULT_MONITOR_SETTINGS: MonitorSettingsType = {
+  showClock: true,
+  showTimer: true,
+  showNextSlide: false,
+  clockFontSize: 75,
+  timerFontSize: 75,
+  timerId: null,
+};
+
+export function isLegacyPreferencesDoc(
+  doc: Record<string, unknown>,
+): doc is Record<string, unknown> & {
+  preferences: PreferencesType;
+  quickLinks: QuickLinkType[];
+  monitorSettings: MonitorSettingsType;
+  mediaRouteFolders?: Partial<Record<MediaRouteKey, string | null>>;
+} {
+  return (
+    Object.prototype.hasOwnProperty.call(doc, "quickLinks") &&
+    Array.isArray(doc.quickLinks)
+  );
+}
+
+async function pouchGetOrNull(
+  db: PouchDB.Database,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    return (await db.get(id)) as Record<string, unknown>;
+  } catch (e) {
+    if (isPouchNotFound(e)) return null;
+    throw e;
+  }
+}
+
+export type PreferencesBundle = {
+  preferences: PreferencesType;
+  quickLinks: QuickLinkType[];
+  monitorSettings: MonitorSettingsType;
+  mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
+};
+
+/**
+ * Load preferences cluster from Pouch. Uses split docs when present and falls back to
+ * legacy monolithic fields for older databases.
+ */
+export const loadPreferencesBundle = async (
+  db: PouchDB.Database,
+): Promise<PreferencesBundle> => {
+  const prefDoc = await pouchGetOrNull(db, PREFERENCES_POUCH_ID);
+  if (!prefDoc || typeof prefDoc.preferences !== "object") {
+    throw new Error("Missing or invalid preferences document");
+  }
+  const legacy = isLegacyPreferencesDoc(prefDoc);
+
+  const qlDoc = (await pouchGetOrNull(
+    db,
+    QUICK_LINKS_POUCH_ID,
+  )) as DBQuickLinksDoc | null;
+  const monDoc = (await pouchGetOrNull(
+    db,
+    MONITOR_SETTINGS_POUCH_ID,
+  )) as DBMonitorSettingsDoc | null;
+  const foldDoc = (await pouchGetOrNull(
+    db,
+    MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  )) as DBMediaRouteFoldersDoc | null;
+
+  let warnedMissing = false;
+  const warnOnce = () => {
+    if (warnedMissing) return;
+    warnedMissing = true;
+    console.warn(
+      "[loadPreferencesBundle] Missing or invalid split preference docs. Falling back to legacy fields/defaults. Run migrateSplitPreferencesDocs(db) once per database.",
+    );
+  };
+
+  const quickLinksFromSplit =
+    qlDoc && Array.isArray(qlDoc.quickLinks) ? qlDoc.quickLinks : null;
+  const monitorFromSplit =
+    monDoc &&
+    monDoc.monitorSettings &&
+    typeof monDoc.monitorSettings === "object"
+      ? monDoc.monitorSettings
+      : null;
+  const foldersFromSplit =
+    foldDoc &&
+    foldDoc.mediaRouteFolders &&
+    typeof foldDoc.mediaRouteFolders === "object"
+      ? foldDoc.mediaRouteFolders
+      : null;
+
+  let quickLinks: QuickLinkType[];
+  if (quickLinksFromSplit) {
+    quickLinks = quickLinksFromSplit;
+  } else if (legacy) {
+    quickLinks = (prefDoc.quickLinks as QuickLinkType[]) ?? [];
+  } else {
+    warnOnce();
+    quickLinks = [];
+  }
+
+  let monitorSettings: MonitorSettingsType;
+  if (monitorFromSplit) {
+    monitorSettings = monitorFromSplit as MonitorSettingsType;
+  } else if (legacy) {
+    monitorSettings =
+      (prefDoc.monitorSettings as MonitorSettingsType) ??
+      DEFAULT_MONITOR_SETTINGS;
+  } else {
+    warnOnce();
+    monitorSettings = { ...DEFAULT_MONITOR_SETTINGS };
+  }
+
+  let mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
+  if (foldersFromSplit) {
+    mediaRouteFolders = foldersFromSplit as Partial<
+      Record<MediaRouteKey, string | null>
+    >;
+  } else if (legacy) {
+    mediaRouteFolders = (prefDoc.mediaRouteFolders ?? {}) as Partial<
+      Record<MediaRouteKey, string | null>
+    >;
+  } else {
+    warnOnce();
+    mediaRouteFolders = {};
+  }
+
+  return {
+    preferences: prefDoc.preferences as PreferencesType,
+    quickLinks,
+    monitorSettings,
+    mediaRouteFolders,
+  };
+};
+
+export type MigrateSplitPreferencesDocsResult = {
+  status: "skipped" | "migrated" | "ensured_subdocs";
+  puts: number;
+  message?: string;
+};
+
+/**
+ * Split legacy monolithic `preferences` into four docs. Idempotent: no-op if already slim.
+ * Run manually once per database (e.g. from devtools).
+ */
+export const migrateSplitPreferencesDocs = async (
+  db: PouchDB.Database,
+): Promise<MigrateSplitPreferencesDocsResult> => {
+  if (!db) return { status: "skipped", puts: 0, message: "No db" };
+  let puts = 0;
+  try {
+    const raw = (await db.get(PREFERENCES_POUCH_ID)) as Record<
+      string,
+      unknown
+    > & { _rev: string };
+    const now = new Date().toISOString();
+
+    if (!isLegacyPreferencesDoc(raw)) {
+      let ensured = 0;
+      const ensureDoc = async <T extends DBDoc>(
+        id: string,
+        factory: () => Omit<T, "_rev">,
+      ) => {
+        try {
+          await db.get(id);
+        } catch (e) {
+          if (!isPouchNotFound(e)) throw e;
+          await db.put({ ...factory(), _id: id } as T);
+          puts++;
+          ensured++;
+        }
+      };
+
+      await ensureDoc<DBQuickLinksDoc>(QUICK_LINKS_POUCH_ID, () => ({
+        _id: QUICK_LINKS_POUCH_ID,
+        quickLinks: [],
+        createdAt: now,
+        updatedAt: now,
+        docType: "quickLinks",
+      }));
+
+      await ensureDoc<DBMonitorSettingsDoc>(MONITOR_SETTINGS_POUCH_ID, () => ({
+        _id: MONITOR_SETTINGS_POUCH_ID,
+        monitorSettings: { ...DEFAULT_MONITOR_SETTINGS },
+        createdAt: now,
+        updatedAt: now,
+        docType: "monitorSettings",
+      }));
+
+      await ensureDoc<DBMediaRouteFoldersDoc>(
+        MEDIA_ROUTE_FOLDERS_POUCH_ID,
+        () => ({
+          _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
+          mediaRouteFolders: {},
+          createdAt: now,
+          updatedAt: now,
+          docType: "mediaRouteFolders",
+        }),
+      );
+
+      return {
+        status: ensured > 0 ? "ensured_subdocs" : "skipped",
+        puts,
+        message:
+          ensured > 0
+            ? `Created ${ensured} missing subsidiary doc(s).`
+            : "Already split; subsidiary docs present.",
+      };
+    }
+
+    const preferences = raw.preferences as PreferencesType;
+    const quickLinks = (raw.quickLinks as QuickLinkType[]) ?? [];
+    const monitorSettings =
+      (raw.monitorSettings as MonitorSettingsType) ?? DEFAULT_MONITOR_SETTINGS;
+    const mediaRouteFolders = (raw.mediaRouteFolders ?? {}) as Partial<
+      Record<MediaRouteKey, string | null>
+    >;
+
+    const putOrCreate = async <T extends DBDoc>(doc: Omit<T, "_rev"> | T) => {
+      const id = (doc as { _id: string })._id;
+      try {
+        const prev = (await db.get(id)) as T & { _rev: string };
+        await db.put({
+          ...prev,
+          ...doc,
+          _rev: prev._rev,
+          updatedAt: now,
+        } as T);
+      } catch (e) {
+        if (!isPouchNotFound(e)) throw e;
+        await db.put({
+          ...doc,
+          createdAt: now,
+          updatedAt: now,
+        } as T);
+      }
+      puts++;
+    };
+
+    await putOrCreate<DBQuickLinksDoc>({
+      _id: QUICK_LINKS_POUCH_ID,
+      quickLinks,
+      docType: "quickLinks",
+    });
+
+    await putOrCreate<DBMonitorSettingsDoc>({
+      _id: MONITOR_SETTINGS_POUCH_ID,
+      monitorSettings,
+      docType: "monitorSettings",
+    });
+
+    await putOrCreate<DBMediaRouteFoldersDoc>({
+      _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
+      mediaRouteFolders,
+      docType: "mediaRouteFolders",
+    });
+
+    const slimPrefs: DBPreferences = {
+      _id: PREFERENCES_POUCH_ID,
+      _rev: raw._rev,
+      preferences,
+      updatedAt: now,
+      docType: "preferences",
+      ...(typeof raw.createdAt === "string"
+        ? { createdAt: raw.createdAt }
+        : {}),
+    };
+    await db.put(slimPrefs);
+    puts++;
+
+    return { status: "migrated", puts, message: "Split preferences cluster." };
+  } catch (e) {
+    if (isPouchNotFound(e)) {
+      return { status: "skipped", puts: 0, message: "No preferences doc" };
+    }
+    throw e;
+  }
+};
+
 function inferDocType(
   doc: PouchDB.Core.IdMeta & Record<string, unknown>,
 ): DocType {
@@ -982,6 +1278,9 @@ function inferDocType(
     return "credits";
   }
   if (id === "media") return "media";
+  if (id === QUICK_LINKS_POUCH_ID) return "quickLinks";
+  if (id === MONITOR_SETTINGS_POUCH_ID) return "monitorSettings";
+  if (id === MEDIA_ROUTE_FOLDERS_POUCH_ID) return "mediaRouteFolders";
   if (id === "preferences") return "preferences";
   if (id === "overlay-templates") return "overlayTemplates";
   if (id === "services") return "services";

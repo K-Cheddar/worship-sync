@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
 import { BrowserRouter } from "react-router-dom";
@@ -16,6 +16,7 @@ import {
   createMockGlobalContext,
   createMockPouchDB,
 } from "../../../test/mocks";
+import { STUCK_DB_PROGRESS_MS } from "../../../constants";
 
 // controllerInfo uses import.meta – replaced by jest.config.cjs moduleNameMapper (__mocks__)
 // ResizeObserver – setupTests.ts
@@ -265,6 +266,58 @@ describe("CreditsEditor", () => {
     expect(loadingOverlay).toBeInTheDocument();
     expect(loadingOverlay).toHaveTextContent(/Setting up/);
     expect(loadingOverlay).toHaveTextContent(/Progress:.*%/);
+  });
+
+  it("shows stuck recovery on loading overlay when dbProgress is unchanged for 15s", async () => {
+    jest.useFakeTimers();
+    const reloadMock = jest.fn();
+    const locationDescriptor = Object.getOwnPropertyDescriptor(
+      window,
+      "location",
+    );
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload: reloadMock },
+    });
+    try {
+      const contextWithLoading = {
+        ...mockControllerContext,
+        dbProgress: 7,
+        connectionStatus: { status: "connecting" as const, retryCount: 0 },
+      };
+
+      render(
+        <Provider store={mockStore}>
+          <ControllerInfoContext.Provider
+            value={contextWithLoading as React.ComponentProps<
+              typeof ControllerInfoContext.Provider
+            >["value"]}
+          >
+            <GlobalInfoContext.Provider value={mockGlobalContext}>
+              <BrowserRouter>
+                <CreditsEditor />
+              </BrowserRouter>
+            </GlobalInfoContext.Provider>
+          </ControllerInfoContext.Provider>
+        </Provider>,
+      );
+
+      act(() => {
+        jest.advanceTimersByTime(STUCK_DB_PROGRESS_MS);
+      });
+
+      expect(
+        await screen.findByText(/Startup is taking longer than expected/),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Try Again" }),
+      ).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+      if (locationDescriptor) {
+        Object.defineProperty(window, "location", locationDescriptor);
+      }
+    }
   });
 
   it("toggles preview mode on mobile", async () => {

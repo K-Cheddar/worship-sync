@@ -8,7 +8,8 @@ describe("SongItemMetadataModal", () => {
     render(
       <SongItemMetadataModal
         isOpen
-        onClose={() => {}}
+        onClose={() => { }}
+        itemType="song"
         itemName="Holy Holy Holy"
         songMetadata={undefined}
         onSave={onSave}
@@ -30,7 +31,8 @@ describe("SongItemMetadataModal", () => {
     render(
       <SongItemMetadataModal
         isOpen
-        onClose={() => {}}
+        onClose={() => { }}
+        itemType="song"
         itemName="Song"
         songMetadata={undefined}
         onSave={onSave}
@@ -58,7 +60,8 @@ describe("SongItemMetadataModal", () => {
     render(
       <SongItemMetadataModal
         isOpen
-        onClose={() => {}}
+        onClose={() => { }}
+        itemType="song"
         itemName="Song"
         songMetadata={{
           source: "manual",

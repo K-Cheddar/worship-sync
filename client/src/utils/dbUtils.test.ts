@@ -22,6 +22,8 @@ import {
   migrateFontSizesToPixels,
   migrateLegacyCreditsToActiveOutlineIfNeeded,
   migrateMediaLibraryFoldersFieldIfNeeded,
+  migrateSplitPreferencesDocs,
+  loadPreferencesBundle,
   putCreditDoc,
   putCreditHistoryDocs,
   putOverlayHistoryDoc,
@@ -684,6 +686,242 @@ describe("dbUtils", () => {
       db as unknown as PouchDB.Database,
     );
     expect(changed).toBe(false);
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
+  it("loadPreferencesBundle loads only split preference docs", async () => {
+    const db = createDb();
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "preferences") {
+        return {
+          _id: "preferences",
+          _rev: "1-p",
+          preferences: { defaultSlidesPerRow: 4 },
+          docType: "preferences",
+        };
+      }
+      if (id === "quickLinks") {
+        return {
+          _id: "quickLinks",
+          _rev: "1-q",
+          quickLinks: [{ id: "q1", label: "Quick", canDelete: true }],
+          docType: "quickLinks",
+        };
+      }
+      if (id === "monitorSettings") {
+        return {
+          _id: "monitorSettings",
+          _rev: "1-m",
+          monitorSettings: {
+            showClock: true,
+            showTimer: true,
+            showNextSlide: false,
+            clockFontSize: 75,
+            timerFontSize: 75,
+            timerId: null,
+          },
+          docType: "monitorSettings",
+        };
+      }
+      if (id === "mediaRouteFolders") {
+        return {
+          _id: "mediaRouteFolders",
+          _rev: "1-f",
+          mediaRouteFolders: { "controller-default": "folder-a" },
+          docType: "mediaRouteFolders",
+        };
+      }
+      throw createNotFoundError();
+    });
+
+    const bundle = await loadPreferencesBundle(
+      db as unknown as PouchDB.Database,
+    );
+
+    expect(bundle).toMatchObject({
+      preferences: { defaultSlidesPerRow: 4 },
+      quickLinks: [{ id: "q1", label: "Quick", canDelete: true }],
+      monitorSettings: {
+        showClock: true,
+        showTimer: true,
+        showNextSlide: false,
+        clockFontSize: 75,
+        timerFontSize: 75,
+        timerId: null,
+      },
+      mediaRouteFolders: { "controller-default": "folder-a" },
+    });
+  });
+
+  it("loadPreferencesBundle falls back to legacy monolithic preferences docs", async () => {
+    const db = createDb();
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "preferences") {
+        return {
+          _id: "preferences",
+          _rev: "1-p",
+          preferences: { defaultSlidesPerRow: 4 },
+          quickLinks: [{ id: "legacy" }],
+          monitorSettings: { showClock: true },
+          mediaRouteFolders: { "controller-default": "legacy-folder" },
+        };
+      }
+      throw createNotFoundError();
+    });
+
+    const bundle = await loadPreferencesBundle(
+      db as unknown as PouchDB.Database,
+    );
+    expect(bundle).toMatchObject({
+      preferences: { defaultSlidesPerRow: 4 },
+      quickLinks: [{ id: "legacy" }],
+      monitorSettings: { showClock: true },
+      mediaRouteFolders: { "controller-default": "legacy-folder" },
+    });
+  });
+
+  it("migrateSplitPreferencesDocs splits legacy monolithic preferences into four docs", async () => {
+    const db = createDb();
+    const legacyPrefs = {
+      _id: "preferences",
+      _rev: "1-legacy",
+      preferences: {
+        defaultSongBackground: { background: "x" },
+        defaultTimerBackground: { background: "" },
+        defaultBibleBackground: { background: "b" },
+        defaultFreeFormBackground: { background: "f" },
+        defaultSongBackgroundBrightness: 50,
+        defaultTimerBackgroundBrightness: 75,
+        defaultBibleBackgroundBrightness: 60,
+        defaultFreeFormBackgroundBrightness: 100,
+        defaultSlidesPerRow: 4,
+        defaultSlidesPerRowMobile: 3,
+        defaultSlidesPerRowMusic: 6,
+        defaultSlidesPerRowMusicMobile: 3,
+        defaultFormattedLyricsPerRow: 4,
+        defaultMediaItemsPerRow: 4,
+        defaultShouldShowItemEditor: true,
+        defaultIsMediaExpanded: false,
+        defaultBibleFontMode: "separate" as const,
+        defaultFreeFormFontMode: "separate" as const,
+      },
+      quickLinks: [{ id: "q1", label: "L", canDelete: true }],
+      monitorSettings: {
+        showClock: true,
+        showTimer: true,
+        showNextSlide: false,
+        clockFontSize: 75,
+        timerFontSize: 75,
+        timerId: null,
+      },
+      mediaRouteFolders: { "controller-default": "folder-a" },
+    };
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "preferences") return legacyPrefs;
+      throw createNotFoundError();
+    });
+    let revCounter = 2;
+    db.put.mockImplementation(async (doc: { _id: string }) => ({
+      ok: true,
+      id: doc._id,
+      rev: `${revCounter++}-x`,
+    }));
+
+    const result = await migrateSplitPreferencesDocs(
+      db as unknown as PouchDB.Database,
+    );
+
+    expect(result.status).toBe("migrated");
+    expect(result.puts).toBe(4);
+    const puts = db.put.mock.calls.map((c) => c[0]) as Record<
+      string,
+      unknown
+    >[];
+    const byId = new Map(puts.map((p) => [p._id as string, p]));
+    expect(byId.get("quickLinks")).toMatchObject({
+      quickLinks: legacyPrefs.quickLinks,
+      docType: "quickLinks",
+    });
+    expect(byId.get("monitorSettings")).toMatchObject({
+      monitorSettings: legacyPrefs.monitorSettings,
+      docType: "monitorSettings",
+    });
+    expect(byId.get("mediaRouteFolders")).toMatchObject({
+      mediaRouteFolders: legacyPrefs.mediaRouteFolders,
+      docType: "mediaRouteFolders",
+    });
+    expect(byId.get("preferences")).toMatchObject({
+      preferences: legacyPrefs.preferences,
+      docType: "preferences",
+    });
+    expect(byId.get("preferences")).not.toHaveProperty("quickLinks");
+  });
+
+  it("migrateSplitPreferencesDocs is idempotent when preferences is already slim", async () => {
+    const db = createDb();
+    const slimPrefs = {
+      _id: "preferences",
+      _rev: "1-slim",
+      preferences: {
+        defaultSongBackground: { background: "x" },
+        defaultTimerBackground: { background: "" },
+        defaultBibleBackground: { background: "b" },
+        defaultFreeFormBackground: { background: "f" },
+        defaultSongBackgroundBrightness: 50,
+        defaultTimerBackgroundBrightness: 75,
+        defaultBibleBackgroundBrightness: 60,
+        defaultFreeFormBackgroundBrightness: 100,
+        defaultSlidesPerRow: 4,
+        defaultSlidesPerRowMobile: 3,
+        defaultSlidesPerRowMusic: 6,
+        defaultSlidesPerRowMusicMobile: 3,
+        defaultFormattedLyricsPerRow: 4,
+        defaultMediaItemsPerRow: 4,
+        defaultShouldShowItemEditor: true,
+        defaultIsMediaExpanded: false,
+        defaultBibleFontMode: "separate" as const,
+        defaultFreeFormFontMode: "separate" as const,
+      },
+      docType: "preferences",
+    };
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "preferences") return slimPrefs;
+      if (id === "quickLinks")
+        return {
+          _id: "quickLinks",
+          _rev: "1-ql",
+          quickLinks: [],
+          docType: "quickLinks",
+        };
+      if (id === "monitorSettings")
+        return {
+          _id: "monitorSettings",
+          _rev: "1-m",
+          monitorSettings: {
+            showClock: true,
+            showTimer: true,
+            showNextSlide: false,
+            clockFontSize: 75,
+            timerFontSize: 75,
+            timerId: null,
+          },
+          docType: "monitorSettings",
+        };
+      if (id === "mediaRouteFolders")
+        return {
+          _id: "mediaRouteFolders",
+          _rev: "1-f",
+          mediaRouteFolders: {},
+          docType: "mediaRouteFolders",
+        };
+      throw createNotFoundError();
+    });
+
+    const result = await migrateSplitPreferencesDocs(
+      db as unknown as PouchDB.Database,
+    );
+
+    expect(result.status).toBe("skipped");
     expect(db.put).not.toHaveBeenCalled();
   });
 });

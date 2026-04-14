@@ -93,6 +93,7 @@ jest.mock("firebase/database", () => ({
   set: (...args: any[]) => setMock(...args),
   onDisconnect: jest.fn(() => ({
     remove: jest.fn(),
+    cancel: jest.fn(() => Promise.resolve()),
   })),
 }));
 
