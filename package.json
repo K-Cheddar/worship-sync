@@ -21,7 +21,7 @@
     "release": "semantic-release"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "24.x"
   },
   "dependencies": {
     "@mux/mux-node": "^12.8.1",
