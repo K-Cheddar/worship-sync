@@ -72,8 +72,20 @@ describe("boardUtils", () => {
       isBoardAuthorInUse([existing], { author: "Alex", authorId: "device-a" }),
     ).toBe(false);
     expect(
-      isBoardAuthorInUse([existing], { author: "Jordan", authorId: "device-b" }),
+      isBoardAuthorInUse([existing], {
+        author: "Jordan",
+        authorId: "device-b",
+      }),
     ).toBe(false);
+    expect(
+      isBoardAuthorInUse(
+        [
+          existing,
+          createPost({ author: "Alex", authorId: "gone", deleted: true }),
+        ],
+        { author: "Alex", authorId: "device-b" },
+      ),
+    ).toBe(true);
   });
 
   it("sorts and filters public and highlighted posts", () => {
@@ -106,6 +118,23 @@ describe("boardUtils", () => {
     expect(filterHighlightedBoardPosts(posts).map((post) => post.id)).toEqual([
       "1",
     ]);
+
+    const withDeleted = [
+      ...posts,
+      createPost({
+        _id: "post:board-a:4",
+        id: "4",
+        timestamp: 4,
+        deleted: true,
+        highlighted: true,
+      }),
+    ];
+    expect(filterVisibleBoardPosts(withDeleted).map((post) => post.id)).toEqual(
+      ["1", "3"],
+    );
+    expect(
+      filterHighlightedBoardPosts(withDeleted).map((post) => post.id),
+    ).toEqual(["1"]);
   });
 
   it("includes a hidden post only for the matching participant id", () => {
@@ -125,12 +154,12 @@ describe("boardUtils", () => {
       createPost({ _id: "post:board-a:3", id: "3", hidden: false }),
     ];
 
-    expect(isBoardPostOwnedByParticipant(posts[0], { authorId: "device-a" })).toBe(
-      true,
-    );
-    expect(isBoardPostOwnedByParticipant(posts[0], { authorId: "device-b" })).toBe(
-      false,
-    );
+    expect(
+      isBoardPostOwnedByParticipant(posts[0], { authorId: "device-a" }),
+    ).toBe(true);
+    expect(
+      isBoardPostOwnedByParticipant(posts[0], { authorId: "device-b" }),
+    ).toBe(false);
 
     expect(
       getBoardPostsForAttendeeView(posts, { authorId: "device-a" }).map(

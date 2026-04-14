@@ -1,43 +1,72 @@
-import { useContext, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useToast } from "../../context/toastContext";
+import type { ToastVariant } from "../../components/Toast/Toast";
 import { useLocation } from "react-router-dom";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
-import ContextMenu from "../../components/ContextMenu/ContextMenu";
 import Modal from "../../components/Modal/Modal";
 import Toggle from "../../components/Toggle/Toggle";
 import {
-  Trash2,
-  ZoomIn,
-  ZoomOut,
-  Image,
-  Images,
   Eye,
   X,
   Minus,
-  Video,
   Maximize,
   Minimize,
   Plus,
+  Folder,
+  FolderInput,
+  FolderPlus,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../../components/ui/Popover";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
-import {
-  updateAllSlideBackgrounds,
-  updateSlideBackground,
-} from "../../store/itemSlice";
-import { MediaType } from "../../types";
-import {
-  setDefaultPreferences,
-  setSelectedQuickLinkImage,
-} from "../../store/preferencesSlice";
+import type { MediaFolder, MediaRouteKey, MediaType } from "../../types";
 import cn from "classnames";
-import { updateOverlayInList } from "../../store/overlaysSlice";
 import { RootState } from "../../store/store";
-import { updateOverlay } from "../../store/overlaySlice";
+import { updateMediaItemFields } from "../../store/mediaSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { MediaUploadInputRef } from "./MediaUploadInput";
 import MediaTypeBadge from "./MediaTypeBadge";
 import { useCachedMediaUrl, useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
 import CachedMediaImage from "../../components/CachedMediaImage/CachedMediaImage";
+import { MEDIA_LIBRARY_ROOT_VIEW, getChildFolders, moveMediaToFolder } from "../../utils/mediaFolderMutations";
+import {
+  buildFolderTreeSelectOptions,
+  MEDIA_LIBRARY_MOVE_TO_NEW_FOLDER,
+} from "../../utils/mediaLibraryFolderOptions";
+import MediaLibraryToolbar from "./MediaLibraryToolbar";
+import { Slider } from "../../components/ui/Slider";
+import MediaLibraryFolderGridItems from "./MediaLibraryFolderGridItems";
+import MediaLibraryActionBar, {
+  MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+} from "./MediaLibraryActionBar";
+import {
+  MediaLibraryFolderModals,
+  MediaLibraryNewFolderForm,
+  MediaLibraryRenameFolderForm,
+  MediaLibraryRenameMediaForm,
+} from "./MediaLibraryFolderModals";
+import {
+  buildMediaActionRouteFlags,
+  buildMediaLibraryBarActions,
+} from "./mediaLibraryActions";
+import { formatMediaDimensionsLine, summarizeMultiSelectMetadata } from "./mediaLibraryMeta";
+import {
+  MEDIA_LIBRARY_ORANGE_FOLDER_CLASS,
+  MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE,
+} from "./mediaLibraryOrangeFolderIcon";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -48,15 +77,84 @@ const sizeMap: Map<number, string> = new Map([
   [2, "grid-cols-2"],
 ]);
 
+type MediaModalGridZoomSliderProps = {
+  modalZoomLevel: number;
+  modalZoomSliderMax: number;
+  disabled: boolean;
+  onZoomChange: (next: number) => void;
+};
+
+function MediaModalGridZoomSlider({
+  modalZoomLevel,
+  modalZoomSliderMax,
+  disabled,
+  onZoomChange,
+}: MediaModalGridZoomSliderProps) {
+  const safeMax = Math.max(modalZoomSliderMax, 1);
+  const value = Math.min(Math.max(modalZoomLevel, 0), modalZoomSliderMax);
+  const changeZoomBy = (delta: number) => {
+    onZoomChange(Math.min(safeMax, Math.max(0, value + delta)));
+  };
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <Button
+        variant="tertiary"
+        className="min-h-0 h-7 w-7 justify-center p-0"
+        svg={ZoomOut}
+        title="Zoom out"
+        aria-label="Zoom out media grid"
+        disabled={disabled || value <= 0}
+        onClick={() => changeZoomBy(-1)}
+      />
+      <div className="w-36 shrink-0">
+        <Slider
+          className="w-full"
+          value={[value]}
+          min={0}
+          max={safeMax}
+          step={1}
+          onValueChange={(v: number[]) => onZoomChange(v[0] ?? 0)}
+          disabled={disabled}
+          aria-label="Media grid zoom"
+        />
+      </div>
+      <Button
+        variant="tertiary"
+        className="min-h-0 h-7 w-7 justify-center p-0"
+        svg={ZoomIn}
+        title="Zoom in"
+        aria-label="Zoom in media grid"
+        disabled={disabled || value >= safeMax}
+        onClick={() => changeZoomBy(1)}
+      />
+    </div>
+  );
+}
+
 type MediaModalProps = {
   isOpen: boolean;
   onClose: () => void;
+  /** Items visible in the grid (search + folder + type applied by parent). */
   mediaList: MediaType[];
+  fullList: MediaType[];
+  folders: MediaFolder[];
+  routeKey: MediaRouteKey;
+  pageMode?: "default" | "overlayController";
+  selectedLibraryFilter: string | null;
+  onSelectLibraryFilter: (folderId: string | null) => void;
+  onUpdateFoldersAndList: (next: {
+    list: MediaType[];
+    folders: MediaFolder[];
+  }) => void;
+  onDeleteFolderKeepContents: (folderId: string) => void;
+  onDeleteFolderSubtree: (folderId: string) => boolean | Promise<boolean>;
   selectedMedia: MediaType;
   selectedMediaIds: Set<string>;
   previewMedia: MediaType | null;
   searchTerm: string;
   showName: boolean;
+  typeFilter: "all" | "image" | "video";
+  onTypeFilterChange: (v: "all" | "image" | "video") => void;
   onMediaClick: (
     e: React.MouseEvent,
     mediaItem: MediaType,
@@ -75,26 +173,65 @@ const MediaModal = ({
   isOpen,
   onClose,
   mediaList,
+  fullList,
+  folders,
+  pageMode = "default",
+  selectedLibraryFilter,
+  onSelectLibraryFilter,
+  onUpdateFoldersAndList,
+  onDeleteFolderKeepContents,
+  onDeleteFolderSubtree,
   selectedMedia,
   selectedMediaIds,
   previewMedia,
   searchTerm,
   showName,
+  typeFilter,
+  onTypeFilterChange,
   onMediaClick,
   onSearchChange,
   onShowNameToggle,
   onDeleteClick,
   onDeleteMultipleClick,
+  onPreviewChange,
   mediaUploadInputRef,
   uploadProgress,
 }: MediaModalProps) => {
   const dispatch = useDispatch();
   const location = useLocation();
+  const { showToast } = useToast();
   const { db, isMobile } = useContext(ControllerInfoContext) || {};
 
-  const { isLoading } = useSelector(
-    (state: RootState) => state.undoable.present.item
+  const notifyMediaAction = useCallback(
+    (message: string, variant: ToastVariant = "success") => {
+      showToast(message, variant);
+    },
+    [showToast],
   );
+
+  const item = useSelector((state: RootState) => state.undoable.present.item);
+  const isLoading = item.isLoading;
+
+  const itemSlideContext = useMemo(() => {
+    if (!location.pathname.includes("item")) return undefined;
+    const arrangement = item.arrangements[item.selectedArrangement];
+    const slides =
+      arrangement?.slides?.length ? arrangement.slides : item.slides;
+    return {
+      itemType: item.type,
+      slides,
+      selectedSlide: item.selectedSlide,
+      backgroundTargetSlideIds: item.backgroundTargetSlideIds ?? [],
+    };
+  }, [
+    item.arrangements,
+    item.selectedArrangement,
+    item.slides,
+    item.type,
+    item.selectedSlide,
+    item.backgroundTargetSlideIds,
+    location.pathname,
+  ]);
   const { selectedOverlay } = useSelector(
     (state: RootState) => state.undoable.present.overlay
   );
@@ -103,17 +240,19 @@ const MediaModal = ({
   );
 
   const [modalZoomLevel, setModalZoomLevel] = useState(0);
-  const [typeFilter, setTypeFilter] = useState<"all" | "image" | "video">("all");
+  const [modalLayoutBaseCols, setModalLayoutBaseCols] = useState(8);
   const modalGridRef = useRef<HTMLUListElement>(null);
-  const [calculatedGridCols, setCalculatedGridCols] = useState(8);
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // Filter media items based on search term and type
-  const filteredList = mediaList.filter((item) => {
-    const matchesSearch = item.name?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = typeFilter === "all" || item.type === typeFilter;
-    return matchesSearch && matchesType;
-  });
+  const calculatedGridCols = useMemo(() => {
+    const maxZ = Math.max(0, modalLayoutBaseCols - 2);
+    const z = Math.min(modalZoomLevel, maxZ);
+    return Math.max(2, modalLayoutBaseCols - z);
+  }, [modalLayoutBaseCols, modalZoomLevel]);
+
+  const modalZoomSliderMax = Math.max(0, modalLayoutBaseCols - 2);
+
+  const filteredList = mediaList;
 
   // Use shared selection hook for modal - independent from Media component
   const {
@@ -126,10 +265,316 @@ const MediaModal = ({
     handleMediaClick: handleModalMediaClick,
     clearSelection: clearModalSelection,
   } = useMediaSelection({
-    mediaList,
+    mediaList: fullList,
     filteredList,
     enableRangeSelection: false, // Modal doesn't need range selection
   });
+
+  const handleModalDeleteClick = useCallback(
+    (mediaItem: MediaType) => {
+      onMediaClick(
+        { ctrlKey: false, metaKey: false, shiftKey: false } as React.MouseEvent,
+        mediaItem,
+        fullList.findIndex((item) => item.id === mediaItem.id),
+      );
+      onDeleteClick(mediaItem);
+    },
+    [fullList, onDeleteClick, onMediaClick],
+  );
+
+  const handleModalDeleteMultipleClick = useCallback(() => {
+    onDeleteMultipleClick(modalSelectedMediaIds);
+  }, [modalSelectedMediaIds, onDeleteMultipleClick]);
+
+  const wasModalOpenRef = useRef(false);
+  const lastBrowseFolderIdRef = useRef<string>(MEDIA_LIBRARY_ROOT_VIEW);
+  const [folderRenameOpen, setFolderRenameOpen] = useState(false);
+  const [mediaRenameOpen, setMediaRenameOpen] = useState(false);
+  const ignoreRenameAutoCloseUntilRef = useRef(0);
+  const [folderDeleteOpen, setFolderDeleteOpen] = useState(false);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [moveSelectKey, setMoveSelectKey] = useState(0);
+  const [moveToNewFolderOpen, setMoveToNewFolderOpen] = useState(false);
+
+  const setMoveToNewFolderPopoverOpen = useCallback((open: boolean) => {
+    setMoveToNewFolderOpen(open);
+  }, []);
+
+  useEffect(() => {
+    if (selectedLibraryFilter !== null) {
+      lastBrowseFolderIdRef.current = selectedLibraryFilter;
+    }
+  }, [selectedLibraryFilter]);
+
+  useEffect(() => {
+    setFolderRenameOpen(false);
+  }, [selectedLibraryFilter]);
+
+  useEffect(() => {
+    if (modalSelectedMediaIds.size !== 1) setMediaRenameOpen(false);
+  }, [modalSelectedMediaIds.size]);
+
+  useEffect(() => {
+    if (modalSelectedMediaIds.size === 0) setMoveToNewFolderPopoverOpen(false);
+  }, [modalSelectedMediaIds.size, setMoveToNewFolderPopoverOpen]);
+
+  const handleRenamePopoverOpenChange = useCallback((open: boolean) => {
+    if (!open && Date.now() < ignoreRenameAutoCloseUntilRef.current) {
+      return;
+    }
+    setMediaRenameOpen(open);
+  }, []);
+
+  const handleMoveToNewFolderPopoverOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && Date.now() < ignoreRenameAutoCloseUntilRef.current) {
+        return;
+      }
+      setMoveToNewFolderPopoverOpen(open);
+    },
+    [setMoveToNewFolderPopoverOpen],
+  );
+
+  const handleActionBarMoveToNewFolderOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        ignoreRenameAutoCloseUntilRef.current = Date.now() + 750;
+        setMediaRenameOpen(false);
+        setMoveSelectKey((k) => k + 1);
+        setMoveToNewFolderPopoverOpen(true);
+        return;
+      }
+      handleMoveToNewFolderPopoverOpenChange(false);
+    },
+    [
+      setMediaRenameOpen,
+      setMoveSelectKey,
+      setMoveToNewFolderPopoverOpen,
+      handleMoveToNewFolderPopoverOpenChange,
+    ],
+  );
+
+  const showAll = selectedLibraryFilter === null;
+  const parentForBrowseChildren =
+    selectedLibraryFilter === null ||
+      selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW
+      ? null
+      : selectedLibraryFilter;
+  const childFolders = useMemo(
+    () => getChildFolders(parentForBrowseChildren, folders),
+    [parentForBrowseChildren, folders],
+  );
+  const selectedRealFolder =
+    selectedLibraryFilter &&
+      selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
+      ? folders.find((f) => f.id === selectedLibraryFilter)
+      : undefined;
+  const canGoUp = Boolean(
+    selectedLibraryFilter &&
+    selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW,
+  );
+
+  const navigateToFolder = useCallback(
+    (folderId: string | null) => {
+      clearModalSelection();
+      onSelectLibraryFilter(folderId);
+    },
+    [clearModalSelection, onSelectLibraryFilter],
+  );
+
+  const handleShowAllChange = useCallback(
+    (next: boolean) => {
+      if (next) {
+        if (selectedLibraryFilter !== null) {
+          lastBrowseFolderIdRef.current = selectedLibraryFilter;
+        }
+        onSelectLibraryFilter(null);
+      } else {
+        onSelectLibraryFilter(lastBrowseFolderIdRef.current);
+      }
+    },
+    [onSelectLibraryFilter, selectedLibraryFilter],
+  );
+
+  const handleGoUp = useCallback(() => {
+    if (!selectedRealFolder) return;
+    navigateToFolder(
+      selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW,
+    );
+  }, [navigateToFolder, selectedRealFolder]);
+
+  const handleMoveTo = useCallback(
+    (targetFolderId: string | null) => {
+      if (modalSelectedMediaIds.size === 0) return;
+      onUpdateFoldersAndList({
+        folders,
+        list: moveMediaToFolder(
+          modalSelectedMediaIds,
+          targetFolderId,
+          fullList,
+        ),
+      });
+      setMoveSelectKey((k) => k + 1);
+      clearModalSelection();
+    },
+    [
+      modalSelectedMediaIds,
+      folders,
+      fullList,
+      onUpdateFoldersAndList,
+      clearModalSelection,
+    ],
+  );
+
+  const moveSelectOptions = useMemo(
+    () => [
+      {
+        value: MEDIA_LIBRARY_MOVE_TO_NEW_FOLDER,
+        label: "New folder…",
+      },
+      ...buildFolderTreeSelectOptions(folders).selectOptions,
+    ],
+    [folders],
+  );
+
+  const routeFlags = useMemo(
+    () =>
+      buildMediaActionRouteFlags(
+        location.pathname,
+        pageMode,
+        selectedOverlay,
+        selectedPreference,
+        selectedQuickLink,
+      ),
+    [
+      location.pathname,
+      pageMode,
+      selectedOverlay,
+      selectedPreference,
+      selectedQuickLink,
+    ],
+  );
+
+  const mediaBarActions = useMemo(
+    () =>
+      buildMediaLibraryBarActions({
+        flags: routeFlags,
+        db,
+        isLoading: Boolean(isLoading),
+        selectedPreference,
+        selectedQuickLink,
+        selectedOverlay,
+        primaryMedia: modalSelectedMedia,
+        hasMultipleSelection: modalSelectedMediaIds.size > 1,
+        selectedCount: modalSelectedMediaIds.size,
+        dispatch,
+        onDeleteSingle: () => {
+          handleModalDeleteClick(modalSelectedMedia);
+        },
+        onDeleteMultiple: handleModalDeleteMultipleClick,
+        itemSlideContext,
+        notify: notifyMediaAction,
+      }),
+    [
+      routeFlags,
+      db,
+      isLoading,
+      selectedPreference,
+      selectedQuickLink,
+      selectedOverlay,
+      modalSelectedMedia,
+      modalSelectedMediaIds.size,
+      dispatch,
+      handleModalDeleteClick,
+      handleModalDeleteMultipleClick,
+      itemSlideContext,
+      notifyMediaAction,
+    ],
+  );
+
+  const actionBarDetails = useMemo(() => {
+    const headerLine = (primary: string, title?: string) => (
+      <div
+        className="min-w-0 truncate text-xs font-medium text-white"
+        title={title ?? primary}
+      >
+        {primary}
+      </div>
+    );
+
+    if (modalSelectedMediaIds.size === 0) {
+      if (selectedLibraryFilter === null) {
+        return headerLine(
+          "All media",
+          "All media — turn off Show all to browse folders.",
+        );
+      }
+      if (selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW) {
+        return headerLine("Library root");
+      }
+      const folderName = selectedRealFolder?.name ?? "—";
+      return (
+        <div
+          className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-white"
+          title={folderName}
+        >
+          <Folder
+            {...MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE}
+            className={MEDIA_LIBRARY_ORANGE_FOLDER_CLASS}
+            aria-hidden
+          />
+          <span className="min-w-0 truncate">{folderName}</span>
+        </div>
+      );
+    }
+    if (modalSelectedMediaIds.size === 1) {
+      const m = modalSelectedMedia;
+      const shown = m.name.includes("/")
+        ? m.name.split("/").slice(1).join("/")
+        : m.name;
+      const metaLine = formatMediaDimensionsLine(m);
+      const metaSuffix = metaLine
+        ? ` · ${m.type} · ${metaLine}`
+        : ` · ${m.type}`;
+      return (
+        <div className="min-w-0 truncate text-xs" title={m.name}>
+          <span className="font-medium text-white">{shown}</span>
+          <span className="font-normal text-gray-400">{metaSuffix}</span>
+        </div>
+      );
+    }
+    const items = fullList.filter((x) => modalSelectedMediaIds.has(x.id));
+    const multiMeta = summarizeMultiSelectMetadata(items);
+    return (
+      <div
+        className="min-w-0 truncate text-xs"
+        title={
+          multiMeta
+            ? `${modalSelectedMediaIds.size} selected · ${multiMeta}`
+            : `${modalSelectedMediaIds.size} selected`
+        }
+      >
+        <span className="font-medium text-white">
+          {modalSelectedMediaIds.size} selected
+        </span>
+        {multiMeta ? (
+          <span className="font-normal text-gray-400"> · {multiMeta}</span>
+        ) : null}
+      </div>
+    );
+  }, [
+    fullList,
+    modalSelectedMedia,
+    modalSelectedMediaIds,
+    selectedLibraryFilter,
+    selectedRealFolder?.name,
+  ]);
+
+  const parentForNewFolder =
+    selectedLibraryFilter &&
+      selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW
+      ? selectedLibraryFilter
+      : null;
 
   const resolvedPreviewImageUrl = useCachedMediaUrl(
     modalPreviewMedia?.type === "image" ? modalPreviewMedia.background : undefined
@@ -147,38 +592,49 @@ const MediaModal = ({
   };
 
   useEffect(() => {
-    if (isOpen && modalGridRef.current) {
-      const updateGridCols = () => {
-        if (modalGridRef.current) {
-          const width = modalGridRef.current.offsetWidth;
-          const baseCols = calculateGridColumns(width);
-          // Zoom out increases items per row, zoom in decreases
-          setCalculatedGridCols(Math.max(2, baseCols - modalZoomLevel));
-        }
-      };
-      updateGridCols();
-      const resizeObserver = new ResizeObserver(updateGridCols);
-      resizeObserver.observe(modalGridRef.current);
-      window.addEventListener("resize", updateGridCols);
-      return () => {
-        window.removeEventListener("resize", updateGridCols);
-        resizeObserver.disconnect();
-      };
-    }
-  }, [isOpen, modalZoomLevel]);
+    if (!isOpen || !modalGridRef.current) return;
+    const el = modalGridRef.current;
+    const updateLayoutBaseCols = () => {
+      const width = el.offsetWidth;
+      setModalLayoutBaseCols(calculateGridColumns(width));
+    };
+    updateLayoutBaseCols();
+    const resizeObserver = new ResizeObserver(updateLayoutBaseCols);
+    resizeObserver.observe(el);
+    window.addEventListener("resize", updateLayoutBaseCols);
+    return () => {
+      window.removeEventListener("resize", updateLayoutBaseCols);
+      resizeObserver.disconnect();
+    };
+  }, [isOpen]);
 
-  // Initialize modal selection state when modal opens
   useEffect(() => {
-    if (isOpen) {
+    const maxZ = Math.max(0, modalLayoutBaseCols - 2);
+    setModalZoomLevel((z) => Math.min(z, maxZ));
+  }, [modalLayoutBaseCols]);
+
+  // Initialize modal selection from the parent only on open; avoid snapping back when parent props refresh while open.
+  useEffect(() => {
+    if (isOpen && !wasModalOpenRef.current) {
       setModalSelectedMedia(selectedMedia);
       setModalSelectedMediaIds(new Set(selectedMediaIds));
       setModalPreviewMedia(previewMedia);
-    } else {
-      // Reset when modal closes
+    }
+    if (!isOpen && wasModalOpenRef.current) {
       clearModalSelection();
       setIsExpanded(false);
     }
-  }, [isOpen, selectedMedia, selectedMediaIds, previewMedia, setModalSelectedMedia, setModalSelectedMediaIds, setModalPreviewMedia, clearModalSelection]);
+    wasModalOpenRef.current = isOpen;
+  }, [
+    isOpen,
+    selectedMedia,
+    selectedMediaIds,
+    previewMedia,
+    setModalSelectedMedia,
+    setModalSelectedMediaIds,
+    setModalPreviewMedia,
+    clearModalSelection,
+  ]);
 
   // Reset expanded mode if preview media changes to video or is cleared
   useEffect(() => {
@@ -187,145 +643,9 @@ const MediaModal = ({
     }
   }, [modalPreviewMedia]);
 
-
-  // Wrapper for delete handlers that syncs modal selection to parent
-  const handleModalDeleteClick = (mediaItem: MediaType) => {
-    // Sync selection to parent before deleting
-    onMediaClick(
-      { ctrlKey: false, metaKey: false, shiftKey: false } as React.MouseEvent,
-      mediaItem,
-      mediaList.findIndex((item) => item.id === mediaItem.id)
-    );
-    onDeleteClick(mediaItem);
-  };
-
-  const handleModalDeleteMultipleClick = () => {
-    onDeleteMultipleClick(modalSelectedMediaIds);
-  };
-
-  // Generate context menu items for a media item
-  const getContextMenuItems = (
-    mediaItem: MediaType,
-    hasMultipleSelection: boolean,
-    selectedCount: number
-  ) => {
-    if (hasMultipleSelection) {
-      return [
-        {
-          label: `Delete ${selectedCount} items`,
-          onClick: handleModalDeleteMultipleClick,
-          icon: <Trash2 className="w-4 h-4" />,
-          variant: "destructive" as const,
-        },
-      ];
-    }
-
-    return [
-      ...(location.pathname.includes("item")
-        ? [
-          {
-            label: "Set All Slides",
-            onClick: () => {
-              if (mediaItem.background && db) {
-                dispatch(
-                  updateAllSlideBackgrounds({
-                    background: mediaItem.background,
-                    mediaInfo: mediaItem,
-                  })
-                );
-              }
-            },
-            icon: <Images className="w-4 h-4" />,
-            disabled: isLoading || !mediaItem.background,
-          },
-          {
-            label: "Set Selected Slide",
-            onClick: () => {
-              if (mediaItem.background && db) {
-                dispatch(
-                  updateSlideBackground({
-                    background: mediaItem.background,
-                    mediaInfo: mediaItem,
-                  })
-                );
-              }
-            },
-            icon: <Image className="w-4 h-4" />,
-            disabled: isLoading || !mediaItem.background,
-          },
-        ]
-        : []),
-      ...(location.pathname.includes("overlays") &&
-        selectedOverlay?.type === "image"
-        ? [
-          {
-            label: "Set Image Overlay",
-            onClick: () => {
-              if (mediaItem.background && db) {
-                dispatch(
-                  updateOverlay({
-                    imageUrl: mediaItem.background,
-                    id: selectedOverlay?.id,
-                  })
-                );
-                dispatch(
-                  updateOverlayInList({
-                    imageUrl: mediaItem.background,
-                    id: selectedOverlay?.id,
-                  })
-                );
-              }
-            },
-            icon: <Image className="w-4 h-4" />,
-            disabled: !mediaItem.background || !selectedOverlay,
-          },
-        ]
-        : []),
-      ...(location.pathname.includes("preferences") &&
-        !location.pathname.includes("quick-links") &&
-        !location.pathname.includes("monitor-settings") &&
-        selectedPreference
-        ? [
-          {
-            label: "Set Background",
-            onClick: () => {
-              dispatch(
-                setDefaultPreferences({
-                  [selectedPreference]: {
-                    background: mediaItem.background,
-                    mediaInfo: mediaItem,
-                  },
-                })
-              );
-            },
-            icon: <Image className="w-4 h-4" />,
-            disabled: !selectedPreference || !mediaItem.background,
-          },
-        ]
-        : []),
-      ...(location.pathname.includes("quick-links") &&
-        selectedQuickLink?.linkType === "media"
-        ? [
-          {
-            label: "Set Quick Link Background",
-            onClick: () => {
-              dispatch(setSelectedQuickLinkImage(mediaItem));
-            },
-            icon: <Image className="w-4 h-4" />,
-            disabled:
-              !selectedQuickLink ||
-              selectedQuickLink?.linkType !== "media",
-          },
-        ]
-        : []),
-      {
-        label: "Delete",
-        onClick: () => handleModalDeleteClick(mediaItem),
-        icon: <Trash2 className="w-4 h-4" />,
-        variant: "destructive" as const,
-      },
-    ];
-  };
+  useEffect(() => {
+    if (!isOpen) setMoveToNewFolderPopoverOpen(false);
+  }, [isOpen, setMoveToNewFolderPopoverOpen]);
 
   return (
     <Modal
@@ -334,12 +654,15 @@ const MediaModal = ({
       title="Media Library"
       size="full"
       contentPadding="p-0"
+      surfaceClassName="relative flex w-full min-h-0 flex-1 flex-col overflow-hidden bg-homepage-canvas shadow-2xl max-md:h-full max-md:max-h-[95vh] max-md:rounded-none rounded-lg"
+      headerClassName="bg-homepage-canvas px-4 pb-0 pt-2"
+      titleClassName="text-lg"
     >
       <div className="relative w-full overflow-hidden" style={{ height: isMobile ? "calc(100vh - 60px)" : "calc(90vh - 120px)" }}>
         {/* Expanded fullscreen view */}
         <div
           className={cn(
-            "absolute inset-0 bg-gray-900 transition-all duration-300 ease-in-out",
+            "absolute inset-0 bg-black/55 transition-all duration-300 ease-in-out",
             isExpanded && modalPreviewMedia && modalPreviewMedia.type === "image"
               ? "opacity-100 z-10"
               : "opacity-0 z-0 pointer-events-none"
@@ -379,7 +702,7 @@ const MediaModal = ({
         {/* Normal view */}
         <div
           className={cn(
-            "flex flex-col transition-all duration-300 ease-in-out h-full",
+            "flex h-full min-h-0 flex-col transition-all duration-300 ease-in-out",
             isExpanded && modalPreviewMedia && modalPreviewMedia.type === "image"
               ? "opacity-0 z-0 pointer-events-none"
               : "opacity-100 z-10"
@@ -387,145 +710,314 @@ const MediaModal = ({
         >
           <div
             className={cn(
-              "px-4 py-2 bg-gray-700 relative w-full flex flex-col items-center gap-2 overflow-hidden transition-all duration-300 ease-in-out",
+              "relative w-full flex flex-col items-center gap-2 overflow-hidden border-b border-gray-500 bg-homepage-canvas px-4 py-1 transition-all duration-300 ease-in-out",
               modalPreviewMedia
                 ? "h-[40vh] flex-1 min-h-[40vh] opacity-100"
                 : "h-0 opacity-0"
             )}
           >
             {modalPreviewMedia && (
-              <>
-                <div className="absolute top-2 right-2 z-10 flex gap-2">
-                  {modalPreviewMedia.type === "image" && (
+              <div className="relative flex max-h-full w-full max-w-full flex-1 min-h-0 items-center justify-center">
+                <div className="relative aspect-video max-h-full w-full max-w-full overflow-hidden rounded-md bg-black/25">
+                  <div className="absolute right-2 top-2 z-10 flex gap-2">
+                    {modalPreviewMedia.type === "image" && (
+                      <Button
+                        variant="secondary"
+                        svg={Maximize}
+                        onClick={() => setIsExpanded(true)}
+                        title="Expand to Fill Modal"
+                      />
+                    )}
                     <Button
                       variant="secondary"
-                      svg={Maximize}
-                      onClick={() => setIsExpanded(true)}
-                      title="Expand to Fill Modal"
+                      svg={Minus}
+                      onClick={() => setModalPreviewMedia(null)}
+                      title="Hide Preview"
                     />
-                  )}
-                  <Button
-                    variant="secondary"
-                    svg={Minus}
-                    onClick={() => setModalPreviewMedia(null)}
-                    title="Hide Preview"
-                  />
+                  </div>
+                  <div className="flex h-full w-full items-center justify-center">
+                    {modalPreviewMedia.type === "video" ? (
+                      <video
+                        src={resolvedPreviewVideoUrl ?? modalPreviewMedia.background}
+                        className="max-h-full max-w-full w-full h-full object-contain"
+                        controls
+                        autoPlay
+                      />
+                    ) : (
+                      <img
+                        src={resolvedPreviewImageUrl ?? modalPreviewMedia.background}
+                        alt={modalPreviewMedia.name}
+                        className="max-h-full max-w-full h-full w-full object-contain"
+                      />
+                    )}
+                  </div>
                 </div>
-                <div className="aspect-video flex items-center justify-center overflow-hidden bg-gray-800 rounded-md flex-1 max-h-full max-w-full">
-                  {modalPreviewMedia.type === "video" ? (
-                    <video
-                      src={resolvedPreviewVideoUrl ?? modalPreviewMedia.background}
-                      className="max-h-full max-w-full w-full h-full object-contain"
-                      controls
-                      autoPlay
-                    />
-                  ) : (
-                    <img
-                      src={resolvedPreviewImageUrl ?? modalPreviewMedia.background}
-                      alt={modalPreviewMedia.name}
-                      className="max-w-full max-h-full w-full h-full object-contain"
-                    />
-                  )}
-                </div>
-                <p className="text-sm text-gray-300 mt-1 truncate font-medium max-w-full">
-                  {modalPreviewMedia.name}
-                </p>
-              </>
-            )}
-          </div>
-
-          {/* Zoom and Filter row */}
-          <div className="px-4 py-2 bg-gray-900 flex items-center gap-2 border-b border-gray-700 relative">
-            <div className="flex gap-2 items-center">
-              <Button
-                variant="tertiary"
-                svg={ZoomOut}
-                onClick={() => setModalZoomLevel((prev) => Math.max(0, prev - 1))}
-                title="Zoom Out (More Items)"
-              />
-              <Button
-                variant="tertiary"
-                svg={ZoomIn}
-                onClick={() => setModalZoomLevel((prev) => prev + 1)}
-                title="Zoom In (Fewer Items)"
-              />
-            </div>
-            <div className="flex gap-1 items-center border border-gray-600 rounded-md absolute left-1/2 -translate-x-1/2">
-              <Button
-                variant={typeFilter === "all" ? "secondary" : "tertiary"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setTypeFilter("all");
-                }}
-                className="rounded-r-none"
-              >
-                All
-              </Button>
-              <Button
-                variant={typeFilter === "image" ? "secondary" : "tertiary"}
-                svg={Image}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setTypeFilter("image");
-                }}
-                className="rounded-none border-x border-gray-600"
-              >
-                <span className="max-md:hidden">Images</span>
-              </Button>
-              <Button
-                variant={typeFilter === "video" ? "secondary" : "tertiary"}
-                svg={Video}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setTypeFilter("video");
-                }}
-                className="rounded-l-none"
-              >
-                <span className="max-md:hidden">Videos</span>
-              </Button>
-            </div>
-            {mediaUploadInputRef && (
-              <div className="ml-auto">
-                <Button
-                  variant="tertiary"
-                  svg={Plus}
-                  onClick={() => mediaUploadInputRef.current?.openModal()}
-                  title={uploadProgress?.isUploading ? `Uploading... ${Math.round(uploadProgress.progress)}%` : "Add Media"}
-                  disabled={uploadProgress?.isUploading}
-                >
-                  {uploadProgress?.isUploading ? `${Math.round(uploadProgress.progress)}%` : ""}
-                </Button>
               </div>
             )}
           </div>
 
-          {/* Search and Toggle row */}
-          <div className="px-4 py-2 bg-gray-900 flex items-center gap-2 border-b border-gray-700">
-            <Input
-              type="text"
-              label="Search"
-              value={searchTerm}
-              onChange={(value) => onSearchChange(value as string)}
-              placeholder="Name"
-              className="flex gap-4 items-center flex-1"
-              inputWidth="w-full"
-              inputTextSize="text-sm"
-              svg={searchTerm ? X : undefined}
-              svgAction={() => onSearchChange("")}
-            />
-            <Toggle
-              icon={Eye}
-              value={showName}
-              onChange={onShowNameToggle}
+          <div className="bg-black/60 px-4 py-2">
+            <div className="flex flex-col gap-2 lg:hidden">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <MediaModalGridZoomSlider
+                  modalZoomLevel={modalZoomLevel}
+                  modalZoomSliderMax={modalZoomSliderMax}
+                  disabled={modalZoomSliderMax <= 0}
+                  onZoomChange={(next) => setModalZoomLevel(next)}
+                />
+                <MediaLibraryToolbar
+                  showAll={showAll}
+                  onShowAllChange={handleShowAllChange}
+                  typeFilter={typeFilter}
+                  onTypeFilterChange={onTypeFilterChange}
+                  className="mx-0 min-w-0 flex-1 border-0 bg-transparent px-0 py-0"
+                />
+                {mediaUploadInputRef && (
+                  <div className="shrink-0">
+                    <Button
+                      variant="tertiary"
+                      svg={Plus}
+                      onClick={() => mediaUploadInputRef.current?.openModal()}
+                      title={
+                        uploadProgress?.isUploading
+                          ? `Uploading... ${Math.round(uploadProgress.progress)}%`
+                          : "Add Media"
+                      }
+                      disabled={uploadProgress?.isUploading}
+                    >
+                      {uploadProgress?.isUploading
+                        ? `${Math.round(uploadProgress.progress)}%`
+                        : ""}
+                    </Button>
+                  </div>
+                )}
+              </div>
+              <div className="flex min-w-0 items-center gap-2">
+                <Input
+                  type="text"
+                  label="Search"
+                  value={searchTerm}
+                  onChange={(value) => onSearchChange(value as string)}
+                  placeholder="Name"
+                  className="flex min-w-0 flex-1 gap-4 items-center"
+                  inputWidth="w-full"
+                  inputTextSize="text-sm"
+                  svg={searchTerm ? X : undefined}
+                  svgAction={() => onSearchChange("")}
+                  svgActionAriaLabel="Clear search"
+                />
+                <Toggle
+                  icon={Eye}
+                  value={showName}
+                  onChange={onShowNameToggle}
+                />
+              </div>
+            </div>
+
+            <div className="flex max-lg:hidden min-w-0 w-full flex-nowrap items-center gap-2">
+              <MediaModalGridZoomSlider
+                modalZoomLevel={modalZoomLevel}
+                modalZoomSliderMax={modalZoomSliderMax}
+                disabled={modalZoomSliderMax <= 0}
+                onZoomChange={(next) => setModalZoomLevel(next)}
+              />
+              <MediaLibraryToolbar
+                showAll={showAll}
+                onShowAllChange={handleShowAllChange}
+                typeFilter={typeFilter}
+                onTypeFilterChange={onTypeFilterChange}
+                className="mx-0 shrink-0 border-0 bg-transparent px-0 py-0"
+              />
+              <div className="flex min-h-10 min-w-0 flex-1 basis-0 items-center gap-2">
+                <Input
+                  type="text"
+                  label="Search"
+                  hideLabel
+                  value={searchTerm}
+                  onChange={(value) => onSearchChange(value as string)}
+                  placeholder="Search by name"
+                  className="min-w-0 w-full max-w-full flex-1"
+                  inputWidth="w-full min-w-0"
+                  inputTextSize="text-sm"
+                  svg={searchTerm ? X : undefined}
+                  svgAction={() => onSearchChange("")}
+                  svgActionAriaLabel="Clear search"
+                  aria-label="Search media by name"
+                />
+                <Toggle
+                  icon={Eye}
+                  value={showName}
+                  onChange={onShowNameToggle}
+                />
+              </div>
+              {mediaUploadInputRef && (
+                <div className="shrink-0">
+                  <Button
+                    variant="tertiary"
+                    svg={Plus}
+                    onClick={() => mediaUploadInputRef.current?.openModal()}
+                    title={
+                      uploadProgress?.isUploading
+                        ? `Uploading... ${Math.round(uploadProgress.progress)}%`
+                        : "Add Media"
+                    }
+                    disabled={uploadProgress?.isUploading}
+                  >
+                    {uploadProgress?.isUploading
+                      ? `${Math.round(uploadProgress.progress)}%`
+                      : ""}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="w-full">
+            <MediaLibraryActionBar
+              className="mx-0 rounded-none border-x-0"
+              detailsRow={actionBarDetails}
+              showFolderActions={modalSelectedMediaIds.size === 0}
+              newFolderPopover={
+                <Popover open={newFolderOpen} onOpenChange={setNewFolderOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="tertiary"
+                      className={MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS}
+                      svg={FolderPlus}
+                      title="New folder"
+                    >
+                      New folder
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="start"
+                    className="w-72 border border-gray-600 bg-gray-900 p-3 text-white"
+                  >
+                    <MediaLibraryNewFolderForm
+                      folders={folders}
+                      list={fullList}
+                      parentForNewFolder={parentForNewFolder}
+                      onUpdateFoldersAndList={onUpdateFoldersAndList}
+                      onClose={() => setNewFolderOpen(false)}
+                    />
+                  </PopoverContent>
+                </Popover>
+              }
+              renameFolderPopover={
+                selectedRealFolder ? (
+                  <Popover
+                    open={folderRenameOpen}
+                    onOpenChange={setFolderRenameOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="tertiary"
+                        className={MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS}
+                        svg={FolderInput}
+                        title="Rename folder"
+                      >
+                        Rename
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      className="w-72 border border-gray-600 bg-gray-900 p-3 text-white"
+                    >
+                      <MediaLibraryRenameFolderForm
+                        folders={folders}
+                        list={fullList}
+                        folder={selectedRealFolder}
+                        onUpdateFoldersAndList={onUpdateFoldersAndList}
+                        onClose={() => setFolderRenameOpen(false)}
+                      />
+                    </PopoverContent>
+                  </Popover>
+                ) : null
+              }
+              onDeleteFolder={() => setFolderDeleteOpen(true)}
+              showFolderRenameDelete={Boolean(selectedRealFolder)}
+              showMediaRename={modalSelectedMediaIds.size === 1}
+              mediaRenameOpen={mediaRenameOpen}
+              onMediaRenameOpenChange={(open) => {
+                if (open) {
+                  ignoreRenameAutoCloseUntilRef.current = Date.now() + 750;
+                  setMoveToNewFolderPopoverOpen(false);
+                  setMediaRenameOpen(true);
+                  return;
+                }
+                handleRenamePopoverOpenChange(false);
+              }}
+              renameMediaContent={
+                modalSelectedMediaIds.size === 1 ? (
+                  <MediaLibraryRenameMediaForm
+                    media={modalSelectedMedia}
+                    onSave={(name) => {
+                      dispatch(
+                        updateMediaItemFields({
+                          id: modalSelectedMedia.id,
+                          patch: {
+                            name,
+                            updatedAt: new Date().toISOString(),
+                          },
+                        }),
+                      );
+                    }}
+                    onClose={() => setMediaRenameOpen(false)}
+                  />
+                ) : null
+              }
+              mediaActions={
+                modalSelectedMediaIds.size > 0 ? mediaBarActions : []
+              }
+              showMoveSelect={modalSelectedMediaIds.size > 0}
+              moveSelectOptions={moveSelectOptions}
+              onMoveTo={handleMoveTo}
+              moveSelectResetKey={moveSelectKey}
+              moveToNewFolderOpen={moveToNewFolderOpen}
+              onMoveToNewFolderOpenChange={handleActionBarMoveToNewFolderOpenChange}
+              moveToNewFolderContent={
+                modalSelectedMediaIds.size > 0 ? (
+                  <MediaLibraryNewFolderForm
+                    folders={folders}
+                    list={fullList}
+                    parentForNewFolder={parentForNewFolder}
+                    onUpdateFoldersAndList={onUpdateFoldersAndList}
+                    adjustListAfterCreate={(nf, _nextFolders, listBefore) =>
+                      moveMediaToFolder(
+                        modalSelectedMediaIds,
+                        nf.id,
+                        listBefore,
+                      )
+                    }
+                    onClose={() => {
+                      setMoveToNewFolderPopoverOpen(false);
+                      setMoveSelectKey((k) => k + 1);
+                      clearModalSelection();
+                    }}
+                  />
+                ) : null
+              }
             />
           </div>
 
-          {/* Media grid */}
-          {filteredList.length !== 0 ? (
+          <MediaLibraryFolderModals
+            selectedLibraryFilter={selectedLibraryFilter}
+            onSelectLibraryFilter={navigateToFolder}
+            folders={folders}
+            list={fullList}
+            onUpdateFoldersAndList={onUpdateFoldersAndList}
+            onDeleteFolderSubtree={onDeleteFolderSubtree}
+            onDeleteFolderKeepContents={onDeleteFolderKeepContents}
+            folderDeleteOpen={folderDeleteOpen}
+            onFolderDeleteOpenChange={setFolderDeleteOpen}
+          />
+
+          {/* Media grid (folder tiles share the same scrollable grid) */}
+          {filteredList.length !== 0 || !showAll ? (
             <ul
               ref={modalGridRef}
               className={cn(
-                "scrollbar-variable grid overflow-y-auto p-4 gap-x-2 gap-y-1",
+                "scrollbar-variable grid min-h-0 flex-1 content-start items-start overflow-y-auto bg-black/30 p-4 gap-x-2 gap-y-1",
                 sizeMap.get(calculatedGridCols) || `grid-cols-${calculatedGridCols}`
               )}
               style={{
@@ -533,99 +1025,79 @@ const MediaModal = ({
                 gridAutoRows: "auto",
               }}
             >
+              <MediaLibraryFolderGridItems
+                active={!showAll}
+                childFolders={childFolders}
+                canGoUp={canGoUp}
+                onGoUp={handleGoUp}
+                onOpenFolder={(id) => navigateToFolder(id)}
+              />
               {filteredList.map((mediaItem, index) => {
                 const { id, thumbnail, name, type } = mediaItem;
                 const isSelected = id === modalSelectedMedia.id;
                 const isMultiSelected = modalSelectedMediaIds.has(id);
-                const hasMultipleSelection = modalSelectedMediaIds.size > 1;
                 const shownName = name.includes("/")
                   ? name.split("/").slice(1).join("/")
                   : name;
 
-                const contextMenuItems = getContextMenuItems(
-                  mediaItem,
-                  hasMultipleSelection,
-                  modalSelectedMediaIds.size
-                );
-
                 return (
                   <li key={id}>
-                    <ContextMenu
-                      menuItems={contextMenuItems}
-                      header={
-                        hasMultipleSelection
-                          ? {
-                            title: `${modalSelectedMediaIds.size} items selected`,
-                            subtitle: "Multiple selection",
-                          }
-                          : {
-                            title: shownName,
-                            subtitle:
-                              type.charAt(0).toUpperCase() + type.slice(1),
-                          }
-                      }
-                      onOpen={() => {
-                        if (!isMultiSelected && !hasMultipleSelection) {
-                          handleModalMediaClick(
-                            {
-                              ctrlKey: false,
-                              metaKey: false,
-                              shiftKey: false,
-                            } as React.MouseEvent,
-                            mediaItem,
-                            index
-                          );
+                    <Button
+                      variant="none"
+                      padding="p-0"
+                      className={cn(
+                        "flex h-auto w-full flex-col items-center justify-center border-2",
+                        isMultiSelected
+                          ? "border-cyan-400 bg-cyan-400/10"
+                          : isSelected
+                            ? "border-cyan-400"
+                            : "border-gray-500 hover:border-gray-300"
+                      )}
+                      onClick={(e) => {
+                        handleModalMediaClick(e, mediaItem, index);
+                      }}
+                      onContextMenu={(e) => {
+                        if (!isMultiSelected && !isSelected) {
+                          handleModalMediaClick(e, mediaItem, index);
                         }
                       }}
                     >
-                      <Button
-                        variant="none"
-                        padding="p-0"
-                        className={cn(
-                          "w-full h-full justify-center flex flex-col items-center border-2",
-                          isMultiSelected
-                            ? "border-cyan-400 bg-cyan-400/10"
-                            : isSelected
-                              ? "border-cyan-400"
-                              : "border-gray-500 hover:border-gray-300"
-                        )}
-                        onClick={(e) => {
-                          handleModalMediaClick(e, mediaItem, index);
-                        }}
-                        onContextMenu={(e) => {
-                          if (!isMultiSelected && !isSelected) {
-                            handleModalMediaClick(e, mediaItem, index);
-                          }
-                        }}
-                      >
-                        <div className="aspect-video flex items-center justify-center w-full flex-1 overflow-hidden border-b border-gray-500 relative">
-                          <CachedMediaImage
-                            className="max-w-full max-h-full"
-                            alt={id}
-                            src={thumbnail}
-                            loading="lazy"
-                          />
-                          <MediaTypeBadge type={type} />
-                        </div>
+                      <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden border-b border-gray-500">
+                        <CachedMediaImage
+                          className="max-w-full max-h-full"
+                          alt={id}
+                          src={thumbnail}
+                          loading="lazy"
+                        />
+                        <MediaTypeBadge type={type} />
+                      </div>
 
-                        {name && showName && (
-                          <div className="w-full px-1 py-1.5 text-center">
-                            <p
-                              className="text-sm font-medium text-gray-300 truncate"
-                              title={name}
-                            >
-                              {shownName}
-                            </p>
-                          </div>
-                        )}
-                      </Button>
-                    </ContextMenu>
+                      {name && showName && (
+                        <div className="w-full px-1 py-1.5 text-center">
+                          <p
+                            className="text-sm font-medium text-gray-300 truncate"
+                            title={name}
+                          >
+                            {shownName}
+                          </p>
+                        </div>
+                      )}
+                    </Button>
                   </li>
                 );
               })}
+              {!showAll &&
+                searchTerm &&
+                filteredList.length === 0 && (
+                  <li className="col-span-full py-1">
+                    <p className="text-sm text-gray-400">
+                      No media found matching &quot;{searchTerm}&quot;
+                    </p>
+                  </li>
+                )}
             </ul>
           ) : (
-            <div className="text-center py-8 px-2 flex-1 flex items-center justify-center">
+            <div className="flex flex-1 items-center justify-center bg-black/30 px-2 py-8 text-center">
               <p className="text-gray-400">
                 {searchTerm
                   ? `No media found matching "${searchTerm}"`

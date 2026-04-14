@@ -42,7 +42,7 @@ const ToastContainer: React.FC<ToastContainerProps> = ({
           className={`toast-group toast-group-${position}`}
           data-testid={`toast-group-${position}`}
         >
-          {positionToasts.map((toast) => {
+          {positionToasts.map((toast, stackIndex) => {
             const children =
               typeof toast.children === "function"
                 ? toast.children(toast.id)
@@ -53,6 +53,7 @@ const ToastContainer: React.FC<ToastContainerProps> = ({
                 key={toast.id}
                 {...toast}
                 children={children}
+                stackIndex={stackIndex}
                 onClose={() => onRemove(toast.id)}
               />
             );

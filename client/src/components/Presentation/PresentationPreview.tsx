@@ -16,6 +16,7 @@ import {
 } from "../../store/presentationSlice";
 import Button from "../Button/Button";
 import cn from "classnames";
+import { CLEAR_ACTION_ICON_COLOR } from "../../constants";
 
 type PresentationPreviewProps = {
   name: string;
@@ -185,7 +186,7 @@ const PresentationPreview = ({
 
   return (
     <div className="flex flex-col gap-2">
-      <section className="border border-gray-600 rounded-sm overflow-hidden relative bg-gray-800">
+      <section className="relative overflow-hidden rounded-sm border border-white/12 bg-black/30">
         <div
           className={cn(
             "flex gap-2",
@@ -195,15 +196,23 @@ const PresentationPreview = ({
           <div
             className={cn(
               "flex flex-col",
-              hideQuickLinks && "w-full items-center min-w-0"
+              hideQuickLinks && "w-full items-center min-w-0",
+              // Match DisplayWindow width so the header never exceeds the preview (w-fit used the
+              // header’s intrinsic width and could overflow past the aspect-video box below).
+              !hideQuickLinks && "shrink-0 min-w-0"
             )}
+            style={
+              !hideQuickLinks
+                ? { width: `${previewWidthVw}vw`, maxWidth: "100%" }
+                : undefined
+            }
           >
             {!hideHeader && (
               <h2
                 ref={headerRef}
                 data-measure="presentation-header"
                 className={cn(
-                  "bg-gray-900 text-center font-semibold text-sm px-2 py-1",
+                  "border-b border-white/10 bg-black/25 text-center text-xs font-semibold px-2 py-1",
                   minimalHeader
                     ? "flex items-center justify-center"
                     : "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2"
@@ -224,15 +233,17 @@ const PresentationPreview = ({
                     <Button
                       data-measure="presentation-clear-button"
                       svg={MonitorX}
+                      color={CLEAR_ACTION_ICON_COLOR}
                       onClick={handleClear}
                       iconSize="md"
-                      className="justify-self-center"
+                      className="justify-self-center text-xs"
                     >
                       {shouldShowClearLabel ? "Clear" : undefined}
                     </Button>
                     <div className="flex items-center justify-self-end shrink-0">
                       <Toggle
                         label={shouldShowTransmitLabel ? "Live" : undefined}
+                        labelClassName="text-xs"
                         icon={MonitorUp}
                         value={isTransmitting}
                         onChange={toggleIsTransmitting}
@@ -251,7 +262,12 @@ const PresentationPreview = ({
                   className="pointer-events-none absolute invisible whitespace-nowrap"
                   aria-hidden="true"
                 >
-                  <Button svg={MonitorX} iconSize="md" />
+                  <Button
+                    svg={MonitorX}
+                    iconSize="md"
+                    color={CLEAR_ACTION_ICON_COLOR}
+                    className="text-xs"
+                  />
                 </div>
                 <div
                   ref={labeledClearMeasureRef}
@@ -259,7 +275,12 @@ const PresentationPreview = ({
                   className="pointer-events-none absolute invisible whitespace-nowrap"
                   aria-hidden="true"
                 >
-                  <Button svg={MonitorX} iconSize="md">
+                  <Button
+                    svg={MonitorX}
+                    iconSize="md"
+                    color={CLEAR_ACTION_ICON_COLOR}
+                    className="text-xs"
+                  >
                     Clear
                   </Button>
                 </div>
@@ -284,6 +305,7 @@ const PresentationPreview = ({
                 >
                   <Toggle
                     label="Live"
+                    labelClassName="text-xs"
                     icon={MonitorUp}
                     value={isTransmitting}
                     onChange={() => undefined}
@@ -292,7 +314,13 @@ const PresentationPreview = ({
                 </div>
               </>
             )}
-            <DisplayWindow {...displayWindowProps} />
+            <div
+              className={cn(
+                info.displayType === "stream" && "bg-gray-500/35"
+              )}
+            >
+              <DisplayWindow {...displayWindowProps} />
+            </div>
           </div>
           {!hideQuickLinks && filteredQuickLinks.length > 0 && (
             <ul className="grid grid-cols-2 gap-2 py-2 w-full pr-2">

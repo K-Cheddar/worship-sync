@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
 import { BrowserRouter } from "react-router-dom";
@@ -7,13 +7,20 @@ import { configureStore } from "@reduxjs/toolkit";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { creditsSlice } from "../../../store/creditsSlice";
+import { itemListsSlice } from "../../../store/itemListsSlice";
 import { overlaysSlice } from "../../../store/overlaysSlice";
+import { getCreditsDocId } from "../../../types";
 import undoable from "redux-undo";
 import {
   createMockControllerContext,
   createMockGlobalContext,
   createMockPouchDB,
 } from "../../../test/mocks";
+import { STUCK_DB_PROGRESS_MS } from "../../../constants";
+import {
+  mockWindowLocationReload,
+  restoreWindowLocation,
+} from "../../../test/windowLocationTestMock";
 
 // controllerInfo uses import.meta – replaced by jest.config.cjs moduleNameMapper (__mocks__)
 // ResizeObserver – setupTests.ts
@@ -40,6 +47,7 @@ jest.mock("../../../containers/Toolbar/ToolbarElements/Undo", () => () => (
 jest.mock("firebase/database", () => ({
   ref: jest.fn(),
   onValue: jest.fn(),
+  set: jest.fn(),
 }));
 
 // Mock the Excel utility
@@ -78,9 +86,34 @@ jest.mock("../../../utils/getScheduleFromExcel", () => {
 interface RootState {
   credits: ReturnType<typeof creditsSlice.reducer>;
   overlays: ReturnType<typeof overlaysSlice.reducer>;
+  itemLists: ReturnType<typeof itemListsSlice.reducer>;
 }
 
-const mockPouchDB = createMockPouchDB();
+const outlineSeed = { _id: "outline-1", name: "Test Outline" };
+
+const mockPouchDB = createMockPouchDB({
+  allDocs: jest.fn().mockResolvedValue({ rows: [] }),
+  get: jest.fn().mockImplementation((id: string) => {
+    if (id === "ItemLists") {
+      return Promise.resolve({
+        itemLists: [outlineSeed],
+        activeList: outlineSeed,
+      });
+    }
+    if (id === "outline-1") {
+      return Promise.resolve({ overlays: [] });
+    }
+    if (id === getCreditsDocId("outline-1")) {
+      return Promise.resolve({
+        _id: id,
+        outlineId: "outline-1",
+        creditIds: [],
+        docType: "credits",
+      });
+    }
+    return Promise.reject({ name: "not_found" });
+  }),
+});
 const mockControllerContext = createMockControllerContext({ db: mockPouchDB });
 const mockGlobalContext = createMockGlobalContext();
 
@@ -88,6 +121,7 @@ const mockGlobalContext = createMockGlobalContext();
 jest.mock("../../../hooks/reduxHooks", () => {
   const { createAsyncThunk } = require("@reduxjs/toolkit");
   const { creditsSlice } = require("../../../store/creditsSlice");
+  const { itemListsSlice } = require("../../../store/itemListsSlice");
   const { overlaysSlice } = require("../../../store/overlaysSlice");
   let mockDispatch = jest.fn();
 
@@ -113,6 +147,13 @@ jest.mock("../../../hooks/reduxHooks", () => {
             { id: "14", heading: "Graphics", text: "" },
           ],
           isLoading: false,
+        },
+        itemLists: {
+          ...itemListsSlice.getInitialState(),
+          currentLists: [{ _id: "outline-1", name: "Test Outline" }],
+          activeList: { _id: "outline-1", name: "Test Outline" },
+          selectedList: { _id: "outline-1", name: "Test Outline" },
+          isInitialized: true,
         },
         overlays: {
           ...overlaysSlice.getInitialState(),
@@ -179,6 +220,7 @@ describe("CreditsEditor", () => {
               ...state,
               credits: creditsSlice.reducer(state.credits, action),
               overlays: overlaysSlice.reducer(state.overlays, action),
+              itemLists: itemListsSlice.reducer(state.itemLists, action),
             };
           },
           {
@@ -228,6 +270,49 @@ describe("CreditsEditor", () => {
     expect(loadingOverlay).toBeInTheDocument();
     expect(loadingOverlay).toHaveTextContent(/Setting up/);
     expect(loadingOverlay).toHaveTextContent(/Progress:.*%/);
+  });
+
+  it("shows stuck recovery on loading overlay when dbProgress is unchanged for 15s", async () => {
+    jest.useFakeTimers();
+    const reloadMock = jest.fn();
+    mockWindowLocationReload(reloadMock);
+    try {
+      const contextWithLoading = {
+        ...mockControllerContext,
+        dbProgress: 7,
+        connectionStatus: { status: "connecting" as const, retryCount: 0 },
+      };
+
+      render(
+        <Provider store={mockStore}>
+          <ControllerInfoContext.Provider
+            value={contextWithLoading as React.ComponentProps<
+              typeof ControllerInfoContext.Provider
+            >["value"]}
+          >
+            <GlobalInfoContext.Provider value={mockGlobalContext}>
+              <BrowserRouter>
+                <CreditsEditor />
+              </BrowserRouter>
+            </GlobalInfoContext.Provider>
+          </ControllerInfoContext.Provider>
+        </Provider>,
+      );
+
+      act(() => {
+        jest.advanceTimersByTime(STUCK_DB_PROGRESS_MS);
+      });
+
+      expect(
+        await screen.findByText(/Startup is taking longer than expected/),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Try Again" }),
+      ).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+      restoreWindowLocation();
+    }
   });
 
   it("toggles preview mode on mobile", async () => {

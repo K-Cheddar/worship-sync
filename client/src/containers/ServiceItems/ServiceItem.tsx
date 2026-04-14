@@ -25,6 +25,8 @@ type ServiceItemsProps = {
   item: ServiceItemType;
   initialItems: string[];
   onItemClick: (listId: string, e: React.MouseEvent) => void;
+  /** When false, outline cannot be reordered or removed (view-only access). */
+  canMutateOutline?: boolean;
 };
 
 const ServiceItem = ({
@@ -37,12 +39,14 @@ const ServiceItem = ({
   selectedListIds,
   initialItems,
   onItemClick,
+  canMutateOutline = true,
 }: ServiceItemsProps) => {
   const dispatch = useDispatch();
   const serviceItemRef = useRef<HTMLElement | null>(null);
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
       id: item.listId,
+      disabled: !canMutateOutline,
     });
   const previousItem = useRef<ServiceItemType | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -61,6 +65,7 @@ const ServiceItem = ({
   };
 
   const actions = useMemo(() => {
+    if (!canMutateOutline) return undefined;
     return [
       {
         action: (listId: string) => {
@@ -74,7 +79,7 @@ const ServiceItem = ({
         id: generateRandomId(),
       },
     ];
-  }, [dispatch]);
+  }, [canMutateOutline, dispatch]);
 
   useEffect(() => {
     // track previousItem for highlighting
@@ -157,8 +162,8 @@ const ServiceItem = ({
 
   return (
     <LeftPanelButton
-      {...attributes}
-      {...listeners}
+      {...(canMutateOutline ? attributes : {})}
+      {...(canMutateOutline ? listeners : {})}
       style={style}
       ref={(element) => {
         setNodeRef(element);
@@ -167,9 +172,11 @@ const ServiceItem = ({
       data-list-id={item.listId}
       title={item.name}
       className={cn(
-        "border-b-2 border-r-4 overflow-hidden",
+        "border-b-2 overflow-hidden",
         isSelected ? "border-l-cyan-500" : "border-transparent",
-        isInsertPoint ? "border-b-white" : "border-b-transparent"
+        isSelected && "border-b-cyan-500",
+        !isSelected && isInsertPoint && "border-b-white",
+        !isSelected && !isInsertPoint && "border-b-transparent"
       )}
       isSelected={isSelected}
       to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(

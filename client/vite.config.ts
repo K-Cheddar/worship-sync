@@ -26,8 +26,14 @@ export default defineConfig(({ mode }) => {
       },
     },
     optimizeDeps: {
-      include: ["pouchdb-browser"],
-      force: true,
+      // PouchDB subclasses Node's EventEmitter; Vite must resolve a real `events`
+      // constructor (see apache/pouchdb#9078, #9118).
+      include: ["pouchdb-browser", "events"],
+      esbuildOptions: {
+        define: {
+          global: "globalThis",
+        },
+      },
     },
     plugins: [
       react(),
@@ -56,6 +62,7 @@ export default defineConfig(({ mode }) => {
         }
       : undefined,
     resolve: {
+      dedupe: ["events"],
       alias: {
         "@/": resolve(__dirname, "./src"),
         "@/utils": resolve(__dirname, "./src/utils"),

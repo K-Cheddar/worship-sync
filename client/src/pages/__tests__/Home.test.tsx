@@ -9,6 +9,7 @@ import {
   createMockGlobalContext,
 } from "../../test/mocks";
 import { usePwaInstallPrompt } from "../../hooks/usePwaInstallPrompt";
+import { isMacBrowser, isWindowsBrowser } from "../../utils/environment";
 
 jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
   <div>User</div>
@@ -17,6 +18,7 @@ jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
 jest.mock("../../utils/environment", () => ({
   isElectron: jest.fn(() => false),
   isWindowsBrowser: jest.fn(() => true),
+  isMacBrowser: jest.fn(() => false),
 }));
 
 jest.mock("../../utils/githubRelease", () => ({
@@ -24,6 +26,7 @@ jest.mock("../../utils/githubRelease", () => ({
     () => "https://github.com/K-Cheddar/worship-sync/releases/latest",
   ),
   fetchLatestWindowsInstallerUrl: jest.fn(() => Promise.resolve(null)),
+  fetchLatestMacInstallerUrl: jest.fn(() => Promise.resolve(null)),
 }));
 
 jest.mock("../../hooks/usePwaInstallPrompt", () => ({
@@ -31,6 +34,8 @@ jest.mock("../../hooks/usePwaInstallPrompt", () => ({
 }));
 
 const mockUsePwaInstallPrompt = jest.mocked(usePwaInstallPrompt);
+const mockIsWindowsBrowser = jest.mocked(isWindowsBrowser);
+const mockIsMacBrowser = jest.mocked(isMacBrowser);
 
 describe("Home", () => {
   beforeEach(() => {
@@ -38,6 +43,8 @@ describe("Home", () => {
       canShowInstall: false,
       installPwa: jest.fn(),
     });
+    mockIsWindowsBrowser.mockReturnValue(true);
+    mockIsMacBrowser.mockReturnValue(false);
   });
 
   it("describes features and keeps controller and display guidance available", async () => {
@@ -91,9 +98,7 @@ describe("Home", () => {
         hidden: true,
       }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Advanced access/, { hidden: true }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Advanced access/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /^Install$/i }));
     await user.click(
@@ -174,7 +179,7 @@ describe("Home", () => {
     render(
       <MemoryRouter>
         <GlobalInfoContext.Provider
-          value={createMockGlobalContext({ loginState: "demo" }) as any}
+          value={createMockGlobalContext({ loginState: "guest" }) as any}
         >
           <ControllerInfoContext.Provider
             value={createMockControllerContext() as any}
@@ -191,5 +196,149 @@ describe("Home", () => {
     expect(
       screen.getByRole("link", { name: /^Credits Editor / }),
     ).toHaveAttribute("href", "/credits-editor");
+  });
+
+  it("hides board moderation, info controller, and display outputs for view access", () => {
+    render(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={
+            createMockGlobalContext({
+              loginState: "success",
+              access: "view",
+            }) as any
+          }
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.queryByRole("link", { name: /Board moderation/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Info Controller/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Show display links$/ }),
+    ).not.toBeInTheDocument();
+    const outboundLinks = screen.getAllByRole("link");
+    const hrefs = outboundLinks.map((el) => el.getAttribute("href") || "");
+    expect(hrefs.some((h) => h.includes("/monitor"))).toBe(false);
+    expect(hrefs.some((h) => h.includes("/stream"))).toBe(false);
+    expect(
+      screen.getByRole("link", { name: /^Credits Editor / }),
+    ).toHaveAttribute("href", "/credits-editor");
+  });
+
+  it("shows only presentation controller for music access", () => {
+    render(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={
+            createMockGlobalContext({
+              loginState: "success",
+              access: "music",
+            }) as any
+          }
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.getByRole("link", { name: /Presentation Controller/i }),
+    ).toHaveAttribute("href", "/controller");
+    expect(
+      screen.queryByRole("link", { name: /Overlay Controller/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /^Credits Editor / }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Board moderation/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Info Controller/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Show display links$/ }),
+    ).not.toBeInTheDocument();
+
+    const outboundLinks = screen.getAllByRole("link");
+    const hrefs = outboundLinks.map((el) => el.getAttribute("href") || "");
+    expect(hrefs.some((h) => h.includes("/monitor"))).toBe(false);
+    expect(hrefs.some((h) => h.includes("/stream"))).toBe(false);
+  });
+
+  it("hides display output links when the user is not logged in and explains why", () => {
+    render(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext({ loginState: "guest" }) as any}
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    // Avoid matching the guest explainer copy ("Sign in to show display links…").
+    expect(
+      screen.queryByText(/^Show display links$/),
+    ).not.toBeInTheDocument();
+    const outboundLinks = screen.getAllByRole("link");
+    const hrefs = outboundLinks.map((el) => el.getAttribute("href") || "");
+    expect(hrefs.some((h) => h.includes("/monitor"))).toBe(false);
+    expect(hrefs.some((h) => h.includes("/stream"))).toBe(false);
+    expect(
+      screen.getByText(/Sign in to show display links/),
+    ).toBeInTheDocument();
+  });
+
+  it("offers Mac DMG download in the popover when on macOS", async () => {
+    mockIsWindowsBrowser.mockReturnValue(false);
+    mockIsMacBrowser.mockReturnValue(true);
+    const user = userEvent.setup();
+    const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
+    render(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /^Install$/i }));
+    await user.click(
+      screen.getByRole("button", { name: /Download Mac app/i }),
+    );
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://github.com/K-Cheddar/worship-sync/releases/latest",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(await screen.findByText(/Download for Mac/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Mac disk image.*\.dmg/i),
+    ).toBeInTheDocument();
+    openSpy.mockRestore();
   });
 });

@@ -5,7 +5,7 @@ const mockValidateFiles = jest.fn((files: File[]) => ({
   valid: files,
   invalid: [],
 }));
-const mockDetectFileType = jest.fn(() => "image");
+const mockDetectFileType = jest.fn((_file: File) => "image");
 const mockUploadImageToCloudinary = jest.fn();
 
 jest.mock("../../components/Modal/Modal", () => ({
@@ -99,7 +99,7 @@ describe("MediaUploadInput", () => {
 
     fireEvent.change(fileInput, { target: { files: [file] } });
 
-    const electronAPI = window.electronAPI as {
+    const electronAPI = window.electronAPI as unknown as {
       setUploadInProgress: jest.Mock;
       setTaskbarUploadProgress: jest.Mock;
     };

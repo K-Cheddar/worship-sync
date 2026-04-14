@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("set-display-preference", windowType, displayId),
   getDisplays: () => ipcRenderer.invoke("get-displays"),
   getWindowStates: () => ipcRenderer.invoke("get-window-states"),
+  refreshDisplayWindows: () =>
+    ipcRenderer.invoke("refresh-display-windows") as Promise<number>,
 
   // Event listeners
   onWindowStateChanged: (callback: () => void) => {
@@ -85,7 +87,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Media cache
   downloadMedia: (url: string) => ipcRenderer.invoke("download-media", url),
   getMediaCacheMap: () =>
-    ipcRenderer.invoke("get-media-cache-map") as Promise<Record<string, string>>,
+    ipcRenderer.invoke("get-media-cache-map") as Promise<
+      Record<string, string>
+    >,
   getLocalMediaPath: (url: string) =>
     ipcRenderer.invoke("get-local-media-path", url),
   cleanupUnusedMedia: (usedUrls: string[]) =>

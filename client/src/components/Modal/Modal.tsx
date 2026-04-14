@@ -1,5 +1,12 @@
-import { useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { useCallback } from "react";
+import {
+  Dialog,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import Button from "../Button/Button";
 import { X } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
@@ -22,6 +29,8 @@ interface ModalProps {
   headerClassName?: string;
   /** Merged onto the title element. */
   titleClassName?: string;
+  /** Accessible description for screen readers; hidden visually by default. */
+  description?: string;
 }
 
 const sizeClasses = {
@@ -31,6 +40,11 @@ const sizeClasses = {
   xl: "max-w-6xl",
   "2xl": "max-w-7xl",
   full: "max-w-[95vw] max-md:w-full max-md:h-full max-md:max-w-none",
+};
+
+const getControllerElement = () => {
+  const controllerMain = document.getElementById("controller-main");
+  return controllerMain ?? document.body;
 };
 
 const Modal = ({
@@ -47,154 +61,93 @@ const Modal = ({
   surfaceClassName,
   headerClassName,
   titleClassName,
+  description,
 }: ModalProps) => {
-  const modalRef = useRef<HTMLDivElement>(null);
-  const previousActiveElement = useRef<HTMLElement | null>(null);
-
-  const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "Escape" && isOpen) {
-      onClose();
-    }
-  };
-
-  useEffect(() => {
-    if (isOpen) {
-      // Store the currently focused element
-      previousActiveElement.current = document.activeElement as HTMLElement;
-    }
-
-    return () => {
-      // Restore focus to the previous element
-      if (previousActiveElement.current) {
-        previousActiveElement.current.focus();
-      }
-    };
-  }, [isOpen]);
-
-  const handleBackdropClick = (event: React.MouseEvent) => {
-    if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
-      onClose();
-    }
-  };
-
-  const handleModalContentClick = (event: React.MouseEvent) => {
-    // Prevent clicks inside the modal from propagating outside
-    event.stopPropagation();
-  };
-
-  useEffect(() => {
-    if (isOpen && modalRef.current) {
-      // Focus the modal when it opens
-      const focusableElements = modalRef.current.querySelectorAll(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      );
-      const firstFocusableElement = focusableElements[0] as HTMLElement;
-      if (firstFocusableElement) {
-        firstFocusableElement.focus();
-      }
-    }
-  }, [isOpen]);
-
-  // Find the controller element to use as portal target
-  const getControllerElement = () => {
-    // Look for the controller main element by ID
-    const controllerMain = document.getElementById("controller-main");
-    if (controllerMain) {
-      return controllerMain;
-    }
-
-    // Fallback to body if controller is not found
-    return document.body;
-  };
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) onClose();
+    },
+    [onClose]
+  );
 
   const zIndexClass = zIndexLevel === 2 ? "z-[55]" : "z-50";
 
-  const modalContent = (
-    <div
-      className={cn(
-        "fixed inset-0 flex items-center justify-center p-4",
-        zIndexClass,
-        size === "full" ? "max-md:p-0" : "p-4",
-        !isOpen && "hidden",
-      )}
-      onClick={handleBackdropClick}
-      onKeyDown={handleKeyDown}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={title && "modal-title"}
-      tabIndex={-1}
-    >
-      <div
-        className={cn(
-          "absolute inset-0 bg-black/50 transition-opacity",
-          backdropClassName,
-        )}
-      />
-
-      <div
-        ref={modalRef}
-        className={cn(
-          "relative w-full overflow-hidden shadow-2xl",
-          sizeClasses[size],
-          surfaceClassName
-            ? surfaceClassName
-            : cn(
-                "bg-gray-800",
-                size === "full"
-                  ? "max-md:h-full max-md:rounded-none"
-                  : "max-h-[90vh] rounded-lg max-md:max-h-[95vh] max-md:rounded-none",
-              ),
-        )}
-        role="document"
-        onClick={handleModalContentClick}
-      >
-        {(title || showCloseButton || headerAction) && (
-          <div
-            className={cn(
-              "flex items-center justify-between p-4",
-              headerClassName,
-            )}
-          >
-            {title && (
-              <h2
-                id="modal-title"
-                className={cn(
-                  "text-xl font-semibold text-white",
-                  titleClassName,
-                )}
-              >
-                {title}
-              </h2>
-            )}
-            <div className="ml-auto flex items-center gap-2">
-              {headerAction}
-              {showCloseButton && (
-                <Button
-                  variant="tertiary"
-                  svg={X}
-                  onClick={onClose}
-                  iconSize="lg"
-                  aria-label="Close modal"
-                />
-              )}
-            </div>
-          </div>
-        )}
-
-        <div
+  return (
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogPortal container={getControllerElement()}>
+        <DialogOverlay className={cn(zIndexClass, backdropClassName)} />
+        <DialogPrimitive.Content
           className={cn(
-            "overflow-y-auto max-h-[calc(90vh-120px)] max-md:max-h-[calc(100vh)] scrollbar-variable",
-            contentPadding
+            "fixed left-1/2 top-1/2 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden border-0 bg-transparent p-0 shadow-none outline-none",
+            zIndexClass,
+            sizeClasses[size],
+            size === "full" &&
+            "max-md:inset-0 max-md:left-0 max-md:top-0 max-md:h-full max-md:max-h-full max-md:w-full max-md:max-w-none max-md:translate-x-0 max-md:translate-y-0 max-md:p-0",
+            size !== "full" && "max-h-[90vh]"
           )}
         >
-          {children}
-        </div>
-      </div>
-    </div>
-  );
+          {!(title || showCloseButton || headerAction) && (
+            <DialogTitle className="sr-only">Dialog</DialogTitle>
+          )}
+          <DialogDescription className="sr-only">
+            {description || "Dialog content"}
+          </DialogDescription>
+          <div
+            className={cn(
+              "relative flex w-full min-h-0 flex-1 flex-col overflow-hidden shadow-2xl",
+              surfaceClassName
+                ? surfaceClassName
+                : cn(
+                  "bg-gray-800",
+                  size === "full"
+                    ? "max-md:h-full max-md:rounded-none"
+                    : "rounded-lg max-md:max-h-[95vh] max-md:rounded-none"
+                )
+            )}
+          >
+            {(title || showCloseButton || headerAction) && (
+              <div
+                className={cn(
+                  "flex shrink-0 items-center justify-between p-4",
+                  headerClassName
+                )}
+              >
+                <DialogTitle
+                  className={cn(
+                    !title && "sr-only",
+                    title && cn("text-xl font-semibold text-white", titleClassName)
+                  )}
+                >
+                  {title ?? "Dialog"}
+                </DialogTitle>
+                <div className="ml-auto flex items-center gap-2">
+                  {headerAction}
+                  {showCloseButton && (
+                    <Button
+                      variant="tertiary"
+                      svg={X}
+                      onClick={onClose}
+                      iconSize="lg"
+                      aria-label="Close modal"
+                    />
+                  )}
+                </div>
+              </div>
+            )}
 
-  // Use portal to render modal into controller element
-  return createPortal(modalContent, getControllerElement());
+            <div
+              className={cn(
+                "min-h-0 flex-1 overflow-y-auto max-h-[calc(90vh-120px)] max-md:max-h-[calc(100vh)] scrollbar-variable",
+                contentPadding
+              )}
+            >
+              {children}
+            </div>
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPortal>
+    </Dialog>
+  );
 };
 
 export default Modal;

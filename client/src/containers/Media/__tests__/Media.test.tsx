@@ -1,5 +1,6 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import Media from "../Media";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 
@@ -41,27 +42,32 @@ const mockSetMediaItems = jest.fn((payload: number) => ({
   payload,
 }));
 
+const emptySelectedMedia = {
+  id: "",
+  background: "",
+  type: "image" as const,
+  path: "",
+  createdAt: "",
+  updatedAt: "",
+  format: "",
+  height: 0,
+  width: 0,
+  publicId: "",
+  name: "",
+  thumbnail: "",
+  placeholderImage: "",
+  source: "cloudinary" as const,
+};
+
+let mockSelectedMedia: typeof emptySelectedMedia = emptySelectedMedia;
+let mockSelectedMediaIds = new Set<string>();
+
 jest.mock("../../../hooks", () => ({
   useDispatch: () => mockDispatch,
   useSelector: (selector: (state: unknown) => unknown) => selector(mockState),
   useMediaSelection: () => ({
-    selectedMedia: {
-      id: "",
-      background: "",
-      type: "image",
-      path: "",
-      createdAt: "",
-      updatedAt: "",
-      format: "",
-      height: 0,
-      width: 0,
-      publicId: "",
-      name: "",
-      thumbnail: "",
-      placeholderImage: "",
-      source: "cloudinary",
-    },
-    selectedMediaIds: new Set<string>(),
+    selectedMedia: mockSelectedMedia,
+    selectedMediaIds: mockSelectedMediaIds,
     previewMedia: null,
     setPreviewMedia: jest.fn(),
     setSelectedMediaIds: jest.fn(),
@@ -75,13 +81,32 @@ jest.mock("../../../hooks/useGlobalBroadcast", () => ({
     mockUseGlobalBroadcast(cb),
 }));
 
+const mockNavigate = jest.fn();
+const mockShowToast = jest.fn();
+
+jest.mock("../../../context/toastContext", () => ({
+  useToast: () => ({
+    showToast: mockShowToast,
+    removeToast: jest.fn(),
+  }),
+}));
+
 jest.mock("react-router-dom", () => ({
   ...jest.requireActual("react-router-dom"),
   useLocation: () => mockUseLocation(),
+  useNavigate: () => mockNavigate,
 }));
 
 jest.mock("../../../store/mediaSlice", () => ({
   initiateMediaList: (payload: any) => mockInitiateMediaList(payload),
+  syncMediaFromRemote: jest.fn((payload: any) => ({
+    type: "media/syncMediaFromRemote",
+    payload,
+  })),
+  setMediaListAndFolders: jest.fn((payload: any) => ({
+    type: "media/setMediaListAndFolders",
+    payload,
+  })),
   updateMediaList: jest.fn((payload: any) => ({ type: "media/updateMediaList", payload })),
   updateMediaListFromRemote: jest.fn((payload: any) => ({
     type: "media/updateMediaListFromRemote",
@@ -98,6 +123,10 @@ jest.mock("../../../store/preferencesSlice", () => ({
   })),
   setMediaItems: (payload: number) => mockSetMediaItems(payload),
   setSelectedQuickLinkImage: (payload: any) => mockSetSelectedQuickLinkImage(payload),
+  setMediaRouteFolder: jest.fn((payload: any) => ({
+    type: "preferences/setMediaRouteFolder",
+    payload,
+  })),
 }));
 
 jest.mock("../../../store/itemSlice", () => ({
@@ -106,6 +135,10 @@ jest.mock("../../../store/itemSlice", () => ({
     payload,
   })),
   updateSlideBackground: (payload: any) => mockUpdateSlideBackground(payload),
+  setActiveItem: jest.fn((payload: any) => ({
+    type: "item/setActiveItem",
+    payload,
+  })),
 }));
 
 jest.mock("../../../store/overlaysSlice", () => ({
@@ -126,31 +159,6 @@ jest.mock("../../../components/ErrorBoundary/ErrorBoundary", () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-jest.mock("../../../components/ContextMenu/ContextMenu", () => ({
-  __esModule: true,
-  default: ({
-    children,
-    menuItems = [],
-  }: {
-    children: React.ReactNode;
-    menuItems?: Array<{ label: string; onClick: () => void }>;
-  }) => (
-    <div>
-      {children}
-      {menuItems.map((item) => (
-        <button
-          key={item.label}
-          type="button"
-          data-testid={`context-item-${item.label}`}
-          onClick={item.onClick}
-        >
-          {item.label}
-        </button>
-      ))}
-    </div>
-  ),
-}));
-
 jest.mock("../MediaTypeBadge", () => ({
   __esModule: true,
   default: () => <span data-testid="media-type-badge" />,
@@ -164,6 +172,14 @@ jest.mock("../../../components/Modal/DeleteModal", () => ({
 jest.mock("../MediaModal", () => ({
   __esModule: true,
   default: () => null,
+}));
+
+jest.mock("../../../utils/mediaReferenceSweep", () => ({
+  sweepMediaReferencesBeforeDelete: jest.fn().mockResolvedValue({ ok: true, failedDocIds: [] }),
+}));
+
+jest.mock("../../../utils/flushMediaLibraryDoc", () => ({
+  flushMediaLibraryDocToPouch: jest.fn().mockResolvedValue({ ok: true }),
 }));
 
 jest.mock("../MediaUploadInput", () => {
@@ -194,6 +210,12 @@ jest.mock("../MediaUploadInput", () => {
 
 const makeBaseState = (overrides: Partial<any> = {}) => {
   const base = {
+    presentation: {
+      isProjectorTransmitting: false,
+    },
+    allItems: {
+      list: [] as { name: string; _id: string; listId: string; type: string }[],
+    },
     media: {
       list: [
         {
@@ -203,22 +225,51 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
           thumbnail: "https://example.com/thumb.jpg",
           background: "https://example.com/bg.jpg",
           source: "cloudinary",
+          format: "",
+          path: "",
+          createdAt: "",
+          updatedAt: "",
+          height: 0,
+          width: 0,
+          publicId: "",
         },
       ],
+      folders: [],
+      isInitialized: true,
     },
     undoable: {
       present: {
         item: {
           isLoading: false,
+          type: "song",
+          selectedArrangement: 0,
+          selectedSlide: 0,
+          arrangements: [],
+          slides: [
+            {
+              id: "slide-1",
+              type: "Verse",
+              name: "V1",
+              boxes: [],
+            },
+          ],
+          backgroundTargetSlideIds: [],
+          backgroundTargetRangeAnchorId: null,
+          mobileBackgroundTargetSelectMode: false,
         },
         overlay: {
           selectedOverlay: null,
         },
         preferences: {
           isMediaExpanded: true,
-          mediaItemsPerRow: 5,
+          mediaItemsPerRow: 4,
           selectedPreference: null,
           selectedQuickLink: null,
+          mediaRouteFolders: {},
+          preferences: {
+            defaultFreeFormBackgroundBrightness: 100,
+            defaultFreeFormFontMode: "separate",
+          },
         },
       },
     },
@@ -227,6 +278,14 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
   return {
     ...base,
     ...overrides,
+    presentation: {
+      ...base.presentation,
+      ...((overrides as any).presentation || {}),
+    },
+    allItems: {
+      ...base.allItems,
+      ...((overrides as any).allItems || {}),
+    },
     media: {
       ...base.media,
       ...(overrides as any).media,
@@ -254,15 +313,26 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
   };
 };
 
+/** In jsdom the action row is often too narrow, so route actions sit in the overflow menu. */
+async function clickMediaLibraryRouteAction(name: RegExp) {
+  const user = userEvent.setup();
+  const more = screen.queryByRole("button", { name: /More actions/i });
+  if (more) {
+    await user.click(more);
+    const item = await screen.findByRole("menuitem", { name });
+    await user.click(item);
+    return;
+  }
+  await user.click(screen.getByRole("button", { name }));
+}
+
 const renderMedia = async ({
   isMobile = false,
-  dbGetResult = { list: [] },
 }: {
   isMobile?: boolean;
-  dbGetResult?: any;
 } = {}) => {
   const db = {
-    get: jest.fn().mockResolvedValue(dbGetResult),
+    get: jest.fn().mockResolvedValue({ list: [], folders: [] }),
   };
   const cloud = { image: jest.fn(), video: jest.fn() };
   const updater = new EventTarget();
@@ -282,41 +352,35 @@ const renderMedia = async ({
     </ControllerInfoContext.Provider>
   );
 
-  await waitFor(() => {
-    expect(db.get).toHaveBeenCalledWith("media");
-  });
-
   return { db };
 };
 
 describe("Media", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockNavigate.mockClear();
+    mockShowToast.mockClear();
     mockUseLocation.mockReturnValue({ pathname: "/item/123" });
     mockState = makeBaseState();
+    mockSelectedMedia = { ...emptySelectedMedia };
+    mockSelectedMediaIds = new Set();
   });
 
-  it("loads media from db and dispatches initialization actions", async () => {
-    const remoteList = [{ id: "remote-1", name: "Remote", type: "image" }];
-    await renderMedia({ isMobile: false, dbGetResult: { list: remoteList } });
+  it("renders media from store and sets media items per row", async () => {
+    await renderMedia({ isMobile: false });
 
     await waitFor(() => {
-      expect(mockSetMediaItems).toHaveBeenCalledWith(5);
+      expect(mockSetMediaItems).toHaveBeenCalledWith(4);
     });
-    expect(mockInitiateMediaList).toHaveBeenCalledWith(remoteList);
     expect(mockDispatch).toHaveBeenCalledWith({
       type: "preferences/setMediaItems",
-      payload: 5,
-    });
-    expect(mockDispatch).toHaveBeenCalledWith({
-      type: "media/initiateMediaList",
-      payload: remoteList,
+      payload: 4,
     });
     expect(screen.getByAltText("media-1")).toBeInTheDocument();
   });
 
   it("uses mobile media grid defaults when running on mobile", async () => {
-    await renderMedia({ isMobile: true, dbGetResult: { list: [] } });
+    await renderMedia({ isMobile: true });
 
     expect(mockSetMediaItems).toHaveBeenCalledWith(3);
     expect(mockDispatch).toHaveBeenCalledWith({
@@ -342,7 +406,7 @@ describe("Media", () => {
     expect(mockOpenModal).toHaveBeenCalledTimes(1);
   });
 
-  it("dispatches quick-link media background action from context menu", async () => {
+  it("does not clear selection when opening the More actions overflow menu", async () => {
     mockUseLocation.mockReturnValue({ pathname: "/preferences/quick-links" });
     mockState = makeBaseState({
       undoable: {
@@ -353,17 +417,75 @@ describe("Media", () => {
         },
       },
     });
+    const listItem = makeBaseState().media.list[0];
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = { ...listItem, source: "cloudinary" as const };
     await renderMedia();
 
-    fireEvent.click(screen.getByTestId("context-item-Set Quick Link Background"));
+    const more = screen.queryByRole("button", { name: /More actions/i });
+    if (!more) {
+      // Wide layout: actions are inline, no overflow trigger.
+      return;
+    }
+
+    const user = userEvent.setup();
+    await user.click(more);
+
+    expect(mockClearSelection).not.toHaveBeenCalled();
+  });
+
+  it("keeps the rename popover open from the action menu", async () => {
+    const listItem = makeBaseState().media.list[0];
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = { ...listItem, source: "cloudinary" as const };
+    await renderMedia();
+
+    const user = userEvent.setup();
+    const more = screen.queryByRole("button", { name: /More actions/i });
+    if (more) {
+      await user.click(more);
+      await user.click(await screen.findByRole("menuitem", { name: /Rename/i }));
+    } else {
+      await user.click(screen.getByRole("button", { name: /^Rename$/i }));
+    }
+
+    const renameInput = await screen.findByLabelText(/Display name/i);
+    await waitFor(() => expect(renameInput).toBeVisible());
+
+    await user.type(renameInput, " updated");
+
+    expect(renameInput).toHaveValue("Sunrise Image updated");
+  });
+
+  it("dispatches quick-link media background action from action bar", async () => {
+    mockUseLocation.mockReturnValue({ pathname: "/preferences/quick-links" });
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          preferences: {
+            selectedQuickLink: { linkType: "media" },
+          },
+        },
+      },
+    });
+    const listItem = makeBaseState().media.list[0];
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = { ...listItem, source: "cloudinary" as const };
+    await renderMedia();
+
+    await clickMediaLibraryRouteAction(/Set Quick Link Background/i);
 
     expect(mockSetSelectedQuickLinkImage).toHaveBeenCalled();
     expect(mockDispatch).toHaveBeenCalledWith(
       expect.objectContaining({ type: "preferences/setSelectedQuickLinkImage" }),
     );
+    expect(mockShowToast).toHaveBeenCalledWith(
+      'Set quick link background to "Sunrise Image".',
+      "success",
+    );
   });
 
-  it("dispatches overlay image actions from overlays route context menu", async () => {
+  it("dispatches overlay image actions from overlays route action bar", async () => {
     mockUseLocation.mockReturnValue({ pathname: "/overlays" });
     mockState = makeBaseState({
       undoable: {
@@ -374,9 +496,12 @@ describe("Media", () => {
         },
       },
     });
+    const listItem = makeBaseState().media.list[0];
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = { ...listItem, source: "cloudinary" as const };
     await renderMedia();
 
-    fireEvent.click(screen.getByTestId("context-item-Set Image Overlay"));
+    await clickMediaLibraryRouteAction(/Set Image Overlay/i);
 
     expect(mockUpdateOverlay).toHaveBeenCalledWith(
       expect.objectContaining({ id: "overlay-1" }),
@@ -389,6 +514,40 @@ describe("Media", () => {
     );
     expect(mockDispatch).toHaveBeenCalledWith(
       expect.objectContaining({ type: "overlays/updateOverlayInList" }),
+    );
+    expect(mockShowToast).toHaveBeenCalledWith(
+      'Set overlay image to "Sunrise Image".',
+      "success",
+    );
+  });
+
+  it("dispatches projector update when Send to projector is used and transmitting is on", async () => {
+    mockState = makeBaseState({
+      presentation: { isProjectorTransmitting: true },
+    });
+    const listItem = makeBaseState().media.list[0];
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = { ...listItem, source: "cloudinary" as const };
+    await renderMedia();
+
+    await clickMediaLibraryRouteAction(/Send to projector/i);
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "presentation/updateProjector",
+        payload: expect.objectContaining({
+          type: "free",
+          name: "Sunrise Image",
+          slide: expect.objectContaining({
+            type: "Section",
+            name: "Section 1",
+          }),
+        }),
+      }),
+    );
+    expect(mockShowToast).toHaveBeenCalledWith(
+      'Sent "Sunrise Image" to projector.',
+      "success",
     );
   });
 });

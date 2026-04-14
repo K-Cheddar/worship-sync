@@ -6,7 +6,8 @@ import { isElectron } from "./environment";
 
 // Get repository info from environment or use defaults
 const GITHUB_REPO_OWNER = import.meta.env.VITE_GITHUB_REPO_OWNER || "K-Cheddar";
-const GITHUB_REPO_NAME = import.meta.env.VITE_GITHUB_REPO_NAME || "worship-sync";
+const GITHUB_REPO_NAME =
+  import.meta.env.VITE_GITHUB_REPO_NAME || "worship-sync";
 
 const latestReleaseApiUrl = `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/releases/latest`;
 
@@ -20,7 +21,9 @@ type GitHubReleaseLatest = {
  * fixed `releases/latest/download/<filename>` URL, which requires a stable asset name).
  * Falls back to null on failure; callers should use {@link getLatestReleaseUrl} as a fallback href.
  */
-export const fetchLatestWindowsInstallerUrl = async (): Promise<string | null> => {
+export const fetchLatestWindowsInstallerUrl = async (): Promise<
+  string | null
+> => {
   if (isElectron()) {
     return null;
   }
@@ -36,6 +39,32 @@ export const fetchLatestWindowsInstallerUrl = async (): Promise<string | null> =
     );
     const anyExe = assets.find((a) => a.name.endsWith(".exe"));
     const chosen = setupExe ?? anyExe;
+    return chosen?.browser_download_url ?? null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Resolve the macOS DMG URL for the latest GitHub release (unsigned or signed).
+ * Prefers `WorshipSync-Setup-<version>.dmg` to match the electron-builder `artifactName` pattern.
+ */
+export const fetchLatestMacInstallerUrl = async (): Promise<string | null> => {
+  if (isElectron()) {
+    return null;
+  }
+  try {
+    const res = await fetch(latestReleaseApiUrl, {
+      headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as GitHubReleaseLatest;
+    const assets = data.assets ?? [];
+    const setupDmg = assets.find((a) =>
+      /^WorshipSync-Setup-.+\.dmg$/i.test(a.name),
+    );
+    const anyDmg = assets.find((a) => a.name.toLowerCase().endsWith(".dmg"));
+    const chosen = setupDmg ?? anyDmg;
     return chosen?.browser_download_url ?? null;
   } catch {
     return null;
@@ -59,6 +88,8 @@ export const getLatestReleaseUrl = (): string => {
 /**
  * Get download URL for a specific platform
  */
-export const getDownloadUrl = (platform: "windows" | "mac" | "linux"): string => {
+export const getDownloadUrl = (
+  platform: "windows" | "mac" | "linux",
+): string => {
   return getLatestReleaseUrl();
 };

@@ -121,6 +121,72 @@ export const validateBoardPostInput = ({ author, authorId, text }) => {
   };
 };
 
+/** Attendee update of an existing post (message body only). */
+export const validateBoardPostTextUpdate = ({ text }) => {
+  const normalizedText = normalizeBoardText(text);
+
+  if (!normalizedText) {
+    return { ok: false, error: "Post text is required." };
+  }
+
+  if (containsBoardProfanity(normalizedText)) {
+    return { ok: false, error: "Posts with profanity are not allowed." };
+  }
+
+  return { ok: true, value: { text: normalizedText } };
+};
+
+/**
+ * Ensures the post belongs to this board alias and current session, and that
+ * `requestAuthorId` matches the post's stored participant id.
+ */
+export const assertAttendeeCanMutateBoardPost = ({
+  aliasDoc,
+  postDoc,
+  requestAuthorId,
+}) => {
+  if (!postDoc || postDoc.docType !== "board-post") {
+    return { ok: false, status: 404, error: "Post not found." };
+  }
+
+  if (postDoc.aliasId !== aliasDoc.aliasId) {
+    return { ok: false, status: 404, error: "Post not found." };
+  }
+
+  if (postDoc.boardId !== aliasDoc.currentBoardId) {
+    return {
+      ok: false,
+      status: 410,
+      error: "This post is from a past session and cannot be changed.",
+    };
+  }
+
+  const postAuthorId = normalizeBoardParticipantId(postDoc.authorId);
+  const normalizedRequest = normalizeBoardParticipantId(requestAuthorId);
+
+  if (!postAuthorId) {
+    return {
+      ok: false,
+      status: 403,
+      error: "This post cannot be changed from the discussion board.",
+    };
+  }
+
+  if (!normalizedRequest || normalizedRequest !== postAuthorId) {
+    return {
+      ok: false,
+      status: 403,
+      error: "You can only edit or delete your own posts.",
+    };
+  }
+
+  if (postDoc.deleted) {
+    return { ok: false, status: 404, error: "Post not found." };
+  }
+
+  return { ok: true };
+};
+
 export const isBoardAuthorInUse = (posts, { author, authorId }) => {
   const normalizedAuthorKey = normalizeBoardAuthorKey(author);
   const normalizedAuthorId = normalizeBoardParticipantId(authorId);
@@ -128,6 +194,10 @@ export const isBoardAuthorInUse = (posts, { author, authorId }) => {
   if (!normalizedAuthorKey) return false;
 
   return posts.some((post) => {
+    if (post.deleted) {
+      return false;
+    }
+
     const postAuthorKey = normalizeBoardAuthorKey(post.author);
     if (postAuthorKey !== normalizedAuthorKey) {
       return false;
@@ -174,7 +244,9 @@ export const createAliasDoc = ({
   database,
   currentBoardId: boardId,
   history: [],
-  presentationFontScale: normalizeBoardPresentationFontScale(presentationFontScale),
+  presentationFontScale: normalizeBoardPresentationFontScale(
+    presentationFontScale,
+  ),
   createdAt: timestamp,
   updatedAt: timestamp,
 });
@@ -206,7 +278,9 @@ export const updateAliasPresentationFontScale = ({
   timestamp = Date.now(),
 }) => ({
   ...aliasDoc,
-  presentationFontScale: normalizeBoardPresentationFontScale(presentationFontScale),
+  presentationFontScale: normalizeBoardPresentationFontScale(
+    presentationFontScale,
+  ),
   updatedAt: timestamp,
 });
 
@@ -233,6 +307,7 @@ export const createBoardPostDoc = ({
   timestamp,
   hidden: false,
   highlighted: false,
+  deleted: false,
 });
 
 export const getBoardPostRange = (boardId) => ({
@@ -249,7 +324,9 @@ export const sortBoardPostsAscending = (posts) =>
   });
 
 export const filterVisibleBoardPosts = (posts) =>
-  sortBoardPostsAscending(posts).filter((post) => !post.hidden);
+  sortBoardPostsAscending(posts).filter(
+    (post) => !post.hidden && !post.deleted,
+  );
 
 export const filterHighlightedBoardPosts = (posts) =>
   filterVisibleBoardPosts(posts).filter((post) => post.highlighted);

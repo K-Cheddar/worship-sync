@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { BookOpen } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
 import { useNavigate } from "react-router-dom";
@@ -81,7 +82,13 @@ const BibleItemActions = ({ item }: BibleItemActionsProps) => {
 
   return (
     <div className="flex flex-col gap-2 lg:flex-[0_0_30%] w-full py-2">
-      <Button variant="secondary" onClick={handleOpenChapter} className="justify-center">
+      <Button
+        variant="primary"
+        svg={BookOpen}
+        color="#22d3ee"
+        onClick={handleOpenChapter}
+        className="justify-center"
+      >
         Open Chapter
       </Button>
       <Select

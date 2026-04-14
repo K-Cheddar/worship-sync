@@ -1,6 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import cn from "classnames";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 interface ContextMenuProps {
   children: React.ReactNode;
@@ -21,7 +27,7 @@ interface ContextMenuProps {
   onContextMenuOpen?: (e: React.MouseEvent) => void;
 }
 
-const ContextMenu = ({
+const ContextMenuWrapper = ({
   children,
   menuItems,
   header,
@@ -29,176 +35,72 @@ const ContextMenu = ({
   onOpen,
   onContextMenuOpen,
 }: ContextMenuProps) => {
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
-  const containerRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const hasAdjustedRef = useRef(false);
-
+  /**
+   * Radix composes trigger handlers as: our onContextMenu first, then Radix's.
+   * If we preventDefault in the first handler, Radix never records pointer position
+   * or opens the menu. Radix ContextMenu Root also does not support a controlled
+   * `open` prop — only `onOpenChange` — so local open state cannot drive visibility.
+   */
   const handleContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault();
     e.stopPropagation();
 
-    // If menu is already open, close it instead of reopening
-    if (open) {
-      setOpen(false);
-      return;
-    }
-
-    // Allow parent to select item under cursor (e.g. right-click an item → select it)
     onContextMenuOpen?.(e);
 
-    // Don't open empty menu (unless we just ran onContextMenuOpen, which may update selection on next render)
     if (menuItems.length === 0 && !onContextMenuOpen) {
-      return;
+      e.preventDefault();
+    } else {
+      onOpen?.();
     }
-
-    const initialPosition = { x: e.clientX, y: e.clientY };
-    setPosition(initialPosition);
-    setOpen(true);
-    hasAdjustedRef.current = false;
-    onOpen?.();
   };
 
-  // Adjust position to stay within bounds after menu renders
-  useEffect(() => {
-    if (!open || !menuRef.current || hasAdjustedRef.current) return;
-
-    const adjustPosition = () => {
-      const menuRect = menuRef.current?.getBoundingClientRect();
-      if (!menuRect) return;
-
-      const padding = 8;
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
-
-      setPosition((prevPosition) => {
-        let adjustedX = prevPosition.x;
-        let adjustedY = prevPosition.y;
-
-        // Adjust horizontal position if menu goes off right edge
-        if (prevPosition.x + menuRect.width > viewportWidth - padding) {
-          adjustedX = viewportWidth - menuRect.width - padding;
-        }
-        // Adjust horizontal position if menu goes off left edge
-        if (adjustedX < padding) {
-          adjustedX = padding;
-        }
-
-        // Adjust vertical position if menu goes off bottom edge
-        if (prevPosition.y + menuRect.height > viewportHeight - padding) {
-          adjustedY = viewportHeight - menuRect.height - padding;
-        }
-        // Adjust vertical position if menu goes off top edge
-        if (adjustedY < padding) {
-          adjustedY = padding;
-        }
-
-        hasAdjustedRef.current = true;
-        return { x: adjustedX, y: adjustedY };
-      });
-    };
-
-    // Use requestAnimationFrame to ensure menu is rendered and measured
-    requestAnimationFrame(() => {
-      adjustPosition();
-    });
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-
-    const handleClickOutside = (e: MouseEvent) => {
-      // Close on any click except on the menu itself (so left-clicking items closes the menu)
-      if (
-        menuRef.current &&
-        !menuRef.current.contains(e.target as Node)
-      ) {
-        setOpen(false);
-      }
-    };
-
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false);
-      }
-    };
-
-    // Use setTimeout to avoid immediate close
-    setTimeout(() => {
-      document.addEventListener("click", handleClickOutside, true);
-      document.addEventListener("contextmenu", handleClickOutside, true);
-      document.addEventListener("keydown", handleEscape);
-    }, 0);
-
-    return () => {
-      document.removeEventListener("click", handleClickOutside, true);
-      document.removeEventListener("contextmenu", handleClickOutside, true);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [open]);
-
   return (
-    <>
-      <div
-        ref={containerRef}
-        className={cn("relative", className)}
-        onContextMenu={handleContextMenu}
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          className={cn("relative", className)}
+          onContextMenu={handleContextMenu}
+        >
+          {children}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent
+        className="min-w-[200px]"
+        onCloseAutoFocus={(e) => e.preventDefault()}
       >
-        {children}
-      </div>
-      {open &&
-        createPortal(
-          <div
-            ref={menuRef}
-            className="fixed z-50 bg-gray-700 text-white min-w-[200px] rounded-md border border-gray-600 shadow-lg py-1"
-            style={{
-              left: `${position.x}px`,
-              top: `${position.y}px`,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {header && (
-              <>
-                <div className="px-3 py-2 border-b border-gray-600">
-                  <div className="flex flex-col">
-                    <span className="font-semibold text-sm max-w-[250px] truncate">{header.title}</span>
-                    {header.subtitle && (
-                      <span className="text-xs text-gray-400 font-normal">
-                        {header.subtitle}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-            {menuItems.map((item, index) => (
-              <button
-                key={index}
-                className={cn(
-                  "w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-600 transition-colors",
-                  item.disabled && "opacity-50 cursor-not-allowed",
-                  item.variant === "destructive" &&
-                  "text-red-400 hover:text-red-300 hover:bg-red-400/10"
-                )}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!item.disabled) {
-                    item.onClick();
-                    setOpen(false);
-                  }
-                }}
-                disabled={item.disabled}
-              >
-                {item.icon && <span className="shrink-0">{item.icon}</span>}
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </div>,
-          document.body
+        {header && (
+          <>
+            <ContextMenuLabel className="max-w-[250px] truncate font-semibold">
+              {header.title}
+            </ContextMenuLabel>
+            {header.subtitle ? (
+              <span className="block px-2 pb-2 text-xs font-normal text-gray-400">
+                {header.subtitle}
+              </span>
+            ) : null}
+            <ContextMenuSeparator />
+          </>
         )}
-    </>
+        {menuItems.map((item, index) => (
+          <ContextMenuItem
+            key={index}
+            disabled={item.disabled}
+            className={cn(
+              item.variant === "destructive" &&
+              "text-red-400 focus:bg-red-400/10 focus:text-red-300"
+            )}
+            onSelect={() => {
+              if (!item.disabled) {
+                item.onClick();
+              }
+            }}
+          >
+            {item.icon && <span className="shrink-0">{item.icon}</span>}
+            <span>{item.label}</span>
+          </ContextMenuItem>
+        ))}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 };
 
-export default ContextMenu;
+export default ContextMenuWrapper;

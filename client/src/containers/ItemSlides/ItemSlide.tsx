@@ -8,8 +8,11 @@ import cn from "classnames";
 import ContextMenu from "../../components/ContextMenu/ContextMenu";
 import { ImageOff } from "lucide-react";
 import { useDispatch } from "../../hooks";
-import { updateSlideBackground } from "../../store/itemSlice";
-import { useContext } from "react";
+import {
+  clearSlideBackgroundsOnSubset,
+  updateSlideBackground,
+} from "../../store/itemSlice";
+import { memo, useContext, useMemo } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
@@ -18,25 +21,29 @@ type ItemSlideProps = {
   slide: ItemSlideType;
   index: number;
   selectSlide: (index: number) => void;
-  selectedSlide: number;
+  isSelected: boolean;
   size: number;
   itemType: string;
   isMobile: boolean;
   timerInfo?: TimerInfo;
   draggedSection: string | null;
-  isTransmitting: boolean;
+  /** True when this slide matches last-sent presentation for enabled outputs. */
+  isLive: boolean;
   isStreamFormat: boolean;
   getBibleInfo: (index: number) => { title: string; text: string };
   borderWidth: string;
   hSize: string;
+  canEdit?: boolean;
+  isBackgroundTargetSelected?: boolean;
+  onSlideGridClick: (e: React.MouseEvent, index: number) => void;
 };
 
 const ItemSlide = ({
-  isTransmitting,
+  isLive,
   slide,
   index,
   selectSlide,
-  selectedSlide,
+  isSelected,
   size,
   itemType,
   isMobile,
@@ -46,11 +53,18 @@ const ItemSlide = ({
   getBibleInfo,
   borderWidth,
   hSize,
+  canEdit = true,
+  isBackgroundTargetSelected = false,
+  onSlideGridClick,
 }: ItemSlideProps) => {
   const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) || {};
-  const { isLoading } = useSelector(
-    (state: RootState) => state.undoable.present.item
+  const isLoading = useSelector(
+    (state: RootState) => state.undoable.present.item.isLoading,
+  );
+  const backgroundTargetSlideIds = useSelector(
+    (state: RootState) =>
+      state.undoable.present.item.backgroundTargetSlideIds ?? [],
   );
 
   const {
@@ -62,6 +76,7 @@ const ItemSlide = ({
     isDragging,
   } = useSortable({
     id: slide.id || "",
+    disabled: !canEdit,
   });
 
   const style = {
@@ -85,22 +100,64 @@ const ItemSlide = ({
       }
       : undefined;
 
-  const contextMenuItems = [
-    {
-      label: "Clear Background",
-      onClick: () => {
-        if (db) {
-          dispatch(
-            updateSlideBackground({
-              background: "",
-            })
-          );
-        }
-      },
-      icon: <ImageOff className="w-4 h-4" />,
-      disabled: isLoading,
-    },
-  ];
+  const contextMenuItems = useMemo(
+    () =>
+      canEdit
+        ? [
+          {
+            label: "Clear Background",
+            onClick: () => {
+              if (!db) return;
+              const slideId = slide.id;
+              const subsetActive =
+                backgroundTargetSlideIds.length > 0 &&
+                Boolean(slideId) &&
+                backgroundTargetSlideIds.includes(slideId);
+              if (subsetActive) {
+                dispatch(
+                  clearSlideBackgroundsOnSubset({
+                    slideIds: [...backgroundTargetSlideIds],
+                  }),
+                );
+              } else {
+                dispatch(
+                  updateSlideBackground({
+                    background: "",
+                  }),
+                );
+              }
+            },
+            icon: <ImageOff className="w-4 h-4" />,
+            disabled: isLoading,
+          },
+        ]
+        : [],
+    [canEdit, db, dispatch, isLoading, backgroundTargetSlideIds, slide.id],
+  );
+
+  const contextMenuHeader = useMemo(() => {
+    const n = backgroundTargetSlideIds.length;
+    const slideId = slide.id;
+    if (
+      slideId &&
+      n > 1 &&
+      backgroundTargetSlideIds.includes(slideId)
+    ) {
+      return {
+        title: `${n} slides selected`,
+        subtitle: "Background selection",
+      };
+    }
+    return {
+      title: slide.name || `Slide ${index + 1}`,
+      subtitle: "Item Slide",
+    };
+  }, [
+    backgroundTargetSlideIds,
+    slide.id,
+    slide.name,
+    index,
+  ]);
 
   return (
     <li
@@ -121,32 +178,40 @@ const ItemSlide = ({
         }
         return borderStyle;
       })()}
-      {...(isFree && attributes)}
-      {...(isFree && listeners)}
+      {...(isFree && canEdit ? attributes : {})}
+      {...(isFree && canEdit ? listeners : {})}
       key={slide.id}
       className={cn(
-        "cursor-pointer w-full rounded-lg",
-        selectedSlide === index && !isTransmitting && "border-gray-300",
-        selectedSlide === index && isTransmitting && "border-green-500",
-        selectedSlide !== index && "border-transparent",
+        "cursor-pointer select-none w-full rounded-lg transition-[background-color,box-shadow] duration-150 ease-out",
+        !isDragging &&
+        "hover:bg-white/12 hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.28)]",
+        (isSelected || isBackgroundTargetSelected) && "border-cyan-500",
+        !(isSelected || isBackgroundTargetSelected) && "border-transparent",
         isInDraggedSection && "z-10"
       )}
       id={`item-slide-${index}`}
     >
       <ContextMenu
         menuItems={contextMenuItems}
-        header={{
-          title: slide.name || `Slide ${index + 1}`,
-          subtitle: "Item Slide",
-        }}
+        header={contextMenuHeader}
         onOpen={() => {
-          // Select the slide when context menu opens
-          if (selectedSlide !== index) {
+          if (!isSelected) {
             selectSlide(index);
           }
         }}
       >
-        <div onClick={() => selectSlide(index)}>
+        <div
+          className="relative"
+          onClick={(e) => onSlideGridClick(e, index)}
+        >
+          {isLive ? (
+            <span
+              className="pointer-events-none absolute bottom-1 right-1 z-20 rounded bg-green-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow"
+              aria-label="Live on output"
+            >
+              Live
+            </span>
+          ) : null}
           <h4
             className={cn(
               "rounded-t-md truncate px-2 text-center flex w-full",
@@ -209,4 +274,4 @@ const ItemSlide = ({
   );
 };
 
-export default ItemSlide;
+export default memo(ItemSlide);

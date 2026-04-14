@@ -18,10 +18,11 @@ import { useDispatch, useSelector } from "../hooks";
 import { RootState } from "../store/store";
 import { addTimer, deleteTimer } from "../store/timersSlice";
 import { updateService } from "../store/serviceTimesSlice";
-import { capitalizeFirstLetter } from "../utils/generalUtils";
+import { getChurchDataPath } from "../utils/firebasePaths";
 
 const StreamInfo = () => {
-  const { user, database, firebaseDb, hostId } = useContext(GlobalInfoContext) || {};
+  const { churchId, firebaseDb, hostId, loginState } =
+    useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
   const timers = useSelector((s: RootState) => s.timers.timers);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -33,17 +34,16 @@ const StreamInfo = () => {
   const [services, setServices] = useState<ServiceTime[]>([]);
 
   useEffect(() => {
-    if (!firebaseDb || user === "Demo" || !database) return;
+    if (!firebaseDb || loginState === "guest" || !churchId) return;
 
-    const capitalizedDatabase = capitalizeFirstLetter(database);
-    const getServicesRef = ref(firebaseDb, "users/" + capitalizedDatabase + "/v2/services");
+    const getServicesRef = ref(firebaseDb, getChurchDataPath(churchId, "services"));
     onValue(getServicesRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
         setServices(data);
       }
     });
-  }, [firebaseDb, database, user]);
+  }, [churchId, firebaseDb, loginState]);
 
   const updateUpcomingService = useCallback(() => {
     if (!services?.length) return;

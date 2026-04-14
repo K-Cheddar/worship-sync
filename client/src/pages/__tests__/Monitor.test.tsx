@@ -57,8 +57,11 @@ jest.mock("../../hooks", () => ({
 }));
 
 jest.mock("firebase/database", () => ({
-  ref: (...args: unknown[]) => refMock(...args),
-  onValue: (...args: unknown[]) => onValueMock(...args),
+  ref: (db: unknown, path: string) => refMock(db, path),
+  onValue: (
+    target: { path: string },
+    callback: (snapshot: unknown) => void,
+  ) => onValueMock(target, callback),
 }));
 
 jest.mock("../../hooks/useCloseOnEscape", () => ({
@@ -92,7 +95,7 @@ describe("Monitor page", () => {
         value={
           {
             firebaseDb: "firebase-db",
-            database: "main",
+            churchId: "church-main",
           } as any
         }
       >
@@ -103,12 +106,12 @@ describe("Monitor page", () => {
     await waitFor(() =>
       expect(refMock).toHaveBeenCalledWith(
         "firebase-db",
-        "users/Main/v2/monitorSettings"
+        "churches/church-main/data/monitorSettings"
       )
     );
 
     onValueCallbacks
-      .get("users/Main/v2/monitorSettings")
+      .get("churches/church-main/data/monitorSettings")
       ?.({
         val: () => ({
           showClock: false,
@@ -140,7 +143,7 @@ describe("Monitor page", () => {
         value={
           {
             firebaseDb: "firebase-db",
-            database: "main",
+            churchId: "church-main",
           } as any
         }
       >
@@ -149,13 +152,13 @@ describe("Monitor page", () => {
     );
 
     await waitFor(() =>
-      expect(onValueCallbacks.has("users/Main/v2/monitorSettings")).toBe(true)
+      expect(onValueCallbacks.has("churches/church-main/data/monitorSettings")).toBe(true)
     );
 
     mockDispatch.mockClear();
 
     onValueCallbacks
-      .get("users/Main/v2/monitorSettings")
+      .get("churches/church-main/data/monitorSettings")
       ?.({
         val: () => ({
           showClock: true,

@@ -1,6 +1,6 @@
 import { useId, ReactNode } from "react";
-import { Switch } from "../ui/Switch";
-import { cn } from "../../utils/cnHelper";
+import { Switch } from "@/components/ui/Switch";
+import { cn } from "@/utils/cnHelper";
 import { LucideIcon } from "lucide-react";
 
 type ToggleProps = {
@@ -8,6 +8,8 @@ type ToggleProps = {
   value: boolean;
   onChange: (value: boolean) => void;
   className?: string;
+  /** Merged onto the text label when `label` is set (e.g. `text-xs`). */
+  labelClassName?: string;
   id?: string;
   color?: string;
   icon?: LucideIcon;
@@ -18,6 +20,7 @@ const Toggle = ({
   value,
   onChange,
   className,
+  labelClassName,
   id: idProp,
   color,
   icon: Icon,
@@ -27,12 +30,18 @@ const Toggle = ({
   return (
     <div
       className={cn(
-        "flex gap-1 relative items-center cursor-pointer",
+        "group/toggle relative flex cursor-pointer items-center gap-1",
         className
       )}
     >
       {label && (
-        <label className="text-sm font-semibold cursor-pointer" htmlFor={id}>
+        <label
+          className={cn(
+            "cursor-pointer text-sm font-semibold transition-colors duration-150 ease-out group-hover/toggle:text-white",
+            labelClassName
+          )}
+          htmlFor={id}
+        >
           {typeof label === "string" ? `${label}:` : label}
         </label>
       )}

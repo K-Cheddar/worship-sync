@@ -41,7 +41,33 @@ VITE_ELECTRON_API_URL=https://your-api-domain.com/ npm run build:electron
 **Option B: Update Default**
 Edit `client/src/utils/environment.ts` line 49 to use your production API URL instead of `localhost:5000`.
 
-### 4. macOS Code Signing (Optional but Recommended)
+### 4. Auth rollout configuration
+
+Before enabling the new auth flow in production:
+- Set `AUTH_SESSION_SECRET`
+- Set `AUTH_APP_BASE_URL` (used as the primary CORS origin in production when `NODE_ENV` is not `development`; the server derives the browser origin from this URL)
+- Set `AUTH_ALLOWED_ORIGINS` to the exact browser origins allowed to use cookie auth
+- **API availability**: Sign-in, session bootstrap, and Firebase custom tokens require a reachable API. If the server is down or misconfigured, clients cannot authenticate or load shared realtime data. This is expected; there is no fully offline authenticated mode.
+- Set `RESEND_API_KEY`
+- Set `RESEND_FROM_EMAIL`
+- Set `RESEND_WEBHOOK_SECRET`
+- Configure the Resend webhook endpoint at `/api/webhooks/resend`
+- Verify the Firebase Admin credentials used by the server
+- Verify the Firebase project can mint custom tokens for shared Realtime Database access
+- Rotate any previously exposed shared Firebase credentials and disable that account
+
+**CORS note (production vs earlier behavior):** Previously, production still used `http://localhost:3000` as the default `frontEndHost` while `AUTH_APP_BASE_URL` was added separately to the allowlist. The server now uses the **origin of `AUTH_APP_BASE_URL`** as the default production `frontEndHost`, so the primary allowed origin matches your deployed app URL. Localhost remains the fallback when `AUTH_APP_BASE_URL` is unset (for local production-style testing).
+
+Validate these operator paths before cutover:
+- Human sign-in from web
+- Human sign-in from Electron
+- Trusted-device return after restart
+- Workstation pairing and operator prompt
+- Display pairing and blocked-state recovery
+- Projector, monitor, stream, and board routes from bookmarked URLs
+- Admin invite, password reset, and admin recovery flows
+
+### 5. macOS Code Signing (Optional but Recommended)
 
 To sign macOS builds, add these GitHub Secrets:
 - `MAC_CERTIFICATE` - Base64 encoded .p12 certificate
@@ -50,7 +76,7 @@ To sign macOS builds, add these GitHub Secrets:
 - `APPLE_APP_SPECIFIC_PASSWORD` - App-specific password
 - `APPLE_TEAM_ID` - Apple Team ID
 
-### 5. Windows Code Signing (Optional but Recommended)
+### 6. Windows Code Signing (Optional but Recommended)
 
 For Windows, you'll need a code signing certificate. Configure in `electron-builder.config.js`:
 ```js

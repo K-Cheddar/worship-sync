@@ -25,6 +25,10 @@ import { X } from "lucide-react";
 import { Paintbrush } from "lucide-react";
 import { Plus } from "lucide-react";
 import generateRandomId from "../../utils/generateRandomId";
+import {
+  INLINE_EDIT_CONFIRM_ICON_COLOR,
+  handleInlineTextInputKeyDown,
+} from "../../utils/inlineEdit";
 
 type Props = {
   isOpen: boolean;
@@ -163,6 +167,12 @@ const OverlayTemplatesDrawer = ({
                         className="flex-1"
                         hideLabel
                         data-ignore-undo="true"
+                        onKeyDown={(e) =>
+                          handleInlineTextInputKeyDown(e, {
+                            onSave: handleSaveEdit,
+                            onCancel: handleCancelEdit,
+                          })
+                        }
                       />
                       <Button
                         className="text-xs px-2 py-1"
@@ -171,7 +181,7 @@ const OverlayTemplatesDrawer = ({
                         disabled={!editingTemplateName.trim()}
                         svg={Check}
                         title="Save changes"
-                        color="#84cc16"
+                        color={INLINE_EDIT_CONFIRM_ICON_COLOR}
                       />
                       <Button
                         className="text-xs px-2 py-1"

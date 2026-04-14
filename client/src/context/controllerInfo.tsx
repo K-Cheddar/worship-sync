@@ -16,6 +16,7 @@ import { useDispatch } from "../hooks";
 import { backoff } from "../utils/generalUtils";
 import { getApiBasePath } from "../utils/environment";
 import { MAX_INITIAL_SESSION_RETRIES, MAX_REPLICATION_AUTH_RETRIES } from "../constants";
+import { seedOfflineGuestDatabase } from "../utils/offlineGuestSeed";
 
 export type ConnectionStatus = {
   status: "connecting" | "retrying" | "failed" | "connected";
@@ -36,10 +37,10 @@ type ControllerInfoContextType = {
   setIsPhone: (val: boolean) => void;
   logout: () => Promise<void>;
   login: ({
-    username,
+    email,
     password,
   }: {
-    username: string;
+    email: string;
     password: string;
   }) => Promise<void>;
   pullFromRemote: () => void;
@@ -51,6 +52,9 @@ export const ControllerInfoContext =
 export let globalDb: PouchDB.Database | undefined = undefined;
 export let globalBibleDb: PouchDB.Database | undefined = undefined;
 export let globalBroadcastRef: BroadcastChannel | undefined = undefined;
+
+const DEMO_DATABASE_KEY = "demo";
+const GUEST_DATABASE_NAME = "worship-sync-demo-guest";
 
 export const updateGlobalBroadcast = (database: string) => {
   if (globalBroadcastRef) {
@@ -100,12 +104,38 @@ const ControllerInfoProvider = ({ children }: any) => {
   const { database, loginState, logout, setLoginState, login } =
     useContext(GlobalInfoContext) || {};
 
+  const isAuthenticatedSession = loginState === "success";
+  const isGuestSession = loginState === "guest";
+  const shouldInitializeControllerData =
+    (isAuthenticatedSession || isGuestSession) &&
+    location.pathname !== "/" &&
+    location.pathname !== "/login";
+  const activeDatabaseKey = (database || DEMO_DATABASE_KEY).toLowerCase();
+  const broadcastDatabaseKey = isGuestSession
+    ? `${DEMO_DATABASE_KEY}-guest`
+    : activeDatabaseKey;
+
   // Update broadcast channel when database changes
   useEffect(() => {
-    if (database) {
-      updateGlobalBroadcast(database);
+    if (broadcastDatabaseKey) {
+      updateGlobalBroadcast(broadcastDatabaseKey);
     }
-  }, [database]);
+  }, [broadcastDatabaseKey]);
+
+  /** Which local PouchDB name we should be using; stable through loading/error so guest DB stays valid until sign-in finishes. */
+  const [localDbIdentity, setLocalDbIdentity] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (loginState === "guest") {
+      setLocalDbIdentity(GUEST_DATABASE_NAME);
+    } else if (loginState === "success") {
+      setLocalDbIdentity(`worship-sync-${activeDatabaseKey}`);
+    } else if (loginState === "loading" || loginState === "error") {
+      // keep prior identity during sign-in attempts and recoverable errors
+    } else {
+      setLocalDbIdentity(null);
+    }
+  }, [loginState, activeDatabaseKey]);
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
@@ -119,6 +149,7 @@ const ControllerInfoProvider = ({ children }: any) => {
   const bibleReplicateRetryRef = useRef(0);
   const bibleReplicateRef = useRef<any>(null);
   const initialSessionRetryRef = useRef(0);
+  const prevLocalDbIdentityRef = useRef<string | null>(null);
 
   const getCouchSession = useCallback(async () => {
     const controller = new AbortController();
@@ -213,7 +244,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const pullFromRemote = useCallback(() => {
     const remote = remoteDbRef.current;
-    if (!db || !remote || loginState !== "success") return;
+    if (!db || !remote || !isAuthenticatedSession) return;
     remote
       .replicate.to(db, { retry: false })
       .on("change", (info: any) => {
@@ -223,7 +254,7 @@ const ControllerInfoProvider = ({ children }: any) => {
           );
         }
       });
-  }, [db, loginState]);
+  }, [db, isAuthenticatedSession]);
 
   const bibleSyncDb = useCallback(
     async (localDb: PouchDB.Database, remoteDb: PouchDB.Database) => {
@@ -260,12 +291,21 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     const attemptSession = async () => {
-      if (
-        (loginState === "success" || loginState === "demo") &&
-        location.pathname !== "/" &&
-        location.pathname !== "/login" &&
-        !hasCheckedSession
-      ) {
+      if (isGuestSession && shouldInitializeControllerData) {
+        if (
+          !hasCheckedSession ||
+          !hasCouchSession ||
+          connectionStatus.status !== "connected"
+        ) {
+          initialSessionRetryRef.current = 0;
+          setHasCouchSession(true);
+          setConnectionStatus({ status: "connected", retryCount: 0 });
+          setHasCheckedSession(true);
+        }
+        return;
+      }
+
+      if (shouldInitializeControllerData && !hasCheckedSession && !isGuestSession) {
         setConnectionStatus({ status: "connecting", retryCount: 0 });
         const success = await getCouchSession();
 
@@ -300,18 +340,50 @@ const ControllerInfoProvider = ({ children }: any) => {
     };
 
     attemptSession();
-  }, [getCouchSession, loginState, location.pathname, hasCheckedSession]);
+  }, [
+    connectionStatus.status,
+    getCouchSession,
+    hasCheckedSession,
+    hasCouchSession,
+    isGuestSession,
+    shouldInitializeControllerData,
+  ]);
 
   // Reset retry counter when login state or database changes
   useEffect(() => {
+    if (isGuestSession) return;
     initialSessionRetryRef.current = 0;
+    setHasCheckedSession(false);
+    setHasCouchSession(false);
     setConnectionStatus({ status: "connecting", retryCount: 0 });
-  }, [loginState, database]);
+  }, [loginState, activeDatabaseKey, isGuestSession]);
 
   useEffect(() => {
     const setupDb = async () => {
       try {
-        const dbName = `worship-sync-${database}`;
+        const dbName = isGuestSession
+          ? GUEST_DATABASE_NAME
+          : `worship-sync-${activeDatabaseKey}`;
+
+        if (isGuestSession) {
+          setDbProgress(0);
+          try {
+            await new PouchDB(GUEST_DATABASE_NAME).destroy();
+          } catch (error) {
+            // Ignore "missing database" and continue with a fresh setup.
+          }
+
+          const localDb = new PouchDB(dbName);
+          await seedOfflineGuestDatabase(localDb);
+          setDbProgress(100);
+          setDb(localDb);
+          setIsDbSetup(true);
+          globalDb = localDb;
+          if (broadcastDatabaseKey) {
+            updateGlobalBroadcast(broadcastDatabaseKey);
+          }
+          return;
+        }
 
         // Wrap PouchDB initialization in try-catch to handle IndexedDB errors
         let localDb: PouchDB.Database;
@@ -338,7 +410,9 @@ const ControllerInfoProvider = ({ children }: any) => {
           }
         }
 
-        const remoteUrl = `${import.meta.env.VITE_COUCHDB_HOST}/${dbName}`;
+        const remoteSourceDbName = `worship-sync-${isGuestSession ? DEMO_DATABASE_KEY : activeDatabaseKey
+          }`;
+        const remoteUrl = `${import.meta.env.VITE_COUCHDB_HOST}/${remoteSourceDbName}`;
         let remoteDb: PouchDB.Database;
         try {
           remoteDb = new PouchDB(remoteUrl, {
@@ -405,11 +479,11 @@ const ControllerInfoProvider = ({ children }: any) => {
             setDb(localDb);
             setIsDbSetup(true);
             globalDb = localDb;
-            if (database) {
-              updateGlobalBroadcast(database);
+            if (broadcastDatabaseKey) {
+              updateGlobalBroadcast(broadcastDatabaseKey);
             }
             console.log("Replication completed");
-            if (loginState === "success") {
+            if (isAuthenticatedSession) {
               syncDb(localDb, remoteDb);
             }
           });
@@ -421,18 +495,18 @@ const ControllerInfoProvider = ({ children }: any) => {
     };
 
     if (
-      (loginState === "success" || loginState === "demo") &&
-      location.pathname !== "/" &&
-      location.pathname !== "/login" &&
+      shouldInitializeControllerData &&
       !isDbSetup &&
       hasCouchSession
     ) {
       setupDb();
     }
   }, [
-    loginState,
-    database,
-    location.pathname,
+    shouldInitializeControllerData,
+    activeDatabaseKey,
+    broadcastDatabaseKey,
+    isAuthenticatedSession,
+    isGuestSession,
     isDbSetup,
     hasCouchSession,
     syncDb,
@@ -441,6 +515,20 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     const setupBibleDb = async () => {
+      if (isGuestSession) {
+        try {
+          await new PouchDB("worship-sync-bibles-guest").destroy();
+        } catch {
+          // Ignore missing local guest Bible DB.
+        }
+        const localDb = new PouchDB("worship-sync-bibles-guest");
+        setBibleDbProgress(100);
+        setBibleDb(localDb);
+        setIsBibleDbSetup(true);
+        globalBibleDb = localDb;
+        return;
+      }
+
       const dbName = "worship-sync-bibles";
       const localDb = new PouchDB(dbName);
       const remoteUrl = `${import.meta.env.VITE_COUCHDB_HOST}/${dbName}`;
@@ -501,16 +589,14 @@ const ControllerInfoProvider = ({ children }: any) => {
           setIsBibleDbSetup(true);
           globalBibleDb = localDb;
           console.log("Bible Replication completed");
-          if (loginState === "success") {
+          if (isAuthenticatedSession) {
             bibleSyncDb(localDb, remoteDb);
           }
         });
     };
 
     if (
-      (loginState === "success" || loginState === "demo") &&
-      location.pathname !== "/" &&
-      location.pathname !== "/login" &&
+      shouldInitializeControllerData &&
       !isBibleDbSetup &&
       isDbSetup &&
       hasCouchSession
@@ -518,60 +604,30 @@ const ControllerInfoProvider = ({ children }: any) => {
       setupBibleDb();
     }
   }, [
-    loginState,
-    location.pathname,
+    shouldInitializeControllerData,
     isBibleDbSetup,
     isDbSetup,
     hasCouchSession,
     bibleSyncDb,
     getCouchSession,
+    isAuthenticatedSession,
+    isGuestSession,
   ]);
 
-  const _logout = useCallback(async () => {
-    setLoginState?.("loading");
+  const tearDownLocalDatabases = useCallback(async () => {
+    if (syncTimeout) {
+      clearTimeout(syncTimeout);
+      syncTimeout = null;
+    }
     await syncRef.current?.cancel();
     await bibleSyncRef.current?.cancel();
     await replicateRef.current?.cancel();
     await bibleReplicateRef.current?.cancel();
     remoteDbRef.current = null;
     globalDb = undefined;
-    setDb(undefined);
-    setDbProgress(0);
-    setIsDbSetup(false);
-    setIsBibleDbSetup(false);
-    setBibleDbProgress(0);
-    pendingMax = 0;
-
-    if (db) {
-      db.destroy()
-        .catch((e) => {
-          console.error(e);
-        })
-        .finally(() => {
-          logout?.();
-        });
-    } else {
-      logout?.();
-    }
-  }, [db, logout, setLoginState]);
-
-  const _login = useCallback(async ({
-    username,
-    password,
-  }: {
-    username: string;
-    password: string;
-  }) => {
-    if (syncTimeout) {
-      clearTimeout(syncTimeout);
-      syncTimeout = null;
-    }
-    syncRef.current?.cancel();
-    bibleSyncRef.current?.cancel();
-    replicateRef.current?.cancel();
-    bibleReplicateRef.current?.cancel();
-    remoteDbRef.current = null;
-    globalDb = undefined;
+    globalBibleDb = undefined;
+    const mainDb = db;
+    const bibleDbInstance = bibleDb;
     setDb(undefined);
     setDbProgress(0);
     setIsDbSetup(false);
@@ -581,18 +637,60 @@ const ControllerInfoProvider = ({ children }: any) => {
     pendingMax = 0;
     dispatch({ type: "RESET_INITIALIZATION" });
 
-    if (db) {
-      db.destroy()
-        .catch((e) => {
-          console.error(e);
-        })
-        .finally(() => {
-          login?.({ username, password });
-        });
-    } else {
-      login?.({ username, password });
+    if (mainDb) {
+      await mainDb.destroy().catch((e) => {
+        console.error(e);
+      });
     }
-  }, [db, login, dispatch]);
+    if (bibleDbInstance) {
+      await bibleDbInstance.destroy().catch((e) => {
+        console.error(e);
+      });
+    }
+  }, [db, bibleDb, dispatch]);
+
+  useEffect(() => {
+    const prev = prevLocalDbIdentityRef.current;
+    if (prev === localDbIdentity) {
+      return;
+    }
+
+    if (prev === null && localDbIdentity !== null) {
+      prevLocalDbIdentityRef.current = localDbIdentity;
+      return;
+    }
+
+    const needsTeardown =
+      (prev !== null &&
+        localDbIdentity !== null &&
+        prev !== localDbIdentity) ||
+      (prev !== null && localDbIdentity === null);
+
+    if (needsTeardown) {
+      void tearDownLocalDatabases();
+    }
+
+    prevLocalDbIdentityRef.current = localDbIdentity;
+  }, [localDbIdentity, tearDownLocalDatabases]);
+
+  const _logout = useCallback(async () => {
+    setLoginState?.("loading");
+    await tearDownLocalDatabases();
+    await logout?.();
+  }, [logout, setLoginState, tearDownLocalDatabases]);
+
+  const _login = useCallback(
+    async ({
+      email,
+      password,
+    }: {
+      email: string;
+      password: string;
+    }) => {
+      await login?.({ method: "password", email, password });
+    },
+    [login]
+  );
 
   useEffect(() => {
     return () => {

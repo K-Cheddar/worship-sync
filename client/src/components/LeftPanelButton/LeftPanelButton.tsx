@@ -2,7 +2,7 @@ import Button from "../Button/Button";
 import { FileQuestion } from "lucide-react";
 import { forwardRef, FunctionComponent } from "react";
 import cn from "classnames";
-import { borderColorMap, iconColorMap, svgMap } from "../../utils/itemTypeMaps";
+import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { formatTime } from "../DisplayWindow/TimerDisplay";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 
@@ -54,18 +54,25 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         ref={ref}
         style={style}
         className={cn(
-          "flex min-h-8",
-          !isSelected && "hover:bg-gray-500 active:bg-gray-400",
-          isSelected && "bg-gray-900",
+          "group relative flex min-h-8 min-w-0",
+          isSelected && "ring-1 ring-inset ring-cyan-500/30",
           className
         )}
         {...rest}
       >
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-0 z-0 transition-colors duration-150 ease-out",
+            isSelected
+              ? "bg-cyan-500/12 group-hover:bg-cyan-500/18 group-active:bg-cyan-500/24"
+              : "bg-transparent group-hover:bg-black/22 group-active:bg-black/32"
+          )}
+        />
         <Button
           variant="none"
           className={cn(
-            "relative w-full text-sm border-l-3 rounded-tl-none rounded-bl-none",
-            borderColorMap.get(type)
+            "relative z-10 flex min-h-8 min-w-0 flex-1 shrink items-center self-stretch bg-transparent text-sm rounded-tl-none rounded-bl-none",
           )}
           iconSize="md"
           wrap
@@ -79,14 +86,26 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           onClick={onClick}
         >
           {image && !isActive && (
-            <img src={resolvedImage ?? image} className="w-14 max-w-[30%]" alt={title} />
+            <img
+              src={resolvedImage ?? image}
+              className="w-14 max-w-[30%] shrink-0"
+              alt={title}
+            />
           )}
           {isActive && (
-            <span className="bg-gray-950 text-white font-semibold rounded-lg px-2 py-1 text-xs tabular-nums">
+            <span className="shrink-0 rounded-lg bg-black/55 px-2 py-1 text-xs font-semibold tabular-nums text-white">
               {formatTime(timerValue || 0, false, true)}
             </span>
           )}
-          <p className="font-semibold pl-1">{title}</p>
+          <p
+            title={title}
+            className={cn(
+              "line-clamp-3 min-w-0 flex-1 wrap-break-word pl-1 text-left text-white",
+              isSelected ? "font-bold" : "font-semibold",
+            )}
+          >
+            {title}
+          </p>
         </Button>
         {actions &&
           actions.map((action) => (
@@ -95,7 +114,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
               key={action.id}
               onClick={() => action.action(id)}
               variant="tertiary"
-              className="hover:bg-gray-800 active:bg-gray-900"
+              className="relative z-10 shrink-0 transition-colors duration-150 ease-out hover:bg-white/10 active:bg-white/15"
             />
           ))}
       </li>

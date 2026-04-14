@@ -40,7 +40,7 @@ const config = {
   },
 
   mac: {
-    target: ["dmg"],
+    target: ["dmg", "zip"],
     icon: "icon.png",
     category: "public.app-category.productivity",
   },

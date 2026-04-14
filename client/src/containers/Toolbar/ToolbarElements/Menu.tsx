@@ -10,19 +10,21 @@ import {
   SquarePen,
   Presentation,
   ScrollText,
+  RotateCcw,
   ZoomIn,
   ZoomOut,
-  RotateCcw,
 } from "lucide-react";
 import Icon from "../../../components/Icon/Icon";
 import { MenuItemType } from "../../../types";
 import { RedoButton, UndoButton } from "./Undo";
 import ChangelogModal from "../../../components/ChangelogModal/ChangelogModal";
 import AboutModal from "../../../components/AboutModal/AboutModal";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useContext } from "react";
 import { useElectronWindows } from "../../../hooks/useElectronWindows";
+import { GlobalInfoContext } from "../../../context/globalInfo";
 import { getDisplayLabel } from "../../../utils/displayUtils";
 import type { WindowType } from "../../../types/electron";
+import { Slider } from "../../../components/ui/Slider";
 
 const ToolbarMenu = ({
   isPhone,
@@ -33,9 +35,13 @@ const ToolbarMenu = ({
   isEditMode?: boolean;
   variant?: "default" | "overlay";
 }) => {
+  const { access } = useContext(GlobalInfoContext) || {};
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
+  const zoomStep = 10;
+  const zoomMin = 50;
+  const zoomMax = 200;
   const navigate = useNavigate();
   const {
     isElectron,
@@ -62,12 +68,8 @@ const ToolbarMenu = ({
     };
   }, [zoomLevel]);
 
-  const handleZoomIn = () => {
-    setZoomLevel((prev) => Math.min(prev + 10, 200)); // Max 200%
-  };
-
-  const handleZoomOut = () => {
-    setZoomLevel((prev) => Math.max(prev - 10, 50)); // Min 50%
+  const setZoomWithinBounds = (nextZoom: number) => {
+    setZoomLevel(Math.min(zoomMax, Math.max(zoomMin, nextZoom)));
   };
 
   const handleReset = () => {
@@ -153,56 +155,57 @@ const ToolbarMenu = ({
       ),
       to: "/",
     },
+    {
+      element: (
+        <div className="flex items-center gap-2 max-md:min-h-12">
+          <Icon svg={SquarePen} color="#d1d5dc" />
+          Credits Editor
+        </div>
+      ),
+      to: "/credits-editor",
+    },
     ...(variant === "overlay"
-      ? [
-        {
-          element: (
-            <div className="flex items-center gap-2 max-md:min-h-12">
-              <Icon svg={SquarePen} color="#d1d5dc" />
-              Credits Editor
-            </div>
-          ),
-          to: "/credits-editor",
-        },
-      ]
-      : [
-        {
-          text: "Open Stage Monitor",
-          element: (
-            <div className="flex items-center gap-2 max-md:min-h-12">
-              <Icon svg={Monitor} color="#d1d5dc" />
-              Open Stage Monitor
-            </div>
-          ),
-          ...(isElectron && displays.length > 0
-            ? {
-              subItems: buildDisplaySubItems("monitor"),
-            }
-            : {
-              onClick: async () => {
-                await openWindowOnLastUsedDisplay("monitor");
-              },
-            }),
-        },
-        {
-          text: "Open Projector",
-          element: (
-            <div className="flex items-center gap-2 max-md:min-h-12">
-              <Icon svg={Presentation} color="#d1d5dc" />
-              Open Projector
-            </div>
-          ),
-          ...(isElectron && displays.length > 0
-            ? {
-              subItems: buildDisplaySubItems("projector"),
-            }
-            : {
-              onClick: async () => {
-                await openWindowOnLastUsedDisplay("projector");
-              },
-            }),
-        },
-      ]),
+      ? []
+      : access === "view"
+        ? []
+        : [
+          {
+            text: "Open Stage Monitor",
+            element: (
+              <div className="flex items-center gap-2 max-md:min-h-12">
+                <Icon svg={Monitor} color="#d1d5dc" />
+                Open Stage Monitor
+              </div>
+            ),
+            ...(isElectron && displays.length > 0
+              ? {
+                subItems: buildDisplaySubItems("monitor"),
+              }
+              : {
+                onClick: async () => {
+                  await openWindowOnLastUsedDisplay("monitor");
+                },
+              }),
+          },
+          {
+            text: "Open Projector",
+            element: (
+              <div className="flex items-center gap-2 max-md:min-h-12">
+                <Icon svg={Presentation} color="#d1d5dc" />
+                Open Projector
+              </div>
+            ),
+            ...(isElectron && displays.length > 0
+              ? {
+                subItems: buildDisplaySubItems("projector"),
+              }
+              : {
+                onClick: async () => {
+                  await openWindowOnLastUsedDisplay("projector");
+                },
+              }),
+          },
+        ]),
 
     {
       element: (
@@ -224,7 +227,7 @@ const ToolbarMenu = ({
     },
     {
       element: (
-        <div className="flex flex-col gap-2 w-full py-1.5 px-2">
+        <div className="flex flex-col gap-2 w-full py-1.5 px-2 min-w-52">
           <div className="flex items-center justify-center gap-2">
             <span className="text-xs font-semibold min-w-12 text-center">
               {zoomLevel}%
@@ -237,27 +240,48 @@ const ToolbarMenu = ({
               variant="secondary"
             ></Button>
           </div>
-          <div className="flex items-center gap-2 w-full">
+          <div className="flex w-full items-center justify-center gap-1 px-0.5">
             <Button
+              variant="tertiary"
+              className="min-h-0 h-7 w-7 justify-center p-0"
               svg={ZoomOut}
-              onClick={handleZoomOut}
-              className="flex-1 justify-center"
-              disabled={zoomLevel <= 50}
-              variant="secondary"
-            ></Button>
+              color="#ffffff"
+              title="Zoom out"
+              aria-label="Zoom out interface"
+              disabled={zoomLevel <= zoomMin}
+              onClick={() => setZoomWithinBounds(zoomLevel - zoomStep)}
+            />
+            <div className="w-36 shrink-0">
+              <Slider
+                value={[zoomLevel]}
+                onValueChange={(v: number[]) =>
+                  setZoomWithinBounds(v[0] ?? 100)
+                }
+                min={zoomMin}
+                max={zoomMax}
+                step={zoomStep}
+                className="w-full"
+                aria-label="Interface zoom"
+              />
+            </div>
             <Button
+              variant="tertiary"
+              className="min-h-0 h-7 w-7 justify-center p-0"
               svg={ZoomIn}
-              onClick={handleZoomIn}
-              className="flex-1 justify-center"
-              disabled={zoomLevel >= 200}
-              variant="secondary"
-            ></Button>
+              color="#ffffff"
+              title="Zoom in"
+              aria-label="Zoom in interface"
+              disabled={zoomLevel >= zoomMax}
+              onClick={() => setZoomWithinBounds(zoomLevel + zoomStep)}
+            />
           </div>
         </div>
       ),
+      className:
+        "p-0 hover:bg-transparent focus:bg-transparent hover:text-inherit focus:text-inherit",
       preventClose: true,
     },
-    ...(isPhone && !isEditMode
+    ...(isPhone && !isEditMode && access !== "view"
       ? [
         {
           element: (
@@ -279,7 +303,7 @@ const ToolbarMenu = ({
       ]
       : []),
     // {
-    //   text: isLoggedIn ? "Logout" : "Login",
+    //   text: isLoggedIn ? "Sign out" : "Sign in",
     //   onClick: async () => {
     //     if (isLoggedIn && logout) {
     //       logout();

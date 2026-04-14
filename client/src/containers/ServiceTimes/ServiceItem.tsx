@@ -12,7 +12,7 @@ type Props = {
 const ServiceItem = ({ service, onEdit, onDelete }: Props) => {
   if (!service) return null;
   return (
-    <li className="bg-gray-700 rounded p-3 flex items-center justify-between">
+    <li className="flex items-center justify-between rounded-md border border-white/10 bg-black/25 p-3">
       <div>
         <div className="font-semibold flex items-center gap-2">
           {service.name}{" "}

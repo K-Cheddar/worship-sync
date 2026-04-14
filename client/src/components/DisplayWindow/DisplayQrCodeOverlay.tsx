@@ -5,6 +5,8 @@ import { useGSAP } from "@gsap/react";
 import { defaultQrCodeOverlayStyles } from "./defaultOverlayStyles";
 import SharedOverlay from "./SharedOverlay";
 
+const EMPTY_OVERLAY_INFO: OverlayInfo = {} as OverlayInfo;
+
 type DisplayQRCodeOverlayProps = {
   width: number;
   qrCodeOverlayInfo?: OverlayInfo;
@@ -20,8 +22,8 @@ const DisplayQRCodeOverlay = forwardRef<
   (
     {
       width,
-      qrCodeOverlayInfo = {},
-      prevQrCodeOverlayInfo = {},
+      qrCodeOverlayInfo = EMPTY_OVERLAY_INFO,
+      prevQrCodeOverlayInfo = EMPTY_OVERLAY_INFO,
       shouldAnimate = false,
       shouldFillContainer = false,
     },
@@ -100,7 +102,7 @@ const DisplayQRCodeOverlay = forwardRef<
       },
       {
         scope: qrCodeOverlayRef,
-        dependencies: [qrCodeOverlayInfo, prevQrCodeOverlayInfo],
+        dependencies: [qrCodeOverlayInfo],
       }
     );
 

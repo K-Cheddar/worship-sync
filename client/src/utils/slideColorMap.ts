@@ -29,6 +29,25 @@ export const itemSectionBgColorMap: Map<string, string> = new Map([
   ["Section", "bg-stone-500"],
 ]);
 
+/** Text color for section labels on dark UI (pairs with itemSectionBgColorMap keys). */
+export const itemSectionTextColorMap: Map<string, string> = new Map([
+  ["Title", "text-stone-400"],
+  ["Reprise", "text-amber-400"],
+  ["Interlude", "text-fuchsia-400"],
+  ["Verse", "text-blue-400"],
+  ["Chorus", "text-red-400"],
+  ["Refrain", "text-red-400"],
+  ["Bridge", "text-green-400"],
+  ["Outro", "text-orange-400"],
+  ["Ending", "text-stone-400"],
+  ["Intro", "text-yellow-400"],
+  ["Pre-Chorus", "text-rose-400"],
+  ["Pre-Bridge", "text-lime-400"],
+  ["Blank", "text-stone-400"],
+  ["blank", "text-stone-400"],
+  ["Section", "text-stone-400"],
+]);
+
 export const itemSectionBorderColorMap: Map<string, string> = new Map([
   ["Title", "border-stone-700"],
   ["Reprise", "border-amber-700"],

@@ -194,6 +194,21 @@ describe("itemUtil", () => {
       );
       expect(textBox?.words).toContain("Welcome and greeting");
     });
+
+    it("with emptyBodyText does not put the item name in the first slide body", async () => {
+      const list: ServiceItem[] = [];
+      const item = await createNewFreeForm({
+        name: "Background clip",
+        text: "",
+        list,
+        db: undefined,
+        background: "#000",
+        brightness: 100,
+        emptyBodyText: true,
+      });
+      const textBox = item.slides[0].boxes[1];
+      expect(textBox?.words?.trim()).toBe("");
+    });
   });
 
   describe("createNewBible", () => {

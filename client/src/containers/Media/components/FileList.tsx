@@ -10,7 +10,7 @@ type FileListProps = {
 export const FileList = ({ files, isUploading, onRemoveFile }: FileListProps) => {
   if (files.length === 0) {
     return (
-      <div className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded flex items-center justify-center text-sm">
+      <div className="flex w-full items-center justify-center rounded border border-gray-600 bg-black/30 px-4 py-2 text-sm">
         <span className="text-gray-500">No files selected</span>
       </div>
     );
@@ -21,7 +21,7 @@ export const FileList = ({ files, isUploading, onRemoveFile }: FileListProps) =>
       {files.map((fileProgress, index) => (
         <div
           key={index}
-          className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded flex items-center justify-between gap-2 text-sm"
+          className="flex w-full items-center justify-between gap-2 rounded border border-gray-600 bg-black/30 px-4 py-2 text-sm"
         >
           <div className="flex-1 min-w-0 flex items-center gap-2">
             {fileProgress.fileType === "video" ? (

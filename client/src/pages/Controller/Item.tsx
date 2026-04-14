@@ -40,7 +40,7 @@ const Item = () => {
   const { isLoading, isSectionLoading } = useSelector(
     (state: RootState) => state.undoable.present.item
   );
-  const showLoadingOverlay = isLoading || isSectionLoading;
+  const showSlidesLoadingOverlay = isSectionLoading && !isLoading;
 
   useEffect(() => {
     const selectItem = async () => {
@@ -72,7 +72,10 @@ const Item = () => {
     <ErrorBoundary>
       <div className="flex-1 min-h-0 flex flex-col">
         <SlideEditor access={access} />
-        <LoadingOverlay isLoading={!!showLoadingOverlay} className="flex-1 min-h-0">
+        <LoadingOverlay
+          isLoading={Boolean(showSlidesLoadingOverlay)}
+          className="flex-1 min-h-0"
+        >
           <ItemSlides />
         </LoadingOverlay>
       </div>

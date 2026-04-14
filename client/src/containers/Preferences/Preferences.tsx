@@ -21,16 +21,19 @@ import {
 import cn from "classnames";
 import Icon from "../../components/Icon/Icon";
 import Input from "../../components/Input/Input";
-import RadioButton from "../../components/RadioButton/RadioButton";
+import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButton";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
+import { Slider } from "../../components/ui/Slider";
 import { useContext } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
+import { useToast } from "../../context/toastContext";
 
 const Preferences = () => {
   const dispatch = useDispatch();
+  const { showToast } = useToast();
   const { isMobile } = useContext(ControllerInfoContext) || {};
   const { access: currentAccess } = useContext(GlobalInfoContext) || {};
 
@@ -194,11 +197,17 @@ const Preferences = () => {
                         : "border-gray-500 hover:border-gray-300"
                     )}
                     onClick={() => {
+                      const wasUnselected = selectedPreference !== preference;
                       dispatch(
                         setSelectedPreference(
                           preference as SelectedPreferenceType
                         )
                       );
+                      if (wasUnselected) {
+                        showToast(
+                          "Pick an item from Media, then click Set Background."
+                        );
+                      }
                     }}
                   >
                     {background ? (
@@ -229,13 +238,19 @@ const Preferences = () => {
                     }}
                   ></Button>
                 </section>
-                <section className="flex gap-2 items-center">
+                <section className="flex flex-wrap gap-2 items-center">
                   <p className="font-semibold">Background Brightness:</p>
                   <Icon size="xl" svg={SunMedium} color="#fbbf24" />
-                  <Button
-                    svg={Minus}
-                    variant="tertiary"
-                    onClick={() => dispatch(setBrightness(brightness - 10))}
+                  <Slider
+                    className="min-w-28 w-32 shrink-0"
+                    value={[brightness]}
+                    min={10}
+                    max={100}
+                    step={1}
+                    onValueChange={(v: number[]) =>
+                      dispatch(setBrightness(v[0] ?? brightness))
+                    }
+                    aria-label={`${label} default background brightness`}
                   />
                   <Input
                     label="Brightness"
@@ -246,12 +261,7 @@ const Preferences = () => {
                     hideLabel
                     data-ignore-undo="true"
                     max={100}
-                    min={1}
-                  />
-                  <Button
-                    svg={Plus}
-                    variant="tertiary"
-                    onClick={() => dispatch(setBrightness(brightness + 10))}
+                    min={10}
                   />
                 </section>
               </li>
@@ -313,20 +323,18 @@ const Preferences = () => {
               >
                 <p className="font-semibold text-right">{label}:</p>
                 <section className="flex gap-2 items-center px-2">
-                  <RadioButton
-                    label="Shown"
-                    value={value}
-                    onChange={() =>
-                      dispatch(setDefaultPreferences({ [property]: true }))
+                  <RadioGroup
+                    value={value ? "shown" : "hidden"}
+                    onValueChange={(v) =>
+                      dispatch(
+                        setDefaultPreferences({ [property]: v === "shown" })
+                      )
                     }
-                  />
-                  <RadioButton
-                    label="Hidden"
-                    value={!value}
-                    onChange={() =>
-                      dispatch(setDefaultPreferences({ [property]: false }))
-                    }
-                  />
+                    className="flex gap-2 items-center"
+                  >
+                    <RadioButton optionValue="shown" label="Shown" />
+                    <RadioButton optionValue="hidden" label="Hidden" />
+                  </RadioGroup>
                 </section>
               </li>
             ))}
@@ -344,17 +352,22 @@ const Preferences = () => {
               >
                 <p className="font-semibold text-right">{label}:</p>
                 <section className="flex gap-2 items-center px-2">
-                  {options.map((option) => (
-                    <RadioButton
-                      key={option}
-                      label={option}
-                      labelClassName="capitalize"
-                      value={value === option}
-                      onChange={() =>
-                        dispatch(setDefaultPreferences({ [property]: option }))
-                      }
-                    />
-                  ))}
+                  <RadioGroup
+                    value={value}
+                    onValueChange={(v) =>
+                      dispatch(setDefaultPreferences({ [property]: v }))
+                    }
+                    className="flex flex-wrap gap-2 items-center"
+                  >
+                    {options.map((option) => (
+                      <RadioButton
+                        key={option}
+                        optionValue={option}
+                        label={option}
+                        labelClassName="capitalize"
+                      />
+                    ))}
+                  </RadioGroup>
                 </section>
               </li>
             ))}
@@ -364,29 +377,19 @@ const Preferences = () => {
       <h2 className="text-lg font-semibold text-center mb-4 mt-8 border-b-2 border-gray-400 pb-2">
         Scrollbar Width
       </h2>
-      <ul className="flex gap-6 items-center justify-center">
-        <li>
-          <RadioButton
-            label="Thin"
-            value={scrollbarWidth === "thin"}
-            onChange={() => dispatch(setScrollbarWidth("thin"))}
-          />
-        </li>
-        <li>
-          <RadioButton
-            label="Auto"
-            value={scrollbarWidth === "auto"}
-            onChange={() => dispatch(setScrollbarWidth("auto"))}
-          />
-        </li>
-        <li>
-          <RadioButton
-            label="None"
-            value={scrollbarWidth === "none"}
-            onChange={() => dispatch(setScrollbarWidth("none"))}
-          />
-        </li>
-      </ul>
+      <RadioGroup
+        value={scrollbarWidth}
+        onValueChange={(v) =>
+          dispatch(
+            setScrollbarWidth(v as "thin" | "auto" | "none")
+          )
+        }
+        className="flex gap-6 items-center justify-center"
+      >
+        <RadioButton optionValue="thin" label="Thin" />
+        <RadioButton optionValue="auto" label="Auto" />
+        <RadioButton optionValue="none" label="None" />
+      </RadioGroup>
     </ErrorBoundary>
   );
 };

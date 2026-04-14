@@ -3,38 +3,39 @@ import { default as CreditsContainer } from "../containers/Credits/Credits";
 import { useDispatch, useSelector } from "../hooks";
 import {
   initiateCreditsScene,
-  initiatePublishedCreditsList,
+  initiateLiveCredits,
   initiateTransitionScene,
 } from "../store/creditsSlice";
 import { onValue, ref } from "firebase/database";
 import { GlobalInfoContext } from "../context/globalInfo";
-import { capitalizeFirstLetter } from "../utils/generalUtils";
+import { getChurchDataPath } from "../utils/firebasePaths";
 
 const Credits = () => {
-  const { publishedList, transitionScene, creditsScene } = useSelector(
+  const { liveCredits, transitionScene, creditsScene } = useSelector(
     (state) => state.undoable.present.credits,
   );
   const dispatch = useDispatch();
-  const { user, database, firebaseDb } = useContext(GlobalInfoContext) || {};
+  const { churchId, firebaseDb, loginState } =
+    useContext(GlobalInfoContext) || {};
   const [isActive, setIsActive] = useState(false);
 
   useEffect(() => {
-    if (!firebaseDb || user === "Demo") return;
+    if (!firebaseDb || loginState === "guest") return;
 
-    const getPublishedRef = ref(
+    const liveCreditsRtdbRef = ref(
       firebaseDb,
-      "users/" + capitalizeFirstLetter(database) + "/v2/credits/publishedList",
+      getChurchDataPath(churchId, "credits", "publishedList"),
     );
-    onValue(getPublishedRef, (snapshot) => {
+    onValue(liveCreditsRtdbRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        dispatch(initiatePublishedCreditsList(data));
+        dispatch(initiateLiveCredits(data));
       }
     });
 
     const getTransitionSceneRef = ref(
       firebaseDb,
-      "users/" + capitalizeFirstLetter(database) + "/v2/credits/transitionScene",
+      getChurchDataPath(churchId, "credits", "transitionScene"),
     );
     onValue(getTransitionSceneRef, (snapshot) => {
       const data = snapshot.val();
@@ -45,7 +46,7 @@ const Credits = () => {
 
     const getCreditsSceneRef = ref(
       firebaseDb,
-      "users/" + capitalizeFirstLetter(database) + "/v2/credits/creditsScene",
+      getChurchDataPath(churchId, "credits", "creditsScene"),
     );
     onValue(getCreditsSceneRef, (snapshot) => {
       const data = snapshot.val();
@@ -53,7 +54,7 @@ const Credits = () => {
         dispatch(initiateCreditsScene(data));
       }
     });
-  }, [dispatch, firebaseDb, database, user]);
+  }, [churchId, dispatch, firebaseDb, loginState]);
 
   const runObsTransition = useCallback(() => {
     if (isActive) {
@@ -69,7 +70,7 @@ const Credits = () => {
 
   return (
     <CreditsContainer
-      credits={publishedList}
+      credits={liveCredits}
       runObsTransition={runObsTransition}
     />
   );

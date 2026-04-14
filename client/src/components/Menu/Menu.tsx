@@ -8,7 +8,7 @@ import {
   DropdownMenuSub,
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
-} from "../ui/DropdownMenu";
+} from "@/components/ui/DropdownMenu";
 import { MenuItemType } from "../../types";
 import { ButtonProps } from "../Button/Button";
 
@@ -53,8 +53,8 @@ const Menu = ({
 
             const handleSelect = preventClose
               ? (e: Event) => {
-                  e.preventDefault();
-                }
+                e.preventDefault();
+              }
               : undefined;
 
             if (subItems?.length) {

@@ -7,11 +7,12 @@ import React, {
   useRef,
 } from "react";
 import { FileQuestion } from "lucide-react";
+import { Link } from "react-router-dom";
+import ShadcnButton, { type ButtonVariantProps } from "@/components/ui/Button";
 import Icon from "../Icon/Icon";
-import cn from "classnames";
+import { cn } from "@/utils/cnHelper";
 import Spinner from "../Spinner/Spinner";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { Link } from "react-router-dom";
 
 export type ButtonProps = Omit<
   React.HTMLProps<HTMLButtonElement | HTMLAnchorElement>,
@@ -20,7 +21,14 @@ export type ButtonProps = Omit<
   children?: ReactNode;
   svg?: FunctionComponent<React.SVGProps<SVGSVGElement>>;
   image?: string;
-  variant?: "primary" | "secondary" | "tertiary" | "cta" | "none";
+  variant?:
+  | "primary"
+  | "secondary"
+  | "tertiary"
+  | "cta"
+  | "destructive"
+  | "textLink"
+  | "none";
   className?: string;
   color?: string;
   wrap?: boolean;
@@ -35,6 +43,22 @@ export type ButtonProps = Omit<
   position?: "relative" | "absolute";
   component?: "button" | "link";
   to?: string;
+  state?: unknown;
+};
+
+type UiVariant = NonNullable<ButtonVariantProps["variant"]>;
+
+const variantToUi: Record<
+  NonNullable<ButtonProps["variant"]>,
+  UiVariant
+> = {
+  primary: "presentPrimary",
+  secondary: "presentSecondary",
+  tertiary: "presentTertiary",
+  cta: "presentCta",
+  destructive: "presentDestructive",
+  textLink: "presentTextLink",
+  none: "none",
 };
 
 const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
@@ -57,6 +81,11 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       image,
       position = "relative",
       component = "button",
+      to,
+      state,
+      onClick,
+      disabled = false,
+      size: _htmlSize,
       ...rest
     },
     ref
@@ -73,31 +102,39 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       return _iconSize || "md";
     }, [isMobile, _iconSize]);
 
+    const iconColor =
+      variant === "cta" || variant === "destructive" || variant === "secondary"
+        ? (color ?? "#ffffff")
+        : color;
+
     const iconWProps = (
-      <Icon svg={svg || FileQuestion} color={color} size={iconSize} />
+      <Icon svg={svg || FileQuestion} color={iconColor} size={iconSize} />
     );
 
-    const _padding = padding ? padding : children ? "py-1 px-2" : "p-1";
+    const _padding = padding
+      ? padding
+      : variant === "textLink"
+        ? "py-0.5 px-0"
+        : children
+          ? "py-1 px-2"
+          : "p-1";
 
-    const variantClasses: Record<
-      NonNullable<ButtonProps["variant"]>,
-      string
-    > = {
-      cta: "bg-green-600 hover:bg-green-700 active:bg-green-800 border-2 border-green-600 hover:border-green-700 active:border-green-800 text-white",
-      primary:
-        "bg-black hover:bg-gray-900 active:bg-gray-800 border-2 border-black hover:border-gray-900 active:border-gray-800 text-white",
-      secondary:
-        "bg-white hover:bg-gray-200 active:bg-gray-300 border-2 border-white hover:border-gray-200 active:border-gray-300 text-black",
-      tertiary:
-        "bg-transparent hover:bg-gray-500 active:bg-gray-400 border-2 border-transparent hover:border-gray-500 active:border-gray-400 text-white",
-      none: "",
-    };
+    const uiVariant: UiVariant = isSelected ? "none" : variantToUi[variant];
 
-    const commonClassName = cn(
-      `font-semibold rounded-md flex items-center max-w-full max-md:min-h-14 cursor-pointer disabled:opacity-65 disabled:pointer-events-none ${gap}`,
+    const uiSize: "bare" | "present" =
+      variant === "textLink" ? "bare" : "present";
+
+    const layoutClassName = cn(
+      variant === "textLink" ? "font-normal" : "font-semibold",
+      "max-w-full justify-start",
+      gap,
+      variant !== "textLink" && "max-md:min-h-14",
+      variant !== "textLink" && "disabled:opacity-65",
+      disabled && "pointer-events-none cursor-not-allowed opacity-65",
       _padding,
-      !isSelected && variant && variantClasses[variant],
-      wrap ? "whitespace-normal text-left break-words" : "whitespace-nowrap",
+      wrap
+        ? "text-wrap whitespace-normal text-left break-words"
+        : "whitespace-nowrap",
       truncate && "truncate",
       position,
       className
@@ -119,37 +156,57 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       </>
     );
 
+    const refProp = buttonRef as React.Ref<HTMLButtonElement>;
+
     if (component === "link") {
-      const { onClick, ...linkRest } = rest;
       return (
-        <Link
-          className={commonClassName}
-          ref={buttonRef as React.Ref<HTMLAnchorElement>}
-          to={linkRest.to || "#"}
-          {...linkRest}
-          onClick={(e) => {
-            if (e.shiftKey || e.ctrlKey || e.metaKey) {
-              e.preventDefault();
-            }
-            onClick?.(e as React.MouseEvent<HTMLAnchorElement>);
-          }}
+        <ShadcnButton
+          ref={refProp}
+          asChild
+          variant={uiVariant}
+          size={uiSize}
+          className={layoutClassName}
         >
-          {commonContent}
-        </Link>
+          <Link
+            to={disabled ? "#" : to || "#"}
+            state={state}
+            {...rest}
+            aria-disabled={disabled || undefined}
+            tabIndex={disabled ? -1 : rest.tabIndex}
+            onClick={(e) => {
+              if (disabled) {
+                e.preventDefault();
+                return;
+              }
+              if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+              }
+              onClick?.(e as React.MouseEvent<HTMLAnchorElement>);
+            }}
+          >
+            {commonContent}
+          </Link>
+        </ShadcnButton>
       );
     }
 
     return (
-      <button
-        className={commonClassName}
+      <ShadcnButton
+        ref={refProp}
         type={type}
-        ref={buttonRef as React.Ref<HTMLButtonElement>}
+        disabled={disabled}
+        variant={uiVariant}
+        size={uiSize}
+        className={layoutClassName}
+        onClick={onClick as React.ComponentProps<"button">["onClick"]}
         {...rest}
       >
         {commonContent}
-      </button>
+      </ShadcnButton>
     );
   }
 );
+
+Button.displayName = "Button";
 
 export default Button;

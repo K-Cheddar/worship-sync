@@ -27,6 +27,8 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { createNewHeading, updateHeadingName } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
 import HeadingItem from "./HeadingItem";
+import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
+import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
 
 /** Matches LeftPanelButton link target (`/controller/${to}`) so keyboard nav is not relative to bible/songs/etc. */
@@ -52,6 +54,9 @@ const ServiceItems = () => {
   );
   const { db } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
+  const canMutateHeadingRow = access === "full";
+  const canMutateServiceItemRow = (item: ServiceItemType) =>
+    access === "full" || (access === "music" && item.type === "song");
   const [isAddingHeading, setIsAddingHeading] = useState(false);
   const [collapsedHeadingListIds, setCollapsedHeadingListIds] = useState<
     Set<string>
@@ -103,11 +108,23 @@ const ServiceItems = () => {
   const sensors = useSensors();
 
   const onDragEnd = (event: DragEndEvent) => {
+    if (access === "view") return;
     const { over, active } = event;
     if (!over || !active) return;
 
     const overId = over.id as string;
     const activeId = active.id as string;
+    if (access === "music") {
+      const activeItem = serviceItems.find((i) => i.listId === activeId);
+      if (!activeItem || activeItem.type !== "song") return;
+      const idsToMove = selectedListIds.has(activeId)
+        ? selectedListIds
+        : new Set([activeId]);
+      for (const id of idsToMove) {
+        const row = serviceItems.find((i) => i.listId === id);
+        if (!row || row.type !== "song") return;
+      }
+    }
     const updatedServiceItems = [...serviceItems];
     const dropIndex = updatedServiceItems.findIndex(
       (item) => item.listId === overId
@@ -280,6 +297,12 @@ const ServiceItems = () => {
   };
 
   const handleItemClick = (listId: string, e: React.MouseEvent) => {
+    if (access === "view" || access === "music") {
+      setSelectedListIds(new Set([listId]));
+      setAnchorListId(listId);
+      dispatch(setActiveItemInList(listId));
+      return;
+    }
     if (e.shiftKey) {
       const clickedIndex = serviceItems.findIndex((i) => i.listId === listId);
       const anchorIndex = anchorListId
@@ -311,10 +334,31 @@ const ServiceItems = () => {
 
   const handleDeleteSelected = () => {
     if (selectedListIds.size === 0) return;
+    if (access === "music") {
+      const songIds = Array.from(selectedListIds).filter((id) => {
+        const row = serviceItems.find((i) => i.listId === id);
+        return row?.type === "song";
+      });
+      if (songIds.length === 0) return;
+      dispatch(removeItemsFromList(songIds));
+      setSelectedListIds(new Set());
+      setAnchorListId(null);
+      return;
+    }
     dispatch(removeItemsFromList(Array.from(selectedListIds)));
     setSelectedListIds(new Set());
     setAnchorListId(null);
   };
+
+  const showBulkDeleteMenu =
+    access === "full" && selectedListIds.size > 0
+      ? true
+      : access === "music" &&
+      selectedListIds.size > 0 &&
+      [...selectedListIds].every((id) => {
+        const row = serviceItems.find((i) => i.listId === id);
+        return row?.type === "song";
+      });
 
   useEffect(() => {
     const itemElement = document.getElementById(
@@ -347,9 +391,9 @@ const ServiceItems = () => {
   return (
     <ErrorBoundary>
       <DndContext onDragEnd={onDragEnd} sensors={sensors}>
-        <h3 className="font-bold text-center p-1 text-base bg-gray-800">
-          {selectedList?.name || "Service Items"}
-        </h3>
+        <div className="min-h-0 border-b-2 border-white/25 bg-black/55 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
+          <Outlines servicePanel className="w-full min-w-0" />
+        </div>
         {selectedList && access === "full" && (
           <Button
             svg={Plus}
@@ -365,17 +409,18 @@ const ServiceItems = () => {
         )}
         {!isLoading && serviceItems.length === 0 && (
           <p className="text-sm p-2">
-            This outline is empty. Create a new item or add an existing one
-            using the buttons above.
+            {access !== "view"
+              ? "This outline is empty. Create a new item or add an existing one using the buttons above."
+              : "This outline is empty."}
           </p>
         )}
         {isLoading ? (
-          <div className="text-lg text-center mt-2">Loading items...</div>
+          <ServiceOutlineSkeleton />
         ) : (
           <ContextMenu
             className="flex-1 min-h-0 flex flex-col overflow-hidden"
             menuItems={[
-              ...(selectedListIds.size > 0
+              ...(showBulkDeleteMenu
                 ? [
                   {
                     label: `Delete selected (${selectedListIds.size})`,
@@ -435,6 +480,7 @@ const ServiceItems = () => {
                         }
                         onDelete={() => handleDeleteHeading(item.listId)}
                         onItemClick={handleItemClick}
+                        canMutateOutline={canMutateHeadingRow}
                       />
                     );
                   }
@@ -456,6 +502,7 @@ const ServiceItems = () => {
                       selectedListIds={selectedListIds}
                       initialItems={initialItems}
                       onItemClick={handleItemClick}
+                      canMutateOutline={canMutateServiceItemRow(item)}
                     />
                   );
                 })}

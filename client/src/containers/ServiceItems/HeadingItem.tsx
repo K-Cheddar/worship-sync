@@ -14,6 +14,10 @@ import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import cn from "classnames";
 import { getOutlineRowSelectionState } from "../../utils/outlineRowSelection";
+import {
+  INLINE_EDIT_CONFIRM_ICON_COLOR,
+  handleInlineTextInputKeyDown,
+} from "../../utils/inlineEdit";
 
 type HeadingItemProps = {
   item: ServiceItemType;
@@ -26,6 +30,8 @@ type HeadingItemProps = {
   onSaveName: (newName: string) => Promise<void>;
   onDelete: () => void;
   onItemClick: (listId: string, e: React.MouseEvent) => void;
+  /** When false, heading cannot be reordered, renamed, or deleted (view-only access). */
+  canMutateOutline?: boolean;
 };
 
 const HeadingItem = ({
@@ -39,6 +45,7 @@ const HeadingItem = ({
   onSaveName,
   onDelete,
   onItemClick,
+  canMutateOutline = true,
 }: HeadingItemProps) => {
   const [isEditing, setIsEditing] = useState(false);
   const [localName, setLocalName] = useState(item.name);
@@ -47,7 +54,7 @@ const HeadingItem = ({
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
       id: item.listId,
-      disabled: isEditing,
+      disabled: isEditing || !canMutateOutline,
     });
 
   const style = {
@@ -76,6 +83,7 @@ const HeadingItem = ({
   }, [isEditing]);
 
   const handleStartEdit = () => {
+    if (!canMutateOutline) return;
     setLocalName(item.name);
     setIsEditing(true);
   };
@@ -95,12 +103,13 @@ const HeadingItem = ({
     setIsEditing(false);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleConfirm();
-    } else if (e.key === "Escape") {
-      handleDiscard();
-    }
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    handleInlineTextInputKeyDown(e, {
+      onSave: () => {
+        void handleConfirm();
+      },
+      onCancel: handleDiscard,
+    });
   };
 
   return (
@@ -111,9 +120,13 @@ const HeadingItem = ({
       style={style}
       onClick={(e) => onItemClick(item.listId, e)}
       className={cn(
-        "group flex items-center gap-1 border-b-2 border-r-4 overflow-hidden bg-gray-800/50",
+        "flex items-center gap-1 border-b-2 overflow-hidden",
+        "bg-black/40 border-t border-white/20 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]",
+        isSelected && "ring-1 ring-inset ring-cyan-500/30",
         isSelected ? "border-l-cyan-500" : "border-transparent",
-        isInsertPoint ? "border-b-white" : "border-b-transparent",
+        isSelected && "border-b-cyan-500",
+        !isSelected && isInsertPoint && "border-b-white",
+        !isSelected && !isInsertPoint && "border-b-transparent",
       )}
     >
       <div className="flex-1 min-w-0 flex items-center gap-1">
@@ -126,32 +139,32 @@ const HeadingItem = ({
                 e.stopPropagation();
                 onToggleCollapse();
               }}
-              className={cn(
-                "opacity-0 group-hover:opacity-100 transition-opacity",
-              )}
               title={isCollapsed ? "Expand" : "Collapse"}
               iconSize="sm"
             />
             <p
-              {...attributes}
-              {...listeners}
-              className="text-xs truncate flex-1 px-1 cursor-grab active:cursor-grabbing text-center"
+              {...(canMutateOutline ? attributes : {})}
+              {...(canMutateOutline ? listeners : {})}
+              title={item.name}
+              className={cn(
+                "line-clamp-3 min-w-0 flex-1 wrap-break-word px-2 py-2 text-center text-[11px] font-semibold text-white",
+                canMutateOutline && "cursor-grab active:cursor-grabbing",
+              )}
             >
               {item.name}
             </p>
-            <Button
-              variant="tertiary"
-              svg={Pencil}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleStartEdit();
-              }}
-              className={cn(
-                "opacity-0 group-hover:opacity-100 transition-opacity",
-              )}
-              iconSize="sm"
-              title="Edit heading name"
-            />
+            {canMutateOutline && (
+              <Button
+                variant="tertiary"
+                svg={Pencil}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleStartEdit();
+                }}
+                iconSize="sm"
+                title="Edit heading name"
+              />
+            )}
           </>
         ) : (
           <div
@@ -174,7 +187,8 @@ const HeadingItem = ({
                 e.stopPropagation();
                 void handleConfirm();
               }}
-              className="shrink-0 p-1 min-w-6 text-green-500"
+              className="shrink-0 p-1 min-w-6"
+              color={INLINE_EDIT_CONFIRM_ICON_COLOR}
               title="Save"
               iconSize="sm"
             />

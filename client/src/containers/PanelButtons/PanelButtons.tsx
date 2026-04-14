@@ -16,31 +16,31 @@ const buttons: ButtonType[] = [
     type: "bible",
     title: "Bible",
     section: "bible",
-    access: ["full"],
+    access: ["full", "view"],
   },
   {
     type: "song",
     title: "Songs",
     section: "songs",
-    access: ["full", "music"],
+    access: ["full", "music", "view"],
   },
   {
     type: "free",
-    title: "Custom Items",
+    title: "Custom",
     section: "free",
-    access: ["full"],
+    access: ["full", "view"],
   },
   {
     type: "timer",
     title: "Timers",
     section: "timers",
-    access: ["full"],
+    access: ["full", "view"],
   },
   {
     type: "overlays",
     title: "Overlays",
     section: "overlays",
-    access: ["full"],
+    access: ["full", "view"],
   },
   {
     type: "create",
@@ -53,26 +53,29 @@ const buttons: ButtonType[] = [
 const EditorButtons = ({ access }: { access?: AccessType }) => {
   const location = useLocation();
 
+  const canShow = (b: ButtonType) =>
+    Boolean(access && b.access?.includes(access));
+
+  const isSelected = (section: string) =>
+    location.pathname.replace("/controller/", "") === section;
+
   return (
     <ErrorBoundary>
       <div className="flex flex-col h-fit">
-        {buttons
-          .filter((button) => access && button.access?.includes(access))
-          .map(({ title, type, section }) => {
-            const id = `editor-button-${title}`;
-            return (
-              <LeftPanelButton
-                key={id}
-                title={title}
-                isSelected={
-                  location.pathname.replace("/controller/", "") === section
-                } // Remove controller route from path
-                to={section}
-                type={type}
-                id={id}
-              />
-            );
-          })}
+        {buttons.map((b) => {
+          if (!canShow(b)) return null;
+          const id = `editor-button-${b.title}`;
+          return (
+            <LeftPanelButton
+              key={id}
+              title={b.title}
+              isSelected={isSelected(b.section)}
+              to={b.section}
+              type={b.type}
+              id={id}
+            />
+          );
+        })}
       </div>
     </ErrorBoundary>
   );

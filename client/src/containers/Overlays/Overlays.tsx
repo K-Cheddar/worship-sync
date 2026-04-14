@@ -2,6 +2,7 @@ import Button from "../../components/Button/Button";
 import { Plus, Check, Download, RefreshCw, FolderOpen, History } from "lucide-react";
 
 import { useDispatch, useSelector } from "../../hooks";
+import { useStore } from "react-redux";
 import {
   addOverlayToList,
   deleteOverlayFromList,
@@ -24,7 +25,9 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import generateRandomId from "../../utils/generateRandomId";
+import { applyPouchAudit } from "../../utils/pouchAudit";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import Drawer from "../../components/Drawer";
@@ -48,7 +51,14 @@ import {
 import { updateTemplatesFromRemote } from "../../store/overlayTemplatesSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import OverlayEditor from "./OverlayEditor";
+import OverlaysListSkeleton from "./OverlaysListSkeleton";
 import { getDefaultFormatting } from "../../utils/overlayUtils";
+import {
+  shouldKeepLocalListRowForRemoteOverlay,
+  syncSelectedOverlayFromRemote,
+  type OverlaySyncRootSlice,
+} from "../../utils/overlayRemoteSync";
+import { normalizeOverlayForSync } from "../../utils/overlayUtils";
 import { putOverlayHistoryDocs } from "../../utils/dbUtils";
 import { DBOverlayTemplates } from "../../types";
 import PopOver from "../../components/PopOver/PopOver";
@@ -91,9 +101,12 @@ const Overlays = () => {
   const selectedOverlay = _selectedOverlay ?? defaultSelectedOverlay;
 
   const dispatch = useDispatch();
+  const store = useStore();
   const { isMobile, db, updater } = useContext(ControllerInfoContext) || {
     isMobile: false,
   };
+  const { access } = useContext(GlobalInfoContext) || {};
+  const canMutateOverlays = access !== "view";
 
   const [showPreview, setShowPreview] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
@@ -133,7 +146,6 @@ const Overlays = () => {
         for (const _update of updates) {
           // check if the list we have selected was updated
           if (_update._id?.startsWith("overlay-")) {
-            console.log("updating overlay from remote", event);
             const update = _update as DBOverlay;
 
             const overlayIndex = list.findIndex(
@@ -144,21 +156,34 @@ const Overlays = () => {
               continue;
             }
 
+            const normalized = normalizeOverlayForSync(update);
+            const getState = store.getState as () => OverlaySyncRootSlice;
+            const keepLocalRow =
+              shouldKeepLocalListRowForRemoteOverlay(getState, normalized);
+
             const updatedOverlayList = list.map((overlay, index) => {
               if (index === overlayIndex) {
+                if (keepLocalRow) {
+                  return overlay;
+                }
                 return update;
               }
               return overlay;
             });
 
             dispatch(updateOverlayListFromRemote(updatedOverlayList));
+            syncSelectedOverlayFromRemote(
+              dispatch,
+              store.getState as () => OverlaySyncRootSlice,
+              update,
+            );
           }
         }
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch, list]
+    [dispatch, list, store]
   );
 
   useEffect(() => {
@@ -199,6 +224,7 @@ const Overlays = () => {
   const sensors = useSensors();
 
   const onDragEnd = (event: DragEndEvent) => {
+    if (!canMutateOverlays) return;
     const { over, active } = event;
     if (!over || !active) return;
 
@@ -248,10 +274,34 @@ const Overlays = () => {
     };
   }, [dispatch]);
 
-  const handleOverlayUpdate = (overlay: OverlayInfo) => {
-    dispatch(updateOverlay(overlay));
-    dispatch(updateOverlayInList(overlay));
-  };
+  const handleOverlayUpdate = useCallback(
+    async (overlay: OverlayInfo) => {
+      if (!overlay.id) return;
+
+      // Draft flushes can arrive after selection swaps; persist by payload id so edits are not dropped.
+      if (selectedOverlay.id && overlay.id !== selectedOverlay.id) {
+        dispatch(updateOverlayInList(overlay));
+        if (!db) return;
+        try {
+          const dbOverlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
+          const updatedAt = new Date().toISOString();
+          const merged = applyPouchAudit(
+            dbOverlay,
+            { ...dbOverlay, ...overlay, updatedAt },
+            { isNew: false },
+          );
+          await db.put(merged);
+        } catch (error) {
+          console.error("Error persisting non-selected overlay", error);
+        }
+        return;
+      }
+
+      dispatch(updateOverlay(overlay));
+      dispatch(updateOverlayInList(overlay));
+    },
+    [db, dispatch, selectedOverlay.id],
+  );
 
   const handleApplyFormattingToAll = async (formatting: OverlayFormatting) => {
     const type = selectedOverlay.type as OverlayType;
@@ -270,9 +320,13 @@ const Overlays = () => {
       for (const overlay of overlaysOfType) {
         try {
           const db_overlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
-          db_overlay.formatting = formatting;
-          db_overlay.updatedAt = new Date().toISOString();
-          await db.put(db_overlay);
+          const updatedAt = new Date().toISOString();
+          const toSave = applyPouchAudit(
+            db_overlay,
+            { ...db_overlay, formatting, updatedAt },
+            { isNew: false },
+          );
+          await db.put(toSave);
         } catch (e) {
           console.error("Failed to update overlay in db", overlay.id, e);
         }
@@ -476,11 +530,16 @@ const Overlays = () => {
             const dbOverlay = await db.get(`overlay-${bestOverlay.id}`);
 
             // Update with new name and timestamp
-            const updatedOverlay = {
-              ...dbOverlay,
-              name: eventData.leader,
-              updatedAt: new Date().toISOString(),
-            };
+            const updatedAt = new Date().toISOString();
+            const updatedOverlay = applyPouchAudit(
+              dbOverlay as DBOverlay,
+              {
+                ...(dbOverlay as DBOverlay),
+                name: eventData.leader,
+                updatedAt,
+              },
+              { isNew: false },
+            );
 
             // Save back to database
             await db.put(updatedOverlay);
@@ -522,111 +581,134 @@ const Overlays = () => {
     <ErrorBoundary>
       <DndContext onDragEnd={onDragEnd} sensors={sensors}>
         <div className="flex flex-col w-full h-full p-2 gap-2">
-          <div className="relative flex w-full items-center">
-            <h2 className="flex-1 text-xl font-semibold text-center h-fit">
-              Overlays
-            </h2>
-            <div className="absolute right-0 flex items-center gap-2">
-              <Button
-                variant="tertiary"
-                padding="px-2 py-1"
-                color="#f59e0b"
-                svg={History}
-                onClick={() => setIsOverlayHistoryDrawerOpen(true)}
-                title="Overlay history"
-                iconSize="sm"
-              />
-              <PopOver
-                TriggeringButton={
+          <div
+            className={
+              access === "view"
+                ? "mx-auto flex w-full max-w-[70%] flex-1 min-h-0 min-w-0 flex-col gap-2"
+                : "flex w-full flex-1 min-h-0 min-w-0 flex-col gap-2"
+            }
+          >
+            <div className="relative flex w-full items-center">
+              <h2 className="flex-1 text-xl font-semibold text-center h-fit">
+                Overlays
+              </h2>
+              <div className="absolute right-0 flex items-center gap-2">
+                {canMutateOverlays && (
                   <Button
-                    className="text-sm hidden"
-                    padding="px-1"
                     variant="tertiary"
-                    color="#06b6d4"
-                    svg={RefreshCw}
-                  >
-                    Get Names
-                  </Button>
-                }
-              >
-                <div className="flex gap-2">
-                  <Input
-                    label="Service Planning URL"
-                    className="flex gap-2"
-                    value={url}
-                    onChange={(val) => setUrl(val as string)}
+                    padding="px-2 py-1"
+                    color="#f59e0b"
+                    svg={History}
+                    onClick={() => setIsOverlayHistoryDrawerOpen(true)}
+                    title="Overlay history"
+                    iconSize="sm"
                   />
-                  <Button
-                    variant="primary"
-                    onClick={() => getNames(url)}
-                    isLoading={isGettingNames}
-                    svg={Download}
-                    color="#06b6d4"
-                  />
-                </div>
-              </PopOver>
-            </div>
-          </div>
-          <OverlayHistoryDrawer
-            isOpen={isOverlayHistoryDrawerOpen}
-            onClose={() => setIsOverlayHistoryDrawerOpen(false)}
-            size={isMobile ? "xl" : "lg"}
-            position={isMobile ? "bottom" : "right"}
-          />
-          {!isLoading && list.length === 0 && (
-            <p className="text-sm px-2">
-              This outline doesn't have any overlays yet. Click the button below
-              to add some.
-            </p>
-          )}
-          {isLoading ? (
-            <h3 className="text-lg text-center">Loading overlays...</h3>
-          ) : (
-            <div className="flex gap-2 max-lg:flex-col-reverse pb-2 flex-1 min-h-0">
-              <section className="flex-1 flex flex-col gap-2 min-h-0">
-                <ul
-                  id="overlays-list"
-                  className="scrollbar-variable flex flex-col gap-2 w-full overflow-y-auto overflow-x-hidden flex-1 min-h-0 pr-2"
-                  ref={setNodeRef}
+                )}
+                <PopOver
+                  TriggeringButton={
+                    <Button
+                      className="text-sm hidden"
+                      padding="px-1"
+                      variant="tertiary"
+                      color="#06b6d4"
+                      svg={RefreshCw}
+                    >
+                      Get Names
+                    </Button>
+                  }
                 >
-                  <SortableContext
-                    items={list.map((overlay) => overlay.id)}
-                    strategy={verticalListSortingStrategy}
+                  <div className="flex gap-2">
+                    <Input
+                      label="Service Planning URL"
+                      className="flex gap-2"
+                      value={url}
+                      onChange={(val) => setUrl(val as string)}
+                    />
+                    <Button
+                      variant="primary"
+                      onClick={() => getNames(url)}
+                      isLoading={isGettingNames}
+                      svg={Download}
+                      color="#06b6d4"
+                    />
+                  </div>
+                </PopOver>
+              </div>
+            </div>
+            <OverlayHistoryDrawer
+              isOpen={isOverlayHistoryDrawerOpen}
+              onClose={() => setIsOverlayHistoryDrawerOpen(false)}
+              size={isMobile ? "xl" : "lg"}
+              position={isMobile ? "bottom" : "right"}
+            />
+            {!isLoading && list.length === 0 && (
+              <p className="text-sm px-2">
+                {canMutateOverlays
+                  ? "This outline doesn't have any overlays yet. Click the button below to add some."
+                  : "This outline doesn't have any overlays yet."}
+              </p>
+            )}
+            <div className="flex min-h-0 flex-1 gap-2 pb-2 max-lg:flex-col-reverse">
+              <section className="flex min-h-0 flex-1 flex-col gap-2">
+                {isLoading ? (
+                  <OverlaysListSkeleton
+                    ref={setNodeRef}
+                    readOnly={!canMutateOverlays}
+                  />
+                ) : (
+                  <ul
+                    id="overlays-list"
+                    className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden pr-2"
+                    ref={setNodeRef}
                   >
-                    {list.map((overlay) => {
-                      return (
-                        <Overlay
-                          key={overlay.id}
-                          initialList={initialList}
-                          overlay={overlay}
-                          selectedId={selectedOverlay.id}
-                          isStreamTransmitting={isStreamTransmitting}
-                          selectAndLoadOverlay={selectAndLoadOverlay}
-                          handleDeleteOverlay={handleDeleteOverlay}
-                        />
-                      );
-                    })}
-                  </SortableContext>
-                </ul>
-                <div className="flex gap-2 mt-2">
-                  <Button
-                    className="text-sm flex-1 justify-center"
-                    svg={justAdded ? Check : Plus}
-                    color={justAdded ? "#84cc16" : "#22d3ee"}
-                    disabled={justAdded}
-                    onClick={createNewOverlay}
-                  >
-                    {justAdded ? justAddedText : addButtonText}
-                  </Button>
-                  <Button
-                    className="text-sm flex-1 justify-center"
-                    svg={FolderOpen}
-                    color="#a78bfa"
-                    onClick={() => setIsAddExistingOpen(true)}
-                  >
-                    Existing overlays
-                  </Button>
-                </div>
+                    <SortableContext
+                      items={list.map((overlay) => overlay.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {list.map((overlay) => {
+                        return (
+                          <Overlay
+                            key={overlay.id}
+                            initialList={initialList}
+                            overlay={overlay}
+                            selectedId={selectedOverlay.id}
+                            isStreamTransmitting={isStreamTransmitting}
+                            selectAndLoadOverlay={selectAndLoadOverlay}
+                            handleDeleteOverlay={handleDeleteOverlay}
+                            readOnly={!canMutateOverlays}
+                          />
+                        );
+                      })}
+                    </SortableContext>
+                  </ul>
+                )}
+                {canMutateOverlays &&
+                  (isLoading ? (
+                    <div className="mt-2 flex gap-2" aria-hidden="true">
+                      <div className="h-9 min-h-9 flex-1 animate-pulse rounded-md bg-white/10" />
+                      <div className="h-9 min-h-9 flex-1 animate-pulse rounded-md bg-white/10" />
+                    </div>
+                  ) : (
+                    <div className="mt-2 flex gap-2">
+                      <Button
+                        className="flex-1 justify-center text-sm"
+                        svg={justAdded ? Check : Plus}
+                        color={justAdded ? "#84cc16" : "#22d3ee"}
+                        disabled={justAdded}
+                        onClick={createNewOverlay}
+                      >
+                        {justAdded ? justAddedText : addButtonText}
+                      </Button>
+                      <Button
+                        className="flex-1 justify-center text-sm"
+                        svg={FolderOpen}
+                        color="#a78bfa"
+                        onClick={() => setIsAddExistingOpen(true)}
+                      >
+                        Existing overlays
+                      </Button>
+                    </div>
+                  ))}
               </section>
               <OverlayEditor
                 selectedOverlay={selectedOverlay}
@@ -638,9 +720,10 @@ const Overlays = () => {
                 isMobile={isMobile}
                 handleOverlayUpdate={handleOverlayUpdate}
                 handleFormattingChange={handleFormattingChange}
+                readOnly={!canMutateOverlays}
               />
             </div>
-          )}
+          </div>
         </div>
 
         <Drawer

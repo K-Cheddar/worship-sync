@@ -16,13 +16,13 @@ export const LyricsImportLyricsPreview = ({
   const display = lyricsText.trim() ? lyricsText : emptyLabel;
 
   return (
-    <div className="mt-2 rounded-md border border-slate-500/80 bg-slate-700/95 p-2">
-      <p className="mb-1 text-xs font-semibold text-gray-100">Lyrics Preview</p>
+    <div className="mt-2 rounded-md bg-neutral-900/90 p-2">
+      <p className="mb-1 text-xs font-semibold text-neutral-200">Lyrics Preview</p>
       <div
         className={
           expanded
-            ? "max-h-60 overflow-y-auto whitespace-pre-wrap text-xs text-gray-50 scrollbar-variable"
-            : "max-h-24 overflow-hidden whitespace-pre-wrap text-xs text-gray-100"
+            ? "max-h-60 overflow-y-auto whitespace-pre-wrap text-xs text-neutral-100 scrollbar-variable"
+            : "max-h-24 overflow-hidden whitespace-pre-wrap text-xs text-neutral-200"
         }
       >
         {display}

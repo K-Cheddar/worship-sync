@@ -33,7 +33,24 @@ export const itemListsSlice = createSlice({
       state.isInitialized = true;
     },
     updateItemListsFromRemote: (state, action: PayloadAction<ItemList[]>) => {
-      state.currentLists = action.payload;
+      const lists = action.payload;
+      state.currentLists = lists;
+      if (lists.length === 0) {
+        state.activeList = undefined;
+        state.selectedList = undefined;
+        return;
+      }
+      const ids = new Set(lists.map((l) => l._id));
+      const selectedId = state.selectedList?._id;
+      state.selectedList =
+        selectedId && ids.has(selectedId)
+          ? lists.find((l) => l._id === selectedId)!
+          : lists[0];
+      const activeId = state.activeList?._id;
+      state.activeList =
+        activeId && ids.has(activeId)
+          ? lists.find((l) => l._id === activeId)!
+          : lists[0];
     },
     removeFromItemLists: (state, action: PayloadAction<string>) => {
       state.currentLists = state.currentLists.filter((item) => {

@@ -17,7 +17,7 @@ export const UploadStatusDisplay = ({
   if (uploadStatus === "idle") return null;
 
   return (
-    <div className="bg-gray-900 p-3 rounded">
+    <div className="rounded bg-black/30 p-3">
       <p className="text-sm text-gray-300 mb-2">{statusMessage}</p>
       <div className="w-full bg-gray-700 rounded-full h-2">
         <div

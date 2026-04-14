@@ -208,9 +208,9 @@ const ServiceTimes = () => {
   useGlobalBroadcast(updateServicesFromExternal);
 
   return (
-    <main className="bg-gray-700 flex-1 min-h-0 text-white p-4 flex flex-col gap-4">
+    <main className="bg-homepage-canvas flex-1 min-h-0 text-white p-4 flex flex-col gap-4">
       {isLoading && (
-        <div className="flex justify-center items-center h-full w-full absolute top-0 left-0 bg-gray-700/50 z-10">
+        <div className="flex justify-center items-center h-full w-full absolute top-0 left-0 bg-homepage-canvas/50 z-10">
           <Spinner />
         </div>
       )}

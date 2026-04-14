@@ -1,9 +1,11 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch } from "../../hooks";
-import { FilePlus, WholeWord, X } from "lucide-react";
+import { useLoadMoreOnScroll } from "../../hooks/useLoadMoreOnScroll";
+import { FilePlus, WholeWord } from "lucide-react";
 
 import Button from "../Button/Button";
-import Input from "../Input/Input";
+import SongListScrollArea from "../SongList/SongListScrollArea";
+import SongSearchInput from "../SongList/SongSearchInput";
 import DeleteModal from "../Modal/DeleteModal";
 import {
   addItemToItemList,
@@ -12,18 +14,20 @@ import {
 import { removeItemFromAllItemsList } from "../../store/allItemsSlice";
 import { DBItem, ServiceItem } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import { ActionCreators } from "redux-undo";
 import FilteredItem from "./FilteredItem";
+import ViewSongSectionsDrawer from "../SongSections/ViewSongSectionsDrawer";
 import {
   getMatchForString,
   punctuationRegex,
   updateWordMatches,
-  capitalizeFirstLetter,
 } from "../../utils/generalUtils";
-import Spinner from "../Spinner/Spinner";
+import { computeSongSearchEnrichment } from "../../utils/songSearchUtils";
 import { ref, get, set } from "firebase/database";
 import { globalFireDbInfo } from "../../context/globalInfo";
 import { deleteTimer } from "../../store/timersSlice";
+import { getChurchDataPath } from "../../utils/firebasePaths";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -53,7 +57,7 @@ const FilteredItems = ({
   setSearchValue,
 }: FilteredItemsProps) => {
   const dispatch = useDispatch();
-  const loader = useRef(null);
+  const listScrollRef = useRef<HTMLUListElement | null>(null);
 
   const listOfType = useMemo(() => {
     return list.filter((item) => item.type === type);
@@ -83,10 +87,23 @@ const FilteredItems = ({
 
   const [showWords, setShowWords] = useState(false);
   const [isSearchLoading, setIsSearchLoading] = useState(false);
+  const [viewSectionsSongId, setViewSectionsSongId] = useState<string | null>(
+    null,
+  );
+
+  const viewSongDoc = useMemo(() => {
+    if (!viewSectionsSongId || type !== "song") return null;
+    const doc = allDocs.find(
+      (d) => d._id === viewSectionsSongId && d.type === "song",
+    );
+    return doc ?? null;
+  }, [viewSectionsSongId, allDocs, type]);
 
   const isFullListLoaded = filteredList.length <= numShownItems;
 
-  const { db } = useContext(ControllerInfoContext) || {};
+  const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
+  const { access } = useContext(GlobalInfoContext) || {};
+  const canMutateLibrary = access !== "view";
 
   // Memoize the search function
   const searchItems = useMemo(() => {
@@ -101,6 +118,23 @@ const FilteredItems = ({
       }
 
       const searchPromises = listOfType.map(async (item) => {
+        if (type === "song") {
+          const doc = allDocs.find((song) => song._id === item._id);
+          if (doc?.type === "song") {
+            const enriched = computeSongSearchEnrichment(
+              doc,
+              cleanSearchValue,
+            );
+            return {
+              ...item,
+              matchRank: enriched.matchRank,
+              matchedWords: enriched.matchedWords,
+              showWords: enriched.showWords,
+            };
+          }
+          return { ...item, matchRank: 0, matchedWords: "", showWords: false };
+        }
+
         const name = item.name.toLowerCase();
         const match = getMatchForString({
           string: name,
@@ -111,27 +145,7 @@ const FilteredItems = ({
         const wordMatches = [];
         let hasLyricMatch = false;
 
-        if (type === "song") {
-          const arrangements =
-            allDocs.find((song) => song.name.toLowerCase() === name)
-              ?.arrangements || [];
-
-          for (const arrangement of arrangements) {
-            for (const lyric of arrangement.formattedLyrics) {
-              const wordMatch = getMatchForString({
-                string: lyric.words,
-                searchValue: cleanSearchValue,
-              });
-              if (wordMatch > 0) {
-                hasLyricMatch = true;
-                wordMatches.push({
-                  match: wordMatch,
-                  matchedWords: lyric.words,
-                });
-              }
-            }
-          }
-        } else if (type === "free") {
+        if (type === "free") {
           const slides =
             allDocs.find((free) => free.name.toLowerCase() === name)?.slides ||
             [];
@@ -197,21 +211,17 @@ const FilteredItems = ({
     performSearch();
   }, [debouncedSearchValue, searchItems]);
 
-  useEffect(() => {
-    const observer = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) {
-        setNumShownItems((prev) => prev + 20);
-      }
-    });
-
-    if (loader.current) {
-      observer.observe(loader.current);
-    }
-
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
+  useLoadMoreOnScroll({
+    scrollRef: listScrollRef,
+    enabled: !isFullListLoaded && filteredList.length > 0,
+    totalAvailable: filteredList.length,
+    batchSize: 20,
+    setShownCount: setNumShownItems,
+    shownCount: numShownItems,
+    rescheduleKey: debouncedSearchValue,
+    /** Load the next batch before the footer enters view (reduces visible “load” strip when scrolling fast). */
+    thresholdPx: 200,
+  });
 
   const deleteItem = async (item: ServiceItem) => {
     setItemToBeDeleted(null);
@@ -240,11 +250,11 @@ const FilteredItems = ({
       }
 
       // Delete from Firebase
-      if (globalFireDbInfo.db && globalFireDbInfo.database) {
+      if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
         try {
           const timersRef = ref(
             globalFireDbInfo.db,
-            "users/" + capitalizeFirstLetter(globalFireDbInfo.database) + "/v2/timers"
+            getChurchDataPath(globalFireDbInfo.churchId, "timers")
           );
 
           const snapshot = await get(timersRef);
@@ -294,29 +304,33 @@ const FilteredItems = ({
   };
 
   return (
-    <div className="px-2 py-4 h-full flex flex-col items-center">
+    <div className="flex h-full w-full max-w-none flex-col items-stretch px-2 py-4">
       <DeleteModal
         isOpen={!!itemToBeDeleted}
         onClose={() => setItemToBeDeleted(null)}
         onConfirm={() => itemToBeDeleted && deleteItem(itemToBeDeleted)}
         itemName={itemToBeDeleted?.name}
       />
-      <h2 className="text-2xl text-center mb-2 max-2xl:w-full 2xl:w-2/3">
-        {heading}
-      </h2>
+      <ViewSongSectionsDrawer
+        song={viewSongDoc}
+        isOpen={Boolean(viewSectionsSongId && viewSongDoc)}
+        isMobile={isMobile}
+        searchHighlight={searchValue}
+        onClose={() => setViewSectionsSongId(null)}
+      />
+      <h2 className="mb-2 w-full text-center text-2xl">{heading}</h2>
       {isLoading && (
         <h3 className="text-lg text-center">{heading} are loading...</h3>
       )}
-      <div className="flex gap-2 max-2xl:w-full 2xl:w-2/3 mb-4">
-        <Input
+      <div className="mb-4 flex w-full gap-2">
+        <SongSearchInput
           value={searchValue}
           disabled={isLoading}
-          onChange={(val) => setSearchValue(val as string)}
+          onChange={setSearchValue}
           label="Search"
-          className="text-base flex gap-2 items-center flex-1"
-          data-ignore-undo="true"
-          svg={searchValue ? X : undefined}
-          svgAction={() => setSearchValue("")}
+          className="text-base flex flex-1 gap-2 items-center"
+          placeholder=""
+          showSearchIconWhenEmpty={false}
         />
         <Button
           disabled={!searchValue}
@@ -326,26 +340,28 @@ const FilteredItems = ({
           {showWords ? "Hide" : "Show"} All{" "}
         </Button>
       </div>
-      <section className="text-sm flex gap-2 items-center mt-1 mb-2 justify-center">
-        <p>Can't find what you're looking for?</p>
-        <Button
-          variant="secondary"
-          className="relative"
-          svg={FilePlus}
-          color="#84cc16"
-          component="link"
-          to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
-        >
-          Create a new {label}
-        </Button>
-      </section>
-      <ul className="scrollbar-variable max-2xl:w-full 2xl:w-2/3 overflow-y-auto mx-2 px-2">
-        {isSearchLoading && (
-          <li className="absolute top-0 left-0 w-full h-full flex items-center justify-center bg-gray-800/35">
-            <Spinner />
-          </li>
-        )}
-
+      {canMutateLibrary && (
+        <section className="text-sm flex gap-2 items-center mt-1 mb-2 justify-center">
+          <p>Can't find what you're looking for?</p>
+          <Button
+            variant="secondary"
+            className="relative"
+            svg={FilePlus}
+            color="#84cc16"
+            component="link"
+            to={`/controller/create?type=${type}&name=${encodeURI(searchValue)}`}
+          >
+            Create a new {label}
+          </Button>
+        </section>
+      )}
+      <SongListScrollArea
+        scrollRef={listScrollRef}
+        isSearchLoading={isSearchLoading}
+        isFullyLoaded={isFullListLoaded}
+        layout="embedded"
+        ulClassName="w-full px-1 sm:px-2"
+      >
         {filteredList.slice(0, numShownItems).map((item, index) => {
           return (
             <FilteredItem
@@ -358,19 +374,16 @@ const FilteredItems = ({
               setItemToBeDeleted={setItemToBeDeleted}
               searchValue={searchValue}
               artistName={songArtistById.get(item._id)}
+              canMutateLibrary={canMutateLibrary}
+              onViewSongSections={
+                type === "song"
+                  ? () => setViewSectionsSongId(item._id)
+                  : undefined
+              }
             />
           );
         })}
-
-        <li
-          className={`w-full text-sm text-center py-1 rounded-md ${
-            isFullListLoaded ? "bg-transparent" : "bg-black"
-          }`}
-          ref={loader}
-        >
-          {!isFullListLoaded && <Spinner />}
-        </li>
-      </ul>
+      </SongListScrollArea>
     </div>
   );
 };

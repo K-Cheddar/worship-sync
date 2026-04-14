@@ -1,10 +1,14 @@
 import Button from "../../components/Button/Button";
 import { Trash2 } from "lucide-react";
-import { itemSectionBorderColorMap } from "../../utils/slideColorMap";
+import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import { SongOrder } from "../../types";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import cn from "classnames";
+import {
+  songOrderSectionSelectedClass,
+  songOrderSectionUnselectedClass,
+} from "../../utils/sortableRowStyles";
 
 type SongSectionProps = {
   songOrder: SongOrder[];
@@ -35,37 +39,49 @@ const SongSection = ({
     transition,
   };
 
+  const sectionKey = name.split(/\s+/)[0] ?? "";
+  const accentBarClass =
+    itemSectionBgColorMap.get(sectionKey) ?? "bg-stone-600";
+
+  const isSelected = selectedIndex === index;
+
   return (
-    <>
-      <li
-        id={`song-section-${index}`}
-        className={cn(
-          "flex items-center px-2 max-lg:py-2 lg:py-1 bg-black rounded-lg hover:bg-gray-800 cursor-pointer border-b-4",
-          itemSectionBorderColorMap.get(name.split(" ")[0])
-        )}
-        {...attributes}
-        {...listeners}
-        style={style}
-        ref={setNodeRef}
-        onClick={() => setSelectedIndex(index)}
-      >
-        <p className="pr-1 text-base">{name}</p>
+    <li
+      id={`song-section-${index}`}
+      className={cn(
+        "flex min-h-0 cursor-grab items-stretch overflow-hidden rounded-md border transition-colors active:cursor-grabbing",
+        isSelected
+          ? songOrderSectionSelectedClass
+          : songOrderSectionUnselectedClass,
+      )}
+      {...attributes}
+      {...listeners}
+      style={style}
+      ref={setNodeRef}
+      onClick={() => setSelectedIndex(index)}
+    >
+      <div
+        className={cn("w-1.5 shrink-0 self-stretch", accentBarClass)}
+        aria-hidden
+      />
+      <div className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-1 pl-2 max-lg:py-2">
+        <p className="min-w-0 flex-1 truncate text-sm font-medium text-gray-100">
+          {name}
+        </p>
         <Button
-          className="ml-auto"
+          className="shrink-0"
           variant="tertiary"
-          color="#dc2626"
           svg={Trash2}
-          onClick={() => {
+          aria-label={`Remove ${name} from song order`}
+          onClick={(event) => {
+            event.stopPropagation();
             const copiedSongOrder = [...songOrder];
             copiedSongOrder.splice(index, 1);
             setSongOrder(copiedSongOrder);
           }}
         />
-      </li>
-      {selectedIndex === index && (
-        <li className="w-full border-b-2 border-white" />
-      )}
-    </>
+      </div>
+    </li>
   );
 };
 

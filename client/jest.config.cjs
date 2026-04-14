@@ -1,6 +1,7 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "jsdom",
+  setupFiles: ["<rootDir>/jest.domPolyfills.cjs"],
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
     "\\.(css|less|scss|sass)$": "identity-obj-proxy",
@@ -11,12 +12,7 @@ module.exports = {
       "<rootDir>/src/__mocks__/utils/environment.ts",
   },
   transform: {
-    "^.+\\.(ts|tsx)$": [
-      "ts-jest",
-      {
-        tsconfig: "tsconfig.json",
-      },
-    ],
+    "^.+\\.(ts|tsx)$": "<rootDir>/jestImportMetaTransform.cjs",
     "^.+\\.(js|jsx)$": "babel-jest",
   },
   transformIgnorePatterns: ["node_modules/(?!(gsap|@gsap|@cloudinary)/)"],

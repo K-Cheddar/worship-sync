@@ -1,4 +1,5 @@
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import SlideEditor from "../SlideEditor";
 import { ToastContext } from "../../../context/toastContext";
 
@@ -31,7 +32,7 @@ const mockSetShouldShowItemEditor = jest.fn((value: boolean) => ({
   type: "preferences/setShouldShowItemEditor",
   payload: value,
 }));
-let mockShowToast = jest.fn(() => "toast-1");
+let mockShowToast = jest.fn<any, any[]>(() => "toast-1");
 let mockRemoveToast = jest.fn();
 
 const mockFormatFree = jest.fn((item: any) => item);
@@ -132,11 +133,6 @@ jest.mock("../../../components/SectionTextEditor/SectionTextEditor", () => ({
 jest.mock("../../../components/SlideBoxes/SlideBoxes", () => ({
   __esModule: true,
   default: () => <div data-testid="slide-boxes" />,
-}));
-
-jest.mock("../../../components/LoadingOverlay/LoadingOverlay", () => ({
-  __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
 jest.mock("../BibleItemActions", () => ({
@@ -257,7 +253,7 @@ describe("SlideEditor", () => {
     jest.clearAllMocks();
     displayWindowCapture.onChange = null;
     mockState = makeBaseState();
-    mockShowToast = jest.fn(() => "toast-1");
+    mockShowToast = jest.fn<any, any[]>(() => "toast-1");
     mockRemoveToast = jest.fn();
   });
 
@@ -290,7 +286,7 @@ describe("SlideEditor", () => {
     expect(screen.queryByTestId("section-text-editor")).not.toBeInTheDocument();
   });
 
-  it("dispatches edit-mode action when song Edit Lyrics is clicked", () => {
+  it("dispatches edit-mode action when song Edit Lyrics is clicked", async () => {
     mockState = makeBaseState({
       undoable: {
         present: {
@@ -305,14 +301,16 @@ describe("SlideEditor", () => {
     render(<SlideEditor access="full" />);
     fireEvent.click(screen.getByRole("button", { name: /edit lyrics/i }));
 
-    expect(mockSetIsEditMode).toHaveBeenCalledWith(true);
+    await waitFor(() => {
+      expect(mockSetIsEditMode).toHaveBeenCalledWith(true);
+    });
     expect(mockDispatch).toHaveBeenCalledWith({
       type: "item/setIsEditMode",
       payload: true,
     });
   });
 
-  it("opens song details modal when song name edit button is clicked", () => {
+  it("opens song details popover when song name edit button is clicked", () => {
     mockState = makeBaseState({
       undoable: {
         present: {
@@ -327,7 +325,7 @@ describe("SlideEditor", () => {
     render(<SlideEditor access="full" />);
     fireEvent.click(screen.getByRole("button", { name: /song details/i }));
 
-    expect(screen.getByRole("dialog", { name: /song details/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Song name:")).toBeInTheDocument();
   });
 
   it("offers toast actions for remote updates outside lyrics edit mode", async () => {
@@ -346,7 +344,11 @@ describe("SlideEditor", () => {
 
     expect(mockShowToast).toHaveBeenCalled();
 
-    const { children: renderToastChildren } = mockShowToast.mock.calls[0][0];
+    const firstToastCall = mockShowToast.mock.calls[0]?.[0];
+    expect(firstToastCall).toBeDefined();
+    const { children: renderToastChildren } = firstToastCall as {
+      children: (toastId: string) => ReactNode;
+    };
     render(<>{renderToastChildren("toast-1")}</>);
 
     fireEvent.click(screen.getByRole("button", { name: "Use Their Changes" }));
@@ -518,6 +520,60 @@ describe("SlideEditor", () => {
     expect(mockUpdateSlides).not.toHaveBeenCalled();
 
     jest.useRealTimers();
+  });
+
+  describe("collapsed item editor", () => {
+    it("shows timer control strip when timer item and editor is collapsed", () => {
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              type: "timer",
+              slides: [
+                {
+                  id: "t1",
+                  type: "Media",
+                  name: "Timer",
+                  boxes: [
+                    { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                    { width: 100, height: 100, words: "00:00", x: 0, y: 0 },
+                  ],
+                },
+              ],
+            },
+            preferences: {
+              shouldShowItemEditor: false,
+              toolbarSection: "settings",
+            },
+          },
+        },
+      });
+
+      renderWithToastContext();
+      expect(
+        screen.getByTestId("timer-item-editor-collapsed-controls"),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("display-window")).not.toBeInTheDocument();
+    });
+
+    it("keeps hidden editor mounted when collapsed for non-timer items", () => {
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            preferences: {
+              shouldShowItemEditor: false,
+              toolbarSection: "settings",
+            },
+          },
+        },
+      });
+
+      renderWithToastContext();
+      expect(
+        screen.queryByTestId("timer-item-editor-collapsed-controls"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("display-window")).toBeInTheDocument();
+    });
   });
 
   describe("onChange (display editor)", () => {

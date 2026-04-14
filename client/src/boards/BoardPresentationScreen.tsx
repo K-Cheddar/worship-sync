@@ -23,6 +23,7 @@ const BoardPresentationScreen = ({
 }: BoardPresentationScreenProps) => {
   const {
     alias,
+    churchLogoUrl,
     posts,
     hasLoadedOnce,
     error,
@@ -44,9 +45,9 @@ const BoardPresentationScreen = ({
       updateAlias((currentAlias) =>
         currentAlias
           ? {
-              ...currentAlias,
-              presentationFontScale: event.presentationFontScale,
-            }
+            ...currentAlias,
+            presentationFontScale: event.presentationFontScale,
+          }
           : currentAlias,
       );
       return;
@@ -83,9 +84,18 @@ const BoardPresentationScreen = ({
           <p className="text-sm font-semibold uppercase tracking-[0.35em] text-cyan-200/80">
             Discussion Board
           </p>
-          <h1 className="mt-3 text-4xl font-semibold md:text-5xl">
-            {alias?.title || "Presentation"}
-          </h1>
+          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-4 md:gap-5">
+            {churchLogoUrl ? (
+              <img
+                src={churchLogoUrl}
+                alt=""
+                className="size-14 shrink-0 rounded-lg border border-cyan-400/25 bg-slate-950/80 object-contain md:size-16"
+              />
+            ) : null}
+            <h1 className="min-w-0 flex-1 text-4xl font-semibold md:text-5xl">
+              {alias?.title || "Presentation"}
+            </h1>
+          </div>
         </header>
 
         {!aliasId ? (

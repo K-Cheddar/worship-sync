@@ -21,13 +21,15 @@ export const useBoardData = (
 ) => {
   const { includeHidden = false, viewerAuthorId } = options;
   const [alias, setAlias] = useState<DBBoardAlias | null>(null);
+  const [churchLogoUrl, setChurchLogoUrl] = useState("");
   const [posts, setPosts] = useState<DBBoardPost[]>([]);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [error, setError] = useState("");
-  const [connectionStatus, setConnectionStatus] = useState<BoardConnectionStatus>({
-    status: "connecting",
-    retryCount: 0,
-  });
+  const [connectionStatus, setConnectionStatus] =
+    useState<BoardConnectionStatus>({
+      status: "connecting",
+      retryCount: 0,
+    });
 
   const isMountedRef = useRef(true);
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -76,6 +78,11 @@ export const useBoardData = (
 
           aliasRef.current = aliasResponse.alias;
           setAlias(aliasResponse.alias);
+          setChurchLogoUrl(
+            typeof aliasResponse.churchLogoUrl === "string"
+              ? aliasResponse.churchLogoUrl.trim()
+              : "",
+          );
           setPosts(postsResponse.posts);
         } else {
           const currentAlias = aliasRef.current;
@@ -203,6 +210,7 @@ export const useBoardData = (
     requestIdRef.current = 0;
     aliasRef.current = null;
     setAlias(null);
+    setChurchLogoUrl("");
     setPosts([]);
     setHasLoadedOnce(false);
     setError("");
@@ -215,6 +223,7 @@ export const useBoardData = (
 
   return {
     alias,
+    churchLogoUrl,
     posts,
     hasLoadedOnce,
     error,

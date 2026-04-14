@@ -5,22 +5,23 @@ import { ref, onValue } from "firebase/database";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { tickTimers, setShouldUpdateTimers } from "../../store/timersSlice";
 import { useSyncRemoteTimers } from "../../hooks";
-import { capitalizeFirstLetter } from "../../utils/generalUtils";
+import { getChurchDataPath } from "../../utils/firebasePaths";
 
 const TimerManager = () => {
   const dispatch = useDispatch();
-  const { user, database, firebaseDb, hostId } = useContext(GlobalInfoContext) || {};
+  const { churchId, firebaseDb, hostId, loginState } =
+    useContext(GlobalInfoContext) || {};
   const timers = useSelector((state: RootState) => state.timers.timers);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  useSyncRemoteTimers(firebaseDb, database, user, hostId);
+  useSyncRemoteTimers(firebaseDb, churchId, loginState === "guest", hostId);
 
   useEffect(() => {
-    if (!firebaseDb || user === "Demo") return;
+    if (!firebaseDb || loginState === "guest") return;
 
     const activeInstancesRef = ref(
       firebaseDb,
-      "users/" + capitalizeFirstLetter(database) + "/v2/activeInstances"
+      getChurchDataPath(churchId, "activeInstances")
     );
     const unsubscribe = onValue(activeInstancesRef, (snapshot) => {
       const data = snapshot.val();
@@ -34,7 +35,7 @@ const TimerManager = () => {
     return () => {
       unsubscribe();
     };
-  }, [firebaseDb, database, user, dispatch]);
+  }, [churchId, firebaseDb, loginState, dispatch]);
 
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);

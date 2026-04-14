@@ -23,6 +23,7 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
   label,
   value,
   onChange,
+  disabled = false,
   id,
   className,
   inputClassName,
@@ -404,7 +405,13 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
         </Label>
       )}
 
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={disabled ? false : open}
+        onOpenChange={(nextOpen) => {
+          if (disabled) return;
+          setOpen(nextOpen);
+        }}
+      >
         <PopoverTrigger asChild>
           <div className="relative">
             <Input
@@ -420,55 +427,58 @@ export const TimePickerTimer: React.FC<BaseTimePickerProps> = ({
               className={inputClassName}
               ref={inputRef}
               readOnly
+              disabled={disabled}
             />
           </div>
         </PopoverTrigger>
-        <PopoverContent
-          className="z-110 w-auto p-3 bg-card"
-          align="start"
-          onOpenAutoFocus={(e) => e.preventDefault()}
-          portal={portal}
-        >
-          <div
-            className="flex gap-1"
-            role="group"
-            aria-label="Time selection lists"
+        {!disabled && (
+          <PopoverContent
+            className="z-110 w-auto p-3 bg-card"
+            align="start"
+            onOpenAutoFocus={(e) => e.preventDefault()}
+            portal={portal}
           >
-            <Listbox
-              label="Hour"
-              aria-label="Select hour"
-              items={HOURS_24 as readonly string[]}
-              value={hour}
-              onChange={(h) => {
-                setHour(h);
-                handleCommit(h, minute || "00", second || "00");
-                selectSegment("hour");
-              }}
-            />
-            <Listbox
-              label="Minute"
-              aria-label="Select minutes"
-              items={MINUTES as readonly string[]}
-              value={minute}
-              onChange={(m) => {
-                setMinute(m);
-                handleCommit(hour || "00", m, second || "00");
-                selectSegment("minute");
-              }}
-            />
-            <Listbox
-              label="Second"
-              aria-label="Select seconds"
-              items={SECONDS as readonly string[]}
-              value={second}
-              onChange={(s) => {
-                setSecond(s);
-                handleCommit(hour || "00", minute || "00", s);
-                selectSegment("second");
-              }}
-            />
-          </div>
-        </PopoverContent>
+            <div
+              className="flex gap-1"
+              role="group"
+              aria-label="Time selection lists"
+            >
+              <Listbox
+                label="Hour"
+                aria-label="Select hour"
+                items={HOURS_24 as readonly string[]}
+                value={hour}
+                onChange={(h) => {
+                  setHour(h);
+                  handleCommit(h, minute || "00", second || "00");
+                  selectSegment("hour");
+                }}
+              />
+              <Listbox
+                label="Minute"
+                aria-label="Select minutes"
+                items={MINUTES as readonly string[]}
+                value={minute}
+                onChange={(m) => {
+                  setMinute(m);
+                  handleCommit(hour || "00", m, second || "00");
+                  selectSegment("minute");
+                }}
+              />
+              <Listbox
+                label="Second"
+                aria-label="Select seconds"
+                items={SECONDS as readonly string[]}
+                value={second}
+                onChange={(s) => {
+                  setSecond(s);
+                  handleCommit(hour || "00", minute || "00", s);
+                  selectSegment("second");
+                }}
+              />
+            </div>
+          </PopoverContent>
+        )}
       </Popover>
       {message && (
         <div className="flex gap-1">

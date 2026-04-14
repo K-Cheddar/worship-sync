@@ -58,7 +58,7 @@ describe("DisplayStbOverlay", () => {
         ref={containerRef as any}
         width={30}
         shouldAnimate
-        stbOverlayInfo={{}}
+        stbOverlayInfo={{ id: "stb-current" }}
         prevStbOverlayInfo={{
           id: "stb-prev",
           type: "stick-to-bottom",
@@ -114,5 +114,26 @@ describe("DisplayStbOverlay", () => {
           props?.delay === 3,
       ),
     ).toBe(true);
+  });
+
+  it("keeps current overlay dependencies stable when no previous overlay is provided", () => {
+    const overlayInfo = {
+      id: "stb-stable",
+      type: "stick-to-bottom" as const,
+      heading: "Welcome",
+    };
+
+    const { rerender } = render(
+      <DisplayStbOverlay width={30} stbOverlayInfo={overlayInfo} />,
+    );
+
+    const firstCurrentConfig = (useGSAP as jest.Mock).mock.calls[0][1];
+
+    rerender(<DisplayStbOverlay width={30} stbOverlayInfo={overlayInfo} />);
+
+    const secondCurrentConfig = (useGSAP as jest.Mock).mock.calls[2][1];
+
+    expect(firstCurrentConfig.dependencies).toEqual([overlayInfo]);
+    expect(secondCurrentConfig.dependencies).toEqual([overlayInfo]);
   });
 });

@@ -6,6 +6,8 @@ import { defaultImageOverlayStyles } from "./defaultOverlayStyles";
 import SharedOverlay from "./SharedOverlay";
 import { checkMediaType } from "../../utils/generalUtils";
 
+const EMPTY_OVERLAY_INFO: OverlayInfo = {} as OverlayInfo;
+
 type DisplayImageOverlayProps = {
   width: number;
   imageOverlayInfo?: OverlayInfo;
@@ -21,8 +23,8 @@ const DisplayImageOverlay = forwardRef<
   (
     {
       width,
-      imageOverlayInfo = {},
-      prevImageOverlayInfo = {},
+      imageOverlayInfo = EMPTY_OVERLAY_INFO,
+      prevImageOverlayInfo = EMPTY_OVERLAY_INFO,
       shouldAnimate = false,
       shouldFillContainer = false,
     },
@@ -92,7 +94,7 @@ const DisplayImageOverlay = forwardRef<
       },
       {
         scope: imageOverlayRef,
-        dependencies: [imageOverlayInfo, prevImageOverlayInfo],
+        dependencies: [imageOverlayInfo],
       }
     );
 
@@ -116,11 +118,12 @@ const DisplayImageOverlay = forwardRef<
           .timeline()
           .set(prevImageOverlayRef.current, {
             // Prevent a brief flash when interrupting an active video overlay.
-            opacity: isPrevOverlayVideo
-              ? 0
-              : hasCurrentImageData
-                ? currentOpacity.current
-                : 1,
+            opacity:
+              hasCurrentImageData && isPrevOverlayVideo
+                ? 0
+                : hasCurrentImageData
+                  ? currentOpacity.current
+                  : 1,
           });
 
         if (prevImageOverlayInfo.imageUrl) {

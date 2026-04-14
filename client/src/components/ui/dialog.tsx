@@ -119,7 +119,7 @@ function DialogFooter({
 function DialogTitle({
   className,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Title>) {
+}: Omit<React.ComponentProps<typeof DialogPrimitive.Title>, "id">) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"

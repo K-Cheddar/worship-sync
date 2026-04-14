@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus } from "lucide-react";
-import Button from "../../components/Button/Button";
-import Select from "../../components/Select/Select";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useSelector } from "../../hooks";
-import { sectionTypes, itemSectionBgColorMap } from "../../utils/slideColorMap";
 import { FormattedLyrics as FormattedLyricsType } from "../../types";
-import generateRandomId from "../../utils/generateRandomId";
 import { RootState } from "../../store/store";
 import cn from "classnames";
 import LyrcisBox from "./LyrcisBox";
@@ -30,8 +32,14 @@ type FormattedLyricsProps = {
   isMobile: boolean;
   selectedSectionId?: string | null;
   recentlyMovedSectionId?: string | null;
+  focusSectionId?: string | null;
   onMovedSectionTracked?: (sectionId: string) => void;
   onSectionSelect?: (sectionId: string | null) => void;
+  /**
+   * Increment when the parent adds or imports sections so the new selection scrolls into view.
+   * (Renames / reorder via the section dropdown scroll in `handleChangeSectionType`.)
+   */
+  scrollSelectedIntoViewToken?: number;
 };
 
 const LyricBoxes = ({
@@ -43,27 +51,44 @@ const LyricBoxes = ({
   isMobile,
   selectedSectionId,
   recentlyMovedSectionId,
+  focusSectionId,
   onMovedSectionTracked,
   onSectionSelect,
+  scrollSelectedIntoViewToken = 0,
 }: FormattedLyricsProps) => {
   const { formattedLyricsPerRow } = useSelector(
     (state: RootState) => state.undoable.present.preferences
   );
 
-  const [newSectionType, setNewSectionType] = useState("Verse");
   const [glowingSectionId, setGlowingSectionId] = useState<string | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const glowTimeoutRef = useRef<number | null>(null);
   const glowRestartTimeoutRef = useRef<number | null>(null);
-  const scrollEndTimeoutRef = useRef<number | null>(null);
+  const prevScrollTokenRef = useRef<number | undefined>(undefined);
   const availableSectionsKey = useMemo(
     () => availableSections.map(({ value }) => value).join("|"),
     [availableSections]
   );
-  const sectionOrderKey = useMemo(
-    () => formattedLyrics.map(({ id, name }) => id || name).join("|"),
-    [formattedLyrics]
-  );
+
+  const formattedLyricsRef = useRef(formattedLyrics);
+  const reformatLyricsRef = useRef(reformatLyrics);
+  const onFormattedLyricsDeleteRef = useRef(onFormattedLyricsDelete);
+  formattedLyricsRef.current = formattedLyrics;
+  reformatLyricsRef.current = reformatLyrics;
+  onFormattedLyricsDeleteRef.current = onFormattedLyricsDelete;
+
+  const scrollSectionBoxIntoView = useCallback((sectionId: string) => {
+    const parent = listRef.current;
+    const itemElement = document.getElementById(`lyric-box-${sectionId}`);
+    if (!parent || !itemElement) {
+      return;
+    }
+    keepElementInView({
+      child: itemElement,
+      parent,
+      shouldScrollToCenter: true,
+    });
+  }, []);
 
   const triggerGlow = useCallback((sectionId: string) => {
     if (glowTimeoutRef.current !== null) {
@@ -94,93 +119,49 @@ const LyricBoxes = ({
       if (glowRestartTimeoutRef.current !== null) {
         window.clearTimeout(glowRestartTimeoutRef.current);
       }
-      if (scrollEndTimeoutRef.current !== null) {
-        window.clearTimeout(scrollEndTimeoutRef.current);
-      }
     };
   }, []);
 
+  useLayoutEffect(() => {
+    const prev = prevScrollTokenRef.current;
+    prevScrollTokenRef.current = scrollSelectedIntoViewToken;
+    if (prev === undefined || scrollSelectedIntoViewToken <= prev) {
+      return;
+    }
+    if (!selectedSectionId) {
+      return;
+    }
+    scrollSectionBoxIntoView(selectedSectionId);
+  }, [scrollSelectedIntoViewToken, scrollSectionBoxIntoView, selectedSectionId]);
+
   useEffect(() => {
-    if (!selectedSectionId || !listRef.current) {
+    if (!recentlyMovedSectionId || recentlyMovedSectionId !== selectedSectionId) {
       return;
     }
 
-    const parentElement = listRef.current;
-    const itemElement = document.getElementById(`lyric-box-${selectedSectionId}`);
-    if (!itemElement) {
-      return;
-    }
-
-    const didScroll = keepElementInView({
-      child: itemElement,
-      parent: parentElement,
-      shouldScrollToCenter: true,
-    });
-
-    if (recentlyMovedSectionId !== selectedSectionId) {
-      return;
-    }
-
-    let isActive = true;
-
-    const finishTracking = () => {
-      if (!isActive) {
+    let cancelled = false;
+    const frameId = requestAnimationFrame(() => {
+      if (cancelled) {
         return;
       }
-
       triggerGlow(selectedSectionId);
       onMovedSectionTracked?.(selectedSectionId);
-    };
-
-    if (!didScroll) {
-      finishTracking();
-      return;
-    }
-
-    const handleScroll = () => {
-      if (scrollEndTimeoutRef.current !== null) {
-        window.clearTimeout(scrollEndTimeoutRef.current);
-      }
-
-      scrollEndTimeoutRef.current = window.setTimeout(() => {
-        parentElement.removeEventListener("scroll", handleScroll);
-        finishTracking();
-      }, 120);
-    };
-
-    parentElement.addEventListener("scroll", handleScroll, { passive: true });
-    handleScroll();
+    });
 
     return () => {
-      isActive = false;
-      parentElement.removeEventListener("scroll", handleScroll);
-      if (scrollEndTimeoutRef.current !== null) {
-        window.clearTimeout(scrollEndTimeoutRef.current);
-      }
+      cancelled = true;
+      cancelAnimationFrame(frameId);
     };
   }, [
     onMovedSectionTracked,
     recentlyMovedSectionId,
-    sectionOrderKey,
     selectedSectionId,
     triggerGlow,
   ]);
 
-  const addSection = () => {
-    reformatLyrics([
-      ...formattedLyrics,
-      {
-        type: newSectionType,
-        name: "",
-        words: "",
-        slideSpan: 1,
-        id: generateRandomId(),
-      },
-    ]);
-  };
-
   const handleChangeSectionType = useCallback((name: string, index: number) => {
-    const copiedFormattedLyrics = [...formattedLyrics];
+    const currentLyrics = formattedLyricsRef.current;
+    const copiedFormattedLyrics = [...currentLyrics];
     const lyric = { ...copiedFormattedLyrics[index] };
     const previousType = lyric.type;
 
@@ -188,8 +169,8 @@ const LyricBoxes = ({
     lyric.type = type;
     const targetIndex =
       name === type
-        ? formattedLyrics.length - 1
-        : formattedLyrics.findIndex((item) => item.name === name);
+        ? currentLyrics.length - 1
+        : currentLyrics.findIndex((item) => item.name === name);
     const newIndex =
       previousType === type || targetIndex <= index
         ? targetIndex
@@ -198,16 +179,27 @@ const LyricBoxes = ({
     copiedFormattedLyrics.splice(index, 1);
     copiedFormattedLyrics.splice(newIndex, 0, lyric);
 
-    reformatLyrics(copiedFormattedLyrics);
-  }, [formattedLyrics, reformatLyrics]);
+    const sectionIdToScroll = lyric.id;
+    reformatLyricsRef.current(copiedFormattedLyrics);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scrollSectionBoxIntoView(sectionIdToScroll);
+      });
+    });
+  }, [scrollSectionBoxIntoView]);
 
   const handleWordsChange = useCallback((index: number, value: string) => {
-    const copiedFormattedLyrics = [...formattedLyrics];
+    const copiedFormattedLyrics = [...formattedLyricsRef.current];
     const lyric = { ...copiedFormattedLyrics[index] };
     lyric.words = value;
     copiedFormattedLyrics[index] = lyric;
     setFormattedLyrics(copiedFormattedLyrics);
-  }, [formattedLyrics, setFormattedLyrics]);
+  }, [setFormattedLyrics]);
+
+  const handleDelete = useCallback((index: number) => {
+    onFormattedLyricsDeleteRef.current(index);
+  }, []);
 
   return (
     <ul
@@ -215,9 +207,9 @@ const LyricBoxes = ({
       data-testid="lyrics-boxes-list"
       ref={listRef}
       className={cn(
-        "scrollbar-variable grid gap-2 overflow-y-auto",
+        // items-start: avoid stretching every card to the row’s tallest cell (border looked huge vs lyrics).
+        "scrollbar-variable grid h-full items-start gap-2 overflow-y-auto",
         isMobile ? "grid-cols-1" : sizeMap.get(formattedLyricsPerRow),
-        "max-h-[calc(100%-clamp(2.5rem,2.5vw,3.5rem))]"
       )}
     >
       {formattedLyrics.map((lyric, index) => (
@@ -231,37 +223,14 @@ const LyricBoxes = ({
           availableSectionsKey={availableSectionsKey}
           isMobile={isMobile}
           onChangeSectionType={handleChangeSectionType}
-          onDelete={onFormattedLyricsDelete}
+          onDelete={handleDelete}
           onSelect={onSectionSelect || undefined}
           onWordsChange={handleWordsChange}
+          focusWordsOnMount={
+            Boolean(focusSectionId && lyric.id === focusSectionId)
+          }
         />
       ))}
-      <li className="flex flex-col px-2">
-        <Select
-          onChange={(val) => {
-            setNewSectionType(val);
-          }}
-          value={newSectionType}
-          options={sectionTypes.map((type) => ({ value: type, label: type }))}
-          className={cn(
-            "flex font-semibold text-sm rounded-t-md",
-            itemSectionBgColorMap.get(newSectionType)
-          )}
-          backgroundColor="bg-black/40"
-          textColor="text-white"
-          chevronColor="text-white"
-          contentBackgroundColor="bg-gray-800"
-          contentTextColor="text-white"
-        />
-        <Button
-          key="lyrics-box-add-section"
-          onClick={() => addSection()}
-          variant="tertiary"
-          svg={Plus}
-          iconSize={64}
-          className="w-full flex-1 justify-center border border-gray-500 rounded-md"
-        />
-      </li>
     </ul>
   );
 };

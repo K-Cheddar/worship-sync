@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useRef } from "react";
+import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   initiateAllItemsList,
@@ -7,8 +8,13 @@ import {
 import {
   DBAllItems,
   DBItemListDetails,
-  DBPreferences,
+  DBMedia,
   DBOverlayTemplates,
+  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  MONITOR_SETTINGS_POUCH_ID,
+  PREFERENCES_POUCH_ID,
+  PreferencesClusterRemoteDoc,
+  QUICK_LINKS_POUCH_ID,
   TemplatesByType,
 } from "../../types";
 import {
@@ -32,13 +38,21 @@ import {
   getAllOverlayHistory,
   getOverlaysByIds,
   updateAllDocs,
+  migrateMediaLibraryFoldersFieldIfNeeded,
+  loadPreferencesBundle,
 } from "../../utils/dbUtils";
+import {
+  mergeRemoteOverlayListWithLocalBuffer,
+  syncSelectedOverlayFromRemote,
+  type OverlaySyncRootSlice,
+} from "../../utils/overlayRemoteSync";
 import { useMediaCache } from "../../hooks/useMediaCache";
 import { getMediaUrlsFromMediaDoc } from "../../utils/mediaCacheUtils";
 import {
   initiateMonitorSettings,
   initiatePreferences,
   initiateQuickLinks,
+  preferencesClusterLoadFallback,
   setIsLoading,
   updatePreferencesFromRemote,
   setIsInitialized as setPreferencesIsInitialized,
@@ -49,8 +63,10 @@ import {
 } from "../../store/overlayTemplatesSlice";
 import {
   initiateMediaList,
+  initiateMediaFromDoc,
   setIsInitialized as setMediaIsInitialized,
 } from "../../store/mediaSlice";
+import { normalizeMediaDoc } from "../../utils/mediaDocUtils";
 import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
 import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemListsSlice";
@@ -58,6 +74,7 @@ import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
 import { CONTROLLER_PAGE_READY, RootState } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { useToast } from "../../context/toastContext";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -65,28 +82,30 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
  */
 export const useControllerPageLifecycle = () => {
   const dispatch = useDispatch();
+  const store = useStore();
+  const { showToast } = useToast();
   const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
   const { access, refreshPresentationListeners } =
     useContext(GlobalInfoContext) || {};
 
   const selectedList = useSelector(
-    (state) => state.undoable.present.itemLists.selectedList
+    (state) => state.undoable.present.itemLists.selectedList,
   );
   const activeList = useSelector(
-    (state) => state.undoable.present.itemLists.activeList
+    (state) => state.undoable.present.itemLists.activeList,
   );
   const allControllerSlicesInitialized = useSelector((state: RootState) =>
     Boolean(
       state.allItems.isInitialized &&
-        state.undoable.present.preferences.isInitialized &&
-        state.undoable.present.itemList.isInitialized &&
-        state.undoable.present.overlays.isInitialized &&
-        state.undoable.present.itemLists.isInitialized &&
-        state.media.isInitialized &&
-        (state.undoable.present.overlayTemplates as { isInitialized: boolean })
-          .isInitialized
-    )
+      state.undoable.present.preferences.isInitialized &&
+      state.undoable.present.itemList.isInitialized &&
+      state.undoable.present.overlays.isInitialized &&
+      state.undoable.present.itemLists.isInitialized &&
+      state.media.isInitialized &&
+      (state.undoable.present.overlayTemplates as { isInitialized: boolean })
+        .isInitialized,
+    ),
   );
 
   const hasDispatchedControllerPageReady = useRef(false);
@@ -105,11 +124,27 @@ export const useControllerPageLifecycle = () => {
             const overlaysIds = update.overlays || [];
             if (cloud) {
               dispatch(
-                updateItemListFromRemote(formatItemList(itemList, cloud))
+                updateItemListFromRemote(formatItemList(itemList, cloud)),
               );
             }
             const formattedOverlays = await getOverlaysByIds(db!, overlaysIds);
-            dispatch(updateOverlayListFromRemote(formattedOverlays));
+            const mergedList = mergeRemoteOverlayListWithLocalBuffer(
+              formattedOverlays,
+              store.getState as () => OverlaySyncRootSlice,
+            );
+            dispatch(updateOverlayListFromRemote(mergedList));
+            const selectedOverlayId = (store.getState() as OverlaySyncRootSlice)
+              .undoable.present.overlay.selectedOverlay?.id;
+            if (selectedOverlayId) {
+              const match = mergedList.find((o) => o.id === selectedOverlayId);
+              if (match) {
+                syncSelectedOverlayFromRemote(
+                  dispatch,
+                  store.getState as () => OverlaySyncRootSlice,
+                  match,
+                );
+              }
+            }
           }
           if (_update._id === "allItems") {
             const update = _update as DBAllItems;
@@ -128,7 +163,7 @@ export const useControllerPageLifecycle = () => {
         console.error(e);
       }
     },
-    [dispatch, cloud, selectedList, db]
+    [dispatch, cloud, selectedList, db, store],
   );
 
   useGlobalBroadcast(updateAllItemsAndListFromExternal);
@@ -138,16 +173,24 @@ export const useControllerPageLifecycle = () => {
       try {
         const updates = event.detail;
         for (const _update of updates) {
-          if (_update._id === "preferences") {
-            const update = _update as DBPreferences;
-            dispatch(updatePreferencesFromRemote(update));
+          if (
+            _update._id === PREFERENCES_POUCH_ID ||
+            _update._id === QUICK_LINKS_POUCH_ID ||
+            _update._id === MONITOR_SETTINGS_POUCH_ID ||
+            _update._id === MEDIA_ROUTE_FOLDERS_POUCH_ID
+          ) {
+            dispatch(
+              updatePreferencesFromRemote(
+                _update as PreferencesClusterRemoteDoc,
+              ),
+            );
           }
         }
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch]
+    [dispatch],
   );
 
   useGlobalBroadcast(updatePreferencesFromExternal);
@@ -171,7 +214,7 @@ export const useControllerPageLifecycle = () => {
       });
       resizeObserver.observe(node);
     },
-    [setIsMobile, setIsPhone]
+    [setIsMobile, setIsPhone],
   );
 
   useEffect(() => {
@@ -207,25 +250,39 @@ export const useControllerPageLifecycle = () => {
     if (!db) return;
     const getPreferences = async () => {
       try {
-        const preferences: DBPreferences | undefined =
-          await db.get("preferences");
+        const bundle = await loadPreferencesBundle(db);
         dispatch(
           initiatePreferences({
-            preferences: preferences.preferences,
+            preferences: bundle.preferences,
             isMusic: access === "music",
-          })
+            mediaRouteFolders: bundle.mediaRouteFolders,
+          }),
         );
-        dispatch(initiateQuickLinks(preferences.quickLinks));
-        dispatch(initiateMonitorSettings(preferences.monitorSettings));
-        dispatch(setPreferencesIsInitialized(true));
+        dispatch(initiateQuickLinks(bundle.quickLinks));
+        dispatch(initiateMonitorSettings(bundle.monitorSettings));
       } catch (e) {
         console.error(e);
+        const fb = preferencesClusterLoadFallback;
+        dispatch(
+          initiatePreferences({
+            preferences: fb.preferences,
+            isMusic: access === "music",
+            mediaRouteFolders: fb.mediaRouteFolders,
+          }),
+        );
+        dispatch(initiateQuickLinks(fb.quickLinks));
+        dispatch(initiateMonitorSettings(fb.monitorSettings));
+        showToast(
+          "Could not load saved preferences. Default settings are in use for this session. Try reloading the page if this continues.",
+          "error",
+        );
       } finally {
         dispatch(setIsLoading(false));
+        dispatch(setPreferencesIsInitialized(true));
       }
     };
     getPreferences();
-  }, [dispatch, db, access]);
+  }, [dispatch, db, access, showToast]);
 
   useEffect(() => {
     if (!db) return;
@@ -246,6 +303,20 @@ export const useControllerPageLifecycle = () => {
     if (db && access !== "full") {
       dispatch(initiateMediaList([]));
     }
+  }, [dispatch, db, access]);
+
+  useEffect(() => {
+    if (!db || access !== "full") return;
+    (async () => {
+      try {
+        await migrateMediaLibraryFoldersFieldIfNeeded(db);
+        const raw = (await db.get("media")) as DBMedia;
+        const { list, folders } = normalizeMediaDoc(raw);
+        dispatch(initiateMediaFromDoc({ list, folders }));
+      } catch {
+        dispatch(initiateMediaFromDoc({ list: [], folders: [] }));
+      }
+    })();
   }, [dispatch, db, access]);
 
   useEffect(() => {
@@ -281,7 +352,7 @@ export const useControllerPageLifecycle = () => {
         if (urlArray.length > 0) {
           const result = await electronAPI.syncMediaCache(urlArray);
           console.log(
-            `Media cache sync: ${result.downloaded} downloaded, ${result.cleaned} cleaned`
+            `Media cache sync: ${result.downloaded} downloaded, ${result.cleaned} cleaned`,
           );
         } else {
           await electronAPI.syncMediaCache([]);
@@ -302,7 +373,7 @@ export const useControllerPageLifecycle = () => {
       dispatch(setItemListIsLoading(true));
       try {
         const response: DBItemListDetails | undefined = await db.get(
-          selectedList._id
+          selectedList._id,
         );
         const itemList = response?.items || [];
         const overlayIds = response?.overlays || [];

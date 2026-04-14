@@ -2,13 +2,21 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import BoardPage from "./BoardPage";
-import { createBoardPost, getBoardAlias, getBoardPosts } from "../boards/api";
+import {
+  createBoardPost,
+  deleteOwnBoardPost,
+  getBoardAlias,
+  getBoardPosts,
+  updateOwnBoardPost,
+} from "../boards/api";
 import { useBoardEventStream } from "../boards/useBoardEventStream";
 
 jest.mock("../boards/api", () => ({
   createBoardPost: jest.fn(),
+  deleteOwnBoardPost: jest.fn(),
   getBoardAlias: jest.fn(),
   getBoardPosts: jest.fn(),
+  updateOwnBoardPost: jest.fn(),
 }));
 
 jest.mock("../boards/useBoardEventStream", () => ({
@@ -18,6 +26,8 @@ jest.mock("../boards/useBoardEventStream", () => ({
 const mockGetBoardAlias = jest.mocked(getBoardAlias);
 const mockGetBoardPosts = jest.mocked(getBoardPosts);
 const mockCreateBoardPost = jest.mocked(createBoardPost);
+const mockUpdateOwnBoardPost = jest.mocked(updateOwnBoardPost);
+const mockDeleteOwnBoardPost = jest.mocked(deleteOwnBoardPost);
 const mockUseBoardEventStream = jest.mocked(useBoardEventStream);
 
 describe("BoardPage", () => {
@@ -327,5 +337,265 @@ describe("BoardPage", () => {
     expect(await screen.findByText(/New post from stream/i)).toBeInTheDocument();
     expect(mockGetBoardAlias).toHaveBeenCalledTimes(initialAliasCalls);
     expect(mockGetBoardPosts).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets an attendee edit and delete only posts that match their participant id", async () => {
+    localStorage.setItem("worshipsyncBoardName", "Alex");
+    localStorage.setItem("worshipsyncBoardParticipantId", "p1");
+    mockGetBoardPosts.mockResolvedValue({
+      aliasId: "sunday",
+      boardId: "board-a",
+      posts: [
+        {
+          _id: "post:board-a:mine",
+          type: "post",
+          docType: "board-post",
+          id: "mine",
+          aliasId: "sunday",
+          boardId: "board-a",
+          database: "demo",
+          author: "Alex",
+          authorId: "p1",
+          text: "My question",
+          timestamp: 1,
+          hidden: false,
+          highlighted: false,
+        },
+        {
+          _id: "post:board-a:theirs",
+          type: "post",
+          docType: "board-post",
+          id: "theirs",
+          aliasId: "sunday",
+          boardId: "board-a",
+          database: "demo",
+          author: "Other",
+          authorId: "p2",
+          text: "Their post",
+          timestamp: 2,
+          hidden: false,
+          highlighted: false,
+        },
+      ],
+    });
+    mockUpdateOwnBoardPost.mockResolvedValue({
+      post: {} as any,
+    });
+    mockDeleteOwnBoardPost.mockResolvedValue({ ok: true });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText(/^My question$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Their post$/i)).toBeInTheDocument();
+
+    expect(
+      screen.getAllByRole("button", { name: /Edit this post/i }),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByRole("button", { name: /Delete this post/i }),
+    ).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: /Edit this post/i }));
+    const editDialog = await screen.findByRole("dialog", { name: /Edit your post/i });
+    const messageField = within(editDialog).getByLabelText(/Message/i);
+    await user.clear(messageField);
+    await user.type(messageField, "Updated question");
+    await user.click(within(editDialog).getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateOwnBoardPost).toHaveBeenCalledWith(
+        "sunday",
+        "post:board-a:mine",
+        expect.objectContaining({
+          authorId: "p1",
+          text: "Updated question",
+        }),
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: /Delete this post/i }));
+    const deleteDialog = await screen.findByRole("dialog", {
+      name: /Delete this post/i,
+    });
+    await user.click(within(deleteDialog).getByRole("button", { name: /^Delete$/i }));
+
+    await waitFor(() => {
+      expect(mockDeleteOwnBoardPost).toHaveBeenCalledWith(
+        "sunday",
+        "post:board-a:mine",
+        { authorId: "p1" },
+      );
+    });
+  });
+
+  it("refreshes posts when the stream reports an update after a soft delete", async () => {
+    let refreshCallback:
+      | ((event: { type: string; presentationFontScale?: number }) => void)
+      | undefined;
+    mockUseBoardEventStream.mockImplementation((_aliasId, onMessage) => {
+      refreshCallback = onMessage;
+    });
+
+    localStorage.setItem("worshipsyncBoardName", "Alex");
+    localStorage.setItem("worshipsyncBoardParticipantId", "p1");
+    mockGetBoardPosts
+      .mockResolvedValueOnce({
+        aliasId: "sunday",
+        boardId: "board-a",
+        posts: [
+          {
+            _id: "post:board-a:1",
+            type: "post",
+            docType: "board-post",
+            id: "1",
+            aliasId: "sunday",
+            boardId: "board-a",
+            database: "demo",
+            author: "Alex",
+            authorId: "p1",
+            text: "Soon gone",
+            timestamp: 1,
+            hidden: false,
+            highlighted: false,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        aliasId: "sunday",
+        boardId: "board-a",
+        posts: [],
+      });
+
+    renderPage();
+
+    expect(await screen.findByText(/^Soon gone$/i)).toBeInTheDocument();
+
+    await act(async () => {
+      refreshCallback?.({ type: "post-updated" });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/^Soon gone$/i)).not.toBeInTheDocument();
+    });
+    expect(mockGetBoardPosts).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes the edit modal when a stream refresh removes the post", async () => {
+    let refreshCallback:
+      | ((event: { type: string; presentationFontScale?: number }) => void)
+      | undefined;
+    mockUseBoardEventStream.mockImplementation((_aliasId, onMessage) => {
+      refreshCallback = onMessage;
+    });
+
+    localStorage.setItem("worshipsyncBoardName", "Alex");
+    localStorage.setItem("worshipsyncBoardParticipantId", "p1");
+    mockGetBoardPosts
+      .mockResolvedValueOnce({
+        aliasId: "sunday",
+        boardId: "board-a",
+        posts: [
+          {
+            _id: "post:board-a:1",
+            type: "post",
+            docType: "board-post",
+            id: "1",
+            aliasId: "sunday",
+            boardId: "board-a",
+            database: "demo",
+            author: "Alex",
+            authorId: "p1",
+            text: "Still here",
+            timestamp: 1,
+            hidden: false,
+            highlighted: false,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        aliasId: "sunday",
+        boardId: "board-a",
+        posts: [],
+      });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText(/^Still here$/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Edit this post/i }));
+    expect(
+      await screen.findByRole("dialog", { name: /Edit your post/i }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      refreshCallback?.({ type: "post-updated" });
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: /Edit your post/i }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("closes the delete confirmation when a stream refresh removes the post", async () => {
+    let refreshCallback:
+      | ((event: { type: string; presentationFontScale?: number }) => void)
+      | undefined;
+    mockUseBoardEventStream.mockImplementation((_aliasId, onMessage) => {
+      refreshCallback = onMessage;
+    });
+
+    localStorage.setItem("worshipsyncBoardName", "Alex");
+    localStorage.setItem("worshipsyncBoardParticipantId", "p1");
+    mockGetBoardPosts
+      .mockResolvedValueOnce({
+        aliasId: "sunday",
+        boardId: "board-a",
+        posts: [
+          {
+            _id: "post:board-a:1",
+            type: "post",
+            docType: "board-post",
+            id: "1",
+            aliasId: "sunday",
+            boardId: "board-a",
+            database: "demo",
+            author: "Alex",
+            authorId: "p1",
+            text: "To delete",
+            timestamp: 1,
+            hidden: false,
+            highlighted: false,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        aliasId: "sunday",
+        boardId: "board-a",
+        posts: [],
+      });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText(/^To delete$/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Delete this post/i }));
+    expect(
+      await screen.findByRole("dialog", { name: /Delete this post/i }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      refreshCallback?.({ type: "post-updated" });
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: /Delete this post/i }),
+      ).not.toBeInTheDocument();
+    });
   });
 });

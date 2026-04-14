@@ -3,14 +3,17 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ToastData } from "../../../components/Toast/ToastContainer";
 import LyricsEditor from "../LyricsEditor";
 import { ToastContext } from "../../../context/toastContext";
-import { resolveLrclibImport } from "../../../api/lrclib";
 
 type ShowToastArg = string | Omit<ToastData, "id">;
 
 const mockDispatch = jest.fn();
 let mockState: any;
 let lastLyricBoxesProps: any;
+let lastLyricSectionToolsProps: any;
 let lastSectionPreviewProps: any;
+let lastAddSongSectionsDrawerProps: any;
+let lastArrangementProps: any[];
+let mockGeneratedIdCounter = 0;
 
 const mockSetIsEditMode = jest.fn((value: boolean) => ({
   type: "item/setIsEditMode",
@@ -48,18 +51,24 @@ jest.mock("../../../store/itemSlice", () => ({
   setSongMetadata: (value: unknown) => mockSetSongMetadata(value),
 }));
 
-jest.mock("../../../api/lrclib", () => ({
-  resolveLrclibImport: jest.fn(),
-}));
-
 jest.mock("../../../store/preferencesSlice", () => ({
-  increaseFormattedLyrics: jest.fn(() => ({ type: "preferences/increaseFormattedLyrics" })),
-  decreaseFormattedLyrics: jest.fn(() => ({ type: "preferences/decreaseFormattedLyrics" })),
+  setFormattedLyrics: jest.fn((n: number) => ({
+    type: "preferences/setFormattedLyrics",
+    payload: n,
+  })),
 }));
 
 jest.mock("../../../utils/overflow", () => ({
   formatSong: (item: any) => mockFormatSong(item),
   formatSection: jest.fn(() => []),
+}));
+
+jest.mock("../../../utils/generateRandomId", () => ({
+  __esModule: true,
+  default: () => {
+    mockGeneratedIdCounter += 1;
+    return `generated-id-${mockGeneratedIdCounter}`;
+  },
 }));
 
 jest.mock("../LyricBoxes", () => ({
@@ -70,6 +79,23 @@ jest.mock("../LyricBoxes", () => ({
   },
 }));
 
+jest.mock("../LyricSectionTools", () => ({
+  __esModule: true,
+  default: (props: any) => {
+    lastLyricSectionToolsProps = props;
+    return (
+      <div data-testid="lyric-section-tools">
+        <button type="button" onClick={() => props.onAddEmptySection("Bridge")}>
+          Add empty section
+        </button>
+        <button type="button" onClick={props.onOpenImportDrawer}>
+          Import from song
+        </button>
+      </div>
+    );
+  },
+}));
+
 jest.mock("../SongSections", () => ({
   __esModule: true,
   default: () => <div data-testid="song-sections" />,
@@ -77,9 +103,29 @@ jest.mock("../SongSections", () => ({
 
 jest.mock("../Arrangement", () => ({
   __esModule: true,
-  default: ({ arrangement }: { arrangement: { name: string } }) => (
-    <li data-testid="arrangement-item">{arrangement.name}</li>
-  ),
+  default: (props: any) => {
+    lastArrangementProps.push(props);
+    return (
+      <li data-testid="arrangement-item">
+        <span>{props.arrangement.name}</span>
+        <button
+          type="button"
+          onClick={() =>
+            props.setLocalArrangements([
+              ...props.localArrangements,
+              {
+                ...props.arrangement,
+                id: "copied-arrangement",
+                name: `${props.arrangement.name} copy`,
+              },
+            ])
+          }
+        >
+          Copy {props.arrangement.name}
+        </button>
+      </li>
+    );
+  },
 }));
 
 jest.mock("../SectionPreview", () => ({
@@ -87,6 +133,14 @@ jest.mock("../SectionPreview", () => ({
   default: (props: any) => {
     lastSectionPreviewProps = props;
     return <div data-testid="section-preview" />;
+  },
+}));
+
+jest.mock("../AddSongSectionsDrawer", () => ({
+  __esModule: true,
+  default: (props: any) => {
+    lastAddSongSectionsDrawerProps = props;
+    return props.isOpen ? <div data-testid="add-song-sections-drawer" /> : null;
   },
 }));
 
@@ -115,6 +169,12 @@ jest.mock("../../../components/Modal/Modal", () => ({
 
 const makeBaseState = (overrides: Partial<any> = {}) => {
   const base = {
+    allDocs: {
+      allSongDocs: [],
+    },
+    allItems: {
+      isAllItemsLoading: false,
+    },
     undoable: {
       present: {
         item: {
@@ -131,6 +191,9 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
               songOrder: [],
             },
           ],
+        },
+        preferences: {
+          formattedLyricsPerRow: 3,
         },
       },
     },
@@ -149,6 +212,10 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
           ...base.undoable.present.item,
           ...((overrides as any).undoable?.present?.item || {}),
         },
+        preferences: {
+          ...base.undoable.present.preferences,
+          ...((overrides as any).undoable?.present?.preferences || {}),
+        },
       },
     },
   };
@@ -166,15 +233,25 @@ const renderWithToastContext = () =>
     </ToastContext.Provider>
   );
 
+/** LyricsEditorPanel mounts after a deferred tick; wait before interacting. */
+const waitForLyricsEditorPanelReady = () =>
+  waitFor(() => {
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+  });
+
 describe("LyricsEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockState = makeBaseState();
     lastLyricBoxesProps = null;
+    lastLyricSectionToolsProps = null;
     lastSectionPreviewProps = null;
+    lastAddSongSectionsDrawerProps = null;
+    lastArrangementProps = [];
     mockShowToast = jest.fn<string, [ShowToastArg]>(() => "toast-1");
     mockRemoveToast = jest.fn();
     mockFormatSong.mockImplementation((item: any) => item);
+    mockGeneratedIdCounter = 0;
   });
 
   it("returns null when edit mode is disabled", () => {
@@ -193,7 +270,7 @@ describe("LyricsEditor", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("dispatches save actions and updates arrangements using formatted song result", () => {
+  it("dispatches save actions and updates arrangements using formatted song result", async () => {
     const formattedResult = {
       arrangements: [
         {
@@ -209,6 +286,7 @@ describe("LyricsEditor", () => {
     mockFormatSong.mockReturnValue(formattedResult);
 
     render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -240,73 +318,9 @@ describe("LyricsEditor", () => {
     });
   });
 
-  it("imports Genius lyrics into a new arrangement and stages song metadata until save", async () => {
-    (resolveLrclibImport as jest.Mock).mockResolvedValue({
-      match: {
-        source: "genius",
-        geniusId: 44,
-        geniusUrl: "https://genius.com/sample-song-lyrics",
-        trackName: "Sample Song",
-        artistName: "Choir",
-        albumName: "Live",
-        plainLyrics: "Verse line\n\nChorus line",
-        syncedLyrics: null,
-      },
-      candidates: [],
-    });
-
-    mockState = makeBaseState({
-      undoable: {
-        present: {
-          item: {
-            arrangements: [
-              {
-                id: "arr-1",
-                name: "Master",
-                slides: [
-                  { id: "title", name: "Title", type: "Title", boxes: [{}, {}] },
-                  { id: "blank", name: "Blank", type: "Blank", boxes: [{}, {}] },
-                ],
-                formattedLyrics: [],
-                songOrder: [],
-              },
-            ],
-          },
-        },
-      },
-    });
-
+  it("closes immediately on cancel when there are no pending changes", async () => {
     render(<LyricsEditor />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
-
-    expect(resolveLrclibImport).toHaveBeenCalledWith({
-      trackName: "Sample Song",
-      artistName: undefined,
-      albumName: undefined,
-    });
-
-    await waitFor(() => {
-      expect(screen.getAllByTestId("arrangement-item")).toHaveLength(2);
-    });
-
-    expect(screen.getAllByTestId("arrangement-item")[1]).toHaveTextContent(
-      "Lyrics import",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(mockSetSongMetadata).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: "genius",
-        geniusId: 44,
-        artistName: "Choir",
-      }),
-    );
-  });
-
-  it("closes immediately on cancel when there are no pending changes", () => {
-    render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -318,12 +332,11 @@ describe("LyricsEditor", () => {
     });
   });
 
-  it("shows confirmation modal when cancelling with unsaved changes", () => {
+  it("shows confirmation modal when cancelling with unsaved changes", async () => {
     render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
 
-    fireEvent.change(screen.getByLabelText(/paste lyrics here/i), {
-      target: { value: "Verse\nAmazing grace" },
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Copy Master" }));
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(
@@ -336,22 +349,6 @@ describe("LyricsEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.click(screen.getByRole("button", { name: "Leave Without Saving" }));
 
-    expect(mockSetIsEditMode).toHaveBeenCalledWith(false);
-  });
-
-  it("does not warn about unsaved changes after pasted lyrics are cleared", () => {
-    render(<LyricsEditor />);
-
-    const pasteLyricsInput = screen.getByLabelText(/paste lyrics here/i);
-    fireEvent.change(pasteLyricsInput, {
-      target: { value: "Verse\nAmazing grace" },
-    });
-    fireEvent.change(pasteLyricsInput, {
-      target: { value: "   " },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mockSetIsEditMode).toHaveBeenCalledWith(false);
   });
 
@@ -393,6 +390,7 @@ describe("LyricsEditor", () => {
     });
 
     render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
 
     await waitFor(() => {
       expect(lastLyricBoxesProps.selectedSectionId).toBe("verse-1");
@@ -472,6 +470,7 @@ describe("LyricsEditor", () => {
     });
 
     render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
 
     await waitFor(() => {
       expect(lastLyricBoxesProps.selectedSectionId).toBe("verse-1");
@@ -520,6 +519,7 @@ describe("LyricsEditor", () => {
     });
 
     const { rerender } = render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
 
     await waitFor(() => {
       expect(screen.getByText("Song A")).toBeInTheDocument();
@@ -591,6 +591,7 @@ describe("LyricsEditor", () => {
     });
 
     rerender(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
 
     await waitFor(() => {
       expect(screen.getByText("Song B")).toBeInTheDocument();
@@ -630,6 +631,7 @@ describe("LyricsEditor", () => {
     });
 
     renderWithToastContext();
+    await waitForLyricsEditorPanelReady();
 
     await waitFor(() => {
       expect(mockShowToast).toHaveBeenCalled();
@@ -649,5 +651,359 @@ describe("LyricsEditor", () => {
       type: "item/discardPendingRemoteItem",
     });
     expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("adds an empty section and appends it to song order by default", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            arrangements: [
+              {
+                id: "arr-1",
+                name: "Master",
+                slides: [],
+                formattedLyrics: [
+                  {
+                    id: "verse-1",
+                    type: "Verse",
+                    name: "Verse",
+                    words: "Verse words",
+                    slideSpan: 1,
+                  },
+                ],
+                songOrder: [{ id: "order-1", name: "Verse" }],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
+
+    act(() => {
+      lastLyricSectionToolsProps.onAddEmptySection("Bridge");
+    });
+
+    await waitFor(() => {
+      expect(
+        lastLyricBoxesProps.formattedLyrics.find(
+          (section: { id: string }) => section.id === "generated-id-1",
+        ),
+      ).toEqual(
+        expect.objectContaining({
+          id: "generated-id-1",
+          type: "Bridge",
+          name: "Bridge",
+          words: "",
+        }),
+      );
+    });
+
+    expect(lastLyricBoxesProps.selectedSectionId).toBe("generated-id-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(mockFormatSong).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arrangements: [
+          expect.objectContaining({
+            songOrder: [
+              { id: "order-1", name: "Verse" },
+              { id: "generated-id-2", name: "Bridge" },
+            ],
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("when song order is empty, adding a section only adds that section to song order (not all lyrics)", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            arrangements: [
+              {
+                id: "arr-1",
+                name: "Master",
+                slides: [],
+                formattedLyrics: [
+                  {
+                    id: "verse-1",
+                    type: "Verse",
+                    name: "Verse",
+                    words: "Verse words",
+                    slideSpan: 1,
+                  },
+                ],
+                songOrder: [],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
+
+    act(() => {
+      lastLyricSectionToolsProps.onAddEmptySection("Bridge");
+    });
+
+    await waitFor(() => {
+      expect(
+        lastLyricBoxesProps.formattedLyrics.some(
+          (section: { id: string }) => section.id === "generated-id-1",
+        ),
+      ).toBe(true);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const savedItem = mockFormatSong.mock.calls[mockFormatSong.mock.calls.length - 1][0];
+    const savedSongOrder = savedItem.arrangements[0].songOrder;
+    expect(savedSongOrder).toHaveLength(1);
+    expect(savedSongOrder[0]).toMatchObject({ name: "Bridge" });
+  });
+
+  it("imports sections from another song into the current arrangement and appends them to song order by default", async () => {
+    mockState = makeBaseState({
+      allDocs: {
+        allSongDocs: [
+          {
+            _id: "source-song",
+            name: "Source Song",
+            type: "song",
+            selectedArrangement: 0,
+            shouldSendTo: {
+              projector: true,
+              monitor: true,
+              stream: true,
+            },
+            slides: [],
+            arrangements: [],
+          },
+        ],
+      },
+      undoable: {
+        present: {
+          item: {
+            _id: "current-song",
+            arrangements: [
+              {
+                id: "arr-1",
+                name: "Master",
+                slides: [],
+                formattedLyrics: [
+                  {
+                    id: "verse-1",
+                    type: "Verse",
+                    name: "Verse",
+                    words: "Verse words",
+                    slideSpan: 1,
+                  },
+                ],
+                songOrder: [{ id: "order-1", name: "Verse" }],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
+
+    act(() => {
+      lastLyricSectionToolsProps.onOpenImportDrawer();
+    });
+
+    await waitFor(() => {
+      expect(lastAddSongSectionsDrawerProps.isOpen).toBe(true);
+    });
+
+    act(() => {
+      lastAddSongSectionsDrawerProps.onImport([
+        {
+          id: "source-chorus",
+          type: "Chorus",
+          name: "Chorus",
+          words: "Imported chorus words",
+          slideSpan: 4,
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(
+        lastLyricBoxesProps.formattedLyrics.find(
+          (section: { id: string }) => section.id === "generated-id-1",
+        ),
+      ).toEqual(
+        expect.objectContaining({
+          id: "generated-id-1",
+          type: "Chorus",
+          words: "Imported chorus words",
+          slideSpan: 1,
+        }),
+      );
+    });
+
+    expect(lastLyricBoxesProps.selectedSectionId).toBe("generated-id-1");
+    expect(lastAddSongSectionsDrawerProps.isOpen).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(mockFormatSong).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arrangements: [
+          expect.objectContaining({
+            songOrder: [
+              { id: "order-1", name: "Verse" },
+              { id: "generated-id-2", name: "Chorus" },
+            ],
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("can import sections without appending them to song order when the toggle is off", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "current-song",
+            arrangements: [
+              {
+                id: "arr-1",
+                name: "Master",
+                slides: [],
+                formattedLyrics: [
+                  {
+                    id: "verse-1",
+                    type: "Verse",
+                    name: "Verse",
+                    words: "Verse words",
+                    slideSpan: 1,
+                  },
+                ],
+                songOrder: [],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
+
+    act(() => {
+      lastLyricSectionToolsProps.onAddNewSectionsToSongOrderChange(false);
+    });
+
+    await waitFor(() => {
+      expect(lastLyricSectionToolsProps.addNewSectionsToSongOrder).toBe(false);
+    });
+
+    act(() => {
+      lastLyricSectionToolsProps.onOpenImportDrawer();
+    });
+
+    act(() => {
+      lastAddSongSectionsDrawerProps.onImport([
+        {
+          id: "source-chorus",
+          type: "Chorus",
+          name: "Chorus",
+          words: "Imported chorus words",
+          slideSpan: 4,
+        },
+      ]);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(mockFormatSong).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arrangements: [
+          expect.objectContaining({
+            songOrder: [],
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("preserves unsaved copied arrangements when deleting a lyric section from a stale handler", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            arrangements: [
+              {
+                id: "arr-1",
+                name: "Master",
+                slides: [],
+                formattedLyrics: [
+                  {
+                    id: "verse-1",
+                    type: "Verse",
+                    name: "Verse",
+                    words: "Verse words",
+                    slideSpan: 1,
+                  },
+                  {
+                    id: "chorus-1",
+                    type: "Chorus",
+                    name: "Chorus",
+                    words: "Chorus words",
+                    slideSpan: 1,
+                  },
+                ],
+                songOrder: [
+                  { id: "order-1", name: "Verse" },
+                  { id: "order-2", name: "Chorus" },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
+
+    const staleDeleteSection = lastLyricBoxesProps.onFormattedLyricsDelete;
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy Master" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Master copy")).toBeInTheDocument();
+    });
+
+    act(() => {
+      staleDeleteSection(0);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(mockFormatSong).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arrangements: expect.arrayContaining([
+          expect.objectContaining({ id: "arr-1", name: "Master" }),
+          expect.objectContaining({
+            id: "copied-arrangement",
+            name: "Master copy",
+          }),
+        ]),
+      }),
+    );
   });
 });

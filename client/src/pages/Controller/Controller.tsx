@@ -12,7 +12,7 @@ import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
 import Songs from "../../containers/Songs/Songs";
-import { Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
@@ -28,6 +28,7 @@ import cn from "classnames";
 import { RootState } from "../../store/store";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 import ControllerPageShell from "../../components/ControllerPageShell/ControllerPageShell";
+import ControllerViewRouteGuard from "../../components/ControllerViewRouteGuard/ControllerViewRouteGuard";
 
 const Controller = () => {
   const dispatch = useDispatch();
@@ -37,7 +38,7 @@ const Controller = () => {
   const { dbProgress, connectionStatus } =
     useContext(ControllerInfoContext) || {};
 
-  const { user } = useContext(GlobalInfoContext) || {};
+  const { user, churchName } = useContext(GlobalInfoContext) || {};
 
   const isEditMode = useSelector(
     (state: RootState) => state.undoable.present.item.isEditMode
@@ -81,20 +82,21 @@ const Controller = () => {
   return (
     <ControllerPageShell
       user={user}
+      churchName={churchName}
       dbProgress={dbProgress}
       connectionStatus={connectionStatus}
       scrollbarWidth={scrollbarWidth}
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
-      <LyricsEditor />
+      {(access === "full" || access === "music") && <LyricsEditor />}
       <Button
         className={cn("lg:hidden mr-2 h-1/4 z-10", isEditMode && "hidden")}
         svg={isLeftPanelOpen ? ArrowLeftFromLine : ArrowRightFromLine}
         onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
       />
       <div
-        className={`flex flex-col border-r-2 border-gray-500 bg-gray-700 h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
+        className={`flex flex-col border-r-2 border-gray-500 bg-homepage-canvas h-full lg:w-[15%] max-lg:absolute max-lg:left-0 transition-all ${isLeftPanelOpen ? "w-[60%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
           }`}
         ref={leftPanelRef}
       >
@@ -108,27 +110,30 @@ const Controller = () => {
         <EditorButtons access={access} />
         <ServiceItems />
       </div>
-      <div className="flex flex-col flex-1 relative w-[60%] h-full">
-        <Routes>
-          <Route
-            path="/"
-            element={
-              <h2 className="text-2xl text-center mt-4 font-bold">
-                No Item Selected
-              </h2>
-            }
-          />
-          <Route path="/item/:itemId/:listId" element={<Item />} />
-          <Route path="overlays" element={<Overlays />} />
-          <Route path="bible" element={<Bible />} />
-          <Route path="songs" element={<Songs />} />
-          <Route path="free" element={<FreeForms />} />
-          <Route path="timers" element={<Timers />} />
-          <Route path="create" element={<CreateItem />} />
-          <Route path="preferences" element={<Preferences />} />
-          <Route path="quick-links" element={<QuickLinks />} />
-          <Route path="monitor-settings" element={<MonitorSettings />} />
-        </Routes>
+      <div className="relative flex h-full min-h-0 w-[60%] flex-1 flex-col overflow-hidden">
+        <ControllerViewRouteGuard>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <h2 className="text-2xl text-center mt-4 font-bold">
+                  No Item Selected
+                </h2>
+              }
+            />
+            <Route path="/item/:itemId/:listId" element={<Item />} />
+            <Route path="overlays" element={<Overlays />} />
+            <Route path="bible" element={<Bible />} />
+            <Route path="songs" element={<Songs />} />
+            <Route path="free" element={<FreeForms />} />
+            <Route path="timers" element={<Timers />} />
+            <Route path="create" element={<CreateItem />} />
+            <Route path="preferences" element={<Preferences />} />
+            <Route path="account" element={<Navigate to="/account" replace />} />
+            <Route path="quick-links" element={<QuickLinks />} />
+            <Route path="monitor-settings" element={<MonitorSettings />} />
+          </Routes>
+        </ControllerViewRouteGuard>
       </div>
 
       {access === "full" && (
@@ -142,7 +147,7 @@ const Controller = () => {
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
           />
           <div
-            className={`flex flex-col h-full lg:w-[25%] bg-gray-700 border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:absolute ${isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
+            className={`flex flex-col h-full lg:w-[25%] bg-homepage-canvas border-gray-500 transition-all border-l-2 max-lg:right-0 max-lg:absolute ${isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]"
               }`}
             ref={rightPanelRef}
           >

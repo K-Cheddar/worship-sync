@@ -8,6 +8,7 @@ import ControllerLoadingOverlay from "./ControllerLoadingOverlay";
 type ControllerPageShellProps = {
   children: ReactNode;
   user?: string;
+  churchName?: string;
   dbProgress?: number;
   connectionStatus?: ConnectionStatus;
   scrollbarWidth?: string | number;
@@ -20,39 +21,39 @@ type ControllerPageShellProps = {
 const ControllerPageShell = ({
   children,
   user,
+  churchName,
   dbProgress,
   connectionStatus,
   scrollbarWidth,
   toolbarVariant = "default",
   onRootClick,
-  mainClassName = "flex flex-1 relative min-h-0 bg-gray-700",
+  mainClassName = "flex flex-1 relative min-h-0 bg-homepage-canvas",
   layoutRef,
 }: ControllerPageShellProps) => {
   return (
-    <>
+    <div
+      onClick={onRootClick}
+      className="dark bg-homepage-canvas flex h-dvh w-dvw list-none flex-col overflow-hidden text-white"
+      style={
+        {
+          "--scrollbar-width": scrollbarWidth,
+        } as CSSProperties
+      }
+    >
       <ControllerLoadingOverlay
         dbProgress={dbProgress}
         connectionStatus={connectionStatus}
         user={user}
+        churchName={churchName}
       />
-      <div
-        onClick={onRootClick}
-        className="bg-gray-700 w-dvw h-dvh flex flex-col text-white overflow-hidden list-none"
-        style={
-          {
-            "--scrollbar-width": scrollbarWidth,
-          } as CSSProperties
-        }
-      >
-        <Toolbar
-          variant={toolbarVariant}
-          className="flex border-b-2 border-gray-500 text-sm min-h-fit bg-gray-700"
-        />
-        <div id="controller-main" className={mainClassName} ref={layoutRef}>
-          {children}
-        </div>
+      <Toolbar
+        variant={toolbarVariant}
+        className="flex min-h-fit shrink-0 overflow-y-hidden border-b-2 border-gray-500 bg-homepage-canvas text-sm"
+      />
+      <div id="controller-main" className={mainClassName} ref={layoutRef}>
+        {children}
       </div>
-    </>
+    </div>
   );
 };
 

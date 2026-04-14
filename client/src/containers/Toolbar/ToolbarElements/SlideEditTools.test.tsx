@@ -123,18 +123,18 @@ describe("SlideEditTools", () => {
     jest.useRealTimers();
   });
 
-  it("renders the Clean Newlines button for free items", () => {
+  it("renders the Remove Blank Lines button for free items", () => {
     render(<SlideEditTools />);
 
     expect(
-      screen.getByRole("button", { name: "Clean Newlines" })
+      screen.getByRole("button", { name: "Remove Blank Lines" })
     ).toBeInTheDocument();
   });
 
   it("cleans free items through the shared helper when the button is clicked", () => {
     render(<SlideEditTools />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Clean Newlines" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Blank Lines" }));
 
     act(() => {
       jest.runAllTimers();

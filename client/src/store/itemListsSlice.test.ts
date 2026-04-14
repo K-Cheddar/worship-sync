@@ -6,6 +6,7 @@ import itemListsReducer, {
   selectItemList,
   setActiveItemList,
   setInitialItemList,
+  updateItemListsFromRemote,
 } from "./itemListsSlice";
 import type { ItemList } from "../types";
 
@@ -157,6 +158,27 @@ describe("itemListsSlice", () => {
       const state = store.getState().itemLists;
       expect(state.activeList?._id).toBe("id-a");
       expect(state.selectedList?._id).toBe("id-a");
+    });
+
+    it("updateItemListsFromRemote keeps selected/active ids when still present", () => {
+      const store = createStore({
+        itemLists: {
+          currentLists: [outline("A", "id-a"), outline("B", "id-b")],
+          activeList: outline("A", "id-a"),
+          selectedList: outline("B", "id-b"),
+          isInitialized: true,
+        },
+      });
+      const refreshed = [
+        outline("A renamed", "id-a"),
+        outline("B", "id-b"),
+      ];
+      store.dispatch(updateItemListsFromRemote(refreshed));
+      const state = store.getState().itemLists;
+      expect(state.selectedList?._id).toBe("id-b");
+      expect(state.selectedList?.name).toBe("B");
+      expect(state.activeList?._id).toBe("id-a");
+      expect(state.activeList?.name).toBe("A renamed");
     });
   });
 });

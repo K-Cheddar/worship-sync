@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, HTMLProps, useId, forwardRef } from "react";
-import cn from "classnames";
+
+import UITextarea from "@/components/ui/Textarea";
+import Label from "@/components/ui/Label";
+import { cn } from "@/utils/cnHelper";
 
 type TextAreaProps = Omit<HTMLProps<HTMLTextAreaElement>, "onChange" | "value"> & {
   className?: string;
@@ -16,7 +19,7 @@ type TextAreaProps = Omit<HTMLProps<HTMLTextAreaElement>, "onChange" | "value"> 
 const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(({
   className,
   textareaClassName,
-  type = "text",
+  type: _unusedType,
   value,
   onChange,
   label,
@@ -25,6 +28,7 @@ const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(({
   labelClassName,
   ...rest
 }, forwardedRef) => {
+  const { onFocus: onFocusProp, onInput: onInputProp, ...textareaDomRest } = rest;
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const id = useId();
 
@@ -42,7 +46,10 @@ const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(({
   const resize = useCallback((textarea: HTMLTextAreaElement) => {
     if (autoResize) {
       textarea.style.height = "auto";
-      textarea.style.height = `${textarea.scrollHeight}px`;
+      // scrollHeight vs set height often differs by 1–2px (subpixels, borders); without a
+      // small buffer the textarea shows a scrollbar that only moves a pixel or two.
+      const padded = Math.ceil(textarea.scrollHeight) + 2;
+      textarea.style.height = `${padded}px`;
     }
   }, [autoResize]);
 
@@ -57,30 +64,71 @@ const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(({
     }
   }, [value, autoResize, resize]);
 
+  // Mobile auto-resize sets inline height; clear it when switching to fixed-height layout
+  // (e.g. resize to desktop) so classes like h-full / min-h-* apply again.
+  useEffect(() => {
+    const el = textAreaRef.current;
+    if (!el) {
+      return;
+    }
+    if (autoResize) {
+      requestAnimationFrame(() => {
+        if (textAreaRef.current) {
+          resize(textAreaRef.current);
+        }
+      });
+    } else {
+      el.style.height = "";
+    }
+  }, [autoResize, resize]);
+
   return (
-    <div className={cn("scrollbar-variable", className)}>
-      <label
-        htmlFor={id}
-        className={cn(
-          "text-sm font-semibold",
-          hideLabel && "sr-only",
-          labelClassName
-        )}
-      >
-        {label}:
-      </label>
-      <textarea
+    <div
+      className={cn(
+        "scrollbar-variable flex min-h-0 flex-col",
+        // flex-1 on the textarea fights inline heights from autoResize (scrollHeight).
+        autoResize && "h-auto",
+        className,
+      )}
+    >
+      {label != null ? (
+        <Label
+          htmlFor={id}
+          className={cn(
+            "shrink-0 text-sm font-semibold p-1",
+            hideLabel && "sr-only",
+            labelClassName
+          )}
+        >
+          {label}:
+        </Label>
+      ) : null}
+      <UITextarea
         id={id}
         ref={setTextAreaRef}
-        className={cn("w-full h-full rounded px-2 py-1 select text-black resize-none text-sm", textareaClassName)}
+        className={cn(
+          "min-h-0 w-full resize-none select-text",
+          autoResize ? "flex-none overflow-x-hidden overflow-y-hidden" : "flex-1",
+          textareaClassName
+        )}
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
+        onFocus={(e) => {
+          if (autoResize) {
+            requestAnimationFrame(() => {
+              if (textAreaRef.current) {
+                resize(textAreaRef.current);
+              }
+            });
+          }
+          onFocusProp?.(e);
+        }}
         onInput={(e) => {
           const target = e.target as HTMLTextAreaElement;
           resize(target);
-          rest.onInput?.(e);
+          onInputProp?.(e);
         }}
-        {...rest}
+        {...textareaDomRest}
       />
     </div>
   );

@@ -1,66 +1,89 @@
-import { CircleCheck } from "lucide-react";
-import { Circle } from "lucide-react";
+import { CircleCheck, Circle } from "lucide-react";
+import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
 import Icon from "../Icon/Icon";
-import cn from "classnames";
-import { useId } from "react";
+import { cn } from "@/utils/cnHelper";
+import { useId, type HTMLAttributes } from "react";
 
-type RadioButtonProps = {
+export { RadioGroup } from "@/components/ui/RadioGroup";
+
+export type RadioButtonProps = Omit<
+  HTMLAttributes<HTMLDivElement>,
+  "onChange"
+> & {
+  /** Unique value for this option within the surrounding `RadioGroup`. */
+  optionValue: string;
   label: string;
-  value: boolean;
-  onChange: (value: boolean) => void;
   className?: string;
   textSize?: string;
   labelClassName?: string;
   disabled?: boolean;
   id?: string;
-  name?: string;
 };
 
 const RadioButton = ({
+  optionValue,
   label,
-  value,
-  onChange,
   className = "",
   textSize = "text-sm",
   labelClassName = "",
   disabled = false,
   id: idProp,
-  name,
+  ...rest
 }: RadioButtonProps) => {
   const generatedId = useId();
-  const id = idProp || generatedId;
+  const itemId = idProp || generatedId;
 
   return (
     <div
       className={cn(
-        "flex gap-4 md:gap-2 items-center relative w-fit h-fit",
+        "group/radio-row relative inline-flex min-w-0 max-w-full items-center gap-3 md:gap-2",
         textSize,
         className,
         disabled && "opacity-50"
       )}
+      {...rest}
     >
-      <label className={cn("font-semibold", labelClassName)} htmlFor={id}>
+      <label
+        className={cn(
+          "min-w-0 flex-1 font-semibold leading-snug transition-colors duration-150 ease-out",
+          !disabled &&
+            "cursor-pointer group-hover/radio-row:text-white",
+          disabled && "cursor-not-allowed",
+          labelClassName
+        )}
+        htmlFor={itemId}
+      >
         {label}:
       </label>
-      <div className="h-4 w-4 flex items-center gap-1">
-        <input
-          type="radio"
-          name={name}
-          checked={value}
-          onChange={(e) => onChange(e.target.checked)}
-          className={cn(
-            "w-full h-full absolute opacity-0 left-0 top-0 z-1",
-            !disabled && "cursor-pointer"
-          )}
-          disabled={disabled}
-          id={id}
-        />
+      <RadioGroupPrimitive.Item
+        value={optionValue}
+        disabled={disabled}
+        id={itemId}
+        className={cn(
+          "group relative size-5 shrink-0 rounded-full outline-none",
+          "ring-1 ring-inset ring-white/20 transition-[background-color,box-shadow] duration-150 ease-out",
+          "enabled:hover:bg-white/15 enabled:hover:ring-white/45",
+          "data-[state=checked]:ring-cyan-400/50",
+          "enabled:data-[state=checked]:hover:bg-cyan-400/15 enabled:data-[state=checked]:hover:ring-cyan-300/55",
+          "focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900",
+          disabled ? "cursor-not-allowed" : "cursor-pointer"
+        )}
+      >
         <Icon
-          svg={value ? CircleCheck : Circle}
-          color={value ? "#67e8f9" : "#e5e7eb"}
-          className={cn("absolute right-0 pointer-events-none")}
+          svg={Circle}
+          color="#e5e7eb"
+          overrideSmallMobile
+          className="pointer-events-none absolute inset-0 group-data-[state=checked]:opacity-0"
         />
-      </div>
+        <RadioGroupPrimitive.Indicator className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <Icon
+            svg={CircleCheck}
+            color="#67e8f9"
+            overrideSmallMobile
+            className="shrink-0"
+          />
+        </RadioGroupPrimitive.Indicator>
+      </RadioGroupPrimitive.Item>
     </div>
   );
 };

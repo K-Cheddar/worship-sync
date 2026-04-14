@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { ItemType, SongMetadata, TimerType } from "../types";
+import type { NormalizedLrclibTrack } from "../utils/lrclib";
 
 export type CreateItemState = {
   name: string;
@@ -13,6 +14,9 @@ export type CreateItemState = {
   seconds: number;
   time: string;
   timerType: TimerType;
+  /** Persists across navigation so the import panel can reopen on return to Create Item. */
+  lyricsImportCandidates: NormalizedLrclibTrack[];
+  lyricsImportError: string;
 };
 
 export const initialCreateItemState: CreateItemState = {
@@ -27,6 +31,8 @@ export const initialCreateItemState: CreateItemState = {
   seconds: 0,
   time: "00:00",
   timerType: "timer",
+  lyricsImportCandidates: [],
+  lyricsImportError: "",
 };
 
 export const createItemSlice = createSlice({

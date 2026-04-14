@@ -21,6 +21,7 @@ import {
   SongMetadata,
 } from "../types";
 import generateRandomId from "./generateRandomId";
+import { applyPouchAudit } from "./pouchAudit";
 import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
@@ -353,10 +354,10 @@ export const formatBibleItemForVersion = ({
             ? {
                 ...slide,
                 boxes: slide.boxes.map((b, j) =>
-                  j === 1 ? { ...b, words: newName } : b
+                  j === 1 ? { ...b, words: newName } : b,
                 ),
               }
-            : slide
+            : slide,
         )
       : [];
   return formatBibleFromScratch({
@@ -457,6 +458,8 @@ type CreateNewFreeFormType = {
   brightness: number;
   mediaInfo?: MediaType;
   overflow?: OverflowMode;
+  /** When true, first slide body stays empty (no `text || name` fallback). */
+  emptyBodyText?: boolean;
 };
 
 export const createNewFreeForm = async ({
@@ -468,8 +471,12 @@ export const createNewFreeForm = async ({
   mediaInfo,
   brightness,
   overflow = "fit",
+  emptyBodyText = false,
 }: CreateNewFreeFormType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
+  const bodyWords: [string, string] = emptyBodyText
+    ? ["", ""]
+    : ["", text || name];
   const newItem: ItemState = {
     name: _name,
     type: "free",
@@ -484,7 +491,7 @@ export const createNewFreeForm = async ({
         type: "Section",
         name: "Section 1",
         fontSize: DEFAULT_FONT_PX,
-        words: ["", text || name],
+        words: bodyWords,
         background,
         mediaInfo,
         brightness,
@@ -640,11 +647,13 @@ export const createNewItemInDb = async ({
       slides: response.slides,
     };
   } catch (error) {
-    db.put({
-      ...item,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+    const now = new Date().toISOString();
+    const doc = applyPouchAudit(
+      null,
+      { ...item, createdAt: now, updatedAt: now },
+      { isNew: true },
+    );
+    db.put(doc);
     return item;
   }
 };
