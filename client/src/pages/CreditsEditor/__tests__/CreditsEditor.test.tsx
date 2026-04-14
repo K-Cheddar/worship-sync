@@ -17,6 +17,10 @@ import {
   createMockPouchDB,
 } from "../../../test/mocks";
 import { STUCK_DB_PROGRESS_MS } from "../../../constants";
+import {
+  mockWindowLocationReload,
+  restoreWindowLocation,
+} from "../../../test/windowLocationTestMock";
 
 // controllerInfo uses import.meta – replaced by jest.config.cjs moduleNameMapper (__mocks__)
 // ResizeObserver – setupTests.ts
@@ -271,14 +275,7 @@ describe("CreditsEditor", () => {
   it("shows stuck recovery on loading overlay when dbProgress is unchanged for 15s", async () => {
     jest.useFakeTimers();
     const reloadMock = jest.fn();
-    const locationDescriptor = Object.getOwnPropertyDescriptor(
-      window,
-      "location",
-    );
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: { ...window.location, reload: reloadMock },
-    });
+    mockWindowLocationReload(reloadMock);
     try {
       const contextWithLoading = {
         ...mockControllerContext,
@@ -314,9 +311,7 @@ describe("CreditsEditor", () => {
       ).toBeInTheDocument();
     } finally {
       jest.useRealTimers();
-      if (locationDescriptor) {
-        Object.defineProperty(window, "location", locationDescriptor);
-      }
+      restoreWindowLocation();
     }
   });
 

@@ -119,6 +119,26 @@ function settleFirebaseWrite<T>(value: T | PromiseLike<T>): Promise<void> {
     .catch(() => { });
 }
 
+const isFirebasePermissionDenied = (error: unknown) => {
+  if (!error || typeof error !== "object") return false;
+  const maybe = error as { code?: string; message?: string };
+  const code = maybe.code?.toLowerCase();
+  if (code === "permission_denied") return true;
+  return /permission_denied/i.test(String(maybe.message || ""));
+};
+
+async function awaitSharedRealtimeAuthReady(auth: Auth) {
+  try {
+    await auth.authStateReady?.();
+    const user = auth.currentUser;
+    if (user) {
+      await user.getIdToken();
+    }
+  } catch {
+    // Tests stub `getSharedDataAuth()` with a partial object; production Auth is full-featured.
+  }
+}
+
 type HumanFirebaseAuthResult =
   | { status: "success"; user: User }
   | { status: "requires-existing-method" };
@@ -358,6 +378,8 @@ export const globalHostId = getStableHostId();
 const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [firebaseDb, setFirebaseDb] = useState<Database | undefined>();
   const [isSharedDataReady, setIsSharedDataReady] = useState(false);
+  const [authenticatedSharedDataScope, setAuthenticatedSharedDataScope] =
+    useState<string | null>(null);
   const [loginState, setLoginState] = useState<LoginStateType>("loading");
   const [bootstrapStatus, setBootstrapStatus] =
     useState<BootstrapStatus>("loading");
@@ -386,6 +408,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   );
   const [churchBrandingStatus, setChurchBrandingStatus] =
     useState<ChurchBrandingStatus>("loading");
+  const [churchBrandingListenGeneration, setChurchBrandingListenGeneration] =
+    useState(0);
   const [role, setRole] = useState("");
   const [authError, setAuthError] = useState("");
   const [pendingEmailVerificationId, setPendingEmailVerificationId] =
@@ -401,6 +425,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const hasRehydratedTimersRef = useRef(false);
   const sharedDataAuthRequestIdRef = useRef(0);
   const sharedDataAuthChainRef = useRef<Promise<void>>(Promise.resolve());
+  const churchBrandingGateKeyRef = useRef("");
+  const churchBrandingPermissionRetryRef = useRef(0);
   const location = useLocation();
   const isOnController = useMemo(() => {
     const path = location.pathname;
@@ -435,6 +461,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         deviceId: device?.deviceId || "",
       }),
     [access, churchId, database, device?.deviceId, loginState, sessionKind, userId]
+  );
+  const isSharedDataScopeReady = useMemo(
+    () =>
+      loginState === "success" &&
+      isSharedDataReady &&
+      authenticatedSharedDataScope === sharedDataSessionScope,
+    [
+      authenticatedSharedDataScope,
+      isSharedDataReady,
+      loginState,
+      sharedDataSessionScope,
+    ]
   );
 
   useEffect(() => {
@@ -1109,6 +1147,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       sharedDataAuthRequestIdRef.current += 1;
       setFirebaseDb(undefined);
       setIsSharedDataReady(false);
+      setAuthenticatedSharedDataScope(null);
       globalFireDbInfo.db = undefined;
       sharedDataAuthChainRef.current = Promise.resolve(
         sharedDataAuthChainRef.current ?? Promise.resolve()
@@ -1122,10 +1161,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
     const requestId = ++sharedDataAuthRequestIdRef.current;
     const _db = getSharedDataDatabase();
+    const targetSharedDataScope = sharedDataSessionScope;
     let cancelled = false;
 
     setFirebaseDb(undefined);
     setIsSharedDataReady(false);
+    setAuthenticatedSharedDataScope(null);
     globalFireDbInfo.db = undefined;
 
     void getSharedDataToken({
@@ -1145,11 +1186,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               return;
             }
             await signInWithCustomToken(auth, response.token);
+            await awaitSharedRealtimeAuthReady(auth);
             if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
               return;
             }
             setFirebaseDb(_db);
             setIsSharedDataReady(true);
+            setAuthenticatedSharedDataScope(targetSharedDataScope);
             globalFireDbInfo.db = _db;
           })
           .catch((error) => {
@@ -1159,6 +1202,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             console.error("Shared realtime sign-in error:", error);
             setFirebaseDb(undefined);
             setIsSharedDataReady(false);
+            setAuthenticatedSharedDataScope(null);
             globalFireDbInfo.db = undefined;
             setAuthError("Could not connect live data.");
           });
@@ -1170,6 +1214,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         console.error("Shared realtime sign-in error:", error);
         setFirebaseDb(undefined);
         setIsSharedDataReady(false);
+        setAuthenticatedSharedDataScope(null);
         globalFireDbInfo.db = undefined;
         setAuthError("Could not connect live data.");
       });
@@ -1182,7 +1227,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   // Track active instances (must run before the connection monitor below so
   // instanceRef points at the current church before .info/connected fires).
   useEffect(() => {
-    if (!firebaseDb || !isSharedDataReady || loginState !== "success") return;
+    if (!firebaseDb || !isSharedDataScopeReady) return;
 
     const activeInstancesRef = ref(
       firebaseDb,
@@ -1274,15 +1319,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     device?.label,
     firebaseDb,
     hostId,
-    isSharedDataReady,
+    isSharedDataScopeReady,
     isOnController,
-    loginState,
     sessionKind,
   ]);
 
   // Monitor connection state and handle reconnection
   useEffect(() => {
-    if (!firebaseDb || !isSharedDataReady || loginState !== "success") return;
+    if (!firebaseDb || !isSharedDataScopeReady) return;
 
     const connectedRef = ref(firebaseDb, ".info/connected");
     const unsubscribe = onValue(connectedRef, (snap) => {
@@ -1315,14 +1359,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     firebaseDb,
     hostId,
     isOnController,
-    isSharedDataReady,
-    loginState,
+    isSharedDataScopeReady,
     sessionKind,
   ]);
 
   // Function to set up Firebase listeners
   const setupFirebaseListeners = useCallback(() => {
-    if (!firebaseDb || !isSharedDataReady) {
+    if (!firebaseDb || !isSharedDataScopeReady) {
       clearPresentationFirebaseListeners();
       return;
     }
@@ -1349,7 +1392,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   }, [
     churchId,
     firebaseDb,
-    isSharedDataReady,
+    isSharedDataScopeReady,
     updateFromRemote,
     clearPresentationFirebaseListeners,
   ]);
@@ -1398,16 +1441,27 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
 
-    if (!firebaseDb || !isSharedDataReady) {
+    if (!firebaseDb || !isSharedDataScopeReady) {
       setChurchBrandingStatus("loading");
       return;
     }
 
+    const brandingGateKey = `${churchId}|${loginState}|${firebaseDb ? "db" : ""}|${isSharedDataScopeReady ? "ready" : ""
+      }`;
+    if (churchBrandingGateKeyRef.current !== brandingGateKey) {
+      churchBrandingGateKeyRef.current = brandingGateKey;
+      churchBrandingPermissionRetryRef.current = 0;
+    }
+
     setChurchBrandingStatus("loading");
+    let cancelled = false;
+    let permissionDeniedRetryTimeout: ReturnType<typeof setTimeout> | undefined;
+
     const brandingRef = ref(firebaseDb, getChurchDataPath(churchId, "branding"));
     const unsubscribe = onValue(
       brandingRef,
       (snapshot) => {
+        churchBrandingPermissionRetryRef.current = 0;
         setChurchBranding(
           snapshot.exists()
             ? normalizeChurchBranding(snapshot.val())
@@ -1416,6 +1470,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         setChurchBrandingStatus("ready");
       },
       (error) => {
+        if (cancelled) return;
+        if (
+          isFirebasePermissionDenied(error) &&
+          churchBrandingPermissionRetryRef.current < 6
+        ) {
+          churchBrandingPermissionRetryRef.current += 1;
+          permissionDeniedRetryTimeout = setTimeout(() => {
+            if (!cancelled) {
+              setChurchBrandingListenGeneration((g) => g + 1);
+            }
+          }, 120);
+          return;
+        }
         console.error("Could not subscribe to church branding:", error);
         setChurchBranding(emptyChurchBranding());
         setChurchBrandingStatus("ready");
@@ -1423,9 +1490,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     );
 
     return () => {
+      cancelled = true;
+      if (permissionDeniedRetryTimeout) {
+        clearTimeout(permissionDeniedRetryTimeout);
+      }
       unsubscribe();
     };
-  }, [churchId, firebaseDb, isSharedDataReady, loginState]);
+  }, [
+    churchId,
+    firebaseDb,
+    isSharedDataScopeReady,
+    loginState,
+    churchBrandingListenGeneration,
+  ]);
 
   // Handle navigation away from the app - set up once when component mounts
   useEffect(() => {

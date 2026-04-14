@@ -86,8 +86,16 @@ const Login = () => {
   const authServerRetryCount = context?.authServerRetryCount ?? 0;
   const isAuthServerOnline = authServerStatus === "online";
   const isAuthServerChecking = authServerStatus === "checking";
+  /** Session is ready but router has not left `/login` yet (avoids a dead-air gap after the submit spinner stops). */
+  const isFinishingSignIn = context?.loginState === "success";
   const isAuthActionDisabled =
-    context?.loginState === "loading" || !isAuthServerOnline;
+    context?.loginState === "loading" ||
+    isFinishingSignIn ||
+    !isAuthServerOnline;
+  const isSignInFormFieldsLocked =
+    !isAuthServerOnline ||
+    context?.loginState === "loading" ||
+    isFinishingSignIn;
   const verifyEmailCode = context?.verifyEmailCode;
   const pendingLinkState = context?.pendingLinkState;
   const prevVerificationDigitsLenRef = useRef(0);
@@ -345,6 +353,9 @@ const Login = () => {
         ? "Could not reach the server after several attempts. Check the connection and try again."
         : "Could not reach the server. Check the connection and try again.";
     }
+    if (context?.loginState === "success") {
+      return "Opening WorshipSync…";
+    }
     if (mode === "forgotPassword") {
       if (forgotPasswordEmailSent) {
         return infoBanner;
@@ -362,7 +373,8 @@ const Login = () => {
     resendCooldownSec === 0 &&
     !isResending &&
     isAuthServerOnline &&
-    context?.loginState !== "loading";
+    context?.loginState !== "loading" &&
+    context?.loginState !== "success";
 
   let resendButtonLabel = "Resend code";
   if (resendCooldownSec > 0) {
@@ -375,6 +387,9 @@ const Login = () => {
     if (authServerStatus === "offline") {
       return "text-amber-300";
     }
+    if (context?.loginState === "success") {
+      return "text-emerald-200";
+    }
     if (context?.authError && !(mode === "forgotPassword" && forgotPasswordEmailSent)) {
       return "text-red-400";
     }
@@ -385,6 +400,7 @@ const Login = () => {
   })();
 
   const loginHeadline = (() => {
+    if (isFinishingSignIn) return "Signed in";
     if (mode === "code") return "Verify this device";
     if (mode === "forgotPassword") {
       return forgotPasswordEmailSent ? "Check your email" : "Forgot password";
@@ -393,6 +409,9 @@ const Login = () => {
   })();
 
   const loginSubtext = (() => {
+    if (isFinishingSignIn) {
+      return "Hang tight—this screen will switch in a moment.";
+    }
     if (mode === "code") {
       return "We sent a six-digit code to your email. Enter it below to trust this device.";
     }
@@ -406,7 +425,10 @@ const Login = () => {
   })();
 
   return (
-    <main className="relative flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
+    <main
+      className="relative flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white"
+      aria-busy={isFinishingSignIn || context?.loginState === "loading"}
+    >
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         {mode === "code" || mode === "forgotPassword" ? (
           <div className="mb-3 flex justify-start">
@@ -417,13 +439,14 @@ const Login = () => {
               iconSize="sm"
               gap="gap-1.5"
               className="-ml-2 whitespace-nowrap px-2 py-1.5 text-sm"
+              disabled={isFinishingSignIn}
               onClick={handleBackToSignIn}
             >
               Back to sign in
             </Button>
           </div>
         ) : (
-          <SetupScreenBackButton />
+          <SetupScreenBackButton disabled={isFinishingSignIn} />
         )}
         <h1 className="text-2xl font-semibold">{loginHeadline}</h1>
         {loginSubtext ? (
@@ -436,7 +459,7 @@ const Login = () => {
             role="status"
             aria-live="polite"
           >
-            {isAuthServerChecking && (
+            {(isAuthServerChecking || context?.loginState === "success") && (
               <LoaderCircle className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
             )}
             <span className="min-w-0">{globalBannerMessage}</span>
@@ -522,7 +545,7 @@ const Login = () => {
                   }
                 }}
                 autoComplete="email"
-                disabled={!isAuthServerOnline}
+                disabled={isSignInFormFieldsLocked}
               />
               <Input
                 className="mt-3"
@@ -542,14 +565,14 @@ const Login = () => {
                 svgAction={() => setShowPassword((current) => !current)}
                 svgActionAriaLabel={showPassword ? "Hide password" : "Show password"}
                 autoComplete="current-password"
-                disabled={!isAuthServerOnline}
+                disabled={isSignInFormFieldsLocked}
               />
               <div className="mt-2 flex justify-end">
                 <Button
                   type="button"
                   variant="textLink"
-                  disabled={!isAuthServerOnline}
-                  aria-disabled={!isAuthServerOnline}
+                  disabled={isSignInFormFieldsLocked}
+                  aria-disabled={isSignInFormFieldsLocked}
                   onClick={() => {
                     window.clearTimeout(forgotPasswordSubmitBlockTimeoutRef.current);
                     setForgotPasswordSubmitBlocked(false);
@@ -589,7 +612,7 @@ const Login = () => {
                 }
               }}
               autoComplete="email"
-              disabled={!isAuthServerOnline}
+              disabled={isSignInFormFieldsLocked}
               autoFocus
             />
           )}
@@ -621,7 +644,7 @@ const Login = () => {
                   setFieldErrors((prev) => ({ ...prev, code: undefined }));
                 }
               }}
-              disabled={!isAuthServerOnline}
+              disabled={isSignInFormFieldsLocked}
               autoFocus
               errorText={fieldErrors.code}
             />
@@ -650,7 +673,10 @@ const Login = () => {
                 type="submit"
                 variant="cta"
                 className="w-full justify-center"
-                isLoading={context?.loginState === "loading"}
+                isLoading={
+                  context?.loginState === "loading" ||
+                  context?.loginState === "success"
+                }
                 disabled={isAuthActionDisabled}
               >
                 Verify device
@@ -698,7 +724,10 @@ const Login = () => {
                 type="submit"
                 variant="cta"
                 className="w-full justify-center"
-                isLoading={context?.loginState === "loading"}
+                isLoading={
+                  context?.loginState === "loading" ||
+                  context?.loginState === "success"
+                }
                 disabled={isAuthActionDisabled}
               >
                 Sign in
@@ -721,6 +750,7 @@ const Login = () => {
                 type="button"
                 variant="tertiary"
                 className="w-full justify-center"
+                disabled={isAuthActionDisabled}
                 onClick={() => context?.enterGuestMode(guestDestination)}
               >
                 Test as guest

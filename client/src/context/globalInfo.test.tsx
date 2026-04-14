@@ -299,16 +299,16 @@ const AuthActionsProbe = () => {
 
   if (!context) return null;
 
-    return (
-      <div>
-        <div data-testid="probe-auth-status">{context.authServerStatus}</div>
-        <div data-testid="probe-auth-error">{context.authError || "none"}</div>
-        <div data-testid="pending-email-verification-id">
-          {context.pendingEmailVerificationId || "none"}
-        </div>
-        <div data-testid="pending-link-provider">
-          {context.pendingLinkState?.providerId || "none"}
-        </div>
+  return (
+    <div>
+      <div data-testid="probe-auth-status">{context.authServerStatus}</div>
+      <div data-testid="probe-auth-error">{context.authError || "none"}</div>
+      <div data-testid="pending-email-verification-id">
+        {context.pendingEmailVerificationId || "none"}
+      </div>
+      <div data-testid="pending-link-provider">
+        {context.pendingLinkState?.providerId || "none"}
+      </div>
       <button
         type="button"
         onClick={() =>
@@ -833,6 +833,13 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     await waitFor(() =>
       expect(authApi.getSharedDataToken).toHaveBeenCalledTimes(2)
     );
+    expect(onValueCallbacks.has("churches/church-2/data/branding")).toBe(false);
+    expect(onValueCallbacks.has("churches/church-2/data/activeInstances")).toBe(
+      false
+    );
+    expect(
+      onValueCallbacks.has("churches/church-2/data/presentation/projectorInfo")
+    ).toBe(false);
 
     staleSharedToken.resolve({
       success: true,
@@ -842,6 +849,10 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
 
     await waitFor(() =>
       expect(signInWithCustomTokenMock).toHaveBeenCalledTimes(0)
+    );
+    expect(onValueCallbacks.has("churches/church-2/data/branding")).toBe(false);
+    expect(onValueCallbacks.has("churches/church-2/data/activeInstances")).toBe(
+      false
     );
 
     freshSharedToken.resolve({
@@ -857,6 +868,15 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       expect.anything(),
       "fresh-token"
     );
+    await waitFor(() =>
+      expect(onValueCallbacks.has("churches/church-2/data/branding")).toBe(true)
+    );
+    expect(onValueCallbacks.has("churches/church-2/data/activeInstances")).toBe(
+      true
+    );
+    expect(
+      onValueCallbacks.has("churches/church-2/data/presentation/projectorInfo")
+    ).toBe(true);
   });
 
   it("navigates to operator handoff immediately even when the server clear fails", async () => {
@@ -1086,10 +1106,10 @@ describe("GlobalInfoProvider auth regression coverage", () => {
   });
 
   it("shows an SSO guidance message when password auth fails", async () => {
-      signInWithEmailAndPasswordMock.mockRejectedValueOnce(
-        Object.assign(new Error("invalid"), {
-          code: "auth/invalid-credential",
-        }),
+    signInWithEmailAndPasswordMock.mockRejectedValueOnce(
+      Object.assign(new Error("invalid"), {
+        code: "auth/invalid-credential",
+      }),
     );
 
     renderProvider(<AuthActionsProbe />);
@@ -1104,42 +1124,42 @@ describe("GlobalInfoProvider auth regression coverage", () => {
       expect(screen.getByTestId("probe-auth-error")).toHaveTextContent(
         "Could not sign in with email and password. If this account uses Google or Microsoft, continue with that method instead.",
       );
-      });
-      expect(authApi.createHumanSession).not.toHaveBeenCalled();
+    });
+    expect(authApi.createHumanSession).not.toHaveBeenCalled();
+  });
+
+  it("stores the pending verification id when provider login requires an email code", async () => {
+    const providerUser = {
+      uid: "provider-user",
+      getIdToken: jest.fn(() => Promise.resolve("provider-id-token")),
+    };
+    mockHumanAuth.currentUser = providerUser;
+    signInWithPopupMock.mockResolvedValue({ user: providerUser });
+    (authApi.createHumanSession as jest.Mock).mockResolvedValue({
+      success: true,
+      requiresEmailCode: true,
+      pendingAuthId: "pending-provider-code",
     });
 
-    it("stores the pending verification id when provider login requires an email code", async () => {
-      const providerUser = {
-        uid: "provider-user",
-        getIdToken: jest.fn(() => Promise.resolve("provider-id-token")),
-      };
-      mockHumanAuth.currentUser = providerUser;
-      signInWithPopupMock.mockResolvedValue({ user: providerUser });
-      (authApi.createHumanSession as jest.Mock).mockResolvedValue({
-        success: true,
-        requiresEmailCode: true,
-        pendingAuthId: "pending-provider-code",
-      });
+    renderProvider(<AuthActionsProbe />);
 
-      renderProvider(<AuthActionsProbe />);
-
-      await waitFor(() => {
-        expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
-      });
-
-      fireEvent.click(screen.getByRole("button", { name: "Google sign in" }));
-
-      await waitFor(() => {
-        expect(screen.getByTestId("pending-email-verification-id")).toHaveTextContent(
-          "pending-provider-code",
-        );
-      });
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
     });
+
+    fireEvent.click(screen.getByRole("button", { name: "Google sign in" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pending-email-verification-id")).toHaveTextContent(
+        "pending-provider-code",
+      );
+    });
+  });
 
   it("does not delete or rename a provider user when church creation fails", async () => {
-      const providerUser = {
-        uid: "provider-user",
-        delete: jest.fn(() => Promise.resolve()),
+    const providerUser = {
+      uid: "provider-user",
+      delete: jest.fn(() => Promise.resolve()),
       getIdToken: jest.fn(() => Promise.resolve("provider-id-token")),
     };
     mockHumanAuth.currentUser = providerUser;
