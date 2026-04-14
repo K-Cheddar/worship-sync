@@ -1,3 +1,32 @@
+# [2.0.0](https://github.com/K-Cheddar/worship-sync/compare/v1.42.0...v2.0.0) (2026-04-14)
+
+
+* feat(auth)!: Implemented full authentication system ([83c2ffd](https://github.com/K-Cheddar/worship-sync/commit/83c2ffdb2d21b47d885d6b47fe1ebad6da4def09))
+
+
+### Bug Fixes
+
+* Multiple bug fixes and UI improvements ([350aadf](https://github.com/K-Cheddar/worship-sync/commit/350aadfbcb99218dad525d6dfdda4a0618444b2e))
+* Several UI improvements ([fbef0f6](https://github.com/K-Cheddar/worship-sync/commit/fbef0f65c9db31fe22d7fc20d274a3a72da62b1c))
+
+
+### Features
+
+* Add edit/delete for board posts ([7158123](https://github.com/K-Cheddar/worship-sync/commit/7158123d4236107fcbaad8f67b1403f9e7b99ab2))
+* Add folders to media ([fca1a8a](https://github.com/K-Cheddar/worship-sync/commit/fca1a8a153d433cd5e4cc2aa21914291c7863288))
+* Add SSO ([bc5f45c](https://github.com/K-Cheddar/worship-sync/commit/bc5f45c4750d6864f4a2b73a4bb1906e7656bf42))
+* Added ability to import from songs ([b8d1e4b](https://github.com/K-Cheddar/worship-sync/commit/b8d1e4bba5d6881ddd5d72de31bb3bada244f377))
+* Added credits editor to overlays controller ([a76783c](https://github.com/K-Cheddar/worship-sync/commit/a76783c0635b701784850f4244cfea2ac49352ad))
+* Adding branding framework ([f377945](https://github.com/K-Cheddar/worship-sync/commit/f37794596ec02516d724658316e50fcb2f11d81a))
+* Show which slide is live ([ee02dbb](https://github.com/K-Cheddar/worship-sync/commit/ee02dbb5fc251d723b28c1243cb94ccadf500495))
+* Updated UI colors ([20f3b89](https://github.com/K-Cheddar/worship-sync/commit/20f3b89e870a2afa553d32689025a841b1c81717))
+* Use church logo ([22d166f](https://github.com/K-Cheddar/worship-sync/commit/22d166f1eec16e80b9c1868690cf5845434c870b))
+
+
+### BREAKING CHANGES
+
+* Users will need to be on new code and create new accounts
+
 # [1.42.0](https://github.com/K-Cheddar/worship-sync/compare/v1.41.0...v1.42.0) (2026-04-06)
 
 
