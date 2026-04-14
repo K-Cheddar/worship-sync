@@ -61,6 +61,8 @@ export interface ElectronAPI {
   ) => Promise<boolean>;
   getDisplays: () => Promise<Display[]>;
   getWindowStates: () => Promise<WindowStatesInfo>;
+  /** Reload open projector/monitor/board windows (e.g. after sign-in). */
+  refreshDisplayWindows: () => Promise<number>;
 
   // Media cache
   downloadMedia: (url: string) => Promise<string | null>;

@@ -41,7 +41,12 @@ export function getAuditActor(): string {
   return "unknown";
 }
 
-type AuditFields = { createdBy?: string; updatedBy?: string };
+type AuditFields = {
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
 
 /**
  * Stamps audit fields on a doc about to be written to Pouch.

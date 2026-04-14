@@ -12,7 +12,7 @@ import Label from "@/components/ui/Label";
 
 export type InputLabelLayout = "stacked" | "inline";
 
-export type InputProps = HTMLProps<HTMLInputElement> & {
+export type InputProps = Omit<HTMLProps<HTMLInputElement>, "onChange" | "value"> & {
   className?: string;
   type?: string;
   value: string | number;

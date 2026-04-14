@@ -1,8 +1,5 @@
 import { configureStore } from "@reduxjs/toolkit";
-import {
-  createItemSlice,
-  initialCreateItemState,
-} from "./createItemSlice";
+import { createItemSlice, initialCreateItemState } from "./createItemSlice";
 
 type CreateItemSliceState = {
   createItem: ReturnType<typeof createItemSlice.reducer>;
@@ -34,7 +31,9 @@ describe("createItemSlice", () => {
         seconds: 3,
         time: "09:30",
         timerType: "countdown",
-      })
+        lyricsImportCandidates: [],
+        lyricsImportError: "",
+      }),
     );
 
     expect(store.getState().createItem).toEqual({

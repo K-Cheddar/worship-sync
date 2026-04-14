@@ -31,6 +31,14 @@ export default defineConfig(({ mode }) => {
     renderer: {
       root: ".", // Custom root since index.html is at project root, not in src/renderer
       base: "./", // Use relative paths for assets (required for Electron file:// protocol)
+      optimizeDeps: {
+        include: ["pouchdb-browser", "events"],
+        esbuildOptions: {
+          define: {
+            global: "globalThis",
+          },
+        },
+      },
       plugins: [
         react(),
         sentryVitePlugin({
@@ -40,6 +48,7 @@ export default defineConfig(({ mode }) => {
         }),
       ],
       resolve: {
+        dedupe: ["events"],
         alias: {
           "@/": resolve(__dirname, "./src"),
           "@/utils": resolve(__dirname, "./src/utils"),

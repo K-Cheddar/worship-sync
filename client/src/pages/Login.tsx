@@ -22,7 +22,10 @@ import {
   INVALID_EMAIL_FORMAT_MESSAGE,
   isValidEmailFormat,
 } from "../utils/emailFormat";
-import { getLastSignInMethod } from "../utils/authStorage";
+import {
+  getLastSignInMethod,
+  setPendingEmailCodeSignInMethod,
+} from "../utils/authStorage";
 
 type Mode = "signIn" | "code" | "forgotPassword";
 
@@ -193,7 +196,12 @@ const Login = () => {
   const handleProviderSignIn = async (method: "google" | "microsoft") => {
     setInfoBanner("");
     setFieldErrors({});
-    await context?.login({ method });
+    const response = await context?.login({ method });
+    if (response?.requiresEmailCode && response.pendingAuthId) {
+      setPendingAuthId(response.pendingAuthId);
+      setMode("code");
+      setInfoBanner("");
+    }
   };
 
   const handleVerifyCode = useCallback(async () => {
@@ -302,6 +310,7 @@ const Login = () => {
     setForgotPasswordHasSubmit(false);
     setForgotPasswordEmailSent(false);
     setCode("");
+    setPendingEmailCodeSignInMethod(null);
     setMode("signIn");
   };
 
@@ -489,7 +498,7 @@ const Login = () => {
                   </div>
                 </div>
               </div>
-              <div className="relative mt-3 min-h-5 text-center text-xs leading-5 text-gray-400">
+              <div className="relative mt-3 min-h-6 text-center text-sm leading-6 text-gray-400">
                 <span>Or use email and password</span>
                 <div
                   className="pointer-events-none absolute inset-y-0 right-0 flex items-center"

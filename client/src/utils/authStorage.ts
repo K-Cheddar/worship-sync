@@ -18,6 +18,8 @@ const WORKSTATION_OPERATOR_BINDING_KEY =
 const PENDING_LINK_STATE_KEY = "worshipsync_pending_link_state";
 const PENDING_LINK_CREDENTIAL_KEY = "worshipsync_pending_link_credential";
 const LAST_SIGN_IN_METHOD_KEY = "worshipsync_last_sign_in_method";
+const PENDING_EMAIL_CODE_SIGN_IN_METHOD_KEY =
+  "worshipsync_pending_email_code_sign_in_method";
 let csrfToken = "";
 
 export type StoredServerSessionHint =
@@ -41,6 +43,50 @@ export const getLastSignInMethod = (): StoredLastSignInMethod | null => {
 export const setLastSignInMethod = (method: StoredLastSignInMethod) => {
   writeStorage(LAST_SIGN_IN_METHOD_KEY, method);
 };
+
+/**
+ * Maps Firebase `UserInfo.providerId` values to the login-screen method key.
+ */
+export const inferLastSignInMethodFromProviderIds = (
+  providerIds: readonly string[],
+): StoredLastSignInMethod => {
+  const set = new Set(providerIds);
+  if (set.has("google.com")) return "google";
+  if (set.has("microsoft.com")) return "microsoft";
+  return "password";
+};
+
+/** Remember which sign-in path led to the pending email code step (OAuth vs password). */
+export const setPendingEmailCodeSignInMethod = (
+  method: StoredLastSignInMethod | null,
+) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (!method) {
+      sessionStorage.removeItem(PENDING_EMAIL_CODE_SIGN_IN_METHOD_KEY);
+      return;
+    }
+    sessionStorage.setItem(PENDING_EMAIL_CODE_SIGN_IN_METHOD_KEY, method);
+  } catch {
+    // private mode / quota
+  }
+};
+
+/** Read and clear the pending method once the email code step completes successfully. */
+export const consumePendingEmailCodeSignInMethod =
+  (): StoredLastSignInMethod | null => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = sessionStorage.getItem(PENDING_EMAIL_CODE_SIGN_IN_METHOD_KEY);
+      sessionStorage.removeItem(PENDING_EMAIL_CODE_SIGN_IN_METHOD_KEY);
+      if (raw === "password" || raw === "google" || raw === "microsoft") {
+        return raw;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
 
 const readStorage = (key: string) => {
   if (typeof window === "undefined") return "";

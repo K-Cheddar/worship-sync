@@ -7,14 +7,14 @@ import { createMockGlobalContext } from "../../test/mocks";
 import * as firebaseApps from "../../firebase/apps";
 
 const navigateMock = jest.fn();
-const acceptInviteMock = jest.fn();
-const fetchInvitePreviewMock = jest.fn();
-const createHumanSessionMock = jest.fn();
-const getAuthBootstrapMock = jest.fn();
-const logoutSessionMock = jest.fn(() => Promise.resolve());
-const createUserWithEmailAndPasswordMock = jest.fn();
-const signOutMock = jest.fn(() => Promise.resolve());
-const updateProfileMock = jest.fn(() => Promise.resolve());
+const acceptInviteMock = jest.fn<any, any[]>();
+const fetchInvitePreviewMock = jest.fn<any, any[]>();
+const createHumanSessionMock = jest.fn<any, any[]>();
+const getAuthBootstrapMock = jest.fn<any, any[]>();
+const logoutSessionMock = jest.fn<any, any[]>(() => Promise.resolve());
+const createUserWithEmailAndPasswordMock = jest.fn<any, any[]>();
+const signOutMock = jest.fn<any, any[]>(() => Promise.resolve());
+const updateProfileMock = jest.fn<any, any[]>(() => Promise.resolve());
 const authenticateHumanWithFirebaseMock = jest.fn();
 
 type MockFirebaseUser = {
@@ -52,6 +52,9 @@ jest.mock("../../firebase/apps", () => ({
 }));
 
 jest.mock("../../utils/authStorage", () => ({
+  ...jest.requireActual<typeof import("../../utils/authStorage")>(
+    "../../utils/authStorage",
+  ),
   getOrCreateDeviceId: jest.fn(() => "device-1"),
 }));
 

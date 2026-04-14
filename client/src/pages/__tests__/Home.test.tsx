@@ -9,6 +9,7 @@ import {
   createMockGlobalContext,
 } from "../../test/mocks";
 import { usePwaInstallPrompt } from "../../hooks/usePwaInstallPrompt";
+import { isMacBrowser, isWindowsBrowser } from "../../utils/environment";
 
 jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
   <div>User</div>
@@ -17,6 +18,7 @@ jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
 jest.mock("../../utils/environment", () => ({
   isElectron: jest.fn(() => false),
   isWindowsBrowser: jest.fn(() => true),
+  isMacBrowser: jest.fn(() => false),
 }));
 
 jest.mock("../../utils/githubRelease", () => ({
@@ -24,6 +26,7 @@ jest.mock("../../utils/githubRelease", () => ({
     () => "https://github.com/K-Cheddar/worship-sync/releases/latest",
   ),
   fetchLatestWindowsInstallerUrl: jest.fn(() => Promise.resolve(null)),
+  fetchLatestMacInstallerUrl: jest.fn(() => Promise.resolve(null)),
 }));
 
 jest.mock("../../hooks/usePwaInstallPrompt", () => ({
@@ -31,6 +34,8 @@ jest.mock("../../hooks/usePwaInstallPrompt", () => ({
 }));
 
 const mockUsePwaInstallPrompt = jest.mocked(usePwaInstallPrompt);
+const mockIsWindowsBrowser = jest.mocked(isWindowsBrowser);
+const mockIsMacBrowser = jest.mocked(isMacBrowser);
 
 describe("Home", () => {
   beforeEach(() => {
@@ -38,6 +43,8 @@ describe("Home", () => {
       canShowInstall: false,
       installPwa: jest.fn(),
     });
+    mockIsWindowsBrowser.mockReturnValue(true);
+    mockIsMacBrowser.mockReturnValue(false);
   });
 
   it("describes features and keeps controller and display guidance available", async () => {
@@ -91,9 +98,7 @@ describe("Home", () => {
         hidden: true,
       }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Advanced access/, { hidden: true }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Advanced access/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /^Install$/i }));
     await user.click(
@@ -302,5 +307,38 @@ describe("Home", () => {
     expect(
       screen.getByText(/Sign in to show display links/),
     ).toBeInTheDocument();
+  });
+
+  it("offers Mac DMG download in the popover when on macOS", async () => {
+    mockIsWindowsBrowser.mockReturnValue(false);
+    mockIsMacBrowser.mockReturnValue(true);
+    const user = userEvent.setup();
+    const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
+    render(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /^Install$/i }));
+    await user.click(
+      screen.getByRole("button", { name: /Download Mac app/i }),
+    );
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://github.com/K-Cheddar/worship-sync/releases/latest",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(await screen.findByText(/Download for Mac/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Mac disk image.*\.dmg/i),
+    ).toBeInTheDocument();
+    openSpy.mockRestore();
   });
 });

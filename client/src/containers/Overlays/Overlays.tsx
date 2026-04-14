@@ -532,9 +532,9 @@ const Overlays = () => {
             // Update with new name and timestamp
             const updatedAt = new Date().toISOString();
             const updatedOverlay = applyPouchAudit(
-              dbOverlay,
+              dbOverlay as DBOverlay,
               {
-                ...dbOverlay,
+                ...(dbOverlay as DBOverlay),
                 name: eventData.leader,
                 updatedAt,
               },

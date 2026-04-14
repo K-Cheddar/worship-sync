@@ -27,7 +27,11 @@ import { GlobalInfoContext } from "../context/globalInfo";
 import Input from "../components/Input/Input";
 import PasswordStrengthIndicator from "../components/PasswordStrengthIndicator/PasswordStrengthIndicator";
 import { isFirebaseAuthError } from "../utils/authUserMessages";
-import { getOrCreateDeviceId } from "../utils/authStorage";
+import {
+  getOrCreateDeviceId,
+  inferLastSignInMethodFromProviderIds,
+  setPendingEmailCodeSignInMethod,
+} from "../utils/authStorage";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
 import {
   INVALID_EMAIL_FORMAT_MESSAGE,
@@ -322,6 +326,14 @@ const InviteAccept = () => {
       return;
     }
     if (session.requiresEmailCode && session.pendingAuthId) {
+      const authUser = getHumanAuth().currentUser;
+      if (authUser) {
+        setPendingEmailCodeSignInMethod(
+          inferLastSignInMethodFromProviderIds(
+            (authUser.providerData ?? []).map((p) => p.providerId),
+          ),
+        );
+      }
       clearInviteRecovery();
       setInviteAccepted(false);
       setNeedsSessionRetry(false);

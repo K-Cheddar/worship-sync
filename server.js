@@ -1449,7 +1449,8 @@ app.use(
   }),
 );
 
-app.get("*", (req, res) => {
+// Express 5 / path-to-regexp v8+: bare "*" is invalid; use a named wildcard.
+app.get("/{*path}", (req, res) => {
   const pathname = req.path;
 
   // Don’t serve index.html for these

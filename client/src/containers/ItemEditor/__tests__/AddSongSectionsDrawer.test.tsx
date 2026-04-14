@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { DBItem, SongMetadata } from "../../../types";
 import AddSongSectionsDrawer from "../AddSongSectionsDrawer";
 
 jest.mock("../../../components/Drawer", () => ({
@@ -52,20 +53,21 @@ jest.mock("../../../components/Select/Select", () => ({
   ),
 }));
 
-const makeSong = (overrides: Partial<any> = {}) => ({
-  _id: "song-id",
-  name: "Song Name",
-  type: "song",
-  selectedArrangement: 0,
-  shouldSendTo: {
-    projector: true,
-    monitor: true,
-    stream: true,
-  },
-  slides: [],
-  arrangements: [],
-  ...overrides,
-});
+const makeSong = (overrides: Partial<DBItem> = {}): DBItem =>
+  ({
+    _id: "song-id",
+    name: "Song Name",
+    type: "song",
+    selectedArrangement: 0,
+    shouldSendTo: {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
+    slides: [],
+    arrangements: [],
+    ...overrides,
+  }) as DBItem;
 
 describe("AddSongSectionsDrawer", () => {
   it("filters songs by title like the Songs library and keeps the current song visible when it matches", async () => {
@@ -75,12 +77,12 @@ describe("AddSongSectionsDrawer", () => {
           makeSong({
             _id: "current-song",
             name: "Current Hope",
-            songMetadata: { artistName: "Team Alpha" },
+            songMetadata: { artistName: "Team Alpha" } as SongMetadata,
           }),
           makeSong({
             _id: "other-song",
             name: "Evening Praise",
-            songMetadata: { artistName: "Jane Doe" },
+            songMetadata: { artistName: "Jane Doe" } as SongMetadata,
           }),
         ]}
         isOpen

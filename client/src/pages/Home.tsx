@@ -10,8 +10,9 @@ import {
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { usePwaInstallPrompt } from "../hooks/usePwaInstallPrompt";
-import { isElectron, isWindowsBrowser } from "../utils/environment";
+import { isElectron, isMacBrowser, isWindowsBrowser } from "../utils/environment";
 import {
+  fetchLatestMacInstallerUrl,
   fetchLatestWindowsInstallerUrl,
   getLatestReleaseUrl,
 } from "../utils/githubRelease";
@@ -141,33 +142,56 @@ const DisplayLinkGroup = ({
   );
 };
 
-type WindowsDownloadHelpProps = {
+type DesktopOs = "windows" | "mac";
+
+type DesktopDownloadHelpProps = {
+  os: DesktopOs;
   onTryAgain: () => void;
-  onClose: () => void;
 };
 
-type WindowsInstallPopoverView = "menu" | "downloadHelp";
+type DesktopInstallPopoverView = "menu" | "downloadHelp";
 
-const WindowsDownloadHelp = ({
-  onTryAgain,
-  onClose,
-}: WindowsDownloadHelpProps) => (
+const DesktopDownloadHelp = ({ os, onTryAgain }: DesktopDownloadHelpProps) => (
   <>
-    <p className="text-sm font-semibold text-white">Download for Windows</p>
+    <p className="text-sm font-semibold text-white">
+      {os === "windows" ? "Download for Windows" : "Download for Mac"}
+    </p>
     <p className="mt-2 text-sm">
-      Your download should begin automatically. If it does not, try
-      again or open the
-      {" "}
-      <a
-        href={getLatestReleaseUrl()}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="font-semibold text-gray-100 underline underline-offset-2 hover:text-white"
-      >
-        release page
-      </a>
-      {" "}
-      and choose the Windows installer from Assets.
+      {os === "windows" ? (
+        <>
+          Your download should begin automatically. If it does not, try
+          again or open the
+          {" "}
+          <a
+            href={getLatestReleaseUrl()}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-semibold text-gray-100 underline underline-offset-2 hover:text-white"
+          >
+            release page
+          </a>
+          {" "}
+          and choose the Windows installer from Assets.
+        </>
+      ) : (
+        <>
+          Your download should begin automatically. If it does not, try
+          again or open the
+          {" "}
+          <a
+            href={getLatestReleaseUrl()}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-semibold text-gray-100 underline underline-offset-2 hover:text-white"
+          >
+            release page
+          </a>
+          {" "}
+          and choose the Mac disk image (.dmg) from Assets. If macOS warns
+          that the app cannot be checked for malicious software,
+          Control-click WorshipSync in Finder, choose Open, then confirm.
+        </>
+      )}
     </p>
 
     <div className="mt-3 flex flex-col gap-2">
@@ -204,52 +228,66 @@ const Welcome = () => {
       })
       : secondaryControllers.filter((link) => link.to !== "/boards/controller");
   const { canShowInstall, installPwa } = usePwaInstallPrompt();
-  const [windowsDownloadHref, setWindowsDownloadHref] = useState(() =>
+  const isWeb = !isElectron();
+  const desktopOs: DesktopOs | null = isWeb
+    ? isWindowsBrowser()
+      ? "windows"
+      : isMacBrowser()
+        ? "mac"
+        : null
+    : null;
+
+  const [installerHref, setInstallerHref] = useState(() =>
     isElectron() ? "" : getLatestReleaseUrl(),
   );
-  const [windowsAppMenuOpen, setWindowsAppMenuOpen] = useState(false);
-  const [windowsInstallPopoverView, setWindowsInstallPopoverView] =
-    useState<WindowsInstallPopoverView>("menu");
+  const [desktopAppMenuOpen, setDesktopAppMenuOpen] = useState(false);
+  const [desktopInstallPopoverView, setDesktopInstallPopoverView] =
+    useState<DesktopInstallPopoverView>("menu");
+
   useEffect(() => {
-    if (isElectron()) return;
+    if (isElectron() || !desktopOs) return;
     let cancelled = false;
-    fetchLatestWindowsInstallerUrl().then((directUrl) => {
+    const fetcher =
+      desktopOs === "windows"
+        ? fetchLatestWindowsInstallerUrl
+        : fetchLatestMacInstallerUrl;
+    void fetcher().then((directUrl) => {
       if (!cancelled && directUrl) {
-        setWindowsDownloadHref(directUrl);
+        setInstallerHref(directUrl);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [desktopOs]);
 
-  const openWindowsDownload = () => {
-    window.open(windowsDownloadHref, "_blank", "noopener,noreferrer");
+  const openInstallerDownload = () => {
+    window.open(installerHref, "_blank", "noopener,noreferrer");
   };
 
-  const handleDownloadWindowsClick = () => {
-    openWindowsDownload();
+  const handleDownloadInstallerClick = () => {
+    openInstallerDownload();
   };
 
-  const handleWindowsInstallPopoverOpenChange = (open: boolean) => {
-    setWindowsAppMenuOpen(open);
-    if (!open) setWindowsInstallPopoverView("menu");
+  const handleDesktopInstallPopoverOpenChange = (open: boolean) => {
+    setDesktopAppMenuOpen(open);
+    if (!open) setDesktopInstallPopoverView("menu");
   };
 
   const handleInstallAppClick = () => {
-    handleWindowsInstallPopoverOpenChange(false);
+    handleDesktopInstallPopoverOpenChange(false);
     void installPwa();
   };
 
-  const handleDownloadWindowsFromMenu = () => {
-    openWindowsDownload();
-    setWindowsInstallPopoverView("downloadHelp");
+  const handleDownloadDesktopFromMenu = () => {
+    openInstallerDownload();
+    setDesktopInstallPopoverView("downloadHelp");
   };
 
-  const isWeb = !isElectron();
-  /** One Windows web entry point avoids a toolbar flash when `beforeinstallprompt` arrives after first paint. */
-  const showWindowsAppMenu = isWeb && isWindowsBrowser();
-  const showInstallOnlyNonWindows = isWeb && !isWindowsBrowser() && canShowInstall;
+  /** One desktop web entry point avoids a toolbar flash when `beforeinstallprompt` arrives after first paint. */
+  const showDesktopAppMenu = desktopOs !== null;
+  const showInstallOnlyWithoutDesktopInstaller =
+    isWeb && !desktopOs && canShowInstall;
 
   const popoverSurfaceClass =
     "w-80 max-w-[min(100vw-2rem,20rem)] border border-gray-500 bg-gray-800 p-4 text-gray-100 shadow-xl";
@@ -259,11 +297,11 @@ const Welcome = () => {
       <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col gap-4 px-4 pb-8">
         <div className="flex w-full items-center justify-between gap-4 border-b border-gray-700 py-3 text-lg">
           <div className="flex flex-wrap items-center gap-2">
-            {showWindowsAppMenu && (
+            {showDesktopAppMenu && desktopOs && (
               <div className="relative inline-flex">
                 <Popover
-                  open={windowsAppMenuOpen}
-                  onOpenChange={handleWindowsInstallPopoverOpenChange}
+                  open={desktopAppMenuOpen}
+                  onOpenChange={handleDesktopInstallPopoverOpenChange}
                   modal={false}
                 >
                   <PopoverTrigger asChild>
@@ -283,20 +321,26 @@ const Welcome = () => {
                     sideOffset={8}
                     className={popoverSurfaceClass}
                     aria-label={
-                      windowsInstallPopoverView === "downloadHelp"
-                        ? "Windows download help"
+                      desktopInstallPopoverView === "downloadHelp"
+                        ? desktopOs === "windows"
+                          ? "Windows download help"
+                          : "Mac download help"
                         : undefined
                     }
                   >
-                    {windowsInstallPopoverView === "menu" ? (
+                    {desktopInstallPopoverView === "menu" ? (
                       <>
                         <p className="text-sm font-semibold text-white">
                           Choose how to run WorshipSync
                         </p>
                         <p className="mt-1.5 text-sm text-gray-200">
-                          {canShowInstall
-                            ? "Install as an app in this browser for quick access, or download the Windows installer for the desktop app."
-                            : "Download the Windows installer for the desktop app."}
+                          {desktopOs === "windows"
+                            ? canShowInstall
+                              ? "Install as an app in this browser for quick access, or download the Windows installer for the desktop app."
+                              : "Download the Windows installer for the desktop app."
+                            : canShowInstall
+                              ? "Install as an app in this browser for quick access, or download the Mac disk image (DMG) for the desktop app."
+                              : "Download the Mac disk image (DMG) for the desktop app."}
                         </p>
                         <div className="mt-3 flex flex-col gap-2">
                           {canShowInstall && (
@@ -317,25 +361,25 @@ const Welcome = () => {
                             className="flex w-full items-center justify-center gap-2"
                             svg={Download}
                             iconSize="md"
-                            onClick={handleDownloadWindowsFromMenu}
+                            onClick={handleDownloadDesktopFromMenu}
                           >
-                            Download Windows app
+                            {desktopOs === "windows"
+                              ? "Download Windows app"
+                              : "Download Mac app"}
                           </Button>
                         </div>
                       </>
                     ) : (
-                      <WindowsDownloadHelp
-                        onTryAgain={handleDownloadWindowsClick}
-                        onClose={() =>
-                          handleWindowsInstallPopoverOpenChange(false)
-                        }
+                      <DesktopDownloadHelp
+                        os={desktopOs}
+                        onTryAgain={handleDownloadInstallerClick}
                       />
                     )}
                   </PopoverContent>
                 </Popover>
               </div>
             )}
-            {showInstallOnlyNonWindows && (
+            {showInstallOnlyWithoutDesktopInstaller && (
               <Button
                 component="button"
                 variant="tertiary"
@@ -378,8 +422,8 @@ const Welcome = () => {
               and keep each display in sync during the service.
             </p>
             <p className="mx-auto max-w-3xl text-sm text-gray-200 md:hidden">
-              For the full experience on room outputs, use the Windows desktop app. Most
-              browsers also work well.
+              For the full experience on room outputs, use the Windows or Mac desktop app.
+              Most browsers also work well.
             </p>
           </div>
         </section>

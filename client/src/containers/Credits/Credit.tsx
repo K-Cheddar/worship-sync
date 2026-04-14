@@ -219,8 +219,8 @@ const Credit = ({
   }, [id, onSelectCredit]);
 
   const onHeadingChange = useCallback(
-    (val: string) => {
-      const v = val as string;
+    (value: string | number) => {
+      const v = String(value);
       setDraftHeading(v);
       draftHeadingRef.current = v;
       scheduleDebouncedRedux();
@@ -230,7 +230,8 @@ const Credit = ({
   );
 
   const onTextChange = useCallback(
-    (val: string) => {
+    (value: string | number) => {
+      const val = String(value);
       setDraftText(val);
       draftTextRef.current = val;
       scheduleDebouncedRedux();

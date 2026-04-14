@@ -51,7 +51,6 @@ const renderBrandingForm = (brandingOverride?: any) => {
           churchId="church-1"
           branding={branding}
           brandingStatus="ready"
-          uploadPreset="bpqu4ma5"
         />
       </GlobalInfoContext.Provider>
     </ToastContext.Provider>,

@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { FirebaseError } from "firebase/app";
 import {
   GoogleAuthProvider,
   OAuthProvider,
@@ -79,7 +80,11 @@ import {
   getPendingLinkState,
   getWorkstationSessionOperatorName,
   getWorkstationToken,
+  type PendingLinkCredentialState,
+  consumePendingEmailCodeSignInMethod,
+  inferLastSignInMethodFromProviderIds,
   setLastSignInMethod,
+  setPendingEmailCodeSignInMethod,
   setPendingLinkCredentialState,
   setPendingLinkState,
   setOperatorNameStorage,
@@ -93,6 +98,7 @@ import {
 import { getChurchDataPath } from "../utils/firebasePaths";
 import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
 import { backoff } from "../utils/generalUtils";
+import { reloadElectronDisplayWindows } from "../utils/environment";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
 import { getHumanPostAuthPath } from "../utils/authRedirectPath";
 import { resolveAccountDisplayNameForAudit } from "../utils/displayName";
@@ -108,7 +114,9 @@ function signOutFirebaseAuth(auth: Auth): Promise<void> {
 }
 
 function settleFirebaseWrite<T>(value: T | PromiseLike<T>): Promise<void> {
-  return Promise.resolve(value).catch(() => undefined);
+  return Promise.resolve(value)
+    .then(() => { })
+    .catch(() => { });
 }
 
 type HumanFirebaseAuthResult =
@@ -131,21 +139,21 @@ const getCredentialJsonValue = (
 const serializePendingLinkCredential = (
   providerId: "google.com" | "microsoft.com",
   credential: AuthCredential,
-) => {
+): PendingLinkCredentialState | null => {
   const credentialJson =
     typeof (credential as { toJSON?: () => unknown }).toJSON === "function"
       ? (credential as { toJSON: () => unknown }).toJSON()
       : null;
-  if (
-    typeof credentialJson !== "string" &&
-    (typeof credentialJson !== "object" || credentialJson === null)
-  ) {
+  if (typeof credentialJson === "string") {
+    return { providerId, credentialJson };
+  }
+  if (typeof credentialJson !== "object" || credentialJson === null) {
     return null;
   }
   return {
     providerId,
-    credentialJson,
-  } as const;
+    credentialJson: credentialJson as Record<string, unknown>,
+  };
 };
 
 const restorePendingLinkCredential = (
@@ -479,6 +487,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   });
 
   const storageListenerCleanupRef = useRef<(() => void) | undefined>(undefined);
+
+  const clearPresentationFirebaseListeners = useCallback(() => {
+    const subs = onValueRef.current;
+    if (subs) {
+      (Object.keys(subs) as (keyof typeof subs)[]).forEach((key) => {
+        subs[key]?.();
+        subs[key] = undefined;
+      });
+    }
+    storageListenerCleanupRef.current?.();
+    storageListenerCleanupRef.current = undefined;
+  }, []);
   const refreshAuthBootstrapPromiseRef = useRef<Promise<void> | null>(null);
 
   const navigate = useNavigate();
@@ -597,8 +617,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         method === "google" ? "google.com" : "microsoft.com";
       const nextCredential =
         method === "google"
-          ? GoogleAuthProvider.credentialFromError(error as Error)
-          : OAuthProvider.credentialFromError(error as Error);
+          ? GoogleAuthProvider.credentialFromError(error as FirebaseError)
+          : OAuthProvider.credentialFromError(error as FirebaseError);
 
       if (!nextCredential) {
         clearPendingLinkState();
@@ -1006,6 +1026,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             restoredSession.requiresEmailCode &&
             restoredSession.pendingAuthId
           ) {
+            setPendingEmailCodeSignInMethod(
+              inferLastSignInMethodFromProviderIds(
+                (persistedUser.providerData ?? []).map((p) => p.providerId),
+              ),
+            );
             setPendingEmailVerificationId(restoredSession.pendingAuthId);
           } else if (restoredSession.requiresEmailCode) {
             setAuthError("Verify this device to continue.");
@@ -1297,7 +1322,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Function to set up Firebase listeners
   const setupFirebaseListeners = useCallback(() => {
-    if (!firebaseDb || !isSharedDataReady) return;
+    if (!firebaseDb || !isSharedDataReady) {
+      clearPresentationFirebaseListeners();
+      return;
+    }
 
     if (onValueRef.current) {
       const keys = Object.keys(onValueRef.current);
@@ -1318,7 +1346,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         });
       }
     }
-  }, [churchId, firebaseDb, isSharedDataReady, updateFromRemote]);
+  }, [
+    churchId,
+    firebaseDb,
+    isSharedDataReady,
+    updateFromRemote,
+    clearPresentationFirebaseListeners,
+  ]);
 
   // Function to set up storage listener
   const setupStorageListener = useCallback(() => {
@@ -1352,7 +1386,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   // get updates from firebase - realtime changes from others
   useEffect(() => {
     refreshPresentationListeners();
-  }, [refreshPresentationListeners]);
+    return () => {
+      clearPresentationFirebaseListeners();
+    };
+  }, [refreshPresentationListeners, clearPresentationFirebaseListeners]);
 
   useEffect(() => {
     if (loginState !== "success" || !churchId) {
@@ -1448,15 +1485,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
       if (response.bootstrap) {
         setPendingEmailVerificationId(null);
+        setPendingEmailCodeSignInMethod(null);
         setLastSignInMethod(method);
         dispatch({ type: "RESET" });
         applyBootstrap(response.bootstrap);
+        reloadElectronDisplayWindows();
         setAuthServerStatus("online");
         navigate(getHumanPostAuthPath(location));
         return {};
       }
 
       if (response.requiresEmailCode && response.pendingAuthId) {
+        setPendingEmailCodeSignInMethod(method);
+        setPendingEmailVerificationId(response.pendingAuthId);
         setLoginState("idle");
         return {
           requiresEmailCode: true,
@@ -1538,9 +1579,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         deviceLabel: getTrustedDeviceLabel(),
       });
       setPendingEmailVerificationId(null);
-      setLastSignInMethod("password");
+      const completedMethod =
+        consumePendingEmailCodeSignInMethod() ?? "password";
+      setLastSignInMethod(completedMethod);
       dispatch({ type: "RESET" });
       applyBootstrap(response.bootstrap);
+      reloadElectronDisplayWindows();
       setAuthServerStatus("online");
       navigate(getHumanPostAuthPath(location));
       return true;
@@ -1597,9 +1641,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (response.bootstrap) {
           setPendingEmailVerificationId(null);
-          setLastSignInMethod("password");
+          const completedMethod =
+            consumePendingEmailCodeSignInMethod() ?? "password";
+          setLastSignInMethod(completedMethod);
           dispatch({ type: "RESET" });
           applyBootstrap(response.bootstrap);
+          reloadElectronDisplayWindows();
           setAuthServerStatus("online");
           navigate(getHumanPostAuthPath(location));
           return {};
@@ -1690,6 +1737,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         platform: navigator.platform,
         deviceLabel: getTrustedDeviceLabel(),
       });
+      if (response.requiresEmailCode && response.pendingAuthId) {
+        setPendingEmailCodeSignInMethod(method);
+      }
       setLoginState("idle");
       return {
         requiresEmailCode: response.requiresEmailCode,
@@ -1793,11 +1843,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     }
     await signOutFirebaseAuth(getSharedDataAuth());
     setPendingEmailVerificationId(null);
+    setPendingEmailCodeSignInMethod(null);
     clearPendingLinkState();
     setAccess("full");
     dispatch({ type: "RESET" });
     dispatch(ActionCreators.clearHistory());
     applyBootstrap(null);
+    reloadElectronDisplayWindows();
     navigate(nextPath, { replace: true });
     setFirebaseDb(undefined);
     globalFireDbInfo.db = undefined;

@@ -57,8 +57,11 @@ jest.mock("../../hooks", () => ({
 }));
 
 jest.mock("firebase/database", () => ({
-  ref: (...args: unknown[]) => refMock(...args),
-  onValue: (...args: unknown[]) => onValueMock(...args),
+  ref: (db: unknown, path: string) => refMock(db, path),
+  onValue: (
+    target: { path: string },
+    callback: (snapshot: unknown) => void,
+  ) => onValueMock(target, callback),
 }));
 
 jest.mock("../../hooks/useCloseOnEscape", () => ({
