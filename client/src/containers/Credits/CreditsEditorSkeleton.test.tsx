@@ -13,17 +13,18 @@ describe("CreditsEditorSkeleton", () => {
   });
 
   it("renders grip and action placeholders when not read-only", () => {
-    const { container } = render(<CreditsEditorSkeleton readOnly={false} />);
-    const pulseBlocks = container.querySelectorAll(".animate-pulse");
-    expect(pulseBlocks.length).toBeGreaterThan(0);
+    render(<CreditsEditorSkeleton readOnly={false} />);
+    expect(screen.getAllByTestId("credits-skeleton-drag-grip")).toHaveLength(6);
   });
 
   it("omits grip and row action placeholders when read-only", () => {
-    const { container: editable } = render(<CreditsEditorSkeleton readOnly={false} />);
-    const { container: readOnly } = render(<CreditsEditorSkeleton readOnly />);
-    expect(editable.querySelectorAll(".size-5").length).toBeGreaterThan(
-      readOnly.querySelectorAll(".size-5").length,
-    );
+    const { unmount } = render(<CreditsEditorSkeleton readOnly={false} />);
+    expect(screen.getAllByTestId("credits-skeleton-drag-grip")).toHaveLength(6);
+    unmount();
+    render(<CreditsEditorSkeleton readOnly />);
+    expect(
+      screen.queryAllByTestId("credits-skeleton-drag-grip"),
+    ).toHaveLength(0);
   });
 });
 

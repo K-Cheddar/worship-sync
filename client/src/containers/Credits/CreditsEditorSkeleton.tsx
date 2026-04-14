@@ -38,7 +38,10 @@ const CreditsEditorSkeleton = ({
               className="flex shrink-0 items-center self-stretch px-2 py-1"
               aria-hidden
             >
-              <div className="size-5 animate-pulse rounded-sm bg-white/10" />
+              <div
+                className="size-5 animate-pulse rounded-sm bg-white/10"
+                data-testid="credits-skeleton-drag-grip"
+              />
             </div>
           )}
           <div className="flex min-h-0 flex-1 flex-col gap-1 px-2 py-1.5 text-center leading-4">

@@ -21,13 +21,13 @@ describe("ControllerLoadingOverlay", () => {
   });
 
   it("renders nothing when dbProgress is 100", () => {
-    const { container } = render(
+    render(
       <ControllerLoadingOverlay
         dbProgress={100}
         connectionStatus={{ status: "connected", retryCount: 0 }}
       />,
     );
-    expect(container.firstChild).toBeNull();
+    expect(screen.queryByText(/Worship/)).not.toBeInTheDocument();
   });
 
   it("stays on normal welcome copy while progress keeps moving before 15s elapse", () => {

@@ -86,11 +86,6 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     [creditsHistory, db, dispatch],
   );
 
-  const listOrderKey = useMemo(
-    () => list.map((c) => c.id).join(","),
-    [list],
-  );
-
   const onDragEnd = (event: DragEndEvent) => {
     if (readOnly) return;
     const { over, active } = event;
@@ -126,7 +121,7 @@ const CreditsEditor = ({ className }: { className?: string }) => {
         });
       }
     }
-  }, [selectedCreditId, listOrderKey]);
+  }, [selectedCreditId, list]);
 
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>

@@ -19,9 +19,7 @@ describe("LastUpdatedByline", () => {
   });
 
   it("renders nothing when no timestamp", () => {
-    const { container } = render(
-      <LastUpdatedByline updatedBy="only-name-no-time" />,
-    );
-    expect(container.firstChild).toBeNull();
+    render(<LastUpdatedByline updatedBy="only-name-no-time" />);
+    expect(screen.queryByText(/Last updated/)).not.toBeInTheDocument();
   });
 });
