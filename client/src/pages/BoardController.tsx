@@ -85,6 +85,57 @@ import { getDisplayLabel } from "../utils/displayUtils";
 
 const BOARD_COPY_LINK_ICON_COLOR = "#22d3ee";
 
+type BoardShareLinkGroupProps = {
+  heading: string;
+  onCopy: () => void | Promise<void>;
+  onView: () => void;
+  disabled: boolean;
+  className?: string;
+};
+
+const BoardShareLinkGroup = ({
+  heading,
+  onCopy,
+  onView,
+  disabled,
+  className,
+}: BoardShareLinkGroupProps) => (
+  <div
+    className={cn(
+      "w-fit max-w-full shrink-0 rounded-lg border border-gray-600 bg-gray-900/50 p-3",
+      className,
+    )}
+  >
+    <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+      {heading}
+    </p>
+    <div className="mt-2 flex flex-row flex-wrap gap-2">
+      <Button
+        type="button"
+        variant="primary"
+        svg={Copy}
+        color={BOARD_COPY_LINK_ICON_COLOR}
+        onClick={() => void onCopy()}
+        disabled={disabled}
+        className="w-fit shrink-0 justify-center px-3"
+      >
+        Copy
+      </Button>
+      <Button
+        type="button"
+        variant="secondary"
+        svg={Eye}
+        color={BOARD_COPY_LINK_ICON_COLOR}
+        onClick={onView}
+        disabled={disabled}
+        className="w-fit shrink-0 justify-center px-3"
+      >
+        View
+      </Button>
+    </div>
+  </div>
+);
+
 type AllDocsResult<T> = {
   rows: Array<{ doc?: T }>;
 };
@@ -266,6 +317,8 @@ const BoardControllerMenu = ({
 type BoardToolsPanelBodyProps = {
   isMobileStack: boolean;
   handleCopy: (value: string, label: string) => Promise<void>;
+  onOpenAttendeeLink: () => void;
+  onOpenViewBoardLink: () => void;
   publicBoardUrl: string;
   publicPresentUrl: string;
   boardIdToView: string;
@@ -283,6 +336,8 @@ type BoardToolsPanelBodyProps = {
 const BoardToolsPanelBody = ({
   isMobileStack,
   handleCopy,
+  onOpenAttendeeLink,
+  onOpenViewBoardLink,
   publicBoardUrl,
   publicPresentUrl,
   boardIdToView,
@@ -312,33 +367,25 @@ const BoardToolsPanelBody = ({
           Share links
         </p>
         <p className="mt-1 text-xs text-gray-400">
-          Copy for attendees and the presentation screen. Links stay the same when you start a new session.
+          Copy or open the attendee page and the presentation screen. Links stay the same when you start a new session.
         </p>
         <div
-          className="mt-3 flex flex-col gap-2"
+          className="mt-3 flex flex-col items-start gap-3"
           role="group"
           aria-labelledby="board-tools-share-label"
         >
-          <Button
-            className="w-full justify-center"
-            variant="primary"
-            svg={Copy}
-            color={BOARD_COPY_LINK_ICON_COLOR}
-            onClick={() => handleCopy(publicBoardUrl, "Attendee link")}
+          <BoardShareLinkGroup
+            heading="Attendee link"
+            onCopy={() => handleCopy(publicBoardUrl, "Attendee link")}
+            onView={onOpenAttendeeLink}
             disabled={!publicBoardUrl}
-          >
-            Copy Attendee Link
-          </Button>
-          <Button
-            className="w-full justify-center"
-            variant="primary"
-            svg={Copy}
-            color={BOARD_COPY_LINK_ICON_COLOR}
-            onClick={() => handleCopy(publicPresentUrl, "Presentation link")}
+          />
+          <BoardShareLinkGroup
+            heading="Board link"
+            onCopy={() => handleCopy(publicPresentUrl, "Board link")}
+            onView={onOpenViewBoardLink}
             disabled={!publicPresentUrl}
-          >
-            Copy View Board Link
-          </Button>
+          />
         </div>
       </div>
 
@@ -671,6 +718,16 @@ export const BoardControllerContent = () => {
     }
   };
 
+  const handleOpenViewBoardLink = useCallback(() => {
+    if (!publicPresentUrl) return;
+    window.open(publicPresentUrl, "_blank", "noopener,noreferrer");
+  }, [publicPresentUrl]);
+
+  const handleOpenAttendeeLink = useCallback(() => {
+    if (!publicBoardUrl) return;
+    window.open(publicBoardUrl, "_blank", "noopener,noreferrer");
+  }, [publicBoardUrl]);
+
   const runAction = useCallback(
     async (action: () => Promise<void>) => {
       setIsActing(true);
@@ -962,7 +1019,7 @@ export const BoardControllerContent = () => {
             <>
               <div className="border-b-2 border-gray-500 bg-homepage-canvas px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                  <h2 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight">
+                  <h2 className="min-w-0 flex-1 truncate text-2xl font-semibold tracking-tight">
                     {selectedAlias.title}
                   </h2>
                   <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
@@ -1001,6 +1058,8 @@ export const BoardControllerContent = () => {
                             <BoardToolsPanelBody
                               isMobileStack={isMobileStack}
                               handleCopy={handleCopy}
+                              onOpenAttendeeLink={handleOpenAttendeeLink}
+                              onOpenViewBoardLink={handleOpenViewBoardLink}
                               publicBoardUrl={publicBoardUrl}
                               publicPresentUrl={publicPresentUrl}
                               boardIdToView={boardIdToView}
@@ -1025,7 +1084,7 @@ export const BoardControllerContent = () => {
                     Current session: {getBoardLabel(currentBoard)}
                   </p>
                   <p className="mt-2 hidden text-sm text-gray-300 lg:block">
-                    Copy links for attendees and the presentation screen, then moderate posts below. The links will stay the same even if you create a new session.
+                    Share attendee and board links, then moderate posts below. The links will stay the same even if you create a new session.
                   </p>
                   {!isViewingCurrent && (
                     <p className="mt-2 text-xs text-amber-100/90">
@@ -1036,25 +1095,19 @@ export const BoardControllerContent = () => {
                         : "Use Board tools on the right to switch."}
                     </p>
                   )}
-                  <div className="mt-3 hidden flex-wrap gap-2 lg:flex">
-                    <Button
-                      variant="primary"
-                      svg={Copy}
-                      color={BOARD_COPY_LINK_ICON_COLOR}
-                      onClick={() => handleCopy(publicBoardUrl, "Attendee link")}
+                  <div className="mt-3 hidden flex-wrap items-start gap-3 lg:flex">
+                    <BoardShareLinkGroup
+                      heading="Attendee link"
+                      onCopy={() => handleCopy(publicBoardUrl, "Attendee link")}
+                      onView={handleOpenAttendeeLink}
                       disabled={!publicBoardUrl}
-                    >
-                      Copy Attendee Link
-                    </Button>
-                    <Button
-                      variant="primary"
-                      svg={Copy}
-                      color={BOARD_COPY_LINK_ICON_COLOR}
-                      onClick={() => handleCopy(publicPresentUrl, "Presentation link")}
+                    />
+                    <BoardShareLinkGroup
+                      heading="Board link"
+                      onCopy={() => handleCopy(publicPresentUrl, "Board link")}
+                      onView={handleOpenViewBoardLink}
                       disabled={!publicPresentUrl}
-                    >
-                      Copy View Board Link
-                    </Button>
+                    />
                   </div>
                 </div>
               </div>
@@ -1180,6 +1233,8 @@ export const BoardControllerContent = () => {
                 <BoardToolsPanelBody
                   isMobileStack={false}
                   handleCopy={handleCopy}
+                  onOpenAttendeeLink={handleOpenAttendeeLink}
+                  onOpenViewBoardLink={handleOpenViewBoardLink}
                   publicBoardUrl={publicBoardUrl}
                   publicPresentUrl={publicPresentUrl}
                   boardIdToView={boardIdToView}

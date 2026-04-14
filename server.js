@@ -16,6 +16,7 @@ import https from "https";
 import {
   authHandlers,
   authSessionConfig,
+  readChurchPublicBoardHeaderLogoUrl,
   resolveRequestBootstrap,
 } from "./authService.js";
 import { fetchExcelFile } from "./getScheduleFunctions.js";
@@ -957,9 +958,14 @@ app.get("/api/boards/:aliasId", async (req, res) => {
       return res.status(404).json({ error: "Current session was not found." });
     }
 
+    const churchLogoUrl = await readChurchPublicBoardHeaderLogoUrl(
+      aliasDoc.database,
+    );
+
     res.json({
       alias: serializeBoardAlias(aliasDoc),
       board: serializeBoardDoc(boardDoc),
+      ...(churchLogoUrl ? { churchLogoUrl } : {}),
     });
   } catch (error) {
     console.error("Error resolving board alias:", error);

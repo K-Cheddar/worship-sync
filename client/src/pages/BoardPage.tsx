@@ -48,6 +48,7 @@ const BoardPage = () => {
   const participantId = useMemo(() => getOrCreateBoardParticipantId(), []);
   const {
     alias,
+    churchLogoUrl,
     posts,
     hasLoadedOnce,
     error,
@@ -319,9 +320,18 @@ const BoardPage = () => {
           <p className="text-sm font-semibold uppercase tracking-[0.25em] text-amber-300">
             Discussion Board
           </p>
-          <h1 className="mt-3 text-3xl font-semibold sm:text-4xl">
-            {alias?.title || "Board"}
-          </h1>
+          <div className="mt-3 flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
+            {churchLogoUrl ? (
+              <img
+                src={churchLogoUrl}
+                alt=""
+                className="mt-0.5 size-10 shrink-0 rounded-md border border-stone-600/90 bg-stone-950 object-contain sm:mt-0 sm:size-12"
+              />
+            ) : null}
+            <h1 className="min-w-0 flex-1 text-3xl font-semibold sm:text-4xl">
+              {alias?.title || "Board"}
+            </h1>
+          </div>
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-stone-300 sm:text-base">
             Share a question or comment for others to see.
           </p>

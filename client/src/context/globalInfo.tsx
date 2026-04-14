@@ -119,12 +119,21 @@ function settleFirebaseWrite<T>(value: T | PromiseLike<T>): Promise<void> {
     .catch(() => { });
 }
 
+const CHURCH_BRANDING_PERMISSION_LISTEN_RETRY_MAX = 12;
+const CHURCH_BRANDING_SHARED_TOKEN_REMINT_MAX = 2;
+
+const brandingListenRetryDelayMs = (zeroBasedAttempt: number) =>
+  Math.min(2500, 100 * 2 ** Math.min(zeroBasedAttempt, 6));
+
 const isFirebasePermissionDenied = (error: unknown) => {
   if (!error || typeof error !== "object") return false;
   const maybe = error as { code?: string; message?: string };
   const code = maybe.code?.toLowerCase();
   if (code === "permission_denied") return true;
-  return /permission_denied/i.test(String(maybe.message || ""));
+  const msg = String(maybe.message || "").toLowerCase();
+  if (msg.includes("permission_denied")) return true;
+  if (msg.includes("permission to access")) return true;
+  return false;
 };
 
 async function awaitSharedRealtimeAuthReady(auth: Auth) {
@@ -132,7 +141,7 @@ async function awaitSharedRealtimeAuthReady(auth: Auth) {
     await auth.authStateReady?.();
     const user = auth.currentUser;
     if (user) {
-      await user.getIdToken();
+      await user.getIdToken(true);
     }
   } catch {
     // Tests stub `getSharedDataAuth()` with a partial object; production Auth is full-featured.
@@ -380,6 +389,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [isSharedDataReady, setIsSharedDataReady] = useState(false);
   const [authenticatedSharedDataScope, setAuthenticatedSharedDataScope] =
     useState<string | null>(null);
+  const [sharedDataTokenRemintNonce, setSharedDataTokenRemintNonce] =
+    useState(0);
   const [loginState, setLoginState] = useState<LoginStateType>("loading");
   const [bootstrapStatus, setBootstrapStatus] =
     useState<BootstrapStatus>("loading");
@@ -427,6 +438,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const sharedDataAuthChainRef = useRef<Promise<void>>(Promise.resolve());
   const churchBrandingGateKeyRef = useRef("");
   const churchBrandingPermissionRetryRef = useRef(0);
+  const churchBrandingRemintAttemptsRef = useRef(0);
   const location = useLocation();
   const isOnController = useMemo(() => {
     const path = location.pathname;
@@ -474,6 +486,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       sharedDataSessionScope,
     ]
   );
+
+  useEffect(() => {
+    churchBrandingRemintAttemptsRef.current = 0;
+  }, [sharedDataSessionScope]);
 
   useEffect(() => {
     setAuditSnapshot({
@@ -1148,6 +1164,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setFirebaseDb(undefined);
       setIsSharedDataReady(false);
       setAuthenticatedSharedDataScope(null);
+      setSharedDataTokenRemintNonce(0);
       globalFireDbInfo.db = undefined;
       sharedDataAuthChainRef.current = Promise.resolve(
         sharedDataAuthChainRef.current ?? Promise.resolve()
@@ -1222,7 +1239,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     return () => {
       cancelled = true;
     };
-  }, [loginState, sharedDataSessionScope]);
+  }, [loginState, sharedDataSessionScope, sharedDataTokenRemintNonce]);
 
   // Track active instances (must run before the connection monitor below so
   // instanceRef points at the current church before .info/connected fires).
@@ -1446,8 +1463,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
 
-    const brandingGateKey = `${churchId}|${loginState}|${firebaseDb ? "db" : ""}|${isSharedDataScopeReady ? "ready" : ""
-      }`;
+    const brandingGateKey = `${sharedDataSessionScope}|${sharedDataTokenRemintNonce}`;
     if (churchBrandingGateKeyRef.current !== brandingGateKey) {
       churchBrandingGateKeyRef.current = brandingGateKey;
       churchBrandingPermissionRetryRef.current = 0;
@@ -1462,6 +1478,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       brandingRef,
       (snapshot) => {
         churchBrandingPermissionRetryRef.current = 0;
+        churchBrandingRemintAttemptsRef.current = 0;
         setChurchBranding(
           snapshot.exists()
             ? normalizeChurchBranding(snapshot.val())
@@ -1471,17 +1488,25 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       },
       (error) => {
         if (cancelled) return;
-        if (
-          isFirebasePermissionDenied(error) &&
-          churchBrandingPermissionRetryRef.current < 6
-        ) {
-          churchBrandingPermissionRetryRef.current += 1;
-          permissionDeniedRetryTimeout = setTimeout(() => {
-            if (!cancelled) {
-              setChurchBrandingListenGeneration((g) => g + 1);
-            }
-          }, 120);
-          return;
+        if (isFirebasePermissionDenied(error)) {
+          const listenAttempt = churchBrandingPermissionRetryRef.current;
+          if (listenAttempt < CHURCH_BRANDING_PERMISSION_LISTEN_RETRY_MAX) {
+            churchBrandingPermissionRetryRef.current += 1;
+            permissionDeniedRetryTimeout = setTimeout(() => {
+              if (!cancelled) {
+                setChurchBrandingListenGeneration((g) => g + 1);
+              }
+            }, brandingListenRetryDelayMs(listenAttempt));
+            return;
+          }
+          if (
+            churchBrandingRemintAttemptsRef.current <
+            CHURCH_BRANDING_SHARED_TOKEN_REMINT_MAX
+          ) {
+            churchBrandingRemintAttemptsRef.current += 1;
+            setSharedDataTokenRemintNonce((n) => n + 1);
+            return;
+          }
         }
         console.error("Could not subscribe to church branding:", error);
         setChurchBranding(emptyChurchBranding());
@@ -1501,6 +1526,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     firebaseDb,
     isSharedDataScopeReady,
     loginState,
+    sharedDataSessionScope,
+    sharedDataTokenRemintNonce,
     churchBrandingListenGeneration,
   ]);
 

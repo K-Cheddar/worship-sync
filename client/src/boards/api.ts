@@ -20,6 +20,8 @@ export const createBoardRequestHeaders = (initHeaders?: HeadersInit) => {
 export type BoardAliasResponse = {
   alias: DBBoardAlias;
   board: DBBoard;
+  /** Set on public GET alias for attendee / presentation headers. */
+  churchLogoUrl?: string;
 };
 
 export type BoardPostsResponse = {
