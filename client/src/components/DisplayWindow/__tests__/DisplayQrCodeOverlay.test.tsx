@@ -74,4 +74,27 @@ describe("DisplayQrCodeOverlay", () => {
     ).toBe(true);
     expect(gsapToMock).toHaveBeenCalled();
   });
+
+  it("keeps current overlay dependencies stable when no previous overlay is provided", () => {
+    const overlayInfo = {
+      id: "qr-stable",
+      type: "qr-code" as const,
+      url: "https://example.com",
+    };
+
+    const { rerender } = render(
+      <DisplayQrCodeOverlay width={30} qrCodeOverlayInfo={overlayInfo} />,
+    );
+
+    const firstCurrentConfig = (useGSAP as jest.Mock).mock.calls[0][1];
+
+    rerender(
+      <DisplayQrCodeOverlay width={30} qrCodeOverlayInfo={overlayInfo} />,
+    );
+
+    const secondCurrentConfig = (useGSAP as jest.Mock).mock.calls[2][1];
+
+    expect(firstCurrentConfig.dependencies).toEqual([overlayInfo]);
+    expect(secondCurrentConfig.dependencies).toEqual([overlayInfo]);
+  });
 });

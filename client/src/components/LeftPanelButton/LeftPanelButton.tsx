@@ -54,7 +54,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         ref={ref}
         style={style}
         className={cn(
-          "group relative flex min-h-8",
+          "group relative flex min-h-8 min-w-0",
           isSelected && "ring-1 ring-inset ring-cyan-500/30",
           className
         )}
@@ -72,7 +72,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         <Button
           variant="none"
           className={cn(
-            "relative z-10 min-h-8 min-w-0 flex-1 shrink self-stretch bg-transparent text-sm rounded-tl-none rounded-bl-none"
+            "relative z-10 flex min-h-8 min-w-0 flex-1 shrink items-center self-stretch bg-transparent text-sm rounded-tl-none rounded-bl-none",
           )}
           iconSize="md"
           wrap
@@ -86,17 +86,22 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           onClick={onClick}
         >
           {image && !isActive && (
-            <img src={resolvedImage ?? image} className="w-14 max-w-[30%]" alt={title} />
+            <img
+              src={resolvedImage ?? image}
+              className="w-14 max-w-[30%] shrink-0"
+              alt={title}
+            />
           )}
           {isActive && (
-            <span className="bg-black/55 text-white font-semibold rounded-lg px-2 py-1 text-xs tabular-nums">
+            <span className="shrink-0 rounded-lg bg-black/55 px-2 py-1 text-xs font-semibold tabular-nums text-white">
               {formatTime(timerValue || 0, false, true)}
             </span>
           )}
           <p
+            title={title}
             className={cn(
-              "pl-1 text-white",
-              isSelected ? "font-bold" : "font-semibold"
+              "line-clamp-3 min-w-0 flex-1 wrap-break-word pl-1 text-left text-white",
+              isSelected ? "font-bold" : "font-semibold",
             )}
           >
             {title}

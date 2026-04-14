@@ -8,15 +8,21 @@ import {
   type FormEvent,
 } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Eye, EyeOff, LoaderCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle, Eye, EyeOff, LoaderCircle } from "lucide-react";
 import Input from "../components/Input/Input";
 import Button from "../components/Button/Button";
+import { GoogleMark, MicrosoftMark } from "../components/AuthProviderMarks";
 import SetupScreenBackButton from "../components/SetupScreenBackButton";
 import VerificationCodeInput from "../components/VerificationCodeInput/VerificationCodeInput";
 import { GlobalInfoContext } from "../context/globalInfo";
 import {
   getAuthRedirectPathnameFromState,
 } from "../utils/authRedirectPath";
+import {
+  INVALID_EMAIL_FORMAT_MESSAGE,
+  isValidEmailFormat,
+} from "../utils/emailFormat";
+import { getLastSignInMethod } from "../utils/authStorage";
 
 type Mode = "signIn" | "code" | "forgotPassword";
 
@@ -30,6 +36,18 @@ const RESEND_COOLDOWN_SEC = 60;
 
 const FORGOT_PASSWORD_EMAIL_HELPER =
   "If an account exists for that email, you will receive a reset link shortly.";
+
+const LastUsedBadge = ({ show }: { show: boolean }) => {
+  if (!show) return null;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold leading-none tracking-wide text-emerald-200/95"
+      aria-label="Last sign-in method used on this device"
+    >
+      Last used
+    </span>
+  );
+};
 
 /**
  * Dedupes concurrent `verifyEmailCode` calls for the same pending auth + digits.
@@ -55,6 +73,12 @@ const Login = () => {
   /** Forgot-password view hides sign-in `authError` until the user submits this form. */
   const [forgotPasswordHasSubmit, setForgotPasswordHasSubmit] = useState(false);
   const [isForgotSending, setIsForgotSending] = useState(false);
+  const [forgotPasswordEmailSent, setForgotPasswordEmailSent] = useState(false);
+  /** Blocks submit briefly after "Change email" so a layout-shift ghost click cannot fire validation on an empty field. */
+  const [forgotPasswordSubmitBlocked, setForgotPasswordSubmitBlocked] =
+    useState(false);
+  const forgotPasswordSubmitBlockTimeoutRef = useRef(0);
+  const [lastSignInMethod] = useState(() => getLastSignInMethod());
   const authServerStatus = context?.authServerStatus ?? "checking";
   const authServerRetryCount = context?.authServerRetryCount ?? 0;
   const isAuthServerOnline = authServerStatus === "online";
@@ -62,6 +86,7 @@ const Login = () => {
   const isAuthActionDisabled =
     context?.loginState === "loading" || !isAuthServerOnline;
   const verifyEmailCode = context?.verifyEmailCode;
+  const pendingLinkState = context?.pendingLinkState;
   const prevVerificationDigitsLenRef = useRef(0);
 
   useLayoutEffect(() => {
@@ -81,6 +106,13 @@ const Login = () => {
     }, 1000);
     return () => window.clearTimeout(timerId);
   }, [resendCooldownSec]);
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(forgotPasswordSubmitBlockTimeoutRef.current);
+    },
+    []
+  );
 
   useEffect(() => {
     const pendingId = context?.pendingEmailVerificationId;
@@ -132,8 +164,13 @@ const Login = () => {
 
   const handleSignIn = async () => {
     setInfoBanner("");
-    if (!email.trim()) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
       setFieldErrors({ email: "Enter your email to continue." });
+      return;
+    }
+    if (!isValidEmailFormat(trimmedEmail)) {
+      setFieldErrors({ email: INVALID_EMAIL_FORMAT_MESSAGE });
       return;
     }
     if (!password) {
@@ -142,7 +179,8 @@ const Login = () => {
     }
     setFieldErrors({});
     const response = await context?.login({
-      email,
+      method: "password",
+      email: trimmedEmail,
       password,
     });
     if (response?.requiresEmailCode && response.pendingAuthId) {
@@ -150,6 +188,12 @@ const Login = () => {
       setMode("code");
       setInfoBanner("");
     }
+  };
+
+  const handleProviderSignIn = async (method: "google" | "microsoft") => {
+    setInfoBanner("");
+    setFieldErrors({});
+    await context?.login({ method });
   };
 
   const handleVerifyCode = useCallback(async () => {
@@ -228,15 +272,21 @@ const Login = () => {
 
   const handleForgotPasswordSubmit = async () => {
     setInfoBanner("");
-    if (!email.trim()) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
       setFieldErrors({ email: "Enter your email to continue." });
+      return;
+    }
+    if (!isValidEmailFormat(trimmedEmail)) {
+      setFieldErrors({ email: INVALID_EMAIL_FORMAT_MESSAGE });
       return;
     }
     setFieldErrors({});
     setForgotPasswordHasSubmit(true);
     setIsForgotSending(true);
     try {
-      await context?.forgotPassword(email.trim());
+      await context?.forgotPassword(trimmedEmail);
+      setForgotPasswordEmailSent(true);
     } catch {
       // Message shown via sign-in context (authError)
     } finally {
@@ -245,9 +295,12 @@ const Login = () => {
   };
 
   const handleBackToSignIn = () => {
+    window.clearTimeout(forgotPasswordSubmitBlockTimeoutRef.current);
+    setForgotPasswordSubmitBlocked(false);
     setFieldErrors({});
     setInfoBanner("");
     setForgotPasswordHasSubmit(false);
+    setForgotPasswordEmailSent(false);
     setCode("");
     setMode("signIn");
   };
@@ -255,7 +308,10 @@ const Login = () => {
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (mode === "forgotPassword") {
-      if (!isAuthServerOnline || isForgotSending) {
+      if (forgotPasswordSubmitBlocked) {
+        return;
+      }
+      if (forgotPasswordEmailSent || !isAuthServerOnline || isForgotSending) {
         return;
       }
       void handleForgotPasswordSubmit();
@@ -281,6 +337,9 @@ const Login = () => {
         : "Could not reach the server. Check the connection and try again.";
     }
     if (mode === "forgotPassword") {
+      if (forgotPasswordEmailSent) {
+        return infoBanner;
+      }
       if (forgotPasswordHasSubmit) {
         return context?.authError || infoBanner;
       }
@@ -307,7 +366,7 @@ const Login = () => {
     if (authServerStatus === "offline") {
       return "text-amber-300";
     }
-    if (context?.authError) {
+    if (context?.authError && !(mode === "forgotPassword" && forgotPasswordEmailSent)) {
       return "text-red-400";
     }
     if (infoBanner) {
@@ -318,7 +377,9 @@ const Login = () => {
 
   const loginHeadline = (() => {
     if (mode === "code") return "Verify this device";
-    if (mode === "forgotPassword") return "Forgot password";
+    if (mode === "forgotPassword") {
+      return forgotPasswordEmailSent ? "Check your email" : "Forgot password";
+    }
     return "Sign in";
   })();
 
@@ -327,13 +388,16 @@ const Login = () => {
       return "We sent a six-digit code to your email. Enter it below to trust this device.";
     }
     if (mode === "forgotPassword") {
+      if (forgotPasswordEmailSent) {
+        return "If an account exists for that address, we sent a password reset link. It may take a minute to arrive.";
+      }
       return "";
     }
-    return "Use your WorshipSync email and password to continue.";
+    return "Choose a sign-in method to continue.";
   })();
 
   return (
-    <main className="relative flex min-h-dvh items-center justify-center bg-gray-700 px-4 text-white">
+    <main className="relative flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         {mode === "code" || mode === "forgotPassword" ? (
           <div className="mb-3 flex justify-start">
@@ -383,6 +447,57 @@ const Login = () => {
         <form className="flex flex-col" onSubmit={handleFormSubmit} noValidate>
           {mode === "signIn" && (
             <>
+              <div className="mt-4 grid grid-cols-1 gap-2">
+                <div className="relative w-full">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    svg={GoogleMark}
+                    iconSize="sm"
+                    gap="gap-2"
+                    className="w-full justify-center"
+                    disabled={isAuthActionDisabled}
+                    onClick={() => void handleProviderSignIn("google")}
+                  >
+                    Continue with Google
+                  </Button>
+                  <div
+                    className="pointer-events-none absolute inset-y-0 right-2 flex items-center"
+                    aria-hidden={lastSignInMethod !== "google"}
+                  >
+                    <LastUsedBadge show={lastSignInMethod === "google"} />
+                  </div>
+                </div>
+                <div className="relative w-full">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    svg={MicrosoftMark}
+                    iconSize="sm"
+                    gap="gap-2"
+                    className="w-full justify-center"
+                    disabled={isAuthActionDisabled}
+                    onClick={() => void handleProviderSignIn("microsoft")}
+                  >
+                    Continue with Microsoft
+                  </Button>
+                  <div
+                    className="pointer-events-none absolute inset-y-0 right-2 flex items-center"
+                    aria-hidden={lastSignInMethod !== "microsoft"}
+                  >
+                    <LastUsedBadge show={lastSignInMethod === "microsoft"} />
+                  </div>
+                </div>
+              </div>
+              <div className="relative mt-3 min-h-5 text-center text-xs leading-5 text-gray-400">
+                <span>Or use email and password</span>
+                <div
+                  className="pointer-events-none absolute inset-y-0 right-0 flex items-center"
+                  aria-hidden={lastSignInMethod !== "password"}
+                >
+                  <LastUsedBadge show={lastSignInMethod === "password"} />
+                </div>
+              </div>
               <Input
                 className="mt-4"
                 id="email"
@@ -427,19 +542,28 @@ const Login = () => {
                   disabled={!isAuthServerOnline}
                   aria-disabled={!isAuthServerOnline}
                   onClick={() => {
+                    window.clearTimeout(forgotPasswordSubmitBlockTimeoutRef.current);
+                    setForgotPasswordSubmitBlocked(false);
                     setFieldErrors({});
                     setInfoBanner("");
                     setForgotPasswordHasSubmit(false);
+                    setForgotPasswordEmailSent(false);
                     setMode("forgotPassword");
                   }}
                 >
                   Forgot password
                 </Button>
               </div>
+              {pendingLinkState ? (
+                <p className="mt-2 text-sm text-amber-200">
+                  This email already exists. Sign in with the existing method to link{" "}
+                  {pendingLinkState.providerId === "google.com" ? "Google" : "Microsoft"}.
+                </p>
+              ) : null}
             </>
           )}
 
-          {mode === "forgotPassword" && (
+          {mode === "forgotPassword" && !forgotPasswordEmailSent && (
             <Input
               className="mt-4"
               id="email-forgot"
@@ -459,6 +583,22 @@ const Login = () => {
               disabled={!isAuthServerOnline}
               autoFocus
             />
+          )}
+
+          {mode === "forgotPassword" && forgotPasswordEmailSent && (
+            <div
+              className="mt-4 flex flex-col items-center gap-3 rounded-xl border border-gray-600 bg-white/5 px-4 py-6 text-center"
+              role="status"
+              aria-live="polite"
+            >
+              <CheckCircle
+                className="h-12 w-12 shrink-0 text-emerald-400"
+                aria-hidden="true"
+              />
+              <p className="text-sm text-gray-200">
+                Request received for <span className="font-medium text-white">{email.trim()}</span>.
+              </p>
+            </div>
           )}
 
           {mode === "code" && (
@@ -507,15 +647,43 @@ const Login = () => {
                 Verify device
               </Button>
             ) : mode === "forgotPassword" ? (
-              <Button
-                type="submit"
-                variant="cta"
-                className="w-full justify-center"
-                isLoading={isForgotSending}
-                disabled={!isAuthServerOnline || isForgotSending}
-              >
-                Send reset link
-              </Button>
+              forgotPasswordEmailSent ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full justify-center"
+                  disabled={!isAuthServerOnline}
+                  onClick={() => {
+                    setForgotPasswordEmailSent(false);
+                    setForgotPasswordHasSubmit(false);
+                    setInfoBanner("");
+                    setEmail("");
+                    setFieldErrors({});
+                    window.clearTimeout(forgotPasswordSubmitBlockTimeoutRef.current);
+                    setForgotPasswordSubmitBlocked(true);
+                    forgotPasswordSubmitBlockTimeoutRef.current = window.setTimeout(
+                      () => {
+                        setForgotPasswordSubmitBlocked(false);
+                      },
+                      300
+                    );
+                  }}
+                >
+                  Change email
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  variant="cta"
+                  className="w-full justify-center"
+                  isLoading={isForgotSending}
+                  disabled={
+                    !isAuthServerOnline || isForgotSending || forgotPasswordSubmitBlocked
+                  }
+                >
+                  Send reset link
+                </Button>
+              )
             ) : (
               <Button
                 type="submit"

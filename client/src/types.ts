@@ -123,6 +123,9 @@ export type DocType =
   | "overlay"
   | "overlayTemplates"
   | "preferences"
+  | "quickLinks"
+  | "monitorSettings"
+  | "mediaRouteFolders"
   | "credits"
   | "credit"
   | "credit-history"
@@ -138,6 +141,8 @@ export type DBItem = ItemProperties & {
   _rev?: string;
   createdAt?: string;
   updatedAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
   docType?: DocType;
 };
 
@@ -239,6 +244,12 @@ export type ItemState = ItemProperties & {
   pendingRemoteItem?: DBItem | null;
   /** When set, SlideEditor should focus this box index then clear. Used after format when slide count changes. */
   restoreFocusToBox?: number | null;
+  /** Editor-only: slide ids selected for subset background apply/clear (media actions). */
+  backgroundTargetSlideIds?: string[];
+  /** Anchor for Shift+click range selection on the slide rail. */
+  backgroundTargetRangeAnchorId?: string | null;
+  /** Mobile: taps toggle background targets instead of changing the active slide. */
+  mobileBackgroundTargetSelectMode?: boolean;
 };
 
 export type Arrangment = {
@@ -433,6 +444,10 @@ export type OverlayInfo = {
   time?: number;
   id: string;
   formatting?: OverlayFormatting;
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
 };
 
 export type DBOverlay = OverlayInfo & {
@@ -603,21 +618,85 @@ export type DBItemListDetails = ItemListDetails & {
   docType?: DocType;
 };
 
+/** Pouch `_id` for the slim defaults doc (backgrounds, grid defaults, etc.). */
+export const PREFERENCES_POUCH_ID = "preferences" as const;
+
+/** Pouch `_id` for quick links only. */
+export const QUICK_LINKS_POUCH_ID = "quickLinks" as const;
+
+/** Pouch `_id` for monitor band / clock settings only. */
+export const MONITOR_SETTINGS_POUCH_ID = "monitorSettings" as const;
+
+/** Pouch `_id` for last-selected media library folder per route. */
+export const MEDIA_ROUTE_FOLDERS_POUCH_ID = "mediaRouteFolders" as const;
+
+/** Slim preferences document (split layout). */
 export type DBPreferences = {
-  _id: string;
+  _id: typeof PREFERENCES_POUCH_ID;
   _rev: string;
   preferences: PreferencesType;
+  createdAt?: string;
+  updatedAt?: string;
+  docType?: DocType;
+};
+
+export type DBQuickLinksDoc = {
+  _id: typeof QUICK_LINKS_POUCH_ID;
+  _rev: string;
   quickLinks: QuickLinkType[];
+  createdAt?: string;
+  updatedAt?: string;
+  docType?: DocType;
+};
+
+export type DBMonitorSettingsDoc = {
+  _id: typeof MONITOR_SETTINGS_POUCH_ID;
+  _rev: string;
   monitorSettings: MonitorSettingsType;
   createdAt?: string;
   updatedAt?: string;
   docType?: DocType;
 };
 
+export type DBMediaRouteFoldersDoc = {
+  _id: typeof MEDIA_ROUTE_FOLDERS_POUCH_ID;
+  _rev: string;
+  mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
+  createdAt?: string;
+  updatedAt?: string;
+  docType?: DocType;
+};
+
+/** Any Pouch doc that can update the preferences slice from local sync. */
+export type PreferencesClusterRemoteDoc =
+  | DBPreferences
+  | DBQuickLinksDoc
+  | DBMonitorSettingsDoc
+  | DBMediaRouteFoldersDoc;
+
+/** Prefix for outline-scoped credits index docs. Legacy global index uses `_id: "credits"`. */
+export const CREDITS_OUTLINE_INDEX_PREFIX = "credits-outline-";
+
+export function getCreditsDocId(outlineId: string): string {
+  return CREDITS_OUTLINE_INDEX_PREFIX + encodeURIComponent(outlineId);
+}
+
+/** Pouch _id for a credit row scoped to an outline (logical `id` is still `CreditsInfo.id`). */
+export function getCreditDocId(outlineId: string, creditId: string): string {
+  return `${CREDITS_OUTLINE_INDEX_PREFIX}${encodeURIComponent(outlineId)}-credit-${creditId}`;
+}
+
+/** True if _id is an outline-scoped credit row (not the legacy `credit-${id}` format). */
+export function isOutlineScopedCreditDocId(id: string): boolean {
+  return id.startsWith(CREDITS_OUTLINE_INDEX_PREFIX) && id.includes("-credit-");
+}
+
 /** Index doc for credits: ordered credit ids. Each credit is stored as a separate doc (DBCredit). */
 export type DBCredits = {
   _id: string;
   _rev: string;
+  /** Set for outline-scoped index docs; omit on legacy `_id: "credits"`. */
+  outlineId?: string;
   creditIds: string[];
   createdAt?: string;
   updatedAt?: string;
@@ -641,10 +720,12 @@ export type DBCreditHistory = {
   docType?: DocType;
 };
 
-/** Single credit document. _id = `credit-${id}`. */
+/** Single credit document. Scoped: _id from getCreditDocId; legacy: `credit-${id}`. */
 export type DBCredit = CreditsInfo & {
   _id: string;
   _rev?: string;
+  /** Set for outline-scoped credit docs. */
+  outlineId?: string;
   createdAt?: string;
   updatedAt?: string;
   docType?: DocType;
@@ -679,12 +760,41 @@ export type MediaType = {
   source?: "cloudinary" | "mux";
   muxPlaybackId?: string;
   muxAssetId?: string;
+  /** App media library folder; root / unset = null */
+  folderId?: string | null;
 };
+
+export type MediaFolder = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Last media folder when editing a specific item kind on `/controller/item/...`. */
+export type ControllerItemMediaRouteKey =
+  | "controller-item-song"
+  | "controller-item-free"
+  | "controller-item-bible"
+  | "controller-item-timer"
+  | "controller-item-image"
+  | "controller-item-heading"
+  | "controller-item-unknown";
+
+/** Keys for persisting last-selected media folder per controller surface. */
+export type MediaRouteKey =
+  | "controller-default"
+  | ControllerItemMediaRouteKey
+  | "controller-overlays"
+  | "controller-settings"
+  | "overlay-controller";
 
 export type DBMedia = {
   _id: string;
   _rev: string;
   list: MediaType[];
+  folders?: MediaFolder[];
   createdAt?: string;
   updatedAt?: string;
   docType?: DocType;
@@ -781,6 +891,9 @@ export type DBDoc =
   | DBMedia
   | DBOverlay
   | DBPreferences
+  | DBQuickLinksDoc
+  | DBMonitorSettingsDoc
+  | DBMediaRouteFoldersDoc
   | DBCredits
   | DBCredit
   | DBCreditHistory

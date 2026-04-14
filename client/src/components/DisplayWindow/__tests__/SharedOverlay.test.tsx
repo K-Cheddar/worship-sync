@@ -37,7 +37,7 @@ const defaultProps = {
 describe("SharedOverlay", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.spyOn(console, "log").mockImplementation(() => {});
+    jest.spyOn(console, "log").mockImplementation(() => { });
     (checkMediaType as jest.Mock).mockImplementation(() => "image");
     (getImageFromVideoUrl as jest.Mock).mockImplementation((url: string) => url);
     (useCachedMediaUrl as jest.Mock).mockImplementation((url?: string) => url);
@@ -146,6 +146,27 @@ describe("SharedOverlay", () => {
       ),
     ).toHaveStyle({
       whiteSpace: "pre-line",
+    });
+  });
+
+  it("renders previous overlays above current overlays during cross-type handoffs", () => {
+    render(
+      <SharedOverlay
+        width={25}
+        styles={defaultParticipantOverlayStyles}
+        overlayInfo={{
+          id: "prev-participant",
+          type: "participant",
+          name: "Jane",
+        }}
+        needsPadding
+        isPrev
+        overlayType="participant"
+      />,
+    );
+
+    expect(screen.getByTestId("shared-overlay")).toHaveStyle({
+      zIndex: "2",
     });
   });
 

@@ -1,4 +1,4 @@
-import { useContext, useMemo } from "react";
+import { useContext, useMemo, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import Button from "../components/Button/Button";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -9,6 +9,7 @@ import { getAllowedRouteOrDefault } from "../utils/sessionRouteAccess";
 const AppEntry = () => {
   const location = useLocation();
   const context = useContext(GlobalInfoContext);
+  const [isRetryingAuthConnection, setIsRetryingAuthConnection] = useState(false);
   const requestedPath = getAuthRedirectPathnameFromState(location.state) ?? "";
   const authServerStatus = context?.authServerStatus;
   const isAuthConnectionNoticeVisible =
@@ -31,6 +32,19 @@ const AppEntry = () => {
 
   const guestDestination =
     requestedPath && requestedPath !== "/" ? requestedPath : "/controller";
+
+  const handleRetryAuthConnection = async () => {
+    if (!context || isRetryingAuthConnection) {
+      return;
+    }
+
+    setIsRetryingAuthConnection(true);
+    try {
+      await context.refreshAuthBootstrap();
+    } finally {
+      setIsRetryingAuthConnection(false);
+    }
+  };
 
   if (context?.sessionKind === "human") {
     return <Navigate to={requestedPath && requestedPath !== "/" ? requestedPath : "/home"} replace />;
@@ -106,7 +120,7 @@ const AppEntry = () => {
               </p>
               <p className="mt-1 text-yellow-100/90">
                 {hasStoredServerSession
-                  ? "This device may already be signed in or linked, but WorshipSync needs a connection to confirm it. You can retry or use the offline demo on this device."
+                  ? "WorshipSync can't verify this device with your church right now. You can retry or use the offline demo on this device."
                   : "Sign-in and device linking need a connection. You can still use the offline demo on this device."}
               </p>
               {authServerStatus === "offline" ? (
@@ -115,10 +129,12 @@ const AppEntry = () => {
                   variant="tertiary"
                   className="mt-3 border border-yellow-300/40 bg-yellow-400/10 text-yellow-50 hover:bg-yellow-400/20"
                   onClick={() => {
-                    void context?.refreshAuthBootstrap();
+                    void handleRetryAuthConnection();
                   }}
+                  disabled={isRetryingAuthConnection}
+                  isLoading={isRetryingAuthConnection}
                 >
-                  Try again
+                  {isRetryingAuthConnection ? "Trying again..." : "Try again"}
                 </Button>
               ) : null}
             </div>
@@ -145,7 +161,7 @@ const AppEntry = () => {
               >
                 <span className="text-lg font-semibold">Sign in</span>
                 <span className="text-sm font-normal text-gray-100">
-                  Sign in to your church with your email and password.
+                  Sign in to your church with Google, Microsoft, or email/password.
                 </span>
               </Button>
               {isServerBackedModeDisabled ? (

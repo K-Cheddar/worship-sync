@@ -1,21 +1,29 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 import { confirmPasswordReset, verifyPasswordResetCode } from "firebase/auth";
 import { Eye, EyeOff } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
+import PasswordStrengthIndicator from "../components/PasswordStrengthIndicator/PasswordStrengthIndicator";
 import { getHumanAuth } from "../firebase/apps";
 import { isFirebaseAuthError } from "../utils/authUserMessages";
 import {
-  FIREBASE_PASSWORD_MIN_LENGTH,
-  firebasePasswordRequirementsHint,
+  PASSWORD_CHARACTER_TYPES_MIN,
+  PASSWORD_POLICY_MIN_LENGTH,
+  getPasswordPolicyValidationMessage,
 } from "../utils/passwordRequirements";
 
 const REDIRECT_DELAY_SEC = 6;
 
 const getPasswordResetErrorMessage = (error: unknown) => {
   if (isFirebaseAuthError(error) && error.code === "auth/weak-password") {
-    return `Password must be at least ${FIREBASE_PASSWORD_MIN_LENGTH} characters. Add a mix of letters, numbers, or symbols.`;
+    return `Use at least ${PASSWORD_POLICY_MIN_LENGTH} characters and any ${PASSWORD_CHARACTER_TYPES_MIN} of: uppercase letter, lowercase letter, number, symbol.`;
   }
   if (error instanceof Error && error.message) {
     return error.message;
@@ -35,6 +43,7 @@ const PasswordReset = () => {
   const [redirectSecondsRemaining, setRedirectSecondsRemaining] = useState<
     number | null
   >(null);
+  const passwordStrengthDescId = useId();
 
   useEffect(() => {
     if (redirectSecondsRemaining === null) {
@@ -65,14 +74,9 @@ const PasswordReset = () => {
   };
 
   const validatePassword = () => {
-    if (!password) {
-      setPasswordFieldError("Enter your password.");
-      return false;
-    }
-    if (password.length < FIREBASE_PASSWORD_MIN_LENGTH) {
-      setPasswordFieldError(
-        `Use at least ${FIREBASE_PASSWORD_MIN_LENGTH} characters.`
-      );
+    const message = getPasswordPolicyValidationMessage(password);
+    if (message) {
+      setPasswordFieldError(message);
       return false;
     }
     return true;
@@ -118,7 +122,7 @@ const PasswordReset = () => {
   const isPostSuccess = redirectSecondsRemaining !== null;
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-gray-700 px-4 text-white">
+    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         <h1 className="text-2xl font-semibold">Reset password</h1>
         {!isPostSuccess ? (
@@ -171,10 +175,12 @@ const PasswordReset = () => {
               svgActionAriaLabel={showPassword ? "Hide password" : "Show password"}
               autoComplete="new-password"
               disabled={isSaving}
+              aria-describedby={passwordStrengthDescId}
             />
-            <p className="mt-2 text-xs leading-relaxed text-gray-400">
-              {firebasePasswordRequirementsHint}
-            </p>
+            <PasswordStrengthIndicator
+              id={passwordStrengthDescId}
+              password={password}
+            />
 
             <div className="mt-6 flex flex-col gap-2">
               <Button

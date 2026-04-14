@@ -8,6 +8,8 @@ type ToggleProps = {
   value: boolean;
   onChange: (value: boolean) => void;
   className?: string;
+  /** Merged onto the text label when `label` is set (e.g. `text-xs`). */
+  labelClassName?: string;
   id?: string;
   color?: string;
   icon?: LucideIcon;
@@ -18,6 +20,7 @@ const Toggle = ({
   value,
   onChange,
   className,
+  labelClassName,
   id: idProp,
   color,
   icon: Icon,
@@ -33,7 +36,10 @@ const Toggle = ({
     >
       {label && (
         <label
-          className="cursor-pointer text-sm font-semibold transition-colors duration-150 ease-out group-hover/toggle:text-white"
+          className={cn(
+            "cursor-pointer text-sm font-semibold transition-colors duration-150 ease-out group-hover/toggle:text-white",
+            labelClassName
+          )}
           htmlFor={id}
         >
           {typeof label === "string" ? `${label}:` : label}

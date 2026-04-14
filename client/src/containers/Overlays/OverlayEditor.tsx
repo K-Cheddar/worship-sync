@@ -2,24 +2,41 @@ import Button from "../../components/Button/Button";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
 import HistorySuggestField from "../../components/HistorySuggestField";
 import Input from "../../components/Input/Input";
-import { OverlayInfo, Option } from "../../types";
+import { OverlayFormatting, OverlayInfo, Option } from "../../types";
 import { SquarePen, Sparkles, Maximize2 } from "lucide-react";
 import Drawer from "../../components/Drawer";
 import StyleEditor from "../../components/StyleEditor";
 import cn from "classnames";
-import { useCallback, useContext, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+} from "react";
 import Select from "../../components/Select/Select";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { OverlayHistoryKey, OverlayType } from "../../types";
 import { putOverlayHistoryDoc } from "../../utils/dbUtils";
+import { useStore } from "react-redux";
 import { useWindowWidth, useDispatch, useSelector } from "../../hooks";
-import { updateOverlayHistoryEntry } from "../../store/overlaysSlice";
+import { useOverlayDraft } from "../../hooks/useOverlayDraft";
+import {
+  updateOverlayHistoryEntry,
+  updateOverlayInList,
+} from "../../store/overlaysSlice";
+import {
+  applyPendingRemoteOverlay,
+  discardPendingRemoteOverlay,
+} from "../../store/overlaySlice";
 import { useToast } from "../../context/toastContext";
 import {
   overlayBorderColorMap,
   overlayTypeLabelMap,
 } from "../../utils/itemTypeMaps";
 import { RootState } from "../../store/store";
+import { LastUpdatedByline } from "../../components/LastUpdatedByline/LastUpdatedByline";
 
 type OverlayEditorProps = {
   selectedOverlay: OverlayInfo;
@@ -46,6 +63,7 @@ const OverlayEditor = ({
   readOnly = false,
 }: OverlayEditorProps) => {
   const dispatch = useDispatch();
+  const store = useStore();
   const { db } = useContext(ControllerInfoContext) ?? {};
   const [isExpandedDrawerOpen, setIsExpandedDrawerOpen] = useState(false);
   const isDisabled = isOverlayLoading || !selectedOverlay.id || readOnly;
@@ -53,8 +71,114 @@ const OverlayEditor = ({
   const overlayHistory = useSelector(
     (state: RootState) => state.undoable.present.overlays.overlayHistory
   );
+  const hasRemoteUpdate = useSelector(
+    (state: RootState) => state.undoable.present.overlay.hasRemoteUpdate
+  );
   const { windowWidth: desktopWidth, windowRef: desktopRef } = useWindowWidth();
-  const { showToast } = useToast();
+  const { showToast, removeToast } = useToast();
+  const remoteUpdateToastIdRef = useRef<string | null>(null);
+
+  const handleKeepLocalEdits = useCallback(() => {
+    dispatch(discardPendingRemoteOverlay());
+  }, [dispatch]);
+
+  const { draft, patchDraft, flushDraft, mergeDraftLocal, replaceDraft } =
+    useOverlayDraft(
+      selectedOverlay,
+      handleOverlayUpdate,
+    );
+
+  const handleReloadRemote = useCallback(() => {
+    const pendingOverlay = (store.getState() as RootState).undoable.present
+      .overlay.pendingRemoteOverlay;
+    if (!pendingOverlay?.id) return;
+
+    // User explicitly accepted remote state; discard dirty local draft first.
+    replaceDraft(pendingOverlay);
+    dispatch(applyPendingRemoteOverlay());
+    const overlay = (store.getState() as RootState).undoable.present.overlay
+      .selectedOverlay;
+    if (overlay?.id) {
+      dispatch(updateOverlayInList(overlay));
+    }
+  }, [dispatch, replaceDraft, store]);
+
+  const handleFormattingChangeLocal = useCallback(
+    (formatting: OverlayFormatting) => {
+      handleFormattingChange(formatting);
+      mergeDraftLocal({ formatting });
+    },
+    [handleFormattingChange, mergeDraftLocal],
+  );
+
+  const handleSectionBlur = useCallback(
+    (e: FocusEvent<HTMLElement>) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+      flushDraft();
+    },
+    [flushDraft],
+  );
+
+  useEffect(() => {
+    if (!hasRemoteUpdate || readOnly) {
+      if (remoteUpdateToastIdRef.current && removeToast) {
+        removeToast(remoteUpdateToastIdRef.current);
+        remoteUpdateToastIdRef.current = null;
+      }
+      return;
+    }
+
+    if (remoteUpdateToastIdRef.current || !showToast || !removeToast) return;
+
+    remoteUpdateToastIdRef.current = showToast({
+      message: "Someone else updated this overlay.",
+      variant: "info",
+      persist: true,
+      showCloseButton: false,
+      children: (toastId) => (
+        <div className="mt-2 flex gap-2">
+          <Button
+            variant="primary"
+            className="text-sm"
+            onClick={() => {
+              handleKeepLocalEdits();
+              removeToast(toastId);
+              remoteUpdateToastIdRef.current = null;
+            }}
+          >
+            Keep Editing Mine
+          </Button>
+          <Button
+            variant="cta"
+            className="text-sm"
+            onClick={() => {
+              handleReloadRemote();
+              removeToast(toastId);
+              remoteUpdateToastIdRef.current = null;
+            }}
+          >
+            Use Their Changes
+          </Button>
+        </div>
+      ),
+    });
+  }, [
+    handleKeepLocalEdits,
+    handleReloadRemote,
+    hasRemoteUpdate,
+    readOnly,
+    removeToast,
+    showToast,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (remoteUpdateToastIdRef.current && removeToast) {
+        removeToast(remoteUpdateToastIdRef.current);
+        remoteUpdateToastIdRef.current = null;
+      }
+    };
+  }, [removeToast]);
 
   const historyValues = (key: string) => overlayHistory[key] ?? [];
 
@@ -91,19 +215,20 @@ const OverlayEditor = ({
   };
 
   const overlayPropertyHandler = () => (
-    <div className="border-t border-white/10 bg-transparent p-4">
+    <div
+      className="border-t border-white/10 bg-transparent p-4"
+      onBlurCapture={handleSectionBlur}
+    >
       <h3 className="text-lg font-semibold text-white mb-4">
         Overlay Properties
       </h3>
       <div className="space-y-3">
-        {selectedOverlay.type === "participant" && (
+        {draft.type === "participant" && (
           <>
             <HistorySuggestField
               label="Name"
-              value={selectedOverlay.name || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, name: val })
-              }
+              value={draft.name || ""}
+              onChange={(val) => patchDraft({ name: val })}
               historyValues={historyValues("participant.name")}
               onRemoveHistoryValue={removeFromHistory("participant.name")}
               multiline={false}
@@ -114,10 +239,8 @@ const OverlayEditor = ({
             />
             <HistorySuggestField
               label="Title"
-              value={selectedOverlay.title || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, title: val })
-              }
+              value={draft.title || ""}
+              onChange={(val) => patchDraft({ title: val })}
               historyValues={historyValues("participant.title")}
               onRemoveHistoryValue={removeFromHistory("participant.title")}
               multiline={false}
@@ -128,10 +251,8 @@ const OverlayEditor = ({
             />
             <HistorySuggestField
               label="Event"
-              value={selectedOverlay.event || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, event: val })
-              }
+              value={draft.event || ""}
+              onChange={(val) => patchDraft({ event: val })}
               historyValues={historyValues("participant.event")}
               onRemoveHistoryValue={removeFromHistory("participant.event")}
               multiline={false}
@@ -142,14 +263,12 @@ const OverlayEditor = ({
             />
           </>
         )}
-        {selectedOverlay.type === "stick-to-bottom" && (
+        {draft.type === "stick-to-bottom" && (
           <>
             <HistorySuggestField
               label="Heading"
-              value={selectedOverlay.heading || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, heading: val })
-              }
+              value={draft.heading || ""}
+              onChange={(val) => patchDraft({ heading: val })}
               historyValues={historyValues("stick-to-bottom.heading")}
               onRemoveHistoryValue={removeFromHistory("stick-to-bottom.heading")}
               multiline={false}
@@ -160,10 +279,8 @@ const OverlayEditor = ({
             />
             <HistorySuggestField
               label="Subheading"
-              value={selectedOverlay.subHeading || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, subHeading: val })
-              }
+              value={draft.subHeading || ""}
+              onChange={(val) => patchDraft({ subHeading: val })}
               historyValues={historyValues("stick-to-bottom.subHeading")}
               onRemoveHistoryValue={removeFromHistory("stick-to-bottom.subHeading")}
               multiline={false}
@@ -174,14 +291,12 @@ const OverlayEditor = ({
             />
           </>
         )}
-        {selectedOverlay.type === "qr-code" && (
+        {draft.type === "qr-code" && (
           <>
             <HistorySuggestField
               label="URL"
-              value={selectedOverlay.url || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, url: val })
-              }
+              value={draft.url || ""}
+              onChange={(val) => patchDraft({ url: val })}
               historyValues={historyValues("qr-code.url")}
               onRemoveHistoryValue={removeFromHistory("qr-code.url")}
               multiline={false}
@@ -192,10 +307,8 @@ const OverlayEditor = ({
             />
             <HistorySuggestField
               label="Description"
-              value={selectedOverlay.description || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, description: val })
-              }
+              value={draft.description || ""}
+              onChange={(val) => patchDraft({ description: val })}
               historyValues={historyValues("qr-code.description")}
               onRemoveHistoryValue={removeFromHistory("qr-code.description")}
               multiline
@@ -206,14 +319,12 @@ const OverlayEditor = ({
             />
           </>
         )}
-        {selectedOverlay.type === "image" && (
+        {draft.type === "image" && (
           <>
             <HistorySuggestField
               label="Name"
-              value={selectedOverlay.name || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, name: val })
-              }
+              value={draft.name || ""}
+              onChange={(val) => patchDraft({ name: val })}
               historyValues={historyValues("image.name")}
               onRemoveHistoryValue={removeFromHistory("image.name")}
               multiline={false}
@@ -224,13 +335,8 @@ const OverlayEditor = ({
             />
             <Input
               label="Image URL"
-              value={selectedOverlay.imageUrl || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  imageUrl: val as string,
-                })
-              }
+              value={draft.imageUrl || ""}
+              onChange={(val) => patchDraft({ imageUrl: val as string })}
               className="text-sm flex gap-2 items-center w-full"
               labelClassName="w-20"
             />
@@ -239,10 +345,9 @@ const OverlayEditor = ({
         <Input
           label="Duration"
           type="number"
-          value={selectedOverlay.duration || ""}
+          value={draft.duration || ""}
           onChange={(val) =>
-            handleOverlayUpdate({
-              ...selectedOverlay,
+            patchDraft({
               duration: Number(val),
             })
           }
@@ -284,51 +389,51 @@ const OverlayEditor = ({
             width={isMobile ? 70 : 25}
             displayType="stream"
             participantOverlayInfo={
-              selectedOverlay.type === "participant"
+              draft.type === "participant"
                 ? {
-                  name: selectedOverlay.name,
-                  title: selectedOverlay.title,
-                  event: selectedOverlay.event,
-                  duration: selectedOverlay.duration,
-                  type: selectedOverlay.type,
-                  id: selectedOverlay.id,
-                  formatting: selectedOverlay.formatting,
+                  name: draft.name,
+                  title: draft.title,
+                  event: draft.event,
+                  duration: draft.duration,
+                  type: draft.type,
+                  id: draft.id,
+                  formatting: draft.formatting,
                 }
                 : undefined
             }
             stbOverlayInfo={
-              selectedOverlay.type === "stick-to-bottom"
+              draft.type === "stick-to-bottom"
                 ? {
-                  heading: selectedOverlay.heading,
-                  subHeading: selectedOverlay.subHeading,
-                  duration: selectedOverlay.duration,
-                  type: selectedOverlay.type,
-                  id: selectedOverlay.id,
-                  formatting: selectedOverlay.formatting,
+                  heading: draft.heading,
+                  subHeading: draft.subHeading,
+                  duration: draft.duration,
+                  type: draft.type,
+                  id: draft.id,
+                  formatting: draft.formatting,
                 }
                 : undefined
             }
             qrCodeOverlayInfo={
-              selectedOverlay.type === "qr-code"
+              draft.type === "qr-code"
                 ? {
-                  url: selectedOverlay.url,
-                  description: selectedOverlay.description,
-                  duration: selectedOverlay.duration,
-                  type: selectedOverlay.type,
-                  id: selectedOverlay.id,
-                  formatting: selectedOverlay.formatting,
+                  url: draft.url,
+                  description: draft.description,
+                  duration: draft.duration,
+                  type: draft.type,
+                  id: draft.id,
+                  formatting: draft.formatting,
                 }
                 : undefined
             }
             imageOverlayInfo={
-              selectedOverlay.type === "image"
+              draft.type === "image"
                 ? {
-                  imageUrl: selectedOverlay.imageUrl,
-                  name: selectedOverlay.name,
-                  duration: selectedOverlay.duration,
-                  type: selectedOverlay.type,
-                  id: selectedOverlay.id,
-                  formatting: selectedOverlay.formatting,
+                  imageUrl: draft.imageUrl,
+                  name: draft.name,
+                  duration: draft.duration,
+                  type: draft.type,
+                  id: draft.id,
+                  formatting: draft.formatting,
                 }
                 : undefined
             }
@@ -340,16 +445,15 @@ const OverlayEditor = ({
           "scrollbar-variable flex min-w-0 w-full flex-col items-stretch gap-2 overflow-y-auto rounded-md border border-white/12 bg-transparent p-4",
           !selectedOverlay.id && "hidden"
         )}
+        onBlurCapture={handleSectionBlur}
       >
-        {selectedOverlay.type === "participant" && (
+        {draft.type === "participant" && (
           <>
             <HistorySuggestField
               {...commonInputProps}
               label="Name"
-              value={selectedOverlay.name || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, name: val })
-              }
+              value={draft.name || ""}
+              onChange={(val) => patchDraft({ name: val })}
               historyValues={historyValues("participant.name")}
               onRemoveHistoryValue={removeFromHistory("participant.name")}
               multiline={false}
@@ -357,10 +461,8 @@ const OverlayEditor = ({
             <HistorySuggestField
               {...commonInputProps}
               label="Title"
-              value={selectedOverlay.title || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, title: val })
-              }
+              value={draft.title || ""}
+              onChange={(val) => patchDraft({ title: val })}
               historyValues={historyValues("participant.title")}
               onRemoveHistoryValue={removeFromHistory("participant.title")}
               multiline={false}
@@ -368,25 +470,21 @@ const OverlayEditor = ({
             <HistorySuggestField
               {...commonInputProps}
               label="Event"
-              value={selectedOverlay.event || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, event: val })
-              }
+              value={draft.event || ""}
+              onChange={(val) => patchDraft({ event: val })}
               historyValues={historyValues("participant.event")}
               onRemoveHistoryValue={removeFromHistory("participant.event")}
               multiline={false}
             />
           </>
         )}
-        {selectedOverlay.type === "stick-to-bottom" && (
+        {draft.type === "stick-to-bottom" && (
           <>
             <HistorySuggestField
               {...commonInputProps}
               label="Heading"
-              value={selectedOverlay.heading || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, heading: val })
-              }
+              value={draft.heading || ""}
+              onChange={(val) => patchDraft({ heading: val })}
               historyValues={historyValues("stick-to-bottom.heading")}
               onRemoveHistoryValue={removeFromHistory("stick-to-bottom.heading")}
               multiline={false}
@@ -394,25 +492,21 @@ const OverlayEditor = ({
             <HistorySuggestField
               {...commonInputProps}
               label="Subheading"
-              value={selectedOverlay.subHeading || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, subHeading: val })
-              }
+              value={draft.subHeading || ""}
+              onChange={(val) => patchDraft({ subHeading: val })}
               historyValues={historyValues("stick-to-bottom.subHeading")}
               onRemoveHistoryValue={removeFromHistory("stick-to-bottom.subHeading")}
               multiline={false}
             />
           </>
         )}
-        {selectedOverlay.type === "qr-code" && (
+        {draft.type === "qr-code" && (
           <>
             <HistorySuggestField
               {...commonInputProps}
               label="URL"
-              value={selectedOverlay.url || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, url: val })
-              }
+              value={draft.url || ""}
+              onChange={(val) => patchDraft({ url: val })}
               historyValues={historyValues("qr-code.url")}
               onRemoveHistoryValue={removeFromHistory("qr-code.url")}
               multiline={false}
@@ -420,25 +514,21 @@ const OverlayEditor = ({
             <HistorySuggestField
               {...commonInputProps}
               label="Info"
-              value={selectedOverlay.description || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, description: val })
-              }
+              value={draft.description || ""}
+              onChange={(val) => patchDraft({ description: val })}
               historyValues={historyValues("qr-code.description")}
               onRemoveHistoryValue={removeFromHistory("qr-code.description")}
               multiline={false}
             />
           </>
         )}
-        {selectedOverlay.type === "image" && (
+        {draft.type === "image" && (
           <>
             <HistorySuggestField
               {...commonInputProps}
               label="Name"
-              value={selectedOverlay.name || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({ ...selectedOverlay, name: val })
-              }
+              value={draft.name || ""}
+              onChange={(val) => patchDraft({ name: val })}
               historyValues={historyValues("image.name")}
               onRemoveHistoryValue={removeFromHistory("image.name")}
               multiline={false}
@@ -446,26 +536,24 @@ const OverlayEditor = ({
             <Input
               {...commonInputProps}
               label="Image URL"
-              value={selectedOverlay.imageUrl || ""}
-              onChange={(val) =>
-                handleOverlayUpdate({
-                  ...selectedOverlay,
-                  imageUrl: val as string,
-                })
+              value={draft.imageUrl || ""}
+              onChange={(val) => patchDraft({ imageUrl: val as string })}
+              onClick={() =>
+                showToast(
+                  "Pick an image in Media, then Set Image Overlay.",
+                )
               }
-              onClick={() => showToast(`Select from the available media. ${isMobile ? "Long press and Set Image Overlay." : "Right click and Set Image Overlay."}`)}
             />
           </>
         )}
         <Input
           {...commonInputProps}
           label="Duration"
-          value={selectedOverlay.duration || ""}
+          value={draft.duration || ""}
           type="number"
           onChange={(val) =>
-            handleOverlayUpdate({
-              ...selectedOverlay,
-              duration: val as number,
+            patchDraft({
+              duration: Number(val),
             })
           }
           data-ignore-undo="true"
@@ -473,10 +561,9 @@ const OverlayEditor = ({
         <Select
           label="Type"
           options={overlayTypeOptions}
-          value={selectedOverlay.type || "participant"}
+          value={draft.type || "participant"}
           onChange={(value) =>
-            handleOverlayUpdate({
-              ...selectedOverlay,
+            patchDraft({
               type: value as OverlayType,
             })
           }
@@ -485,26 +572,33 @@ const OverlayEditor = ({
           selectClassName="flex-1"
           labelClassName="w-20"
         />
-        <div className="flex gap-2 w-full">
-          <Button
-            className="flex-1 justify-center text-sm"
-            svg={SquarePen}
-            color="#22d3ee"
-            onClick={() => setIsStyleDrawerOpen(true)}
-            disabled={isDisabled}
-          >
-            Edit Style
-          </Button>
-          <Button
-            className="flex-1 justify-center text-sm"
-            variant="secondary"
-            svg={Sparkles}
-            color="#22d3ee"
-            onClick={() => setIsTemplateDrawerOpen(true)}
-            disabled={isDisabled}
-          >
-            Templates
-          </Button>
+        <div className="flex w-full flex-col gap-2">
+          <div className="flex w-full gap-2">
+            <Button
+              className="flex-1 justify-center text-sm"
+              svg={SquarePen}
+              color="#22d3ee"
+              onClick={() => setIsStyleDrawerOpen(true)}
+              disabled={isDisabled}
+            >
+              Edit Style
+            </Button>
+            <Button
+              className="flex-1 justify-center text-sm"
+              variant="secondary"
+              svg={Sparkles}
+              color="#22d3ee"
+              onClick={() => setIsTemplateDrawerOpen(true)}
+              disabled={isDisabled}
+            >
+              Templates
+            </Button>
+          </div>
+          <LastUpdatedByline
+            className="text-white/60"
+            updatedBy={selectedOverlay.updatedBy}
+            updatedAt={selectedOverlay.updatedAt}
+          />
         </div>
       </section>
 
@@ -531,51 +625,51 @@ const OverlayEditor = ({
                 displayType="stream"
                 width={isMobile ? 95 : desktopWidth}
                 participantOverlayInfo={
-                  selectedOverlay.type === "participant"
+                  draft.type === "participant"
                     ? {
-                      name: selectedOverlay.name,
-                      title: selectedOverlay.title,
-                      event: selectedOverlay.event,
-                      duration: selectedOverlay.duration,
-                      type: selectedOverlay.type,
-                      id: selectedOverlay.id,
-                      formatting: selectedOverlay.formatting,
+                      name: draft.name,
+                      title: draft.title,
+                      event: draft.event,
+                      duration: draft.duration,
+                      type: draft.type,
+                      id: draft.id,
+                      formatting: draft.formatting,
                     }
                     : undefined
                 }
                 stbOverlayInfo={
-                  selectedOverlay.type === "stick-to-bottom"
+                  draft.type === "stick-to-bottom"
                     ? {
-                      heading: selectedOverlay.heading,
-                      subHeading: selectedOverlay.subHeading,
-                      duration: selectedOverlay.duration,
-                      type: selectedOverlay.type,
-                      id: selectedOverlay.id,
-                      formatting: selectedOverlay.formatting,
+                      heading: draft.heading,
+                      subHeading: draft.subHeading,
+                      duration: draft.duration,
+                      type: draft.type,
+                      id: draft.id,
+                      formatting: draft.formatting,
                     }
                     : undefined
                 }
                 qrCodeOverlayInfo={
-                  selectedOverlay.type === "qr-code"
+                  draft.type === "qr-code"
                     ? {
-                      url: selectedOverlay.url,
-                      description: selectedOverlay.description,
-                      duration: selectedOverlay.duration,
-                      type: selectedOverlay.type,
-                      id: selectedOverlay.id,
-                      formatting: selectedOverlay.formatting,
+                      url: draft.url,
+                      description: draft.description,
+                      duration: draft.duration,
+                      type: draft.type,
+                      id: draft.id,
+                      formatting: draft.formatting,
                     }
                     : undefined
                 }
                 imageOverlayInfo={
-                  selectedOverlay.type === "image"
+                  draft.type === "image"
                     ? {
-                      imageUrl: selectedOverlay.imageUrl,
-                      name: selectedOverlay.name,
-                      duration: selectedOverlay.duration,
-                      type: selectedOverlay.type,
-                      id: selectedOverlay.id,
-                      formatting: selectedOverlay.formatting,
+                      imageUrl: draft.imageUrl,
+                      name: draft.name,
+                      duration: draft.duration,
+                      type: draft.type,
+                      id: draft.id,
+                      formatting: draft.formatting,
                     }
                     : undefined
                 }
@@ -590,9 +684,9 @@ const OverlayEditor = ({
               Style Editor
             </h3>
             <StyleEditor
-              formatting={selectedOverlay.formatting || {}}
-              onChange={handleFormattingChange}
-              overlayType={selectedOverlay.type}
+              formatting={draft.formatting || {}}
+              onChange={handleFormattingChangeLocal}
+              overlayType={draft.type}
               className="p-2 flex-1 lg:overflow-y-auto"
             />
           </div>

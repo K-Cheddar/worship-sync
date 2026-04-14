@@ -1,15 +1,21 @@
 import { BrowserWindow, shell } from "electron";
 import {
   createDisplayWindow,
+  isLikelyAuthPopupCompletionUrl,
   setupSharedSessionWindowOpenHandler,
   shouldUseSharedSessionChildWindow,
 } from "./windowHelpers";
 
 jest.mock("electron", () => ({
-  BrowserWindow: jest.fn().mockImplementation(() => ({
-    loadURL: jest.fn(),
-    loadFile: jest.fn(),
-  })),
+  BrowserWindow: Object.assign(
+    jest.fn().mockImplementation(() => ({
+      loadURL: jest.fn(),
+      loadFile: jest.fn(),
+    })),
+    {
+      fromWebContents: jest.fn(() => null),
+    },
+  ),
   shell: {
     openExternal: jest.fn(),
   },
@@ -29,7 +35,7 @@ describe("createDisplayWindow", () => {
         webPreferences: expect.objectContaining({
           backgroundThrottling: false,
         }),
-      })
+      }),
     );
   });
 });
@@ -39,8 +45,8 @@ describe("shouldUseSharedSessionChildWindow", () => {
     expect(
       shouldUseSharedSessionChildWindow(
         "file:///C:/app/index.html#/home",
-        "file:///C:/app/index.html#/monitor"
-      )
+        "file:///C:/app/index.html#/monitor",
+      ),
     ).toBe(true);
   });
 
@@ -48,8 +54,37 @@ describe("shouldUseSharedSessionChildWindow", () => {
     expect(
       shouldUseSharedSessionChildWindow(
         "file:///C:/app/index.html#/home",
-        "https://github.com/K-Cheddar/worship-sync/releases/latest"
-      )
+        "https://github.com/K-Cheddar/worship-sync/releases/latest",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("isLikelyAuthPopupCompletionUrl", () => {
+  it("returns true for Firebase auth handler completion URL", () => {
+    expect(
+      isLikelyAuthPopupCompletionUrl(
+        "file:///C:/app/index.html#/login",
+        "https://worshipsync.firebaseapp.com/__/auth/handler?code=abc123&state=xyz",
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true when popup navigates to about:blank", () => {
+    expect(
+      isLikelyAuthPopupCompletionUrl(
+        "file:///C:/app/index.html#/login",
+        "about:blank",
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false for intermediate Microsoft login pages", () => {
+    expect(
+      isLikelyAuthPopupCompletionUrl(
+        "file:///C:/app/index.html#/login",
+        "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+      ),
     ).toBe(false);
   });
 });
@@ -64,11 +99,12 @@ describe("setupSharedSessionWindowOpenHandler", () => {
     const webContents = {
       getURL: () => "file:///C:/app/index.html#/home",
       setWindowOpenHandler,
+      on: jest.fn(),
     } as any;
 
     setupSharedSessionWindowOpenHandler(
       webContents,
-      "C:/app/dist-electron/main"
+      "C:/app/dist-electron/main",
     );
 
     const handler = setWindowOpenHandler.mock.calls[0][0];
@@ -82,7 +118,7 @@ describe("setupSharedSessionWindowOpenHandler", () => {
             partition: "persist:worshipsync",
           }),
         }),
-      })
+      }),
     );
     expect(shell.openExternal).not.toHaveBeenCalled();
   });
@@ -92,11 +128,12 @@ describe("setupSharedSessionWindowOpenHandler", () => {
     const webContents = {
       getURL: () => "file:///C:/app/index.html#/home",
       setWindowOpenHandler,
+      on: jest.fn(),
     } as any;
 
     setupSharedSessionWindowOpenHandler(
       webContents,
-      "C:/app/dist-electron/main"
+      "C:/app/dist-electron/main",
     );
 
     const handler = setWindowOpenHandler.mock.calls[0][0];
@@ -106,7 +143,42 @@ describe("setupSharedSessionWindowOpenHandler", () => {
 
     expect(result).toEqual({ action: "deny" });
     expect(shell.openExternal).toHaveBeenCalledWith(
-      "https://github.com/K-Cheddar/worship-sync/releases/latest"
+      "https://github.com/K-Cheddar/worship-sync/releases/latest",
     );
+  });
+
+  it("allows Firebase auth popups inside Electron with hardened options", () => {
+    const setWindowOpenHandler = jest.fn();
+    const webContents = {
+      getURL: () => "file:///C:/app/index.html#/home",
+      setWindowOpenHandler,
+      on: jest.fn(),
+    } as any;
+
+    setupSharedSessionWindowOpenHandler(
+      webContents,
+      "C:/app/dist-electron/main",
+    );
+
+    const handler = setWindowOpenHandler.mock.calls[0][0];
+    const result = handler({
+      url: "https://worshipsync.firebaseapp.com/__/auth/handler",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        action: "allow",
+        overrideBrowserWindowOptions: expect.objectContaining({
+          webPreferences: expect.objectContaining({
+            partition: "persist:worshipsync",
+            preload: undefined,
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+          }),
+        }),
+      }),
+    );
+    expect(shell.openExternal).not.toHaveBeenCalled();
   });
 });

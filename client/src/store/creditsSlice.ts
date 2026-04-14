@@ -9,10 +9,10 @@ function sortHistoryLines(lines: string[]): string[] {
   return [...lines].sort(historySort);
 }
 
-/** Pure merge of visible credits' lines into a history map. Used by reducer and by Publish click handler. */
-export function mergePublishedCreditsIntoHistory(
+/** Pure merge of visible credits' lines into a history map. Used by reducer and debounced save. */
+export function mergeVisibleCreditsIntoHistory(
   creditsHistory: Record<string, string[]>,
-  visibleCredits: CreditsInfo[]
+  visibleCredits: CreditsInfo[],
 ): Record<string, string[]> {
   const next = { ...creditsHistory };
   for (const credit of visibleCredits) {
@@ -26,6 +26,43 @@ export function mergePublishedCreditsIntoHistory(
     next[key] = sortHistoryLines([...new Set([...existing, ...lines])]);
   }
   return next;
+}
+
+/** Unique lines from all headings in `creditsHistory`, sorted and deduped by trimmed lowercase text. */
+export function flattenCreditsHistoryLines(
+  creditsHistory: Record<string, string[]>,
+): string[] {
+  const byKey = new Map<string, string>();
+  for (const lines of Object.values(creditsHistory)) {
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t) continue;
+      const key = t.toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, t);
+    }
+  }
+  return sortHistoryLines([...byKey.values()]);
+}
+
+/** Remove one line (trimmed) from every heading that contains it. */
+export function applyRemoveLineFromCreditsHistoryMap(
+  creditsHistory: Record<string, string[]>,
+  line: string,
+): Record<string, string[]> {
+  const trimmed = line.trim();
+  if (!trimmed) return creditsHistory;
+  const next: Record<string, string[]> = {};
+  let changed = false;
+  for (const [h, lines] of Object.entries(creditsHistory)) {
+    const filtered = lines.filter((l) => l.trim() !== trimmed);
+    if (filtered.length === lines.length) {
+      next[h] = lines;
+    } else {
+      changed = true;
+      if (filtered.length > 0) next[h] = sortHistoryLines(filtered);
+    }
+  }
+  return changed ? next : creditsHistory;
 }
 
 const dummyList = [
@@ -251,8 +288,9 @@ const dummyList = [
 
 type CreditsState = {
   list: CreditsInfo[];
-  publishedList: CreditsInfo[];
-  /** Per-heading history of unique lines from published credits. */
+  /** Visible rows mirrored for RTDB live display (synced under `credits/publishedList` in Firebase). */
+  liveCredits: CreditsInfo[];
+  /** Per-heading history of unique lines merged from visible credits. */
   creditsHistory: Record<string, string[]>;
   initialList: string[];
   isLoading: boolean;
@@ -265,7 +303,7 @@ type CreditsState = {
 
 const initialState: CreditsState = {
   list: [],
-  publishedList: [],
+  liveCredits: [],
   creditsHistory: {},
   initialList: [],
   isLoading: true,
@@ -310,12 +348,13 @@ export const creditsSlice = createSlice({
     updateCreditsList: (state, action: PayloadAction<CreditsInfo[]>) => {
       state.list = action.payload;
     },
-    updatePublishedCreditsList: (state) => {
+    /** Sets liveCredits from visible rows and merges lines into shared creditsHistory (debounced / autosave). */
+    syncVisibleCreditsMirrorAndHistory: (state) => {
       const visible = state.list.filter((c) => !c.hidden);
-      state.publishedList = visible.map((credit) => credit);
-      state.creditsHistory = mergePublishedCreditsIntoHistory(
+      state.liveCredits = visible.map((credit) => ({ ...credit }));
+      state.creditsHistory = mergeVisibleCreditsIntoHistory(
         state.creditsHistory ?? {},
-        visible
+        visible,
       );
     },
     initiateCreditsList: (state, action: PayloadAction<CreditsInfo[]>) => {
@@ -330,17 +369,17 @@ export const creditsSlice = createSlice({
       state.initialList = state.list.map((credit) => credit.id);
       state.isInitialized = true;
     },
-    initiatePublishedCreditsList: (
+    initiateLiveCredits: (
       state,
       action: PayloadAction<CreditsInfo[]>,
     ) => {
       if (action.payload.length === 0) {
-        state.publishedList = [];
+        state.liveCredits = [];
         return;
       }
-      state.publishedList = action.payload.map((credit) => ({
+      state.liveCredits = action.payload.map((credit) => ({
         ...credit,
-        id: generateRandomId(),
+        id: credit.id ?? generateRandomId(),
       }));
     },
     updateCreditsListFromRemote: (
@@ -356,15 +395,15 @@ export const creditsSlice = createSlice({
         id: credit.id || generateRandomId(),
       }));
     },
-    updatePublishedCreditsListFromRemote: (
+    updateLiveCreditsFromRemote: (
       state,
       action: PayloadAction<CreditsInfo[]>,
     ) => {
       if (action.payload.length === 0) {
-        state.publishedList = [];
+        state.liveCredits = [];
         return;
       }
-      state.publishedList = action.payload.map((credit) => ({
+      state.liveCredits = action.payload.map((credit) => ({
         ...credit,
         id: credit.id || generateRandomId(),
       }));
@@ -401,7 +440,7 @@ export const creditsSlice = createSlice({
         Object.entries(raw).map(([heading, lines]) => [
           heading,
           sortHistoryLines(lines),
-        ])
+        ]),
       );
     },
     deleteCreditsHistoryEntry: (state, action: PayloadAction<string>) => {
@@ -413,6 +452,15 @@ export const creditsSlice = createSlice({
     ) => {
       const { heading, lines } = action.payload;
       state.creditsHistory[heading] = sortHistoryLines(lines);
+    },
+    removeCreditsHistoryLineEverywhere: (
+      state,
+      action: PayloadAction<string>,
+    ) => {
+      state.creditsHistory = applyRemoveLineFromCreditsHistoryMap(
+        state.creditsHistory,
+        action.payload,
+      );
     },
     forceUpdate: () => {},
   },
@@ -426,16 +474,17 @@ export const {
   initiateCreditsScene,
   setCreditsScene,
   updateCreditsList: updateList,
-  updatePublishedCreditsList,
+  syncVisibleCreditsMirrorAndHistory,
   deleteCredit,
   updateCredit,
   initiateCreditsList,
   initiateCreditsHistory,
   deleteCreditsHistoryEntry,
   updateCreditsHistoryEntry,
-  initiatePublishedCreditsList,
+  removeCreditsHistoryLineEverywhere,
+  initiateLiveCredits,
   updateCreditsListFromRemote,
-  updatePublishedCreditsListFromRemote,
+  updateLiveCreditsFromRemote,
   updateInitialList,
   setIsLoading,
   setScheduleName,

@@ -1,17 +1,19 @@
-import { Plus, ZoomIn, ZoomOut, Trash2, Copy } from "lucide-react";
+import { ListChecks, Plus, Trash2, Copy, ZoomIn, ZoomOut } from "lucide-react";
 import Button from "../../components/Button/Button";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import {
+  clearBackgroundTargetSelection,
+  clearBackgroundTargetSlideIdsOnly,
   removeSlide,
+  setBackgroundTargetSlideIds,
+  setBackgroundTargetRangeAnchorId,
+  setMobileBackgroundTargetSelectMode,
   setSelectedSlide,
+  toggleBackgroundTargetSlideId,
   updateSlides,
 } from "../../store/itemSlice";
 import {
-  increaseSlides,
-  decreaseSlides,
   setSlides,
-  increaseSlidesMobile,
-  decreaseSlidesMobile,
   setSlidesMobile,
   setMonitorTimerId,
 } from "../../store/preferencesSlice";
@@ -55,6 +57,8 @@ import { cn } from "../../utils/cnHelper";
 import { updateTimer } from "../../store/timersSlice";
 import { DEFAULT_FONT_PX } from "../../constants";
 import { ensureSlidesHaveMonitorBandFormatting } from "../../utils/overflow";
+import { inclusiveRangeIndicesFromAnchor } from "../../utils/backgroundTargetResolution";
+import { Slider } from "../../components/ui/Slider";
 
 type SizeConfig = {
   borderWidth: string;
@@ -74,7 +78,13 @@ const ItemSlides = () => {
     _id,
     shouldSendTo,
     isEditMode,
+    backgroundTargetSlideIds: backgroundTargetSlideIdsRaw,
+    backgroundTargetRangeAnchorId,
+    mobileBackgroundTargetSelectMode: mobileBgSelectModeRaw,
   } = useSelector((state: RootState) => state.undoable.present.item);
+
+  const backgroundTargetSlideIds = backgroundTargetSlideIdsRaw ?? [];
+  const mobileBackgroundTargetSelectMode = mobileBgSelectModeRaw ?? false;
 
   const { projectorInfo, monitorInfo, streamInfo } = useSelector(
     (state: RootState) => state.presentation
@@ -148,6 +158,12 @@ const ItemSlides = () => {
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
   const size = type === "timer" ? Math.min(_size, 3) : _size;
 
+  const slidesGridColsMin = 1;
+  const slidesGridColsMax = type === "timer" ? 3 : 7;
+  /** Slider is inverted so moving right = zoom in (fewer columns, larger thumbnails). */
+  const slideZoomSliderValue =
+    slidesGridColsMax + slidesGridColsMin - size;
+
   const sizeConfig: SizeConfig = useMemo(() => {
     const configs: Record<number, SizeConfig> = {
       7: {
@@ -202,6 +218,20 @@ const ItemSlides = () => {
 
   const dispatch = useDispatch();
   const location = useLocation();
+  const setSlideGridSize = useCallback(
+    (nextSize: number) => {
+      const clampedSize = Math.min(
+        slidesGridColsMax,
+        Math.max(slidesGridColsMin, nextSize),
+      );
+      if (isMobile) {
+        dispatch(setSlidesMobile(clampedSize));
+      } else {
+        dispatch(setSlides(clampedSize));
+      }
+    },
+    [dispatch, isMobile, slidesGridColsMax, slidesGridColsMin],
+  );
 
   /** Latest selected slide; read in selectSlide before dispatch so transitionDirection uses the prior index. */
   const selectedSlideRef = useRef(selectedSlide);
@@ -241,6 +271,7 @@ const ItemSlides = () => {
 
   const selectSlide = useCallback(
     (index: number) => {
+      dispatch(setBackgroundTargetRangeAnchorId(slides[index]?.id ?? null));
       const prevSelected = selectedSlideRef.current;
       dispatch(setSelectedSlide(index));
       const slide = slides[index];
@@ -369,6 +400,57 @@ const ItemSlides = () => {
       _id,
       monitorReadySlides,
     ]
+  );
+
+  const onSlideGridClick = useCallback(
+    (e: React.MouseEvent, index: number) => {
+      if (!canEdit) {
+        selectSlide(index);
+        return;
+      }
+      if (mobileBackgroundTargetSelectMode) {
+        e.preventDefault();
+        const id = slides[index]?.id;
+        if (id) dispatch(toggleBackgroundTargetSlideId(id));
+        return;
+      }
+      if (e.shiftKey) {
+        e.preventDefault();
+        const indices = inclusiveRangeIndicesFromAnchor(
+          slides,
+          backgroundTargetRangeAnchorId ?? null,
+          index,
+          selectedSlide,
+        );
+        dispatch(
+          setBackgroundTargetSlideIds(
+            indices.map((i) => slides[i]?.id).filter(Boolean) as string[],
+          ),
+        );
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const id = slides[index]?.id;
+        if (id) dispatch(toggleBackgroundTargetSlideId(id));
+        return;
+      }
+      // Plain click: focus one slide and drop background subset selection.
+      if (backgroundTargetSlideIds.length > 0) {
+        dispatch(clearBackgroundTargetSelection());
+      }
+      selectSlide(index);
+    },
+    [
+      canEdit,
+      mobileBackgroundTargetSelectMode,
+      slides,
+      backgroundTargetRangeAnchorId,
+      selectedSlide,
+      backgroundTargetSlideIds.length,
+      dispatch,
+      selectSlide,
+    ],
   );
 
   const advanceSlide = useCallback(() => {
@@ -622,56 +704,130 @@ const ItemSlides = () => {
         onDragStart={canEdit ? onDragStart : undefined}
       >
         <div className="flex h-full min-h-0 flex-col overflow-hidden bg-homepage-canvas">
-          <div className="mb-2 flex w-full shrink-0 gap-1 border-b border-white/20 bg-black/60 px-2">
-            <Button
-              variant="tertiary"
-              svg={ZoomOut}
-              onClick={() => {
-                if (isMobile) {
-                  dispatch(increaseSlidesMobile());
-                  if (type === "timer") {
-                    dispatch(setSlidesMobile(size + 1));
-                  }
-                } else {
-                  dispatch(increaseSlides());
-                  if (type === "timer") {
-                    dispatch(setSlides(size + 1));
-                  }
-                }
-              }}
-            />
-            <Button
-              variant="tertiary"
-              svg={ZoomIn}
-              onClick={() => {
-                if (isMobile) {
-                  dispatch(decreaseSlidesMobile());
-                  if (type === "timer") {
-                    dispatch(setSlidesMobile(size - 1));
-                  }
-                } else {
-                  dispatch(decreaseSlides());
-                  if (type === "timer") {
-                    dispatch(setSlides(size - 1));
-                  }
-                }
-              }}
-            />
-            {type === "free" && canEdit && (
-              <>
+          <div className="mb-2 flex w-full shrink-0 flex-col border-b border-white/20 bg-black/60">
+            <div className="flex min-w-0 flex-1 items-center gap-2 px-2">
+              <div className="flex shrink-0 items-center gap-1">
                 <Button
                   variant="tertiary"
-                  className="ml-auto"
-                  svg={Plus}
-                  onClick={() => addSlide()}
+                  className="min-h-0 h-7 w-7 justify-center p-0"
+                  svg={ZoomOut}
+                  title="Zoom out"
+                  aria-label="Zoom out slide thumbnails"
+                  disabled={size >= slidesGridColsMax}
+                  onClick={() => setSlideGridSize(size + 1)}
                 />
-                <Button variant="tertiary" svg={Copy} onClick={copySlide} />
+                <div className="w-36 shrink-0">
+                  <Slider
+                    className="w-full"
+                    value={[slideZoomSliderValue]}
+                    min={slidesGridColsMin}
+                    max={slidesGridColsMax}
+                    step={1}
+                    onValueChange={(v: number[]) => {
+                      const raw = v[0];
+                      if (raw == null) return;
+                      setSlideGridSize(
+                        slidesGridColsMax + slidesGridColsMin - raw,
+                      );
+                    }}
+                    aria-label="Slide thumbnail zoom"
+                  />
+                </div>
                 <Button
                   variant="tertiary"
-                  svg={Trash2}
-                  onClick={() => dispatch(removeSlide({ index: selectedSlide }))}
+                  className="min-h-0 h-7 w-7 justify-center p-0"
+                  svg={ZoomIn}
+                  title="Zoom in"
+                  aria-label="Zoom in slide thumbnails"
+                  disabled={size <= slidesGridColsMin}
+                  onClick={() => setSlideGridSize(size - 1)}
                 />
-              </>
+              </div>
+              {type === "free" && canEdit && (
+                <>
+                  <Button
+                    variant="tertiary"
+                    className="ml-auto"
+                    svg={Plus}
+                    onClick={() => addSlide()}
+                  />
+                  <Button variant="tertiary" svg={Copy} onClick={copySlide} />
+                  <Button
+                    variant="tertiary"
+                    svg={Trash2}
+                    onClick={() =>
+                      dispatch(removeSlide({ index: selectedSlide }))
+                    }
+                  />
+                </>
+              )}
+              {canEdit && hasSlides && (
+                <Button
+                  variant="tertiary"
+                  className={cn(
+                    type === "free" ? "" : "ml-auto",
+                    mobileBackgroundTargetSelectMode && "bg-white/15",
+                  )}
+                  svg={ListChecks}
+                  title={
+                    mobileBackgroundTargetSelectMode
+                      ? "Exit slide selection mode"
+                      : "Select slides for background targets"
+                  }
+                  onClick={() => {
+                    if (mobileBackgroundTargetSelectMode) {
+                      dispatch(clearBackgroundTargetSelection());
+                    } else {
+                      dispatch(setMobileBackgroundTargetSelectMode(true));
+                    }
+                  }}
+                >
+                  {isMobile ? "Select" : "Select slides"}
+                </Button>
+              )}
+            </div>
+            {canEdit && hasSlides && (
+              <div
+                className={cn(
+                  "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+                  mobileBackgroundTargetSelectMode
+                    ? "grid-rows-[1fr]"
+                    : "grid-rows-[0fr]",
+                )}
+              >
+                <div
+                  className="min-h-0 overflow-hidden"
+                  inert={mobileBackgroundTargetSelectMode ? undefined : true}
+                >
+                  <div className="flex items-center justify-between gap-2 border-t border-white/10 px-2 py-1.5">
+                    <span className="text-xs text-gray-400">
+                      {backgroundTargetSlideIds.length} slide
+                      {backgroundTargetSlideIds.length === 1 ? "" : "s"}{" "}
+                      selected
+                    </span>
+                    <span className="flex shrink-0 gap-1">
+                      <Button
+                        variant="tertiary"
+                        className="min-h-7 h-7 px-2 text-xs"
+                        onClick={() =>
+                          dispatch(clearBackgroundTargetSlideIdsOnly())
+                        }
+                      >
+                        Clear
+                      </Button>
+                      <Button
+                        variant="tertiary"
+                        className="min-h-7 h-7 px-2 text-xs"
+                        onClick={() =>
+                          dispatch(clearBackgroundTargetSelection())
+                        }
+                      >
+                        Done
+                      </Button>
+                    </span>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
           {isLoading ? (
@@ -708,6 +864,10 @@ const ItemSlides = () => {
                     borderWidth={sizeConfig.borderWidth}
                     hSize={sizeConfig.hSize}
                     canEdit={canEdit}
+                    isBackgroundTargetSelected={backgroundTargetSlideIds.includes(
+                      slide.id,
+                    )}
+                    onSlideGridClick={onSlideGridClick}
                   />
                 ))}
               </SortableContext>

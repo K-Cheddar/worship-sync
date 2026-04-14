@@ -32,7 +32,7 @@ const RecoveryConfirm = () => {
   };
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-gray-700 px-4 text-white">
+    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         <h1 className="text-2xl font-semibold">Approve admin recovery</h1>
         <p className="mt-2 text-sm text-gray-200">

@@ -213,4 +213,28 @@ describe("DisplayParticipantOverlay", () => {
       ),
     ).toBe(true);
   });
+
+  it("keeps current overlay dependencies stable when no previous overlay is provided", () => {
+    const overlayInfo = {
+      id: "stable-p",
+      type: "participant" as const,
+      name: "Stable Speaker",
+      formatting: {},
+    };
+
+    const { rerender } = render(
+      <DisplayParticipantOverlay width={25} participantOverlayInfo={overlayInfo} />,
+    );
+
+    const firstCurrentConfig = (useGSAP as jest.Mock).mock.calls[0][1];
+
+    rerender(
+      <DisplayParticipantOverlay width={25} participantOverlayInfo={overlayInfo} />,
+    );
+
+    const secondCurrentConfig = (useGSAP as jest.Mock).mock.calls[2][1];
+
+    expect(firstCurrentConfig.dependencies).toEqual([overlayInfo]);
+    expect(secondCurrentConfig.dependencies).toEqual([overlayInfo]);
+  });
 });

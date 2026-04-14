@@ -146,6 +146,15 @@ export const forgotPassword = async (email: string) =>
     body: JSON.stringify({ email }),
   });
 
+export const updateHumanProfile = async (body: { displayName: string }) =>
+  apiFetch<{
+    success: boolean;
+    user: { uid: string; email: string; displayName: string };
+  }>("api/auth/profile", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
 export const getSharedDataToken = async ({
   workstationToken,
   displayToken,

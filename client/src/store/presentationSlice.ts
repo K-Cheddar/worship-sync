@@ -94,6 +94,17 @@ const hasActiveStreamOverlay = (s: Presentation) => {
   );
 };
 
+const hasParticipantOverlayData = (overlay?: OverlayInfo) =>
+  Boolean(overlay?.name || overlay?.title || overlay?.event);
+
+const hasStbOverlayData = (overlay?: OverlayInfo) =>
+  Boolean(overlay?.heading || overlay?.subHeading);
+
+const hasQrOverlayData = (overlay?: OverlayInfo) =>
+  Boolean(overlay?.url || overlay?.description);
+
+const hasImageOverlayData = (overlay?: OverlayInfo) => Boolean(overlay?.imageUrl);
+
 const getNextTimestamp = (...times: Array<number | undefined>) => {
   const highestKnownTime = times.reduce<number>((highest, time) => {
     if (time == null || !Number.isFinite(time)) return highest;
@@ -162,16 +173,19 @@ const preserveClearedStreamOverlaysForTransition = (
   keep: "participant" | "stb" | "qr" | "image",
 ) => {
   const { streamInfo, prevStreamInfo } = state;
-  if (keep !== "participant") {
+  if (
+    keep !== "participant" &&
+    hasParticipantOverlayData(streamInfo.participantOverlayInfo)
+  ) {
     prevStreamInfo.participantOverlayInfo = streamInfo.participantOverlayInfo;
   }
-  if (keep !== "stb") {
+  if (keep !== "stb" && hasStbOverlayData(streamInfo.stbOverlayInfo)) {
     prevStreamInfo.stbOverlayInfo = streamInfo.stbOverlayInfo;
   }
-  if (keep !== "qr") {
+  if (keep !== "qr" && hasQrOverlayData(streamInfo.qrCodeOverlayInfo)) {
     prevStreamInfo.qrCodeOverlayInfo = streamInfo.qrCodeOverlayInfo;
   }
-  if (keep !== "image") {
+  if (keep !== "image" && hasImageOverlayData(streamInfo.imageOverlayInfo)) {
     prevStreamInfo.imageOverlayInfo = streamInfo.imageOverlayInfo;
   }
 };
@@ -338,7 +352,9 @@ export const presentationSlice = createSlice({
       action: PayloadAction<OverlayInfo>,
     ) => {
       const t = action.payload.time ?? Date.now();
-      state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
+      if (hasImageOverlayData(state.streamInfo.imageOverlayInfo)) {
+        state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
+      }
       state.streamInfo.imageOverlayInfo = {
         ...action.payload,
         time: t,
@@ -352,8 +368,10 @@ export const presentationSlice = createSlice({
       action: PayloadAction<OverlayInfo>,
     ) => {
       const t = action.payload.time ?? Date.now();
-      state.prevStreamInfo.participantOverlayInfo =
-        state.streamInfo.participantOverlayInfo;
+      if (hasParticipantOverlayData(state.streamInfo.participantOverlayInfo)) {
+        state.prevStreamInfo.participantOverlayInfo =
+          state.streamInfo.participantOverlayInfo;
+      }
       state.streamInfo.participantOverlayInfo = {
         ...action.payload,
         time: t,
@@ -371,7 +389,9 @@ export const presentationSlice = createSlice({
       action: PayloadAction<OverlayInfo>,
     ) => {
       const t = action.payload.time ?? Date.now();
-      state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
+      if (hasStbOverlayData(state.streamInfo.stbOverlayInfo)) {
+        state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
+      }
       state.streamInfo.stbOverlayInfo = {
         ...action.payload,
         time: t,
@@ -385,8 +405,10 @@ export const presentationSlice = createSlice({
       action: PayloadAction<OverlayInfo>,
     ) => {
       const t = action.payload.time ?? Date.now();
-      state.prevStreamInfo.qrCodeOverlayInfo =
-        state.streamInfo.qrCodeOverlayInfo;
+      if (hasQrOverlayData(state.streamInfo.qrCodeOverlayInfo)) {
+        state.prevStreamInfo.qrCodeOverlayInfo =
+          state.streamInfo.qrCodeOverlayInfo;
+      }
       state.streamInfo.qrCodeOverlayInfo = {
         ...action.payload,
         time: t,

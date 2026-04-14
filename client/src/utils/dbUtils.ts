@@ -11,9 +11,13 @@ import {
   Box,
   CreditsInfo,
   CREDIT_HISTORY_ID_PREFIX,
+  CREDITS_OUTLINE_INDEX_PREFIX,
   DBAllItems,
   DBCredit,
+  DBCredits,
   DBCreditHistory,
+  getCreditDocId,
+  getCreditsDocId,
   DBItem,
   DBItemListDetails,
   DBItemLists,
@@ -27,7 +31,21 @@ import {
   getOverlayHistoryDocId,
   OVERLAY_HISTORY_ID_PREFIX,
   DBDoc,
+  DBMedia,
+  DBMediaRouteFoldersDoc,
+  DBMonitorSettingsDoc,
+  DBPreferences,
+  DBQuickLinksDoc,
+  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  MONITOR_SETTINGS_POUCH_ID,
+  PREFERENCES_POUCH_ID,
+  QUICK_LINKS_POUCH_ID,
+  MediaRouteKey,
+  MonitorSettingsType,
+  PreferencesType,
+  QuickLinkType,
 } from "../types";
+import { normalizeMediaDoc } from "./mediaDocUtils";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
 
@@ -152,6 +170,35 @@ export const getOverlayUsageByList = async (
   return usage;
 };
 
+/**
+ * Returns a map of credit row id -> item list names whose credits index includes that id.
+ */
+export const getCreditUsageByList = async (
+  db: PouchDB.Database,
+): Promise<Map<string, string[]>> => {
+  const usage = new Map<string, string[]>();
+  const allItemLists: DBItemLists | undefined = await db.get("ItemLists");
+  const itemLists = allItemLists?.itemLists || [];
+  for (const itemList of itemLists) {
+    try {
+      const details: DBItemListDetails = await db.get(itemList._id);
+      const name = details?.name ?? itemList.name;
+      const indexDoc = (await db.get(
+        getCreditsDocId(itemList._id),
+      )) as DBCredits;
+      const creditIds = indexDoc?.creditIds ?? [];
+      for (const id of creditIds) {
+        const existing = usage.get(id) ?? [];
+        if (!existing.includes(name)) existing.push(name);
+        usage.set(id, existing);
+      }
+    } catch {
+      // missing credits index or list doc
+    }
+  }
+  return usage;
+};
+
 export const getOverlaysByIds = async (
   db: PouchDB.Database,
   overlayIds: string[],
@@ -206,7 +253,7 @@ export const getAllCreditsHistory = async (
   return map;
 };
 
-/** Persist credit history docs for the given headings. Call after dispatch(updatePublishedCreditsList()) so creditsHistory in state is updated. */
+/** Persist credit history docs for the given headings. Call after credits mirror/history sync (debounced save) so creditsHistory in state is updated. */
 export const putCreditHistoryDocs = async (
   db: PouchDB.Database,
   creditsHistory: Record<string, string[]>,
@@ -385,10 +432,11 @@ export const removeOverlayHistoryDoc = async (
 
 export const getCreditsByIds = async (
   db: PouchDB.Database,
+  outlineId: string,
   creditIds: string[],
 ): Promise<CreditsInfo[]> => {
   if (creditIds.length === 0) return [];
-  const keys = creditIds.map((id) => `credit-${id}`);
+  const keys = creditIds.map((id) => getCreditDocId(outlineId, id));
   const result = (await db.allDocs({
     keys,
     include_docs: true,
@@ -410,15 +458,115 @@ export const getCreditsByIds = async (
     .filter((c): c is CreditsInfo => c != null);
 };
 
+/** All outline-scoped credit row docs in PouchDB, including orphans removed from the credits index. */
+export const getAllCreditDocsForOutline = async (
+  db: PouchDB.Database,
+  outlineId: string,
+): Promise<DBCredit[]> => {
+  const prefix = `${CREDITS_OUTLINE_INDEX_PREFIX}${encodeURIComponent(outlineId)}-credit-`;
+  const result = (await db.allDocs({
+    include_docs: true,
+    startkey: prefix,
+    endkey: `${prefix}\uffff`,
+  })) as { rows: { doc?: DBCredit }[] };
+  const docs: DBCredit[] = [];
+  for (const row of result.rows) {
+    const doc = row.doc;
+    if (!doc || doc.id == null) continue;
+    if (doc.docType != null && doc.docType !== "credit") continue;
+    docs.push(doc);
+  }
+  return docs;
+};
+
+/**
+ * If legacy `_id: "credits"` exists and this outline has no scoped index yet, copy the index
+ * and each `credit-${id}` doc into outline-scoped docs. Leaves legacy docs in place.
+ */
+export const migrateLegacyCreditsToActiveOutlineIfNeeded = async (
+  db: PouchDB.Database,
+  outlineId: string,
+): Promise<void> => {
+  const scopedId = getCreditsDocId(outlineId);
+  try {
+    await db.get(scopedId);
+    return;
+  } catch (e: unknown) {
+    if ((e as { status?: number }).status !== 404) throw e;
+  }
+
+  let legacyIndex: DBCredits;
+  try {
+    legacyIndex = (await db.get("credits")) as DBCredits;
+  } catch (e: unknown) {
+    if ((e as { status?: number }).status !== 404) throw e;
+    return;
+  }
+
+  const creditIds = legacyIndex.creditIds ?? [];
+  const now = new Date().toISOString();
+
+  await db.put({
+    _id: scopedId,
+    outlineId,
+    creditIds: [...creditIds],
+    createdAt: now,
+    updatedAt: now,
+    docType: "credits",
+  } as unknown as DBCredits);
+
+  for (const creditId of creditIds) {
+    try {
+      const legacy = (await db.get(`credit-${creditId}`)) as DBCredit;
+      const newId = getCreditDocId(outlineId, creditId);
+      const { _id: _legacyId, _rev: _legacyRev, ...rest } = legacy;
+      await db.put({
+        ...rest,
+        _id: newId,
+        outlineId,
+        docType: "credit",
+        updatedAt: now,
+      } as DBCredit);
+    } catch {
+      // missing legacy credit doc — skip
+    }
+  }
+};
+
+/** Ensure an empty outline-scoped credits index exists when there was no legacy doc to migrate. */
+export const ensureCreditsIndexDoc = async (
+  db: PouchDB.Database,
+  outlineId: string,
+): Promise<void> => {
+  const scopedId = getCreditsDocId(outlineId);
+  try {
+    await db.get(scopedId);
+    return;
+  } catch (e: unknown) {
+    if ((e as { status?: number }).status !== 404) throw e;
+  }
+  const now = new Date().toISOString();
+  await db.put({
+    _id: scopedId,
+    outlineId,
+    creditIds: [],
+    createdAt: now,
+    updatedAt: now,
+    docType: "credits",
+  } as unknown as DBCredits);
+};
+
 /**
  * Persist a single credit to the db (get-then-put; does not touch _rev). Returns the doc for broadcasting, or null on error.
  */
 export const putCreditDoc = async (
   db: PouchDB.Database,
+  outlineId: string,
   credit: CreditsInfo,
 ): Promise<DBCredit | null> => {
   try {
-    const existing: DBCredit = await db.get(`credit-${credit.id}`);
+    const docId = getCreditDocId(outlineId, credit.id);
+    const existing: DBCredit = await db.get(docId);
     existing.heading = credit.heading;
     existing.text = credit.text;
     existing.hidden = credit.hidden;
@@ -834,6 +982,290 @@ export const migrateFontSizesToDefaults = async (
 
 const ITEM_TYPES = ["song", "free", "bible", "timer", "image"] as const;
 
+function isPouchNotFound(e: unknown): boolean {
+  return (e as { status?: number })?.status === 404;
+}
+
+const DEFAULT_MONITOR_SETTINGS: MonitorSettingsType = {
+  showClock: true,
+  showTimer: true,
+  showNextSlide: false,
+  clockFontSize: 75,
+  timerFontSize: 75,
+  timerId: null,
+};
+
+export function isLegacyPreferencesDoc(
+  doc: Record<string, unknown>,
+): doc is Record<string, unknown> & {
+  preferences: PreferencesType;
+  quickLinks: QuickLinkType[];
+  monitorSettings: MonitorSettingsType;
+  mediaRouteFolders?: Partial<Record<MediaRouteKey, string | null>>;
+} {
+  return (
+    Object.prototype.hasOwnProperty.call(doc, "quickLinks") &&
+    Array.isArray(doc.quickLinks)
+  );
+}
+
+async function pouchGetOrNull(
+  db: PouchDB.Database,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    return (await db.get(id)) as Record<string, unknown>;
+  } catch (e) {
+    if (isPouchNotFound(e)) return null;
+    throw e;
+  }
+}
+
+export type PreferencesBundle = {
+  preferences: PreferencesType;
+  quickLinks: QuickLinkType[];
+  monitorSettings: MonitorSettingsType;
+  mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
+};
+
+/**
+ * Load preferences cluster from Pouch. Uses split docs when present and falls back to
+ * legacy monolithic fields for older databases.
+ */
+export const loadPreferencesBundle = async (
+  db: PouchDB.Database,
+): Promise<PreferencesBundle> => {
+  const prefDoc = await pouchGetOrNull(db, PREFERENCES_POUCH_ID);
+  if (!prefDoc || typeof prefDoc.preferences !== "object") {
+    throw new Error("Missing or invalid preferences document");
+  }
+  const legacy = isLegacyPreferencesDoc(prefDoc);
+
+  const qlDoc = (await pouchGetOrNull(
+    db,
+    QUICK_LINKS_POUCH_ID,
+  )) as DBQuickLinksDoc | null;
+  const monDoc = (await pouchGetOrNull(
+    db,
+    MONITOR_SETTINGS_POUCH_ID,
+  )) as DBMonitorSettingsDoc | null;
+  const foldDoc = (await pouchGetOrNull(
+    db,
+    MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  )) as DBMediaRouteFoldersDoc | null;
+
+  let warnedMissing = false;
+  const warnOnce = () => {
+    if (warnedMissing) return;
+    warnedMissing = true;
+    console.warn(
+      "[loadPreferencesBundle] Missing or invalid split preference docs. Falling back to legacy fields/defaults. Run migrateSplitPreferencesDocs(db) once per database.",
+    );
+  };
+
+  const quickLinksFromSplit =
+    qlDoc && Array.isArray(qlDoc.quickLinks) ? qlDoc.quickLinks : null;
+  const monitorFromSplit =
+    monDoc &&
+    monDoc.monitorSettings &&
+    typeof monDoc.monitorSettings === "object"
+      ? monDoc.monitorSettings
+      : null;
+  const foldersFromSplit =
+    foldDoc &&
+    foldDoc.mediaRouteFolders &&
+    typeof foldDoc.mediaRouteFolders === "object"
+      ? foldDoc.mediaRouteFolders
+      : null;
+
+  let quickLinks: QuickLinkType[];
+  if (quickLinksFromSplit) {
+    quickLinks = quickLinksFromSplit;
+  } else if (legacy) {
+    quickLinks = (prefDoc.quickLinks as QuickLinkType[]) ?? [];
+  } else {
+    warnOnce();
+    quickLinks = [];
+  }
+
+  let monitorSettings: MonitorSettingsType;
+  if (monitorFromSplit) {
+    monitorSettings = monitorFromSplit as MonitorSettingsType;
+  } else if (legacy) {
+    monitorSettings =
+      (prefDoc.monitorSettings as MonitorSettingsType) ??
+      DEFAULT_MONITOR_SETTINGS;
+  } else {
+    warnOnce();
+    monitorSettings = { ...DEFAULT_MONITOR_SETTINGS };
+  }
+
+  let mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
+  if (foldersFromSplit) {
+    mediaRouteFolders = foldersFromSplit as Partial<
+      Record<MediaRouteKey, string | null>
+    >;
+  } else if (legacy) {
+    mediaRouteFolders = (prefDoc.mediaRouteFolders ?? {}) as Partial<
+      Record<MediaRouteKey, string | null>
+    >;
+  } else {
+    warnOnce();
+    mediaRouteFolders = {};
+  }
+
+  return {
+    preferences: prefDoc.preferences as PreferencesType,
+    quickLinks,
+    monitorSettings,
+    mediaRouteFolders,
+  };
+};
+
+export type MigrateSplitPreferencesDocsResult = {
+  status: "skipped" | "migrated" | "ensured_subdocs";
+  puts: number;
+  message?: string;
+};
+
+/**
+ * Split legacy monolithic `preferences` into four docs. Idempotent: no-op if already slim.
+ * Run manually once per database (e.g. from devtools).
+ */
+export const migrateSplitPreferencesDocs = async (
+  db: PouchDB.Database,
+): Promise<MigrateSplitPreferencesDocsResult> => {
+  if (!db) return { status: "skipped", puts: 0, message: "No db" };
+  let puts = 0;
+  try {
+    const raw = (await db.get(PREFERENCES_POUCH_ID)) as Record<
+      string,
+      unknown
+    > & { _rev: string };
+    const now = new Date().toISOString();
+
+    if (!isLegacyPreferencesDoc(raw)) {
+      let ensured = 0;
+      const ensureDoc = async <T extends DBDoc>(
+        id: string,
+        factory: () => Omit<T, "_rev">,
+      ) => {
+        try {
+          await db.get(id);
+        } catch (e) {
+          if (!isPouchNotFound(e)) throw e;
+          await db.put({ ...factory(), _id: id } as T);
+          puts++;
+          ensured++;
+        }
+      };
+
+      await ensureDoc<DBQuickLinksDoc>(QUICK_LINKS_POUCH_ID, () => ({
+        _id: QUICK_LINKS_POUCH_ID,
+        quickLinks: [],
+        createdAt: now,
+        updatedAt: now,
+        docType: "quickLinks",
+      }));
+
+      await ensureDoc<DBMonitorSettingsDoc>(MONITOR_SETTINGS_POUCH_ID, () => ({
+        _id: MONITOR_SETTINGS_POUCH_ID,
+        monitorSettings: { ...DEFAULT_MONITOR_SETTINGS },
+        createdAt: now,
+        updatedAt: now,
+        docType: "monitorSettings",
+      }));
+
+      await ensureDoc<DBMediaRouteFoldersDoc>(
+        MEDIA_ROUTE_FOLDERS_POUCH_ID,
+        () => ({
+          _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
+          mediaRouteFolders: {},
+          createdAt: now,
+          updatedAt: now,
+          docType: "mediaRouteFolders",
+        }),
+      );
+
+      return {
+        status: ensured > 0 ? "ensured_subdocs" : "skipped",
+        puts,
+        message:
+          ensured > 0
+            ? `Created ${ensured} missing subsidiary doc(s).`
+            : "Already split; subsidiary docs present.",
+      };
+    }
+
+    const preferences = raw.preferences as PreferencesType;
+    const quickLinks = (raw.quickLinks as QuickLinkType[]) ?? [];
+    const monitorSettings =
+      (raw.monitorSettings as MonitorSettingsType) ?? DEFAULT_MONITOR_SETTINGS;
+    const mediaRouteFolders = (raw.mediaRouteFolders ?? {}) as Partial<
+      Record<MediaRouteKey, string | null>
+    >;
+
+    const putOrCreate = async <T extends DBDoc>(doc: Omit<T, "_rev"> | T) => {
+      const id = (doc as { _id: string })._id;
+      try {
+        const prev = (await db.get(id)) as T & { _rev: string };
+        await db.put({
+          ...prev,
+          ...doc,
+          _rev: prev._rev,
+          updatedAt: now,
+        } as T);
+      } catch (e) {
+        if (!isPouchNotFound(e)) throw e;
+        await db.put({
+          ...doc,
+          createdAt: now,
+          updatedAt: now,
+        } as T);
+      }
+      puts++;
+    };
+
+    await putOrCreate<DBQuickLinksDoc>({
+      _id: QUICK_LINKS_POUCH_ID,
+      quickLinks,
+      docType: "quickLinks",
+    });
+
+    await putOrCreate<DBMonitorSettingsDoc>({
+      _id: MONITOR_SETTINGS_POUCH_ID,
+      monitorSettings,
+      docType: "monitorSettings",
+    });
+
+    await putOrCreate<DBMediaRouteFoldersDoc>({
+      _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
+      mediaRouteFolders,
+      docType: "mediaRouteFolders",
+    });
+
+    const slimPrefs: DBPreferences = {
+      _id: PREFERENCES_POUCH_ID,
+      _rev: raw._rev,
+      preferences,
+      updatedAt: now,
+      docType: "preferences",
+      ...(typeof raw.createdAt === "string"
+        ? { createdAt: raw.createdAt }
+        : {}),
+    };
+    await db.put(slimPrefs);
+    puts++;
+
+    return { status: "migrated", puts, message: "Split preferences cluster." };
+  } catch (e) {
+    if (isPouchNotFound(e)) {
+      return { status: "skipped", puts: 0, message: "No preferences doc" };
+    }
+    throw e;
+  }
+};
+
 function inferDocType(
   doc: PouchDB.Core.IdMeta & Record<string, unknown>,
 ): DocType {
@@ -841,7 +1273,14 @@ function inferDocType(
   if (id === "allItems") return "allItems";
   if (id === "ItemLists") return "itemLists";
   if (id === "credits") return "credits";
+  if (typeof id === "string" && id.startsWith(CREDITS_OUTLINE_INDEX_PREFIX)) {
+    if (id.includes("-credit-")) return "credit";
+    return "credits";
+  }
   if (id === "media") return "media";
+  if (id === QUICK_LINKS_POUCH_ID) return "quickLinks";
+  if (id === MONITOR_SETTINGS_POUCH_ID) return "monitorSettings";
+  if (id === MEDIA_ROUTE_FOLDERS_POUCH_ID) return "mediaRouteFolders";
   if (id === "preferences") return "preferences";
   if (id === "overlay-templates") return "overlayTemplates";
   if (id === "services") return "services";
@@ -895,12 +1334,11 @@ export const migrateDocTypes = async (
         continue;
       }
       try {
-        const updated: DBDoc = {
+        await db.put({
           ...doc,
           docType: inferred,
           updatedAt: new Date().toISOString(),
-        };
-        await db.put(updated);
+        } as DBDoc);
         updatedCount++;
         console.log(`migrateDocTypes: set docType="${inferred}" on ${doc._id}`);
       } catch (e) {
@@ -915,5 +1353,38 @@ export const migrateDocTypes = async (
   } catch (error) {
     console.error("migrateDocTypes failed", error);
     throw error;
+  }
+};
+
+/**
+ * Legacy `media` docs may omit `folders`. Persist `folders: []` and normalized list
+ * so replication and older clients stay consistent.
+ */
+export const migrateMediaLibraryFoldersFieldIfNeeded = async (
+  db: PouchDB.Database,
+): Promise<boolean> => {
+  if (!db) return false;
+  try {
+    const media = (await db.get("media")) as DBMedia;
+    let changed = false;
+    if (!Array.isArray(media.folders)) {
+      media.folders = [];
+      changed = true;
+    }
+    const { list, folders } = normalizeMediaDoc(media);
+    if (JSON.stringify(media.list) !== JSON.stringify(list)) {
+      media.list = list;
+      changed = true;
+    }
+    if (JSON.stringify(media.folders) !== JSON.stringify(folders)) {
+      media.folders = folders;
+      changed = true;
+    }
+    if (!changed) return false;
+    media.updatedAt = new Date().toISOString();
+    await db.put(media);
+    return true;
+  } catch {
+    return false;
   }
 };

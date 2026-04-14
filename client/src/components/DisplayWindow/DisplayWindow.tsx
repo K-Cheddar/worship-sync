@@ -92,17 +92,16 @@ const getPrevOverlayVisibleUntilMs = ({
   prevTime,
   prevDuration,
   prevTotalVisibleMs,
-  currentHasData,
   currentTime,
 }: {
   prevHasData: boolean;
   prevTime?: number;
   prevDuration?: number;
   prevTotalVisibleMs: number | null;
-  currentHasData: boolean;
   currentTime?: number;
 }) => {
-  if (!prevHasData || currentHasData || currentTime == null) return null;
+  if (!prevHasData || currentTime == null) return null;
+  if (prevTime != null && currentTime <= prevTime) return null;
   const prevVisibleUntilMs = getOverlayVisibleUntilMs({
     hasData: prevHasData,
     time: prevTime,
@@ -149,7 +148,6 @@ const isPrevOverlayVisibleAtMs = ({
   prevTime,
   prevDuration,
   prevTotalVisibleMs,
-  currentHasData,
   currentTime,
   nowMs,
 }: {
@@ -157,7 +155,6 @@ const isPrevOverlayVisibleAtMs = ({
   prevTime?: number;
   prevDuration?: number;
   prevTotalVisibleMs: number | null;
-  currentHasData: boolean;
   currentTime?: number;
   nowMs: number;
 }) => {
@@ -166,7 +163,6 @@ const isPrevOverlayVisibleAtMs = ({
     prevTime,
     prevDuration,
     prevTotalVisibleMs,
-    currentHasData,
     currentTime,
   });
 
@@ -407,7 +403,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevTotalVisibleMs: getParticipantOverlayTotalVisibleMs(
             prevParticipantOverlayInfo,
           ),
-          currentHasData: hasParticipantOverlayData(participantOverlayInfo),
           currentTime: participantOverlayInfo?.time,
         }),
         getPrevOverlayVisibleUntilMs({
@@ -415,7 +410,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevTime: prevStbOverlayInfo?.time,
           prevDuration: prevStbOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
-          currentHasData: hasStbOverlayData(stbOverlayInfo),
           currentTime: stbOverlayInfo?.time,
         }),
         getPrevOverlayVisibleUntilMs({
@@ -423,7 +417,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevTime: prevQrCodeOverlayInfo?.time,
           prevDuration: prevQrCodeOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
-          currentHasData: hasQrOverlayData(qrCodeOverlayInfo),
           currentTime: qrCodeOverlayInfo?.time,
         }),
         getPrevOverlayVisibleUntilMs({
@@ -431,7 +424,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevTime: prevImageOverlayInfo?.time,
           prevDuration: prevImageOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
-          currentHasData: hasImageOverlayData(imageOverlayInfo),
           currentTime: imageOverlayInfo?.time,
         }),
       ].filter((value): value is number => value != null);
@@ -478,7 +470,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevTotalVisibleMs: getParticipantOverlayTotalVisibleMs(
             prevParticipantOverlayInfo,
           ),
-          currentHasData: hasParticipantOverlayData(participantOverlayInfo),
           currentTime: participantOverlayInfo?.time,
           nowMs: streamOverlayNowMs,
         })
@@ -512,7 +503,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevTime: prevStbOverlayInfo?.time,
           prevDuration: prevStbOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
-          currentHasData: hasStbOverlayData(stbOverlayInfo),
           currentTime: stbOverlayInfo?.time,
           nowMs: streamOverlayNowMs,
         })
@@ -542,7 +532,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevTime: prevQrCodeOverlayInfo?.time,
           prevDuration: prevQrCodeOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
-          currentHasData: hasQrOverlayData(qrCodeOverlayInfo),
           currentTime: qrCodeOverlayInfo?.time,
           nowMs: streamOverlayNowMs,
         })
@@ -572,7 +561,6 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevTime: prevImageOverlayInfo?.time,
           prevDuration: prevImageOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
-          currentHasData: hasImageOverlayData(imageOverlayInfo),
           currentTime: imageOverlayInfo?.time,
           nowMs: streamOverlayNowMs,
         })

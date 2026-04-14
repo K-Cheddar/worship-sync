@@ -80,6 +80,32 @@ describe("itemSlice", () => {
       );
     });
 
+    it("setActiveItem clears background target UI state", () => {
+      const store = createStore({
+        item: {
+          ...itemSlice.getInitialState(),
+          _id: "prev",
+          type: "song",
+          backgroundTargetSlideIds: ["a", "b"],
+          backgroundTargetRangeAnchorId: "a",
+          mobileBackgroundTargetSelectMode: true,
+        },
+      });
+
+      store.dispatch(
+        itemSlice.actions.setActiveItem({
+          name: "Next",
+          _id: "next",
+          type: "song",
+        }),
+      );
+
+      const state = store.getState().item;
+      expect(state.backgroundTargetSlideIds).toEqual([]);
+      expect(state.backgroundTargetRangeAnchorId).toBeNull();
+      expect(state.mobileBackgroundTargetSelectMode).toBe(false);
+    });
+
     it("setActiveItem resets transient item flags", () => {
       const store = createStore({
         item: {

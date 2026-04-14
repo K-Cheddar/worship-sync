@@ -452,6 +452,7 @@ app.post("/api/auth/resend-email-code", authHandlers.resendEmailCode);
 app.post("/api/auth/verify-email-code", authHandlers.verifyEmailCode);
 app.post("/api/auth/logout", authHandlers.logout);
 app.post("/api/auth/forgot-password", authHandlers.forgotPassword);
+app.post("/api/auth/profile", authHandlers.updateOwnProfile);
 app.get("/api/devices/human", authHandlers.listTrustedHumanDevices);
 app.post(
   "/api/devices/human/:deviceId/revoke",
@@ -463,10 +464,7 @@ app.post(
   "/api/churches/:churchId/recovery-email",
   authHandlers.updateRecoveryEmail,
 );
-app.post(
-  "/api/churches/:churchId/branding",
-  authHandlers.updateChurchBranding,
-);
+app.post("/api/churches/:churchId/branding", authHandlers.updateChurchBranding);
 app.post("/api/churches/:churchId/invites", authHandlers.createInvite);
 app.get("/api/invites/preview", authHandlers.getInvitePreview);
 app.post("/api/invites/accept", authHandlers.acceptInvite);
@@ -508,10 +506,7 @@ app.post(
   "/api/workstations/:deviceId/operator",
   authHandlers.updateWorkstationOperator,
 );
-app.post(
-  "/api/workstations/:deviceId/unlink",
-  authHandlers.unlinkWorkstation,
-);
+app.post("/api/workstations/:deviceId/unlink", authHandlers.unlinkWorkstation);
 app.post(
   "/api/churches/:churchId/display-pairings",
   authHandlers.createDisplayPairing,
@@ -1203,12 +1198,10 @@ app.post("/api/login", async (req, res) => {
     });
   } catch (error) {
     console.error("Sign-in error:", error);
-    res
-      .status(500)
-      .json({
-        success: false,
-        errorMessage: `Sign in failed: ${error.message}`,
-      });
+    res.status(500).json({
+      success: false,
+      errorMessage: `Sign in failed: ${error.message}`,
+    });
   }
 });
 

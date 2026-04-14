@@ -52,8 +52,10 @@ jest.mock("../../../store/itemSlice", () => ({
 }));
 
 jest.mock("../../../store/preferencesSlice", () => ({
-  increaseFormattedLyrics: jest.fn(() => ({ type: "preferences/increaseFormattedLyrics" })),
-  decreaseFormattedLyrics: jest.fn(() => ({ type: "preferences/decreaseFormattedLyrics" })),
+  setFormattedLyrics: jest.fn((n: number) => ({
+    type: "preferences/setFormattedLyrics",
+    payload: n,
+  })),
 }));
 
 jest.mock("../../../utils/overflow", () => ({
@@ -190,6 +192,9 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
             },
           ],
         },
+        preferences: {
+          formattedLyricsPerRow: 3,
+        },
       },
     },
   };
@@ -206,6 +211,10 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
         item: {
           ...base.undoable.present.item,
           ...((overrides as any).undoable?.present?.item || {}),
+        },
+        preferences: {
+          ...base.undoable.present.preferences,
+          ...((overrides as any).undoable?.present?.preferences || {}),
         },
       },
     },

@@ -1,0 +1,25 @@
+import { render, screen } from "@testing-library/react";
+import { LastUpdatedByline } from "./LastUpdatedByline";
+
+describe("LastUpdatedByline", () => {
+  it("renders name and formatted time when both are set", () => {
+    render(
+      <LastUpdatedByline
+        updatedBy="pat@uid"
+        updatedAt="2020-05-01T15:30:00.000Z"
+      />,
+    );
+    expect(screen.getByText(/Updated .* · pat@uid/)).toBeInTheDocument();
+  });
+
+  it("renders time-only line when updatedBy is missing", () => {
+    render(<LastUpdatedByline updatedAt="2020-05-01T15:30:00.000Z" />);
+    expect(screen.getByText(/^Updated /)).toBeInTheDocument();
+    expect(screen.queryByText(/ · /)).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when no timestamp", () => {
+    render(<LastUpdatedByline updatedBy="only-name-no-time" />);
+    expect(screen.queryByText(/Updated/)).not.toBeInTheDocument();
+  });
+});

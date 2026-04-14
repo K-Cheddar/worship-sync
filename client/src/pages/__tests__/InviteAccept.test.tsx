@@ -15,6 +15,7 @@ const logoutSessionMock = jest.fn(() => Promise.resolve());
 const createUserWithEmailAndPasswordMock = jest.fn();
 const signOutMock = jest.fn(() => Promise.resolve());
 const updateProfileMock = jest.fn(() => Promise.resolve());
+const authenticateHumanWithFirebaseMock = jest.fn();
 
 type MockFirebaseUser = {
   email: string;
@@ -88,6 +89,7 @@ const renderPage = ({
             loginState: "idle",
             sessionKind: null,
             refreshAuthBootstrap,
+            authenticateHumanWithFirebase: authenticateHumanWithFirebaseMock,
           }) as any
         }
       >
@@ -97,6 +99,8 @@ const renderPage = ({
   );
 
 describe("InviteAccept", () => {
+  jest.setTimeout(15_000);
+
   beforeEach(() => {
     navigateMock.mockReset();
     acceptInviteMock.mockReset();
@@ -106,6 +110,7 @@ describe("InviteAccept", () => {
     createUserWithEmailAndPasswordMock.mockReset();
     signOutMock.mockClear();
     updateProfileMock.mockClear();
+    authenticateHumanWithFirebaseMock.mockReset();
     window.sessionStorage.clear();
     authStateChangedCallback = null;
     setCurrentUser(null);
@@ -125,6 +130,51 @@ describe("InviteAccept", () => {
     renderPage();
     expect(
       await screen.findByRole("heading", { name: /join test church/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("redirects provider collisions to login so the existing method can link", async () => {
+    const user = userEvent.setup();
+    authenticateHumanWithFirebaseMock.mockResolvedValue({
+      status: "requires-existing-method",
+    });
+
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: /continue with google/i }),
+    );
+
+    await waitFor(() => {
+      expect(authenticateHumanWithFirebaseMock).toHaveBeenCalledWith({
+        method: "google",
+      });
+    });
+    expect(navigateMock).toHaveBeenCalledWith("/login", {
+      replace: true,
+      state: { from: { pathname: "/invite" } },
+    });
+    expect(acceptInviteMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a safe message when Microsoft provider sign-in fails", async () => {
+    const user = userEvent.setup();
+    authenticateHumanWithFirebaseMock.mockRejectedValue(
+      Object.assign(new Error("AADSTS7000215 invalid_client"), {
+        code: "auth/invalid-credential",
+      }),
+    );
+
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: /continue with microsoft/i }),
+    );
+
+    expect(
+      await screen.findByText(
+        /Microsoft sign-in is not available right now\. Try again, or use email and password\./i,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -155,14 +205,14 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Invited User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
     await user.click(screen.getByRole("button", { name: /^accept invite$/i }));
 
     await waitFor(() => {
       expect(createUserWithEmailAndPasswordMock).toHaveBeenCalledWith(
         mockAuth,
         "invited@example.com",
-        "secret-pass",
+        "Secret-pass1!",
       );
     });
     await waitFor(() => {
@@ -205,7 +255,7 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Wrong User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
     await user.click(
       screen.getByRole("button", { name: /^accept invite$/i }),
     );
@@ -214,7 +264,7 @@ describe("InviteAccept", () => {
       expect(createUserWithEmailAndPasswordMock).toHaveBeenCalledWith(
         mockAuth,
         "invited@example.com",
-        "secret-pass",
+        "Secret-pass1!",
       );
     });
     await waitFor(() => {
@@ -249,7 +299,7 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Invited User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
     await user.click(
       screen.getByRole("button", { name: /^accept invite$/i }),
     );
@@ -294,7 +344,7 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Invited User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
     await user.click(
       screen.getByRole("button", { name: /^accept invite$/i }),
     );
@@ -387,7 +437,7 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Invited User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
     await user.click(
       screen.getByRole("button", { name: /^accept invite$/i }),
     );
@@ -427,7 +477,7 @@ describe("InviteAccept", () => {
 
     await user.type(screen.getByLabelText(/email/i), "invited@example.com");
     await user.type(screen.getByLabelText(/^name/i), "Invited User");
-    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "secret-pass{Enter}");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!{Enter}");
 
     await waitFor(() => {
       expect(createUserWithEmailAndPasswordMock).toHaveBeenCalled();

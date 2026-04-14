@@ -292,10 +292,18 @@ const QuickLink = ({
               ""
             ) || ""
           }
-          helpText="Click to select media."
-          selectedText="Now right click media and click set."
+          helpText="Click to choose media for this link."
+          selectedText="Pick an item from Media."
           isSelected={isSelected}
-          onClick={setSelectedQuickLinkProp}
+          onClick={() => {
+            const wasUnselected = !isSelected;
+            setSelectedQuickLinkProp();
+            if (wasUnselected) {
+              showToast(
+                "Pick an item from Media, then Set Quick Link Background.",
+              );
+            }
+          }}
         />
       )}
 

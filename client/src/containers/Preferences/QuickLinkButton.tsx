@@ -31,7 +31,9 @@ const QuickLinkButton = ({
     <p className="text-xs w-48 overflow-hidden text-ellipsis whitespace-nowrap bg-gray-200 p-2 rounded-md text-black">
       {content}
     </p>
-    {isSelected && <p className="text-xs">{selectedText}</p>}
+    {isSelected && selectedText ? (
+      <p className="text-xs">{selectedText}</p>
+    ) : null}
     {!isSelected && <p className="text-xs">{helpText}</p>}
   </Button>
 );

@@ -5,6 +5,8 @@ import { useGSAP } from "@gsap/react";
 import { defaultParticipantOverlayStyles } from "./defaultOverlayStyles";
 import SharedOverlay from "./SharedOverlay";
 
+const EMPTY_OVERLAY_INFO: Partial<OverlayInfo> = {};
+
 type DisplayParticipantOverlayProps = {
   width: number;
   participantOverlayInfo?: Partial<OverlayInfo>;
@@ -20,8 +22,8 @@ const DisplayParticipantOverlay = forwardRef<
   (
     {
       width,
-      participantOverlayInfo = {},
-      prevParticipantOverlayInfo = {},
+      participantOverlayInfo = EMPTY_OVERLAY_INFO,
+      prevParticipantOverlayInfo = EMPTY_OVERLAY_INFO,
       shouldAnimate = false,
       shouldFillContainer = false,
     },
@@ -188,7 +190,7 @@ const DisplayParticipantOverlay = forwardRef<
       },
       {
         scope: participantOverlayRef,
-        dependencies: [participantOverlayInfo, prevParticipantOverlayInfo],
+        dependencies: [participantOverlayInfo],
       }
     );
 

@@ -10,28 +10,41 @@ import gsap from "gsap";
 import { CreditsInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import { useGSAP } from "@gsap/react";
 import {
-  deleteCredit,
-  updateCredit,
-  updateCreditsHistoryEntry,
-} from "../../store/creditsSlice";
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  memo,
+} from "react";
+import { useGSAP } from "@gsap/react";
+import { deleteCredit, updateCredit } from "../../store/creditsSlice";
 import { broadcastCreditsUpdate } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { putCreditDoc, putCreditHistoryDoc } from "../../utils/dbUtils";
+import { putCreditDoc } from "../../utils/dbUtils";
 import Input from "../../components/Input/Input";
-import type { DBCredits } from "../../types";
+import { getCreditsDocId, type DBCredits } from "../../types";
 import CreditHistoryTextArea from "./CreditHistoryTextArea";
+import {
+  creditRowSelectedClass,
+  creditRowUnselectedClass,
+} from "../Overlays/overlayRowStyles";
 
 const PERSIST_DEBOUNCE_MS = 500;
+/** Batch Redux updates while typing so the list and undo stack do not churn every keystroke. */
+const REDUX_DEBOUNCE_MS = 200;
 
 type CreditProps = CreditsInfo & {
+  /** Active service outline id for scoped Pouch docs. */
+  outlineId: string | undefined;
   initialList: string[];
-  selectCredit: () => void;
+  onSelectCredit: (id: string) => void;
   selectedCreditId: string;
-  /** History lines for this credit's heading, used for suggestions. */
+  /** History lines from saved credits history, used for suggestions. */
   historyLines: string[];
+  /** Remove a line from history everywhere (all headings). */
+  onRemoveHistoryLine?: (line: string) => void;
   readOnly?: boolean;
 };
 
@@ -39,47 +52,88 @@ const Credit = ({
   heading,
   text,
   id,
-  initialList,
+  outlineId,
+  initialList: _initialList,
   hidden,
-  selectCredit,
+  onSelectCredit,
   selectedCreditId,
   historyLines,
+  onRemoveHistoryLine,
   readOnly = false,
 }: CreditProps) => {
   const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) ?? {};
 
   const [isDeleting, setIsDeleting] = useState(false);
+  const [draftHeading, setDraftHeading] = useState(heading);
+  const [draftText, setDraftText] = useState(text);
   const creditRef = useRef<HTMLLIElement | null>(null);
   const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reduxDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftHeadingRef = useRef(heading);
+  const draftTextRef = useRef(text);
+  const hiddenRef = useRef(hidden);
+
+  useEffect(() => {
+    hiddenRef.current = hidden;
+  }, [hidden]);
+
+  useEffect(() => {
+    setDraftHeading(heading);
+    setDraftText(text);
+    draftHeadingRef.current = heading;
+    draftTextRef.current = text;
+  }, [id, heading, text]);
 
   const persistCredit = useCallback(
     async (payload: { heading: string; text: string; hidden?: boolean }) => {
-      if (!db) return;
-      const doc = await putCreditDoc(db, { id, ...payload });
+      if (!db || !outlineId) return;
+      const doc = await putCreditDoc(db, outlineId, { id, ...payload });
       if (doc) broadcastCreditsUpdate([doc]);
     },
-    [db, id]
+    [db, id, outlineId]
   );
 
-  const updateField = useCallback(
-    (key: keyof Pick<CreditsInfo, "heading" | "text" | "hidden">, value: CreditsInfo[typeof key]) => {
-      const next = { heading, text, hidden, [key]: value };
-      dispatch(updateCredit({ id, ...next }));
-      if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
-      persistTimeoutRef.current = setTimeout(
-        () => persistCredit(next),
-        PERSIST_DEBOUNCE_MS
-      );
-    },
-    [dispatch, id, heading, text, hidden, persistCredit]
-  );
+  const flushDraftToRedux = useCallback(() => {
+    const h = draftHeadingRef.current;
+    const t = draftTextRef.current;
+    const hid = hiddenRef.current;
+    dispatch(updateCredit({ id, heading: h, text: t, hidden: hid }));
+  }, [dispatch, id]);
+
+  const scheduleDebouncedRedux = useCallback(() => {
+    if (reduxDebounceRef.current) clearTimeout(reduxDebounceRef.current);
+    reduxDebounceRef.current = setTimeout(() => {
+      reduxDebounceRef.current = null;
+      const h = draftHeadingRef.current;
+      const t = draftTextRef.current;
+      const hid = hiddenRef.current;
+      dispatch(updateCredit({ id, heading: h, text: t, hidden: hid }));
+    }, REDUX_DEBOUNCE_MS);
+  }, [dispatch, id]);
+
+  /** Persist to Pouch ~500ms after the last keystroke (independent of Redux debounce). */
+  const bumpPersistTimeout = useCallback(() => {
+    if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
+    persistTimeoutRef.current = setTimeout(() => {
+      persistCredit({
+        heading: draftHeadingRef.current,
+        text: draftTextRef.current,
+        hidden: hiddenRef.current,
+      });
+    }, PERSIST_DEBOUNCE_MS);
+  }, [persistCredit]);
 
   useEffect(
     () => () => {
+      if (reduxDebounceRef.current) {
+        clearTimeout(reduxDebounceRef.current);
+        reduxDebounceRef.current = null;
+        flushDraftToRedux();
+      }
       if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
     },
-    []
+    [flushDraftToRedux]
   );
 
   const { attributes, listeners, setNodeRef, transform, transition } =
@@ -98,7 +152,6 @@ const Credit = ({
       if (!creditRef.current) return;
 
       if (isDeleting) {
-        // delete animation
         gsap.timeline().fromTo(
           creditRef.current,
           {
@@ -113,32 +166,23 @@ const Credit = ({
           }
         );
       }
-      // else if (!initialList.includes(id)) {
-      //   // initial animation for new items
-      //   gsap.timeline().fromTo(
-      //     creditRef.current,
-      //     {
-      //       height: 0,
-      //       opacity: 0,
-      //     },
-      //     {
-      //       height: "auto",
-      //       opacity: 1,
-      //       duration: 0.5,
-      //       ease: "power1.inOut",
-      //     }
-      //   );
-      // }
     },
     { scope: creditRef, dependencies: [isDeleting] }
   );
 
   const deleteOverlayHandler = async () => {
+    if (reduxDebounceRef.current) {
+      clearTimeout(reduxDebounceRef.current);
+      reduxDebounceRef.current = null;
+      flushDraftToRedux();
+    }
     setIsDeleting(true);
     setTimeout(async () => {
-      if (db) {
+      if (db && outlineId) {
         try {
-          const existingCredits: DBCredits = await db.get("credits");
+          const existingCredits: DBCredits = await db.get(
+            getCreditsDocId(outlineId),
+          );
           const creditIds = existingCredits.creditIds.filter((x) => x !== id);
           existingCredits.creditIds = creditIds;
           existingCredits.updatedAt = new Date().toISOString();
@@ -153,36 +197,54 @@ const Credit = ({
     }, 500);
   };
 
-  const toggleHidden = () => updateField("hidden", !hidden);
+  const toggleHidden = () => {
+    if (reduxDebounceRef.current) {
+      clearTimeout(reduxDebounceRef.current);
+      reduxDebounceRef.current = null;
+    }
+    const nextHidden = !hidden;
+    const h = draftHeadingRef.current;
+    const t = draftTextRef.current;
+    dispatch(updateCredit({ id, heading: h, text: t, hidden: nextHidden }));
+    hiddenRef.current = nextHidden;
+    if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
+    persistTimeoutRef.current = setTimeout(
+      () => persistCredit({ heading: h, text: t, hidden: nextHidden }),
+      PERSIST_DEBOUNCE_MS
+    );
+  };
 
-  const handleRemoveHistoryLine = useCallback(
-    (line: string) => {
-      const trimmed = line.trim();
-      const newLines = historyLines.filter((l) => l.trim() !== trimmed);
-      if (JSON.stringify(newLines) === JSON.stringify(historyLines)) return;
+  const handleRowClick = useCallback(() => {
+    onSelectCredit(id);
+  }, [id, onSelectCredit]);
 
-      dispatch(
-        updateCreditsHistoryEntry({
-          heading,
-          lines: newLines,
-        })
-      );
-
-      if (db) {
-        putCreditHistoryDoc(db, heading, newLines).catch(console.error);
-      }
+  const onHeadingChange = useCallback(
+    (val: string) => {
+      const v = val as string;
+      setDraftHeading(v);
+      draftHeadingRef.current = v;
+      scheduleDebouncedRedux();
+      bumpPersistTimeout();
     },
-    [dispatch, db, heading, historyLines]
+    [scheduleDebouncedRedux, bumpPersistTimeout]
   );
 
-  // return <li className="h-[200px]">Lol Ok</li>;
+  const onTextChange = useCallback(
+    (val: string) => {
+      setDraftText(val);
+      draftTextRef.current = val;
+      scheduleDebouncedRedux();
+      bumpPersistTimeout();
+    },
+    [scheduleDebouncedRedux, bumpPersistTimeout]
+  );
 
   return (
     <li
       className={cn(
-        "flex items-center rounded-lg w-full overflow-clip leading-3 bg-gray-800",
+        "flex items-center w-full overflow-clip leading-3 transition-colors",
         hidden ? "opacity-50" : "",
-        selectedCreditId === id && "bg-gray-950"
+        selectedCreditId === id ? creditRowSelectedClass : creditRowUnselectedClass
       )}
       ref={(element) => {
         setNodeRef(element);
@@ -190,7 +252,7 @@ const Credit = ({
       }}
       style={style}
       id={`credit-editor-${id}`}
-      onClick={selectCredit}
+      onClick={handleRowClick}
     >
       {!readOnly && (
         <Button
@@ -209,16 +271,16 @@ const Credit = ({
           className="flex flex-col gap-1"
           hideLabel
           placeholder="Heading"
-          value={heading}
-          onChange={(val) => updateField("heading", val as string)}
+          value={draftHeading}
+          onChange={onHeadingChange}
           data-ignore-undo="true"
           disabled={readOnly}
         />
         <CreditHistoryTextArea
-          value={text}
-          onChange={(val) => updateField("text", val)}
+          value={draftText}
+          onChange={onTextChange}
           historyLines={historyLines}
-          onRemoveHistoryLine={handleRemoveHistoryLine}
+          onRemoveHistoryLine={onRemoveHistoryLine}
           disabled={readOnly}
         />
       </div>
@@ -246,4 +308,4 @@ const Credit = ({
   );
 };
 
-export default Credit;
+export default memo(Credit);

@@ -5,6 +5,9 @@
 export const MAX_INITIAL_SESSION_RETRIES = 5;
 export const MAX_REPLICATION_AUTH_RETRIES = 3;
 
+/** No `dbProgress` change while below 100% → show stuck-recovery UI (wall-clock). */
+export const STUCK_DB_PROGRESS_MS = 15_000;
+
 // ============================================================================
 // Display Window Constants
 // ============================================================================
@@ -28,8 +31,14 @@ export const MONITOR_BAND_NEXT_PX =
 // Font size: stored as pixels. Default when box.fontSize is unset (legacy ~44px).
 export const DEFAULT_FONT_PX = 108;
 export const DEFAULT_TITLE_FONT_PX = 150;
-/** Step for +/- font size toolbar buttons (px / formatted-text scale). */
-export const FONT_SIZE_BUTTON_STEP = 5;
+/** Step for +/- font size toolbar buttons (px for slide boxes; formatted-text display scale). */
+export const FONT_SIZE_BUTTON_STEP = 1;
+
+/** Slide Tools font size presets (px): 50–250 in 5px steps. */
+export const FONT_SIZE_PRESETS: readonly number[] = Array.from(
+  { length: (250 - 50) / 5 + 1 },
+  (_, i) => 50 + i * 5,
+);
 
 // ============================================================================
 // Time Picker Constants
@@ -47,3 +56,13 @@ export const SECONDS = Array.from({ length: 12 }, (_, i) =>
 );
 
 export const pad2 = (v: string | number) => String(v).padStart(2, "0");
+
+// ============================================================================
+// UI accents
+// ============================================================================
+
+/**
+ * Lucide MonitorX (clear display) in transmit handler and preview headers.
+ * Pale amber (~`#f59e0b` at 58% + white) — softer than full amber-500, distinct from Live green.
+ */
+export const CLEAR_ACTION_ICON_COLOR = "#f9c771";

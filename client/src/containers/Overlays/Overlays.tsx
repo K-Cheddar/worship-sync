@@ -2,6 +2,7 @@ import Button from "../../components/Button/Button";
 import { Plus, Check, Download, RefreshCw, FolderOpen, History } from "lucide-react";
 
 import { useDispatch, useSelector } from "../../hooks";
+import { useStore } from "react-redux";
 import {
   addOverlayToList,
   deleteOverlayFromList,
@@ -26,6 +27,7 @@ import {
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import generateRandomId from "../../utils/generateRandomId";
+import { applyPouchAudit } from "../../utils/pouchAudit";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import Drawer from "../../components/Drawer";
@@ -49,7 +51,14 @@ import {
 import { updateTemplatesFromRemote } from "../../store/overlayTemplatesSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import OverlayEditor from "./OverlayEditor";
+import OverlaysListSkeleton from "./OverlaysListSkeleton";
 import { getDefaultFormatting } from "../../utils/overlayUtils";
+import {
+  shouldKeepLocalListRowForRemoteOverlay,
+  syncSelectedOverlayFromRemote,
+  type OverlaySyncRootSlice,
+} from "../../utils/overlayRemoteSync";
+import { normalizeOverlayForSync } from "../../utils/overlayUtils";
 import { putOverlayHistoryDocs } from "../../utils/dbUtils";
 import { DBOverlayTemplates } from "../../types";
 import PopOver from "../../components/PopOver/PopOver";
@@ -92,6 +101,7 @@ const Overlays = () => {
   const selectedOverlay = _selectedOverlay ?? defaultSelectedOverlay;
 
   const dispatch = useDispatch();
+  const store = useStore();
   const { isMobile, db, updater } = useContext(ControllerInfoContext) || {
     isMobile: false,
   };
@@ -136,7 +146,6 @@ const Overlays = () => {
         for (const _update of updates) {
           // check if the list we have selected was updated
           if (_update._id?.startsWith("overlay-")) {
-            console.log("updating overlay from remote", event);
             const update = _update as DBOverlay;
 
             const overlayIndex = list.findIndex(
@@ -147,21 +156,34 @@ const Overlays = () => {
               continue;
             }
 
+            const normalized = normalizeOverlayForSync(update);
+            const getState = store.getState as () => OverlaySyncRootSlice;
+            const keepLocalRow =
+              shouldKeepLocalListRowForRemoteOverlay(getState, normalized);
+
             const updatedOverlayList = list.map((overlay, index) => {
               if (index === overlayIndex) {
+                if (keepLocalRow) {
+                  return overlay;
+                }
                 return update;
               }
               return overlay;
             });
 
             dispatch(updateOverlayListFromRemote(updatedOverlayList));
+            syncSelectedOverlayFromRemote(
+              dispatch,
+              store.getState as () => OverlaySyncRootSlice,
+              update,
+            );
           }
         }
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch, list]
+    [dispatch, list, store]
   );
 
   useEffect(() => {
@@ -252,10 +274,34 @@ const Overlays = () => {
     };
   }, [dispatch]);
 
-  const handleOverlayUpdate = (overlay: OverlayInfo) => {
-    dispatch(updateOverlay(overlay));
-    dispatch(updateOverlayInList(overlay));
-  };
+  const handleOverlayUpdate = useCallback(
+    async (overlay: OverlayInfo) => {
+      if (!overlay.id) return;
+
+      // Draft flushes can arrive after selection swaps; persist by payload id so edits are not dropped.
+      if (selectedOverlay.id && overlay.id !== selectedOverlay.id) {
+        dispatch(updateOverlayInList(overlay));
+        if (!db) return;
+        try {
+          const dbOverlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
+          const updatedAt = new Date().toISOString();
+          const merged = applyPouchAudit(
+            dbOverlay,
+            { ...dbOverlay, ...overlay, updatedAt },
+            { isNew: false },
+          );
+          await db.put(merged);
+        } catch (error) {
+          console.error("Error persisting non-selected overlay", error);
+        }
+        return;
+      }
+
+      dispatch(updateOverlay(overlay));
+      dispatch(updateOverlayInList(overlay));
+    },
+    [db, dispatch, selectedOverlay.id],
+  );
 
   const handleApplyFormattingToAll = async (formatting: OverlayFormatting) => {
     const type = selectedOverlay.type as OverlayType;
@@ -274,9 +320,13 @@ const Overlays = () => {
       for (const overlay of overlaysOfType) {
         try {
           const db_overlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
-          db_overlay.formatting = formatting;
-          db_overlay.updatedAt = new Date().toISOString();
-          await db.put(db_overlay);
+          const updatedAt = new Date().toISOString();
+          const toSave = applyPouchAudit(
+            db_overlay,
+            { ...db_overlay, formatting, updatedAt },
+            { isNew: false },
+          );
+          await db.put(toSave);
         } catch (e) {
           console.error("Failed to update overlay in db", overlay.id, e);
         }
@@ -480,11 +530,16 @@ const Overlays = () => {
             const dbOverlay = await db.get(`overlay-${bestOverlay.id}`);
 
             // Update with new name and timestamp
-            const updatedOverlay = {
-              ...dbOverlay,
-              name: eventData.leader,
-              updatedAt: new Date().toISOString(),
-            };
+            const updatedAt = new Date().toISOString();
+            const updatedOverlay = applyPouchAudit(
+              dbOverlay,
+              {
+                ...dbOverlay,
+                name: eventData.leader,
+                updatedAt,
+              },
+              { isNew: false },
+            );
 
             // Save back to database
             await db.put(updatedOverlay);
@@ -593,11 +648,14 @@ const Overlays = () => {
                   : "This outline doesn't have any overlays yet."}
               </p>
             )}
-            {isLoading ? (
-              <h3 className="text-lg text-center">Loading overlays...</h3>
-            ) : (
-              <div className="flex min-h-0 flex-1 gap-2 pb-2 max-lg:flex-col-reverse">
-                <section className="flex min-h-0 flex-1 flex-col gap-2">
+            <div className="flex min-h-0 flex-1 gap-2 pb-2 max-lg:flex-col-reverse">
+              <section className="flex min-h-0 flex-1 flex-col gap-2">
+                {isLoading ? (
+                  <OverlaysListSkeleton
+                    ref={setNodeRef}
+                    readOnly={!canMutateOverlays}
+                  />
+                ) : (
                   <ul
                     id="overlays-list"
                     className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden pr-2"
@@ -623,7 +681,14 @@ const Overlays = () => {
                       })}
                     </SortableContext>
                   </ul>
-                  {canMutateOverlays && (
+                )}
+                {canMutateOverlays &&
+                  (isLoading ? (
+                    <div className="mt-2 flex gap-2" aria-hidden="true">
+                      <div className="h-9 min-h-9 flex-1 animate-pulse rounded-md bg-white/10" />
+                      <div className="h-9 min-h-9 flex-1 animate-pulse rounded-md bg-white/10" />
+                    </div>
+                  ) : (
                     <div className="mt-2 flex gap-2">
                       <Button
                         className="flex-1 justify-center text-sm"
@@ -643,22 +708,21 @@ const Overlays = () => {
                         Existing overlays
                       </Button>
                     </div>
-                  )}
-                </section>
-                <OverlayEditor
-                  selectedOverlay={selectedOverlay}
-                  isOverlayLoading={isOverlayLoading}
-                  setShowPreview={setShowPreview}
-                  showPreview={showPreview}
-                  setIsStyleDrawerOpen={setIsStyleDrawerOpen}
-                  setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
-                  isMobile={isMobile}
-                  handleOverlayUpdate={handleOverlayUpdate}
-                  handleFormattingChange={handleFormattingChange}
-                  readOnly={!canMutateOverlays}
-                />
-              </div>
-            )}
+                  ))}
+              </section>
+              <OverlayEditor
+                selectedOverlay={selectedOverlay}
+                isOverlayLoading={isOverlayLoading}
+                setShowPreview={setShowPreview}
+                showPreview={showPreview}
+                setIsStyleDrawerOpen={setIsStyleDrawerOpen}
+                setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
+                isMobile={isMobile}
+                handleOverlayUpdate={handleOverlayUpdate}
+                handleFormattingChange={handleFormattingChange}
+                readOnly={!canMutateOverlays}
+              />
+            </div>
           </div>
         </div>
 

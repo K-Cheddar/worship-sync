@@ -25,12 +25,15 @@ import RadioButton, { RadioGroup } from "../../components/RadioButton/RadioButto
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
+import { Slider } from "../../components/ui/Slider";
 import { useContext } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
+import { useToast } from "../../context/toastContext";
 
 const Preferences = () => {
   const dispatch = useDispatch();
+  const { showToast } = useToast();
   const { isMobile } = useContext(ControllerInfoContext) || {};
   const { access: currentAccess } = useContext(GlobalInfoContext) || {};
 
@@ -194,11 +197,17 @@ const Preferences = () => {
                         : "border-gray-500 hover:border-gray-300"
                     )}
                     onClick={() => {
+                      const wasUnselected = selectedPreference !== preference;
                       dispatch(
                         setSelectedPreference(
                           preference as SelectedPreferenceType
                         )
                       );
+                      if (wasUnselected) {
+                        showToast(
+                          "Pick an item from Media, then click Set Background."
+                        );
+                      }
                     }}
                   >
                     {background ? (
@@ -229,13 +238,19 @@ const Preferences = () => {
                     }}
                   ></Button>
                 </section>
-                <section className="flex gap-2 items-center">
+                <section className="flex flex-wrap gap-2 items-center">
                   <p className="font-semibold">Background Brightness:</p>
                   <Icon size="xl" svg={SunMedium} color="#fbbf24" />
-                  <Button
-                    svg={Minus}
-                    variant="tertiary"
-                    onClick={() => dispatch(setBrightness(brightness - 10))}
+                  <Slider
+                    className="min-w-28 w-32 shrink-0"
+                    value={[brightness]}
+                    min={10}
+                    max={100}
+                    step={1}
+                    onValueChange={(v: number[]) =>
+                      dispatch(setBrightness(v[0] ?? brightness))
+                    }
+                    aria-label={`${label} default background brightness`}
                   />
                   <Input
                     label="Brightness"
@@ -246,12 +261,7 @@ const Preferences = () => {
                     hideLabel
                     data-ignore-undo="true"
                     max={100}
-                    min={1}
-                  />
-                  <Button
-                    svg={Plus}
-                    variant="tertiary"
-                    onClick={() => dispatch(setBrightness(brightness + 10))}
+                    min={10}
                   />
                 </section>
               </li>

@@ -3,7 +3,7 @@ import { default as CreditsContainer } from "../containers/Credits/Credits";
 import { useDispatch, useSelector } from "../hooks";
 import {
   initiateCreditsScene,
-  initiatePublishedCreditsList,
+  initiateLiveCredits,
   initiateTransitionScene,
 } from "../store/creditsSlice";
 import { onValue, ref } from "firebase/database";
@@ -11,7 +11,7 @@ import { GlobalInfoContext } from "../context/globalInfo";
 import { getChurchDataPath } from "../utils/firebasePaths";
 
 const Credits = () => {
-  const { publishedList, transitionScene, creditsScene } = useSelector(
+  const { liveCredits, transitionScene, creditsScene } = useSelector(
     (state) => state.undoable.present.credits,
   );
   const dispatch = useDispatch();
@@ -22,14 +22,14 @@ const Credits = () => {
   useEffect(() => {
     if (!firebaseDb || loginState === "guest") return;
 
-    const getPublishedRef = ref(
+    const liveCreditsRtdbRef = ref(
       firebaseDb,
       getChurchDataPath(churchId, "credits", "publishedList"),
     );
-    onValue(getPublishedRef, (snapshot) => {
+    onValue(liveCreditsRtdbRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        dispatch(initiatePublishedCreditsList(data));
+        dispatch(initiateLiveCredits(data));
       }
     });
 
@@ -70,7 +70,7 @@ const Credits = () => {
 
   return (
     <CreditsContainer
-      credits={publishedList}
+      credits={liveCredits}
       runObsTransition={runObsTransition}
     />
   );

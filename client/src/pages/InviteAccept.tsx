@@ -1,4 +1,11 @@
-import { useContext, useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import {
@@ -7,6 +14,7 @@ import {
   updateProfile,
 } from "firebase/auth";
 import Button from "../components/Button/Button";
+import { GoogleMark, MicrosoftMark } from "../components/AuthProviderMarks";
 import {
   acceptInvite,
   createHumanSession,
@@ -17,13 +25,18 @@ import {
 import { getHumanAuth } from "../firebase/apps";
 import { GlobalInfoContext } from "../context/globalInfo";
 import Input from "../components/Input/Input";
+import PasswordStrengthIndicator from "../components/PasswordStrengthIndicator/PasswordStrengthIndicator";
 import { isFirebaseAuthError } from "../utils/authUserMessages";
 import { getOrCreateDeviceId } from "../utils/authStorage";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
-import { isValidEmailFormat } from "../utils/emailFormat";
 import {
-  FIREBASE_PASSWORD_MIN_LENGTH,
-  firebasePasswordRequirementsHint,
+  INVALID_EMAIL_FORMAT_MESSAGE,
+  isValidEmailFormat,
+} from "../utils/emailFormat";
+import {
+  PASSWORD_CHARACTER_TYPES_MIN,
+  PASSWORD_POLICY_MIN_LENGTH,
+  passwordMeetsPolicy,
 } from "../utils/passwordRequirements";
 
 const INVITE_TOKEN_STORAGE_KEY = "worshipsync_pending_invite_token";
@@ -46,10 +59,10 @@ const getCreateAccountErrorMessage = (error: unknown) => {
       return "That email already has a WorshipSync account. You can’t use it for this invite yet. Try another email or ask your admin to resend the invite to a different address.";
     }
     if (error.code === "auth/weak-password") {
-      return `Password must be at least ${FIREBASE_PASSWORD_MIN_LENGTH} characters. Add a mix of letters, numbers, or symbols.`;
+      return `Use at least ${PASSWORD_POLICY_MIN_LENGTH} characters and any ${PASSWORD_CHARACTER_TYPES_MIN} of: uppercase letter, lowercase letter, number, symbol.`;
     }
     if (error.code === "auth/invalid-email") {
-      return "That email address does not look valid. Check it and try again.";
+      return INVALID_EMAIL_FORMAT_MESSAGE;
     }
     if (error.code === "auth/network-request-failed") {
       return "Could not reach the sign-in service. Check your connection and try again.";
@@ -62,7 +75,27 @@ const getCreateAccountErrorMessage = (error: unknown) => {
   return "Could not create your account and accept this invite.";
 };
 
-const getInviteFlowErrorMessage = (error: unknown) => {
+const getInviteFlowErrorMessage = (
+  error: unknown,
+  options?: { provider?: "google" | "microsoft" },
+) => {
+  if (isFirebaseAuthError(error)) {
+    if (
+      error.code === "auth/popup-blocked" ||
+      error.code === "auth/popup-closed-by-user"
+    ) {
+      return "Provider sign-in did not complete. Try again, or use email and password.";
+    }
+    if (error.code === "auth/network-request-failed") {
+      return "Could not reach the sign-in service. Check your connection and try again.";
+    }
+    if (options?.provider) {
+      const providerLabel =
+        options.provider === "google" ? "Google" : "Microsoft";
+      return `${providerLabel} sign-in is not available right now. Try again, or use email and password.`;
+    }
+    return "Could not complete sign-in for this invite. Try again.";
+  }
   if (error instanceof Error && error.message) {
     return error.message;
   }
@@ -108,6 +141,7 @@ const InviteAccept = () => {
   const [inviteChurchName, setInviteChurchName] = useState<string | null | undefined>(
     undefined
   );
+  const passwordStrengthDescId = useId();
 
   const persistInviteRecovery = (acceptedToken: string) => {
     if (typeof window === "undefined") {
@@ -312,16 +346,16 @@ const InviteAccept = () => {
 
   const validateCommonFields = () => {
     const nextErrors: InviteFieldErrors = {};
-    if (!email.trim()) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
       nextErrors.email = "Enter the invited email address.";
-    } else if (!isValidEmailFormat(email)) {
-      nextErrors.email =
-        "That email address does not look valid. Check it and try again.";
+    } else if (!isValidEmailFormat(trimmedEmail)) {
+      nextErrors.email = INVALID_EMAIL_FORMAT_MESSAGE;
     }
     if (!password) {
       nextErrors.password = "Enter your password.";
-    } else if (password.length < FIREBASE_PASSWORD_MIN_LENGTH) {
-      nextErrors.password = `Use at least ${FIREBASE_PASSWORD_MIN_LENGTH} characters.`;
+    } else if (!passwordMeetsPolicy(password)) {
+      nextErrors.password = "Meet every password requirement below.";
     }
     if (!displayName.trim()) {
       nextErrors.displayName = "Enter your name.";
@@ -438,6 +472,35 @@ const InviteAccept = () => {
     }
   };
 
+  const handleProviderSignInAndAccept = async (method: "google" | "microsoft") => {
+    if (!token) {
+      setErrorMessage("This invite link is missing its token.");
+      return;
+    }
+    setIsSaving(true);
+    clearMessages();
+    setNeedsSessionRetry(false);
+    try {
+      await clearCurrentAccount();
+      const authResult = await context?.authenticateHumanWithFirebase({
+        method,
+      });
+      if (!authResult || authResult.status === "requires-existing-method") {
+        navigate("/login", {
+          replace: true,
+          state: { from: { pathname: "/invite" } },
+        });
+        return;
+      }
+      const idToken = await acceptInviteMembershipWithSignedInUser();
+      await startSessionAfterInvite(idToken);
+    } catch (error) {
+      setErrorMessage(getInviteFlowErrorMessage(error, { provider: method }));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isSaving) {
@@ -447,7 +510,7 @@ const InviteAccept = () => {
   };
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-gray-700 px-4 text-white">
+    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         <h1 className="text-2xl font-semibold">{joinHeadline}</h1>
         <p className="mt-2 text-sm text-gray-200">
@@ -491,6 +554,35 @@ const InviteAccept = () => {
           </div>
         ) : (
           <form onSubmit={handleFormSubmit} noValidate>
+            <div className="mt-4 grid grid-cols-1 gap-2">
+              <Button
+                type="button"
+                variant="primary"
+                svg={GoogleMark}
+                iconSize="sm"
+                gap="gap-2"
+                className="w-full justify-center"
+                disabled={isSaving}
+                onClick={() => void handleProviderSignInAndAccept("google")}
+              >
+                Continue with Google
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                svg={MicrosoftMark}
+                iconSize="sm"
+                gap="gap-2"
+                className="w-full justify-center"
+                disabled={isSaving}
+                onClick={() => void handleProviderSignInAndAccept("microsoft")}
+              >
+                Continue with Microsoft
+              </Button>
+            </div>
+            <p className="mt-3 text-center text-xs text-gray-400">
+              Or create an email/password account
+            </p>
             <div className="mt-4 flex flex-col gap-3">
               <Input
                 id="invite-email"
@@ -535,10 +627,13 @@ const InviteAccept = () => {
                 svgActionAriaLabel={showPassword ? "Hide password" : "Show password"}
                 autoComplete="new-password"
                 disabled={isSaving}
+                aria-describedby={passwordStrengthDescId}
               />
-              <p className="text-xs text-gray-400 leading-relaxed -mt-1">
-                {firebasePasswordRequirementsHint}
-              </p>
+              <PasswordStrengthIndicator
+                id={passwordStrengthDescId}
+                password={password}
+                className="-mt-1"
+              />
             </div>
 
             <div className="mt-4 flex flex-col gap-2">

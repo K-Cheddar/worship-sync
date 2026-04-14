@@ -179,7 +179,33 @@ if (process.env.NODE_ENV === "production" && !firebaseRuntime?.db) {
   );
 }
 
-const resendFromEmail = process.env.RESEND_FROM_EMAIL || null;
+/** Display name for Resend "from" when RESEND_FROM_EMAIL is a bare address. Set to "" to omit. */
+const formatResendDisplayName = (name) => {
+  const s = String(name).trim();
+  if (!s) return "";
+  if (/[",<>]/.test(s)) {
+    return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+  return s;
+};
+
+const buildResendFrom = () => {
+  const addr = process.env.RESEND_FROM_EMAIL?.trim();
+  if (!addr) return null;
+  if (addr.includes("<") && addr.includes(">")) {
+    return addr;
+  }
+  const nameRaw = process.env.RESEND_FROM_NAME;
+  const display = formatResendDisplayName(
+    nameRaw === undefined ? "WorshipSync" : nameRaw,
+  );
+  if (!display) {
+    return addr;
+  }
+  return `${display} <${addr}>`;
+};
+
+const resendFromEmail = buildResendFrom();
 const resendWebhookSecret = process.env.RESEND_WEBHOOK_SECRET || null;
 const resendClient =
   process.env.RESEND_API_KEY && resendFromEmail
@@ -624,6 +650,29 @@ const getUserByUid = async (uid) => {
   return user ? { uid: user.id || uid, ...user } : null;
 };
 
+const normalizeLinkedMethods = (methods) => {
+  const unique = new Set();
+  for (const method of methods || []) {
+    const normalized = String(method || "").trim();
+    if (!normalized) continue;
+    unique.add(normalized);
+  }
+  return Array.from(unique.values()).sort();
+};
+
+const extractLinkedMethodsFromAuthRecord = (record) => {
+  const methods = new Set();
+  for (const provider of record?.providerData || []) {
+    const providerId = String(provider?.providerId || "").trim();
+    if (!providerId) continue;
+    methods.add(providerId);
+  }
+  if (record?.passwordHash) {
+    methods.add("password");
+  }
+  return normalizeLinkedMethods(Array.from(methods.values()));
+};
+
 const getUserByEmail = async (email) => {
   const normalizedEmail = normalizeEmail(email);
   const [user] = await queryDocs(
@@ -637,14 +686,21 @@ const getUserByEmail = async (email) => {
 const upsertUserProfile = async ({
   uid,
   email,
+  primaryEmail,
+  linkedMethods,
   displayName,
   migrationSource = "firebase-auth",
 }) => {
   const normalizedEmail = normalizeEmail(email);
+  const normalizedPrimaryEmail = normalizeEmail(primaryEmail || email);
   const existing = await getDoc(COLLECTIONS.users, uid);
   const payload = {
     uid,
     email: normalizedEmail,
+    primaryEmail: normalizedPrimaryEmail,
+    linkedMethods: normalizeLinkedMethods(
+      linkedMethods || existing?.linkedMethods || [],
+    ),
     normalizedEmail,
     displayName: displayName || existing?.displayName || normalizedEmail,
     createdAt: existing?.createdAt || nowIso(),
@@ -749,7 +805,9 @@ const listTrustedHumanDevicesForChurch = async (churchId) => {
         ? {
             uid: user.uid,
             email: user.email,
+            primaryEmail: user.primaryEmail || user.email,
             displayName: user.displayName || "",
+            linkedMethods: normalizeLinkedMethods(user.linkedMethods || []),
           }
         : null,
     })),
@@ -1077,11 +1135,19 @@ const upsertProfileFromVerifiedToken = async (
       "",
   ).trim();
 
+  let authRecord = null;
+  try {
+    const auth = requireFirebaseAdmin();
+    authRecord = await auth.getUser(verifiedToken.uid);
+  } catch (error) {
+    logAuthEvent("warn", "auth.profile.user_record", {
+      message: error.message,
+    });
+  }
+
   if (!fromToken) {
     try {
-      const auth = requireFirebaseAdmin();
-      const record = await auth.getUser(verifiedToken.uid);
-      fromToken = String(record.displayName || "").trim();
+      fromToken = String(authRecord?.displayName || "").trim();
     } catch (error) {
       logAuthEvent("warn", "auth.profile.display_name", {
         message: error.message,
@@ -1092,6 +1158,8 @@ const upsertProfileFromVerifiedToken = async (
   return upsertUserProfile({
     uid: verifiedToken.uid,
     email,
+    primaryEmail: authRecord?.email || email,
+    linkedMethods: extractLinkedMethodsFromAuthRecord(authRecord),
     displayName: fromToken || undefined,
   });
 };
@@ -1118,6 +1186,8 @@ const buildHumanBootstrap = ({
   user: {
     uid: user.uid,
     email: user.email,
+    primaryEmail: user.primaryEmail || user.email,
+    linkedMethods: normalizeLinkedMethods(user.linkedMethods || []),
     displayName: String(profileDisplayName || "").trim(),
   },
   device: {
@@ -2132,10 +2202,7 @@ const requireAdminSession = async (req, churchId) => {
 
 const requireRealtimeDatabase = () => {
   if (!firebaseRuntime?.rtdb) {
-    throw httpError(
-      503,
-      "Realtime Database is not configured on the server.",
-    );
+    throw httpError(503, "Realtime Database is not configured on the server.");
   }
   return firebaseRuntime.rtdb;
 };
@@ -2684,6 +2751,44 @@ export const authHandlers = {
     }
   },
 
+  async updateOwnProfile(req, res) {
+    try {
+      assertCsrf(req);
+      const session = await requireHumanSession(req);
+      const displayName = String(req.body?.displayName || "").trim();
+      if (!displayName) {
+        throw httpError(400, "Display name is required.");
+      }
+      const auth = requireFirebaseAdmin();
+      await auth.updateUser(session.user.uid, { displayName });
+      const updatedUser = await upsertUserProfile({
+        uid: session.user.uid,
+        email: session.user.email,
+        primaryEmail: session.user.primaryEmail || session.user.email,
+        linkedMethods: session.user.linkedMethods || [],
+        displayName,
+      });
+      await addSecurityEvent({
+        type: "profile_updated",
+        churchId: session.churchId,
+        userId: session.user.uid,
+      });
+      return res.json({
+        success: true,
+        user: {
+          uid: updatedUser.uid,
+          email: updatedUser.email,
+          displayName: updatedUser.displayName,
+        },
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not update your profile.",
+      });
+    }
+  },
+
   async listTrustedHumanDevices(req, res) {
     try {
       const admin = await requireHumanSession(req);
@@ -2746,11 +2851,46 @@ export const authHandlers = {
     try {
       await requireAdminSession(req, req.params.churchId);
       const memberships = await listMembershipsForChurch(req.params.churchId);
+      let auth = null;
+      try {
+        auth = requireFirebaseAdmin();
+      } catch {
+        auth = null;
+      }
       const members = await Promise.all(
-        memberships.map(async (membership) => ({
-          ...membership,
-          user: await getUserByUid(membership.userId),
-        })),
+        memberships.map(async (membership) => {
+          const user = await getUserByUid(membership.userId);
+          let linkedMethods = normalizeLinkedMethods(user?.linkedMethods || []);
+          let primaryEmail = user?.primaryEmail || user?.email || "";
+          if (auth) {
+            try {
+              const authRecord = await auth.getUser(membership.userId);
+              linkedMethods = extractLinkedMethodsFromAuthRecord(authRecord);
+              primaryEmail = normalizeEmail(authRecord.email || primaryEmail);
+              await setDoc(
+                COLLECTIONS.users,
+                membership.userId,
+                {
+                  primaryEmail,
+                  linkedMethods,
+                },
+                { merge: true },
+              );
+            } catch {
+              // Keep fallback profile values if admin record lookup fails.
+            }
+          }
+          return {
+            ...membership,
+            user: user
+              ? {
+                  ...user,
+                  primaryEmail,
+                  linkedMethods,
+                }
+              : null,
+          };
+        }),
       );
       return res.json({ success: true, members });
     } catch (error) {

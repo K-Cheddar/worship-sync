@@ -427,10 +427,10 @@ app.whenReady().then(() => {
     : "https://local.worshipsync.net:5000 https://localhost:5000 ";
   const cspHeaderValue =
     "default-src 'self'; " +
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app https://apis.google.com https://www.gstatic.com; " +
-    "style-src 'self' 'unsafe-inline' data:; " +
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.firebasedatabase.app https://apis.google.com https://www.gstatic.com https://*.msftauth.net https://*.msauth.net; " +
+    "style-src 'self' 'unsafe-inline' data: https://*.msftauth.net https://*.msauth.net; " +
     "font-src 'self' data:; " +
-    "img-src 'self' data: blob: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com; " +
+    "img-src 'self' data: blob: media-cache: https://*.googleapis.com https://*.gstatic.com https://res.cloudinary.com https://image.mux.com https://*.google.com https://accounts.youtube.com https://*.msftauth.net https://*.msauth.net; " +
     "media-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com; " +
     "connect-src 'self' blob: media-cache: https://*.mux.com https://*.edgemv.mux.com https://direct-uploads.oci-us-ashburn-1-vop1.production.mux.com https://*.cloudinary.com " +
     devConnectSrc +
@@ -439,9 +439,11 @@ app.whenReady().then(() => {
     "https://*.firebasedatabase.app wss://*.firebasedatabase.app " +
     "https://*.firebaseapp.com https://*.googleapis.com " +
     "https://securetoken.googleapis.com https://www.googleapis.com " +
-    "https://apis.google.com https://www.google.com " +
+    "https://apis.google.com https://www.google.com https://accounts.youtube.com https://login.microsoftonline.com https://*.live.com " +
+    "https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com https://*.msauth.net https://*.msftauth.net https://*.azureedge.net " +
     "https://*.ingest.us.sentry.io https://*.ingest.euro.sentry.io; " +
-    "frame-src 'self' https://*.firebaseio.com https://*.firebasedatabase.app https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com https://apis.google.com; " +
+    "form-action 'self' https://*.live.com https://login.microsoftonline.com https://*.microsoftonline.com https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com https://*.firebaseapp.com https://accounts.google.com; " +
+    "frame-src 'self' https://*.worshipsync.net https://*.firebaseio.com https://*.firebasedatabase.app https://*.firebaseapp.com https://securetoken.googleapis.com https://accounts.google.com https://accounts.youtube.com https://apis.google.com https://login.microsoftonline.com https://*.live.com https://*.microsoft.com https://*.cfp.microsoft.com https://*.copilot.com; " +
     "worker-src 'self' blob:; " +
     "child-src 'self' blob:; " +
     "object-src 'none'; " +

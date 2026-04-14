@@ -8,12 +8,22 @@ import type {
   DBOverlay,
   DBOverlayTemplates,
   DBPreferences,
+  DBQuickLinksDoc,
+  DBMonitorSettingsDoc,
+  DBMediaRouteFoldersDoc,
   ItemSlideType,
   MonitorSettingsType,
   PreferencesType,
   ServiceItem,
   TemplatesByType,
   TimerInfo,
+} from "../types";
+import {
+  getCreditsDocId,
+  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  MONITOR_SETTINGS_POUCH_ID,
+  PREFERENCES_POUCH_ID,
+  QUICK_LINKS_POUCH_ID,
 } from "../types";
 import { DEFAULT_FONT_PX, DEFAULT_TITLE_FONT_PX } from "../constants";
 
@@ -312,17 +322,37 @@ export const createOfflineGuestSeedDocs = (now = new Date().toISOString()) => {
       docType: "itemListDetails",
     } satisfies Omit<DBItemListDetails, "_rev">,
     {
-      _id: "preferences",
+      _id: PREFERENCES_POUCH_ID,
       preferences: defaultPreferences,
-      quickLinks: [],
-      monitorSettings: defaultMonitorSettings,
       createdAt: now,
       updatedAt: now,
       docType: "preferences",
     } satisfies Omit<DBPreferences, "_rev">,
     {
+      _id: QUICK_LINKS_POUCH_ID,
+      quickLinks: [],
+      createdAt: now,
+      updatedAt: now,
+      docType: "quickLinks",
+    } satisfies Omit<DBQuickLinksDoc, "_rev">,
+    {
+      _id: MONITOR_SETTINGS_POUCH_ID,
+      monitorSettings: defaultMonitorSettings,
+      createdAt: now,
+      updatedAt: now,
+      docType: "monitorSettings",
+    } satisfies Omit<DBMonitorSettingsDoc, "_rev">,
+    {
+      _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
+      mediaRouteFolders: {},
+      createdAt: now,
+      updatedAt: now,
+      docType: "mediaRouteFolders",
+    } satisfies Omit<DBMediaRouteFoldersDoc, "_rev">,
+    {
       _id: "media",
       list: [],
+      folders: [],
       createdAt: now,
       updatedAt: now,
       docType: "media",
@@ -335,7 +365,8 @@ export const createOfflineGuestSeedDocs = (now = new Date().toISOString()) => {
       docType: "overlayTemplates",
     } satisfies Omit<DBOverlayTemplates, "_rev">,
     {
-      _id: "credits",
+      _id: getCreditsDocId(outline._id),
+      outlineId: outline._id,
       creditIds: [],
       createdAt: now,
       updatedAt: now,

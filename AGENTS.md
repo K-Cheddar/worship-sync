@@ -132,13 +132,26 @@ Expect tests when logic changes in:
 
 A failing test is a signal, not a prompt to silence it. Agents and contributors must not update tests only to make the suite green without establishing that the **production change is intentional** and the **old expectation is obsolete**.
 
+Changing an existing test expectation is a **behavior-change decision**, not a cleanup step. Treat it as a contract review.
+
 Before changing a test to match new behavior:
 
 1. **Confirm intent** — Was the code change deliberate (ticket, PR description, explicit request)? If the failure might be an accident, fix the implementation first.
 2. **Confirm the contract** — Does the product or API still require the old behavior (compatibility, security, operator workflow)? If yes, preserve or restore that behavior; do not weaken the test.
 3. **If the new behavior is correct** — Update the test to assert the new contract and, when useful, add coverage for edge cases the change introduced.
 
+Required agent workflow before editing an existing test:
+
+1. State in one sentence what behavior changed.
+2. State why that change is intentional.
+3. Check whether the old behavior was user-visible, operator-critical, API-visible, or relied on elsewhere.
+4. Only then update the test expectation.
+
+If an agent cannot complete those steps confidently, it must stop and clarify instead of rewriting the test.
+
 **Heuristic:** If you cannot state in one sentence why the new behavior is correct and the prior test expectation no longer applies, stop and clarify before editing the test.
+
+When a test is updated because the contract truly changed, the agent should also say so explicitly in its summary, review notes, or final response. Do not leave test expectation changes unexplained.
 
 Reviewers should treat unexplained test-only diffs alongside production changes as high risk: they may hide a regression.
 

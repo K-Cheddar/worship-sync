@@ -108,7 +108,7 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
         size={size}
         contentClassName="overflow-auto flex-1 min-h-0 flex flex-col text-white"
       >
-        <p className="text-sm text-gray-400 pb-2">Suggestions are based on the history of published credits.</p>
+        <p className="text-sm text-gray-400 pb-2">Suggestions are based on your saved credits history (shared across outlines).</p>
         <div className="flex flex-col gap-2 p-2 shrink-0 border-b border-gray-700">
           <Input
             label="Search"
@@ -125,7 +125,7 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
         {entries.length === 0 ? (
           <p className="text-sm text-gray-400 p-2">
             {Object.keys(creditsHistory).length === 0
-              ? "History is built when you publish credits. Publish your credits list to start building history per heading."
+              ? "History is built as you save credits. Edit headings and lines in the credits list to grow suggestions per heading."
               : "No history entries match your search."}
           </p>
         ) : (
@@ -265,7 +265,7 @@ const CreditHistoryDrawer = ({ isOpen, onClose, size = "lg", position = "right" 
             ? `Are you sure you want to delete the history for "${headingToDelete}"?`
             : "Are you sure you want to delete this history entry?"
         }
-        warningMessage="This will remove all saved lines for this heading. You can build history again by publishing credits."
+        warningMessage="This will remove all saved lines for this heading. You can build history again by saving credits for that heading."
       />
     </>
   );
