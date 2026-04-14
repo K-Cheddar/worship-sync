@@ -1,3 +1,12 @@
+## [2.0.2](https://github.com/K-Cheddar/worship-sync/compare/v2.0.1...v2.0.2) (2026-04-14)
+
+
+### Bug Fixes
+
+* Update encoding ([f4dc816](https://github.com/K-Cheddar/worship-sync/commit/f4dc8161f007d7e1391576a6adcb00839c7d8425))
+* update packages ([f4d5058](https://github.com/K-Cheddar/worship-sync/commit/f4d5058124f506f35b6c009d13483b0603fab551))
+* Update version of node ([2985394](https://github.com/K-Cheddar/worship-sync/commit/298539493a5bbe1abf8e6628e4c35d8cf9ab6d31))
+
 ## [2.0.1](https://github.com/K-Cheddar/worship-sync/compare/v2.0.0...v2.0.1) (2026-04-14)
 
 
