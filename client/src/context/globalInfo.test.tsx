@@ -6,6 +6,10 @@ import { GlobalInfoContext } from "./globalInfo";
 import * as authApi from "../api/auth";
 import * as firebaseApps from "../firebase/apps";
 import {
+  getPendingLinkCredentialState,
+  getPendingLinkState,
+  setPendingLinkCredentialState,
+  setPendingLinkState,
   getWorkstationSessionOperatorName,
   setWorkstationSessionOperatorName,
 } from "../utils/authStorage";
@@ -37,6 +41,28 @@ const setMock = jest.fn();
 const getDatabaseMock = jest.fn(() => ({ name: "firebase-db" }));
 const signInWithCustomTokenMock = jest.fn(() => Promise.resolve({}));
 const signOutMock = jest.fn(() => Promise.resolve());
+const signInWithEmailAndPasswordMock = jest.fn(() => Promise.resolve({}));
+const signInWithPopupMock = jest.fn(() => Promise.resolve({}));
+const fetchSignInMethodsForEmailMock = jest.fn(() => Promise.resolve([]));
+const linkWithCredentialMock = jest.fn(() => Promise.resolve({}));
+const updateProfileMock = jest.fn(() => Promise.resolve());
+const googleCredentialFromErrorMock = jest.fn();
+const googleCredentialFactoryMock = jest.fn(
+  (idToken?: string | null, accessToken?: string | null) => ({
+    providerId: "google.com",
+    signInMethod: "google.com",
+    idToken,
+    accessToken,
+    toJSON: () => ({
+      oauthIdToken: idToken,
+      oauthAccessToken: accessToken,
+    }),
+  }),
+);
+const microsoftCredentialFromErrorMock = jest.fn();
+const mockHumanAuth = {
+  currentUser: null as any,
+};
 
 jest.mock("../hooks", () => ({
   useDispatch: () => mockDispatch,
@@ -68,23 +94,66 @@ jest.mock("../api/auth", () => ({
 }));
 
 jest.mock("../firebase/apps", () => ({
-  getHumanAuth: jest.fn(() => ({})),
+  getHumanAuth: jest.fn(() => mockHumanAuth),
   getSharedDataAuth: jest.fn(() => ({})),
   getSharedDataDatabase: jest.fn(() => ({ name: "firebase-db" })),
 }));
 
 jest.mock("firebase/auth", () => ({
+  GoogleAuthProvider: Object.assign(
+    jest.fn(() => ({
+      providerId: "google.com",
+    })),
+    {
+      credentialFromError: (...args: any[]) => googleCredentialFromErrorMock(...args),
+      credential: (...args: any[]) => googleCredentialFactoryMock(...args),
+    },
+  ),
+  OAuthProvider: Object.assign(
+    jest.fn((providerId: string) => ({
+      providerId,
+      setCustomParameters: jest.fn(),
+      credential: (
+        optionsOrIdToken: { idToken?: string; accessToken?: string } | string | null,
+        accessToken?: string,
+      ) => ({
+        providerId,
+        signInMethod: providerId,
+        optionsOrIdToken,
+        accessToken,
+        toJSON: () => ({
+          oauthIdToken:
+            typeof optionsOrIdToken === "object" && optionsOrIdToken
+              ? optionsOrIdToken.idToken
+              : "",
+          oauthAccessToken:
+            typeof optionsOrIdToken === "object" && optionsOrIdToken
+              ? optionsOrIdToken.accessToken
+              : accessToken,
+        }),
+      }),
+    })),
+    {
+      credentialFromError: (...args: any[]) =>
+        microsoftCredentialFromErrorMock(...args),
+    },
+  ),
   onAuthStateChanged: (_auth: unknown, callback: (user: unknown) => void) => {
     const unsubscribe = jest.fn();
-    Promise.resolve().then(() => callback(null));
+    Promise.resolve().then(() => callback(mockHumanAuth.currentUser));
     return unsubscribe;
   },
+  fetchSignInMethodsForEmail: (...args: any[]) =>
+    fetchSignInMethodsForEmailMock(...args),
+  linkWithCredential: (...args: any[]) => linkWithCredentialMock(...args),
   signInWithCustomToken: (...args: any[]) =>
     signInWithCustomTokenMock(...args),
-  signInWithEmailAndPassword: jest.fn(() => Promise.resolve({})),
+  signInWithEmailAndPassword: (...args: any[]) =>
+    signInWithEmailAndPasswordMock(...args),
+  signInWithPopup: (...args: any[]) => signInWithPopupMock(...args),
   signOut: (...args: any[]) => signOutMock(...args),
   createUserWithEmailAndPassword: jest.fn(() => Promise.resolve({ user: {} })),
-  updateProfile: jest.fn(() => Promise.resolve()),
+  updateProfile: (...args: any[]) => updateProfileMock(...args),
 }));
 
 jest.mock("firebase/database", () => ({
@@ -211,6 +280,56 @@ const ContextProbe = () => {
   );
 };
 
+const AuthActionsProbe = () => {
+  const context = useContext(GlobalInfoContext);
+
+  if (!context) return null;
+
+  return (
+    <div>
+      <div data-testid="probe-auth-status">{context.authServerStatus}</div>
+      <div data-testid="probe-auth-error">{context.authError || "none"}</div>
+      <div data-testid="pending-link-provider">
+        {context.pendingLinkState?.providerId || "none"}
+      </div>
+      <button
+        type="button"
+        onClick={() =>
+          void context.login({
+            method: "google",
+          })
+        }
+      >
+        Google sign in
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void context.login({
+            method: "password",
+            email: "person@example.com",
+            password: "Secret-pass1!",
+          })
+        }
+      >
+        Password sign in
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void context.createChurchAccount({
+            method: "google",
+            churchName: "Test Church",
+            adminName: "Leader Name",
+          })
+        }
+      >
+        Create church with Google
+      </button>
+    </div>
+  );
+};
+
 describe("GlobalInfoProvider presentation listener contracts", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -223,10 +342,21 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     setMock.mockClear();
     signInWithCustomTokenMock.mockClear();
     signOutMock.mockClear();
+    signInWithEmailAndPasswordMock.mockReset();
+    signInWithPopupMock.mockReset();
+    fetchSignInMethodsForEmailMock.mockReset();
+    linkWithCredentialMock.mockReset();
+    updateProfileMock.mockReset();
+    googleCredentialFromErrorMock.mockReset();
+    googleCredentialFactoryMock.mockClear();
+    microsoftCredentialFromErrorMock.mockReset();
+    mockHumanAuth.currentUser = null;
     (authApi.getAuthBootstrap as jest.Mock).mockReset();
     (authApi.getSharedDataToken as jest.Mock).mockReset();
     (authApi.unlinkWorkstation as jest.Mock).mockReset();
     (authApi.updateWorkstationOperator as jest.Mock).mockReset();
+    (authApi.createHumanSession as jest.Mock).mockReset();
+    (authApi.createChurchAccount as jest.Mock).mockReset();
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(demoBootstrap);
     (authApi.getSharedDataToken as jest.Mock).mockResolvedValue({
       success: true,
@@ -239,6 +369,19 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     (authApi.updateWorkstationOperator as jest.Mock).mockResolvedValue({
       success: true,
       workstation: {},
+    });
+    signInWithEmailAndPasswordMock.mockResolvedValue({ user: mockHumanAuth.currentUser });
+    signInWithPopupMock.mockResolvedValue({ user: mockHumanAuth.currentUser });
+    fetchSignInMethodsForEmailMock.mockResolvedValue([]);
+    linkWithCredentialMock.mockResolvedValue({ success: true });
+    (authApi.createHumanSession as jest.Mock).mockResolvedValue({
+      success: true,
+      bootstrap: loggedInHumanBootstrap,
+    });
+    (authApi.createChurchAccount as jest.Mock).mockResolvedValue({
+      success: true,
+      requiresEmailCode: true,
+      pendingAuthId: "pending-123",
     });
     (firebaseApps.getSharedDataDatabase as jest.Mock).mockImplementation(() =>
       getDatabaseMock()
@@ -767,5 +910,194 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     expect(authApi.unlinkWorkstation).toHaveBeenCalledWith("workstation-1", "");
     expect(screen.getByTestId("session-kind")).toHaveTextContent("none");
     expect(getWorkstationSessionOperatorName()).toBe("");
+  });
+});
+
+describe("GlobalInfoProvider auth regression coverage", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    setPendingLinkState(null);
+    setPendingLinkCredentialState(null);
+  });
+
+  it("clears stale pending-link UI state when no linkable credential remains", async () => {
+    setPendingLinkState({
+      email: "person@example.com",
+      providerId: "google.com",
+      requiredMethods: ["password"],
+    });
+
+    renderProvider(<AuthActionsProbe />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pending-link-provider")).toHaveTextContent("none");
+    });
+    expect(getPendingLinkState()).toBeNull();
+    expect(getPendingLinkCredentialState()).toBeNull();
+  });
+
+  it("restores a pending provider link after remount and links on password sign-in", async () => {
+    const collisionError = Object.assign(new Error("collision"), {
+      code: "auth/account-exists-with-different-credential",
+      customData: { email: "person@example.com" },
+    });
+    googleCredentialFromErrorMock.mockReturnValue({
+      toJSON: () => ({
+        oauthAccessToken: "google-token",
+      }),
+    });
+    signInWithPopupMock.mockRejectedValueOnce(collisionError);
+    fetchSignInMethodsForEmailMock.mockResolvedValue(["password"]);
+
+    const linkedUser = {
+      uid: "user-1",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+    };
+    signInWithEmailAndPasswordMock.mockResolvedValue({ user: linkedUser });
+
+    const view = renderProvider(<AuthActionsProbe />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Google sign in" }));
+
+    await waitFor(() => {
+      expect(getPendingLinkState()?.providerId).toBe("google.com");
+    });
+    expect(getPendingLinkCredentialState()).toEqual({
+      providerId: "google.com",
+      credentialJson: {
+        oauthAccessToken: "google-token",
+      },
+    });
+
+    view.unmount();
+
+    renderProvider(<AuthActionsProbe />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("pending-link-provider")).toHaveTextContent(
+        "google.com",
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Password sign in" }));
+
+    await waitFor(() => {
+      expect(linkWithCredentialMock).toHaveBeenCalledWith(
+        linkedUser,
+        expect.objectContaining({
+          providerId: "google.com",
+        }),
+      );
+    });
+    expect(getPendingLinkState()).toBeNull();
+    expect(getPendingLinkCredentialState()).toBeNull();
+  });
+
+  it("continues password sign-in when a restored provider link can no longer be applied", async () => {
+    setPendingLinkState({
+      email: "person@example.com",
+      providerId: "google.com",
+      requiredMethods: ["password"],
+    });
+    setPendingLinkCredentialState({
+      providerId: "google.com",
+      credentialJson: {
+        oauthAccessToken: "expired-token",
+      },
+    });
+
+    const linkedUser = {
+      uid: "user-2",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+    };
+    signInWithEmailAndPasswordMock.mockResolvedValue({ user: linkedUser });
+    linkWithCredentialMock.mockRejectedValueOnce(new Error("credential-expired"));
+
+    renderProvider(<AuthActionsProbe />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pending-link-provider")).toHaveTextContent(
+        "google.com",
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Password sign in" }));
+
+    await waitFor(() => {
+      expect(authApi.createHumanSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          idToken: "firebase-id-token",
+        }),
+      );
+    });
+    expect(getPendingLinkState()).toBeNull();
+    expect(getPendingLinkCredentialState()).toBeNull();
+  });
+
+  it("shows an SSO guidance message when password auth fails", async () => {
+    signInWithEmailAndPasswordMock.mockRejectedValueOnce(
+      Object.assign(new Error("invalid"), {
+        code: "auth/invalid-credential",
+      }),
+    );
+
+    renderProvider(<AuthActionsProbe />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Password sign in" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-error")).toHaveTextContent(
+        "Could not sign in with email and password. If this account uses Google or Microsoft, continue with that method instead.",
+      );
+    });
+    expect(authApi.createHumanSession).not.toHaveBeenCalled();
+  });
+
+  it("does not delete or rename a provider user when church creation fails", async () => {
+    const providerUser = {
+      uid: "provider-user",
+      delete: jest.fn(() => Promise.resolve()),
+      getIdToken: jest.fn(() => Promise.resolve("provider-id-token")),
+    };
+    mockHumanAuth.currentUser = providerUser;
+    signInWithPopupMock.mockResolvedValue({ user: providerUser });
+    (authApi.createChurchAccount as jest.Mock).mockRejectedValue(
+      new Error("This account already belongs to a church."),
+    );
+
+    renderProvider(<AuthActionsProbe />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create church with Google" }),
+    );
+
+    await waitFor(() => {
+      expect(authApi.createChurchAccount).toHaveBeenCalledWith(
+        expect.objectContaining({
+          idToken: "provider-id-token",
+          adminName: "Leader Name",
+        }),
+      );
+    });
+    expect(providerUser.delete).not.toHaveBeenCalled();
+    expect(updateProfileMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(signOutMock).toHaveBeenCalledWith(mockHumanAuth);
+    });
   });
 });

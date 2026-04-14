@@ -48,6 +48,8 @@ export type AuthBootstrap = {
     uid: string;
     email: string;
     displayName: string;
+    primaryEmail?: string;
+    linkedMethods?: string[];
   } | null;
   device?: {
     deviceId: string | null;
@@ -62,6 +64,8 @@ export type AuthUserSummary = {
   uid: string;
   email: string;
   displayName?: string;
+  primaryEmail?: string;
+  linkedMethods?: string[];
 };
 
 /** Trusted device row from GET api/devices/human (flattened per church admins). */

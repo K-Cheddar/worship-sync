@@ -48,7 +48,6 @@ import {
 } from "../../utils/mediaLibraryFolderOptions";
 import MediaLibraryToolbar from "./MediaLibraryToolbar";
 import { Slider } from "../../components/ui/Slider";
-import Icon from "../../components/Icon/Icon";
 import MediaLibraryFolderGridItems from "./MediaLibraryFolderGridItems";
 import MediaLibraryActionBar, {
   MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
@@ -92,12 +91,21 @@ function MediaModalGridZoomSlider({
   onZoomChange,
 }: MediaModalGridZoomSliderProps) {
   const safeMax = Math.max(modalZoomSliderMax, 1);
-  const value = Math.min(modalZoomLevel, modalZoomSliderMax);
+  const value = Math.min(Math.max(modalZoomLevel, 0), modalZoomSliderMax);
+  const changeZoomBy = (delta: number) => {
+    onZoomChange(Math.min(safeMax, Math.max(0, value + delta)));
+  };
   return (
     <div className="flex shrink-0 items-center gap-1">
-      <span className="shrink-0 text-gray-300" aria-hidden>
-        <Icon svg={ZoomOut} size="sm" color="currentColor" />
-      </span>
+      <Button
+        variant="tertiary"
+        className="min-h-0 h-7 w-7 justify-center p-0"
+        svg={ZoomOut}
+        title="Zoom out"
+        aria-label="Zoom out media grid"
+        disabled={disabled || value <= 0}
+        onClick={() => changeZoomBy(-1)}
+      />
       <div className="w-36 shrink-0">
         <Slider
           className="w-full"
@@ -110,9 +118,15 @@ function MediaModalGridZoomSlider({
           aria-label="Media grid zoom"
         />
       </div>
-      <span className="shrink-0 text-gray-300" aria-hidden>
-        <Icon svg={ZoomIn} size="sm" color="currentColor" />
-      </span>
+      <Button
+        variant="tertiary"
+        className="min-h-0 h-7 w-7 justify-center p-0"
+        svg={ZoomIn}
+        title="Zoom in"
+        aria-label="Zoom in media grid"
+        disabled={disabled || value >= safeMax}
+        onClick={() => changeZoomBy(1)}
+      />
     </div>
   );
 }

@@ -39,6 +39,9 @@ const ToolbarMenu = ({
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
+  const zoomStep = 10;
+  const zoomMin = 50;
+  const zoomMax = 200;
   const navigate = useNavigate();
   const {
     isElectron,
@@ -64,6 +67,10 @@ const ToolbarMenu = ({
       document.documentElement.style.fontSize = `${baseFontSize}%`;
     };
   }, [zoomLevel]);
+
+  const setZoomWithinBounds = (nextZoom: number) => {
+    setZoomLevel(Math.min(zoomMax, Math.max(zoomMin, nextZoom)));
+  };
 
   const handleReset = () => {
     setZoomLevel(100);
@@ -234,26 +241,44 @@ const ToolbarMenu = ({
             ></Button>
           </div>
           <div className="flex w-full items-center justify-center gap-1 px-0.5">
-            <span className="shrink-0 text-gray-300" aria-hidden>
-              <Icon svg={ZoomOut} size="sm" color="currentColor" />
-            </span>
+            <Button
+              variant="tertiary"
+              className="min-h-0 h-7 w-7 justify-center p-0"
+              svg={ZoomOut}
+              color="#ffffff"
+              title="Zoom out"
+              aria-label="Zoom out interface"
+              disabled={zoomLevel <= zoomMin}
+              onClick={() => setZoomWithinBounds(zoomLevel - zoomStep)}
+            />
             <div className="w-36 shrink-0">
               <Slider
                 value={[zoomLevel]}
-                onValueChange={(v: number[]) => setZoomLevel(v[0] ?? 100)}
-                min={50}
-                max={200}
-                step={10}
+                onValueChange={(v: number[]) =>
+                  setZoomWithinBounds(v[0] ?? 100)
+                }
+                min={zoomMin}
+                max={zoomMax}
+                step={zoomStep}
                 className="w-full"
                 aria-label="Interface zoom"
               />
             </div>
-            <span className="shrink-0 text-gray-300" aria-hidden>
-              <Icon svg={ZoomIn} size="sm" color="currentColor" />
-            </span>
+            <Button
+              variant="tertiary"
+              className="min-h-0 h-7 w-7 justify-center p-0"
+              svg={ZoomIn}
+              color="#ffffff"
+              title="Zoom in"
+              aria-label="Zoom in interface"
+              disabled={zoomLevel >= zoomMax}
+              onClick={() => setZoomWithinBounds(zoomLevel + zoomStep)}
+            />
           </div>
         </div>
       ),
+      className:
+        "p-0 hover:bg-transparent focus:bg-transparent hover:text-inherit focus:text-inherit",
       preventClose: true,
     },
     ...(isPhone && !isEditMode && access !== "view"

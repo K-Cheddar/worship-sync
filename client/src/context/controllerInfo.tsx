@@ -686,7 +686,7 @@ const ControllerInfoProvider = ({ children }: any) => {
       email: string;
       password: string;
     }) => {
-      await login?.({ email, password });
+      await login?.({ method: "password", email, password });
     },
     [login]
   );

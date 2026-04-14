@@ -6,7 +6,7 @@ import type { WindowType } from "./windowState";
 export const WORSHIPSYNC_SESSION_PARTITION = "persist:worshipsync";
 
 const sharedChildWindowWebPreferences = (
-  electronMainDirname: string
+  electronMainDirname: string,
 ): Electron.WebPreferences => ({
   preload: join(electronMainDirname, "../preload/preload.mjs"),
   partition: WORSHIPSYNC_SESSION_PARTITION,
@@ -17,6 +17,117 @@ const sharedChildWindowWebPreferences = (
 });
 
 const EXTERNAL_CHILD_WINDOW_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
+const OAUTH_POPUP_HOST_PATTERNS = [
+  /\.firebaseapp\.com$/i,
+  /\.google\.com$/i,
+  /^login\.microsoftonline\.com$/i,
+  /^login\.live\.com$/i,
+  /^account\.live\.com$/i,
+];
+
+const shouldOpenAuthPopupInApp = (targetUrl: string): boolean => {
+  try {
+    const target = new URL(targetUrl);
+    if (target.protocol !== "https:") return false;
+    return OAUTH_POPUP_HOST_PATTERNS.some((pattern) =>
+      pattern.test(target.hostname),
+    );
+  } catch {
+    return false;
+  }
+};
+
+const AUTH_HANDLER_PATH = "/__/auth/handler";
+const AUTH_POPUP_CLOSE_DELAY_MS = 800;
+const authPopupLifecycleAttached = new WeakSet<WebContents>();
+
+const hasAuthCompletionSignals = (value: string): boolean => {
+  const normalized = value.toLowerCase();
+  return (
+    normalized.includes("code=") ||
+    normalized.includes("state=") ||
+    normalized.includes("oauth") ||
+    normalized.includes("error=") ||
+    normalized.includes("firebaseerror=")
+  );
+};
+
+export const isLikelyAuthPopupCompletionUrl = (
+  parentUrl: string,
+  targetUrl: string,
+): boolean => {
+  try {
+    const target = new URL(targetUrl);
+    if (
+      target.protocol === "about:" &&
+      target.pathname.toLowerCase() === "blank"
+    ) {
+      return true;
+    }
+
+    if (
+      target.protocol === "https:" &&
+      target.pathname.toLowerCase() === AUTH_HANDLER_PATH &&
+      (hasAuthCompletionSignals(target.search) ||
+        hasAuthCompletionSignals(target.hash))
+    ) {
+      return true;
+    }
+
+    const parent = new URL(parentUrl);
+    if (parent.protocol === "file:" && target.protocol === "file:") {
+      return target.pathname === parent.pathname;
+    }
+
+    if (
+      (parent.protocol === "https:" || parent.protocol === "http:") &&
+      (target.protocol === "https:" || target.protocol === "http:")
+    ) {
+      return target.origin === parent.origin;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+};
+
+const attachAuthPopupLifecycle = (parentContents: WebContents): void => {
+  if (authPopupLifecycleAttached.has(parentContents)) {
+    return;
+  }
+  authPopupLifecycleAttached.add(parentContents);
+
+  parentContents.on("did-create-window", (popupWindow, details) => {
+    if (!shouldOpenAuthPopupInApp(details.url)) {
+      return;
+    }
+
+    const safeClosePopup = () => {
+      if (!popupWindow.isDestroyed()) {
+        popupWindow.close();
+      }
+    };
+
+    const parentWindow = BrowserWindow.fromWebContents(parentContents);
+    if (parentWindow && !parentWindow.isDestroyed()) {
+      parentWindow.once("closed", safeClosePopup);
+    }
+
+    popupWindow.webContents.on("did-fail-load", () => {
+      safeClosePopup();
+    });
+
+    popupWindow.webContents.on("did-navigate", (_event, navigatedUrl) => {
+      if (
+        isLikelyAuthPopupCompletionUrl(parentContents.getURL(), navigatedUrl)
+      ) {
+        setTimeout(() => {
+          safeClosePopup();
+        }, AUTH_POPUP_CLOSE_DELAY_MS);
+      }
+    });
+  });
+};
 
 /**
  * Only same-app child windows should inherit the WorshipSync session partition and preload.
@@ -24,7 +135,7 @@ const EXTERNAL_CHILD_WINDOW_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
  */
 export const shouldUseSharedSessionChildWindow = (
   parentUrl: string,
-  targetUrl: string
+  targetUrl: string,
 ): boolean => {
   try {
     const parent = new URL(parentUrl);
@@ -50,14 +161,37 @@ export const shouldUseSharedSessionChildWindow = (
  */
 export const setupSharedSessionWindowOpenHandler = (
   webContents: WebContents,
-  electronMainDirname: string
+  electronMainDirname: string,
 ): void => {
+  attachAuthPopupLifecycle(webContents);
   webContents.setWindowOpenHandler(({ url }) => {
     if (shouldUseSharedSessionChildWindow(webContents.getURL(), url)) {
       return {
         action: "allow",
         overrideBrowserWindowOptions: {
           webPreferences: sharedChildWindowWebPreferences(electronMainDirname),
+        },
+      };
+    }
+
+    if (shouldOpenAuthPopupInApp(url)) {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          parent: BrowserWindow.fromWebContents(webContents) || undefined,
+          modal: false,
+          autoHideMenuBar: true,
+          show: true,
+          width: 520,
+          height: 720,
+          webPreferences: {
+            partition: WORSHIPSYNC_SESSION_PARTITION,
+            preload: undefined,
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+            backgroundThrottling: false,
+          },
         },
       };
     }
@@ -86,7 +220,7 @@ export const setupWindowEventListeners = (
   window: BrowserWindow,
   windowType: WindowType,
   windowStateManager: any,
-  onClosed: () => void
+  onClosed: () => void,
 ) => {
   // Only track when window closes to update wasOpen state
   // Since windows are always fullscreen, we don't need to track moves/resizes
@@ -106,13 +240,14 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
 
   if (config.isDev) {
     // Ensure route starts with # for hash routing
-    const hashRoute = config.route.startsWith("#") ? config.route : `#${config.route}`;
+    const hashRoute = config.route.startsWith("#")
+      ? config.route
+      : `#${config.route}`;
     window.loadURL(`https://local.worshipsync.net:3000${hashRoute}`);
   } else {
-    window.loadFile(
-      join(config.dirname, "../renderer/index.html"),
-      { hash: config.route }
-    );
+    window.loadFile(join(config.dirname, "../renderer/index.html"), {
+      hash: config.route,
+    });
   }
 
   return window;
@@ -121,7 +256,7 @@ export const createDisplayWindow = (config: WindowConfig): BrowserWindow => {
 export const setupReadyToShow = (
   window: BrowserWindow,
   windowType: WindowType,
-  windowStateManager: any
+  windowStateManager: any,
 ) => {
   window.once("ready-to-show", () => {
     if (window && !window.isDestroyed()) {

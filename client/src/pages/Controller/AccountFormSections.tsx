@@ -265,8 +265,8 @@ const displaySurfaceOptions: {
     { value: "credits", label: "Credits" },
   ];
 
-const ACCOUNT_CONTROL_INPUT_CLASSNAME = "h-10 max-md:min-h-14";
-const ACCOUNT_CONTROL_SELECT_CLASSNAME = "h-10 max-md:min-h-14";
+export const ACCOUNT_CONTROL_INPUT_CLASSNAME = "h-9 max-md:min-h-14";
+export const ACCOUNT_CONTROL_SELECT_CLASSNAME = "h-9 max-md:min-h-14";
 
 const formatAccountError = (error: unknown, fallback: string): string => {
   const raw = error instanceof Error ? error.message.trim() : String(error).trim();

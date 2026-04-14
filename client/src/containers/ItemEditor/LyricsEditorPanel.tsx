@@ -48,7 +48,6 @@ import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { Slider } from "../../components/ui/Slider";
-import Icon from "../../components/Icon/Icon";
 import Modal from "../../components/Modal/Modal";
 import { ToastContext } from "../../context/toastContext";
 import { createNewSlide, createBox } from "../../utils/slideCreation";
@@ -133,6 +132,13 @@ const LyricsEditorPanel = () => {
   const [pendingFocusSectionId, setPendingFocusSectionId] = useState<string | null>(null);
   const [addNewSectionsToSongOrder, setAddNewSectionsToSongOrder] = useState(true);
   const dispatch = useDispatch();
+  const setLyricsDensity = useCallback(
+    (next: number) => {
+      const clamped = Math.min(lyricsDensityMax, Math.max(lyricsDensityMin, next));
+      dispatch(setFormattedLyrics(clamped));
+    },
+    [dispatch, lyricsDensityMax, lyricsDensityMin],
+  );
   const toastContext = useContext(ToastContext);
   const showToast = toastContext?.showToast;
   const removeToast = toastContext?.removeToast;
@@ -859,9 +865,15 @@ const LyricsEditorPanel = () => {
       <div className="absolute left-0 z-30 bg-homepage-canvas lg:border-r-2 border-gray-500 flex flex-col gap-2 h-full w-full max-lg:pb-6 pb-2">
         <div className="flex h-fit shrink-0 items-center border-b border-white/20 bg-black/60 px-2 gap-2">
           <div className="max-lg:hidden flex shrink-0 items-center gap-1">
-            <span className="shrink-0 text-gray-300" aria-hidden>
-              <Icon svg={ZoomOut} size="sm" color="currentColor" />
-            </span>
+            <Button
+              variant="tertiary"
+              className="min-h-0 h-7 w-7 justify-center p-0"
+              svg={ZoomOut}
+              title="Zoom out"
+              aria-label="Zoom out lyrics density"
+              disabled={formattedLyricsPerRow >= lyricsDensityMax}
+              onClick={() => setLyricsDensity(formattedLyricsPerRow + 1)}
+            />
             <div className="w-36 shrink-0">
               <Slider
                 className="w-full"
@@ -872,18 +884,20 @@ const LyricsEditorPanel = () => {
                 onValueChange={(v: number[]) => {
                   const raw = v[0];
                   if (raw == null) return;
-                  dispatch(
-                    setFormattedLyrics(
-                      lyricsDensityMax + lyricsDensityMin - raw,
-                    ),
-                  );
+                  setLyricsDensity(lyricsDensityMax + lyricsDensityMin - raw);
                 }}
                 aria-label="Lyrics section density"
               />
             </div>
-            <span className="shrink-0 text-gray-300" aria-hidden>
-              <Icon svg={ZoomIn} size="sm" color="currentColor" />
-            </span>
+            <Button
+              variant="tertiary"
+              className="min-h-0 h-7 w-7 justify-center p-0"
+              svg={ZoomIn}
+              title="Zoom in"
+              aria-label="Zoom in lyrics density"
+              disabled={formattedLyricsPerRow <= lyricsDensityMin}
+              onClick={() => setLyricsDensity(formattedLyricsPerRow - 1)}
+            />
           </div>
           <p className="mx-auto font-semibold text-lg">{item.name}</p>
           <Button variant="tertiary" svg={X} onClick={() => onClose()} />

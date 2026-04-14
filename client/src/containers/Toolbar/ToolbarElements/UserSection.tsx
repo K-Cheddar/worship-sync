@@ -1,11 +1,12 @@
 import { useContext, useState, useEffect, useMemo } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { CloudOff, Cloud, CircleDot } from "lucide-react";
+import { CloudOff, Cloud, CircleDot, Save, LogOut } from "lucide-react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import Icon from "../../../components/Icon/Icon";
 import Button from "../../../components/Button/Button";
 import PopOver from "../../../components/PopOver/PopOver";
+import Input from "../../../components/Input/Input";
 import { WORKSTATION_END_SESSION_LABEL } from "../../../components/WorkstationUnpairConfirmModal/WorkstationUnpairConfirmModal";
 import { getHumanAuth } from "../../../firebase/apps";
 import {
@@ -25,6 +26,8 @@ const UserSection = () => {
     sessionKind,
     loginState,
     churchName,
+    linkedAuthMethods,
+    updateSelfDisplayName,
     exitGuestMode,
     endWorkstationOperatorSession,
   } = useContext(GlobalInfoContext) || {};
@@ -33,6 +36,8 @@ const UserSection = () => {
   const isLoggedIn = loginState === "success";
   const [isPulsing, setIsPulsing] = useState(false);
   const [firebaseDisplayName, setFirebaseDisplayName] = useState("");
+  const [nameDraft, setNameDraft] = useState("");
+  const [isSavingName, setIsSavingName] = useState(false);
 
   useEffect(() => {
     if (sessionKind !== "human") {
@@ -59,6 +64,11 @@ const UserSection = () => {
   const toolbarFirstName = firstNameFromDisplayName(fullDisplayName);
   const churchLine = churchName?.trim() ?? "";
   const emailLine = userEmail?.trim() ?? "";
+  const linkedMethodsLine = (linkedAuthMethods || []).join(", ");
+
+  useEffect(() => {
+    setNameDraft(fullDisplayName || "");
+  }, [fullDisplayName]);
 
   useEffect(() => {
     if ((activeInstances?.length || 0) > 0) {
@@ -168,6 +178,56 @@ const UserSection = () => {
             <span className="wrap-break-word text-sm text-gray-300">{emailLine}</span>
           </div>
         ) : null}
+        {linkedMethodsLine ? (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Sign-in methods
+            </span>
+            <span className="wrap-break-word text-sm text-gray-300">
+              {linkedMethodsLine}
+            </span>
+          </div>
+        ) : null}
+        {sessionKind === "human" && updateSelfDisplayName ? (
+          <div className="border-t border-gray-600 pt-3">
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Name
+            </span>
+            <Input
+              className="mt-2"
+              id="account-display-name"
+              label="Display name"
+              hideLabel
+              value={nameDraft}
+              onChange={(value) => setNameDraft(String(value))}
+              disabled={isSavingName}
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              svg={Save}
+              color="#22d3ee"
+              className="mt-2 w-full justify-center text-sm"
+              isLoading={isSavingName}
+              disabled={isSavingName || !nameDraft.trim() || nameDraft.trim() === fullDisplayName}
+              onClick={() => {
+                void (async () => {
+                  setIsSavingName(true);
+                  try {
+                    const didUpdate = await updateSelfDisplayName(nameDraft);
+                    if (didUpdate) {
+                      setFirebaseDisplayName(nameDraft.trim());
+                    }
+                  } finally {
+                    setIsSavingName(false);
+                  }
+                })();
+              }}
+            >
+              Save name
+            </Button>
+          </div>
+        ) : null}
         <div className="flex flex-col gap-1">
           <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
             Church
@@ -225,7 +285,9 @@ const UserSection = () => {
             <div className="border-t border-gray-600 pt-3">
               <Button
                 type="button"
-                variant="secondary"
+                variant="primary"
+                svg={LogOut}
+                color="#22d3ee"
                 className="w-full justify-center text-sm"
                 onClick={() => void logout()}
               >

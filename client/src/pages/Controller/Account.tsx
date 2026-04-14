@@ -25,6 +25,7 @@ import {
   updateChurchMemberAccess,
 } from "../../api/auth";
 import {
+  ACCOUNT_CONTROL_SELECT_CLASSNAME,
   BrandingForm,
   DisplayPairingForm,
   InvitePeopleForm,
@@ -40,7 +41,9 @@ type Member = {
   user?: {
     uid: string;
     email: string;
+    primaryEmail?: string;
     displayName?: string;
+    linkedMethods?: string[];
   } | null;
 };
 
@@ -118,8 +121,6 @@ const memberAccessOptions: {
     { value: "music", label: "Music access" },
     { value: "view", label: "View access" },
   ];
-
-const ACCOUNT_CONTROL_SELECT_CLASSNAME = "h-10 max-md:min-h-14";
 
 type AccountTabId = "people" | "setup" | "branding";
 
@@ -675,8 +676,10 @@ const AccountPage = () => {
                     )}
                     {sortedMembers.map((member, memberIndex) => {
                       const memberUser = member.user;
+                      const memberEmail =
+                        memberUser?.primaryEmail || memberUser?.email || "";
                       const memberLabel =
-                        memberUser?.displayName || memberUser?.email || "Unknown user";
+                        memberUser?.displayName || memberEmail || "Unknown user";
                       const isSelf = memberUser?.uid === context?.userId;
                       const isAdminMember = member.role === "admin";
                       const targetUserId = memberUser?.uid || member.userId;
@@ -713,6 +716,15 @@ const AccountPage = () => {
                               >
                                 {isAdminMember ? "Admin" : "Member"} | {member.appAccess}
                               </p>
+                              {memberEmail ? (
+                                <p className="text-xs text-gray-400">{memberEmail}</p>
+                              ) : null}
+                              {Array.isArray(memberUser?.linkedMethods) &&
+                                memberUser?.linkedMethods.length > 0 ? (
+                                <p className="text-xs text-gray-400">
+                                  Sign-in methods: {memberUser.linkedMethods.join(", ")}
+                                </p>
+                              ) : null}
                             </div>
                             {!isSelf && (
                               <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">

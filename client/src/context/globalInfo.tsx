@@ -7,13 +7,19 @@ import {
   useState,
 } from "react";
 import {
+  GoogleAuthProvider,
+  OAuthProvider,
   createUserWithEmailAndPassword,
+  fetchSignInMethodsForEmail,
+  linkWithCredential,
   onAuthStateChanged,
+  signInWithPopup,
   signInWithCustomToken,
   signInWithEmailAndPassword,
   signOut,
-  updateProfile,
   type Auth,
+  type AuthCredential,
+  type User,
 } from "firebase/auth";
 import {
   Database,
@@ -40,6 +46,7 @@ import {
   unlinkWorkstation as unlinkWorkstationRequest,
   SessionKind,
   updateWorkstationOperator,
+  updateHumanProfile,
   verifyEmailCode as verifyEmailCodeRequest,
   resendEmailCode as resendEmailCodeRequest,
 } from "../api/auth";
@@ -68,8 +75,13 @@ import {
   getDisplayToken,
   getOperatorName,
   getOrCreateDeviceId,
+  getPendingLinkCredentialState,
+  getPendingLinkState,
   getWorkstationSessionOperatorName,
   getWorkstationToken,
+  setLastSignInMethod,
+  setPendingLinkCredentialState,
+  setPendingLinkState,
   setOperatorNameStorage,
   setWorkstationSessionOperatorName,
 } from "../utils/authStorage";
@@ -99,19 +111,123 @@ function settleFirebaseWrite<T>(value: T | PromiseLike<T>): Promise<void> {
   return Promise.resolve(value).catch(() => undefined);
 }
 
+type HumanFirebaseAuthResult =
+  | { status: "success"; user: User }
+  | { status: "requires-existing-method" };
+
+const getCredentialJsonValue = (
+  credentialJson: Record<string, unknown>,
+  ...keys: string[]
+) => {
+  for (const key of keys) {
+    const value = credentialJson[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+};
+
+const serializePendingLinkCredential = (
+  providerId: "google.com" | "microsoft.com",
+  credential: AuthCredential,
+) => {
+  const credentialJson =
+    typeof (credential as { toJSON?: () => unknown }).toJSON === "function"
+      ? (credential as { toJSON: () => unknown }).toJSON()
+      : null;
+  if (
+    typeof credentialJson !== "string" &&
+    (typeof credentialJson !== "object" || credentialJson === null)
+  ) {
+    return null;
+  }
+  return {
+    providerId,
+    credentialJson,
+  } as const;
+};
+
+const restorePendingLinkCredential = (
+  storedCredential: ReturnType<typeof getPendingLinkCredentialState>,
+) => {
+  if (!storedCredential) {
+    return null;
+  }
+  const credentialJson =
+    typeof storedCredential.credentialJson === "string"
+      ? JSON.parse(storedCredential.credentialJson)
+      : storedCredential.credentialJson;
+  if (typeof credentialJson !== "object" || credentialJson === null) {
+    return null;
+  }
+
+  const idToken = getCredentialJsonValue(
+    credentialJson,
+    "idToken",
+    "oauthIdToken",
+  );
+  const accessToken = getCredentialJsonValue(
+    credentialJson,
+    "accessToken",
+    "oauthAccessToken",
+  );
+
+  if (storedCredential.providerId === "google.com") {
+    if (!idToken && !accessToken) {
+      return null;
+    }
+    return GoogleAuthProvider.credential(idToken || null, accessToken || null);
+  }
+
+  if (!idToken && !accessToken) {
+    return null;
+  }
+
+  const provider = new OAuthProvider("microsoft.com");
+  if (idToken) {
+    return provider.credential({
+      idToken,
+      accessToken: accessToken || undefined,
+    });
+  }
+  return provider.credential({
+    accessToken: accessToken || undefined,
+  });
+};
+
+const PASSWORD_SIGN_IN_FALLBACK_ERROR_CODES = new Set([
+  "auth/invalid-credential",
+  "auth/invalid-login-credentials",
+  "auth/wrong-password",
+  "auth/user-not-found",
+]);
+
 type LoginStateType = "idle" | "loading" | "error" | "success" | "guest";
 type BootstrapStatus = "loading" | "ready";
 type AuthServerStatus = "checking" | "online" | "offline";
 type ChurchBrandingStatus = "loading" | "ready";
+export type HumanAuthMethod = "password" | "google" | "microsoft";
 
 export type AccessType = "full" | "music" | "view";
 type GlobalInfoContextType = {
-  login: ({
+  authenticateHumanWithFirebase: ({
+    method,
     email,
     password,
   }: {
-    email: string;
-    password: string;
+    method: HumanAuthMethod;
+    email?: string;
+    password?: string;
+  }) => Promise<HumanFirebaseAuthResult>;
+  login: ({
+    method,
+    email,
+    password,
+  }: {
+    method: HumanAuthMethod;
+    email?: string;
+    password?: string;
   }) => Promise<{ requiresEmailCode?: boolean; pendingAuthId?: string }>;
   verifyEmailCode: ({
     pendingAuthId,
@@ -126,15 +242,17 @@ type GlobalInfoContextType = {
     pendingAuthId: string;
   }) => Promise<{ pendingAuthId?: string }>;
   createChurchAccount: ({
+    method,
     churchName,
     adminName,
     adminEmail,
     password,
   }: {
+    method: HumanAuthMethod;
     churchName: string;
     adminName: string;
-    adminEmail: string;
-    password: string;
+    adminEmail?: string;
+    password?: string;
   }) => Promise<{ requiresEmailCode?: boolean; pendingAuthId?: string }>;
   forgotPassword: (email: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -152,6 +270,9 @@ type GlobalInfoContextType = {
   user: string;
   /** Account email when session has a human user (from bootstrap). */
   userEmail: string;
+  linkedAuthMethods: string[];
+  pendingLinkState: ReturnType<typeof getPendingLinkState>;
+  clearPendingLinkState: () => void;
   database: string;
   uploadPreset: string;
   setLoginState: (val: LoginStateType) => void;
@@ -175,6 +296,7 @@ type GlobalInfoContextType = {
   setOperatorName: (value: string) => void;
   refreshAuthBootstrap: () => Promise<void>;
   refreshPresentationListeners: () => void;
+  updateSelfDisplayName: (displayName: string) => Promise<boolean>;
 };
 
 export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
@@ -240,6 +362,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [userId, setUserId] = useState("");
   const [user, setUser] = useState("Demo");
   const [userEmail, setUserEmail] = useState("");
+  const [linkedAuthMethods, setLinkedAuthMethods] = useState<string[]>([]);
+  const [pendingLinkState, setPendingLinkStateLocal] = useState<
+    ReturnType<typeof getPendingLinkState>
+  >(null);
   const [database, setDatabase] = useState("demo");
   const [uploadPreset, setUploadPreset] = useState("bpqu4ma5");
   const [access, setAccess] = useState<AccessType>("full");
@@ -262,6 +388,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const [humanAuthDisplayName, setHumanAuthDisplayName] = useState("");
 
   const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
+  const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const hasRehydratedTimersRef = useRef(false);
   const sharedDataAuthRequestIdRef = useRef(0);
@@ -372,6 +499,194 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     );
   }, []);
 
+  const clearPendingLinkState = useCallback(() => {
+    pendingLinkCredentialRef.current = null;
+    setPendingLinkStateLocal(null);
+    setPendingLinkCredentialState(null);
+    setPendingLinkState(null);
+  }, []);
+
+  const getProviderForMethod = useCallback(
+    (method: Exclude<HumanAuthMethod, "password">) => {
+      if (method === "google") {
+        return new GoogleAuthProvider();
+      }
+      const provider = new OAuthProvider("microsoft.com");
+      provider.setCustomParameters({ tenant: "common" });
+      return provider;
+    },
+    []
+  );
+
+  const linkPendingCredentialIfPresent = useCallback(async (authUser: User) => {
+    let credentialToLink = pendingLinkCredentialRef.current;
+    if (!credentialToLink) {
+      credentialToLink = restorePendingLinkCredential(
+        getPendingLinkCredentialState()
+      );
+      if (!credentialToLink) {
+        clearPendingLinkState();
+        return;
+      }
+      pendingLinkCredentialRef.current = credentialToLink;
+    }
+    pendingLinkCredentialRef.current = null;
+    try {
+      await linkWithCredential(authUser, credentialToLink);
+      clearPendingLinkState();
+    } catch (error) {
+      clearPendingLinkState();
+      console.error("Could not link auth provider:", error);
+    }
+  }, [clearPendingLinkState]);
+
+  useEffect(() => {
+    const storedState = getPendingLinkState();
+    const storedCredential = getPendingLinkCredentialState();
+    const restoredCredential = (() => {
+      try {
+        return restorePendingLinkCredential(storedCredential);
+      } catch {
+        return;
+      }
+    })();
+
+    if (
+      storedState &&
+      storedCredential &&
+      restoredCredential &&
+      storedState.providerId === storedCredential.providerId
+    ) {
+      pendingLinkCredentialRef.current = restoredCredential;
+      setPendingLinkStateLocal(storedState);
+      return;
+    }
+
+    if (storedState || storedCredential) {
+      clearPendingLinkState();
+    }
+  }, [clearPendingLinkState]);
+
+  const persistPendingLinkFromError = useCallback(
+    async (
+      error: unknown,
+      method: Exclude<HumanAuthMethod, "password">,
+      fallbackEmail?: string,
+    ) => {
+      const errorCode =
+        typeof error === "object" &&
+          error &&
+          "code" in error &&
+          typeof (error as { code?: unknown }).code === "string"
+          ? ((error as { code: string }).code || "")
+          : "";
+      if (errorCode !== "auth/account-exists-with-different-credential") {
+        return false;
+      }
+
+      const auth = getHumanAuth();
+      const collisionEmail = String(
+        (error as { customData?: { email?: string } })?.customData?.email ||
+        fallbackEmail ||
+        "",
+      ).trim();
+      const requiredMethods = collisionEmail
+        ? await fetchSignInMethodsForEmail(auth, collisionEmail)
+        : [];
+      const providerId =
+        method === "google" ? "google.com" : "microsoft.com";
+      const nextCredential =
+        method === "google"
+          ? GoogleAuthProvider.credentialFromError(error as Error)
+          : OAuthProvider.credentialFromError(error as Error);
+
+      if (!nextCredential) {
+        clearPendingLinkState();
+        return false;
+      }
+
+      pendingLinkCredentialRef.current = nextCredential;
+      const serializedCredential = serializePendingLinkCredential(
+        providerId,
+        nextCredential,
+      );
+      if (!serializedCredential) {
+        clearPendingLinkState();
+        return false;
+      }
+
+      const nextState = {
+        email: collisionEmail,
+        providerId,
+        requiredMethods,
+      } as const;
+
+      setPendingLinkCredentialState(serializedCredential);
+      setPendingLinkStateLocal(nextState);
+      setPendingLinkState(nextState);
+      setAuthError(
+        requiredMethods.includes("password")
+          ? "This email is already in use. Sign in with your password to link this provider."
+          : "This email is already in use. Sign in with the existing method to link this provider."
+      );
+      return true;
+    },
+    [clearPendingLinkState],
+  );
+
+  const authenticateHumanWithFirebase = useCallback(
+    async ({
+      method,
+      email,
+      password,
+    }: {
+      method: HumanAuthMethod;
+      email?: string;
+      password?: string;
+    }): Promise<HumanFirebaseAuthResult> => {
+      const auth = getHumanAuth();
+      try {
+        let firebaseUser: User;
+        if (method === "password") {
+          const trimmedEmail = String(email || "").trim();
+          const nextPassword = String(password || "");
+          if (!trimmedEmail || !nextPassword) {
+            throw new Error("Enter your email and password to continue.");
+          }
+          const credential = await signInWithEmailAndPassword(
+            auth,
+            trimmedEmail,
+            nextPassword,
+          );
+          firebaseUser = credential.user;
+        } else {
+          const provider = getProviderForMethod(method);
+          const credential = await signInWithPopup(auth, provider);
+          firebaseUser = credential.user;
+        }
+
+        await linkPendingCredentialIfPresent(firebaseUser);
+        return {
+          status: "success",
+          user: firebaseUser,
+        };
+      } catch (error) {
+        if (
+          method !== "password" &&
+          (await persistPendingLinkFromError(error, method, email))
+        ) {
+          return { status: "requires-existing-method" };
+        }
+        throw error;
+      }
+    },
+    [
+      getProviderForMethod,
+      linkPendingCredentialIfPresent,
+      persistPendingLinkFromError,
+    ],
+  );
+
   const isReachabilityError = useCallback((error: unknown) => {
     return error instanceof AuthApiError && error.isReachabilityError;
   }, []);
@@ -466,6 +781,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setUserId("");
       setUser("");
       setUserEmail("");
+      setLinkedAuthMethods([]);
       setDatabase("");
       setUploadPreset("bpqu4ma5");
       setAccess("full");
@@ -494,9 +810,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setLoginState("success");
     setSessionKind(bootstrap.sessionKind);
     setUserId(bootstrap.user?.uid || "");
-    setUserEmail(bootstrap.user?.email?.trim() || "");
+    setUserEmail(
+      bootstrap.user?.primaryEmail?.trim() || bootstrap.user?.email?.trim() || ""
+    );
+    setLinkedAuthMethods(bootstrap.user?.linkedMethods || []);
     const humanToolbarLabel =
       bootstrap.user?.displayName?.trim() ||
+      bootstrap.user?.primaryEmail?.trim() ||
       bootstrap.user?.email?.trim() ||
       "";
     const workstationSessionOperator = getWorkstationSessionOperatorName().trim();
@@ -1085,11 +1405,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   }, []); // Empty dependency array means this only runs once on mount
 
   const login = useCallback(async ({
+    method,
     email,
     password,
   }: {
-    email: string;
-    password: string;
+    method: HumanAuthMethod;
+    email?: string;
+    password?: string;
   }) => {
     if (authServerStatus !== "online") {
       setAuthError(
@@ -1105,9 +1427,16 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setAuthError("");
 
     try {
-      const auth = getHumanAuth();
-      const credential = await signInWithEmailAndPassword(auth, email, password);
-      const idToken = await credential.user.getIdToken(true);
+      const authResult = await authenticateHumanWithFirebase({
+        method,
+        email,
+        password,
+      });
+      if (authResult.status !== "success") {
+        setLoginState("error");
+        return {};
+      }
+      const idToken = await authResult.user.getIdToken(true);
       const response = await createHumanSession({
         idToken,
         deviceId: getOrCreateDeviceId(),
@@ -1119,6 +1448,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
       if (response.bootstrap) {
         setPendingEmailVerificationId(null);
+        setLastSignInMethod(method);
         dispatch({ type: "RESET" });
         applyBootstrap(response.bootstrap);
         setAuthServerStatus("online");
@@ -1145,11 +1475,36 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         setLoginState("idle");
         return {};
       }
-      setAuthError(getSignInFlowErrorMessage(e));
+      const errorCode =
+        typeof e === "object" &&
+          e &&
+          "code" in e &&
+          typeof (e as { code?: unknown }).code === "string"
+          ? ((e as { code: string }).code || "")
+          : "";
+      if (
+        method !== "password" &&
+        (errorCode === "auth/popup-blocked" ||
+          errorCode === "auth/popup-closed-by-user")
+      ) {
+        setAuthError(
+          "Provider sign-in did not complete. Try again, or use email and password."
+        );
+      } else if (
+        method === "password" &&
+        PASSWORD_SIGN_IN_FALLBACK_ERROR_CODES.has(errorCode)
+      ) {
+        setAuthError(
+          "Could not sign in with email and password. If this account uses Google or Microsoft, continue with that method instead."
+        );
+      } else {
+        setAuthError(getSignInFlowErrorMessage(e));
+      }
       setLoginState("error");
       return {};
     }
   }, [
+    authenticateHumanWithFirebase,
     applyBootstrap,
     authServerStatus,
     dispatch,
@@ -1183,6 +1538,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         deviceLabel: getTrustedDeviceLabel(),
       });
       setPendingEmailVerificationId(null);
+      setLastSignInMethod("password");
       dispatch({ type: "RESET" });
       applyBootstrap(response.bootstrap);
       setAuthServerStatus("online");
@@ -1241,6 +1597,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (response.bootstrap) {
           setPendingEmailVerificationId(null);
+          setLastSignInMethod("password");
           dispatch({ type: "RESET" });
           applyBootstrap(response.bootstrap);
           setAuthServerStatus("online");
@@ -1282,33 +1639,48 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   );
 
   const createChurchAccountHandler = useCallback(async ({
+    method,
     churchName,
     adminName,
     adminEmail,
     password,
   }: {
+    method: HumanAuthMethod;
     churchName: string;
     adminName: string;
-    adminEmail: string;
-    password: string;
+    adminEmail?: string;
+    password?: string;
   }) => {
     setLoginState("loading");
     setAuthError("");
-    let createdUserCredential:
-      | Awaited<ReturnType<typeof createUserWithEmailAndPassword>>
-      | null = null;
+    let createdPasswordUser = false;
+    const auth = getHumanAuth();
     try {
-      const auth = getHumanAuth();
-      const credential = await createUserWithEmailAndPassword(
-        auth,
-        adminEmail,
-        password
-      );
-      createdUserCredential = credential;
-      if (adminName.trim()) {
-        await updateProfile(credential.user, { displayName: adminName.trim() });
+      const authResult =
+        method === "password"
+          ? {
+            status: "success" as const,
+            user: (
+              await createUserWithEmailAndPassword(
+                auth,
+                String(adminEmail || "").trim(),
+                String(password || ""),
+              )
+            ).user,
+          }
+          : await authenticateHumanWithFirebase({
+            method,
+            email: adminEmail,
+            password,
+          });
+      if (authResult.status !== "success") {
+        setLoginState("error");
+        return {};
       }
-      const idToken = await credential.user.getIdToken(true);
+      if (method === "password") {
+        createdPasswordUser = true;
+      }
+      const idToken = await authResult.user.getIdToken(true);
       const response = await createChurchAccount({
         idToken,
         churchName,
@@ -1324,15 +1696,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         pendingAuthId: response.pendingAuthId,
       };
     } catch (error) {
-      if (createdUserCredential) {
-        await settleFirebaseWrite(createdUserCredential.user.delete());
+      if (createdPasswordUser && auth.currentUser) {
+        await settleFirebaseWrite(auth.currentUser.delete());
+        await signOutFirebaseAuth(auth);
+      } else if (method !== "password") {
+        await signOutFirebaseAuth(auth);
       }
       console.error("Create church error:", error);
       setAuthError(error instanceof Error ? error.message : "Could not create church");
       setLoginState("error");
       return {};
     }
-  }, []);
+  }, [authenticateHumanWithFirebase]);
 
   const forgotPassword = useCallback(async (email: string) => {
     if (authServerStatus !== "online") {
@@ -1351,6 +1726,26 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       throw error;
     }
   }, [authServerStatus, isReachabilityError]);
+
+  const updateSelfDisplayName = useCallback(async (displayName: string) => {
+    const nextName = displayName.trim();
+    if (!nextName) {
+      setAuthError("Enter your name before saving.");
+      return false;
+    }
+    try {
+      await updateHumanProfile({ displayName: nextName });
+      await refreshAuthBootstrap();
+      return true;
+    } catch (error) {
+      setAuthError(
+        error instanceof Error && error.message
+          ? error.message
+          : "Could not update your profile."
+      );
+      return false;
+    }
+  }, [refreshAuthBootstrap]);
 
   const setOperatorName = useCallback((value: string) => {
     setOperatorNameState(value);
@@ -1398,6 +1793,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     }
     await signOutFirebaseAuth(getSharedDataAuth());
     setPendingEmailVerificationId(null);
+    clearPendingLinkState();
     setAccess("full");
     dispatch({ type: "RESET" });
     dispatch(ActionCreators.clearHistory());
@@ -1405,7 +1801,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     navigate(nextPath, { replace: true });
     setFirebaseDb(undefined);
     globalFireDbInfo.db = undefined;
-  }, [applyBootstrap, dispatch, navigate, sessionKind]);
+  }, [applyBootstrap, clearPendingLinkState, dispatch, navigate, sessionKind]);
 
   const unlinkCurrentWorkstation = useCallback(async () => {
     if (sessionKind !== "workstation" || !device?.deviceId) {
@@ -1438,6 +1834,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       userId,
       user,
       userEmail,
+      linkedAuthMethods,
+      pendingLinkState,
+      clearPendingLinkState,
+      authenticateHumanWithFirebase,
       database,
       uploadPreset,
       login,
@@ -1470,6 +1870,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setOperatorName,
       refreshAuthBootstrap,
       refreshPresentationListeners,
+      updateSelfDisplayName,
     }),
     [
       loginState,
@@ -1480,6 +1881,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       userId,
       user,
       userEmail,
+      linkedAuthMethods,
+      pendingLinkState,
+      clearPendingLinkState,
+      authenticateHumanWithFirebase,
       database,
       uploadPreset,
       login,
@@ -1512,6 +1917,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setOperatorName,
       refreshAuthBootstrap,
       refreshPresentationListeners,
+      updateSelfDisplayName,
     ]
   );
 

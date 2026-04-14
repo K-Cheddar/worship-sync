@@ -59,7 +59,6 @@ import { DEFAULT_FONT_PX } from "../../constants";
 import { ensureSlidesHaveMonitorBandFormatting } from "../../utils/overflow";
 import { inclusiveRangeIndicesFromAnchor } from "../../utils/backgroundTargetResolution";
 import { Slider } from "../../components/ui/Slider";
-import Icon from "../../components/Icon/Icon";
 
 type SizeConfig = {
   borderWidth: string;
@@ -219,6 +218,20 @@ const ItemSlides = () => {
 
   const dispatch = useDispatch();
   const location = useLocation();
+  const setSlideGridSize = useCallback(
+    (nextSize: number) => {
+      const clampedSize = Math.min(
+        slidesGridColsMax,
+        Math.max(slidesGridColsMin, nextSize),
+      );
+      if (isMobile) {
+        dispatch(setSlidesMobile(clampedSize));
+      } else {
+        dispatch(setSlides(clampedSize));
+      }
+    },
+    [dispatch, isMobile, slidesGridColsMax, slidesGridColsMin],
+  );
 
   /** Latest selected slide; read in selectSlide before dispatch so transitionDirection uses the prior index. */
   const selectedSlideRef = useRef(selectedSlide);
@@ -694,9 +707,15 @@ const ItemSlides = () => {
           <div className="mb-2 flex w-full shrink-0 flex-col border-b border-white/20 bg-black/60">
             <div className="flex min-w-0 flex-1 items-center gap-2 px-2">
               <div className="flex shrink-0 items-center gap-1">
-                <span className="shrink-0 text-gray-300" aria-hidden>
-                  <Icon svg={ZoomOut} size="sm" color="currentColor" />
-                </span>
+                <Button
+                  variant="tertiary"
+                  className="min-h-0 h-7 w-7 justify-center p-0"
+                  svg={ZoomOut}
+                  title="Zoom out"
+                  aria-label="Zoom out slide thumbnails"
+                  disabled={size >= slidesGridColsMax}
+                  onClick={() => setSlideGridSize(size + 1)}
+                />
                 <div className="w-36 shrink-0">
                   <Slider
                     className="w-full"
@@ -707,20 +726,22 @@ const ItemSlides = () => {
                     onValueChange={(v: number[]) => {
                       const raw = v[0];
                       if (raw == null) return;
-                      const next =
-                        slidesGridColsMax + slidesGridColsMin - raw;
-                      if (isMobile) {
-                        dispatch(setSlidesMobile(next));
-                      } else {
-                        dispatch(setSlides(next));
-                      }
+                      setSlideGridSize(
+                        slidesGridColsMax + slidesGridColsMin - raw,
+                      );
                     }}
                     aria-label="Slide thumbnail zoom"
                   />
                 </div>
-                <span className="shrink-0 text-gray-300" aria-hidden>
-                  <Icon svg={ZoomIn} size="sm" color="currentColor" />
-                </span>
+                <Button
+                  variant="tertiary"
+                  className="min-h-0 h-7 w-7 justify-center p-0"
+                  svg={ZoomIn}
+                  title="Zoom in"
+                  aria-label="Zoom in slide thumbnails"
+                  disabled={size <= slidesGridColsMin}
+                  onClick={() => setSlideGridSize(size - 1)}
+                />
               </div>
               {type === "free" && canEdit && (
                 <>

@@ -13,10 +13,34 @@ const RUNTIME_SESSION_ID_KEY = "worshipsync_runtime_session_id";
  * sessionStorage is empty → new runtime id → mismatch → operator cleared without relying
  * on sessionStorage alone (Chrome can restore sessionStorage with restored tabs).
  */
-const WORKSTATION_OPERATOR_BINDING_KEY = "worshipsync_workstation_operator_binding";
+const WORKSTATION_OPERATOR_BINDING_KEY =
+  "worshipsync_workstation_operator_binding";
+const PENDING_LINK_STATE_KEY = "worshipsync_pending_link_state";
+const PENDING_LINK_CREDENTIAL_KEY = "worshipsync_pending_link_credential";
+const LAST_SIGN_IN_METHOD_KEY = "worshipsync_last_sign_in_method";
 let csrfToken = "";
 
-export type StoredServerSessionHint = "human" | "workstation" | "display" | null;
+export type StoredServerSessionHint =
+  | "human"
+  | "workstation"
+  | "display"
+  | null;
+
+/** Human sign-in method remembered for the login screen. */
+export type StoredLastSignInMethod = "password" | "google" | "microsoft";
+
+export const getLastSignInMethod = (): StoredLastSignInMethod | null => {
+  if (typeof window === "undefined") return null;
+  const raw = readStorage(LAST_SIGN_IN_METHOD_KEY);
+  if (raw === "password" || raw === "google" || raw === "microsoft") {
+    return raw;
+  }
+  return null;
+};
+
+export const setLastSignInMethod = (method: StoredLastSignInMethod) => {
+  writeStorage(LAST_SIGN_IN_METHOD_KEY, method);
+};
 
 const readStorage = (key: string) => {
   if (typeof window === "undefined") return "";
@@ -55,7 +79,10 @@ const writeSessionStorage = (key: string, value: string) => {
 };
 
 const createRuntimeSessionId = () => {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
   return `ws_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
@@ -72,27 +99,30 @@ const getOrCreateRuntimeSessionId = () => {
 
 type WorkstationOperatorBinding = { runtimeId: string; name: string };
 
-const readWorkstationOperatorBinding = (): WorkstationOperatorBinding | null => {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(WORKSTATION_OPERATOR_BINDING_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      typeof (parsed as WorkstationOperatorBinding).runtimeId !== "string" ||
-      typeof (parsed as WorkstationOperatorBinding).name !== "string"
-    ) {
+const readWorkstationOperatorBinding =
+  (): WorkstationOperatorBinding | null => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = localStorage.getItem(WORKSTATION_OPERATOR_BINDING_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as unknown;
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        typeof (parsed as WorkstationOperatorBinding).runtimeId !== "string" ||
+        typeof (parsed as WorkstationOperatorBinding).name !== "string"
+      ) {
+        return null;
+      }
+      return parsed as WorkstationOperatorBinding;
+    } catch {
       return null;
     }
-    return parsed as WorkstationOperatorBinding;
-  } catch {
-    return null;
-  }
-};
+  };
 
-const writeWorkstationOperatorBinding = (binding: WorkstationOperatorBinding | null) => {
+const writeWorkstationOperatorBinding = (
+  binding: WorkstationOperatorBinding | null,
+) => {
   if (typeof window === "undefined") return;
   try {
     if (!binding || !binding.name.trim()) {
@@ -104,7 +134,7 @@ const writeWorkstationOperatorBinding = (binding: WorkstationOperatorBinding | n
       JSON.stringify({
         runtimeId: binding.runtimeId,
         name: binding.name.trim(),
-      })
+      }),
     );
   } catch {
     // ignore
@@ -114,7 +144,7 @@ const writeWorkstationOperatorBinding = (binding: WorkstationOperatorBinding | n
 export const getOrCreateDeviceId = () => {
   const current = readStorage(DEVICE_ID_KEY);
   if (current) return current;
-  const next = crypto.randomUUID();
+  const next = createRuntimeSessionId();
   writeStorage(DEVICE_ID_KEY, next);
   return next;
 };
@@ -122,7 +152,8 @@ export const getOrCreateDeviceId = () => {
 export const getWorkstationToken = () => readStorage(WORKSTATION_TOKEN_KEY);
 export const setWorkstationToken = (value: string) =>
   writeStorage(WORKSTATION_TOKEN_KEY, value);
-export const clearWorkstationToken = () => writeStorage(WORKSTATION_TOKEN_KEY, "");
+export const clearWorkstationToken = () =>
+  writeStorage(WORKSTATION_TOKEN_KEY, "");
 
 export const getDisplayToken = () => readStorage(DISPLAY_TOKEN_KEY);
 export const setDisplayToken = (value: string) =>
@@ -139,7 +170,8 @@ export const getStoredServerSessionHint = (): StoredServerSessionHint => {
 export const getOperatorName = () => readStorage(OPERATOR_NAME_KEY);
 export const setOperatorNameStorage = (value: string) =>
   writeStorage(OPERATOR_NAME_KEY, value.trim());
-export const clearOperatorNameStorage = () => writeStorage(OPERATOR_NAME_KEY, "");
+export const clearOperatorNameStorage = () =>
+  writeStorage(OPERATOR_NAME_KEY, "");
 
 /**
  * Who is operating this workstation for this browser session (shared-PC safe).
@@ -186,4 +218,109 @@ export const setCsrfToken = (value: string) => {
 };
 export const clearCsrfToken = () => {
   csrfToken = "";
+};
+
+export type PendingLinkState = {
+  email: string;
+  providerId: "google.com" | "microsoft.com";
+  requiredMethods: string[];
+};
+
+export type PendingLinkCredentialState = {
+  providerId: PendingLinkState["providerId"];
+  credentialJson: Record<string, unknown> | string;
+};
+
+export const getPendingLinkState = (): PendingLinkState | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(PENDING_LINK_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PendingLinkState;
+    if (
+      typeof parsed?.email !== "string" ||
+      (parsed.providerId !== "google.com" &&
+        parsed.providerId !== "microsoft.com") ||
+      !Array.isArray(parsed.requiredMethods)
+    ) {
+      return null;
+    }
+    return {
+      email: parsed.email.trim(),
+      providerId: parsed.providerId,
+      requiredMethods: parsed.requiredMethods
+        .filter((method): method is string => typeof method === "string")
+        .map((method) => method.trim())
+        .filter(Boolean),
+    };
+  } catch {
+    return null;
+  }
+};
+
+export const setPendingLinkState = (state: PendingLinkState | null) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (!state) {
+      sessionStorage.removeItem(PENDING_LINK_STATE_KEY);
+      return;
+    }
+    sessionStorage.setItem(
+      PENDING_LINK_STATE_KEY,
+      JSON.stringify({
+        email: state.email.trim(),
+        providerId: state.providerId,
+        requiredMethods: state.requiredMethods,
+      }),
+    );
+  } catch {
+    // Ignore storage errors in private mode/quota constraints.
+  }
+};
+
+export const getPendingLinkCredentialState =
+  (): PendingLinkCredentialState | null => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = sessionStorage.getItem(PENDING_LINK_CREDENTIAL_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as PendingLinkCredentialState;
+      const credentialJson = parsed?.credentialJson;
+      if (
+        (parsed?.providerId !== "google.com" &&
+          parsed?.providerId !== "microsoft.com") ||
+        ((typeof credentialJson !== "string" ||
+          credentialJson.trim().length === 0) &&
+          (typeof credentialJson !== "object" || credentialJson === null))
+      ) {
+        return null;
+      }
+      return {
+        providerId: parsed.providerId,
+        credentialJson,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+export const setPendingLinkCredentialState = (
+  state: PendingLinkCredentialState | null,
+) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (!state) {
+      sessionStorage.removeItem(PENDING_LINK_CREDENTIAL_KEY);
+      return;
+    }
+    sessionStorage.setItem(
+      PENDING_LINK_CREDENTIAL_KEY,
+      JSON.stringify({
+        providerId: state.providerId,
+        credentialJson: state.credentialJson,
+      }),
+    );
+  } catch {
+    // Ignore storage errors in private mode/quota constraints.
+  }
 };

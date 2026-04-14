@@ -23,6 +23,7 @@ export type ToastProps = {
   persist?: boolean;
   duration?: number;
   showCloseButton?: boolean;
+  stackIndex?: number;
   onClose: () => void;
 };
 
@@ -35,6 +36,7 @@ const Toast: React.FC<ToastProps> = ({
   persist = false,
   duration = 7000,
   showCloseButton = true,
+  stackIndex = 0,
   onClose,
 }) => {
   const [isVisible, setIsVisible] = useState(false);
@@ -159,6 +161,12 @@ const Toast: React.FC<ToastProps> = ({
     "bottom-center": "bottom-4 left-1/2 -translate-x-1/2",
   };
 
+  const stackOffsetPx = stackIndex * 12;
+  const stackOffsetStyle =
+    position.startsWith("top")
+      ? { top: `${16 + stackOffsetPx}px` }
+      : { bottom: `${16 + stackOffsetPx}px` };
+
   return (
     <div
       role="status"
@@ -173,6 +181,7 @@ const Toast: React.FC<ToastProps> = ({
       )}
       style={{
         borderColor: config.borderColor,
+        ...stackOffsetStyle,
       }}
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}

@@ -14,6 +14,7 @@ import {
   updateProfile,
 } from "firebase/auth";
 import Button from "../components/Button/Button";
+import { GoogleMark, MicrosoftMark } from "../components/AuthProviderMarks";
 import {
   acceptInvite,
   createHumanSession,
@@ -74,7 +75,27 @@ const getCreateAccountErrorMessage = (error: unknown) => {
   return "Could not create your account and accept this invite.";
 };
 
-const getInviteFlowErrorMessage = (error: unknown) => {
+const getInviteFlowErrorMessage = (
+  error: unknown,
+  options?: { provider?: "google" | "microsoft" },
+) => {
+  if (isFirebaseAuthError(error)) {
+    if (
+      error.code === "auth/popup-blocked" ||
+      error.code === "auth/popup-closed-by-user"
+    ) {
+      return "Provider sign-in did not complete. Try again, or use email and password.";
+    }
+    if (error.code === "auth/network-request-failed") {
+      return "Could not reach the sign-in service. Check your connection and try again.";
+    }
+    if (options?.provider) {
+      const providerLabel =
+        options.provider === "google" ? "Google" : "Microsoft";
+      return `${providerLabel} sign-in is not available right now. Try again, or use email and password.`;
+    }
+    return "Could not complete sign-in for this invite. Try again.";
+  }
   if (error instanceof Error && error.message) {
     return error.message;
   }
@@ -451,6 +472,35 @@ const InviteAccept = () => {
     }
   };
 
+  const handleProviderSignInAndAccept = async (method: "google" | "microsoft") => {
+    if (!token) {
+      setErrorMessage("This invite link is missing its token.");
+      return;
+    }
+    setIsSaving(true);
+    clearMessages();
+    setNeedsSessionRetry(false);
+    try {
+      await clearCurrentAccount();
+      const authResult = await context?.authenticateHumanWithFirebase({
+        method,
+      });
+      if (!authResult || authResult.status === "requires-existing-method") {
+        navigate("/login", {
+          replace: true,
+          state: { from: { pathname: "/invite" } },
+        });
+        return;
+      }
+      const idToken = await acceptInviteMembershipWithSignedInUser();
+      await startSessionAfterInvite(idToken);
+    } catch (error) {
+      setErrorMessage(getInviteFlowErrorMessage(error, { provider: method }));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isSaving) {
@@ -504,6 +554,35 @@ const InviteAccept = () => {
           </div>
         ) : (
           <form onSubmit={handleFormSubmit} noValidate>
+            <div className="mt-4 grid grid-cols-1 gap-2">
+              <Button
+                type="button"
+                variant="primary"
+                svg={GoogleMark}
+                iconSize="sm"
+                gap="gap-2"
+                className="w-full justify-center"
+                disabled={isSaving}
+                onClick={() => void handleProviderSignInAndAccept("google")}
+              >
+                Continue with Google
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                svg={MicrosoftMark}
+                iconSize="sm"
+                gap="gap-2"
+                className="w-full justify-center"
+                disabled={isSaving}
+                onClick={() => void handleProviderSignInAndAccept("microsoft")}
+              >
+                Continue with Microsoft
+              </Button>
+            </div>
+            <p className="mt-3 text-center text-xs text-gray-400">
+              Or create an email/password account
+            </p>
             <div className="mt-4 flex flex-col gap-3">
               <Input
                 id="invite-email"

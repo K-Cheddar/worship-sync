@@ -29,9 +29,11 @@ import { Slider } from "../../components/ui/Slider";
 import { useContext } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
+import { useToast } from "../../context/toastContext";
 
 const Preferences = () => {
   const dispatch = useDispatch();
+  const { showToast } = useToast();
   const { isMobile } = useContext(ControllerInfoContext) || {};
   const { access: currentAccess } = useContext(GlobalInfoContext) || {};
 
@@ -195,11 +197,17 @@ const Preferences = () => {
                         : "border-gray-500 hover:border-gray-300"
                     )}
                     onClick={() => {
+                      const wasUnselected = selectedPreference !== preference;
                       dispatch(
                         setSelectedPreference(
                           preference as SelectedPreferenceType
                         )
                       );
+                      if (wasUnselected) {
+                        showToast(
+                          "Pick an item from Media, then click Set Background."
+                        );
+                      }
                     }}
                   >
                     {background ? (

@@ -275,11 +275,32 @@ const Overlays = () => {
   }, [dispatch]);
 
   const handleOverlayUpdate = useCallback(
-    (overlay: OverlayInfo) => {
+    async (overlay: OverlayInfo) => {
+      if (!overlay.id) return;
+
+      // Draft flushes can arrive after selection swaps; persist by payload id so edits are not dropped.
+      if (selectedOverlay.id && overlay.id !== selectedOverlay.id) {
+        dispatch(updateOverlayInList(overlay));
+        if (!db) return;
+        try {
+          const dbOverlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
+          const updatedAt = new Date().toISOString();
+          const merged = applyPouchAudit(
+            dbOverlay,
+            { ...dbOverlay, ...overlay, updatedAt },
+            { isNew: false },
+          );
+          await db.put(merged);
+        } catch (error) {
+          console.error("Error persisting non-selected overlay", error);
+        }
+        return;
+      }
+
       dispatch(updateOverlay(overlay));
       dispatch(updateOverlayInList(overlay));
     },
-    [dispatch],
+    [db, dispatch, selectedOverlay.id],
   );
 
   const handleApplyFormattingToAll = async (formatting: OverlayFormatting) => {

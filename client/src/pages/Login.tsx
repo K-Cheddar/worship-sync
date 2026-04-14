@@ -11,6 +11,7 @@ import { useLocation, useSearchParams } from "react-router-dom";
 import { ArrowLeft, CheckCircle, Eye, EyeOff, LoaderCircle } from "lucide-react";
 import Input from "../components/Input/Input";
 import Button from "../components/Button/Button";
+import { GoogleMark, MicrosoftMark } from "../components/AuthProviderMarks";
 import SetupScreenBackButton from "../components/SetupScreenBackButton";
 import VerificationCodeInput from "../components/VerificationCodeInput/VerificationCodeInput";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -21,6 +22,7 @@ import {
   INVALID_EMAIL_FORMAT_MESSAGE,
   isValidEmailFormat,
 } from "../utils/emailFormat";
+import { getLastSignInMethod } from "../utils/authStorage";
 
 type Mode = "signIn" | "code" | "forgotPassword";
 
@@ -34,6 +36,18 @@ const RESEND_COOLDOWN_SEC = 60;
 
 const FORGOT_PASSWORD_EMAIL_HELPER =
   "If an account exists for that email, you will receive a reset link shortly.";
+
+const LastUsedBadge = ({ show }: { show: boolean }) => {
+  if (!show) return null;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold leading-none tracking-wide text-emerald-200/95"
+      aria-label="Last sign-in method used on this device"
+    >
+      Last used
+    </span>
+  );
+};
 
 /**
  * Dedupes concurrent `verifyEmailCode` calls for the same pending auth + digits.
@@ -64,6 +78,7 @@ const Login = () => {
   const [forgotPasswordSubmitBlocked, setForgotPasswordSubmitBlocked] =
     useState(false);
   const forgotPasswordSubmitBlockTimeoutRef = useRef(0);
+  const [lastSignInMethod] = useState(() => getLastSignInMethod());
   const authServerStatus = context?.authServerStatus ?? "checking";
   const authServerRetryCount = context?.authServerRetryCount ?? 0;
   const isAuthServerOnline = authServerStatus === "online";
@@ -71,6 +86,7 @@ const Login = () => {
   const isAuthActionDisabled =
     context?.loginState === "loading" || !isAuthServerOnline;
   const verifyEmailCode = context?.verifyEmailCode;
+  const pendingLinkState = context?.pendingLinkState;
   const prevVerificationDigitsLenRef = useRef(0);
 
   useLayoutEffect(() => {
@@ -163,6 +179,7 @@ const Login = () => {
     }
     setFieldErrors({});
     const response = await context?.login({
+      method: "password",
       email: trimmedEmail,
       password,
     });
@@ -171,6 +188,12 @@ const Login = () => {
       setMode("code");
       setInfoBanner("");
     }
+  };
+
+  const handleProviderSignIn = async (method: "google" | "microsoft") => {
+    setInfoBanner("");
+    setFieldErrors({});
+    await context?.login({ method });
   };
 
   const handleVerifyCode = useCallback(async () => {
@@ -370,7 +393,7 @@ const Login = () => {
       }
       return "";
     }
-    return "Use your WorshipSync email and password to continue.";
+    return "Choose a sign-in method to continue.";
   })();
 
   return (
@@ -424,6 +447,57 @@ const Login = () => {
         <form className="flex flex-col" onSubmit={handleFormSubmit} noValidate>
           {mode === "signIn" && (
             <>
+              <div className="mt-4 grid grid-cols-1 gap-2">
+                <div className="relative w-full">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    svg={GoogleMark}
+                    iconSize="sm"
+                    gap="gap-2"
+                    className="w-full justify-center"
+                    disabled={isAuthActionDisabled}
+                    onClick={() => void handleProviderSignIn("google")}
+                  >
+                    Continue with Google
+                  </Button>
+                  <div
+                    className="pointer-events-none absolute inset-y-0 right-2 flex items-center"
+                    aria-hidden={lastSignInMethod !== "google"}
+                  >
+                    <LastUsedBadge show={lastSignInMethod === "google"} />
+                  </div>
+                </div>
+                <div className="relative w-full">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    svg={MicrosoftMark}
+                    iconSize="sm"
+                    gap="gap-2"
+                    className="w-full justify-center"
+                    disabled={isAuthActionDisabled}
+                    onClick={() => void handleProviderSignIn("microsoft")}
+                  >
+                    Continue with Microsoft
+                  </Button>
+                  <div
+                    className="pointer-events-none absolute inset-y-0 right-2 flex items-center"
+                    aria-hidden={lastSignInMethod !== "microsoft"}
+                  >
+                    <LastUsedBadge show={lastSignInMethod === "microsoft"} />
+                  </div>
+                </div>
+              </div>
+              <div className="relative mt-3 min-h-5 text-center text-xs leading-5 text-gray-400">
+                <span>Or use email and password</span>
+                <div
+                  className="pointer-events-none absolute inset-y-0 right-0 flex items-center"
+                  aria-hidden={lastSignInMethod !== "password"}
+                >
+                  <LastUsedBadge show={lastSignInMethod === "password"} />
+                </div>
+              </div>
               <Input
                 className="mt-4"
                 id="email"
@@ -480,6 +554,12 @@ const Login = () => {
                   Forgot password
                 </Button>
               </div>
+              {pendingLinkState ? (
+                <p className="mt-2 text-sm text-amber-200">
+                  This email already exists. Sign in with the existing method to link{" "}
+                  {pendingLinkState.providerId === "google.com" ? "Google" : "Microsoft"}.
+                </p>
+              ) : null}
             </>
           )}
 
