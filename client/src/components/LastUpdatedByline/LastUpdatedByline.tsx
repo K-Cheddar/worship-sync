@@ -8,23 +8,16 @@ export type LastUpdatedBylineProps = {
 };
 
 const LAST_UPDATED_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
+  dateStyle: "short",
 });
-
 const LAST_UPDATED_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
-  hour: "numeric",
-  minute: "2-digit",
-  hour12: true,
+  timeStyle: "short",
 });
 
 function formatUpdatedAt(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const datePart = LAST_UPDATED_DATE_FORMATTER.format(d);
-  const timePart = LAST_UPDATED_TIME_FORMATTER.format(d);
-  return `${datePart} at ${timePart}`;
+  return `${LAST_UPDATED_DATE_FORMATTER.format(d)}: ${LAST_UPDATED_TIME_FORMATTER.format(d)}`;
 }
 
 /**
@@ -43,9 +36,9 @@ export function LastUpdatedByline({
 
   let lastUpdatedText: string | null = null;
   if (by && at) {
-    lastUpdatedText = `Last updated by ${by} on ${formatUpdatedAt(at)}`;
+    lastUpdatedText = `Updated ${formatUpdatedAt(at)} · ${by}`;
   } else if (at) {
-    lastUpdatedText = `Last updated on ${formatUpdatedAt(at)}`;
+    lastUpdatedText = `Updated ${formatUpdatedAt(at)}`;
   }
 
   useEffect(() => {

@@ -918,6 +918,33 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     sessionStorage.clear();
     setPendingLinkState(null);
     setPendingLinkCredentialState(null);
+    mockHumanAuth.currentUser = null;
+    (authApi.getAuthBootstrap as jest.Mock).mockReset();
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(demoBootstrap);
+    (authApi.createHumanSession as jest.Mock).mockReset();
+    (authApi.createHumanSession as jest.Mock).mockResolvedValue({
+      success: true,
+      bootstrap: loggedInHumanBootstrap,
+    });
+    (authApi.createChurchAccount as jest.Mock).mockReset();
+    (authApi.createChurchAccount as jest.Mock).mockResolvedValue({
+      success: true,
+      requiresEmailCode: true,
+      pendingAuthId: "pending-123",
+    });
+    signInWithEmailAndPasswordMock.mockReset();
+    signInWithEmailAndPasswordMock.mockResolvedValue({
+      user: mockHumanAuth.currentUser,
+    });
+    signInWithPopupMock.mockReset();
+    signInWithPopupMock.mockResolvedValue({ user: mockHumanAuth.currentUser });
+    fetchSignInMethodsForEmailMock.mockReset();
+    fetchSignInMethodsForEmailMock.mockResolvedValue([]);
+    linkWithCredentialMock.mockReset();
+    linkWithCredentialMock.mockResolvedValue({ success: true });
+    googleCredentialFromErrorMock.mockReset();
+    microsoftCredentialFromErrorMock.mockReset();
+    googleCredentialFactoryMock.mockClear();
   });
 
   it("clears stale pending-link UI state when no linkable credential remains", async () => {

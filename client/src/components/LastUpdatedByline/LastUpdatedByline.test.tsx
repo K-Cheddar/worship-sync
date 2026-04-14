@@ -9,17 +9,17 @@ describe("LastUpdatedByline", () => {
         updatedAt="2020-05-01T15:30:00.000Z"
       />,
     );
-    expect(screen.getByText(/Last updated by pat@uid on/)).toBeInTheDocument();
+    expect(screen.getByText(/Updated .* · pat@uid/)).toBeInTheDocument();
   });
 
   it("renders time-only line when updatedBy is missing", () => {
     render(<LastUpdatedByline updatedAt="2020-05-01T15:30:00.000Z" />);
-    expect(screen.getByText(/Last updated on/)).toBeInTheDocument();
-    expect(screen.queryByText(/Last updated by/)).not.toBeInTheDocument();
+    expect(screen.getByText(/^Updated /)).toBeInTheDocument();
+    expect(screen.queryByText(/ · /)).not.toBeInTheDocument();
   });
 
   it("renders nothing when no timestamp", () => {
     render(<LastUpdatedByline updatedBy="only-name-no-time" />);
-    expect(screen.queryByText(/Last updated/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Updated/)).not.toBeInTheDocument();
   });
 });

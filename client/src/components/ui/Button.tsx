@@ -23,7 +23,7 @@ const buttonVariants = cva(
         presentPrimary:
           "border-2 border-black bg-black font-semibold text-white hover:border-gray-900 hover:bg-gray-900 active:border-gray-800 active:bg-gray-800",
         presentSecondary:
-          "border-2 border-gray-600 bg-gray-500 font-semibold text-white hover:border-gray-700 hover:bg-gray-600 active:border-gray-800 active:bg-gray-700",
+          "border-2 border-gray-500 bg-gray-500 font-semibold text-white hover:border-gray-600 hover:bg-gray-600 active:border-gray-700 active:bg-gray-700",
         presentTertiary:
           "border-2 border-transparent bg-transparent font-semibold text-white hover:border-gray-500 hover:bg-gray-500 active:border-gray-400 active:bg-gray-400",
         presentCta:
