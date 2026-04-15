@@ -46,7 +46,13 @@ import {
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
-import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  lineTabsListShellClassName,
+  lineTabsTriggerClassName,
+} from "../../components/ui/tabs";
 import { Slider } from "../../components/ui/Slider";
 import Modal from "../../components/Modal/Modal";
 import { ToastContext } from "../../context/toastContext";
@@ -67,15 +73,6 @@ const ensureArrangementIds = (nextArrangements: Arrangment[]): Arrangment[] =>
   );
 
 type MobileLyricsEditorTab = "arrangements" | "song-order";
-
-/** Matches line-tab triggers in `SectionTabs` (Account, import drawer). */
-const mobileLyricsEditorLineTabTriggerClassName = cn(
-  "relative inline-flex h-full min-h-0 min-w-0 shrink-0 flex-1 items-center justify-center self-stretch rounded-none border-r border-white/25 px-4 py-2.5 text-sm font-semibold shadow-none transition-colors duration-150 first:rounded-l-xl last:rounded-r-xl last:border-r-0",
-  "after:hidden group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0",
-  "group-data-[variant=line]/tabs-list:data-[state=active]:border-b-2 group-data-[variant=line]/tabs-list:data-[state=active]:border-b-cyan-500 group-data-[variant=line]/tabs-list:data-[state=active]:bg-gray-950 group-data-[variant=line]/tabs-list:data-[state=active]:text-white group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]",
-  "group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-2 group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-transparent group-data-[variant=line]/tabs-list:data-[state=inactive]:bg-white/6 group-data-[variant=line]/tabs-list:data-[state=inactive]:text-gray-200 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:bg-gray-600/45 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:text-white",
-  "focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900",
-);
 
 type UpdateFormattedLyricsOptions = {
   songOrder?: SongOrder[];
@@ -910,20 +907,17 @@ const LyricsEditorPanel = () => {
             }
             className="w-full gap-0"
           >
-            <div className="z-10 overflow-hidden rounded-xl border border-gray-700/80 bg-gray-950/45 px-0 pb-0">
-              <TabsList
-                variant="line"
-                className="scrollbar-thin group-data-[orientation=horizontal]/tabs:h-auto h-auto min-h-0 min-w-0 w-full flex-nowrap items-stretch justify-start gap-0 overflow-x-auto overflow-y-hidden rounded-xl border border-white/35 bg-transparent p-0!"
-              >
+            <div className="z-10 overflow-hidden rounded-xl border border-gray-700 bg-gray-950 px-0 pb-0">
+              <TabsList variant="line" className={lineTabsListShellClassName}>
                 <TabsTrigger
                   value="arrangements"
-                  className={mobileLyricsEditorLineTabTriggerClassName}
+                  className={lineTabsTriggerClassName}
                 >
                   Show Arrangements
                 </TabsTrigger>
                 <TabsTrigger
                   value="song-order"
-                  className={mobileLyricsEditorLineTabTriggerClassName}
+                  className={lineTabsTriggerClassName}
                 >
                   Show Song Order
                 </TabsTrigger>

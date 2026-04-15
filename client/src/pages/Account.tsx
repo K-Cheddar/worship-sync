@@ -3,6 +3,7 @@ import { House, LogIn } from "lucide-react";
 import Button from "../components/Button/Button";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { GlobalInfoContext } from "../context/globalInfo";
+import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import { resolveChurchToolbarLogoUrl } from "../utils/churchBranding";
 import AccountManagement from "./Controller/Account";
 
@@ -31,12 +32,12 @@ const AccountPage = () => {
               Home
             </Button>
           </div>
-          <div className="flex max-w-[min(220px,calc(100vw-11rem))] justify-center justify-self-center px-1">
+          <div className="flex max-w-[min(22rem,calc(100vw-6rem))] justify-center justify-self-center px-1 sm:max-w-[min(26rem,calc(100vw-10rem))]">
             {toolbarLogoUrl ? (
-              <img
+              <ChurchLogoImg
                 src={toolbarLogoUrl}
                 alt={churchNameTrimmed ? `${churchNameTrimmed} logo` : "Church logo"}
-                className="max-h-10 w-auto max-w-full rounded-md border border-gray-600/80 bg-gray-900 object-contain"
+                variant="account-header"
               />
             ) : null}
           </div>

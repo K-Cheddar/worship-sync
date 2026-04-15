@@ -55,17 +55,17 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
                 setYPercent(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                        stbOverlayRef.current,
-                        "yPercent"
-                      ) as number)
+                      stbOverlayRef.current,
+                      "yPercent"
+                    ) as number)
                     : 0
                 );
                 setOpacity(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                        stbOverlayRef.current,
-                        "opacity"
-                      ) as number)
+                      stbOverlayRef.current,
+                      "opacity"
+                    ) as number)
                     : 1
                 );
               },
@@ -80,17 +80,17 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
                 setYPercent(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                        stbOverlayRef.current,
-                        "yPercent"
-                      ) as number)
+                      stbOverlayRef.current,
+                      "yPercent"
+                    ) as number)
                     : 0
                 );
                 setOpacity(
                   stbOverlayRef.current
                     ? (gsap.getProperty(
-                        stbOverlayRef.current,
-                        "opacity"
-                      ) as number)
+                      stbOverlayRef.current,
+                      "opacity"
+                    ) as number)
                     : 1
                 );
               },
@@ -106,10 +106,10 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
     useGSAP(
       () => {
         // Handle both callback refs and object refs
-        const containerElement = typeof containerRef === 'function' 
+        const containerElement = typeof containerRef === 'function'
           ? null
           : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
-        
+
         if (
           !prevStbOverlayRef.current ||
           !shouldAnimate ||
@@ -177,7 +177,7 @@ const DisplayStbOverlay = forwardRef<HTMLDivElement, DisplayStbOverlayProps>(
           overlayType="stick-to-bottom"
           shouldFillContainer={shouldFillContainer}
         />
-        {!shouldFillContainer && (
+        {!shouldFillContainer && prevStbData.length > 0 && (
           <SharedOverlay
             ref={prevStbOverlayRef}
             width={width}

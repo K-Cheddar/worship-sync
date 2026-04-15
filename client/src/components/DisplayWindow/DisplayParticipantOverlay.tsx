@@ -101,37 +101,37 @@ const DisplayParticipantOverlay = forwardRef<
         if (participantData.length > 0) {
           const enterProps = isCenter
             ? {
-                duration: 2.5,
-                ease: "power1.out" as const,
-                opacity: 1,
-                onUpdate: () => {
-                  if (participantOverlayRef.current) {
-                    containerLeftPercent.current = 50;
-                    containerOpacity.current = gsap.getProperty(
-                      participantOverlayRef.current,
-                      "opacity"
-                    ) as number;
-                  }
-                },
-              }
+              duration: 2.5,
+              ease: "power1.out" as const,
+              opacity: 1,
+              onUpdate: () => {
+                if (participantOverlayRef.current) {
+                  containerLeftPercent.current = 50;
+                  containerOpacity.current = gsap.getProperty(
+                    participantOverlayRef.current,
+                    "opacity"
+                  ) as number;
+                }
+              },
+            }
             : {
-                xPercent: 0,
-                duration: 2.5,
-                ease: "power1.out" as const,
-                opacity: 1,
-                onUpdate: () => {
-                  if (participantOverlayRef.current) {
-                    containerXPercent.current = gsap.getProperty(
-                      participantOverlayRef.current,
-                      "xPercent"
-                    ) as number;
-                    containerOpacity.current = gsap.getProperty(
-                      participantOverlayRef.current,
-                      "opacity"
-                    ) as number;
-                  }
-                },
-              };
+              xPercent: 0,
+              duration: 2.5,
+              ease: "power1.out" as const,
+              opacity: 1,
+              onUpdate: () => {
+                if (participantOverlayRef.current) {
+                  containerXPercent.current = gsap.getProperty(
+                    participantOverlayRef.current,
+                    "xPercent"
+                  ) as number;
+                  containerOpacity.current = gsap.getProperty(
+                    participantOverlayRef.current,
+                    "opacity"
+                  ) as number;
+                }
+              },
+            };
 
           overlayTimeline.current = gsap
             .timeline()
@@ -141,50 +141,50 @@ const DisplayParticipantOverlay = forwardRef<
               isCenter
                 ? { opacity: 1, duration: 2.5, ease: "power1.out", stagger: 0.5 }
                 : {
-                    xPercent: 0,
-                    opacity: 1,
-                    duration: 2.5,
-                    ease: "power1.out",
-                    stagger: 0.5,
-                  },
+                  xPercent: 0,
+                  opacity: 1,
+                  duration: 2.5,
+                  ease: "power1.out",
+                  stagger: 0.5,
+                },
               isCenter ? "-=2" : "-=2.25"
             )
             .to(
               participantOverlayRef.current,
               isCenter
                 ? {
-                    duration: 2.5,
-                    opacity: 0,
-                    ease: "none",
-                    delay: participantOverlayInfo.duration,
-                    onUpdate: () => {
-                      if (participantOverlayRef.current) {
-                        containerOpacity.current = gsap.getProperty(
-                          participantOverlayRef.current,
-                          "opacity"
-                        ) as number;
-                      }
-                    },
-                  }
+                  duration: 2.5,
+                  opacity: 0,
+                  ease: "none",
+                  delay: participantOverlayInfo.duration,
+                  onUpdate: () => {
+                    if (participantOverlayRef.current) {
+                      containerOpacity.current = gsap.getProperty(
+                        participantOverlayRef.current,
+                        "opacity"
+                      ) as number;
+                    }
+                  },
+                }
                 : {
-                    xPercent: offScreenXPercent,
-                    duration: 2.5,
-                    opacity: 0,
-                    ease: "none",
-                    delay: participantOverlayInfo.duration,
-                    onUpdate: () => {
-                      if (participantOverlayRef.current) {
-                        containerXPercent.current = gsap.getProperty(
-                          participantOverlayRef.current,
-                          "xPercent"
-                        ) as number;
-                        containerOpacity.current = gsap.getProperty(
-                          participantOverlayRef.current,
-                          "opacity"
-                        ) as number;
-                      }
-                    },
-                  }
+                  xPercent: offScreenXPercent,
+                  duration: 2.5,
+                  opacity: 0,
+                  ease: "none",
+                  delay: participantOverlayInfo.duration,
+                  onUpdate: () => {
+                    if (participantOverlayRef.current) {
+                      containerXPercent.current = gsap.getProperty(
+                        participantOverlayRef.current,
+                        "xPercent"
+                      ) as number;
+                      containerOpacity.current = gsap.getProperty(
+                        participantOverlayRef.current,
+                        "opacity"
+                      ) as number;
+                    }
+                  },
+                }
             );
         }
       },
@@ -197,10 +197,10 @@ const DisplayParticipantOverlay = forwardRef<
     useGSAP(
       () => {
         // Handle both callback refs and object refs
-        const containerElement = typeof containerRef === 'function' 
+        const containerElement = typeof containerRef === 'function'
           ? null // Callback refs don't have .current, but the ref is valid if function exists
           : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
-        
+
         if (
           !prevParticipantOverlayRef.current ||
           !shouldAnimate ||
@@ -295,7 +295,7 @@ const DisplayParticipantOverlay = forwardRef<
           overlayType="participant"
           shouldFillContainer={shouldFillContainer}
         />
-        {!shouldFillContainer && (
+        {!shouldFillContainer && prevParticipantData.length > 0 && (
           <SharedOverlay
             ref={prevParticipantOverlayRef}
             width={width}

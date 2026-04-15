@@ -93,12 +93,17 @@ const getPrevOverlayVisibleUntilMs = ({
   prevDuration,
   prevTotalVisibleMs,
   currentTime,
+  currentHasData,
+  nowMs,
 }: {
   prevHasData: boolean;
   prevTime?: number;
   prevDuration?: number;
   prevTotalVisibleMs: number | null;
   currentTime?: number;
+  /** False when the live slot is an empty placeholder (e.g. after another overlay took the layer). */
+  currentHasData: boolean;
+  nowMs: number;
 }) => {
   if (!prevHasData || currentTime == null) return null;
   if (prevTime != null && currentTime <= prevTime) return null;
@@ -108,10 +113,24 @@ const getPrevOverlayVisibleUntilMs = ({
     duration: prevDuration,
     totalVisibleMs: prevTotalVisibleMs,
   });
+  // Same-type: new live content past prev's natural end → do not show prev exit.
   if (
+    currentHasData &&
     prevVisibleUntilMs != null &&
     Number.isFinite(prevVisibleUntilMs) &&
     currentTime >= prevVisibleUntilMs
+  ) {
+    return null;
+  }
+  // Cleared live slot: compare wall clock so a stale prev does not keep the
+  // stream item hidden, but do not use `currentTime` here — after a cross-type
+  // switch the empty slot gets a new timestamp that can be past prev's model
+  // end while the exit should still run.
+  if (
+    !currentHasData &&
+    prevVisibleUntilMs != null &&
+    Number.isFinite(prevVisibleUntilMs) &&
+    nowMs >= prevVisibleUntilMs
   ) {
     return null;
   }
@@ -149,6 +168,7 @@ const isPrevOverlayVisibleAtMs = ({
   prevDuration,
   prevTotalVisibleMs,
   currentTime,
+  currentHasData,
   nowMs,
 }: {
   prevHasData: boolean;
@@ -156,6 +176,7 @@ const isPrevOverlayVisibleAtMs = ({
   prevDuration?: number;
   prevTotalVisibleMs: number | null;
   currentTime?: number;
+  currentHasData: boolean;
   nowMs: number;
 }) => {
   const visibleUntilMs = getPrevOverlayVisibleUntilMs({
@@ -164,6 +185,8 @@ const isPrevOverlayVisibleAtMs = ({
     prevDuration,
     prevTotalVisibleMs,
     currentTime,
+    currentHasData,
+    nowMs,
   });
 
   if (visibleUntilMs == null) return false;
@@ -404,6 +427,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             prevParticipantOverlayInfo,
           ),
           currentTime: participantOverlayInfo?.time,
+          currentHasData: hasParticipantOverlayData(participantOverlayInfo),
+          nowMs: streamOverlayNowMs,
         }),
         getPrevOverlayVisibleUntilMs({
           prevHasData: hasStbOverlayData(prevStbOverlayInfo),
@@ -411,6 +436,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevDuration: prevStbOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
           currentTime: stbOverlayInfo?.time,
+          currentHasData: hasStbOverlayData(stbOverlayInfo),
+          nowMs: streamOverlayNowMs,
         }),
         getPrevOverlayVisibleUntilMs({
           prevHasData: hasQrOverlayData(prevQrCodeOverlayInfo),
@@ -418,6 +445,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevDuration: prevQrCodeOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
           currentTime: qrCodeOverlayInfo?.time,
+          currentHasData: hasQrOverlayData(qrCodeOverlayInfo),
+          nowMs: streamOverlayNowMs,
         }),
         getPrevOverlayVisibleUntilMs({
           prevHasData: hasImageOverlayData(prevImageOverlayInfo),
@@ -425,6 +454,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevDuration: prevImageOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
           currentTime: imageOverlayInfo?.time,
+          currentHasData: hasImageOverlayData(imageOverlayInfo),
+          nowMs: streamOverlayNowMs,
         }),
       ].filter((value): value is number => value != null);
 
@@ -443,6 +474,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       prevStbOverlayInfo,
       qrCodeOverlayInfo,
       stbOverlayInfo,
+      streamOverlayNowMs,
     ]);
 
     const visibleParticipantOverlayInfo = useMemo(
@@ -471,6 +503,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             prevParticipantOverlayInfo,
           ),
           currentTime: participantOverlayInfo?.time,
+          currentHasData: hasParticipantOverlayData(participantOverlayInfo),
           nowMs: streamOverlayNowMs,
         })
           ? prevParticipantOverlayInfo
@@ -504,6 +537,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevDuration: prevStbOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.stb,
           currentTime: stbOverlayInfo?.time,
+          currentHasData: hasStbOverlayData(stbOverlayInfo),
           nowMs: streamOverlayNowMs,
         })
           ? prevStbOverlayInfo
@@ -533,6 +567,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevDuration: prevQrCodeOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.qr,
           currentTime: qrCodeOverlayInfo?.time,
+          currentHasData: hasQrOverlayData(qrCodeOverlayInfo),
           nowMs: streamOverlayNowMs,
         })
           ? prevQrCodeOverlayInfo
@@ -562,6 +597,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           prevDuration: prevImageOverlayInfo?.duration,
           prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.image,
           currentTime: imageOverlayInfo?.time,
+          currentHasData: hasImageOverlayData(imageOverlayInfo),
           nowMs: streamOverlayNowMs,
         })
           ? prevImageOverlayInfo
@@ -908,47 +944,47 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               {/* Layer 2: stream overlays. Active overlays temporarily override the item layer without destroying it. */}
               {(visibleStbOverlayInfo != null ||
                 visiblePrevStbOverlayInfo != null) && (
-                <DisplayStbOverlay
-                  width={effectiveWidth}
-                  shouldAnimate={shouldAnimate}
-                  stbOverlayInfo={visibleStbOverlayInfo}
-                  prevStbOverlayInfo={visiblePrevStbOverlayInfo}
-                  ref={containerRef}
-                />
-              )}
+                  <DisplayStbOverlay
+                    width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
+                    stbOverlayInfo={visibleStbOverlayInfo}
+                    prevStbOverlayInfo={visiblePrevStbOverlayInfo}
+                    ref={containerRef}
+                  />
+                )}
 
               {(visibleParticipantOverlayInfo != null ||
                 visiblePrevParticipantOverlayInfo != null) && (
-                <DisplayParticipantOverlay
-                  width={effectiveWidth}
-                  shouldAnimate={shouldAnimate}
-                  participantOverlayInfo={visibleParticipantOverlayInfo}
-                  prevParticipantOverlayInfo={visiblePrevParticipantOverlayInfo}
-                  ref={containerRef}
-                />
-              )}
+                  <DisplayParticipantOverlay
+                    width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
+                    participantOverlayInfo={visibleParticipantOverlayInfo}
+                    prevParticipantOverlayInfo={visiblePrevParticipantOverlayInfo}
+                    ref={containerRef}
+                  />
+                )}
 
               {(visibleQrCodeOverlayInfo != null ||
                 visiblePrevQrCodeOverlayInfo != null) && (
-                <DisplayQrCodeOverlay
-                  width={effectiveWidth}
-                  shouldAnimate={shouldAnimate}
-                  qrCodeOverlayInfo={visibleQrCodeOverlayInfo}
-                  prevQrCodeOverlayInfo={visiblePrevQrCodeOverlayInfo}
-                  ref={containerRef}
-                />
-              )}
+                  <DisplayQrCodeOverlay
+                    width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
+                    qrCodeOverlayInfo={visibleQrCodeOverlayInfo}
+                    prevQrCodeOverlayInfo={visiblePrevQrCodeOverlayInfo}
+                    ref={containerRef}
+                  />
+                )}
 
               {(visibleImageOverlayInfo != null ||
                 visiblePrevImageOverlayInfo != null) && (
-                <DisplayImageOverlay
-                  width={effectiveWidth}
-                  shouldAnimate={shouldAnimate}
-                  imageOverlayInfo={visibleImageOverlayInfo}
-                  prevImageOverlayInfo={visiblePrevImageOverlayInfo}
-                  ref={containerRef}
-                />
-              )}
+                  <DisplayImageOverlay
+                    width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
+                    imageOverlayInfo={visibleImageOverlayInfo}
+                    prevImageOverlayInfo={visiblePrevImageOverlayInfo}
+                    ref={containerRef}
+                  />
+                )}
             </>
           )}
 

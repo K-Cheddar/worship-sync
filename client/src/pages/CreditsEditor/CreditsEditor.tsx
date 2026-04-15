@@ -66,6 +66,13 @@ import {
 } from "../../components/ControllerPageShell/DbProgressStartupRecoveryUi";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import Button from "../../components/Button/Button";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  lineTabsListShellClassName,
+  lineTabsTriggerClassName,
+} from "@/components/ui/tabs";
 import cn from "classnames";
 import { onValue, ref, set } from "firebase/database";
 import Menu from "../../components/Menu/Menu";
@@ -440,7 +447,8 @@ const CreditsEditor = ({
       if (node) {
         const resizeObserver = new ResizeObserver((entries) => {
           const width = entries[0].borderBoxSize[0].inlineSize;
-          if (width < 1024) {
+          // Match Tailwind `md` (768px) so `isMobile` aligns with max-md/md layout on this page.
+          if (width < 768) {
             setIsMobile?.(true);
           } else {
             setIsMobile?.(false);
@@ -547,23 +555,21 @@ const CreditsEditor = ({
     </Button>
   );
 
-  const mobilePreviewToggle = (
-    <div className="flex w-full items-center md:hidden">
-      <Button
-        variant={isPreviewOpen ? "secondary" : "primary"}
-        onClick={() => setIsPreviewOpen(false)}
-        className="flex-1 justify-center rounded-r-none"
-      >
-        Show Editor
-      </Button>
-      <Button
-        variant={isPreviewOpen ? "primary" : "secondary"}
-        onClick={() => setIsPreviewOpen(true)}
-        className="flex-1 justify-center rounded-l-none"
-      >
-        Show Preview
-      </Button>
-    </div>
+  const mobileEditorPreviewTabs = (
+    <Tabs
+      value={isPreviewOpen ? "preview" : "editor"}
+      onValueChange={(v) => setIsPreviewOpen(v === "preview")}
+      className="w-full gap-0"
+    >
+      <TabsList variant="line" className={lineTabsListShellClassName}>
+        <TabsTrigger value="editor" className={lineTabsTriggerClassName}>
+          Editor
+        </TabsTrigger>
+        <TabsTrigger value="preview" className={lineTabsTriggerClassName}>
+          Preview
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
   );
 
   return (
@@ -578,42 +584,50 @@ const CreditsEditor = ({
     >
       {!embeddedInOverlayController && (
         <div className="min-h-0">
-          <div className="flex w-full items-center gap-2 bg-gray-800 px-4 py-1">
-            <Menu
-              menuItems={creditsMenuItems}
-              align="start"
-              TriggeringButton={
-                <Button
-                  variant="tertiary"
-                  className="w-fit p-1"
-                  padding="p-1"
-                  aria-label="Open menu"
-                  svg={MenuIcon}
-                />
-              }
-            />
-            {canEditCredits && (
-              <div className="border-l-2 border-gray-400 pl-4">
-                <Undo />
-              </div>
-            )}
-            <div className="flex max-w-xl min-w-0 flex-1 items-center gap-2 border-l-2 border-gray-400 pl-4">
-              <Outlines className="min-w-0" />
+          <div className="flex w-full flex-col gap-2 bg-gray-800 px-4 py-2 md:flex-row md:items-center md:gap-2 md:py-1">
+            <div className="flex w-full min-w-0 items-center gap-2">
+              <Menu
+                menuItems={creditsMenuItems}
+                align="start"
+                TriggeringButton={
+                  <Button
+                    variant="tertiary"
+                    className="w-fit p-1"
+                    padding="p-1"
+                    aria-label="Open menu"
+                    svg={MenuIcon}
+                  />
+                }
+              />
               {canEditCredits && (
-                <div className="shrink-0">{generateCreditsButton}</div>
+                <div className="border-l-2 border-gray-400 pl-4">
+                  <Undo />
+                </div>
+              )}
+              <div className="hidden max-w-xl min-w-0 flex-1 items-center gap-2 border-l-2 border-gray-400 pl-4 md:flex">
+                <Outlines className="min-w-0" />
+                {canEditCredits && (
+                  <div className="shrink-0">{generateCreditsButton}</div>
+                )}
+              </div>
+              <div className="ml-auto shrink-0">
+                <UserSection />
+              </div>
+            </div>
+            <div className="flex w-full justify-around min-w-0 border-t border-gray-600 pt-2 md:hidden">
+              <Outlines />
+              {canEditCredits && (
+                <div>{generateCreditsButton}</div>
               )}
             </div>
-            <div className="ml-auto">
-              <UserSection />
-            </div>
           </div>
-          <div className="mt-2 flex items-center md:hidden">{mobilePreviewToggle}</div>
+          <div className="mt-2 px-4 md:hidden">{mobileEditorPreviewTabs}</div>
         </div>
       )}
 
       {embeddedInOverlayController && (
         <div className="flex shrink-0 flex-col gap-2 border-b border-gray-700 px-4 pb-3 pt-1 md:hidden">
-          {mobilePreviewToggle}
+          {mobileEditorPreviewTabs}
         </div>
       )}
 

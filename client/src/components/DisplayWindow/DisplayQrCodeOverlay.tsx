@@ -38,10 +38,10 @@ const DisplayQRCodeOverlay = forwardRef<
     useGSAP(
       () => {
         // Handle both callback refs and object refs
-        const containerElement = typeof containerRef === 'function' 
+        const containerElement = typeof containerRef === 'function'
           ? null
           : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
-        
+
         if (
           !qrCodeOverlayRef.current ||
           (typeof containerRef !== 'function' && !containerElement) ||
@@ -68,9 +68,9 @@ const DisplayQRCodeOverlay = forwardRef<
               onUpdate: () => {
                 opacity.current = qrCodeOverlayRef.current
                   ? (gsap.getProperty(
-                      qrCodeOverlayRef.current,
-                      "opacity"
-                    ) as number)
+                    qrCodeOverlayRef.current,
+                    "opacity"
+                  ) as number)
                   : 1;
               },
             })
@@ -87,9 +87,9 @@ const DisplayQRCodeOverlay = forwardRef<
               onUpdate: () => {
                 opacity.current = qrCodeOverlayRef.current
                   ? (gsap.getProperty(
-                      qrCodeOverlayRef.current,
-                      "opacity"
-                    ) as number)
+                    qrCodeOverlayRef.current,
+                    "opacity"
+                  ) as number)
                   : 1;
               },
             })
@@ -109,10 +109,10 @@ const DisplayQRCodeOverlay = forwardRef<
     useGSAP(
       () => {
         // Handle both callback refs and object refs
-        const containerElement = typeof containerRef === 'function' 
+        const containerElement = typeof containerRef === 'function'
           ? null
           : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
-        
+
         if (
           !prevQrCodeOverlayRef.current ||
           !shouldAnimate ||
@@ -173,7 +173,7 @@ const DisplayQRCodeOverlay = forwardRef<
           overlayType="qr-code"
           shouldFillContainer={shouldFillContainer}
         />
-        {!shouldFillContainer && (
+        {!shouldFillContainer && prevNeedsPadding && (
           <SharedOverlay
             ref={prevQrCodeOverlayRef}
             width={width}

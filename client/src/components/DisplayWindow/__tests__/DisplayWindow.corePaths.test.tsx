@@ -403,6 +403,40 @@ describe("DisplayWindow core paths", () => {
     expect(overlay).toHaveAttribute("data-prev-name", "Alice");
   });
 
+  it("exposes previous participant for exit when image is live and participant slot is empty with a newer placeholder time", () => {
+    jest.useFakeTimers();
+    const t0 = new Date("2026-03-19T12:00:00.000Z").getTime();
+    jest.setSystemTime(t0);
+
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        participantOverlayInfo={{
+          id: "p-empty",
+          type: "participant",
+          time: t0 + 50_000,
+        }}
+        prevParticipantOverlayInfo={{
+          id: "p-prev",
+          type: "participant",
+          name: "Alex",
+          time: t0 - 2000,
+          duration: 0,
+        }}
+        imageOverlayInfo={{
+          id: "img-1",
+          type: "image",
+          imageUrl: "https://img.example/crossfade.jpg",
+          time: t0,
+        }}
+      />,
+    );
+
+    const overlay = screen.getByTestId("display-participant-overlay-mock");
+    expect(overlay.getAttribute("data-prev-name")).toBe("Alex");
+  });
+
   it("renders editor mode with DisplayEditor boxes", () => {
     render(<DisplayWindow displayType="editor" boxes={[baseBox, { ...baseBox, id: "b2" }]} />);
     expect(screen.getAllByTestId("display-editor-mock")).toHaveLength(2);

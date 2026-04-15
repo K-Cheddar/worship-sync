@@ -42,16 +42,13 @@ import {
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 import { cn } from "@/utils/cnHelper";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-
-/** Line-tab triggers — matches `LyricsEditorPanel` / `SectionTabs` (Account, import drawer). */
-const createItemMobileSongTabTriggerClassName = cn(
-  "relative inline-flex h-full min-h-0 min-w-0 shrink-0 flex-1 items-center justify-center self-stretch rounded-none border-r border-white/25 px-4 py-2.5 text-sm font-semibold shadow-none transition-colors duration-150 first:rounded-l-xl last:rounded-r-xl last:border-r-0",
-  "after:hidden group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0",
-  "group-data-[variant=line]/tabs-list:data-[state=active]:border-b-2 group-data-[variant=line]/tabs-list:data-[state=active]:border-b-cyan-500 group-data-[variant=line]/tabs-list:data-[state=active]:bg-gray-950 group-data-[variant=line]/tabs-list:data-[state=active]:text-white group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]",
-  "group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-2 group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-transparent group-data-[variant=line]/tabs-list:data-[state=inactive]:bg-white/6 group-data-[variant=line]/tabs-list:data-[state=inactive]:text-gray-200 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:bg-gray-600/45 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:text-white",
-  "focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900",
-);
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  lineTabsListShellClassName,
+  lineTabsTriggerClassName,
+} from "@/components/ui/tabs";
 
 type ItemTypesType = {
   type: ItemType;
@@ -474,19 +471,16 @@ const CreateItem = () => {
               onValueChange={(v) => setMobileSongTab(v as MobileSongTab)}
               className="w-full shrink-0 gap-0 lg:hidden"
             >
-              <TabsList
-                variant="line"
-                className="scrollbar-thin group-data-[orientation=horizontal]/tabs:h-auto h-auto min-h-0 min-w-0 w-full flex-nowrap items-stretch justify-start gap-0 overflow-x-auto overflow-y-hidden rounded-xl border border-white/35 bg-transparent p-0!"
-              >
+              <TabsList variant="line" className={lineTabsListShellClassName}>
                 <TabsTrigger
                   value="create"
-                  className={createItemMobileSongTabTriggerClassName}
+                  className={lineTabsTriggerClassName}
                 >
                   Create
                 </TabsTrigger>
                 <TabsTrigger
                   value="import"
-                  className={createItemMobileSongTabTriggerClassName}
+                  className={lineTabsTriggerClassName}
                 >
                   Import lyrics
                 </TabsTrigger>

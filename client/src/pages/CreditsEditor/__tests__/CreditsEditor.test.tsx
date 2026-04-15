@@ -318,25 +318,20 @@ describe("CreditsEditor", () => {
   it("toggles preview mode on mobile", async () => {
     renderWithProviders(<CreditsEditor />);
 
-    const showPreviewButton = screen.getByRole("button", {
-      name: "Show Preview",
-    });
-    const showEditorButton = screen.getByRole("button", {
-      name: "Show Editor",
-    });
+    const previewTab = screen.getByRole("tab", { name: "Preview" });
+    const editorTab = screen.getByRole("tab", { name: "Editor" });
 
     // Initially both sections should be visible
     expect(screen.getByTestId("credits-editor")).toBeVisible();
     expect(screen.getByTestId("credits-preview")).toBeVisible();
 
-    // Click preview button: editor gets max-md:hidden (hidden on mobile)
-    fireEvent.click(showPreviewButton);
+    // Radix TabsTrigger selects on pointer down (not click alone in jsdom).
+    fireEvent.mouseDown(previewTab, { button: 0 });
     await waitFor(() => {
       expect(screen.getByTestId("credits-editor")).toHaveClass("max-md:hidden");
     });
 
-    // Click editor button: preview container gets max-md:hidden
-    fireEvent.click(showEditorButton);
+    fireEvent.mouseDown(editorTab, { button: 0 });
     await waitFor(() => {
       expect(screen.getByTestId("credits-preview-container")).toHaveClass(
         "max-md:hidden",

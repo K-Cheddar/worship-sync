@@ -91,19 +91,45 @@ describe("DisplayParticipantOverlay", () => {
     expect(overlayDivs[0]).toHaveAttribute("data-name", "Test Name");
   });
 
-  it("renders current and prev overlay when shouldFillContainer is false", () => {
+  it("renders current and prev overlay when shouldFillContainer is false and prev has data", () => {
     render(
       <div style={{ position: "relative", width: 400, height: 300 }}>
         <DisplayParticipantOverlay
           width={25}
           participantOverlayInfo={defaultParticipantInfo}
-          prevParticipantOverlayInfo={{}}
+          prevParticipantOverlayInfo={{
+            id: "prev-id",
+            name: "Previous Name",
+          }}
           shouldFillContainer={false}
         />
       </div>,
     );
 
     expect(screen.getAllByTestId("shared-overlay-mock")).toHaveLength(2);
+  });
+
+  it("does not mount a z-index prev layer when current is hidden by expiry and prev slot has no lines (same props shape as after clear)", () => {
+    render(
+      <div style={{ position: "relative", width: 400, height: 300 }}>
+        <DisplayParticipantOverlay
+          width={25}
+          participantOverlayInfo={undefined}
+          prevParticipantOverlayInfo={{
+            id: "p-empty",
+            name: "",
+            title: "",
+            event: "",
+            time: Date.now(),
+          }}
+          shouldFillContainer={false}
+        />
+      </div>,
+    );
+
+    const overlays = screen.getAllByTestId("shared-overlay-mock");
+    expect(overlays).toHaveLength(1);
+    expect(overlays[0]).toHaveAttribute("data-prev", "false");
   });
 
   it("keeps the previous participant overlay visible when the current type has switched away", () => {

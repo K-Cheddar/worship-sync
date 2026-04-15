@@ -13,6 +13,7 @@ import {
   firstNameFromDisplayName,
   resolveAccountDisplayNameForAudit,
 } from "../../../utils/displayName";
+import { ChurchLogoImg } from "../../../components/ChurchLogoImg";
 import { resolveChurchToolbarLogoUrl } from "../../../utils/churchBranding";
 import type { Instance } from "../../../types";
 
@@ -212,6 +213,7 @@ const UserSection = () => {
               type="button"
               variant="secondary"
               svg={Save}
+              iconSize="sm"
               color="#22d3ee"
               className="mt-2 w-full justify-center text-sm"
               isLoading={isSavingName}
@@ -240,13 +242,7 @@ const UserSection = () => {
           </span>
           <div className="flex min-w-0 items-center gap-2.5">
             {churchLogoUrl ? (
-              <img
-                src={churchLogoUrl}
-                alt=""
-                width={36}
-                height={36}
-                className="size-9 shrink-0 rounded-md border border-gray-600/80 bg-gray-900 object-contain"
-              />
+              <ChurchLogoImg src={churchLogoUrl} variant="popover" />
             ) : null}
             <span className="min-w-0 flex-1 wrap-break-word text-sm leading-snug text-gray-300">
               {churchLine || "—"}
@@ -304,6 +300,7 @@ const UserSection = () => {
                 type="button"
                 variant="primary"
                 svg={LogOut}
+                iconSize="sm"
                 color="#22d3ee"
                 className="w-full justify-center text-sm"
                 onClick={() => void logout()}

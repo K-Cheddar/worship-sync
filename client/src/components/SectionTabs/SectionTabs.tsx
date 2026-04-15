@@ -1,6 +1,13 @@
 import * as React from "react";
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  lineTabsListShellClassName,
+  lineTabsTriggerClassName,
+} from "@/components/ui/tabs";
 import { cn } from "@/utils/cnHelper";
 
 export type SectionTabItem<T extends string = string> = {
@@ -71,33 +78,20 @@ export function SectionTabs<T extends string>({
     >
       <div
         className={cn(
-          "sticky top-0 z-10 -mx-1 overflow-hidden rounded-xl border border-gray-700/80 bg-gray-950/45 px-0 pb-0",
+          "sticky top-0 z-10 -mx-1 overflow-hidden rounded-xl border border-gray-700 bg-gray-950 px-0 pb-0",
           tabBarClassName
         )}
       >
         <TabsList
           variant="line"
-          className={cn(
-            "scrollbar-thin group-data-[orientation=horizontal]/tabs:h-auto h-auto min-h-0 min-w-0 w-full flex-nowrap items-stretch justify-start gap-0 overflow-x-auto overflow-y-hidden rounded-xl border border-white/35 bg-transparent p-0!",
-            tabsListClassName
-          )}
+          className={cn(lineTabsListShellClassName, tabsListClassName)}
         >
           {items.map((item) => (
             <TabsTrigger
               key={item.value}
               value={item.value}
               disabled={item.disabled}
-              className={cn(
-                "relative inline-flex h-full min-h-0 min-w-0 shrink-0 flex-1 items-center justify-center self-stretch rounded-none border-r border-white/25 px-4 py-2.5 text-sm font-semibold shadow-none transition-colors duration-150 first:rounded-l-xl last:rounded-r-xl last:border-r-0",
-                // Match group/tabs-list specificity from ui/tabs; hide default line underline (we use border-b accent instead).
-                "after:hidden group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0",
-                // Active — darker surface + cyan bottom (clearly above inactive tint).
-                "group-data-[variant=line]/tabs-list:data-[state=active]:border-b-2 group-data-[variant=line]/tabs-list:data-[state=active]:border-b-cyan-500 group-data-[variant=line]/tabs-list:data-[state=active]:bg-gray-950 group-data-[variant=line]/tabs-list:data-[state=active]:text-white group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]",
-                // Inactive — light tint (matches Account management overview tabs).
-                "group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-2 group-data-[variant=line]/tabs-list:data-[state=inactive]:border-b-transparent group-data-[variant=line]/tabs-list:data-[state=inactive]:bg-white/6 group-data-[variant=line]/tabs-list:data-[state=inactive]:text-gray-200 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:bg-gray-600/45 group-data-[variant=line]/tabs-list:data-[state=inactive]:hover:text-white",
-                "focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900",
-                triggerClassName
-              )}
+              className={cn(lineTabsTriggerClassName, triggerClassName)}
             >
               {item.label}
             </TabsTrigger>

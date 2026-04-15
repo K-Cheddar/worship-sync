@@ -50,7 +50,17 @@ const Toggle = ({
         onCheckedChange={onChange}
         id={id}
         color={color}
-        icon={Icon && <Icon className="w-3 h-3 text-gray-700 dark:text-gray-300" />}
+        icon={
+          Icon && (
+            <Icon
+              className={cn(
+                "w-3 h-3 shrink-0 text-foreground",
+                // Dark unchecked thumb is near-white; use page background token for a dark glyph.
+                "dark:group-data-[state=unchecked]:text-background"
+              )}
+            />
+          )
+        }
       />
     </div>
   );

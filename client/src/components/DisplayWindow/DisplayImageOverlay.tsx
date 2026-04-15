@@ -165,7 +165,7 @@ const DisplayImageOverlay = forwardRef<
           overlayType="image"
           shouldFillContainer={shouldFillContainer}
         />
-        {!shouldFillContainer && (
+        {!shouldFillContainer && prevNeedsPadding && (
           <SharedOverlay
             ref={prevImageOverlayRef}
             width={width}

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useParams } from "react-router-dom";
 import Button from "../components/Button/Button";
+import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import Modal from "../components/Modal/Modal";
 import Input from "../components/Input/Input";
 import TextArea from "../components/TextArea/TextArea";
@@ -553,11 +554,7 @@ const BoardPage = () => {
           </p>
           <div className="mt-3 flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
             {churchLogoUrl ? (
-              <img
-                src={churchLogoUrl}
-                alt=""
-                className="mt-0.5 size-10 shrink-0 rounded-md border border-stone-600/90 bg-stone-950 object-contain sm:mt-0 sm:size-12"
-              />
+              <ChurchLogoImg src={churchLogoUrl} variant="board-attendee" />
             ) : null}
             <h1 className="min-w-0 flex-1 text-3xl font-semibold sm:text-4xl">
               {alias?.title || "Board"}
