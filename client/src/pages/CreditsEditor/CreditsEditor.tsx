@@ -89,6 +89,7 @@ import CreditHistoryDrawer from "../../containers/Credits/CreditHistoryDrawer";
 import CreditsSettingsDrawer from "../../containers/Credits/CreditsSettingsDrawer";
 import { CreditsPreviewSkeleton } from "../../containers/Credits/CreditsEditorSkeleton";
 import { useGenerateCreditsFromOverlays } from "../../hooks/useGenerateCreditsFromOverlays";
+import { setOverlayCreditsSettingsDrawerOpen } from "../../store/preferencesSlice";
 
 const cleanForRtdb = (obj: object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
@@ -147,9 +148,25 @@ const CreditsEditor = ({
   const canEditCredits = access !== "view";
   const dispatch = useDispatch();
 
+  const overlayCreditsSettingsDrawerOpen = useSelector(
+    (state: RootState) =>
+      state.undoable.present.preferences.overlayCreditsSettingsDrawerOpen,
+  );
+
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isSettingsDrawerOpen, setIsSettingsDrawerOpen] = useState(false);
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
+
+  const creditsSettingsDrawerOpen = embeddedInOverlayController
+    ? overlayCreditsSettingsDrawerOpen
+    : isSettingsDrawerOpen;
+
+  const handleCloseCreditsSettingsDrawer = useCallback(() => {
+    setIsSettingsDrawerOpen(false);
+    if (embeddedInOverlayController) {
+      dispatch(setOverlayCreditsSettingsDrawerOpen(false));
+    }
+  }, [dispatch, embeddedInOverlayController]);
 
   useEffect(() => {
     if (embeddedInOverlayController) return;
@@ -592,11 +609,13 @@ const CreditsEditor = ({
                 TriggeringButton={
                   <Button
                     variant="tertiary"
-                    className="w-fit p-1"
-                    padding="p-1"
+                    className="w-fit"
                     aria-label="Open menu"
                     svg={MenuIcon}
-                  />
+                    gap="gap-1.5"
+                  >
+                    Menu
+                  </Button>
                 }
               />
               {canEditCredits && (
@@ -694,8 +713,8 @@ const CreditsEditor = ({
         </section>
       </div>
       <CreditsSettingsDrawer
-        isOpen={isSettingsDrawerOpen}
-        onClose={() => setIsSettingsDrawerOpen(false)}
+        isOpen={creditsSettingsDrawerOpen}
+        onClose={handleCloseCreditsSettingsDrawer}
         size={isMobile ? "xl" : "md"}
         position={isMobile ? "bottom" : "right"}
       />

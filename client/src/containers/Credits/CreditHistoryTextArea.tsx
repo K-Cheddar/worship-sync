@@ -8,6 +8,8 @@ type CreditHistoryTextAreaProps = {
   /** Optional callback to remove a history line from the underlying history store. */
   onRemoveHistoryLine?: (line: string) => void;
   disabled?: boolean;
+  /** Fires when the text field loses focus (e.g. to merge lines into credits history). */
+  onFieldBlur?: () => void;
 };
 
 const CreditHistoryTextArea = ({
@@ -16,6 +18,7 @@ const CreditHistoryTextArea = ({
   historyLines,
   onRemoveHistoryLine,
   disabled = false,
+  onFieldBlur,
 }: CreditHistoryTextAreaProps) => (
   <HistorySuggestField
     value={value}
@@ -29,6 +32,7 @@ const CreditHistoryTextArea = ({
     autoResize
     data-ignore-undo="true"
     disabled={disabled}
+    onFieldBlur={onFieldBlur}
   />
 );
 

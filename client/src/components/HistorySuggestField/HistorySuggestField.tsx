@@ -41,6 +41,8 @@ export type HistorySuggestFieldProps = {
   /** Only for multiline: enable auto-resize on TextArea. */
   autoResize?: boolean;
   "data-ignore-undo"?: string;
+  /** Fires when the field loses focus (after internal blur handling for the suggestion popover). */
+  onFieldBlur?: () => void;
 };
 
 const HistorySuggestField = ({
@@ -57,6 +59,7 @@ const HistorySuggestField = ({
   disabled = false,
   autoResize = true,
   "data-ignore-undo": dataIgnoreUndo,
+  onFieldBlur,
 }: HistorySuggestFieldProps) => {
   const effectiveHideLabel = hideLabel ?? (multiline ? true : false);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -202,6 +205,11 @@ const HistorySuggestField = ({
     [onChange, updateSuggestions]
   );
 
+  const handleFieldBlur = useCallback(() => {
+    scheduleBlurClose();
+    onFieldBlur?.();
+  }, [scheduleBlurClose, onFieldBlur]);
+
   const commonFieldProps = {
     value,
     label,
@@ -259,7 +267,7 @@ const HistorySuggestField = ({
                 setIsFocused(true);
                 updateSuggestions(value);
               }}
-              onBlur={scheduleBlurClose}
+              onBlur={handleFieldBlur}
               onClick={() => updateSuggestions(value)}
               onSelect={() => updateSuggestions(value)}
             />
@@ -277,7 +285,7 @@ const HistorySuggestField = ({
                 setIsFocused(true);
                 updateSuggestions(value);
               }}
-              onBlur={scheduleBlurClose}
+              onBlur={handleFieldBlur}
               onClick={() => updateSuggestions(value)}
               onSelect={() => updateSuggestions(value)}
             />

@@ -123,11 +123,15 @@ jest.mock("../../../hooks/reduxHooks", () => {
   const { creditsSlice } = require("../../../store/creditsSlice");
   const { itemListsSlice } = require("../../../store/itemListsSlice");
   const { overlaysSlice } = require("../../../store/overlaysSlice");
+  const { preferencesSlice } = require("../../../store/preferencesSlice");
   let mockDispatch = jest.fn();
 
   const mockState = {
     undoable: {
       present: {
+        preferences: {
+          ...preferencesSlice.getInitialState(),
+        },
         credits: {
           ...creditsSlice.getInitialState(),
           list: [

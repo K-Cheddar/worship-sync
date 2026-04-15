@@ -4,7 +4,8 @@ import { ControllerInfoContext } from "../context/controllerInfo";
 import { putCreditDoc } from "../utils/dbUtils";
 import getScheduleFromExcel from "../utils/getScheduleFromExcel";
 import { updateList } from "../store/creditsSlice";
-import { broadcastCreditsUpdate } from "../store/store";
+import store, { broadcastCreditsUpdate } from "../store/store";
+import { flushCreditsHistoryFromLatestList } from "../utils/creditsHistoryFlush";
 
 /**
  * Shared "Generate credits from overlays + schedule" action for Credits Editor and overlay toolbar.
@@ -125,6 +126,12 @@ export function useGenerateCreditsFromOverlays() {
       });
 
       dispatch(updateList(updatedList));
+
+      await flushCreditsHistoryFromLatestList(
+        dispatch,
+        () => store.getState(),
+        db,
+      );
 
       if (db && outlineIdForCredits) {
         const oid = outlineIdForCredits;
