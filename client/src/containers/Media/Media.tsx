@@ -227,6 +227,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                   onMoveToNewFolderOpenChange={
                     c.handleActionBarMoveToNewFolderOpenChange
                   }
+                  showMultiSelectDone={c.mediaMultiSelectMode}
+                  onMultiSelectDone={c.clearSelection}
                   moveToNewFolderContent={
                     selectedCount > 0 ? (
                       <MediaLibraryNewFolderForm
@@ -281,7 +283,9 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           onOpenFolder={c.navigateToFolder}
           selectedMedia={c.selectedMedia}
           selectedMediaIds={c.selectedMediaIds}
+          mediaMultiSelectMode={c.mediaMultiSelectMode}
           onMediaTileClick={c.handleMediaClick}
+          onEnterMediaMultiSelectMode={c.enterMediaMultiSelectMode}
         />
 
         <DeleteModal

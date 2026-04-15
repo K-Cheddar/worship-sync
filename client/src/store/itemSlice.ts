@@ -72,6 +72,13 @@ const resetBackgroundTargetUi = (state: ItemState) => {
   state.mobileBackgroundTargetSelectMode = false;
 };
 
+/** When the last target slide is deselected, leave subset selection mode (anchor + mobile). */
+const exitBackgroundTargetSelectModeIfNoTargets = (state: ItemState) => {
+  if (state.backgroundTargetSlideIds?.length) return;
+  state.backgroundTargetRangeAnchorId = null;
+  state.mobileBackgroundTargetSelectMode = false;
+};
+
 const resetTransientItemState = (state: ItemState) => {
   state.isLoading = false;
   state.isSectionLoading = false;
@@ -353,9 +360,11 @@ export const itemSlice = createSlice({
       } else {
         state.backgroundTargetSlideIds.push(id);
       }
+      exitBackgroundTargetSelectModeIfNoTargets(state);
     },
     setBackgroundTargetSlideIds: (state, action: PayloadAction<string[]>) => {
       state.backgroundTargetSlideIds = [...action.payload];
+      exitBackgroundTargetSelectModeIfNoTargets(state);
     },
     setBackgroundTargetRangeAnchorId: (
       state,
@@ -374,6 +383,7 @@ export const itemSlice = createSlice({
     },
     clearBackgroundTargetSlideIdsOnly: (state) => {
       state.backgroundTargetSlideIds = [];
+      exitBackgroundTargetSelectModeIfNoTargets(state);
     },
   },
 });
@@ -756,6 +766,21 @@ export const removeSlide = createAsyncThunk(
     const item = getState().undoable.present.item;
     const newSlides = item.slides.filter((_, index) => index !== args.index);
     dispatch(updateSlides({ slides: newSlides }));
+  },
+);
+
+/** Removes all slides whose ids are in `slideIds` (free-form multi-delete). Keeps at least one slide. */
+export const removeSlidesByIds = createAsyncThunk(
+  "item/removeSlidesByIds",
+  async (args: { slideIds: string[] }, { dispatch, getState }) => {
+    const item = getState().undoable.present.item;
+    const idSet = new Set(args.slideIds);
+    if (idSet.size === 0) return;
+    const newSlides = item.slides.filter((s) => !idSet.has(s.id));
+    if (newSlides.length === item.slides.length) return;
+    if (newSlides.length === 0) return;
+    await dispatch(updateSlides({ slides: newSlides })).unwrap();
+    dispatch(itemSlice.actions.clearBackgroundTargetSelection());
   },
 );
 

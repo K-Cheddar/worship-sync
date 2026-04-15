@@ -11,6 +11,7 @@ export type ToolbarButtonProps = {
   hidden?: boolean;
   isActive?: boolean;
   children: React.ReactNode;
+  "aria-label"?: string;
 };
 
 /** Shared with outline switcher and other toolbar-row controls that should match tab styling. */
@@ -31,6 +32,7 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = ({
   hidden = false,
   isActive = false,
   children,
+  "aria-label": ariaLabel,
 }) => {
   const variant = isActive ? "none" : "tertiary";
   const color = isActive ? "#ffffff" : undefined;
@@ -46,6 +48,7 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = ({
         to={to}
         disabled={disabled}
         className={className}
+        aria-label={ariaLabel}
       >
         {children}
       </Button>
@@ -60,6 +63,7 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = ({
       onClick={onClick}
       disabled={disabled}
       className={className}
+      aria-label={ariaLabel}
     >
       {children}
     </Button>

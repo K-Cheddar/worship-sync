@@ -1,21 +1,24 @@
 import { useMemo } from "react";
 import { useSelector } from "../../hooks";
+import { getNextServiceTimerId } from "../../constants/nextServiceTimer";
+import ServiceTimeCountdownFace from "../../containers/ServiceTimes/ServiceTimeCountdownFace";
 import { RootState } from "../../store/store";
 import { formatTime } from "../DisplayWindow/TimerDisplay";
 import { ServiceTime } from "../../types";
 
 type Props = {
   upcomingService?: ServiceTime | null;
+  hostId?: string;
 };
 
-const StreamInfo = ({ upcomingService }: Props) => {
+const StreamInfo = ({ upcomingService, hostId }: Props) => {
+  const timerId = getNextServiceTimerId(hostId);
   const timers = useSelector((state: RootState) => state.timers.timers);
 
   const timer = useMemo(() => {
     if (!timers?.length) return undefined;
-    const nextServiceTimer = timers.find((t) => t.id === "next-service");
-    return nextServiceTimer;
-  }, [timers]);
+    return timers.find((t) => t.id === timerId);
+  }, [timerId, timers]);
 
   const positionClasses = useMemo(() => {
     const pos = upcomingService?.position ?? "top-right";
@@ -34,34 +37,26 @@ const StreamInfo = ({ upcomingService }: Props) => {
     }
   }, [upcomingService?.position]);
 
-  if (!timer) return null;
+  if (!timer || !upcomingService) return null;
 
-  const nameFontsize = (upcomingService?.nameFontSize ?? 12) / 10;
-  const timeFontSize = (upcomingService?.timeFontSize ?? 35) / 10;
-  const shouldShowName = upcomingService?.shouldShowName ?? true;
+  const timeText =
+    timer.timerType === "countdown" && timer.status === "stopped"
+      ? timer.countdownTime || "00:00"
+      : formatTime(timer.remainingTime || 0, timer.showMinutesOnly);
 
   return (
     <div className="fixed inset-0 pointer-events-none background-transparent">
-      <div
-        className={`absolute ${positionClasses} transform px-[1%] py-[0.5%] rounded-[5%/10%] font-semibold select-none flex flex-col items-center justify-center`}
-        style={{
-          color: upcomingService?.color || undefined,
-          backgroundColor: upcomingService?.background || undefined,
-        }}
-      >
-        {shouldShowName && (
-          <div style={{ fontSize: `${nameFontsize}vw` }}>
-            {upcomingService?.name} begins in
-          </div>
-        )}
-        <div
-          className="leading-none tabular-nums"
-          style={{ fontSize: `${timeFontSize}vw` }}
-        >
-          {timer.timerType === "countdown" && timer.status === "stopped"
-            ? timer.countdownTime || "00:00"
-            : formatTime(timer.remainingTime || 0, timer.showMinutesOnly)}
-        </div>
+      <div className={`absolute ${positionClasses} transform`}>
+        <ServiceTimeCountdownFace
+          service={upcomingService}
+          timeText={timeText}
+          timeDisplay="livePulseAtZero"
+          fontSpec="streamFullscreen"
+          paddingSpec="streamInfo"
+          includeNameTimeGap={false}
+          nameClassName="leading-none whitespace-nowrap"
+          timeClassName="leading-none tabular-nums"
+        />
       </div>
     </div>
   );

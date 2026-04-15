@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { MediaType } from "../types";
 
 const emptyMedia: MediaType = {
@@ -33,6 +33,8 @@ interface UseMediaSelectionReturn {
   selectedMediaIds: Set<string>;
   previewMedia: MediaType | null;
   lastSelectedIndex: number;
+  /** True after long-press / right-click enter; plain taps toggle like Ctrl until cleared. */
+  mediaMultiSelectMode: boolean;
   setSelectedMedia: (media: MediaType) => void;
   setSelectedMediaIds: (
     ids: Set<string> | ((prev: Set<string>) => Set<string>),
@@ -43,6 +45,12 @@ interface UseMediaSelectionReturn {
     e: React.MouseEvent,
     mediaItem: MediaType,
     index: number,
+  ) => void;
+  /** Long-press (touch) or right-click — mirrors item-slide background-target enter. */
+  enterMediaMultiSelectMode: (
+    mediaItem: MediaType,
+    index: number,
+    options?: { skipNextClick?: boolean },
   ) => void;
   clearSelection: () => void;
 }
@@ -58,6 +66,12 @@ export const useMediaSelection = ({
   );
   const [previewMedia, setPreviewMedia] = useState<MediaType | null>(null);
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number>(-1);
+  const [mediaMultiSelectMode, setMediaMultiSelectMode] = useState(false);
+  const skipNextMediaClickRef = useRef(false);
+  /** Ignore duplicate enter for the same tile when long-press and `contextmenu` both fire (key by id, not list index). */
+  const lastEnterSameMediaAtRef = useRef<{ id: string; t: number } | null>(
+    null,
+  );
 
   // Replace stale object references when the library updates (e.g. rename in Redux).
   useEffect(() => {
@@ -73,38 +87,82 @@ export const useMediaSelection = ({
     });
   }, [mediaList, selectedMediaIds]);
 
+  const enterMediaMultiSelectMode = useCallback(
+    (
+      mediaItem: MediaType,
+      index: number,
+      options?: { skipNextClick?: boolean },
+    ) => {
+      const pressedId = mediaItem.id;
+      if (!pressedId) return;
+
+      const now = Date.now();
+      const last = lastEnterSameMediaAtRef.current;
+      if (last && last.id === pressedId && now - last.t < 400) return;
+      lastEnterSameMediaAtRef.current = { id: pressedId, t: now };
+
+      const currentPrimaryId = selectedMedia.id;
+      const ids =
+        currentPrimaryId &&
+        currentPrimaryId !== pressedId &&
+        selectedMediaIds.size <= 1
+          ? [currentPrimaryId, pressedId]
+          : [pressedId];
+
+      setSelectedMediaIds(new Set(ids));
+      setSelectedMedia(mediaItem);
+      setPreviewMedia(mediaItem);
+      setLastSelectedIndex(index);
+      setMediaMultiSelectMode(true);
+      if (options?.skipNextClick) {
+        skipNextMediaClickRef.current = true;
+      }
+    },
+    [selectedMedia.id, selectedMediaIds],
+  );
+
   const handleMediaClick = useCallback(
     (e: React.MouseEvent, mediaItem: MediaType, index: number) => {
+      if (skipNextMediaClickRef.current) {
+        skipNextMediaClickRef.current = false;
+        e.preventDefault();
+        return;
+      }
       const isCtrlOrCmd = e.ctrlKey || e.metaKey;
       const isShift = e.shiftKey;
       const listToUse = filteredList || mediaList;
 
-      if (isCtrlOrCmd) {
-        // Toggle selection with Ctrl/Cmd — compute next ids, then update related state from the handler (not inside setState updaters).
+      const applyToggle = (item: MediaType, idx: number) => {
         const newSet = new Set(selectedMediaIds);
-        if (newSet.has(mediaItem.id)) {
-          newSet.delete(mediaItem.id);
+        if (newSet.has(item.id)) {
+          newSet.delete(item.id);
           setSelectedMediaIds(newSet);
           if (newSet.size === 0) {
             setSelectedMedia(emptyMedia);
             setPreviewMedia(null);
-          } else if (selectedMedia.id === mediaItem.id) {
+            setMediaMultiSelectMode(false);
+          } else if (selectedMedia.id === item.id) {
             const firstId = Array.from(newSet)[0];
-            const firstItem = mediaList.find((item) => item.id === firstId);
+            const firstItem = mediaList.find((idItem) => idItem.id === firstId);
             if (firstItem) {
               setSelectedMedia(firstItem);
               setPreviewMedia(firstItem);
             }
           }
         } else {
-          newSet.add(mediaItem.id);
+          newSet.add(item.id);
           setSelectedMediaIds(newSet);
-          setSelectedMedia(mediaItem);
-          setPreviewMedia(mediaItem);
+          setSelectedMedia(item);
+          setPreviewMedia(item);
         }
-        setLastSelectedIndex(index);
-      } else if (isShift && enableRangeSelection && lastSelectedIndex >= 0) {
-        // Range selection with Shift
+        setLastSelectedIndex(idx);
+      };
+
+      if (isCtrlOrCmd) {
+        applyToggle(mediaItem, index);
+        return;
+      }
+      if (isShift && enableRangeSelection && lastSelectedIndex >= 0) {
         const start = Math.min(lastSelectedIndex, index);
         const end = Math.max(lastSelectedIndex, index);
         const newSet = new Set(selectedMediaIds);
@@ -117,13 +175,18 @@ export const useMediaSelection = ({
         setSelectedMedia(mediaItem);
         setPreviewMedia(mediaItem);
         setLastSelectedIndex(index);
-      } else {
-        // Single selection
-        setSelectedMediaIds(new Set([mediaItem.id]));
-        setSelectedMedia(mediaItem);
-        setPreviewMedia(mediaItem);
-        setLastSelectedIndex(index);
+        return;
       }
+      if (mediaMultiSelectMode) {
+        e.preventDefault();
+        applyToggle(mediaItem, index);
+        return;
+      }
+      setMediaMultiSelectMode(false);
+      setSelectedMediaIds(new Set([mediaItem.id]));
+      setSelectedMedia(mediaItem);
+      setPreviewMedia(mediaItem);
+      setLastSelectedIndex(index);
     },
     [
       mediaList,
@@ -132,6 +195,7 @@ export const useMediaSelection = ({
       selectedMediaIds,
       lastSelectedIndex,
       enableRangeSelection,
+      mediaMultiSelectMode,
     ],
   );
 
@@ -140,6 +204,8 @@ export const useMediaSelection = ({
     setSelectedMediaIds(new Set());
     setPreviewMedia(null);
     setLastSelectedIndex(-1);
+    setMediaMultiSelectMode(false);
+    skipNextMediaClickRef.current = false;
   }, []);
 
   return {
@@ -147,11 +213,13 @@ export const useMediaSelection = ({
     selectedMediaIds,
     previewMedia,
     lastSelectedIndex,
+    mediaMultiSelectMode,
     setSelectedMedia,
     setSelectedMediaIds,
     setPreviewMedia,
     setLastSelectedIndex,
     handleMediaClick,
+    enterMediaMultiSelectMode,
     clearSelection,
   };
 };

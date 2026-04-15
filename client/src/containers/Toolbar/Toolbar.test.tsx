@@ -167,7 +167,7 @@ const renderToolbarOverlay = ({
   overlayPanel = "overlays",
 }: {
   access: "full" | "music" | "view";
-  overlayPanel?: "overlays" | "credits";
+  overlayPanel?: "overlays" | "credits" | "serviceTimes";
 }) => {
   mockState = {
     undoable: {
@@ -244,7 +244,7 @@ describe("Toolbar", () => {
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 
-  it("overlay variant shows Overlays and Credits Editor tabs", () => {
+  it("overlay variant shows Overlays, Credits Editor, and Service Times tabs", () => {
     renderToolbarOverlay({ access: "full" });
 
     expect(
@@ -253,13 +253,19 @@ describe("Toolbar", () => {
     expect(
       screen.getByRole("button", { name: "Credits Editor" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Service Times" }),
+    ).toBeInTheDocument();
   });
 
-  it("overlay variant hides Credits Editor tab for view access", () => {
+  it("overlay variant hides Credits Editor and Service Times tabs for view access", () => {
     renderToolbarOverlay({ access: "view" });
 
     expect(
       screen.queryByRole("button", { name: "Credits Editor" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Service Times" }),
     ).not.toBeInTheDocument();
   });
 
@@ -284,6 +290,19 @@ describe("Toolbar", () => {
     );
   });
 
+  it("overlay variant dispatches when Service Times is clicked", () => {
+    renderToolbarOverlay({ access: "full" });
+
+    screen.getByRole("button", { name: "Service Times" }).click();
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "preferences/setOverlayControllerPanel",
+        payload: "serviceTimes",
+      }),
+    );
+  });
+
   it("overlay variant shows Generate Credits instead of Quick Links on credits tab", () => {
     renderToolbarOverlay({ access: "full", overlayPanel: "credits" });
 
@@ -299,5 +318,13 @@ describe("Toolbar", () => {
     renderToolbarOverlay({ access: "full", overlayPanel: "overlays" });
 
     expect(screen.getByRole("button", { name: "Quick Links" })).toBeInTheDocument();
+  });
+
+  it("overlay variant hides Quick Links on service times tab when full access", () => {
+    renderToolbarOverlay({ access: "full", overlayPanel: "serviceTimes" });
+
+    expect(
+      screen.queryByRole("button", { name: "Quick Links" }),
+    ).not.toBeInTheDocument();
   });
 });

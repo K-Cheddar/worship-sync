@@ -12,17 +12,26 @@ export const formatTime = (
   showMinutesOnly?: boolean,
   separateSections = false
 ) => {
-  const hours = Math.floor(seconds / 3600)
+  const totalSec = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(totalSec / 3600)
     .toString()
     .padStart(2, "0");
-  const minutes = Math.floor((seconds % 3600) / 60)
+  const minutes = Math.floor((totalSec % 3600) / 60)
     .toString()
     .padStart(2, "0");
-  const secs = (seconds % 60).toString().padStart(2, "0");
+  const secs = (totalSec % 60).toString().padStart(2, "0");
 
   if (showMinutesOnly) {
-    const totalMinutes = Math.floor(seconds / 60);
+    const totalMinutes = Math.floor(totalSec / 60);
     return totalMinutes.toString();
+  }
+
+  if (hours === "00" && totalSec < 60) {
+    const secOnly = String(totalSec);
+    if (separateSections) {
+      return <span className="inline-block">{secOnly}</span>;
+    }
+    return secOnly;
   }
 
   if (hours === "00" && separateSections) {

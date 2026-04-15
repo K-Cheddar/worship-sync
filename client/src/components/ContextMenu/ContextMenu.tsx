@@ -25,6 +25,11 @@ interface ContextMenuProps {
   onOpen?: () => void;
   /** Called before opening; use to e.g. select the item under the cursor. When provided, menu may open even if menuItems is currently empty (they update on next render). */
   onContextMenuOpen?: (e: React.MouseEvent) => void;
+  /**
+   * If this returns true, the default context menu flow is skipped (preventDefault, no Radix open).
+   * Use for gestures that should not compete with the context menu (e.g. plain right-click elsewhere).
+   */
+  onBeforeContextMenu?: (e: React.MouseEvent) => boolean;
 }
 
 const ContextMenuWrapper = ({
@@ -34,6 +39,7 @@ const ContextMenuWrapper = ({
   className,
   onOpen,
   onContextMenuOpen,
+  onBeforeContextMenu,
 }: ContextMenuProps) => {
   /**
    * Radix composes trigger handlers as: our onContextMenu first, then Radix's.
@@ -43,6 +49,11 @@ const ContextMenuWrapper = ({
    */
   const handleContextMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
+
+    if (onBeforeContextMenu?.(e)) {
+      e.preventDefault();
+      return;
+    }
 
     onContextMenuOpen?.(e);
 

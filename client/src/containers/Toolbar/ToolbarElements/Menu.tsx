@@ -3,6 +3,7 @@ import Button from "../../../components/Button/Button";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
+  CircleAlert,
   Home,
   Info,
   Menu as MenuIcon,
@@ -16,7 +17,6 @@ import {
 } from "lucide-react";
 import Icon from "../../../components/Icon/Icon";
 import { MenuItemType } from "../../../types";
-import { RedoButton, UndoButton } from "./Undo";
 import ChangelogModal from "../../../components/ChangelogModal/ChangelogModal";
 import AboutModal from "../../../components/AboutModal/AboutModal";
 import { useState, useEffect, useContext } from "react";
@@ -27,17 +27,14 @@ import type { WindowType } from "../../../types/electron";
 import { Slider } from "../../../components/ui/Slider";
 
 const ToolbarMenu = ({
-  isPhone,
-  isEditMode,
   variant = "default",
 }: {
-  isPhone?: boolean;
-  isEditMode?: boolean;
   variant?: "default" | "overlay";
 }) => {
   const { access } = useContext(GlobalInfoContext) || {};
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [updateReadyVersion, setUpdateReadyVersion] = useState("");
   const [zoomLevel, setZoomLevel] = useState(100);
   const zoomStep = 10;
   const zoomMin = 50;
@@ -67,6 +64,20 @@ const ToolbarMenu = ({
       document.documentElement.style.fontSize = `${baseFontSize}%`;
     };
   }, [zoomLevel]);
+
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI?.onUpdateDownloaded) {
+      return;
+    }
+
+    const unsubscribe = window.electronAPI.onUpdateDownloaded((info) => {
+      setUpdateReadyVersion(info.version);
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [isElectron]);
 
   const setZoomWithinBounds = (nextZoom: number) => {
     setZoomLevel(Math.min(zoomMax, Math.max(zoomMin, nextZoom)));
@@ -221,6 +232,9 @@ const ToolbarMenu = ({
         <div className="flex items-center gap-2 max-md:min-h-12">
           <Icon svg={Info} color="#d1d5dc" />
           About
+          {updateReadyVersion ? (
+            <Icon svg={CircleAlert} color="#f59e0b" size="sm" />
+          ) : null}
         </div>
       ),
       onClick: () => setIsAboutOpen(true),
@@ -281,37 +295,6 @@ const ToolbarMenu = ({
         "p-0 hover:bg-transparent focus:bg-transparent hover:text-inherit focus:text-inherit",
       preventClose: true,
     },
-    ...(isPhone && !isEditMode && access !== "view"
-      ? [
-        {
-          element: (
-            <div className="flex gap-2 w-full py-1.5 px-2">
-              <UndoButton
-                variant="secondary"
-                color="black"
-                className="w-full justify-center"
-              />
-              <RedoButton
-                variant="secondary"
-                color="black"
-                className="w-full justify-center"
-              />
-            </div>
-          ),
-          preventClose: true,
-        },
-      ]
-      : []),
-    // {
-    //   text: isLoggedIn ? "Sign out" : "Sign in",
-    //   onClick: async () => {
-    //     if (isLoggedIn && logout) {
-    //       logout();
-    //     } else {
-    //       navigate("/login");
-    //     }
-    //   },
-    // },
   ];
 
   return (
@@ -322,11 +305,16 @@ const ToolbarMenu = ({
         TriggeringButton={
           <Button
             variant="tertiary"
-            className="w-fit p-1"
-            padding="p-1"
+            className="w-fit"
             aria-label="Open menu"
             svg={MenuIcon}
-          />
+            gap="gap-1.5"
+          >
+            Menu
+            {updateReadyVersion ? (
+              <Icon svg={CircleAlert} color="#f59e0b" size="sm" />
+            ) : null}
+          </Button>
         }
       />
       <ChangelogModal
@@ -336,6 +324,7 @@ const ToolbarMenu = ({
       <AboutModal
         isOpen={isAboutOpen}
         onClose={() => setIsAboutOpen(false)}
+        updateReadyVersion={updateReadyVersion}
       />
     </>
   );

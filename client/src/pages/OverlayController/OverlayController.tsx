@@ -13,6 +13,7 @@ import cn from "classnames";
 import { ArrowRightFromLine, ArrowLeftFromLine } from "lucide-react";
 import ControllerPageShell from "../../components/ControllerPageShell/ControllerPageShell";
 import CreditsEditor from "../CreditsEditor/CreditsEditor";
+import ServiceTimes from "../../containers/ServiceTimes/ServiceTimes";
 
 const OverlayController = () => {
   const dispatch = useDispatch();
@@ -90,13 +91,26 @@ const OverlayController = () => {
             <CreditsEditor embeddedInOverlayController />
           </div>
         )}
+        {access !== "view" && (
+          <div
+            className={cn(
+              "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
+              overlayControllerPanel === "serviceTimes"
+                ? "z-10 opacity-100"
+                : "pointer-events-none z-0 opacity-0",
+            )}
+            aria-hidden={overlayControllerPanel !== "serviceTimes"}
+          >
+            <ServiceTimes embeddedInOverlayController />
+          </div>
+        )}
       </div>
       {access === "full" && (
         <>
           <Button
             className={cn(
               "z-10 ml-2 h-1/4 justify-center text-sm lg:hidden",
-              overlayControllerPanel === "credits" && "hidden",
+              overlayControllerPanel !== "overlays" && "hidden",
             )}
             svg={isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine}
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
@@ -107,7 +121,7 @@ const OverlayController = () => {
               "lg:w-[min(46rem,46%)] lg:min-w-120 shrink-0",
               "max-lg:right-0 max-lg:absolute",
               isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]",
-              overlayControllerPanel === "credits" && "hidden",
+              overlayControllerPanel !== "overlays" && "hidden",
             )}
             ref={rightPanelRef}
           >
@@ -135,7 +149,7 @@ const OverlayController = () => {
         <div
           className={cn(
             "flex h-full shrink-0 flex-col border-l-2 border-gray-500 bg-homepage-canvas lg:w-[min(46rem,46%)] lg:min-w-120",
-            overlayControllerPanel === "credits" && "hidden",
+            overlayControllerPanel !== "overlays" && "hidden",
           )}
         >
           <TransmitHandler

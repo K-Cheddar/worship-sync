@@ -64,7 +64,7 @@ const Toolbar = ({
     (state) => state.undoable.present.item
   );
   const [section, setSection] = useState<sections>("settings");
-  const { isPhone, isMobile = false } = useContext(ControllerInfoContext) || {};
+  const { isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
 
@@ -120,13 +120,9 @@ const Toolbar = ({
   return (
     <ErrorBoundary>
       <div className={className}>
-        <div className="px-2 py-1 flex gap-1 border-r-2 border-gray-500 items-center">
-          <Menu
-            isPhone={isPhone}
-            isEditMode={isEditMode}
-            variant={variant}
-          />
-          {!isEditMode && !isPhone && access !== "view" && <Undo />}
+        <div className="px-2 py-1 flex gap-2 border-r-2 border-gray-500 items-center flex-col justify-center">
+          <Menu variant={variant} />
+          {!isEditMode && access !== "view" && <Undo />}
         </div>
         <div
           className={cn(
@@ -200,7 +196,7 @@ const Toolbar = ({
               <hr className="border-gray-500 w-full border-t-2 sticky left-0" />
               <div
                 className={cn(
-                  "px-2 py-1 flex items-center flex-1 overflow-x-auto w-full",
+                  "px-2 py-1 flex items-center flex-1 overflow-x-auto w-full scrollbar-variable",
                   isEditMode && "hidden"
                 )}
               >

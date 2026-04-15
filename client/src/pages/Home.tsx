@@ -1,4 +1,10 @@
-import { useContext, useEffect, useState } from "react";
+import {
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { Download, Smartphone } from "lucide-react";
 import WorshipSyncImage from "../assets/WorshipSyncImage.png";
 import Button from "../components/Button/Button";
@@ -10,8 +16,14 @@ import {
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { usePwaInstallPrompt } from "../hooks/usePwaInstallPrompt";
-import { isElectron, isMacBrowser, isWindowsBrowser } from "../utils/environment";
 import {
+  isElectron,
+  isLinuxBrowser,
+  isMacBrowser,
+  isWindowsBrowser,
+} from "../utils/environment";
+import {
+  fetchLatestLinuxInstallerUrl,
   fetchLatestMacInstallerUrl,
   fetchLatestWindowsInstallerUrl,
   getLatestReleaseUrl,
@@ -142,7 +154,7 @@ const DisplayLinkGroup = ({
   );
 };
 
-type DesktopOs = "windows" | "mac";
+type DesktopOs = "windows" | "mac" | "linux";
 
 type DesktopDownloadHelpProps = {
   os: DesktopOs;
@@ -151,61 +163,111 @@ type DesktopDownloadHelpProps = {
 
 type DesktopInstallPopoverView = "menu" | "downloadHelp";
 
-const DesktopDownloadHelp = ({ os, onTryAgain }: DesktopDownloadHelpProps) => (
-  <>
-    <p className="text-sm font-semibold text-white">
-      {os === "windows" ? "Download for Windows" : "Download for Mac"}
-    </p>
-    <p className="mt-2 text-sm">
-      {os === "windows" ? (
-        <>
-          Your download should begin automatically. If it does not, try
-          again or open the
-          {" "}
-          <a
-            href={getLatestReleaseUrl()}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-semibold text-gray-100 underline underline-offset-2 hover:text-white"
-          >
-            release page
-          </a>
-          {" "}
-          and choose the Windows installer from Assets.
-        </>
-      ) : (
-        <>
-          Your download should begin automatically. If it does not, try
-          again or open the
-          {" "}
-          <a
-            href={getLatestReleaseUrl()}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-semibold text-gray-100 underline underline-offset-2 hover:text-white"
-          >
-            release page
-          </a>
-          {" "}
-          and choose the Mac disk image (.dmg) from Assets. If macOS warns
-          that the app cannot be checked for malicious software,
-          Control-click WorshipSync in Finder, choose Open, then confirm.
-        </>
-      )}
-    </p>
+const getDesktopInstallMenuBody = (os: DesktopOs, canInstall: boolean) => {
+  if (os === "windows") {
+    return canInstall
+      ? "Install as an app in this browser for quick access, or download the Windows installer for the desktop app."
+      : "Download the Windows installer for the desktop app.";
+  }
+  if (os === "mac") {
+    return canInstall
+      ? "Install as an app in this browser for quick access, or download the Mac disk image (DMG) for the desktop app."
+      : "Download the Mac disk image (DMG) for the desktop app.";
+  }
+  return canInstall
+    ? "Install as an app in this browser for quick access, or download the Linux desktop app (AppImage or Debian package)."
+    : "Download the Linux desktop app (AppImage or Debian package).";
+};
 
-    <div className="mt-3 flex flex-col gap-2">
-      <Button
-        component="button"
-        variant="tertiary"
-        className="w-full"
-        onClick={onTryAgain}
-      >
-        Download again
-      </Button>
-    </div>
-  </>
-);
+const getDesktopDownloadButtonLabel = (os: DesktopOs) => {
+  if (os === "windows") return "Download Windows app";
+  if (os === "mac") return "Download Mac app";
+  return "Download Linux app";
+};
+
+const getDesktopDownloadHelpAriaLabel = (os: DesktopOs) => {
+  if (os === "windows") return "Windows download help";
+  if (os === "mac") return "Mac download help";
+  return "Linux download help";
+};
+
+const getDesktopDownloadHelpTitle = (os: DesktopOs) => {
+  if (os === "windows") return "Download for Windows";
+  if (os === "mac") return "Download for Mac";
+  return "Download for Linux";
+};
+
+const isMobileBrowser = (): boolean => {
+  if (typeof navigator === "undefined") return false;
+  return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+};
+
+const isIosBrowser = (): boolean => {
+  if (typeof navigator === "undefined") return false;
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+};
+
+const DesktopDownloadHelp = ({ os, onTryAgain }: DesktopDownloadHelpProps) => {
+  const releaseLink = (
+    <a
+      href={getLatestReleaseUrl()}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="font-semibold text-gray-100 underline underline-offset-2 hover:text-white"
+    >
+      release page
+    </a>
+  );
+
+  let body: ReactNode;
+  if (os === "windows") {
+    body = (
+      <>
+        Your download should begin automatically. If it does not, try again
+        or open the {releaseLink} and choose the Windows installer from Assets.
+      </>
+    );
+  } else if (os === "mac") {
+    body = (
+      <>
+        Your download should begin automatically. If it does not, try again
+        or open the {releaseLink} and choose the Mac disk image (.dmg) from
+        Assets. If macOS warns that the app cannot be checked for malicious
+        software, Control-click WorshipSync in Finder, choose Open, then
+        confirm.
+      </>
+    );
+  } else {
+    body = (
+      <>
+        Your download should begin automatically. If it does not, try again
+        or open the {releaseLink} and choose the Linux AppImage or .deb from
+        Assets. AppImage runs without installing a package; use the .deb if you
+        prefer a system package.
+      </>
+    );
+  }
+
+  return (
+    <>
+      <p className="text-sm font-semibold text-white">
+        {getDesktopDownloadHelpTitle(os)}
+      </p>
+      <p className="mt-2 text-sm">{body}</p>
+
+      <div className="mt-3 flex flex-col gap-2">
+        <Button
+          component="button"
+          variant="tertiary"
+          className="w-full"
+          onClick={onTryAgain}
+        >
+          Download again
+        </Button>
+      </div>
+    </>
+  );
+};
 
 const Welcome = () => {
   const { loginState, role, access } = useContext(GlobalInfoContext) || {};
@@ -227,15 +289,15 @@ const Welcome = () => {
         return true;
       })
       : secondaryControllers.filter((link) => link.to !== "/boards/controller");
-  const { canShowInstall, installPwa } = usePwaInstallPrompt();
+  const { canShowInstall, installPwa, isStandalone } = usePwaInstallPrompt();
   const isWeb = !isElectron();
-  const desktopOs: DesktopOs | null = isWeb
-    ? isWindowsBrowser()
-      ? "windows"
-      : isMacBrowser()
-        ? "mac"
-        : null
-    : null;
+  const desktopOs = useMemo((): DesktopOs | null => {
+    if (!isWeb) return null;
+    if (isWindowsBrowser()) return "windows";
+    if (isMacBrowser()) return "mac";
+    if (isLinuxBrowser()) return "linux";
+    return null;
+  }, [isWeb]);
 
   const [installerHref, setInstallerHref] = useState(() =>
     isElectron() ? "" : getLatestReleaseUrl(),
@@ -243,14 +305,21 @@ const Welcome = () => {
   const [desktopAppMenuOpen, setDesktopAppMenuOpen] = useState(false);
   const [desktopInstallPopoverView, setDesktopInstallPopoverView] =
     useState<DesktopInstallPopoverView>("menu");
+  const [mobileInstallHelpOpen, setMobileInstallHelpOpen] = useState(false);
+  const isMobileWeb = useMemo(() => isWeb && isMobileBrowser(), [isWeb]);
+  const isiOSWeb = useMemo(() => isWeb && isIosBrowser(), [isWeb]);
 
   useEffect(() => {
     if (isElectron() || !desktopOs) return;
     let cancelled = false;
-    const fetcher =
-      desktopOs === "windows"
-        ? fetchLatestWindowsInstallerUrl
-        : fetchLatestMacInstallerUrl;
+    let fetcher: () => Promise<string | null>;
+    if (desktopOs === "windows") {
+      fetcher = fetchLatestWindowsInstallerUrl;
+    } else if (desktopOs === "mac") {
+      fetcher = fetchLatestMacInstallerUrl;
+    } else {
+      fetcher = fetchLatestLinuxInstallerUrl;
+    }
     void fetcher().then((directUrl) => {
       if (!cancelled && directUrl) {
         setInstallerHref(directUrl);
@@ -285,9 +354,8 @@ const Welcome = () => {
   };
 
   /** One desktop web entry point avoids a toolbar flash when `beforeinstallprompt` arrives after first paint. */
-  const showDesktopAppMenu = desktopOs !== null;
-  const showInstallOnlyWithoutDesktopInstaller =
-    isWeb && !desktopOs && canShowInstall;
+  const showDesktopAppMenu = desktopOs !== null && !isStandalone;
+  const showMobileInstallButton = isMobileWeb && !desktopOs && !isStandalone;
 
   const popoverSurfaceClass =
     "w-80 max-w-[min(100vw-2rem,20rem)] border border-gray-500 bg-gray-800 p-4 text-gray-100 shadow-xl";
@@ -322,9 +390,7 @@ const Welcome = () => {
                     className={popoverSurfaceClass}
                     aria-label={
                       desktopInstallPopoverView === "downloadHelp"
-                        ? desktopOs === "windows"
-                          ? "Windows download help"
-                          : "Mac download help"
+                        ? getDesktopDownloadHelpAriaLabel(desktopOs)
                         : undefined
                     }
                   >
@@ -334,13 +400,7 @@ const Welcome = () => {
                           Choose how to run WorshipSync
                         </p>
                         <p className="mt-1.5 text-sm text-gray-200">
-                          {desktopOs === "windows"
-                            ? canShowInstall
-                              ? "Install as an app in this browser for quick access, or download the Windows installer for the desktop app."
-                              : "Download the Windows installer for the desktop app."
-                            : canShowInstall
-                              ? "Install as an app in this browser for quick access, or download the Mac disk image (DMG) for the desktop app."
-                              : "Download the Mac disk image (DMG) for the desktop app."}
+                          {getDesktopInstallMenuBody(desktopOs, canShowInstall)}
                         </p>
                         <div className="mt-3 flex flex-col gap-2">
                           {canShowInstall && (
@@ -363,9 +423,7 @@ const Welcome = () => {
                             iconSize="md"
                             onClick={handleDownloadDesktopFromMenu}
                           >
-                            {desktopOs === "windows"
-                              ? "Download Windows app"
-                              : "Download Mac app"}
+                            {getDesktopDownloadButtonLabel(desktopOs)}
                           </Button>
                         </div>
                       </>
@@ -379,17 +437,69 @@ const Welcome = () => {
                 </Popover>
               </div>
             )}
-            {showInstallOnlyWithoutDesktopInstaller && (
-              <Button
-                component="button"
-                variant="tertiary"
-                className="flex items-center gap-2"
-                svg={Smartphone}
-                iconSize="md"
-                onClick={() => void installPwa()}
-              >
-                Install
-              </Button>
+            {showMobileInstallButton && (
+              canShowInstall ? (
+                <Button
+                  component="button"
+                  variant="tertiary"
+                  className="flex items-center gap-2"
+                  svg={Smartphone}
+                  iconSize="md"
+                  onClick={() => {
+                    void installPwa();
+                  }}
+                >
+                  Install
+                </Button>
+              ) : (
+                <Popover
+                  open={mobileInstallHelpOpen}
+                  onOpenChange={setMobileInstallHelpOpen}
+                  modal={false}
+                >
+                  <PopoverTrigger asChild>
+                    <Button
+                      component="button"
+                      variant="tertiary"
+                      className="flex items-center gap-2"
+                      svg={Smartphone}
+                      iconSize="md"
+                    >
+                      Install
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="start"
+                    side="bottom"
+                    sideOffset={8}
+                    className={popoverSurfaceClass}
+                    aria-label="Mobile install instructions"
+                  >
+                    <p className="text-sm font-semibold text-white">
+                      Install WorshipSync
+                    </p>
+                    {isiOSWeb ? (
+                      <p className="mt-1.5 text-sm text-gray-200">
+                        On iPhone and iPad, open Safari&apos;s Share menu, then choose
+                        {" "}
+                        <span className="font-semibold text-white">Add to Home Screen</span>
+                        .
+                      </p>
+                    ) : (
+                      <p className="mt-1.5 text-sm text-gray-200">
+                        Open your browser menu and choose
+                        {" "}
+                        <span className="font-semibold text-white">Install app</span>
+                        {" "}
+                        or
+                        {" "}
+                        <span className="font-semibold text-white">Add to Home screen</span>
+                        .
+                      </p>
+                    )}
+                  </PopoverContent>
+                </Popover>
+              )
             )}
           </div>
           <div className="flex flex-1 justify-end gap-4">

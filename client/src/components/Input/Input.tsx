@@ -12,6 +12,9 @@ import Label from "@/components/ui/Label";
 
 export type InputLabelLayout = "stacked" | "inline";
 
+/** `compactLight`: small label, medium weight, white text (dark surfaces like service time controls). */
+export type InputLabelStyle = "default" | "compactLight";
+
 export type InputProps = Omit<HTMLProps<HTMLInputElement>, "onChange" | "value"> & {
   className?: string;
   type?: string;
@@ -19,6 +22,8 @@ export type InputProps = Omit<HTMLProps<HTMLInputElement>, "onChange" | "value">
   label?: string;
   /** `stacked`: label above the field (default). `inline`: label to the left of the field on one row. */
   labelLayout?: InputLabelLayout;
+  /** Stacked label density and color. `compactLight` matches small gray field labels but uses white text. */
+  labelStyle?: InputLabelStyle;
   hideLabel?: boolean;
   onChange: (value: string | number) => void;
   labelClassName?: string;
@@ -74,6 +79,7 @@ const Input = ({
   onChange,
   label,
   labelLayout = "stacked",
+  labelStyle = "default",
   hideLabel = false,
   labelClassName,
   labelFontSize = "text-sm",
@@ -164,19 +170,26 @@ const Input = ({
 
   const showLabel = label != null;
   const isInlineLabel = labelLayout === "inline" && showLabel;
+  const isCompactLightLabel = labelStyle === "compactLight";
 
   const labelEl = showLabel ? (
     <Label
       htmlFor={inputId}
       className={cn(
-        labelFontSize,
-        "font-semibold",
-        isInlineLabel ? "shrink-0 py-0 pl-0 pr-0" : "p-1",
+        isCompactLightLabel
+          ? "text-xs font-medium text-white"
+          : cn(labelFontSize, "font-semibold"),
+        isInlineLabel
+          ? "shrink-0 py-0 pl-0 pr-0"
+          : isCompactLightLabel
+            ? "p-0"
+            : "p-1",
         hideLabel && "sr-only",
         labelClassName
       )}
     >
-      {label}:
+      {label}
+      {isCompactLightLabel ? "" : ":"}
     </Label>
   ) : null;
 
@@ -227,7 +240,7 @@ const Input = ({
         onChange={(e) => {
           const val = e.target.value;
           if (type === "number") {
-            onChange(Number(val));
+            onChange(val === "" ? "" : Number(val));
           } else {
             onChange(val as string);
           }
@@ -246,8 +259,17 @@ const Input = ({
     </span>
   );
 
+  const stackedLabelGap =
+    showLabel && !isInlineLabel && isCompactLightLabel;
+
   return (
-    <div className={cn("group relative h-fit", className)}>
+    <div
+      className={cn(
+        "group relative h-fit",
+        stackedLabelGap && "flex flex-col gap-0.5",
+        className
+      )}
+    >
       {isInlineLabel ? (
         <div className="flex min-w-0 flex-row flex-wrap items-center gap-x-2 gap-y-1">
           {labelEl}

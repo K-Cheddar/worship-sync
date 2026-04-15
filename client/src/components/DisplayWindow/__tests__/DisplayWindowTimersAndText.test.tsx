@@ -48,6 +48,20 @@ describe("DisplayWindow timer and text helpers", () => {
       expect(formatTime(125, true)).toBe("2");
     });
 
+    it("shows seconds only when under one minute (no leading 00:)", () => {
+      expect(formatTime(58, false)).toBe("58");
+      expect(formatTime(9, false)).toBe("9");
+      expect(formatTime(0, false)).toBe("0");
+      expect(formatTime(60, false)).toBe("01:00");
+    });
+
+    it("renders a single span for under-one-minute split formatting", () => {
+      render(<div data-testid="format-root">{formatTime(45, false, true)}</div>);
+      const root = screen.getByTestId("format-root");
+      expect(root).toHaveTextContent("45");
+      expect(within(root).getByText("45")).toBeInTheDocument();
+    });
+
     it("renders split spans when formatting mm:ss sections", () => {
       render(<div data-testid="format-root">{formatTime(65, false, true)}</div>);
       const root = screen.getByTestId("format-root");

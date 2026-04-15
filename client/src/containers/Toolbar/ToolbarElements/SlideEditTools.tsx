@@ -506,7 +506,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const controls = (
     <>
-      <div className="flex gap-1 items-center flex-wrap justify-center">
+      <div className="flex gap-1 items-center flex-wrap md:flex-nowrap justify-center">
         <Icon svg={ALargeSmall} className="border-b border-black" />
         <Button
           svg={Minus}
@@ -623,7 +623,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
                   updateItem(updatedItem);
                 });
               }}
-              className="flex flex-wrap items-center gap-1"
+              className="flex flex-wrap md:flex-nowrap items-center gap-1"
             >
               <RadioButton
                 className="text-xs"
@@ -647,7 +647,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               onValueChange={(v) =>
                 _updateBibleFontMode(v as BibleFontMode)
               }
-              className="flex flex-wrap items-center gap-1"
+              className="flex flex-wrap md:flex-nowrap items-center gap-1"
             >
               <RadioButton className="text-xs" optionValue="fit" label="Fit" />
               <RadioButton
@@ -714,7 +714,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           Remove Blank Lines
         </Button>
       )}
-      <Button svg={ALargeSmall} iconSize="lg" className="invisible" />
     </>
   );
 

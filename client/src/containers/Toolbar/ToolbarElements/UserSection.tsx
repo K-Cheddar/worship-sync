@@ -1,6 +1,14 @@
 import { useContext, useState, useEffect, useMemo } from "react";
+import { useLocation } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { CloudOff, Cloud, CircleDot, Save, LogOut } from "lucide-react";
+import {
+  CloudOff,
+  Cloud,
+  Users,
+  Save,
+  LogOut,
+  Loader2,
+} from "lucide-react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import Icon from "../../../components/Icon/Icon";
@@ -16,8 +24,16 @@ import {
 import { ChurchLogoImg } from "../../../components/ChurchLogoImg";
 import { resolveChurchToolbarLogoUrl } from "../../../utils/churchBranding";
 import type { Instance } from "../../../types";
+import { useSelector } from "../../../hooks";
+import { selectAnyAutosavePending } from "../../../store/autosaveIndicatorSlice";
 
 const ACCOUNT_TRIGGER_MAX_W = "max-w-[10rem]";
+
+const isToolbarAutosaveStatusRoute = (pathname: string) =>
+  pathname.startsWith("/controller") ||
+  pathname === "/overlay-controller" ||
+  pathname === "/credits-editor" ||
+  pathname === "/info-controller";
 
 const UserSection = () => {
   const {
@@ -41,6 +57,9 @@ const UserSection = () => {
   const [firebaseDisplayName, setFirebaseDisplayName] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [isSavingName, setIsSavingName] = useState(false);
+  const { pathname } = useLocation();
+  const showToolbarAutosaveStatus = isToolbarAutosaveStatusRoute(pathname);
+  const anyAutosavePending = useSelector(selectAnyAutosavePending);
 
   useEffect(() => {
     if (sessionKind !== "human") {
@@ -139,29 +158,73 @@ const UserSection = () => {
           className="h-auto min-h-0! max-md:min-h-0! flex! flex-row! flex-nowrap! items-center! rounded-md font-normal text-white hover:bg-white/10"
           aria-label={accountAriaLabel}
         >
-          <Icon
-            svg={isDemo ? CloudOff : Cloud}
-            size="md"
-            color={isDemo ? "oklch(0.75 0.183 55.934)" : "#22d3ee"}
-          />
           <div
-            className={`flex min-w-0 flex-col items-start text-left ${ACCOUNT_TRIGGER_MAX_W}`}
+            className={`flex min-w-0 flex-col gap-1 items-start text-left ${ACCOUNT_TRIGGER_MAX_W}`}
           >
-            <span className="w-full truncate text-sm font-semibold">
-              {toolbarFirstName || fullDisplayName || "—"}
-            </span>
-            {churchLine ? (
-              <span className="w-full truncate text-xs text-gray-300">{churchLine}</span>
+            {showToolbarAutosaveStatus ? (
+              <div className="flex w-full min-w-0 items-center gap-3">
+                <div
+                  className="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-medium"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  <span
+                    className="inline-flex size-3.5 shrink-0 items-center justify-center"
+                    aria-hidden
+                  >
+                    {anyAutosavePending ? (
+                      <Loader2 className="size-3.5 animate-spin text-gray-400" />
+                    ) : isDemo ? (
+                      <CloudOff className="size-3.5 shrink-0 text-emerald-400" />
+                    ) : (
+                      <Cloud className="size-3.5 shrink-0 text-emerald-400" />
+                    )}
+                  </span>
+                  <span
+                    className={`min-w-13 leading-none ${anyAutosavePending ? "text-gray-400" : "text-emerald-400"}`}
+                  >
+                    {anyAutosavePending ? "Saving..." : "Saved"}
+                  </span>
+                </div>
+                {!isMobile ? (
+                  <span className="flex items-center gap-1">
+                    <span
+                      className="inline-flex shrink-0"
+                      title="Active sessions"
+                    >
+                      <Icon
+                        svg={Users}
+                        size="xs"
+                        color="#22d3ee"
+                        className={isPulsing ? "animate-pulse" : ""}
+                      />
+                    </span>
+                    <span className="shrink-0 text-sm">{activeCount}</span>
+                  </span>
+                ) : null}
+              </div>
             ) : null}
+            <div className="flex min-w-0 w-full flex-col gap-0.5">
+              <span className="w-full truncate text-sm font-semibold max-w-28">
+                {toolbarFirstName || fullDisplayName || "—"}
+              </span>
+              {churchLine ? (
+                <span className="w-full truncate text-xs text-gray-300 max-w-28">
+                  {churchLine}
+                </span>
+              ) : null}
+            </div>
           </div>
-          {!isMobile ? (
+          {!isMobile && !showToolbarAutosaveStatus ? (
             <>
-              <Icon
-                svg={CircleDot}
-                size="xs"
-                color="#22d3ee"
-                className={`shrink-0 ${isPulsing ? "animate-pulse" : ""}`}
-              />
+              <span className="inline-flex shrink-0" title="Active sessions">
+                <Icon
+                  svg={Users}
+                  size="xs"
+                  color="#22d3ee"
+                  className={isPulsing ? "animate-pulse" : ""}
+                />
+              </span>
               <span className="shrink-0 text-sm">{activeCount}</span>
             </>
           ) : null}
@@ -329,9 +392,7 @@ const UserSection = () => {
     </PopOver>
   );
 
-  return (
-    <div className="flex min-w-0 items-center text-white">{accountBlock}</div>
-  );
+  return <div className="flex min-w-0 items-center text-white">{accountBlock}</div>;
 };
 
 export default UserSection;

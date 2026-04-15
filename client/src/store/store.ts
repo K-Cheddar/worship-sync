@@ -63,7 +63,7 @@ import {
   TimerInfo,
 } from "../types";
 import { allDocsSlice, upsertItemInAllDocs } from "./allDocsSlice";
-import { creditsSlice, mergeVisibleCreditsIntoHistory } from "./creditsSlice";
+import { creditsSlice } from "./creditsSlice";
 import {
   timersSlice,
   reconcileTimersFromDocs,
@@ -71,6 +71,10 @@ import {
   updateTimerFromRemote,
 } from "./timersSlice";
 import { overlayTemplatesSlice } from "./overlayTemplatesSlice";
+import {
+  autosaveIndicatorSlice,
+  AUTOSAVE_DEBOUNCE_KEYS,
+} from "./autosaveIndicatorSlice";
 import serviceTimesSliceReducer, {
   serviceTimesSlice,
 } from "./serviceTimesSlice";
@@ -84,7 +88,6 @@ import {
   ensureCreditsIndexDoc,
   getCreditsByIds,
   migrateLegacyCreditsToActiveOutlineIfNeeded,
-  putCreditHistoryDocs,
 } from "../utils/dbUtils";
 
 // Helper function to safely post messages to the broadcast channel
@@ -757,28 +760,41 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(1500);
+    listenerApi.dispatch(
+      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
+        AUTOSAVE_DEBOUNCE_KEYS.itemLists,
+      ),
+    );
+    try {
+      listenerApi.cancelActiveListeners();
+      await listenerApi.delay(1500);
 
-    // update ItemList
-    const { currentLists, activeList } = (listenerApi.getState() as RootState)
-      .undoable.present.itemLists;
+      // update ItemList
+      const { currentLists, activeList } = (listenerApi.getState() as RootState)
+        .undoable.present.itemLists;
 
-    if (!db || !activeList) return;
-    const db_itemLists: DBItemLists = await db.get("ItemLists");
-    db_itemLists.itemLists = [...currentLists];
-    db_itemLists.activeList = activeList;
-    db_itemLists.updatedAt = new Date().toISOString();
-    db.put(db_itemLists);
+      if (!db || !activeList) return;
+      const db_itemLists: DBItemLists = await db.get("ItemLists");
+      db_itemLists.itemLists = [...currentLists];
+      db_itemLists.activeList = activeList;
+      db_itemLists.updatedAt = new Date().toISOString();
+      db.put(db_itemLists);
 
-    // Local machine updates
-    safePostMessage({
-      type: "update",
-      data: {
-        docs: db_itemLists,
-        hostId: globalHostId,
-      },
-    });
+      // Local machine updates
+      safePostMessage({
+        type: "update",
+        data: {
+          docs: db_itemLists,
+          hostId: globalHostId,
+        },
+      });
+    } finally {
+      listenerApi.dispatch(
+        autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
+          AUTOSAVE_DEBOUNCE_KEYS.itemLists,
+        ),
+      );
+    }
   },
 });
 
@@ -805,26 +821,39 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(1500);
+    listenerApi.dispatch(
+      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
+        AUTOSAVE_DEBOUNCE_KEYS.allItems,
+      ),
+    );
+    try {
+      listenerApi.cancelActiveListeners();
+      await listenerApi.delay(1500);
 
-    // update ItemList
-    const { list } = (listenerApi.getState() as RootState).allItems;
+      // update ItemList
+      const { list } = (listenerApi.getState() as RootState).allItems;
 
-    if (!db) return;
-    const db_allItems: DBAllItems = await db.get("allItems");
-    db_allItems.items = [...list];
-    db_allItems.updatedAt = new Date().toISOString();
-    db.put(db_allItems);
+      if (!db) return;
+      const db_allItems: DBAllItems = await db.get("allItems");
+      db_allItems.items = [...list];
+      db_allItems.updatedAt = new Date().toISOString();
+      db.put(db_allItems);
 
-    // Local machine updates
-    safePostMessage({
-      type: "update",
-      data: {
-        docs: db_allItems,
-        hostId: globalHostId,
-      },
-    });
+      // Local machine updates
+      safePostMessage({
+        type: "update",
+        data: {
+          docs: db_allItems,
+          hostId: globalHostId,
+        },
+      });
+    } finally {
+      listenerApi.dispatch(
+        autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
+          AUTOSAVE_DEBOUNCE_KEYS.allItems,
+        ),
+      );
+    }
   },
 });
 
@@ -1103,129 +1132,129 @@ listenerMiddleware.startListening({
       preDelay.undoable.present.itemLists.activeList?._id;
     if (!snapshotOutlineId) return;
 
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(1500);
-    listenerApi.throwIfCancelled();
-
-    const afterDelay = listenerApi.getState() as RootState;
-    const currentOutlineId =
-      afterDelay.undoable.present.itemLists.selectedList?._id ??
-      afterDelay.undoable.present.itemLists.activeList?._id;
-
-    const afterDelayCredits = afterDelay.undoable.present.credits;
-    /** Same outline: use latest Redux (e.g. after updateCreditsListFromRemote). Switched outline: only snapshot still matches this Pouch doc. */
-    const creditsForPersist =
-      currentOutlineId === snapshotOutlineId && afterDelayCredits.isInitialized
-        ? afterDelayCredits
-        : snapshotCredits;
-
-    const { list, creditsHistory } = creditsForPersist;
-
-    const visible = list.filter((c) => !c.hidden);
-    const prevHistory = creditsHistory ?? {};
-    const merged = mergeVisibleCreditsIntoHistory(prevHistory, visible);
-    const uniqueHeadings = [
-      ...new Set(visible.map((c) => c.heading.trim()).filter(Boolean)),
-    ];
-    const headingsToSave = uniqueHeadings.filter(
-      (h) => JSON.stringify(merged[h]) !== JSON.stringify(prevHistory[h]),
+    listenerApi.dispatch(
+      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
+        AUTOSAVE_DEBOUNCE_KEYS.credits,
+      ),
     );
+    try {
+      listenerApi.cancelActiveListeners();
+      await listenerApi.delay(1500);
+      listenerApi.throwIfCancelled();
 
-    if (currentOutlineId === snapshotOutlineId) {
-      listenerApi.dispatch(
-        creditsSlice.actions.syncVisibleCreditsMirrorAndHistory(),
-      );
-    }
-
-    if (headingsToSave.length > 0 && db) {
-      try {
-        await putCreditHistoryDocs(db, merged, headingsToSave);
-      } catch (e) {
-        console.error("putCreditHistoryDocs failed", e);
-      }
-    }
-
-    const fireDb = globalFireDbInfo.db;
-    const fireChurchId = globalFireDbInfo.churchId;
-    const shouldSyncGlobalRtdbCredits =
-      Boolean(fireDb) &&
-      Boolean(fireChurchId) &&
-      currentOutlineId === snapshotOutlineId &&
-      creditsForPersist.isInitialized;
-
-    if (shouldSyncGlobalRtdbCredits && fireDb && fireChurchId) {
-      const {
-        list: rtdbList,
-        transitionScene,
-        creditsScene,
-        scheduleName,
-      } = creditsForPersist;
-      const activeOutlineId =
+      const afterDelay = listenerApi.getState() as RootState;
+      const currentOutlineId =
+        afterDelay.undoable.present.itemLists.selectedList?._id ??
         afterDelay.undoable.present.itemLists.activeList?._id;
-      const isEditingLiveOutline =
-        activeOutlineId != null && currentOutlineId === activeOutlineId;
-      const liveCreditsForRtdb = rtdbList
-        .filter((c) => !c.hidden)
-        .map((credit) => ({ ...credit }));
 
-      if (isEditingLiveOutline) {
+      const afterDelayCredits = afterDelay.undoable.present.credits;
+      /** Same outline: use latest Redux (e.g. after updateCreditsListFromRemote). Switched outline: only snapshot still matches this Pouch doc. */
+      const creditsForPersist =
+        currentOutlineId === snapshotOutlineId &&
+        afterDelayCredits.isInitialized
+          ? afterDelayCredits
+          : snapshotCredits;
+
+      const { list } = creditsForPersist;
+
+      const fireDb = globalFireDbInfo.db;
+      const fireChurchId = globalFireDbInfo.churchId;
+      const shouldSyncGlobalRtdbCredits =
+        Boolean(fireDb) &&
+        Boolean(fireChurchId) &&
+        currentOutlineId === snapshotOutlineId &&
+        creditsForPersist.isInitialized;
+
+      if (shouldSyncGlobalRtdbCredits && fireDb && fireChurchId) {
+        const {
+          list: rtdbList,
+          transitionScene,
+          creditsScene,
+          scheduleName,
+        } = creditsForPersist;
+        const activeOutlineId =
+          afterDelay.undoable.present.itemLists.activeList?._id;
+        const isEditingLiveOutline =
+          activeOutlineId != null && currentOutlineId === activeOutlineId;
+        const liveCreditsForRtdb = rtdbList
+          .filter((c) => !c.hidden)
+          .map((credit) => ({ ...credit }));
+
+        if (isEditingLiveOutline) {
+          set(
+            ref(
+              fireDb,
+              getChurchDataPath(fireChurchId, "credits", "publishedList"),
+            ),
+            cleanObject(liveCreditsForRtdb),
+          );
+        }
         set(
           ref(
             fireDb,
-            getChurchDataPath(fireChurchId, "credits", "publishedList"),
+            getChurchDataPath(fireChurchId, "credits", "transitionScene"),
           ),
-          cleanObject(liveCreditsForRtdb),
+          transitionScene,
+        );
+        set(
+          ref(
+            fireDb,
+            getChurchDataPath(fireChurchId, "credits", "creditsScene"),
+          ),
+          creditsScene,
+        );
+        set(
+          ref(
+            fireDb,
+            getChurchDataPath(fireChurchId, "credits", "scheduleName"),
+          ),
+          scheduleName,
         );
       }
-      set(
-        ref(
-          fireDb,
-          getChurchDataPath(fireChurchId, "credits", "transitionScene"),
+
+      if (!db) return;
+
+      const now = new Date().toISOString();
+      const creditIds = list.map((c) => c.id);
+      const docsToBroadcast: DBCredits[] = [];
+
+      try {
+        await ensureCreditsIndexDoc(db, snapshotOutlineId);
+        const db_credits: DBCredits = await db.get(
+          getCreditsDocId(snapshotOutlineId),
+        );
+        db_credits.creditIds = creditIds;
+        db_credits.updatedAt = now;
+        await db.put(db_credits);
+        docsToBroadcast.push(db_credits);
+      } catch (e) {
+        console.error("credits index save failed", e);
+      }
+
+      safePostMessage({
+        type: "update",
+        data: {
+          docs: docsToBroadcast,
+          hostId: globalHostId,
+        },
+      });
+    } finally {
+      listenerApi.dispatch(
+        autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
+          AUTOSAVE_DEBOUNCE_KEYS.credits,
         ),
-        transitionScene,
-      );
-      set(
-        ref(fireDb, getChurchDataPath(fireChurchId, "credits", "creditsScene")),
-        creditsScene,
-      );
-      set(
-        ref(fireDb, getChurchDataPath(fireChurchId, "credits", "scheduleName")),
-        scheduleName,
       );
     }
-
-    if (!db) return;
-
-    const now = new Date().toISOString();
-    const creditIds = list.map((c) => c.id);
-    const docsToBroadcast: DBCredits[] = [];
-
-    try {
-      await ensureCreditsIndexDoc(db, snapshotOutlineId);
-      const db_credits: DBCredits = await db.get(
-        getCreditsDocId(snapshotOutlineId),
-      );
-      db_credits.creditIds = creditIds;
-      db_credits.updatedAt = now;
-      await db.put(db_credits);
-      docsToBroadcast.push(db_credits);
-    } catch (e) {
-      console.error("credits index save failed", e);
-    }
-
-    safePostMessage({
-      type: "update",
-      data: {
-        docs: docsToBroadcast,
-        hostId: globalHostId,
-      },
-    });
   },
 });
 
 /** When the active outline changes, push that outline's credits from Pouch to RTDB live display. */
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    // Full store RESET (e.g. overlay/controller page unmount) clears slices to initial
+    // state; activeList becomes undefined transiently. Do not treat that as "no active
+    // outline" for audience RTDB — avoids wiping `publishedList` while displays stay open.
+    if (action.type === "RESET") return false;
     const prevId = (previousState as RootState).undoable.present.itemLists
       .activeList?._id;
     const nextId = (currentState as RootState).undoable.present.itemLists
@@ -1297,57 +1326,70 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(1500);
-
-    // update ItemList
-    const { list, folders } = (listenerApi.getState() as RootState).media;
-
-    if (!db) return;
+    listenerApi.dispatch(
+      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
+        AUTOSAVE_DEBOUNCE_KEYS.media,
+      ),
+    );
     try {
-      const db_media: DBMedia = await db.get("media");
-      db_media.list = [...list];
-      db_media.folders = [...folders];
-      db_media.updatedAt = new Date().toISOString();
-      await db.put(db_media);
+      listenerApi.cancelActiveListeners();
+      await listenerApi.delay(1500);
 
-      // Local machine updates — only after Pouch reports success so `_rev` matches other tabs.
-      safePostMessage({
-        type: "update",
-        data: {
-          docs: db_media,
-          hostId: globalHostId,
-        },
-      });
+      // update ItemList
+      const { list, folders } = (listenerApi.getState() as RootState).media;
 
-      // Sync media cache to match the saved media list (Electron only)
-      if (window.electronAPI) {
-        try {
-          const urlArray = extractMediaUrlsFromBackgrounds(list);
-          const electronAPI = window.electronAPI as unknown as {
-            syncMediaCache: (
-              urls: string[],
-            ) => Promise<{ downloaded: number; cleaned: number }>;
-            getMediaCacheMap: () => Promise<Record<string, string>>;
-          };
-          if (urlArray.length > 0) {
-            await electronAPI.syncMediaCache(urlArray);
-          } else {
-            await electronAPI.syncMediaCache([]);
+      if (!db) return;
+      try {
+        const db_media: DBMedia = await db.get("media");
+        db_media.list = [...list];
+        db_media.folders = [...folders];
+        db_media.updatedAt = new Date().toISOString();
+        await db.put(db_media);
+
+        // Local machine updates — only after Pouch reports success so `_rev` matches other tabs.
+        safePostMessage({
+          type: "update",
+          data: {
+            docs: db_media,
+            hostId: globalHostId,
+          },
+        });
+
+        // Sync media cache to match the saved media list (Electron only)
+        if (window.electronAPI) {
+          try {
+            const urlArray = extractMediaUrlsFromBackgrounds(list);
+            const electronAPI = window.electronAPI as unknown as {
+              syncMediaCache: (
+                urls: string[],
+              ) => Promise<{ downloaded: number; cleaned: number }>;
+              getMediaCacheMap: () => Promise<Record<string, string>>;
+            };
+            if (urlArray.length > 0) {
+              await electronAPI.syncMediaCache(urlArray);
+            } else {
+              await electronAPI.syncMediaCache([]);
+            }
+            const map = await electronAPI.getMediaCacheMap();
+            listenerApi.dispatch(setMediaCacheMap(map));
+          } catch (error) {
+            console.error(
+              "Error syncing media cache after media list save:",
+              error,
+            );
           }
-          const map = await electronAPI.getMediaCacheMap();
-          listenerApi.dispatch(setMediaCacheMap(map));
-        } catch (error) {
-          console.error(
-            "Error syncing media cache after media list save:",
-            error,
-          );
         }
+      } catch (error) {
+        console.error(
+          "Failed to persist media library to PouchDB (debounced listener):",
+          error,
+        );
       }
-    } catch (error) {
-      console.error(
-        "Failed to persist media library to PouchDB (debounced listener):",
-        error,
+    } finally {
+      listenerApi.dispatch(
+        autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
+          AUTOSAVE_DEBOUNCE_KEYS.media,
+        ),
       );
     }
   },
@@ -1432,146 +1474,159 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(1500);
-
-    const { preferences, monitorSettings, quickLinks, mediaRouteFolders } = (
-      listenerApi.getState() as RootState
-    ).undoable.present.preferences;
-
-    if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
-      set(
-        ref(
-          globalFireDbInfo.db,
-          getChurchDataPath(globalFireDbInfo.churchId, "monitorSettings"),
-        ),
-        cleanObject({
-          ...monitorSettings,
-        }),
-      );
-    }
-
-    if (!db) return;
-    const pouchDb = db;
-    const now = new Date().toISOString();
-
-    const getDoc = async (id: string) => {
-      try {
-        return await pouchDb.get(id);
-      } catch (e) {
-        if ((e as { status?: number }).status === 404) return null;
-        throw e;
-      }
-    };
-
+    listenerApi.dispatch(
+      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
+        AUTOSAVE_DEBOUNCE_KEYS.preferences,
+      ),
+    );
     try {
-      const p0 = (await getDoc(PREFERENCES_POUCH_ID)) as DBPreferences | null;
-      const prefsToPut = (
-        p0
-          ? {
-              ...p0,
-              preferences,
-              updatedAt: now,
-              docType: "preferences" as const,
-            }
-          : {
-              _id: PREFERENCES_POUCH_ID,
-              preferences,
-              createdAt: now,
-              updatedAt: now,
-              docType: "preferences" as const,
-            }
-      ) as DBPreferences;
-      const prefsRes = await pouchDb.put(prefsToPut);
-      const prefsOut = {
-        ...prefsToPut,
-        _rev: (prefsRes as { rev: string }).rev,
-      } as DBPreferences;
+      listenerApi.cancelActiveListeners();
+      await listenerApi.delay(1500);
 
-      const ql0 = (await getDoc(
-        QUICK_LINKS_POUCH_ID,
-      )) as DBQuickLinksDoc | null;
-      const qlToPut = (
-        ql0
-          ? {
-              ...ql0,
-              quickLinks,
-              updatedAt: now,
-              docType: "quickLinks" as const,
-            }
-          : {
-              _id: QUICK_LINKS_POUCH_ID,
-              quickLinks,
-              createdAt: now,
-              updatedAt: now,
-              docType: "quickLinks" as const,
-            }
-      ) as DBQuickLinksDoc;
-      const qlRes = await pouchDb.put(qlToPut);
-      const qlOut = {
-        ...qlToPut,
-        _rev: (qlRes as { rev: string }).rev,
-      } as DBQuickLinksDoc;
+      const { preferences, monitorSettings, quickLinks, mediaRouteFolders } = (
+        listenerApi.getState() as RootState
+      ).undoable.present.preferences;
 
-      const m0 = (await getDoc(
-        MONITOR_SETTINGS_POUCH_ID,
-      )) as DBMonitorSettingsDoc | null;
-      const monToPut = (
-        m0
-          ? {
-              ...m0,
-              monitorSettings,
-              updatedAt: now,
-              docType: "monitorSettings" as const,
-            }
-          : {
-              _id: MONITOR_SETTINGS_POUCH_ID,
-              monitorSettings,
-              createdAt: now,
-              updatedAt: now,
-              docType: "monitorSettings" as const,
-            }
-      ) as DBMonitorSettingsDoc;
-      const monRes = await pouchDb.put(monToPut);
-      const monOut = {
-        ...monToPut,
-        _rev: (monRes as { rev: string }).rev,
-      } as DBMonitorSettingsDoc;
+      if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
+        set(
+          ref(
+            globalFireDbInfo.db,
+            getChurchDataPath(globalFireDbInfo.churchId, "monitorSettings"),
+          ),
+          cleanObject({
+            ...monitorSettings,
+          }),
+        );
+      }
 
-      const f0 = (await getDoc(
-        MEDIA_ROUTE_FOLDERS_POUCH_ID,
-      )) as DBMediaRouteFoldersDoc | null;
-      const foldToPut = (
-        f0
-          ? {
-              ...f0,
-              mediaRouteFolders: { ...mediaRouteFolders },
-              updatedAt: now,
-              docType: "mediaRouteFolders" as const,
-            }
-          : {
-              _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
-              mediaRouteFolders: { ...mediaRouteFolders },
-              createdAt: now,
-              updatedAt: now,
-              docType: "mediaRouteFolders" as const,
-            }
-      ) as DBMediaRouteFoldersDoc;
-      const foldRes = await pouchDb.put(foldToPut);
-      const foldOut = {
-        ...foldToPut,
-        _rev: (foldRes as { rev: string }).rev,
-      } as DBMediaRouteFoldersDoc;
+      if (!db) return;
+      const pouchDb = db;
+      const now = new Date().toISOString();
 
-      safePostMessage({
-        type: "update",
-        data: {
-          docs: [prefsOut, qlOut, monOut, foldOut],
-          hostId: globalHostId,
-        },
-      });
-    } catch (error) {
-      console.error(error);
+      const getDoc = async (id: string) => {
+        try {
+          return await pouchDb.get(id);
+        } catch (e) {
+          if ((e as { status?: number }).status === 404) return null;
+          throw e;
+        }
+      };
+
+      try {
+        const p0 = (await getDoc(PREFERENCES_POUCH_ID)) as DBPreferences | null;
+        const prefsToPut = (
+          p0
+            ? {
+                ...p0,
+                preferences,
+                updatedAt: now,
+                docType: "preferences" as const,
+              }
+            : {
+                _id: PREFERENCES_POUCH_ID,
+                preferences,
+                createdAt: now,
+                updatedAt: now,
+                docType: "preferences" as const,
+              }
+        ) as DBPreferences;
+        const prefsRes = await pouchDb.put(prefsToPut);
+        const prefsOut = {
+          ...prefsToPut,
+          _rev: (prefsRes as { rev: string }).rev,
+        } as DBPreferences;
+
+        const ql0 = (await getDoc(
+          QUICK_LINKS_POUCH_ID,
+        )) as DBQuickLinksDoc | null;
+        const qlToPut = (
+          ql0
+            ? {
+                ...ql0,
+                quickLinks,
+                updatedAt: now,
+                docType: "quickLinks" as const,
+              }
+            : {
+                _id: QUICK_LINKS_POUCH_ID,
+                quickLinks,
+                createdAt: now,
+                updatedAt: now,
+                docType: "quickLinks" as const,
+              }
+        ) as DBQuickLinksDoc;
+        const qlRes = await pouchDb.put(qlToPut);
+        const qlOut = {
+          ...qlToPut,
+          _rev: (qlRes as { rev: string }).rev,
+        } as DBQuickLinksDoc;
+
+        const m0 = (await getDoc(
+          MONITOR_SETTINGS_POUCH_ID,
+        )) as DBMonitorSettingsDoc | null;
+        const monToPut = (
+          m0
+            ? {
+                ...m0,
+                monitorSettings,
+                updatedAt: now,
+                docType: "monitorSettings" as const,
+              }
+            : {
+                _id: MONITOR_SETTINGS_POUCH_ID,
+                monitorSettings,
+                createdAt: now,
+                updatedAt: now,
+                docType: "monitorSettings" as const,
+              }
+        ) as DBMonitorSettingsDoc;
+        const monRes = await pouchDb.put(monToPut);
+        const monOut = {
+          ...monToPut,
+          _rev: (monRes as { rev: string }).rev,
+        } as DBMonitorSettingsDoc;
+
+        const f0 = (await getDoc(
+          MEDIA_ROUTE_FOLDERS_POUCH_ID,
+        )) as DBMediaRouteFoldersDoc | null;
+        const foldToPut = (
+          f0
+            ? {
+                ...f0,
+                mediaRouteFolders: { ...mediaRouteFolders },
+                updatedAt: now,
+                docType: "mediaRouteFolders" as const,
+              }
+            : {
+                _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
+                mediaRouteFolders: { ...mediaRouteFolders },
+                createdAt: now,
+                updatedAt: now,
+                docType: "mediaRouteFolders" as const,
+              }
+        ) as DBMediaRouteFoldersDoc;
+        const foldRes = await pouchDb.put(foldToPut);
+        const foldOut = {
+          ...foldToPut,
+          _rev: (foldRes as { rev: string }).rev,
+        } as DBMediaRouteFoldersDoc;
+
+        safePostMessage({
+          type: "update",
+          data: {
+            docs: [prefsOut, qlOut, monOut, foldOut],
+            hostId: globalHostId,
+          },
+        });
+      } catch (error) {
+        console.error(error);
+      }
+    } finally {
+      listenerApi.dispatch(
+        autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
+          AUTOSAVE_DEBOUNCE_KEYS.preferences,
+        ),
+      );
     }
   },
 });
@@ -1659,58 +1714,46 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(1500);
+    listenerApi.dispatch(
+      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
+        AUTOSAVE_DEBOUNCE_KEYS.serviceTimes,
+      ),
+    );
+    try {
+      listenerApi.cancelActiveListeners();
+      await listenerApi.delay(1500);
 
-    // update service times
-    const { list } = (listenerApi.getState() as RootState).undoable.present
-      .serviceTimes;
+      // update service times
+      const { list } = (listenerApi.getState() as RootState).undoable.present
+        .serviceTimes;
 
-    // Prevent syncing empty arrays to Firebase if we have no services
-    // This prevents clearing Firebase when Redux is empty but PouchDB has services
-    if (list.length === 0) {
-      // Still update PouchDB if it exists, but don't clear Firebase
+      // Prevent syncing empty arrays to Firebase if we have no services
+      // This prevents clearing Firebase when Redux is empty but PouchDB has services
+      if (list.length === 0) {
+        // Still update PouchDB if it exists, but don't clear Firebase
+        if (db) {
+          try {
+            const db_services: DBServices = await db.get("services");
+            // Only update PouchDB if it already has services (don't create empty)
+            if (db_services?.list && db_services.list.length > 0) {
+              db_services.list = list;
+              db_services.updatedAt = new Date().toISOString();
+              db.put(db_services);
+            }
+          } catch (error) {
+            // Don't create empty services document
+          }
+        }
+        return;
+      }
+
       if (db) {
         try {
           const db_services: DBServices = await db.get("services");
-          // Only update PouchDB if it already has services (don't create empty)
-          if (db_services?.list && db_services.list.length > 0) {
-            db_services.list = list;
-            db_services.updatedAt = new Date().toISOString();
-            db.put(db_services);
-          }
-        } catch (error) {
-          // Don't create empty services document
-        }
-      }
-      return;
-    }
-
-    if (db) {
-      try {
-        const db_services: DBServices = await db.get("services");
-        db_services.list = list;
-        db_services.updatedAt = new Date().toISOString();
-        db.put(db_services);
-        // Local machine updates
-        safePostMessage({
-          type: "update",
-          data: {
-            docs: db_services,
-            hostId: globalHostId,
-          },
-        });
-      } catch (error) {
-        // if the services are not found, create a new one
-        const db_services = {
-          _id: "services",
-          list,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        db.put(db_services);
-        // Only broadcast if list is not empty
-        if (list.length > 0) {
+          db_services.list = list;
+          db_services.updatedAt = new Date().toISOString();
+          db.put(db_services);
+          // Local machine updates
           safePostMessage({
             type: "update",
             data: {
@@ -1718,16 +1761,41 @@ listenerMiddleware.startListening({
               hostId: globalHostId,
             },
           });
+        } catch (error) {
+          // if the services are not found, create a new one
+          const db_services = {
+            _id: "services",
+            list,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          db.put(db_services);
+          // Only broadcast if list is not empty
+          if (list.length > 0) {
+            safePostMessage({
+              type: "update",
+              data: {
+                docs: db_services,
+                hostId: globalHostId,
+              },
+            });
+          }
         }
       }
-    }
-    if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
-      set(
-        ref(
-          globalFireDbInfo.db,
-          getChurchDataPath(globalFireDbInfo.churchId, "services"),
+      if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
+        set(
+          ref(
+            globalFireDbInfo.db,
+            getChurchDataPath(globalFireDbInfo.churchId, "services"),
+          ),
+          cleanObject(list),
+        );
+      }
+    } finally {
+      listenerApi.dispatch(
+        autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
+          AUTOSAVE_DEBOUNCE_KEYS.serviceTimes,
         ),
-        cleanObject(list),
       );
     }
   },
@@ -2315,6 +2383,7 @@ const combinedReducers = combineReducers({
   media: mediaItemsSlice.reducer,
   mediaCacheMap: mediaCacheMapReducer,
   overlayTemplates: overlayTemplatesSlice.reducer,
+  autosaveIndicator: autosaveIndicatorSlice.reducer,
 });
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {

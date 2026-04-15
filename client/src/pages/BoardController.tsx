@@ -304,11 +304,13 @@ const BoardControllerMenu = ({
       TriggeringButton={
         <Button
           variant="tertiary"
-          className="w-fit p-1"
-          padding="p-1"
+          className="w-fit"
           aria-label="Open menu"
           svg={MenuIcon}
-        />
+          gap="gap-1.5"
+        >
+          Menu
+        </Button>
       }
     />
   );
