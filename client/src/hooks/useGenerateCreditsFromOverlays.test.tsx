@@ -27,6 +27,10 @@ jest.mock("../store/store", () => ({
   broadcastCreditsUpdate: jest.fn(),
 }));
 
+jest.mock("../utils/creditsHistoryFlush", () => ({
+  flushCreditsHistoryFromLatestList: jest.fn().mockResolvedValue(undefined),
+}));
+
 const baseMockState = {
   undoable: {
     present: {

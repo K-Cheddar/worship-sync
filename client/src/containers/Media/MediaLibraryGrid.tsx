@@ -1,8 +1,6 @@
 import type { RefObject } from "react";
-import Button from "../../components/Button/Button";
-import CachedMediaImage from "../../components/CachedMediaImage/CachedMediaImage";
-import MediaTypeBadge from "./MediaTypeBadge";
 import MediaLibraryFolderGridItems from "./MediaLibraryFolderGridItems";
+import MediaLibraryGridMediaTile from "./MediaLibraryGridMediaTile";
 import cn from "classnames";
 import type { MediaFolder, MediaType } from "../../types";
 
@@ -31,7 +29,13 @@ export type MediaLibraryGridProps = {
   onOpenFolder: (id: string) => void;
   selectedMedia: MediaType;
   selectedMediaIds: Set<string>;
+  mediaMultiSelectMode: boolean;
   onMediaTileClick: (e: React.MouseEvent, mediaItem: MediaType, index: number) => void;
+  onEnterMediaMultiSelectMode: (
+    mediaItem: MediaType,
+    index: number,
+    options?: { skipNextClick?: boolean },
+  ) => void;
 };
 
 export default function MediaLibraryGrid({
@@ -50,7 +54,9 @@ export default function MediaLibraryGrid({
   onOpenFolder,
   selectedMedia,
   selectedMediaIds,
+  mediaMultiSelectMode,
   onMediaTileClick,
+  onEnterMediaMultiSelectMode,
 }: MediaLibraryGridProps) {
   return (
     <>
@@ -86,61 +92,24 @@ export default function MediaLibraryGrid({
               onOpenFolder={onOpenFolder}
             />
             {filteredList.map((mediaItem, index) => {
-              const { id, thumbnail, name, type } = mediaItem;
+              const { id } = mediaItem;
               const isSelected = id === selectedMedia.id;
               const isMultiSelected = selectedMediaIds.has(id);
-              const shownName = name.includes("/")
-                ? name.split("/").slice(1).join("/")
-                : name;
 
               return (
                 <li key={id}>
-                  <Button
-                    variant="none"
-                    padding="p-0"
-                    className={cn(
-                      "flex h-auto w-full flex-col items-center justify-center border-2",
-                      isMultiSelected
-                        ? "border-cyan-400 bg-cyan-400/10"
-                        : isSelected
-                          ? "border-cyan-400"
-                          : "border-gray-500 hover:border-gray-300",
-                    )}
-                    onClick={(e) => {
-                      onMediaTileClick(e, mediaItem, index);
-                    }}
-                    onContextMenu={(e) => {
-                      if (!isMultiSelected && !isSelected) {
-                        onMediaTileClick(e, mediaItem, index);
-                      }
-                    }}
-                  >
-                    <div
-                      className={cn(
-                        "relative flex aspect-video w-full items-center justify-center overflow-hidden",
-                        isMediaExpanded && "border-b border-gray-500",
-                      )}
-                    >
-                      <CachedMediaImage
-                        className="max-w-full max-h-full"
-                        alt={id}
-                        src={thumbnail}
-                        loading="lazy"
-                      />
-                      <MediaTypeBadge type={type} />
-                    </div>
-
-                    {isMediaExpanded && name && showNamesInPanelGrid && (
-                      <div className="w-full px-1 py-1 text-center">
-                        <p
-                          className="text-sm text-gray-300 truncate"
-                          title={name}
-                        >
-                          {shownName}
-                        </p>
-                      </div>
-                    )}
-                  </Button>
+                  <MediaLibraryGridMediaTile
+                    mediaItem={mediaItem}
+                    index={index}
+                    isSelected={isSelected}
+                    isMultiSelected={isMultiSelected}
+                    mediaMultiSelectMode={mediaMultiSelectMode}
+                    onMediaTileClick={onMediaTileClick}
+                    onEnterMediaMultiSelectMode={onEnterMediaMultiSelectMode}
+                    showBottomName={
+                      Boolean(isMediaExpanded && mediaItem.name && showNamesInPanelGrid)
+                    }
+                  />
                 </li>
               );
             })}

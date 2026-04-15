@@ -7,6 +7,11 @@ import {
   MonitorPlay,
   Trash2,
 } from "lucide-react";
+import cn from "classnames";
+import {
+  MEDIA_LIBRARY_MEDIA_ACTION_CREATE_ICON_CLASS,
+  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+} from "./mediaLibraryMediaActionUi";
 import type {
   ItemSlideType,
   ItemType,
@@ -146,7 +151,7 @@ export function buildMediaLibraryBarActions(args: {
       {
         id: "delete-multiple",
         label: `Delete ${selectedCount} items`,
-        icon: <Trash2 className="size-3.5" />,
+        icon: <Trash2 className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
         variant: "destructive",
         onClick: onDeleteMultiple,
       },
@@ -162,7 +167,7 @@ export function buildMediaLibraryBarActions(args: {
       {
         id: "set-all-slides",
         label: "Set All Slides",
-        icon: <Images className="size-3.5" />,
+        icon: <Images className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
         disabled: isLoading || !m.background,
         onClick: () => {
           if (m.background && db) {
@@ -179,7 +184,7 @@ export function buildMediaLibraryBarActions(args: {
       {
         id: "set-selected-slide",
         label: "Set Selected Slide",
-        icon: <Image className="size-3.5" />,
+        icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
         disabled: isLoading || !m.background,
         onClick: () => {
           if (m.background && db) {
@@ -372,14 +377,14 @@ export function buildMediaLibraryBarActions(args: {
         {
           id: "apply-to-subset",
           label: "Apply to…",
-          icon: <Layers className="size-3.5" />,
+          icon: <Layers className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
           disabled: applyDisabled,
           menuItems: applyMenuItems,
         },
         {
           id: "clear-background-subset",
           label: "Clear…",
-          icon: <ImageOff className="size-3.5" />,
+          icon: <ImageOff className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
           disabled: isLoading || !db,
           menuItems: clearMenuItems,
         },
@@ -391,7 +396,7 @@ export function buildMediaLibraryBarActions(args: {
     out.push({
       id: "set-image-overlay",
       label: "Set Image Overlay",
-      icon: <Image className="size-3.5" />,
+      icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
       disabled: !m.background || !selectedOverlay,
       onClick: () => {
         if (m.background && db) {
@@ -417,7 +422,7 @@ export function buildMediaLibraryBarActions(args: {
     out.push({
       id: "set-pref-bg",
       label: "Set Background",
-      icon: <Image className="size-3.5" />,
+      icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
       disabled: !selectedPreference || !m.background,
       onClick: () => {
         dispatch(
@@ -437,7 +442,7 @@ export function buildMediaLibraryBarActions(args: {
     out.push({
       id: "set-quick-link",
       label: "Set Quick Link Background",
-      icon: <Image className="size-3.5" />,
+      icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
       disabled:
         !selectedQuickLink || selectedQuickLink?.linkType !== "media",
       onClick: () => {
@@ -453,20 +458,28 @@ export function buildMediaLibraryBarActions(args: {
       onSendToProjector,
       onCreateCustomItem,
     } = controllerFromSelectedMedia;
+    /** Do not use `isLoading` (item document) here — it stays true during unrelated item fetches and incorrectly disables send. */
+    const sendDisabled = !m.background || !isProjectorTransmitting;
     out.push(
       {
         id: "send-media-to-projector",
         label: "Send to projector",
-        icon: <MonitorPlay className="size-3.5" />,
-        disabled:
-          isLoading || !m.background || !isProjectorTransmitting,
+        icon: (
+          <MonitorPlay
+            className={cn(
+              MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+              sendDisabled ? "text-gray-500" : "text-lime-500",
+            )}
+          />
+        ),
+        disabled: sendDisabled,
         onClick: onSendToProjector,
       },
       {
         id: "create-custom-item-from-media",
         label: "Create custom item",
-        icon: <FilePlus2 className="size-3.5" />,
-        disabled: isLoading || !m.background || !db,
+        icon: <FilePlus2 className={MEDIA_LIBRARY_MEDIA_ACTION_CREATE_ICON_CLASS} />,
+        disabled: !m.background || !db,
         onClick: () => {
           void Promise.resolve(onCreateCustomItem());
         },
@@ -477,7 +490,7 @@ export function buildMediaLibraryBarActions(args: {
   out.push({
     id: "delete",
     label: "Delete",
-    icon: <Trash2 className="size-3.5" />,
+    icon: <Trash2 className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
     variant: "destructive",
     onClick: onDeleteSingle,
   });
