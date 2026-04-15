@@ -1,4 +1,11 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useDispatch, useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
 import {
@@ -22,12 +29,23 @@ import ServiceTimesForm from "./ServiceTimesForm";
 import StreamPreview from "./StreamPreview";
 import ServiceTimesList from "./ServiceTimesList";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import { useSyncNextServiceTimer } from "../../hooks/useSyncNextServiceTimer";
+import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../../constants/nextServiceTimer";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import Spinner from "../../components/Spinner/Spinner";
 import { Eye, EyeOff } from "lucide-react";
 import { getClosestUpcomingService } from "../../utils/serviceTimes";
+import { cn } from "@/utils/cnHelper";
 
-const ServiceTimes = () => {
+type ServiceTimesProps = {
+  /** When true, layout matches embedded credits (overlay controller third tab). */
+  embeddedInOverlayController?: boolean;
+};
+
+const ServiceTimes = ({
+  embeddedInOverlayController = false,
+}: ServiceTimesProps) => {
   const dispatch = useDispatch();
   const services = useSelector(
     (s: RootState) => s.undoable.present.serviceTimes.list
@@ -52,10 +70,62 @@ const ServiceTimes = () => {
   const [isLoading, setIsLoading] = useState(true);
 
   const { db, updater, isMobile } = useContext(ControllerInfoContext) || {};
+  const { hostId } = useContext(GlobalInfoContext) || {};
 
-  const upcomingService = useMemo(() => {
-    return getClosestUpcomingService(services);
+  const [upcomingService, setUpcomingService] = useState<{
+    service: ServiceTime;
+    nextAt: Date;
+  } | null>(null);
+  const upcomingRefreshTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const updateUpcomingService = useCallback(() => {
+    setUpcomingService(getClosestUpcomingService(services));
   }, [services]);
+
+  useEffect(() => {
+    updateUpcomingService();
+  }, [updateUpcomingService]);
+
+  const targetIso = useSyncNextServiceTimer(upcomingService, hostId);
+
+  // When the current target passes, wait through the grace window then recompute (matches stream info).
+  useEffect(() => {
+    if (upcomingRefreshTimeoutRef.current) {
+      clearTimeout(upcomingRefreshTimeoutRef.current as unknown as number);
+      upcomingRefreshTimeoutRef.current = null;
+    }
+
+    if (!targetIso) return;
+
+    const now = new Date();
+    const target = new Date(targetIso);
+    const msUntilTarget = target.getTime() - now.getTime();
+
+    let delayMs: number;
+    if (msUntilTarget > 0) {
+      delayMs = msUntilTarget + NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS;
+    } else {
+      const pastMs = Math.abs(msUntilTarget);
+      delayMs = Math.max(0, NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS - pastMs);
+    }
+
+    if (delayMs === 0) {
+      updateUpcomingService();
+      return;
+    }
+
+    upcomingRefreshTimeoutRef.current = setTimeout(() => {
+      updateUpcomingService();
+      upcomingRefreshTimeoutRef.current = null;
+    }, delayMs) as unknown as NodeJS.Timeout;
+
+    return () => {
+      if (upcomingRefreshTimeoutRef.current) {
+        clearTimeout(upcomingRefreshTimeoutRef.current as unknown as number);
+        upcomingRefreshTimeoutRef.current = null;
+      }
+    };
+  }, [targetIso, updateUpcomingService]);
 
   useEffect(() => {
     setShowPreview(!isMobile);
@@ -207,14 +277,27 @@ const ServiceTimes = () => {
 
   useGlobalBroadcast(updateServicesFromExternal);
 
-  return (
-    <main className="bg-homepage-canvas flex-1 min-h-0 text-white p-4 flex flex-col gap-4">
+  const rootClassName = cn(
+    "bg-homepage-canvas text-white flex flex-col",
+    embeddedInOverlayController
+      ? "relative min-h-0 flex-1 overflow-hidden p-3"
+      : "min-h-0 flex-1 gap-4 p-4",
+  );
+
+  const inner = (
+    <>
       {isLoading && (
         <div className="flex justify-center items-center h-full w-full absolute top-0 left-0 bg-homepage-canvas/50 z-10">
           <Spinner />
         </div>
       )}
-      <h1 className="text-2xl font-bold">Service Times</h1>
+      {embeddedInOverlayController ? (
+        <h2 className="text-lg font-semibold tracking-tight text-gray-100">
+          Service times
+        </h2>
+      ) : (
+        <h1 className="text-2xl font-bold">Service Times</h1>
+      )}
 
       <section className="flex gap-2">
         <Button className="w-fit" onClick={startCreate}>
@@ -232,7 +315,12 @@ const ServiceTimes = () => {
         )}
       </section>
       {isFormOpen && (
-        <div className="flex gap-6 items-start max-md:flex-col max-h-[50vh]">
+        <div
+          className={cn(
+            "flex gap-6 items-start max-md:flex-col",
+            embeddedInOverlayController ? "max-h-[40vh]" : "max-h-[50vh]",
+          )}
+        >
           <ServiceTimesForm
             editingId={editingId}
             name={name}
@@ -285,10 +373,23 @@ const ServiceTimes = () => {
           onEdit={startEdit}
           onDelete={(id) => dispatch(removeService(id))}
           upcomingService={upcomingService}
+          hostId={hostId}
         />
       )}
-    </main>
+    </>
   );
+
+  if (embeddedInOverlayController) {
+    return (
+      <div className={rootClassName} role="main">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+          {inner}
+        </div>
+      </div>
+    );
+  }
+
+  return <main className={rootClassName}>{inner}</main>;
 };
 
 export default ServiceTimes;

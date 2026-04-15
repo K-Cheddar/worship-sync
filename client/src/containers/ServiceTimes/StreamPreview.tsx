@@ -1,5 +1,6 @@
 import { memo, useMemo } from "react";
 import { ServiceTimePosition } from "../../types";
+import ServiceTimeCountdownFace from "./ServiceTimeCountdownFace";
 
 type Props = {
   name: string;
@@ -20,9 +21,6 @@ const StreamPreview = ({
   shouldShowName,
   position = "top-right",
 }: Props) => {
-  const nameFontSize = nameSize / 10 / (100 / 50);
-  const timeFontSize = timeSize / 10 / (100 / 50);
-
   const positionClasses = useMemo(() => {
     switch (position) {
       case "top-left":
@@ -43,24 +41,21 @@ const StreamPreview = ({
     <div className="flex flex-col gap-2 flex-1 max-h-full max-md:w-[calc(100vw-2rem)]">
       <div className="text-sm text-gray-300">Preview</div>
       <div className="relative aspect-video overflow-hidden rounded-md border border-white/12 bg-black/30">
-        <div
-          className={`absolute ${positionClasses} transform px-[1%] py-[0.5%] rounded-[5%_/_10%] font-semibold select-none flex flex-col items-center justify-center text-center`}
-          style={{ color, backgroundColor: background, maxWidth: "90%" }}
-        >
-          {shouldShowName && (
-            <div
-              className="leading-none"
-              style={{ fontSize: `${nameFontSize}vw` }}
-            >
-              {name || "Service Name"} begins in
-            </div>
-          )}
-          <div
-            className="leading-none"
-            style={{ fontSize: `${timeFontSize}vw` }}
-          >
-            12:34
-          </div>
+        <div className={`absolute ${positionClasses} transform`}>
+          <ServiceTimeCountdownFace
+            service={{
+              name: name || "Service Name",
+              color,
+              background,
+              nameFontSize: nameSize,
+              timeFontSize: timeSize,
+              shouldShowName,
+            }}
+            timeText="12:34"
+            fontSpec="preview"
+            paddingSpec="viewportFraction"
+            extraSurfaceStyle={{ maxWidth: "90%" }}
+          />
         </div>
       </div>
     </div>
