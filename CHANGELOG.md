@@ -1,3 +1,10 @@
+## [2.0.4](https://github.com/K-Cheddar/worship-sync/compare/v2.0.3...v2.0.4) (2026-04-15)
+
+
+### Bug Fixes
+
+* Correct overlay transitions ([a7edecf](https://github.com/K-Cheddar/worship-sync/commit/a7edecffad198ad636b20f1d69436d6d0b383c95))
+
 # [2.0.0](https://github.com/K-Cheddar/worship-sync/compare/v1.42.0...v2.0.0) (2026-04-14)
 
 - feat(auth)!: Implemented full authentication system ([83c2ffd](https://github.com/K-Cheddar/worship-sync/commit/83c2ffdb2d21b47d885d6b47fe1ebad6da4def09))
