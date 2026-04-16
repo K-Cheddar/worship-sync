@@ -1,4 +1,5 @@
 export const isElectron = jest.fn(() => false);
+export const isPackagedElectronRenderer = jest.fn(() => false);
 export const reloadElectronDisplayWindows = jest.fn();
 export const getApiBasePath = jest.fn(() => "/");
 export const getIsDev = jest.fn(() => Promise.resolve(false));
