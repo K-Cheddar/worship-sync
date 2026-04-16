@@ -13,6 +13,7 @@ import Stream from "./pages/Stream";
 import { Provider } from "react-redux";
 import store from "./store/store";
 import Login from "./pages/Login";
+import DesktopSsoComplete from "./pages/DesktopSsoComplete";
 import ControllerContextWrapper from "./ControllerContextWrapper";
 import GlobalInfoProvider from "./context/globalInfo";
 import { ToastProvider } from "./context/toastContext";
@@ -157,6 +158,10 @@ const AppRoutes = () => {
             }
           />
           <Route path="/login" element={<Login />} />
+          <Route
+            path="/login/desktop-sso-complete"
+            element={<DesktopSsoComplete />}
+          />
           <Route path="/invite" element={<InviteAccept />} />
           <Route path="/auth/reset" element={<PasswordReset />} />
           <Route path="/recovery/confirm" element={<RecoveryConfirm />} />

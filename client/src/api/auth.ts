@@ -1,10 +1,17 @@
-import { getApiBasePath } from "../utils/environment";
-import { getCsrfToken } from "../utils/authStorage";
+import {
+  getApiBasePath,
+  isPackagedElectronRenderer,
+} from "../utils/environment";
+import { getCsrfToken, getHumanApiToken } from "../utils/authStorage";
 import type {
   AuthBootstrap,
   ChurchBranding,
   ChurchInviteRow,
   ChurchMemberRow,
+  DesktopAuthCompleteResponse,
+  DesktopAuthProvider,
+  DesktopAuthStartResponse,
+  DesktopAuthStatusResponse,
   DisplayDeviceClient,
   PairingClient,
   RedeemDisplayPairingResponse,
@@ -46,6 +53,9 @@ const apiFetch = async <T>(
         "Content-Type": "application/json",
         ...(options.headers || {}),
         ...(extraHeaders || {}),
+        ...(isPackagedElectronRenderer() && getHumanApiToken()
+          ? { Authorization: `Bearer ${getHumanApiToken()}` }
+          : {}),
         ...((options.method || "GET").toUpperCase() !== "GET" && getCsrfToken()
           ? { "x-csrf-token": getCsrfToken() }
           : {}),
@@ -96,9 +106,55 @@ export const createHumanSession = async (body: JsonBody) =>
   apiFetch<{
     success: boolean;
     bootstrap?: AuthBootstrap;
+    humanApiToken?: string;
     requiresEmailCode?: boolean;
     pendingAuthId?: string;
   }>("api/auth/session", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const startDesktopAuth = async (body: {
+  provider: DesktopAuthProvider;
+  deviceId: string;
+  userAgent: string;
+  platform: string;
+  deviceLabel?: string;
+  requestedPath?: string;
+}) =>
+  apiFetch<DesktopAuthStartResponse>("api/auth/desktop/start", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const completeDesktopAuth = async (body: {
+  desktopAuthId: string;
+  idToken: string;
+}) =>
+  apiFetch<DesktopAuthCompleteResponse>("api/auth/desktop/complete", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const getDesktopAuthStatus = async (body: {
+  desktopAuthId: string;
+  desktopAuthSecret: string;
+}) =>
+  apiFetch<DesktopAuthStatusResponse>("api/auth/desktop/status", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const exchangeDesktopAuth = async (body: {
+  desktopAuthId: string;
+  desktopAuthSecret: string;
+  exchangeCode: string;
+}) =>
+  apiFetch<{
+    success: boolean;
+    bootstrap: AuthBootstrap;
+    humanApiToken?: string;
+  }>("api/auth/desktop/exchange", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -107,6 +163,7 @@ export const resendEmailCode = async (body: JsonBody) =>
   apiFetch<{
     success: boolean;
     bootstrap?: AuthBootstrap;
+    humanApiToken?: string;
     requiresEmailCode?: boolean;
     pendingAuthId?: string;
   }>("api/auth/resend-email-code", {
@@ -118,6 +175,7 @@ export const verifyEmailCode = async (body: JsonBody) =>
   apiFetch<{
     success: boolean;
     bootstrap: AuthBootstrap;
+    humanApiToken?: string;
   }>("api/auth/verify-email-code", {
     method: "POST",
     body: JSON.stringify(body),
@@ -222,6 +280,15 @@ export const createAdminInvite = async (churchId: string, body: JsonBody) =>
     {
       method: "POST",
       body: JSON.stringify(body),
+    },
+  );
+
+export const revokeChurchInvite = async (churchId: string, inviteId: string) =>
+  apiFetch<{ success: boolean }>(
+    `api/churches/${churchId}/invites/${encodeURIComponent(inviteId)}/revoke`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
     },
   );
 

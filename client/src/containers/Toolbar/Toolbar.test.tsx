@@ -217,6 +217,13 @@ describe("Toolbar", () => {
     expect(screen.getByRole("button", { name: "Box Tools" })).toBeInTheDocument();
   });
 
+  it("shows slide and box tools for music access on free form items", () => {
+    renderToolbar({ access: "music", itemType: "free" });
+
+    expect(screen.getByRole("button", { name: "Slide Tools" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Box Tools" })).toBeInTheDocument();
+  });
+
   it("hides quick links and monitor settings for music access", () => {
     renderToolbar({ access: "music", itemType: "song" });
 
@@ -275,6 +282,17 @@ describe("Toolbar", () => {
     expect(
       screen.queryByRole("button", { name: "Quick Links" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("overlay variant hides Credits Editor for music access but shows Service Times", () => {
+    renderToolbarOverlay({ access: "music" });
+
+    expect(
+      screen.queryByRole("button", { name: "Credits Editor" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Service Times" }),
+    ).toBeInTheDocument();
   });
 
   it("overlay variant dispatches when Credits Editor is clicked", () => {

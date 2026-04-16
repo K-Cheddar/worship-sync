@@ -161,7 +161,7 @@ const UserSection = () => {
             className={`flex min-w-0 flex-col gap-1 items-start text-left ${ACCOUNT_TRIGGER_MAX_W}`}
           >
             {showToolbarAutosaveStatus ? (
-              <div className="flex w-full min-w-0 items-center gap-2">
+              <div className="flex w-full min-w-0 items-center gap-1">
                 <div
                   className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium"
                   aria-live="polite"
@@ -203,7 +203,7 @@ const UserSection = () => {
                 ) : null}
               </div>
             ) : null}
-            <div className="flex min-w-0 w-full flex-col gap-0.5">
+            <div className="flex min-w-0 w-full flex-col gap-0.5 text-center">
               <span className="w-full truncate text-sm font-semibold max-w-28">
                 {toolbarFirstName || fullDisplayName || "—"}
               </span>

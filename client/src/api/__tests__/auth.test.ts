@@ -1,8 +1,12 @@
+const packagedElectron = { value: false };
+
 jest.mock("../../utils/environment", () => ({
   getApiBasePath: () => "http://localhost:5000/",
+  isPackagedElectronRenderer: () => packagedElectron.value,
 }));
 
 const csrfStore = { token: "" };
+const humanApiTokenStore = { value: "" };
 
 jest.mock("../../utils/authStorage", () => ({
   getCsrfToken: () => csrfStore.token,
@@ -12,6 +16,7 @@ jest.mock("../../utils/authStorage", () => ({
   clearWorkstationToken: jest.fn(),
   setCsrfToken: jest.fn(),
   getDisplayToken: () => "",
+  getHumanApiToken: () => humanApiTokenStore.value,
   getOperatorName: () => "",
   getOrCreateDeviceId: () => "device-1",
   getWorkstationToken: () => "",
@@ -31,11 +36,13 @@ import {
 describe("api/auth", () => {
   beforeEach(() => {
     csrfStore.token = "";
+    packagedElectron.value = false;
+    humanApiTokenStore.value = "";
     global.fetch = jest.fn(() =>
       Promise.resolve({
         ok: true,
         json: () => Promise.resolve({ authenticated: false }),
-      })
+      }),
     ) as jest.Mock;
   });
 
@@ -54,7 +61,24 @@ describe("api/auth", () => {
           "x-workstation-token": "ws-1",
           "x-display-token": "dp-1",
         }),
-      })
+      }),
+    );
+  });
+
+  it("sends Authorization Bearer when packaged Electron has a stored human API token", async () => {
+    packagedElectron.value = true;
+    humanApiTokenStore.value = "wsh_test_token";
+    await getAuthBootstrap({});
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:5000/api/auth/me",
+      expect.objectContaining({
+        method: "GET",
+        credentials: "include",
+        headers: expect.objectContaining({
+          Authorization: "Bearer wsh_test_token",
+        }),
+      }),
     );
   });
 
@@ -66,7 +90,7 @@ describe("api/auth", () => {
       expect.objectContaining({
         method: "POST",
         credentials: "include",
-      })
+      }),
     );
   });
 
@@ -81,7 +105,7 @@ describe("api/auth", () => {
         headers: expect.objectContaining({
           "x-csrf-token": "csrf-test-token",
         }),
-      })
+      }),
     );
   });
 
@@ -96,7 +120,7 @@ describe("api/auth", () => {
         headers: expect.objectContaining({
           "x-csrf-token": "csrf-test-token",
         }),
-      })
+      }),
     );
   });
 
@@ -108,7 +132,7 @@ describe("api/auth", () => {
       expect.objectContaining({
         method: "POST",
         credentials: "include",
-      })
+      }),
     );
   });
 
@@ -121,7 +145,7 @@ describe("api/auth", () => {
         method: "POST",
         credentials: "include",
         body: JSON.stringify({ appAccess: "music" }),
-      })
+      }),
     );
   });
 });

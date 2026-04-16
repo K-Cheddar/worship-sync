@@ -16,6 +16,13 @@ const config = {
     buildResources: "buildResources",
   },
 
+  protocols: [
+    {
+      name: "WorshipSync",
+      schemes: ["worshipsync"],
+    },
+  ],
+
   files: [
     "dist-electron/**/*",
     "package.json"

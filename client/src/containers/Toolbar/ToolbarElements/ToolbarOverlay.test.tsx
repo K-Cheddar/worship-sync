@@ -192,4 +192,14 @@ describe("ToolbarOverlay", () => {
       screen.queryByRole("button", { name: "Service Times" }),
     ).not.toBeInTheDocument();
   });
+
+  it("hides Credits Editor tab for music access but shows Service Times", () => {
+    renderOverlay({ access: "music", overlayPanel: "overlays" });
+    expect(
+      screen.queryByRole("button", { name: "Credits Editor" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Service Times" }),
+    ).toBeInTheDocument();
+  });
 });

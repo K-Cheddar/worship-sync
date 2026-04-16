@@ -1,6 +1,8 @@
 const DEVICE_ID_KEY = "worshipsync_device_id";
 const WORKSTATION_TOKEN_KEY = "worshipsync_workstation_token";
 const DISPLAY_TOKEN_KEY = "worshipsync_display_token";
+/** Packaged Electron human API session (Bearer); not used for cookie-based web sign-in. */
+const HUMAN_API_TOKEN_KEY = "worshipsync_human_api_token";
 const OPERATOR_NAME_KEY = "worshipsync_operator_name";
 /**
  * Per-tab id in sessionStorage. Survives refresh; cleared when the tab/window is gone
@@ -20,6 +22,8 @@ const PENDING_LINK_CREDENTIAL_KEY = "worshipsync_pending_link_credential";
 const LAST_SIGN_IN_METHOD_KEY = "worshipsync_last_sign_in_method";
 const PENDING_EMAIL_CODE_SIGN_IN_METHOD_KEY =
   "worshipsync_pending_email_code_sign_in_method";
+const PENDING_DESKTOP_AUTH_KEY = "worshipsync_pending_desktop_auth";
+const PENDING_DESKTOP_EMAIL_RESEND_KEY = "worshipsync_desktop_email_resend";
 let csrfToken = "";
 
 export type StoredServerSessionHint =
@@ -206,6 +210,11 @@ export const setDisplayToken = (value: string) =>
   writeStorage(DISPLAY_TOKEN_KEY, value);
 export const clearDisplayToken = () => writeStorage(DISPLAY_TOKEN_KEY, "");
 
+export const getHumanApiToken = () => readStorage(HUMAN_API_TOKEN_KEY);
+export const setHumanApiToken = (value: string) =>
+  writeStorage(HUMAN_API_TOKEN_KEY, value);
+export const clearHumanApiToken = () => writeStorage(HUMAN_API_TOKEN_KEY, "");
+
 export const getStoredServerSessionHint = (): StoredServerSessionHint => {
   if (getWorkstationToken()) return "workstation";
   if (getDisplayToken()) return "display";
@@ -275,6 +284,15 @@ export type PendingLinkState = {
 export type PendingLinkCredentialState = {
   providerId: PendingLinkState["providerId"];
   credentialJson: Record<string, unknown> | string;
+};
+
+export type PendingDesktopAuthState = {
+  desktopAuthId: string;
+  desktopAuthSecret: string;
+  provider: "google" | "microsoft";
+  browserUrl: string;
+  expiresAt: string;
+  pollIntervalMs: number;
 };
 
 export const getPendingLinkState = (): PendingLinkState | null => {
@@ -364,6 +382,102 @@ export const setPendingLinkCredentialState = (
       JSON.stringify({
         providerId: state.providerId,
         credentialJson: state.credentialJson,
+      }),
+    );
+  } catch {
+    // Ignore storage errors in private mode/quota constraints.
+  }
+};
+
+export const getPendingDesktopAuthState =
+  (): PendingDesktopAuthState | null => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = sessionStorage.getItem(PENDING_DESKTOP_AUTH_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as PendingDesktopAuthState;
+      if (
+        !parsed ||
+        typeof parsed.desktopAuthId !== "string" ||
+        typeof parsed.desktopAuthSecret !== "string" ||
+        typeof parsed.browserUrl !== "string" ||
+        typeof parsed.expiresAt !== "string" ||
+        typeof parsed.pollIntervalMs !== "number" ||
+        (parsed.provider !== "google" && parsed.provider !== "microsoft")
+      ) {
+        return null;
+      }
+      return {
+        desktopAuthId: parsed.desktopAuthId.trim(),
+        desktopAuthSecret: parsed.desktopAuthSecret.trim(),
+        provider: parsed.provider,
+        browserUrl: parsed.browserUrl.trim(),
+        expiresAt: parsed.expiresAt.trim(),
+        pollIntervalMs: parsed.pollIntervalMs,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+export const setPendingDesktopAuthState = (
+  state: PendingDesktopAuthState | null,
+) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (!state) {
+      sessionStorage.removeItem(PENDING_DESKTOP_AUTH_KEY);
+      return;
+    }
+    sessionStorage.setItem(PENDING_DESKTOP_AUTH_KEY, JSON.stringify(state));
+  } catch {
+    // Ignore storage errors in private mode/quota constraints.
+  }
+};
+
+/** Retained after browser handoff so packaged Electron can resend email codes without a Firebase session. */
+export type PendingDesktopEmailResendState = {
+  desktopAuthId: string;
+  desktopAuthSecret: string;
+};
+
+export const getPendingDesktopEmailResendState =
+  (): PendingDesktopEmailResendState | null => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = sessionStorage.getItem(PENDING_DESKTOP_EMAIL_RESEND_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as PendingDesktopEmailResendState;
+      if (
+        !parsed ||
+        typeof parsed.desktopAuthId !== "string" ||
+        typeof parsed.desktopAuthSecret !== "string"
+      ) {
+        return null;
+      }
+      return {
+        desktopAuthId: parsed.desktopAuthId.trim(),
+        desktopAuthSecret: parsed.desktopAuthSecret.trim(),
+      };
+    } catch {
+      return null;
+    }
+  };
+
+export const setPendingDesktopEmailResendState = (
+  state: PendingDesktopEmailResendState | null,
+) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (!state) {
+      sessionStorage.removeItem(PENDING_DESKTOP_EMAIL_RESEND_KEY);
+      return;
+    }
+    sessionStorage.setItem(
+      PENDING_DESKTOP_EMAIL_RESEND_KEY,
+      JSON.stringify({
+        desktopAuthId: state.desktopAuthId.trim(),
+        desktopAuthSecret: state.desktopAuthSecret.trim(),
       }),
     );
   } catch {

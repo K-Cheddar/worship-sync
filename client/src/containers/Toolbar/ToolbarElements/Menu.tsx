@@ -180,69 +180,71 @@ const ToolbarMenu = ({
       ),
       to: "/",
     },
-    {
-      element: (
-        <div className="flex items-center gap-2 max-md:min-h-12">
-          <Icon svg={SquarePen} color="#d1d5dc" />
-          Credits Editor
-        </div>
-      ),
-      to: "/credits-editor",
-    },
-    ...(variant === "overlay"
+    ...(access !== "music"
+      ? [
+        {
+          element: (
+            <div className="flex items-center gap-2 max-md:min-h-12">
+              <Icon svg={SquarePen} color="#d1d5dc" />
+              Credits Editor
+            </div>
+          ),
+          to: "/credits-editor",
+        },
+      ]
+      : []),
+    ...(variant === "overlay" || access === "view" || access === "music"
       ? []
-      : access === "view"
-        ? []
-        : [
-          {
-            text: monitorMenuOpen ? "Close Stage Monitor" : "Open Stage Monitor",
-            element: (
-              <div className="flex items-center gap-2 max-md:min-h-12">
-                <Icon svg={Monitor} color="#d1d5dc" />
-                {monitorMenuOpen ? "Close Stage Monitor" : "Open Stage Monitor"}
-              </div>
-            ),
-            ...(monitorMenuOpen
+      : [
+        {
+          text: monitorMenuOpen ? "Close Stage Monitor" : "Open Stage Monitor",
+          element: (
+            <div className="flex items-center gap-2 max-md:min-h-12">
+              <Icon svg={Monitor} color="#d1d5dc" />
+              {monitorMenuOpen ? "Close Stage Monitor" : "Open Stage Monitor"}
+            </div>
+          ),
+          ...(monitorMenuOpen
+            ? {
+              onClick: async () => {
+                await closeWindow("monitor");
+              },
+            }
+            : isElectron && displays.length > 0
               ? {
-                onClick: async () => {
-                  await closeWindow("monitor");
-                },
+                subItems: buildDisplaySubItems("monitor"),
               }
-              : isElectron && displays.length > 0
-                ? {
-                  subItems: buildDisplaySubItems("monitor"),
-                }
-                : {
-                  onClick: async () => {
-                    await openWindowOnLastUsedDisplay("monitor");
-                  },
-                }),
-          },
-          {
-            text: projectorMenuOpen ? "Close Projector" : "Open Projector",
-            element: (
-              <div className="flex items-center gap-2 max-md:min-h-12">
-                <Icon svg={Presentation} color="#d1d5dc" />
-                {projectorMenuOpen ? "Close Projector" : "Open Projector"}
-              </div>
-            ),
-            ...(projectorMenuOpen
+              : {
+                onClick: async () => {
+                  await openWindowOnLastUsedDisplay("monitor");
+                },
+              }),
+        },
+        {
+          text: projectorMenuOpen ? "Close Projector" : "Open Projector",
+          element: (
+            <div className="flex items-center gap-2 max-md:min-h-12">
+              <Icon svg={Presentation} color="#d1d5dc" />
+              {projectorMenuOpen ? "Close Projector" : "Open Projector"}
+            </div>
+          ),
+          ...(projectorMenuOpen
+            ? {
+              onClick: async () => {
+                await closeWindow("projector");
+              },
+            }
+            : isElectron && displays.length > 0
               ? {
-                onClick: async () => {
-                  await closeWindow("projector");
-                },
+                subItems: buildDisplaySubItems("projector"),
               }
-              : isElectron && displays.length > 0
-                ? {
-                  subItems: buildDisplaySubItems("projector"),
-                }
-                : {
-                  onClick: async () => {
-                    await openWindowOnLastUsedDisplay("projector");
-                  },
-                }),
-          },
-        ]),
+              : {
+                onClick: async () => {
+                  await openWindowOnLastUsedDisplay("projector");
+                },
+              }),
+        },
+      ]),
 
     {
       element: (

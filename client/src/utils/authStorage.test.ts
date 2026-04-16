@@ -1,9 +1,14 @@
 import {
+  clearHumanApiToken,
   clearLegacyWorkstationOperatorName,
   clearWorkstationSessionOperatorName,
   consumePendingEmailCodeSignInMethod,
+  getHumanApiToken,
+  getPendingDesktopEmailResendState,
   getWorkstationSessionOperatorName,
   inferLastSignInMethodFromProviderIds,
+  setHumanApiToken,
+  setPendingDesktopEmailResendState,
   setPendingEmailCodeSignInMethod,
   setWorkstationSessionOperatorName,
 } from "./authStorage";
@@ -144,5 +149,62 @@ describe("authStorage pending email code sign-in method", () => {
     expect(inferLastSignInMethodFromProviderIds(["microsoft.com"])).toBe(
       "microsoft",
     );
+  });
+});
+
+describe("authStorage desktop email resend handshake", () => {
+  let sessionMock: ReturnType<typeof memoryStorage>;
+
+  beforeEach(() => {
+    sessionMock = memoryStorage();
+    Object.defineProperty(window, "sessionStorage", {
+      value: sessionMock,
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  it("stores and reads desktop auth id and secret", () => {
+    setPendingDesktopEmailResendState({
+      desktopAuthId: " id-1 ",
+      desktopAuthSecret: " secret-1 ",
+    });
+    expect(getPendingDesktopEmailResendState()).toEqual({
+      desktopAuthId: "id-1",
+      desktopAuthSecret: "secret-1",
+    });
+  });
+
+  it("clears when set to null", () => {
+    setPendingDesktopEmailResendState({
+      desktopAuthId: "a",
+      desktopAuthSecret: "b",
+    });
+    setPendingDesktopEmailResendState(null);
+    expect(getPendingDesktopEmailResendState()).toBeNull();
+  });
+});
+
+const HUMAN_API_TOKEN_KEY = "worshipsync_human_api_token";
+
+describe("authStorage human API token", () => {
+  let localMock: ReturnType<typeof memoryStorage>;
+
+  beforeEach(() => {
+    localMock = memoryStorage();
+    Object.defineProperty(window, "localStorage", {
+      value: localMock,
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  it("stores and reads human API token", () => {
+    setHumanApiToken("wsh_test_token");
+    expect(getHumanApiToken()).toBe("wsh_test_token");
+    expect(localMock.getItem(HUMAN_API_TOKEN_KEY)).toBe("wsh_test_token");
+    clearHumanApiToken();
+    expect(getHumanApiToken()).toBe("");
+    expect(localMock.getItem(HUMAN_API_TOKEN_KEY)).toBeNull();
   });
 });

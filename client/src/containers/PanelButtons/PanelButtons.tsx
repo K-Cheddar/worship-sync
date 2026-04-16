@@ -28,7 +28,7 @@ const buttons: ButtonType[] = [
     type: "free",
     title: "Custom",
     section: "free",
-    access: ["full", "view"],
+    access: ["full", "music", "view"],
   },
   {
     type: "timer",

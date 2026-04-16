@@ -162,7 +162,6 @@ const Services = ({
       : matchToolbarTabs
         ? cn(toolbarTabClassName(outlinePopoverOpen, false), "max-w-64")
         : "max-w-64",
-    access === "music" && "cursor-default",
   );
   const triggerColor =
     matchToolbarTabs && !servicePanel && outlinePopoverOpen
@@ -199,145 +198,122 @@ const Services = ({
           className,
         )}
       >
-        {access === "music" ? (
-          <Button
-            svg={List}
-            iconSize={triggerIconSize}
-            variant={
-              matchToolbarTabs && !servicePanel ? "tertiary" : triggerVariant
-            }
-            className={
-              matchToolbarTabs && !servicePanel
-                ? cn(
-                  toolbarTabClassName(false, false),
-                  "max-w-64 cursor-default",
-                )
-                : triggerClass
-            }
-            truncate
-            disabled
-            title="Outline is managed by a full-access operator"
-          >
-            {selectedList?.name}
-          </Button>
-        ) : (
-          <PopOver
-            onOpenChange={setOutlinePopoverOpen}
-            TriggeringButton={
-              <Button
-                svg={List}
-                iconSize={triggerIconSize}
-                variant={triggerVariant}
-                color={triggerColor}
-                className={triggerClass}
-                truncate
-              >
-                {selectedList?.name}
-              </Button>
-            }
-            align="start"
-            contentClassName={OUTLINE_POPOVER_CONTENT}
-            headerRowClassName={OUTLINE_POPOVER_HEADER}
-            bodyClassName={OUTLINE_POPOVER_BODY}
-          >
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <div className="flex min-w-0 flex-1 gap-4">
-                <section className="flex h-full min-w-0 flex-1 flex-col p-0">
-                  <h3 className="mb-1.5 border-b border-gray-600 pb-2 text-center text-sm font-bold text-gray-100">
-                    {heading}
-                  </h3>
-                  <ul
-                    ref={setNodeRef}
-                    className="scrollbar-variable max-h-[min(18rem,50vh)] min-w-0 flex-1 overflow-x-visible overflow-y-auto"
-                  >
-                    <SortableContext
-                      items={currentLists.map((list) => list._id)}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      {currentLists.map((list, index) => (
-                        <Outline
-                          key={list._id}
-                          list={list}
-                          panel
-                          canEdit={access === "full"}
-                          disableDrag={access !== "full"}
-                          isSelected={list._id === selectedList?._id}
-                          selectList={(listId: string) =>
-                            dispatch(selectItemList(listId))
-                          }
-                          setActiveList={(listId: string) =>
-                            dispatch(setActiveItemList(listId))
-                          }
-                          isActive={list._id === activeList?._id}
-                          copyList={async (list) => {
-                            const newList = await createItemListFromExisting({
-                              db,
-                              currentLists,
-                              list,
-                            });
-                            if (newList) {
-                              dispatch(
-                                updateItemLists([...currentLists, newList])
-                              );
-                            }
-                          }}
-                          deleteList={
-                            index === 0
-                              ? undefined
-                              : async (id) => {
-                                dispatch(removeFromItemLists(id));
-                                if (db) {
-                                  const existingList: DBItemListDetails =
-                                    await db.get(id);
-                                  db.remove(existingList);
-                                  if (selectedList?._id === id) {
-                                    dispatch(
-                                      selectItemList(currentLists[0]._id)
-                                    );
-                                  }
-                                  if (activeList?._id === id) {
-                                    dispatch(
-                                      setActiveItemList(currentLists[0]._id)
-                                    );
-                                  }
-                                }
-                                dispatch(ActionCreators.clearHistory());
-                              }
-                          }
-                          updateList={(list) => {
-                            _updateItemLists(list);
-                          }}
-                        />
-                      ))}
-                    </SortableContext>
-                  </ul>
-                </section>
-              </div>
-              {access === "full" && (
-                <Button
-                  svg={justAdded ? Check : Plus}
-                  color={justAdded ? "#84cc16" : "#22d3ee"}
-                  className="w-full justify-center py-2 text-xs font-semibold"
-                  variant="primary"
-                  disabled={justAdded}
-                  onClick={async () => {
-                    const newList = await createNewItemList({
-                      db,
-                      name: "New Outline",
-                      currentLists,
-                    });
-                    setJustAdded(true);
-
-                    dispatch(updateItemLists([...currentLists, newList]));
-                    setTimeout(() => setJustAdded(false), 2000);
-                  }}
+        <PopOver
+          onOpenChange={setOutlinePopoverOpen}
+          TriggeringButton={
+            <Button
+              svg={List}
+              iconSize={triggerIconSize}
+              variant={triggerVariant}
+              color={triggerColor}
+              className={triggerClass}
+              truncate
+            >
+              {selectedList?.name}
+            </Button>
+          }
+          align="start"
+          contentClassName={OUTLINE_POPOVER_CONTENT}
+          headerRowClassName={OUTLINE_POPOVER_HEADER}
+          bodyClassName={OUTLINE_POPOVER_BODY}
+        >
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <div className="flex min-w-0 flex-1 gap-4">
+              <section className="flex h-full min-w-0 flex-1 flex-col p-0">
+                <h3 className="mb-1.5 border-b border-gray-600 pb-2 text-center text-sm font-bold text-gray-100">
+                  {heading}
+                </h3>
+                <ul
+                  ref={setNodeRef}
+                  className="scrollbar-variable max-h-[min(18rem,50vh)] min-w-0 flex-1 overflow-x-visible overflow-y-auto"
                 >
-                  {justAdded ? "Added." : "Add New Service"}
-                </Button>
-              )}
+                  <SortableContext
+                    items={currentLists.map((list) => list._id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {currentLists.map((list, index) => (
+                      <Outline
+                        key={list._id}
+                        list={list}
+                        panel
+                        canEdit={access === "full"}
+                        disableDrag={access !== "full"}
+                        isSelected={list._id === selectedList?._id}
+                        selectList={(listId: string) =>
+                          dispatch(selectItemList(listId))
+                        }
+                        setActiveList={(listId: string) =>
+                          dispatch(setActiveItemList(listId))
+                        }
+                        isActive={list._id === activeList?._id}
+                        copyList={async (list) => {
+                          const newList = await createItemListFromExisting({
+                            db,
+                            currentLists,
+                            list,
+                          });
+                          if (newList) {
+                            dispatch(
+                              updateItemLists([...currentLists, newList])
+                            );
+                          }
+                        }}
+                        deleteList={
+                          index === 0
+                            ? undefined
+                            : async (id) => {
+                              dispatch(removeFromItemLists(id));
+                              if (db) {
+                                const existingList: DBItemListDetails =
+                                  await db.get(id);
+                                db.remove(existingList);
+                                if (selectedList?._id === id) {
+                                  dispatch(
+                                    selectItemList(currentLists[0]._id)
+                                  );
+                                }
+                                if (activeList?._id === id) {
+                                  dispatch(
+                                    setActiveItemList(currentLists[0]._id)
+                                  );
+                                }
+                              }
+                              dispatch(ActionCreators.clearHistory());
+                            }
+                        }
+                        updateList={(list) => {
+                          _updateItemLists(list);
+                        }}
+                      />
+                    ))}
+                  </SortableContext>
+                </ul>
+              </section>
             </div>
-          </PopOver>
-        )}
+            {access === "full" && (
+              <Button
+                svg={justAdded ? Check : Plus}
+                color={justAdded ? "#84cc16" : "#22d3ee"}
+                className="w-full justify-center py-2 text-xs font-semibold"
+                variant="primary"
+                disabled={justAdded}
+                onClick={async () => {
+                  const newList = await createNewItemList({
+                    db,
+                    name: "New Outline",
+                    currentLists,
+                  });
+                  setJustAdded(true);
+
+                  dispatch(updateItemLists([...currentLists, newList]));
+                  setTimeout(() => setJustAdded(false), 2000);
+                }}
+              >
+                {justAdded ? "Added." : "Add New Service"}
+              </Button>
+            )}
+          </div>
+        </PopOver>
       </div>
     </DndContext>
   );

@@ -44,6 +44,7 @@ const RoutePersistence: React.FC = () => {
     if (
       location.pathname !== "/" &&
       location.pathname !== "/login" &&
+      location.pathname !== "/login/desktop-sso-complete" &&
       location.pathname !== "/home"
     ) {
       initialRouteRestoreStatus = "done";
@@ -90,6 +91,7 @@ const RoutePersistence: React.FC = () => {
     // Don't save certain routes (like sign-in, projector, monitor, stream)
     const routesToSkip = [
       "/login",
+      "/login/desktop-sso-complete",
       "/projector",
       "/projector-full",
       "/monitor",

@@ -8,6 +8,7 @@ import {
   session,
   dialog,
   Menu,
+  shell,
   type WebContents,
 } from "electron";
 import { join, dirname } from "node:path";
@@ -37,6 +38,14 @@ import {
   hasDisplayWindow,
 } from "./displayWindowStore";
 import { MediaCacheManager } from "./mediaCache";
+import {
+  DESKTOP_AUTH_CALLBACK_CHANNEL,
+  WORSHIPSYNC_PROTOCOL_SCHEME,
+  findDesktopAuthProtocolArg,
+  parseDesktopAuthCallbackUrl,
+  type DesktopAuthCallbackPayload,
+} from "./desktopAuth";
+import { assertAllowedOpenExternalUrl } from "./openExternalUrlAllowlist";
 
 const { autoUpdater } = updaterPkg;
 
@@ -131,15 +140,83 @@ if (!app.isPackaged) {
   app.setPath("userData", join(app.getPath("userData"), "dev"));
 }
 
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+app.on("second-instance", (_event, argv) => {
+  const protocolUrl = findDesktopAuthProtocolArg(argv);
+  if (protocolUrl) {
+    handleDesktopAuthProtocolUrl(protocolUrl);
+    return;
+  }
+  focusMainWindow();
+});
+
+app.on("open-url", (event, targetUrl) => {
+  event.preventDefault();
+  handleDesktopAuthProtocolUrl(targetUrl);
+});
+
 let mainWindow: BrowserWindow | null = null;
 let windowStateManager: WindowStateManager;
 let mediaCacheManager: MediaCacheManager;
 let isUploadInProgress = false;
 let isAppClosing = false;
+let pendingDesktopAuthCallback: DesktopAuthCallbackPayload | null = null;
+let desktopAuthListenerReady = false;
 const notifyWindowStateChanged = () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("window-state-changed");
   }
+};
+
+const notifyDesktopAuthCallback = (
+  payload: DesktopAuthCallbackPayload,
+): void => {
+  pendingDesktopAuthCallback = payload;
+  if (
+    desktopAuthListenerReady &&
+    mainWindow &&
+    !mainWindow.isDestroyed() &&
+    !mainWindow.webContents.isDestroyed()
+  ) {
+    mainWindow.webContents.send(DESKTOP_AUTH_CALLBACK_CHANNEL, payload);
+    pendingDesktopAuthCallback = null;
+  }
+};
+
+const focusMainWindow = (): void => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+};
+
+const handleDesktopAuthProtocolUrl = (targetUrl: string): void => {
+  const payload = parseDesktopAuthCallbackUrl(targetUrl);
+  if (!payload) {
+    return;
+  }
+  notifyDesktopAuthCallback(payload);
+  focusMainWindow();
+};
+
+const registerWorshipSyncProtocolClient = (): void => {
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(
+      WORSHIPSYNC_PROTOCOL_SCHEME,
+      process.execPath,
+      [process.argv[1]],
+    );
+    return;
+  }
+  app.setAsDefaultProtocolClient(WORSHIPSYNC_PROTOCOL_SCHEME);
 };
 
 const createProjectorWindow = () => {
@@ -241,6 +318,7 @@ const createBoardWindow = () => {
 };
 
 const createWindow = () => {
+  desktopAuthListenerReady = false;
   const iconPath = getIconPath();
   const savedBounds = windowStateManager.getMainWindowBounds();
   const wasMaximized = windowStateManager.wasMainWindowMaximized();
@@ -408,12 +486,21 @@ const createWindow = () => {
   });
 
   mainWindow.on("closed", () => {
+    desktopAuthListenerReady = false;
     mainWindow = null;
   });
 };
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
+  if (app.isPackaged) {
+    registerWorshipSyncProtocolClient();
+  }
+  const initialProtocolUrl = findDesktopAuthProtocolArg(process.argv);
+  if (initialProtocolUrl) {
+    handleDesktopAuthProtocolUrl(initialProtocolUrl);
+  }
+
   // window.open / middle-click children do not inherit `partition` by default; attach for every
   // renderer webContents (including nested opens) so auth cookies and storage stay consistent.
   app.on("web-contents-created", (_event, contents) => {
@@ -731,6 +818,29 @@ ipcMain.handle("is-electron", () => {
 
 ipcMain.handle("is-dev", () => {
   return isDev;
+});
+
+ipcMain.handle("open-external-url", async (_event, targetUrl: string) => {
+  assertAllowedOpenExternalUrl(targetUrl, { isDev });
+  await shell.openExternal(targetUrl);
+  return true;
+});
+
+ipcMain.handle("desktop-auth-listener-ready", () => {
+  desktopAuthListenerReady = true;
+  if (
+    pendingDesktopAuthCallback &&
+    mainWindow &&
+    !mainWindow.isDestroyed() &&
+    !mainWindow.webContents.isDestroyed()
+  ) {
+    mainWindow.webContents.send(
+      DESKTOP_AUTH_CALLBACK_CHANNEL,
+      pendingDesktopAuthCallback,
+    );
+    pendingDesktopAuthCallback = null;
+  }
+  return true;
 });
 
 // Auto-updater IPC (only functional in production builds)

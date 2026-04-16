@@ -126,7 +126,9 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     return isLoading ? [] : _slides;
   }, [isLoading, __slides, arrangement?.slides]);
 
-  const canEdit = access === "full" || (access === "music" && type === "song");
+  const canEdit =
+    access === "full" ||
+    (access === "music" && (type === "song" || type === "free"));
 
   const { shouldShowItemEditor, toolbarSection = "settings" } = useSelector(
     (state: RootState) => state.undoable.present.preferences

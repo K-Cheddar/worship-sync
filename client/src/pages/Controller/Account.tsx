@@ -19,6 +19,7 @@ import {
   removeChurchMember,
   removeAdmin,
   requestAdminAccess,
+  revokeChurchInvite,
   revokeDisplayDevice,
   revokeTrustedDevice,
   revokeWorkstation,
@@ -111,6 +112,10 @@ type AccountDestructiveConfirm =
   | {
     kind: "revokeTrusted";
     device: HumanDevice;
+  }
+  | {
+    kind: "revokeInvite";
+    invite: InviteRecord;
   };
 
 const memberAccessOptions: {
@@ -421,6 +426,15 @@ const AccountPage = () => {
           confirmText: "Revoke access",
         };
       }
+      case "revokeInvite":
+        return {
+          title: "Revoke invite",
+          message: "Stop this pending invite for",
+          itemName: destructiveConfirm.invite.email,
+          warningMessage:
+            "The invite link will stop working. You can send a new invite later if you need to.",
+          confirmText: "Revoke invite",
+        };
     }
   }, [destructiveConfirm]);
 
@@ -459,6 +473,11 @@ const AccountPage = () => {
         case "revokeTrusted":
           await revokeTrustedDevice(c.device.deviceId);
           showStatus(getTrustedDeviceRevokeMessage(c.device));
+          await refresh();
+          break;
+        case "revokeInvite":
+          await revokeChurchInvite(churchId, c.invite.inviteId);
+          showStatus("Invite revoked.");
           await refresh();
           break;
       }
@@ -628,6 +647,7 @@ const AccountPage = () => {
                   <h3 className="text-lg font-semibold">Pending invites</h3>
                   <p className="mt-1 text-sm text-gray-400">
                     Waiting to be accepted. Unused invites expire on their own.
+                    You can revoke an invite if the link should stop working.
                   </p>
                   <div className="mt-4 space-y-2">
                     {sortedInvites.length === 0 && (
@@ -642,20 +662,44 @@ const AccountPage = () => {
                       const createdLabel = invite.createdAt
                         ? new Date(invite.createdAt).toLocaleString()
                         : "Unknown";
+                      const isRevokeInviteConfirming =
+                        destructiveConfirmRunning &&
+                        destructiveConfirm?.kind === "revokeInvite" &&
+                        destructiveConfirm.invite.inviteId === invite.inviteId;
 
                       return (
                         <div
                           key={invite.inviteId}
                           className={cn(
-                            "rounded-lg px-3 py-3",
+                            "flex flex-col gap-2 rounded-lg px-3 py-3 sm:flex-row sm:items-center sm:justify-between",
                             alternatingAdminListRowBg(inviteIndex)
                           )}
                         >
-                          <p className="font-semibold">{invite.email}</p>
-                          <p className="text-sm text-gray-300">
-                            {accessLabel} | Sent {createdLabel}
-                          </p>
-                          <p className="text-sm text-gray-400">Expires {expiresLabel}</p>
+                          <div className="min-w-0">
+                            <p className="font-semibold">{invite.email}</p>
+                            <p className="text-sm text-gray-300">
+                              {accessLabel} | Sent {createdLabel}
+                            </p>
+                            <p className="text-sm text-gray-400">
+                              Expires {expiresLabel}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            className="shrink-0 self-start sm:self-center"
+                            aria-label={`Revoke invite for ${invite.email}`}
+                            isLoading={isRevokeInviteConfirming}
+                            disabled={destructiveConfirmRunning}
+                            onClick={() =>
+                              setDestructiveConfirm({
+                                kind: "revokeInvite",
+                                invite,
+                              })
+                            }
+                          >
+                            Revoke
+                          </Button>
                         </div>
                       );
                     })}
