@@ -1,3 +1,20 @@
+# [2.1.0](https://github.com/K-Cheddar/worship-sync/compare/v2.0.4...v2.1.0) (2026-04-16)
+
+
+### Bug Fixes
+
+* Adjusted UI for service times ([5578733](https://github.com/K-Cheddar/worship-sync/commit/55787331996ba765d17dbd1794a9f7ff80f9232c))
+* Correct authentication implementation on electron ([5c2cf56](https://github.com/K-Cheddar/worship-sync/commit/5c2cf56dd470df5b75811ddeba64540a3408eb74))
+* Improve credits consistency ([fbfac0f](https://github.com/K-Cheddar/worship-sync/commit/fbfac0fa6978c36c23fd7001c3b61b54cf594d7e))
+* Improve overlays stability ([32e3c18](https://github.com/K-Cheddar/worship-sync/commit/32e3c1886da16d84818b94dfe29f6e658dff76ff))
+* Improve selection state ([3ee3b71](https://github.com/K-Cheddar/worship-sync/commit/3ee3b7136ad9e09fba9219487e1acbdfa441cb4e))
+* Minor bug fixes and UI tweaks ([425eb29](https://github.com/K-Cheddar/worship-sync/commit/425eb29e2c6e1c21b8026a674cafb6f65e0b2253))
+
+
+### Features
+
+* Improve service times controller to have more control ([777876d](https://github.com/K-Cheddar/worship-sync/commit/777876d776852ffe1efc3a18419589157d871e02))
+
 ## [2.0.4](https://github.com/K-Cheddar/worship-sync/compare/v2.0.3...v2.0.4) (2026-04-15)
 
 
