@@ -493,7 +493,6 @@ const AccountPage = () => {
     destructiveConfirm,
     churchId,
     refresh,
-    revokeChurchInvite,
     showError,
     showStatus,
     showRevokedWorkstations,
