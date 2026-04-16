@@ -1,3 +1,10 @@
+## [2.1.3](https://github.com/K-Cheddar/worship-sync/compare/v2.1.2...v2.1.3) (2026-04-16)
+
+
+### Bug Fixes
+
+* Fix selection in media and items ([92298cb](https://github.com/K-Cheddar/worship-sync/commit/92298cbdeb7d20299a550150571f5abfb617ca9d))
+
 ## [2.1.2](https://github.com/K-Cheddar/worship-sync/compare/v2.1.1...v2.1.2) (2026-04-16)
 
 
