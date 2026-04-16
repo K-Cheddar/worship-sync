@@ -101,7 +101,7 @@ const OverlayController = () => {
             )}
             aria-hidden={overlayControllerPanel !== "serviceTimes"}
           >
-            <ServiceTimes embeddedInOverlayController />
+            <ServiceTimes />
           </div>
         )}
       </div>

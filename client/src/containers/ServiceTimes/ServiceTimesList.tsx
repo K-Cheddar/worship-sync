@@ -8,7 +8,7 @@ type Props = {
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   upcomingService: { service: ServiceTime; nextAt: Date } | null;
-  hostId?: string;
+  upcomingServiceTimeText: string | null;
 };
 
 const ServiceTimesList = ({
@@ -16,17 +16,21 @@ const ServiceTimesList = ({
   onEdit,
   onDelete,
   upcomingService,
-  hostId,
+  upcomingServiceTimeText,
 }: Props) => {
+  const otherServices = services.filter(
+    (s) => s.id !== upcomingService?.service.id,
+  );
+
   return (
-    <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-md border border-white/12 bg-black/30 p-4">
+    <section className="flex w-full shrink-0 flex-col gap-2 rounded-md border border-white/12 bg-black/30 p-4">
       <h2 className="text-xl font-semibold">Service Times</h2>
       {services.length === 0 ? (
         <p className="text-gray-300">No service times yet.</p>
       ) : (
-        <ul className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+        <>
           {upcomingService && (
-            <div className="flex min-w-0 flex-col gap-2 overflow-x-auto rounded-md border border-cyan-400/45 bg-white/5 p-3">
+            <div className="flex min-w-0 shrink-0 flex-col gap-2 rounded-md border border-cyan-400/45 bg-white/5 p-3">
               <p>Next service</p>
               <ServiceItem
                 service={upcomingService.service}
@@ -35,23 +39,25 @@ const ServiceTimesList = ({
               />
               <NextServiceLiveCountdown
                 service={upcomingService.service}
-                hostId={hostId}
+                timeText={upcomingServiceTimeText}
               />
               <TimeAdjuster serviceId={upcomingService.service.id} />
             </div>
           )}
 
-          {services
-            .filter((s) => s.id !== upcomingService?.service.id)
-            .map((s) => (
-              <ServiceItem
-                key={s.id}
-                service={s}
-                onEdit={onEdit}
-                onDelete={onDelete}
-              />
-            ))}
-        </ul>
+          {otherServices.length > 0 && (
+            <ul className="scrollbar-variable flex flex-col gap-2">
+              {otherServices.map((s) => (
+                <ServiceItem
+                  key={s.id}
+                  service={s}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                />
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </section>
   );

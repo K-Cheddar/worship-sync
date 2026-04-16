@@ -200,10 +200,10 @@ const ColorField: React.FC<ColorFieldProps> = ({
     }, debounceParentCommitMs);
   };
   return (
-    <div className={cn("flex flex-col gap-2 items-center", className)}>
+    <div className={cn("flex w-full min-w-0 flex-col items-stretch gap-1", className)}>
       <label
         className={cn(
-          "block text-sm font-medium text-white whitespace-nowrap",
+          "block w-full p-0 text-left text-sm font-semibold text-white whitespace-nowrap",
           hideLabel && "sr-only",
         )}
       >

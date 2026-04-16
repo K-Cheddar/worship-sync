@@ -18,7 +18,6 @@ const AUTH_REDIRECT_EXACT_PATHS = new Set([
   "/stream-info",
   "/credits",
   "/credits-editor",
-  "/info-controller",
   "/overlay-controller",
   "/boards/controller",
   "/boards/display",

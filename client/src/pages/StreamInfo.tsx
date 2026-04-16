@@ -2,6 +2,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -9,15 +10,15 @@ import StreamInfoComponent from "../components/StreamInfo/StreamInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ServiceTime } from "../types";
 import { onValue, ref } from "firebase/database";
-import { getClosestUpcomingService } from "../utils/serviceTimes";
+import { getClosestUpcomingService, getEffectiveTargetTime } from "../utils/serviceTimes";
 import { useDispatch } from "../hooks";
+import useNextServiceCountdownText from "../hooks/useNextServiceCountdownText";
 import { updateService } from "../store/serviceTimesSlice";
 import { getChurchDataPath } from "../utils/firebasePaths";
-import { useSyncNextServiceTimer } from "../hooks/useSyncNextServiceTimer";
 import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../constants/nextServiceTimer";
 
 const StreamInfo = () => {
-  const { churchId, firebaseDb, hostId, loginState } =
+  const { churchId, firebaseDb, loginState } =
     useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -49,7 +50,12 @@ const StreamInfo = () => {
     updateUpcomingService();
   }, [updateUpcomingService]);
 
-  const targetIso = useSyncNextServiceTimer(upcomingService, hostId);
+  const targetIso = useMemo(() => {
+    if (!upcomingService) return null;
+    const effectiveTime = getEffectiveTargetTime(upcomingService.service);
+    return effectiveTime ? effectiveTime.toISOString() : null;
+  }, [upcomingService]);
+  const timeText = useNextServiceCountdownText(targetIso);
 
   // when the current upcomingService reaches 0, wait 15 minutes, then refresh
   useEffect(() => {
@@ -124,7 +130,7 @@ const StreamInfo = () => {
   return (
     <StreamInfoComponent
       upcomingService={upcomingService?.service}
-      hostId={hostId}
+      timeText={timeText}
     />
   );
 };

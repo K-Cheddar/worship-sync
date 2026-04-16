@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useSelector } from "react-redux";
 import { TimerInfo } from "../../types";
 import { RootState } from "../../store/store";
@@ -7,11 +8,21 @@ interface TimerDisplayProps {
   words: string;
 }
 
-export const formatTime = (
+export function formatTime(
   seconds: number,
   showMinutesOnly?: boolean,
-  separateSections = false
-) => {
+  separateSections?: false,
+): string;
+export function formatTime(
+  seconds: number,
+  showMinutesOnly: boolean | undefined,
+  separateSections: true,
+): ReactNode;
+export function formatTime(
+  seconds: number,
+  showMinutesOnly?: boolean,
+  separateSections = false,
+): string | ReactNode {
   const totalSec = Math.max(0, Math.floor(Number(seconds) || 0));
   const hours = Math.floor(totalSec / 3600)
     .toString()
@@ -58,7 +69,7 @@ export const formatTime = (
   }
 
   return [hours, minutes, secs].join(":");
-};
+}
 
 const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   const timer = useSelector((state: RootState) =>

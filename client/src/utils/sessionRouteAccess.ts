@@ -25,7 +25,6 @@ const GUEST_ALLOWED_EXACT = new Set([
   "/home",
   "/overlay-controller",
   "/credits-editor",
-  "/info-controller",
 ]);
 
 const HUMAN_ALLOWED_PREFIXES = ["/controller"];
@@ -36,7 +35,6 @@ const HUMAN_ALLOWED_EXACT = new Set([
   "/workstation/pair",
   "/display/pair",
   "/credits-editor",
-  "/info-controller",
   "/boards/controller",
   "/boards/display",
   "/projector",
@@ -67,7 +65,6 @@ const WORKSTATION_ALLOWED_EXACT = new Set([
   "/home",
   "/overlay-controller",
   "/credits-editor",
-  "/info-controller",
   "/boards/controller",
   "/workstation/operator",
   "/workstation/pair",
@@ -98,7 +95,6 @@ const DISPLAY_ALLOWED_EXACT = new Set([
 ]);
 
 const VIEW_BLOCKED_EXACT = new Set([
-  "/info-controller",
   "/boards/controller",
   "/boards/display",
   "/projector",

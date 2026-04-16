@@ -8,8 +8,8 @@ type ViewAccessBlockedRedirectProps = {
 };
 
 /**
- * Redirects view-only sessions away from display outputs, info controller,
- * and board moderation/display routes. Also blocks non–full-access sessions
+ * Redirects view-only sessions away from display outputs and board
+ * moderation/display routes. Also blocks non–full-access sessions
  * from board moderation (aligned with /api/boards/admin).
  */
 const ViewAccessBlockedRedirect = ({

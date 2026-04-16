@@ -44,7 +44,7 @@ const primaryControllers: CardLink[] = [
   },
   {
     title: "Overlay Controller",
-    description: "Manage overlays, graphics, and lower thirds for the stream.",
+    description: "Manage overlays, service timers, credits, and lower thirds for the stream.",
     to: "/overlay-controller",
   },
 ];
@@ -61,11 +61,6 @@ const secondaryControllers: CardLink[] = [
     description:
       "Build the credits roll and choose which OBS scene to transition to when credits finish.",
     to: "/credits-editor",
-  },
-  {
-    title: "Info Controller",
-    description: "Prepare the information pages used during the service.",
-    to: "/info-controller",
   },
 ];
 
@@ -282,9 +277,7 @@ const Welcome = () => {
     : isLoggedIn
       ? secondaryControllers.filter((link) => {
         if (access === "view") {
-          return (
-            link.to !== "/boards/controller" && link.to !== "/info-controller"
-          );
+          return link.to !== "/boards/controller";
         }
         return true;
       })
@@ -573,7 +566,7 @@ const Welcome = () => {
           {visibleSecondaryControllers.length > 0 && (
             <div className="space-y-3 border-t border-gray-700 pt-4">
               <p className="text-center text-sm font-medium text-gray-300 md:text-left">
-                Credits and info
+                Credits and board moderation
               </p>
               <div className="grid gap-4 md:grid-cols-2">
                 {visibleSecondaryControllers.map((link) => (

@@ -234,7 +234,9 @@ describe("BoardControllerContent", () => {
     mockUseElectronWindows.mockReturnValue({
       isElectron: false,
       displays: [],
+      windowStates: null,
       openWindow: jest.fn(),
+      closeWindow: jest.fn(),
       focusWindow: jest.fn(),
       moveWindowToDisplay: jest.fn(),
       setDisplayPreference: jest.fn(),
@@ -292,48 +294,48 @@ describe("BoardControllerContent", () => {
   it(
     "creates boards and sends moderation actions to the board api",
     async () => {
-    const user = userEvent.setup();
-    renderPage();
+      const user = userEvent.setup();
+      renderPage();
 
-    await findBoardToolsPanel();
+      await findBoardToolsPanel();
 
-    await user.click(screen.getAllByRole("button", { name: /^Hide$/i })[0]);
-    expect(mockUpdateBoardPostHidden).toHaveBeenCalledWith(
-      "post:board-current:2",
-      true,
-    );
+      await user.click(screen.getAllByRole("button", { name: /^Hide$/i })[0]);
+      expect(mockUpdateBoardPostHidden).toHaveBeenCalledWith(
+        "post:board-current:2",
+        true,
+      );
 
-    await user.click(screen.getAllByRole("button", { name: /^Highlight$/i })[0]);
-    expect(mockUpdateBoardPostHighlighted).toHaveBeenCalledWith(
-      "post:board-current:2",
-      true,
-    );
+      await user.click(screen.getAllByRole("button", { name: /^Highlight$/i })[0]);
+      expect(mockUpdateBoardPostHighlighted).toHaveBeenCalledWith(
+        "post:board-current:2",
+        true,
+      );
 
-    await openBoardToolsSheetIfMobile(user);
-    await user.click(
-      await screen.findByRole("button", { name: /Reset presentation text size/i }),
-    );
-    expect(mockUpdateBoardPresentationFontScale).toHaveBeenCalledWith(
-      "sunday",
-      1,
-    );
+      await openBoardToolsSheetIfMobile(user);
+      await user.click(
+        await screen.findByRole("button", { name: /Reset presentation text size/i }),
+      );
+      expect(mockUpdateBoardPresentationFontScale).toHaveBeenCalledWith(
+        "sunday",
+        1,
+      );
 
-    await user.click(
-      await screen.findByRole("button", { name: /Clear all posts/i }),
-    );
-    expect(mockSoftResetBoardAlias).toHaveBeenCalledWith("sunday");
+      await user.click(
+        await screen.findByRole("button", { name: /Clear all posts/i }),
+      );
+      expect(mockSoftResetBoardAlias).toHaveBeenCalledWith("sunday");
 
-    await user.keyboard("{Escape}");
+      await user.keyboard("{Escape}");
 
-    await user.type(screen.getByLabelText(/^Title/i), "New Board");
-    expect(screen.getByText(/^new-board$/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Create Discussion Board/i }));
+      await user.type(screen.getByLabelText(/^Title/i), "New Board");
+      expect(screen.getByText(/^new-board$/i)).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /Create Discussion Board/i }));
 
-    expect(mockCreateBoardAlias).toHaveBeenCalledWith({
-      aliasId: "new-board",
-      title: "New Board",
-      database: "test",
-    });
+      expect(mockCreateBoardAlias).toHaveBeenCalledWith({
+        aliasId: "new-board",
+        title: "New Board",
+        database: "test",
+      });
     },
     20000,
   );

@@ -215,44 +215,47 @@ const TimeAdjuster = ({ serviceId }: Props) => {
           className="flex min-w-0 flex-1 flex-col gap-3 border-t border-white/10 pt-4 md:border-t-0 md:border-l md:border-white/20 md:pt-0 md:pl-4"
           aria-label="Set exact remaining time and quick sum"
         >
-          <div className="flex min-w-0 flex-1 flex-col gap-3 rounded-md border border-white/10 bg-black/30 p-3 w-fit">
+          <div className="flex min-w-0 w-full max-w-full flex-1 flex-col gap-3 rounded-md border border-white/10 bg-black/30 p-3 md:w-fit">
             <p className="text-xs leading-relaxed text-gray-400">
               Minutes and seconds, then set remaining time or add to sum.
             </p>
-            <div className="flex flex-wrap items-end gap-2">
-              <Input
-                type="number"
-                min={0}
-                max={59}
-                placeholder="0-59"
-                value={minutes}
-                onChange={(val) => onMinuteSecondChange(val, setMinutes)}
-                onBlur={handleMinutesBlur}
-                inputWidth="w-14"
-                className="m-0"
-                label="Minutes"
-                labelStyle="compactLight"
-              />
-              <Input
-                type="number"
-                min={0}
-                max={59}
-                placeholder="0-59"
-                value={seconds}
-                onChange={(val) => onMinuteSecondChange(val, setSeconds)}
-                onBlur={handleSecondsBlur}
-                inputWidth="w-14"
-                className="m-0"
-                label="Seconds"
-                labelStyle="compactLight"
-              />
-              <div className="flex flex-wrap flex-1 justify-between gap-2">
+            <div className="flex min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-end md:gap-2">
+              <div className="flex min-w-0 w-full gap-2 md:w-auto md:shrink-0 items-center justify-center">
+                <Input
+                  type="number"
+                  min={0}
+                  max={59}
+                  placeholder="0-59"
+                  value={minutes}
+                  onChange={(val) => onMinuteSecondChange(val, setMinutes)}
+                  onBlur={handleMinutesBlur}
+                  inputWidth="w-22 md:w-14"
+                  className="m-0 min-w-0"
+                  label="Minutes"
+                  labelStyle="compactLight"
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  max={59}
+                  placeholder="0-59"
+                  value={seconds}
+                  onChange={(val) => onMinuteSecondChange(val, setSeconds)}
+                  onBlur={handleSecondsBlur}
+                  inputWidth="w-22 md:w-14"
+                  className="m-0 min-w-0"
+                  label="Seconds"
+                  labelStyle="compactLight"
+                />
+              </div>
+              <div className="flex min-w-0 w-full gap-2 md:flex-1 md:justify-between">
                 <Button
                   onClick={addToSum}
                   variant="secondary"
                   disabled={!canSetExact}
                   svg={Plus}
                   color="#22d3ee"
+                  className="min-h-0 min-w-0 flex-1 justify-center md:flex-none"
                 >
                   Add {formatMmSs(entrySeconds)} to sum
                 </Button>
@@ -262,13 +265,12 @@ const TimeAdjuster = ({ serviceId }: Props) => {
                   disabled={!canSetExact}
                   svg={Timer}
                   color="#22d3ee"
+                  className="min-h-0 min-w-0 flex-1 justify-center md:flex-none"
                 >
-                  Set remaining time to {formatMmSs(entrySeconds)}
+                  Set to {formatMmSs(entrySeconds)}
                 </Button>
               </div>
             </div>
-
-
 
             <div className="h-px bg-white/10" aria-hidden />
             <p className="text-xs leading-relaxed text-gray-400">

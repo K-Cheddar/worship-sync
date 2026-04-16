@@ -3,39 +3,83 @@ import { useLayoutEffect, useRef, useState } from "react";
 import type { ServiceTime } from "../../types";
 import { cn } from "@/utils/cnHelper";
 import {
-  getServiceTimeOverlayFontSizesVw,
   serviceTimeOverlayContentClassName,
   serviceTimeOverlayContentGapClassName,
-  serviceTimeOverlayPanelPaddingClassName,
   serviceTimeOverlayStreamInfoPaddingClassName,
-  serviceTimeOverlayViewportFractionalPaddingClassName,
+  serviceTimePreviewFramePaddingStyle,
 } from "./serviceTimeStreamOverlayStyles";
 
-export type ServiceTimeCountdownFontSpec = "preview" | "streamFullscreen";
+export type ServiceTimeCountdownFontSpec =
+  | "streamFullscreen"
+  /** Same ratios as `streamFullscreen`, but `cqw` so embedded previews scale with their box. */
+  | "previewFrame"
+  /**
+   * Service Times “Next service” inline block: same cqw ratios as `previewFrame`, but
+   * `clamp()` floors keep copy legible when the panel is narrow.
+   */
+  | "nextServicePanel";
 
-type PaddingSpec = "viewportFraction" | "infoPanel" | "streamInfo";
+type PaddingSpec =
+  | "streamInfo"
+  /** Matches stream-info padding ratios using `cqw` (requires a `container-type` ancestor). */
+  | "previewFrame"
+  /** Inline next-service card: padding scales with container but does not collapse on narrow widths. */
+  | "nextServicePanel";
 
 const paddingClassName = (spec: PaddingSpec) => {
   switch (spec) {
-    case "infoPanel":
-      return serviceTimeOverlayPanelPaddingClassName;
     case "streamInfo":
       return serviceTimeOverlayStreamInfoPaddingClassName;
-    case "viewportFraction":
-    default:
-      return serviceTimeOverlayViewportFractionalPaddingClassName;
+    case "previewFrame":
+    case "nextServicePanel":
+      return "";
   }
 };
 
-const getFontSizesVw = (
+type FontSizeUnit = "vw" | "cqw" | "cqwClamp";
+
+const getFontSizes = (
   fontSpec: ServiceTimeCountdownFontSpec,
   nameSize: number,
-  timeSize: number
-) => {
+  timeSize: number,
+): { nameFontSize: number; timeFontSize: number; unit: FontSizeUnit } => {
   if (fontSpec === "streamFullscreen") {
-    return { nameFontSize: nameSize / 10, timeFontSize: timeSize / 10 };
+    return {
+      nameFontSize: nameSize / 10,
+      timeFontSize: timeSize / 10,
+      unit: "vw",
+    };
   }
-  return getServiceTimeOverlayFontSizesVw(nameSize, timeSize);
+  if (fontSpec === "nextServicePanel") {
+    return {
+      nameFontSize: nameSize / 10,
+      timeFontSize: timeSize / 10,
+      unit: "cqwClamp",
+    };
+  }
+  return {
+    nameFontSize: nameSize / 10,
+    timeFontSize: timeSize / 10,
+    unit: "cqw",
+  };
+};
+
+/** Lower bound of the name line `clamp()` in `nextServicePanel` (rem). */
+const NEXT_SERVICE_NAME_CLAMP_MIN_REM = 0.8125;
+
+const clampedNameFontSize = (nameCqw: number) =>
+  `clamp(${NEXT_SERVICE_NAME_CLAMP_MIN_REM}rem, ${nameCqw}cqw, 1.375rem)`;
+
+/**
+ * Stream-info keeps the same cqw *ratio* as name/time sliders. On narrow panels the name hits
+ * its clamp floor first; a flat time floor (previously 1.125rem) made the digits look nearly as
+ * large as “… begins in”. Scale the time floor from the name floor × (timeCqw / nameCqw).
+ */
+const clampedNextServiceTimeFontSize = (nameCqw: number, timeCqw: number) => {
+  const minRem =
+    NEXT_SERVICE_NAME_CLAMP_MIN_REM *
+    (timeCqw / Math.max(nameCqw, 0.01));
+  return `clamp(${minRem}rem, ${timeCqw}cqw, 4rem)`;
 };
 
 export type ServiceTimeCountdownTimeDisplay =
@@ -48,9 +92,9 @@ export type ServiceTimeCountdownFaceProps = {
   Partial<Pick<ServiceTime, "nameFontSize" | "timeFontSize" | "shouldShowName">>;
   timeText: string;
   timeDisplay?: ServiceTimeCountdownTimeDisplay;
-  /** Edit preview + info controller use `preview`; live `/stream-info` overlay uses `streamFullscreen`. */
+  /** `/stream-info`: `streamFullscreen` (vw). Previews: `previewFrame`. Next-service row: `nextServicePanel`. */
   fontSpec: ServiceTimeCountdownFontSpec;
-  /** `%` padding inside aspect preview, vw for stream-info, clamped vw for info panel. */
+  /** `streamInfo`: vw padding. `previewFrame` / `nextServicePanel`: container-relative padding. */
   paddingSpec: PaddingSpec;
   /** Extra vertical gap between name line and timer (off for `/stream-info` to match legacy). */
   includeNameTimeGap?: boolean;
@@ -59,9 +103,57 @@ export type ServiceTimeCountdownFaceProps = {
   timeClassName?: string;
 };
 
+/** `/stream-info` fullscreen overlay (viewport-based units). */
+export const serviceTimeStreamInfoFaceLayoutProps: Pick<
+  ServiceTimeCountdownFaceProps,
+  | "fontSpec"
+  | "paddingSpec"
+  | "includeNameTimeGap"
+  | "nameClassName"
+  | "timeClassName"
+> = {
+  fontSpec: "streamFullscreen",
+  paddingSpec: "streamInfo",
+  includeNameTimeGap: false,
+  nameClassName: "leading-none whitespace-nowrap",
+  timeClassName: "leading-none tabular-nums",
+};
+
+/** Service Times aspect preview: same layout as stream, scaled to the preview container. */
+export const serviceTimeEditPreviewFaceLayoutProps: Pick<
+  ServiceTimeCountdownFaceProps,
+  | "fontSpec"
+  | "paddingSpec"
+  | "includeNameTimeGap"
+  | "nameClassName"
+  | "timeClassName"
+> = {
+  fontSpec: "previewFrame",
+  paddingSpec: "previewFrame",
+  includeNameTimeGap: false,
+  nameClassName: "leading-none whitespace-nowrap",
+  timeClassName: "leading-none tabular-nums",
+};
+
+/** Next service live pill in Service Times list (narrow panel–safe type scale). */
+export const serviceTimeNextServicePanelFaceLayoutProps: Pick<
+  ServiceTimeCountdownFaceProps,
+  | "fontSpec"
+  | "paddingSpec"
+  | "includeNameTimeGap"
+  | "nameClassName"
+  | "timeClassName"
+> = {
+  fontSpec: "nextServicePanel",
+  paddingSpec: "nextServicePanel",
+  includeNameTimeGap: false,
+  nameClassName: "leading-none whitespace-nowrap",
+  timeClassName: "leading-none tabular-nums",
+};
+
 /**
- * Shared “pill” for next-service countdown: stream-info overlay, edit preview, and info controller.
- * Callers own outer layout (fullscreen fixed, aspect-video frame, inline panel).
+ * Shared “pill” for next-service countdown: `/stream-info`, Service Times edit preview, and
+ * “Next service” live block. Callers own outer layout (fullscreen fixed, aspect frame, panel).
  */
 const ServiceTimeCountdownFace = ({
   service,
@@ -72,18 +164,33 @@ const ServiceTimeCountdownFace = ({
   includeNameTimeGap = true,
   extraSurfaceStyle,
   nameClassName = "leading-none",
-  timeClassName = "leading-none tabular-nums tracking-tight",
+  timeClassName = "leading-none tabular-nums tracking-tight transition-width",
 }: ServiceTimeCountdownFaceProps) => {
   const nameSize = service.nameFontSize ?? 12;
   const timeSize = service.timeFontSize ?? 35;
-  const { nameFontSize, timeFontSize } = getFontSizesVw(
+  const { nameFontSize, timeFontSize, unit: fontUnit } = getFontSizes(
     fontSpec,
     nameSize,
-    timeSize
+    timeSize,
   );
+
+  const containerPaddingStyle: CSSProperties | undefined = (() => {
+    if (paddingSpec === "previewFrame") {
+      return { ...serviceTimePreviewFramePaddingStyle };
+    }
+    if (paddingSpec === "nextServicePanel") {
+      return {
+        padding: "clamp(8px, 0.55cqw, 12px) clamp(10px, 1cqw, 20px)",
+      };
+    }
+    return undefined;
+  })();
   const shouldShowName = service.shouldShowName !== false;
   const showLivePulse =
     timeDisplay === "livePulseAtZero" && timeText === "0";
+  /** Stream-info + Next service: centered time, min width ≈ four tabular digits (5ch — `ch` runs slightly narrow vs tabular glyphs). */
+  const streamStyleTimeRow =
+    paddingSpec === "streamInfo" || paddingSpec === "nextServicePanel";
 
   const [zeroToLivePhase, setZeroToLivePhase] = useState<
     "idle" | "fading_zero" | "showing_live"
@@ -121,11 +228,20 @@ const ServiceTimeCountdownFace = ({
       style={{
         color: service.color || undefined,
         backgroundColor: service.background || undefined,
+        ...containerPaddingStyle,
         ...extraSurfaceStyle,
       }}
     >
       {shouldShowName && (
-        <div className={nameClassName} style={{ fontSize: `${nameFontSize}vw` }}>
+        <div
+          className={nameClassName}
+          style={{
+            fontSize:
+              fontUnit === "cqwClamp"
+                ? clampedNameFontSize(nameFontSize)
+                : `${nameFontSize}${fontUnit}`,
+          }}
+        >
           {service.name} begins in
         </div>
       )}
@@ -133,8 +249,16 @@ const ServiceTimeCountdownFace = ({
         className={cn(
           timeClassName,
           showLivePulse && "flex min-h-[1em] items-center justify-center",
+          streamStyleTimeRow &&
+          "min-w-[5ch] shrink-0 self-center text-center",
+          streamStyleTimeRow && !showLivePulse && "w-max max-w-full",
         )}
-        style={{ fontSize: `${timeFontSize}vw` }}
+        style={{
+          fontSize:
+            fontUnit === "cqwClamp"
+              ? clampedNextServiceTimeFontSize(nameFontSize, timeFontSize)
+              : `${timeFontSize}${fontUnit}`,
+        }}
       >
         {showLivePulse && zeroToLivePhase !== "showing_live" ? (
           <span

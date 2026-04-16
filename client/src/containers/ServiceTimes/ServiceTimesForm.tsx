@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Plus, SquarePen, X } from "lucide-react";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
 import Button from "../../components/Button/Button";
@@ -10,8 +10,9 @@ import {
   Weekday,
 } from "../../types";
 import Toggle from "../../components/Toggle/Toggle";
+import TimePicker from "../../components/TimePicker/TimePicker";
 import { ordinals, weekdays } from "./utils";
-import { ButtonGroup, ButtonGroupItem } from "../../components/Button";
+import { cn } from "@/utils/cnHelper";
 
 type Props = {
   editingId: string | null;
@@ -78,48 +79,29 @@ const ServiceTimesForm = ({
   onSave,
   onCancel,
 }: Props) => {
-  const [activeTab, setActiveTab] = useState<"info" | "style">("info");
+  const fieldClass = "min-w-0 w-full";
+  const stackedFieldClass = `flex min-w-0 w-full flex-col gap-1`;
+  const labelClassName = "!p-0";
 
   return (
-    <article className="w-fit rounded-md border border-white/12 bg-black/30 p-4">
+    <article className="w-full max-w-full shrink-0 rounded-md border border-white/12 bg-black/30 p-4 md:w-fit md:max-w-lg">
       <h2 className="text-xl font-semibold">
         {editingId ? "Edit Service Timer" : "Create Service Timer"}
       </h2>
 
-      {/* Tabs - only visible on mobile */}
-      <ButtonGroup className="md:hidden w-full">
-        <ButtonGroupItem
-          variant={activeTab === "info" ? "secondary" : "tertiary"}
-          onClick={() => setActiveTab("info")}
-          className="justify-center rounded-r-none flex-1 text-sm"
-        >
-          Info
-        </ButtonGroupItem>
-        <ButtonGroupItem
-          variant={activeTab === "style" ? "secondary" : "tertiary"}
-          onClick={() => setActiveTab("style")}
-          className="justify-center rounded-l-none flex-1 text-sm"
-        >
-          Style
-        </ButtonGroupItem>
-      </ButtonGroup>
-
-      {/* Info Tab Content */}
-      <section
-        className={`grid grid-cols-2 gap-4 ${activeTab !== "info" ? "hidden md:grid" : ""
-          }`}
-      >
+      <section className="mt-4 grid min-w-0 grid-cols-2 gap-4">
         <Input
-          className="gap-1 w-full"
-          labelClassName="mb-2"
+          className={stackedFieldClass}
           label="Name"
+          labelClassName={labelClassName}
           value={name}
           onChange={(v) => setName(String(v))}
         />
         <Select
-          className="w-full"
-          selectClassName="w-full mt-1"
+          className={stackedFieldClass}
+          selectClassName="w-full"
           label="Type"
+          labelClassName={labelClassName}
           value={recurrence}
           onChange={(v) => setRecurrence(v as RecurrenceType)}
           options={[
@@ -131,8 +113,9 @@ const ServiceTimesForm = ({
 
         {recurrence === "one_time" && (
           <Input
-            className="flex flex-col gap-1 w-full"
+            className={stackedFieldClass}
             label="Date & Time"
+            labelClassName={labelClassName}
             type="datetime-local"
             value={dateTimeISO}
             onChange={(v) => setDateTimeISO(String(v))}
@@ -142,9 +125,10 @@ const ServiceTimesForm = ({
         {recurrence === "weekly" && (
           <>
             <Select
-              className="w-full"
-              selectClassName="w-full mt-1"
+              className={stackedFieldClass}
+              selectClassName="w-full"
               label="Day"
+              labelClassName={labelClassName}
               value={String(dayOfWeek)}
               onChange={(v) => setDayOfWeek(parseInt(v) as Weekday)}
               options={weekdays.map((d) => ({
@@ -152,10 +136,11 @@ const ServiceTimesForm = ({
                 value: String(d.value),
               }))}
             />
-            <Input
-              className="flex flex-col gap-1 w-full"
+            <TimePicker
+              variant="countdown"
+              className={stackedFieldClass}
+              inputClassName="min-w-0 w-full"
               label="Time"
-              type="time"
               value={time}
               onChange={(v) => setTime(String(v))}
             />
@@ -165,9 +150,10 @@ const ServiceTimesForm = ({
         {recurrence === "monthly" && (
           <>
             <Select
-              className="w-full"
-              selectClassName="w-full mt-1"
+              className={stackedFieldClass}
+              selectClassName="w-full"
               label="Ordinal"
+              labelClassName={labelClassName}
               value={String(ordinal)}
               onChange={(v) => setOrdinal(parseInt(v) as MonthWeekOrdinal)}
               options={ordinals.map((o) => ({
@@ -176,9 +162,10 @@ const ServiceTimesForm = ({
               }))}
             />
             <Select
-              className="w-full"
-              selectClassName="w-full mt-1"
+              className={stackedFieldClass}
+              selectClassName="w-full"
               label="Weekday"
+              labelClassName={labelClassName}
               value={String(weekday)}
               onChange={(v) => setWeekday(parseInt(v) as Weekday)}
               options={weekdays.map((d) => ({
@@ -186,53 +173,52 @@ const ServiceTimesForm = ({
                 value: String(d.value),
               }))}
             />
-            <Input
-              className="flex flex-col gap-1 w-full"
+            <TimePicker
+              variant="countdown"
+              className={stackedFieldClass}
+              inputClassName="min-w-0 w-full"
               label="Time"
-              type="time"
+              labelClassName={labelClassName}
               value={time}
               onChange={(v) => setTime(String(v))}
             />
           </>
         )}
-      </section>
 
-      {/* Style Tab Content */}
-      <section
-        className={`grid grid-cols-2 gap-4 mt-4 ${activeTab !== "style" ? "hidden md:grid" : ""
-          }`}
-      >
         <ColorField
-          className="w-full"
+          className={fieldClass}
           label="Color"
           value={color}
           onChange={setColor}
         />
         <ColorField
-          className="w-full"
+          className={fieldClass}
           label="Background"
           value={background}
           onChange={setBackground}
         />
 
         <Input
-          className="flex flex-col gap-1"
+          className={stackedFieldClass}
           label="Name Font Size"
+          labelClassName={labelClassName}
           type="number"
           value={String(nameSize)}
           onChange={(v) => setNameSize(parseInt(String(v) || "0", 10))}
         />
         <Input
-          className="flex flex-col gap-1"
+          className={stackedFieldClass}
           label="Timer Font Size"
+          labelClassName={labelClassName}
           type="number"
           value={String(timeSize)}
           onChange={(v) => setTimeSize(parseInt(String(v) || "0", 10))}
         />
         <Select
-          className="w-full"
-          selectClassName="w-full mt-1"
+          className={stackedFieldClass}
+          selectClassName="w-full"
           label="Position"
+          labelClassName={labelClassName}
           value={position}
           onChange={(v) => setPosition(v as ServiceTimePosition)}
           options={[
@@ -244,25 +230,33 @@ const ServiceTimesForm = ({
           ]}
         />
 
-        <div className="flex items-center gap-2">
-          <Toggle
-            label="Show Name"
-            value={shouldShowName}
-            onChange={setShouldShowName}
-          />
-        </div>
+        <Toggle
+          layout="stacked"
+          className={cn(stackedFieldClass, "items-start")}
+          labelClassName={labelClassName}
+          label="Show Name"
+          value={shouldShowName}
+          onChange={setShouldShowName}
+        />
       </section>
-      <section className="flex gap-2 mt-4 w-full">
+
+      <section className="mt-4 flex w-full gap-2">
         <Button
-          className="justify-center flex-1"
+          className="flex-1 justify-center"
           variant="secondary"
+          svg={X}
+          iconSize="sm"
+          color="#22d3ee"
           onClick={onCancel}
         >
           Cancel
         </Button>
         <Button
-          className="justify-center flex-1"
-          variant="cta"
+          className="flex-1 justify-center"
+          variant="primary"
+          color="#22d3ee"
+          svg={editingId ? SquarePen : Plus}
+          iconSize="sm"
           onClick={onSave}
           disabled={!canSave}
         >

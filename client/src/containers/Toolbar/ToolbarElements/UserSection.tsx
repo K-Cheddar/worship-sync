@@ -32,8 +32,7 @@ const ACCOUNT_TRIGGER_MAX_W = "max-w-[10rem]";
 const isToolbarAutosaveStatusRoute = (pathname: string) =>
   pathname.startsWith("/controller") ||
   pathname === "/overlay-controller" ||
-  pathname === "/credits-editor" ||
-  pathname === "/info-controller";
+  pathname === "/credits-editor";
 
 const UserSection = () => {
   const {
@@ -152,19 +151,19 @@ const UserSection = () => {
       TriggeringButton={
         <Button
           type="button"
-          variant="none"
+          variant="tertiary"
           gap="gap-2"
           padding="py-0.5 px-1"
-          className="h-auto min-h-0! max-md:min-h-0! flex! flex-row! flex-nowrap! items-center! rounded-md font-normal text-white hover:bg-white/10"
+          className="h-auto min-h-0! max-md:min-h-0! rounded-md font-normal"
           aria-label={accountAriaLabel}
         >
           <div
             className={`flex min-w-0 flex-col gap-1 items-start text-left ${ACCOUNT_TRIGGER_MAX_W}`}
           >
             {showToolbarAutosaveStatus ? (
-              <div className="flex w-full min-w-0 items-center gap-3">
+              <div className="flex w-full min-w-0 items-center gap-2">
                 <div
-                  className="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-medium"
+                  className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium"
                   aria-live="polite"
                   aria-atomic="true"
                 >
@@ -181,9 +180,9 @@ const UserSection = () => {
                     )}
                   </span>
                   <span
-                    className={`min-w-13 leading-none ${anyAutosavePending ? "text-gray-400" : "text-emerald-400"}`}
+                    className={`min-w-15 leading-none ${anyAutosavePending ? "text-gray-400" : "text-emerald-400"}`}
                   >
-                    {anyAutosavePending ? "Saving..." : "Saved"}
+                    {anyAutosavePending ? "Syncing..." : "Synced"}
                   </span>
                 </div>
                 {!isMobile ? (

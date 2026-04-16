@@ -149,9 +149,6 @@ jest.mock("./pages/ProjectorFull", () => () => (
 jest.mock("./pages/CreditsEditor/CreditsEditor", () => () => (
   <div data-testid="credits-editor-page">Credits Editor Page</div>
 ));
-jest.mock("./pages/InfoController", () => () => (
-  <div data-testid="info-controller-page">Info Controller Page</div>
-));
 jest.mock("./pages/BoardController", () => () => (
   <div data-testid="board-controller-page">Board Controller Page</div>
 ));

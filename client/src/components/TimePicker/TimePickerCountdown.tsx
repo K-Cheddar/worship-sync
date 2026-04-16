@@ -22,6 +22,7 @@ const MERIDIEMS: Meridiem[] = ["AM", "PM"];
 
 export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
   label,
+  labelClassName,
   value,
   onChange,
   disabled = false,
@@ -383,7 +384,13 @@ export const TimePickerCountdown: React.FC<BaseTimePickerProps> = ({
   return (
     <div className={cn("flex gap-2", className)}>
       {label && (
-        <Label htmlFor={dropdownId} className="pl-1">
+        <Label
+          htmlFor={dropdownId}
+          className={cn(
+            "p-1 text-sm font-semibold leading-none",
+            labelClassName,
+          )}
+        >
           {label}:
         </Label>
       )}

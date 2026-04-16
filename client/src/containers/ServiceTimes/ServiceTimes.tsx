@@ -2,6 +2,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -29,23 +30,23 @@ import ServiceTimesForm from "./ServiceTimesForm";
 import StreamPreview from "./StreamPreview";
 import ServiceTimesList from "./ServiceTimesList";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { GlobalInfoContext } from "../../context/globalInfo";
-import { useSyncNextServiceTimer } from "../../hooks/useSyncNextServiceTimer";
 import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../../constants/nextServiceTimer";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
+import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
 import Spinner from "../../components/Spinner/Spinner";
-import { Eye, EyeOff } from "lucide-react";
-import { getClosestUpcomingService } from "../../utils/serviceTimes";
-import { cn } from "@/utils/cnHelper";
+import { Plus } from "lucide-react";
+import { getClosestUpcomingService, getEffectiveTargetTime } from "../../utils/serviceTimes";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  lineTabsListShellClassName,
+  lineTabsTriggerClassName,
+} from "@/components/ui/tabs";
 
-type ServiceTimesProps = {
-  /** When true, layout matches embedded credits (overlay controller third tab). */
-  embeddedInOverlayController?: boolean;
-};
-
-const ServiceTimes = ({
-  embeddedInOverlayController = false,
-}: ServiceTimesProps) => {
+/** Service times editor for the overlay controller “Service times” tab only. */
+const ServiceTimes = () => {
   const dispatch = useDispatch();
   const services = useSelector(
     (s: RootState) => s.undoable.present.serviceTimes.list
@@ -66,17 +67,20 @@ const ServiceTimes = ({
   const [timeSize, setTimeSize] = useState<number>(35);
   const [position, setPosition] = useState<ServiceTimePosition>("top-right");
   const [shouldShowName, setShouldShowName] = useState<boolean>(true);
-  const [showPreview, setShowPreview] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState(true);
+  const [mobileTab, setMobileTab] = useState<"services" | "edit">("services");
 
   const { db, updater, isMobile } = useContext(ControllerInfoContext) || {};
-  const { hostId } = useContext(GlobalInfoContext) || {};
 
   const [upcomingService, setUpcomingService] = useState<{
     service: ServiceTime;
     nextAt: Date;
   } | null>(null);
   const upcomingRefreshTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const formColumnRef = useRef<HTMLDivElement | null>(null);
+  const [previewMaxHeightPx, setPreviewMaxHeightPx] = useState<number | null>(
+    null,
+  );
 
   const updateUpcomingService = useCallback(() => {
     setUpcomingService(getClosestUpcomingService(services));
@@ -86,7 +90,12 @@ const ServiceTimes = ({
     updateUpcomingService();
   }, [updateUpcomingService]);
 
-  const targetIso = useSyncNextServiceTimer(upcomingService, hostId);
+  const targetIso = useMemo(() => {
+    if (!upcomingService) return null;
+    const effectiveTime = getEffectiveTargetTime(upcomingService.service);
+    return effectiveTime ? effectiveTime.toISOString() : null;
+  }, [upcomingService]);
+  const upcomingServiceTimeText = useNextServiceCountdownText(targetIso);
 
   // When the current target passes, wait through the grace window then recompute (matches stream info).
   useEffect(() => {
@@ -126,10 +135,6 @@ const ServiceTimes = ({
       }
     };
   }, [targetIso, updateUpcomingService]);
-
-  useEffect(() => {
-    setShowPreview(!isMobile);
-  }, [isMobile]);
 
   const canSave = useMemo(() => {
     if (!name) return false;
@@ -191,18 +196,21 @@ const ServiceTimes = ({
     setIsFormOpen(false);
     setEditingId(null);
     resetForm();
+    if (isMobile) setMobileTab("services");
   };
 
   const onCancel = () => {
     setIsFormOpen(false);
     setEditingId(null);
     resetForm();
+    if (isMobile) setMobileTab("services");
   };
 
   const startCreate = () => {
     setEditingId(null);
     resetForm();
     setIsFormOpen(true);
+    if (isMobile) setMobileTab("edit");
   };
 
   const startEdit = (id: string) => {
@@ -223,6 +231,7 @@ const ServiceTimes = ({
     setPosition(s.position ?? "top-right");
     setShouldShowName(s.shouldShowName ?? true);
     setIsFormOpen(true);
+    if (isMobile) setMobileTab("edit");
   };
 
   useEffect(() => {
@@ -277,119 +286,187 @@ const ServiceTimes = ({
 
   useGlobalBroadcast(updateServicesFromExternal);
 
-  const rootClassName = cn(
-    "bg-homepage-canvas text-white flex flex-col",
-    embeddedInOverlayController
-      ? "relative min-h-0 flex-1 overflow-hidden p-3"
-      : "min-h-0 flex-1 gap-4 p-4",
+  const syncPreviewMaxHeight = useCallback(() => {
+    if (!isFormOpen) {
+      setPreviewMaxHeightPx(null);
+      return;
+    }
+    const wide =
+      typeof window !== "undefined" &&
+      window.matchMedia("(min-width: 768px)").matches;
+    const el = formColumnRef.current;
+    if (!wide || !el) {
+      setPreviewMaxHeightPx(null);
+      return;
+    }
+    setPreviewMaxHeightPx(Math.ceil(el.getBoundingClientRect().height));
+  }, [isFormOpen]);
+
+  useLayoutEffect(() => {
+    syncPreviewMaxHeight();
+    const mq =
+      typeof window !== "undefined"
+        ? window.matchMedia("(min-width: 768px)")
+        : null;
+    const onMq = () => syncPreviewMaxHeight();
+    mq?.addEventListener("change", onMq);
+    const el = formColumnRef.current;
+    const ro =
+      el && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => syncPreviewMaxHeight())
+        : null;
+    if (el && ro) ro.observe(el);
+    return () => {
+      mq?.removeEventListener("change", onMq);
+      if (ro && el) ro.disconnect();
+    };
+  }, [syncPreviewMaxHeight]);
+
+  const listSection = (
+    <ServiceTimesList
+      services={services}
+      onEdit={startEdit}
+      onDelete={(id) => dispatch(removeService(id))}
+      upcomingService={upcomingService}
+      upcomingServiceTimeText={upcomingServiceTimeText}
+    />
   );
 
-  const inner = (
-    <>
+  const editorLayout = isFormOpen ? (
+    <div className="flex w-full shrink-0 flex-col gap-4 md:flex-row md:items-stretch md:gap-6">
+      <div ref={formColumnRef} className="shrink-0">
+        <ServiceTimesForm
+          editingId={editingId}
+          name={name}
+          setName={setName}
+          color={color}
+          setColor={setColor}
+          background={background}
+          setBackground={setBackground}
+          recurrence={recurrence}
+          setRecurrence={setRecurrence}
+          time={time}
+          setTime={setTime}
+          dateTimeISO={dateTimeISO}
+          setDateTimeISO={setDateTimeISO}
+          dayOfWeek={dayOfWeek}
+          setDayOfWeek={setDayOfWeek}
+          ordinal={ordinal}
+          setOrdinal={setOrdinal}
+          weekday={weekday}
+          setWeekday={setWeekday}
+          nameSize={nameSize}
+          setNameSize={setNameSize}
+          timeSize={timeSize}
+          setTimeSize={setTimeSize}
+          position={position}
+          setPosition={setPosition}
+          shouldShowName={shouldShowName}
+          setShouldShowName={setShouldShowName}
+          canSave={canSave}
+          onSave={onSave}
+          onCancel={onCancel}
+        />
+      </div>
+      <StreamPreview
+        name={name}
+        color={color}
+        background={background}
+        nameSize={nameSize}
+        timeSize={timeSize}
+        shouldShowName={shouldShowName}
+        position={position}
+        maxColumnHeightPx={isMobile ? null : previewMaxHeightPx}
+      />
+    </div>
+  ) : null;
+
+  const editTabPlaceholder = (
+    <div className="rounded-md border border-white/12 bg-black/30 p-4 text-gray-200">
+      <p className="text-sm">
+        Open the Services tab to add a timer or choose one to edit.
+      </p>
+      <Button
+        variant="secondary"
+        className="mt-3 w-full justify-center sm:w-fit"
+        onClick={() => setMobileTab("services")}
+      >
+        Go to Services
+      </Button>
+    </div>
+  );
+
+  const tabsContentClass =
+    "mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto outline-none data-[state=inactive]:hidden";
+
+  return (
+    <div
+      role="main"
+      className="relative flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto bg-homepage-canvas p-3 text-white scrollbar-variable"
+    >
       {isLoading && (
         <div className="flex justify-center items-center h-full w-full absolute top-0 left-0 bg-homepage-canvas/50 z-10">
           <Spinner />
         </div>
       )}
-      {embeddedInOverlayController ? (
-        <h2 className="text-lg font-semibold tracking-tight text-gray-100">
-          Service times
-        </h2>
-      ) : (
-        <h1 className="text-2xl font-bold">Service Times</h1>
-      )}
+      <h2 className="shrink-0 text-lg font-semibold tracking-tight text-gray-100">
+        Service times
+      </h2>
 
-      <section className="flex gap-2">
-        <Button className="w-fit" onClick={startCreate}>
-          Add Service Timer
-        </Button>
-        {isFormOpen && (
-          <Button
-            className="w-fit md:hidden"
-            variant="secondary"
-            svg={showPreview ? EyeOff : Eye}
-            onClick={() => setShowPreview(!showPreview)}
-          >
-            {showPreview ? "Hide Preview" : "Show Preview"}
-          </Button>
-        )}
-      </section>
-      {isFormOpen && (
-        <div
-          className={cn(
-            "flex gap-6 items-start max-md:flex-col",
-            embeddedInOverlayController ? "max-h-[40vh]" : "max-h-[50vh]",
-          )}
+      {isMobile ? (
+        <Tabs
+          value={mobileTab}
+          onValueChange={(v) =>
+            setMobileTab(v === "edit" ? "edit" : "services")
+          }
+          className="flex min-h-0 flex-1 flex-col gap-3"
         >
-          <ServiceTimesForm
-            editingId={editingId}
-            name={name}
-            setName={setName}
-            color={color}
-            setColor={setColor}
-            background={background}
-            setBackground={setBackground}
-            recurrence={recurrence}
-            setRecurrence={setRecurrence}
-            time={time}
-            setTime={setTime}
-            dateTimeISO={dateTimeISO}
-            setDateTimeISO={setDateTimeISO}
-            dayOfWeek={dayOfWeek}
-            setDayOfWeek={setDayOfWeek}
-            ordinal={ordinal}
-            setOrdinal={setOrdinal}
-            weekday={weekday}
-            setWeekday={setWeekday}
-            nameSize={nameSize}
-            setNameSize={setNameSize}
-            timeSize={timeSize}
-            setTimeSize={setTimeSize}
-            position={position}
-            setPosition={setPosition}
-            shouldShowName={shouldShowName}
-            setShouldShowName={setShouldShowName}
-            canSave={canSave}
-            onSave={onSave}
-            onCancel={onCancel}
-          />
-          {showPreview && (
-            <StreamPreview
-              name={name}
-              color={color}
-              background={background}
-              nameSize={nameSize}
-              timeSize={timeSize}
-              shouldShowName={shouldShowName}
-              position={position}
-            />
-          )}
-        </div>
+          <TabsList variant="line" className={lineTabsListShellClassName}>
+            <TabsTrigger
+              value="services"
+              className={lineTabsTriggerClassName}
+            >
+              Services
+            </TabsTrigger>
+            <TabsTrigger value="edit" className={lineTabsTriggerClassName}>
+              Edit
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="services" forceMount className={tabsContentClass}>
+            <Button
+              className="w-fit shrink-0"
+              svg={Plus}
+              iconSize="sm"
+              variant="cta"
+              onClick={startCreate}
+            >
+              Add Service Timer
+            </Button>
+            {listSection}
+          </TabsContent>
+          <TabsContent value="edit" forceMount className={tabsContentClass}>
+            {isFormOpen ? editorLayout : editTabPlaceholder}
+          </TabsContent>
+        </Tabs>
+      ) : (
+        <>
+          <section className="flex shrink-0 gap-2">
+            <Button
+              className="w-fit"
+              svg={Plus}
+              iconSize="sm"
+              onClick={startCreate}
+              variant="cta"
+            >
+              Add Service Timer
+            </Button>
+          </section>
+          {editorLayout}
+          {listSection}
+        </>
       )}
-
-      {(!isMobile || !showPreview) && (
-        <ServiceTimesList
-          services={services}
-          onEdit={startEdit}
-          onDelete={(id) => dispatch(removeService(id))}
-          upcomingService={upcomingService}
-          hostId={hostId}
-        />
-      )}
-    </>
+    </div>
   );
-
-  if (embeddedInOverlayController) {
-    return (
-      <div className={rootClassName} role="main">
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-          {inner}
-        </div>
-      </div>
-    );
-  }
-
-  return <main className={rootClassName}>{inner}</main>;
 };
 
 export default ServiceTimes;

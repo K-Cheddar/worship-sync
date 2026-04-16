@@ -101,9 +101,6 @@ describe("Home", () => {
     expect(
       screen.getByRole("link", { name: /Board moderation/i }),
     ).toHaveAttribute("href", "/boards/controller");
-    expect(
-      screen.getByRole("link", { name: /Info Controller/i }),
-    ).toHaveAttribute("href", "/info-controller");
 
     expect(
       screen.getByText(
@@ -217,7 +214,7 @@ describe("Home", () => {
     ).toHaveAttribute("href", "/credits-editor");
   });
 
-  it("hides board moderation, info controller, and display outputs for view access", () => {
+  it("hides board moderation and display outputs for view access", () => {
     render(
       <MemoryRouter>
         <GlobalInfoContext.Provider
@@ -239,9 +236,6 @@ describe("Home", () => {
 
     expect(
       screen.queryByRole("link", { name: /Board moderation/i }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: /Info Controller/i }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /^Show display links$/ }),
@@ -286,9 +280,6 @@ describe("Home", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("link", { name: /Board moderation/i }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: /Info Controller/i }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /^Show display links$/ }),

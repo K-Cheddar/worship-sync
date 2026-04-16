@@ -25,6 +25,7 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { getDisplayLabel } from "../../../utils/displayUtils";
 import type { WindowType } from "../../../types/electron";
 import { Slider } from "../../../components/ui/Slider";
+import { isElectronDisplayWindowOpen } from "../../../utils/isElectronDisplayWindowOpen";
 
 const ToolbarMenu = ({
   variant = "default",
@@ -43,11 +44,24 @@ const ToolbarMenu = ({
   const {
     isElectron,
     displays,
+    windowStates,
     openWindow,
+    closeWindow,
     focusWindow,
     moveWindowToDisplay,
     setDisplayPreference,
   } = useElectronWindows();
+
+  const monitorMenuOpen = isElectronDisplayWindowOpen(
+    isElectron,
+    windowStates,
+    "monitor",
+  );
+  const projectorMenuOpen = isElectronDisplayWindowOpen(
+    isElectron,
+    windowStates,
+    "projector",
+  );
 
   useEffect(() => {
     // Base font size from index.css (92.5%)
@@ -181,40 +195,52 @@ const ToolbarMenu = ({
         ? []
         : [
           {
-            text: "Open Stage Monitor",
+            text: monitorMenuOpen ? "Close Stage Monitor" : "Open Stage Monitor",
             element: (
               <div className="flex items-center gap-2 max-md:min-h-12">
                 <Icon svg={Monitor} color="#d1d5dc" />
-                Open Stage Monitor
+                {monitorMenuOpen ? "Close Stage Monitor" : "Open Stage Monitor"}
               </div>
             ),
-            ...(isElectron && displays.length > 0
+            ...(monitorMenuOpen
               ? {
-                subItems: buildDisplaySubItems("monitor"),
-              }
-              : {
                 onClick: async () => {
-                  await openWindowOnLastUsedDisplay("monitor");
+                  await closeWindow("monitor");
                 },
-              }),
+              }
+              : isElectron && displays.length > 0
+                ? {
+                  subItems: buildDisplaySubItems("monitor"),
+                }
+                : {
+                  onClick: async () => {
+                    await openWindowOnLastUsedDisplay("monitor");
+                  },
+                }),
           },
           {
-            text: "Open Projector",
+            text: projectorMenuOpen ? "Close Projector" : "Open Projector",
             element: (
               <div className="flex items-center gap-2 max-md:min-h-12">
                 <Icon svg={Presentation} color="#d1d5dc" />
-                Open Projector
+                {projectorMenuOpen ? "Close Projector" : "Open Projector"}
               </div>
             ),
-            ...(isElectron && displays.length > 0
+            ...(projectorMenuOpen
               ? {
-                subItems: buildDisplaySubItems("projector"),
-              }
-              : {
                 onClick: async () => {
-                  await openWindowOnLastUsedDisplay("projector");
+                  await closeWindow("projector");
                 },
-              }),
+              }
+              : isElectron && displays.length > 0
+                ? {
+                  subItems: buildDisplaySubItems("projector"),
+                }
+                : {
+                  onClick: async () => {
+                    await openWindowOnLastUsedDisplay("projector");
+                  },
+                }),
           },
         ]),
 

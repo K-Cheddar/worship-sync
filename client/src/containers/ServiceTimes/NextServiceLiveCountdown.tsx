@@ -1,46 +1,30 @@
-import { useMemo } from "react";
-import { useSelector } from "../../hooks";
-import { getNextServiceTimerId } from "../../constants/nextServiceTimer";
-import { formatTime } from "../../components/DisplayWindow/TimerDisplay";
-import type { RootState } from "../../store/store";
 import type { ServiceTime } from "../../types";
-import ServiceTimeCountdownFace from "./ServiceTimeCountdownFace";
+import ServiceTimeCountdownFace, {
+  serviceTimeNextServicePanelFaceLayoutProps,
+} from "./ServiceTimeCountdownFace";
 
 type Props = {
   service: ServiceTime;
-  hostId?: string;
+  timeText: string | null;
 };
 
 /**
- * Live next-service countdown for the info controller, using the same Redux timer as stream-info.
+ * Live next-service countdown in Service Times.
+ * Uses clamped container-relative type so the pill stays legible in narrow panels.
  */
-const NextServiceLiveCountdown = ({ service, hostId }: Props) => {
-  const timerId = getNextServiceTimerId(hostId);
-  const timer = useSelector((s: RootState) =>
-    s.timers.timers.find((t) => t.id === timerId)
-  );
-
-  const display = useMemo(() => {
-    if (!timer) return null;
-    if (timer.timerType === "countdown" && timer.status === "stopped") {
-      return timer.countdownTime || "00:00";
-    }
-    return formatTime(timer.remainingTime || 0, timer.showMinutesOnly);
-  }, [timer]);
-
-  if (!display) {
+const NextServiceLiveCountdown = ({ service, timeText }: Props) => {
+  if (!timeText) {
     return null;
   }
 
   return (
-    <div className="inline-block w-max shrink-0 self-start">
+    <div className="@container flex w-full max-w-full justify-center">
       <ServiceTimeCountdownFace
+        {...serviceTimeNextServicePanelFaceLayoutProps}
         service={service}
-        timeText={display}
+        timeText={timeText}
         timeDisplay="livePulseAtZero"
-        fontSpec="preview"
-        paddingSpec="infoPanel"
-        nameClassName="whitespace-nowrap leading-none"
+        extraSurfaceStyle={{ maxWidth: "100%" }}
       />
     </div>
   );

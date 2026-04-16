@@ -4,6 +4,7 @@ export type Segment = "hour" | "minute" | "second" | "meridiem";
 
 export interface BaseTimePickerProps {
   label?: string;
+  labelClassName?: string;
   value?: string | number;
   onChange?: (value: string | number) => void;
   disabled?: boolean;

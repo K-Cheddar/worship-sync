@@ -1,27 +1,9 @@
-/**
- * vw font sizes for the stream / service-time preview overlay (matches StreamPreview).
- */
-export const getServiceTimeOverlayFontSizesVw = (
-  nameSize: number,
-  timeSize: number,
-) => {
-  const nameFontSize = nameSize / 10 / (100 / 50);
-  const timeFontSize = timeSize / 10 / (100 / 50);
-  return { nameFontSize, timeFontSize };
-};
-
-/** Shape + typography shared by stream preview, stream-info overlay, and info-controller countdown. */
+/** Shape + typography shared by stream-info overlay and Service Times previews. */
 export const serviceTimeOverlayContentClassName =
   "rounded-[5%_/_10%] font-semibold select-none flex flex-col items-center justify-center text-center";
 
-/** Vertical space between “… begins in” and the countdown (info controller + edit preview). */
+/** Vertical space between “… begins in” and the countdown when `includeNameTimeGap` is true. */
 export const serviceTimeOverlayContentGapClassName = "gap-y-3";
-
-/**
- * Padding for the **aspect-video edit preview** only. Percentages resolve against the preview box.
- */
-export const serviceTimeOverlayViewportFractionalPaddingClassName =
-  "px-[1%] py-[0.5%]";
 
 /**
  * `/stream-info` overlay: the face sits inside a shrink-wrapped `absolute` wrapper, so `%` padding
@@ -31,8 +13,12 @@ export const serviceTimeOverlayStreamInfoPaddingClassName =
   "px-[1vw] py-[0.5vw]";
 
 /**
- * Padding matched to stream-info behavior: 1% / 0.5% of the viewport there ≈ 1vw / 0.5vw here,
- * with a floor so small viewports still get comfortable padding in the info controller.
+ * Service Times aspect preview: same **ratio** as stream (`0.5` / `1` vertical / horizontal vs
+ * reference width), but `cqw` is % of the **preview box**, which is usually much narrower than the
+ * browser viewport—so literal `0.5cqw` / `1cqw` reads tighter than `0.5vw` / `1vw` on stream-info.
+ * These multipliers bring the in-preview pill padding in line with how stream-info reads on a
+ * typical operator display (requires a `container-type` ancestor, e.g. `@container` on the frame).
  */
-export const serviceTimeOverlayPanelPaddingClassName =
-  "px-[max(1rem,1vw)] py-[max(0.625rem,0.5vw)]";
+export const serviceTimePreviewFramePaddingStyle = {
+  padding: "0.75cqw 1.5cqw",
+} as const;

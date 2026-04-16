@@ -16,11 +16,13 @@ import UserSection from "./ToolbarElements/UserSection";
 import ToolbarButton from "./ToolbarElements/ToolbarButton";
 import { useDispatch, useSelector } from "../../hooks";
 import {
+  useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
-  useCallback,
 } from "react";
 import Drawer from "../../components/Drawer/Drawer";
 import QuickLinksPage from "../../pages/Controller/QuickLinks";
@@ -40,6 +42,7 @@ import {
   updateSlides,
 } from "../../store/itemSlice";
 import { ItemState } from "../../types";
+import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIntoView";
 
 type sections =
   | "settings"
@@ -67,6 +70,20 @@ const Toolbar = ({
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
+
+  const primaryToolbarTabRefs = useRef<
+    Partial<Record<sections, HTMLButtonElement | HTMLAnchorElement | null>>
+  >({});
+
+  const settingsSubTabRefs = useRef<{
+    preferences: HTMLButtonElement | HTMLAnchorElement | null;
+    quickLinks: HTMLButtonElement | HTMLAnchorElement | null;
+    monitor: HTMLButtonElement | HTMLAnchorElement | null;
+  }>({
+    preferences: null,
+    quickLinks: null,
+    monitor: null,
+  });
 
   const updateItem = useCallback(
     (updatedItem: ItemState) => {
@@ -117,6 +134,21 @@ const Toolbar = ({
     }
   }, [section, dispatch]);
 
+  useLayoutEffect(() => {
+    scrollToolbarTabIntoViewIfNeeded(primaryToolbarTabRefs.current[section]);
+  }, [section]);
+
+  useLayoutEffect(() => {
+    if (section !== "settings") return;
+    const path = location.pathname;
+    const subKey = path.includes("quick-links")
+      ? "quickLinks"
+      : path.includes("monitor-settings")
+        ? "monitor"
+        : "preferences";
+    scrollToolbarTabIntoViewIfNeeded(settingsSubTabRefs.current[subKey]);
+  }, [section, location.pathname]);
+
   return (
     <ErrorBoundary>
       <div className={className}>
@@ -141,6 +173,9 @@ const Toolbar = ({
               <div className="flex gap-0 overflow-x-auto w-full scrollbar-variable">
                 {access !== "view" ? (
                   <ToolbarButton
+                    ref={(el) => {
+                      primaryToolbarTabRefs.current.settings = el;
+                    }}
                     svg={Settings}
                     to="/controller/preferences"
                     isActive={section === "settings"}
@@ -149,6 +184,9 @@ const Toolbar = ({
                   </ToolbarButton>
                 ) : (
                   <ToolbarButton
+                    ref={(el) => {
+                      primaryToolbarTabRefs.current.settings = el;
+                    }}
                     svg={Settings}
                     onClick={() => setSection("settings")}
                     isActive={section === "settings"}
@@ -157,6 +195,9 @@ const Toolbar = ({
                   </ToolbarButton>
                 )}
                 <ToolbarButton
+                  ref={(el) => {
+                    primaryToolbarTabRefs.current["slide-tools"] = el;
+                  }}
                   svg={SquarePen}
                   onClick={() => setSection("slide-tools")}
                   hidden={!onItemPage || access === "view" || !canShowSlideAndBoxTools}
@@ -165,6 +206,9 @@ const Toolbar = ({
                   Slide Tools
                 </ToolbarButton>
                 <ToolbarButton
+                  ref={(el) => {
+                    primaryToolbarTabRefs.current["box-tools"] = el;
+                  }}
                   svg={Pencil}
                   onClick={() => setSection("box-tools")}
                   hidden={!onItemPage || access === "view" || !canShowSlideAndBoxTools}
@@ -175,6 +219,9 @@ const Toolbar = ({
                 {access === "full" && (
                   <>
                     <ToolbarButton
+                      ref={(el) => {
+                        primaryToolbarTabRefs.current["stream-format"] = el;
+                      }}
                       svg={MonitorPlay}
                       onClick={() => setSection("stream-format")}
                       hidden={!onItemPage}
@@ -183,6 +230,9 @@ const Toolbar = ({
                       Stream Format
                     </ToolbarButton>
                     <ToolbarButton
+                      ref={(el) => {
+                        primaryToolbarTabRefs.current["item-tools"] = el;
+                      }}
                       svg={SquarePen}
                       onClick={() => setSection("item-tools")}
                       hidden={!onItemPage}
@@ -202,6 +252,9 @@ const Toolbar = ({
               >
                 {access !== "view" && (
                   <ToolbarButton
+                    ref={(el) => {
+                      settingsSubTabRefs.current.preferences = el;
+                    }}
                     svg={Settings}
                     to="/controller/preferences"
                     hidden={section !== "settings"}
@@ -215,6 +268,9 @@ const Toolbar = ({
                 )}
                 {access === "full" && (
                   <ToolbarButton
+                    ref={(el) => {
+                      settingsSubTabRefs.current.quickLinks = el;
+                    }}
                     svg={RectangleEllipsis}
                     hidden={section !== "settings"}
                     isActive={location.pathname.includes("quick-links")}
@@ -225,6 +281,9 @@ const Toolbar = ({
                 )}
                 {access === "full" && (
                   <ToolbarButton
+                    ref={(el) => {
+                      settingsSubTabRefs.current.monitor = el;
+                    }}
                     svg={Monitor}
                     to="/controller/monitor-settings"
                     hidden={section !== "settings"}

@@ -2301,8 +2301,6 @@ const safeRequestIdleCallback =
 // Credits editor only needs credits; Controller needs all controller slices (by access).
 export const CREDITS_EDITOR_PAGE_READY = "CREDITS_EDITOR_PAGE_READY";
 export const CONTROLLER_PAGE_READY = "CONTROLLER_PAGE_READY";
-export const INFO_CONTROLLER_PAGE_READY = "INFO_CONTROLLER_PAGE_READY";
-
 const isCreditsPageReady = (state: RootState) => {
   return state.undoable.present.credits.isInitialized;
 };
@@ -2320,10 +2318,6 @@ const areControllerSlicesReady = (state: RootState) => {
   );
 };
 
-const isInfoControllerPageReady = (state: RootState) => {
-  return state.undoable.present.serviceTimes.isInitialized;
-};
-
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type === "RESET_INITIALIZATION") {
@@ -2332,8 +2326,7 @@ listenerMiddleware.startListening({
 
     const explicitPageReady =
       action.type === CREDITS_EDITOR_PAGE_READY ||
-      action.type === CONTROLLER_PAGE_READY ||
-      action.type === INFO_CONTROLLER_PAGE_READY;
+      action.type === CONTROLLER_PAGE_READY;
     if (explicitPageReady) return true;
 
     // Fallback for hot reload / full reload: no page-ready was dispatched yet
@@ -2343,9 +2336,7 @@ listenerMiddleware.startListening({
 
     const state = currentState as RootState;
     const ready =
-      isCreditsPageReady(state) ||
-      areControllerSlicesReady(state) ||
-      isInfoControllerPageReady(state);
+      isCreditsPageReady(state) || areControllerSlicesReady(state);
     return ready;
   },
 

@@ -82,6 +82,7 @@ import {
 } from "../types";
 import type { WindowType } from "../types/electron";
 import { getDisplayLabel } from "../utils/displayUtils";
+import { isElectronDisplayWindowOpen } from "../utils/isElectronDisplayWindowOpen";
 
 const BOARD_COPY_LINK_ICON_COLOR = "#22d3ee";
 
@@ -197,11 +198,19 @@ const BoardControllerMenu = ({
   const {
     isElectron,
     displays,
+    windowStates,
     openWindow,
+    closeWindow,
     focusWindow,
     moveWindowToDisplay,
     setDisplayPreference,
   } = useElectronWindows();
+
+  const boardWindowOpen = isElectronDisplayWindowOpen(
+    isElectron,
+    windowStates,
+    "board",
+  );
 
   const openWindowOnLastUsedDisplay = async (windowType: WindowType) => {
     prepareBoardDisplay();
@@ -266,24 +275,30 @@ const BoardControllerMenu = ({
       ),
       to: "/",
     },
-    canOpenBoard
+    canOpenBoard || boardWindowOpen
       ? {
-        text: "Open Board",
+        text: boardWindowOpen ? "Close Board" : "Open Board",
         element: (
           <div className="flex items-center gap-2">
             <Presentation className="size-4 text-gray-300" />
-            Open Board
+            {boardWindowOpen ? "Close Board" : "Open Board"}
           </div>
         ),
-        ...(isElectron && displays.length > 0
+        ...(boardWindowOpen
           ? {
-            subItems: buildDisplaySubItems("board"),
-          }
-          : {
             onClick: async () => {
-              await openWindowOnLastUsedDisplay("board");
+              await closeWindow("board");
             },
-          }),
+          }
+          : isElectron && displays.length > 0
+            ? {
+              subItems: buildDisplaySubItems("board"),
+            }
+            : {
+              onClick: async () => {
+                await openWindowOnLastUsedDisplay("board");
+              },
+            }),
       }
       : {
         text: "Open Board",
