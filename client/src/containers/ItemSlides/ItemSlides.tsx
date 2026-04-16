@@ -282,8 +282,13 @@ const ItemSlides = () => {
   );
 
   const selectSlide = useCallback(
-    (index: number) => {
-      dispatch(setBackgroundTargetRangeAnchorId(slides[index]?.id ?? null));
+    (
+      index: number,
+      options?: { preserveBackgroundTargetRangeAnchor?: boolean },
+    ) => {
+      if (!options?.preserveBackgroundTargetRangeAnchor) {
+        dispatch(setBackgroundTargetRangeAnchorId(slides[index]?.id ?? null));
+      }
       const prevSelected = selectedSlideRef.current;
       dispatch(setSelectedSlide(index));
       const slide = slides[index];
@@ -463,17 +468,17 @@ const ItemSlides = () => {
         selectSlide(index);
         return;
       }
-      if (mobileBackgroundTargetSelectMode) {
-        e.preventDefault();
-        const id = slides[index]?.id;
-        if (id) dispatch(toggleBackgroundTargetSlideId(id));
-        return;
-      }
+      // Modifier order matches `useMediaSelection`: Shift (range) before touch-toggle and Ctrl/Cmd.
       if (e.shiftKey) {
         e.preventDefault();
+        const resolvedAnchorId =
+          backgroundTargetRangeAnchorId ?? slides[selectedSlide]?.id ?? null;
+        if (!backgroundTargetRangeAnchorId && resolvedAnchorId) {
+          dispatch(setBackgroundTargetRangeAnchorId(resolvedAnchorId));
+        }
         const indices = inclusiveRangeIndicesFromAnchor(
           slides,
-          backgroundTargetRangeAnchorId ?? null,
+          resolvedAnchorId,
           index,
           selectedSlide,
         );
@@ -482,12 +487,22 @@ const ItemSlides = () => {
             indices.map((i) => slides[i]?.id).filter(Boolean) as string[],
           ),
         );
+        selectSlide(index, { preserveBackgroundTargetRangeAnchor: true });
+        return;
+      }
+      if (mobileBackgroundTargetSelectMode) {
+        e.preventDefault();
+        const id = slides[index]?.id;
+        if (id) dispatch(toggleBackgroundTargetSlideId(id));
         return;
       }
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         const id = slides[index]?.id;
-        if (id) dispatch(toggleBackgroundTargetSlideId(id));
+        if (id) {
+          dispatch(toggleBackgroundTargetSlideId(id));
+          selectSlide(index, { preserveBackgroundTargetRangeAnchor: true });
+        }
         return;
       }
       // Plain click: focus one slide and drop background subset selection.

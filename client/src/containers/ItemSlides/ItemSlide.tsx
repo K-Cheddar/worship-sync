@@ -13,7 +13,10 @@ import { RootState } from "../../store/store";
 type ItemSlideProps = {
   slide: ItemSlideType;
   index: number;
-  selectSlide: (index: number) => void;
+  selectSlide: (
+    index: number,
+    options?: { preserveBackgroundTargetRangeAnchor?: boolean },
+  ) => void;
   isSelected: boolean;
   size: number;
   itemType: string;

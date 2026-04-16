@@ -293,11 +293,16 @@ export function useMediaLibraryController({
     handleMediaClick,
     enterMediaMultiSelectMode,
     clearSelection,
+    reconcileSelectionWithMediaList,
   } = useMediaSelection({
     mediaList: list,
     filteredList,
     enableRangeSelection: true,
   });
+
+  useEffect(() => {
+    reconcileSelectionWithMediaList(list);
+  }, [list, reconcileSelectionWithMediaList]);
 
   /** Keep ref in sync immediately — document click runs before useEffect after setState. */
   const setRenamePopoverOpen = useCallback((open: boolean) => {

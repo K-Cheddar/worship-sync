@@ -361,10 +361,16 @@ export const itemSlice = createSlice({
         state.backgroundTargetSlideIds.push(id);
       }
       exitBackgroundTargetSelectModeIfNoTargets(state);
+      if (state.backgroundTargetSlideIds.length > 1) {
+        state.mobileBackgroundTargetSelectMode = true;
+      }
     },
     setBackgroundTargetSlideIds: (state, action: PayloadAction<string[]>) => {
       state.backgroundTargetSlideIds = [...action.payload];
       exitBackgroundTargetSelectModeIfNoTargets(state);
+      if (state.backgroundTargetSlideIds.length > 1) {
+        state.mobileBackgroundTargetSelectMode = true;
+      }
     },
     setBackgroundTargetRangeAnchorId: (
       state,

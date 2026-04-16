@@ -317,10 +317,11 @@ const MediaModal = ({
     handleMediaClick: handleModalMediaClick,
     enterMediaMultiSelectMode: enterModalMediaMultiSelectMode,
     clearSelection: clearModalSelection,
+    reconcileSelectionWithMediaList: reconcileModalSelectionWithMediaList,
   } = useMediaSelection({
     mediaList: fullList,
     filteredList,
-    enableRangeSelection: false, // Modal doesn't need range selection
+    enableRangeSelection: true,
   });
 
   const handleModalDeleteClick = useCallback(
@@ -723,6 +724,12 @@ const MediaModal = ({
     setModalPreviewMedia,
     clearModalSelection,
   ]);
+
+  // Modal keeps its own selection; after deletes the list updates but parent clearSelection does not reach here.
+  useEffect(() => {
+    if (!isOpen) return;
+    reconcileModalSelectionWithMediaList(fullList);
+  }, [isOpen, fullList, reconcileModalSelectionWithMediaList]);
 
   // Reset expanded mode if preview media changes to video or is cleared
   useEffect(() => {

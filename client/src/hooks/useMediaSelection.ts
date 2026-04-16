@@ -53,6 +53,8 @@ interface UseMediaSelectionReturn {
     options?: { skipNextClick?: boolean },
   ) => void;
   clearSelection: () => void;
+  /** When media rows disappear (e.g. delete), prune selection and leave multi-select mode. */
+  reconcileSelectionWithMediaList: (stillPresentList: MediaType[]) => void;
 }
 
 export const useMediaSelection = ({
@@ -68,6 +70,8 @@ export const useMediaSelection = ({
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number>(-1);
   const [mediaMultiSelectMode, setMediaMultiSelectMode] = useState(false);
   const skipNextMediaClickRef = useRef(false);
+  /** Index in `filteredList || mediaList` for Shift+range; stays fixed until plain select / clear / enter. */
+  const rangeAnchorIndexRef = useRef<number>(-1);
   /** Ignore duplicate enter for the same tile when long-press and `contextmenu` both fire (key by id, not list index). */
   const lastEnterSameMediaAtRef = useRef<{ id: string; t: number } | null>(
     null,
@@ -113,6 +117,7 @@ export const useMediaSelection = ({
       setSelectedMedia(mediaItem);
       setPreviewMedia(mediaItem);
       setLastSelectedIndex(index);
+      rangeAnchorIndexRef.current = index;
       setMediaMultiSelectMode(true);
       if (options?.skipNextClick) {
         skipNextMediaClickRef.current = true;
@@ -132,7 +137,11 @@ export const useMediaSelection = ({
       const isShift = e.shiftKey;
       const listToUse = filteredList || mediaList;
 
-      const applyToggle = (item: MediaType, idx: number) => {
+      const applyToggle = (
+        item: MediaType,
+        idx: number,
+        skipPreview: boolean,
+      ) => {
         const newSet = new Set(selectedMediaIds);
         if (newSet.has(item.id)) {
           newSet.delete(item.id);
@@ -141,31 +150,49 @@ export const useMediaSelection = ({
             setSelectedMedia(emptyMedia);
             setPreviewMedia(null);
             setMediaMultiSelectMode(false);
+            rangeAnchorIndexRef.current = -1;
           } else if (selectedMedia.id === item.id) {
             const firstId = Array.from(newSet)[0];
             const firstItem = mediaList.find((idItem) => idItem.id === firstId);
             if (firstItem) {
               setSelectedMedia(firstItem);
-              setPreviewMedia(firstItem);
+              if (!skipPreview) {
+                setPreviewMedia(firstItem);
+              }
             }
           }
         } else {
           newSet.add(item.id);
           setSelectedMediaIds(newSet);
           setSelectedMedia(item);
-          setPreviewMedia(item);
+          if (!skipPreview) {
+            setPreviewMedia(item);
+          }
+          if (newSet.size > 1) {
+            setMediaMultiSelectMode(true);
+          }
         }
         setLastSelectedIndex(idx);
       };
 
-      if (isCtrlOrCmd) {
-        applyToggle(mediaItem, index);
-        return;
-      }
-      if (isShift && enableRangeSelection && lastSelectedIndex >= 0) {
-        const start = Math.min(lastSelectedIndex, index);
-        const end = Math.max(lastSelectedIndex, index);
-        const newSet = new Set(selectedMediaIds);
+      // Shift+range before Ctrl/Cmd so Shift+Meta (e.g. Mac) extends a range instead of toggling one item.
+      // Range always spans from the sticky anchor to the clicked index (common list UX).
+      if (
+        isShift &&
+        enableRangeSelection &&
+        (rangeAnchorIndexRef.current >= 0 || lastSelectedIndex >= 0)
+      ) {
+        const anchorIdx =
+          rangeAnchorIndexRef.current >= 0
+            ? rangeAnchorIndexRef.current
+            : lastSelectedIndex;
+        if (rangeAnchorIndexRef.current < 0 && anchorIdx >= 0) {
+          rangeAnchorIndexRef.current = anchorIdx;
+        }
+        const start = Math.min(anchorIdx, index);
+        const end = Math.max(anchorIdx, index);
+        // Replace selection with this range only (same as item slides / file lists), not union with prior picks.
+        const newSet = new Set<string>();
         for (let i = start; i <= end; i++) {
           if (listToUse[i]) {
             newSet.add(listToUse[i].id);
@@ -173,19 +200,30 @@ export const useMediaSelection = ({
         }
         setSelectedMediaIds(newSet);
         setSelectedMedia(mediaItem);
-        setPreviewMedia(mediaItem);
+        if (!mediaMultiSelectMode) {
+          setPreviewMedia(mediaItem);
+        }
+        if (newSet.size > 1) {
+          setMediaMultiSelectMode(true);
+        }
         setLastSelectedIndex(index);
+        return;
+      }
+
+      if (isCtrlOrCmd) {
+        applyToggle(mediaItem, index, mediaMultiSelectMode);
         return;
       }
       if (mediaMultiSelectMode) {
         e.preventDefault();
-        applyToggle(mediaItem, index);
+        applyToggle(mediaItem, index, true);
         return;
       }
       setMediaMultiSelectMode(false);
       setSelectedMediaIds(new Set([mediaItem.id]));
       setSelectedMedia(mediaItem);
       setPreviewMedia(mediaItem);
+      rangeAnchorIndexRef.current = index;
       setLastSelectedIndex(index);
     },
     [
@@ -205,8 +243,68 @@ export const useMediaSelection = ({
     setPreviewMedia(null);
     setLastSelectedIndex(-1);
     setMediaMultiSelectMode(false);
+    rangeAnchorIndexRef.current = -1;
     skipNextMediaClickRef.current = false;
   }, []);
+
+  const reconcileSelectionWithMediaList = useCallback(
+    (stillPresentList: MediaType[]) => {
+      const validIds = new Set(stillPresentList.map((m) => m.id));
+      const hadRemovedSelected = [...selectedMediaIds].some(
+        (id) => !validIds.has(id),
+      );
+      if (!hadRemovedSelected) return;
+
+      const prunedIds = new Set(
+        [...selectedMediaIds].filter((id) => validIds.has(id)),
+      );
+
+      if (prunedIds.size === 0) {
+        setMediaMultiSelectMode(false);
+        setSelectedMedia(emptyMedia);
+        setSelectedMediaIds(new Set());
+        setPreviewMedia(null);
+        setLastSelectedIndex(-1);
+        rangeAnchorIndexRef.current = -1;
+        skipNextMediaClickRef.current = false;
+        return;
+      }
+
+      if (prunedIds.size < 2) {
+        setMediaMultiSelectMode(false);
+      } else {
+        setMediaMultiSelectMode(true);
+      }
+
+      const primaryId =
+        selectedMedia.id && prunedIds.has(selectedMedia.id)
+          ? selectedMedia.id
+          : [...prunedIds][0];
+
+      const primaryItem = stillPresentList.find((m) => m.id === primaryId);
+      if (!primaryItem) {
+        clearSelection();
+        return;
+      }
+
+      setSelectedMediaIds(prunedIds);
+      setSelectedMedia(primaryItem);
+      setPreviewMedia(primaryItem);
+      const listForRangeIndex = filteredList || mediaList;
+      const nextAnchorIdx = listForRangeIndex.findIndex(
+        (m) => m.id === primaryId,
+      );
+      setLastSelectedIndex(nextAnchorIdx);
+      rangeAnchorIndexRef.current = nextAnchorIdx;
+    },
+    [
+      selectedMediaIds,
+      selectedMedia.id,
+      clearSelection,
+      filteredList,
+      mediaList,
+    ],
+  );
 
   return {
     selectedMedia,
@@ -221,5 +319,6 @@ export const useMediaSelection = ({
     handleMediaClick,
     enterMediaMultiSelectMode,
     clearSelection,
+    reconcileSelectionWithMediaList,
   };
 };
