@@ -15,6 +15,12 @@ export const isElectron = (): boolean => {
   );
 };
 
+/** Packaged app loads the renderer from `file://`; dev loads from HTTPS. */
+export const isPackagedElectronRenderer = (): boolean =>
+  typeof window !== "undefined" &&
+  isElectron() &&
+  window.location.protocol === "file:";
+
 /** Reload open projector/monitor/board windows (Electron only). Use after auth changes. */
 export const reloadElectronDisplayWindows = (): void => {
   if (typeof window === "undefined" || !isElectron()) return;

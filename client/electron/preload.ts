@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPlatform: () => ipcRenderer.invoke("get-platform"),
   isElectron: () => ipcRenderer.invoke("is-electron"),
   isDev: () => ipcRenderer.invoke("is-dev"),
+  openExternalUrl: (url: string) => ipcRenderer.invoke("open-external-url", url),
 
   // Window management - all generic handlers
   openWindow: (windowType: WindowType) =>
@@ -82,6 +83,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ) => callback(error);
     ipcRenderer.on("update-error", listener);
     return () => ipcRenderer.removeListener("update-error", listener);
+  },
+
+  onDesktopAuthCallback: (
+    callback: (payload: { desktopAuthId: string }) => void,
+  ) => {
+    void ipcRenderer.invoke("desktop-auth-listener-ready");
+    const listener = (
+      _: Electron.IpcRendererEvent,
+      payload: { desktopAuthId: string },
+    ) => callback(payload);
+    ipcRenderer.on("desktop-auth-callback", listener);
+    return () => ipcRenderer.removeListener("desktop-auth-callback", listener);
   },
 
   // Media cache

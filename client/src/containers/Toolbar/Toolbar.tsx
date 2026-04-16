@@ -109,7 +109,10 @@ const Toolbar = ({
     [location.pathname]
   );
   const canShowSlideAndBoxTools = useMemo(
-    () => access === "full" || (access === "music" && itemType === "song"),
+    () =>
+      access === "full" ||
+      (access === "music" &&
+        (itemType === "song" || itemType === "free")),
     [access, itemType]
   );
 

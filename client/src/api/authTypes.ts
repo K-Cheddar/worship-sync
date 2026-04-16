@@ -8,6 +8,14 @@
 
 export type SessionKind = "human" | "workstation" | "display" | null;
 export type ChurchStatus = "active" | "needs-admin";
+export type DesktopAuthProvider = "google" | "microsoft";
+export type DesktopAuthStatus =
+  | "pending"
+  | "awaiting_exchange"
+  | "requires_email_code"
+  | "completed"
+  | "expired"
+  | "failed";
 
 export type ChurchLogoAsset = {
   url: string;
@@ -155,4 +163,28 @@ export type RedeemDisplayPairingResponse = {
   success: boolean;
   credential: string;
   device: DisplayDeviceClient;
+};
+
+export type DesktopAuthStartResponse = {
+  success: boolean;
+  desktopAuthId: string;
+  desktopAuthSecret: string;
+  browserUrl: string;
+  expiresAt: string;
+  pollIntervalMs: number;
+};
+
+export type DesktopAuthCompleteResponse = {
+  success: boolean;
+  status: DesktopAuthStatus;
+  pendingAuthId?: string | null;
+  exchangeCode?: string | null;
+};
+
+export type DesktopAuthStatusResponse = {
+  success: boolean;
+  status: DesktopAuthStatus;
+  pendingAuthId?: string | null;
+  exchangeCode?: string | null;
+  exchangeCodeExpiresAt?: string | null;
 };

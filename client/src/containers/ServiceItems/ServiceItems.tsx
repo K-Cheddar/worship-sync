@@ -55,8 +55,11 @@ const ServiceItems = () => {
   const { db } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const canMutateHeadingRow = access === "full";
+  const musicCanOutlineMutateItem = (item: ServiceItemType) =>
+    item.type === "song" || item.type === "free";
   const canMutateServiceItemRow = (item: ServiceItemType) =>
-    access === "full" || (access === "music" && item.type === "song");
+    access === "full" ||
+    (access === "music" && musicCanOutlineMutateItem(item));
   const [isAddingHeading, setIsAddingHeading] = useState(false);
   const [collapsedHeadingListIds, setCollapsedHeadingListIds] = useState<
     Set<string>
@@ -116,13 +119,13 @@ const ServiceItems = () => {
     const activeId = active.id as string;
     if (access === "music") {
       const activeItem = serviceItems.find((i) => i.listId === activeId);
-      if (!activeItem || activeItem.type !== "song") return;
+      if (!activeItem || !musicCanOutlineMutateItem(activeItem)) return;
       const idsToMove = selectedListIds.has(activeId)
         ? selectedListIds
         : new Set([activeId]);
       for (const id of idsToMove) {
         const row = serviceItems.find((i) => i.listId === id);
-        if (!row || row.type !== "song") return;
+        if (!row || !musicCanOutlineMutateItem(row)) return;
       }
     }
     const updatedServiceItems = [...serviceItems];
@@ -335,12 +338,12 @@ const ServiceItems = () => {
   const handleDeleteSelected = () => {
     if (selectedListIds.size === 0) return;
     if (access === "music") {
-      const songIds = Array.from(selectedListIds).filter((id) => {
+      const allowedIds = Array.from(selectedListIds).filter((id) => {
         const row = serviceItems.find((i) => i.listId === id);
-        return row?.type === "song";
+        return row && musicCanOutlineMutateItem(row);
       });
-      if (songIds.length === 0) return;
-      dispatch(removeItemsFromList(songIds));
+      if (allowedIds.length === 0) return;
+      dispatch(removeItemsFromList(allowedIds));
       setSelectedListIds(new Set());
       setAnchorListId(null);
       return;
@@ -357,7 +360,7 @@ const ServiceItems = () => {
       selectedListIds.size > 0 &&
       [...selectedListIds].every((id) => {
         const row = serviceItems.find((i) => i.listId === id);
-        return row?.type === "song";
+        return Boolean(row && musicCanOutlineMutateItem(row));
       });
 
   useEffect(() => {

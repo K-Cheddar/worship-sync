@@ -12,9 +12,11 @@ import {
   OAuthProvider,
   createUserWithEmailAndPassword,
   fetchSignInMethodsForEmail,
+  getRedirectResult,
   linkWithCredential,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
   signInWithCustomToken,
   signInWithEmailAndPassword,
   signOut,
@@ -40,6 +42,7 @@ import {
   AuthApiError,
   createChurchAccount,
   createHumanSession,
+  exchangeDesktopAuth as exchangeDesktopAuthRequest,
   forgotPassword as forgotPasswordRequest,
   getAuthBootstrap,
   getSharedDataToken,
@@ -68,11 +71,13 @@ import {
 import {
   clearCsrfToken,
   clearDisplayToken,
+  clearHumanApiToken,
   clearLegacyWorkstationOperatorName,
   clearOperatorNameStorage,
   clearWorkstationSessionOperatorName,
   clearWorkstationToken,
   setCsrfToken,
+  setHumanApiToken,
   getDisplayToken,
   getOperatorName,
   getOrCreateDeviceId,
@@ -88,7 +93,9 @@ import {
   setPendingLinkCredentialState,
   setPendingLinkState,
   setOperatorNameStorage,
+  setPendingDesktopEmailResendState,
   setWorkstationSessionOperatorName,
+  getPendingDesktopEmailResendState,
 } from "../utils/authStorage";
 import {
   getHumanAuth,
@@ -98,7 +105,11 @@ import {
 import { getChurchDataPath } from "../utils/firebasePaths";
 import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
 import { backoff } from "../utils/generalUtils";
-import { reloadElectronDisplayWindows } from "../utils/environment";
+import {
+  isElectron,
+  isPackagedElectronRenderer,
+  reloadElectronDisplayWindows,
+} from "../utils/environment";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
 import { getHumanPostAuthPath } from "../utils/authRedirectPath";
 import { resolveAccountDisplayNameForAudit } from "../utils/displayName";
@@ -150,7 +161,9 @@ async function awaitSharedRealtimeAuthReady(auth: Auth) {
 
 type HumanFirebaseAuthResult =
   | { status: "success"; user: User }
-  | { status: "requires-existing-method" };
+  | { status: "requires-existing-method" }
+  /** Full-page OAuth navigation started; current tab is about to leave the app. */
+  | { status: "redirect-started" };
 
 const getCredentialJsonValue = (
   credentialJson: Record<string, unknown>,
@@ -252,10 +265,12 @@ type GlobalInfoContextType = {
     method,
     email,
     password,
+    interaction,
   }: {
     method: HumanAuthMethod;
     email?: string;
     password?: string;
+    interaction?: "popup" | "redirect";
   }) => Promise<HumanFirebaseAuthResult>;
   login: ({
     method,
@@ -266,6 +281,17 @@ type GlobalInfoContextType = {
     email?: string;
     password?: string;
   }) => Promise<{ requiresEmailCode?: boolean; pendingAuthId?: string }>;
+  completeDesktopExchange: ({
+    desktopAuthId,
+    desktopAuthSecret,
+    exchangeCode,
+    method,
+  }: {
+    desktopAuthId: string;
+    desktopAuthSecret: string;
+    exchangeCode: string;
+    method: Exclude<HumanAuthMethod, "password">;
+  }) => Promise<boolean>;
   verifyEmailCode: ({
     pendingAuthId,
     code,
@@ -580,6 +606,127 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setPendingLinkState(null);
   }, []);
 
+  const applyBootstrap = useCallback((
+    bootstrap?: AuthBootstrap | null,
+    options?: { clearWorkstationSessionOperator?: boolean }
+  ) => {
+    if (!bootstrap?.authenticated) {
+      setLoginState("idle");
+      setSessionKind(null);
+      setUserId("");
+      setUser("");
+      setUserEmail("");
+      setLinkedAuthMethods([]);
+      setDatabase("");
+      setUploadPreset("bpqu4ma5");
+      setAccess("full");
+      setChurchId("");
+      setChurchName("");
+      setChurchStatus("active");
+      setRecoveryEmail("");
+      setRole("");
+      setOperatorNameState("");
+      setDevice(null);
+      clearCsrfToken();
+      clearHumanApiToken();
+      if (options?.clearWorkstationSessionOperator) {
+        clearWorkstationSessionOperatorName();
+      }
+      localStorage.setItem("loggedIn", "false");
+      localStorage.removeItem("user");
+      localStorage.removeItem("database");
+      localStorage.setItem("upload_preset", "bpqu4ma5");
+      localStorage.setItem("access", "full");
+      globalFireDbInfo.user = "";
+      globalFireDbInfo.database = "";
+      globalFireDbInfo.churchId = "";
+      return;
+    }
+
+    setLoginState("success");
+    setSessionKind(bootstrap.sessionKind);
+    setUserId(bootstrap.user?.uid || "");
+    setUserEmail(
+      bootstrap.user?.primaryEmail?.trim() || bootstrap.user?.email?.trim() || ""
+    );
+    setLinkedAuthMethods(bootstrap.user?.linkedMethods || []);
+    const humanToolbarLabel =
+      bootstrap.user?.displayName?.trim() ||
+      bootstrap.user?.primaryEmail?.trim() ||
+      bootstrap.user?.email?.trim() ||
+      "";
+    const workstationSessionOperator = getWorkstationSessionOperatorName().trim();
+    const toolbarDisplayName =
+      bootstrap.sessionKind === "workstation"
+        ? workstationSessionOperator ||
+        bootstrap.device?.label?.trim() ||
+        "Operator"
+        : humanToolbarLabel ||
+        bootstrap.device?.operatorName ||
+        bootstrap.device?.label ||
+        "Operator";
+    setUser(toolbarDisplayName);
+    setDatabase(bootstrap.database || "demo");
+    setUploadPreset(bootstrap.uploadPreset || "bpqu4ma5");
+    setAccess((bootstrap.appAccess as AccessType) || "view");
+    setChurchId(bootstrap.churchId || "");
+    setChurchName(bootstrap.churchName?.trim() || "");
+    setChurchStatus(bootstrap.churchStatus || "active");
+    setRecoveryEmail(bootstrap.recoveryEmail || "");
+    setRole(bootstrap.role || "");
+    if (bootstrap.sessionKind === "workstation") {
+      clearLegacyWorkstationOperatorName();
+      setOperatorNameState(workstationSessionOperator);
+    } else {
+      setOperatorNameState(bootstrap.device?.operatorName || getOperatorName());
+    }
+    setDevice(bootstrap.device || null);
+    if (bootstrap.csrfToken) {
+      setCsrfToken(bootstrap.csrfToken);
+    } else {
+      clearCsrfToken();
+    }
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem("user", toolbarDisplayName);
+    localStorage.setItem("database", bootstrap.database || "demo");
+    localStorage.setItem("upload_preset", bootstrap.uploadPreset || "bpqu4ma5");
+    localStorage.setItem("access", (bootstrap.appAccess as AccessType) || "view");
+    globalFireDbInfo.user = toolbarDisplayName;
+    globalFireDbInfo.database = bootstrap.database || "demo";
+    globalFireDbInfo.churchId = bootstrap.churchId || "";
+  }, []);
+
+  const finalizeHumanSignIn = useCallback(
+    ({
+      bootstrap,
+      method,
+      humanApiToken,
+    }: {
+      bootstrap: AuthBootstrap;
+      method: HumanAuthMethod;
+      humanApiToken?: string;
+    }) => {
+      setPendingEmailVerificationId(null);
+      setPendingEmailCodeSignInMethod(null);
+      setLastSignInMethod(method);
+      dispatch({ type: "RESET" });
+      applyBootstrap(bootstrap);
+      if (isPackagedElectronRenderer()) {
+        if (humanApiToken) {
+          setHumanApiToken(humanApiToken);
+        } else {
+          clearHumanApiToken();
+        }
+      } else {
+        clearHumanApiToken();
+      }
+      reloadElectronDisplayWindows();
+      setAuthServerStatus("online");
+      navigate(getHumanPostAuthPath(location));
+    },
+    [applyBootstrap, dispatch, location, navigate],
+  );
+
   const getProviderForMethod = useCallback(
     (method: Exclude<HumanAuthMethod, "password">) => {
       if (method === "google") {
@@ -713,10 +860,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       method,
       email,
       password,
+      interaction = "popup",
     }: {
       method: HumanAuthMethod;
       email?: string;
       password?: string;
+      interaction?: "popup" | "redirect";
     }): Promise<HumanFirebaseAuthResult> => {
       const auth = getHumanAuth();
       try {
@@ -734,9 +883,32 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           );
           firebaseUser = credential.user;
         } else {
+          if (isPackagedElectronRenderer()) {
+            throw new Error(
+              "Provider sign-in opens in your browser from the desktop app. Use Continue with Google or Microsoft on the sign-in screen.",
+            );
+          }
           const provider = getProviderForMethod(method);
-          const credential = await signInWithPopup(auth, provider);
-          firebaseUser = credential.user;
+          if (interaction === "redirect") {
+            let redirectResult;
+            try {
+              redirectResult = await getRedirectResult(auth);
+            } catch (error) {
+              if (await persistPendingLinkFromError(error, method, email)) {
+                return { status: "requires-existing-method" };
+              }
+              throw error;
+            }
+            if (redirectResult?.user) {
+              firebaseUser = redirectResult.user;
+            } else {
+              await signInWithRedirect(auth, provider);
+              return { status: "redirect-started" };
+            }
+          } else {
+            const credential = await signInWithPopup(auth, provider);
+            firebaseUser = credential.user;
+          }
         }
 
         await linkPendingCredentialIfPresent(firebaseUser);
@@ -844,95 +1016,6 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
     return trimmedUser || trimmedOperatorName || trimmedDeviceLabel || "Operator";
   }, [device?.label, operatorName, sessionKind, user]);
-
-  const applyBootstrap = useCallback((
-    bootstrap?: AuthBootstrap | null,
-    options?: { clearWorkstationSessionOperator?: boolean }
-  ) => {
-    if (!bootstrap?.authenticated) {
-      setLoginState("idle");
-      setSessionKind(null);
-      setUserId("");
-      setUser("");
-      setUserEmail("");
-      setLinkedAuthMethods([]);
-      setDatabase("");
-      setUploadPreset("bpqu4ma5");
-      setAccess("full");
-      setChurchId("");
-      setChurchName("");
-      setChurchStatus("active");
-      setRecoveryEmail("");
-      setRole("");
-      setOperatorNameState("");
-      setDevice(null);
-      clearCsrfToken();
-      if (options?.clearWorkstationSessionOperator) {
-        clearWorkstationSessionOperatorName();
-      }
-      localStorage.setItem("loggedIn", "false");
-      localStorage.removeItem("user");
-      localStorage.removeItem("database");
-      localStorage.setItem("upload_preset", "bpqu4ma5");
-      localStorage.setItem("access", "full");
-      globalFireDbInfo.user = "";
-      globalFireDbInfo.database = "";
-      globalFireDbInfo.churchId = "";
-      return;
-    }
-
-    setLoginState("success");
-    setSessionKind(bootstrap.sessionKind);
-    setUserId(bootstrap.user?.uid || "");
-    setUserEmail(
-      bootstrap.user?.primaryEmail?.trim() || bootstrap.user?.email?.trim() || ""
-    );
-    setLinkedAuthMethods(bootstrap.user?.linkedMethods || []);
-    const humanToolbarLabel =
-      bootstrap.user?.displayName?.trim() ||
-      bootstrap.user?.primaryEmail?.trim() ||
-      bootstrap.user?.email?.trim() ||
-      "";
-    const workstationSessionOperator = getWorkstationSessionOperatorName().trim();
-    const toolbarDisplayName =
-      bootstrap.sessionKind === "workstation"
-        ? workstationSessionOperator ||
-        bootstrap.device?.label?.trim() ||
-        "Operator"
-        : humanToolbarLabel ||
-        bootstrap.device?.operatorName ||
-        bootstrap.device?.label ||
-        "Operator";
-    setUser(toolbarDisplayName);
-    setDatabase(bootstrap.database || "demo");
-    setUploadPreset(bootstrap.uploadPreset || "bpqu4ma5");
-    setAccess((bootstrap.appAccess as AccessType) || "view");
-    setChurchId(bootstrap.churchId || "");
-    setChurchName(bootstrap.churchName?.trim() || "");
-    setChurchStatus(bootstrap.churchStatus || "active");
-    setRecoveryEmail(bootstrap.recoveryEmail || "");
-    setRole(bootstrap.role || "");
-    if (bootstrap.sessionKind === "workstation") {
-      clearLegacyWorkstationOperatorName();
-      setOperatorNameState(workstationSessionOperator);
-    } else {
-      setOperatorNameState(bootstrap.device?.operatorName || getOperatorName());
-    }
-    setDevice(bootstrap.device || null);
-    if (bootstrap.csrfToken) {
-      setCsrfToken(bootstrap.csrfToken);
-    } else {
-      clearCsrfToken();
-    }
-    localStorage.setItem("loggedIn", "true");
-    localStorage.setItem("user", toolbarDisplayName);
-    localStorage.setItem("database", bootstrap.database || "demo");
-    localStorage.setItem("upload_preset", bootstrap.uploadPreset || "bpqu4ma5");
-    localStorage.setItem("access", (bootstrap.appAccess as AccessType) || "view");
-    globalFireDbInfo.user = toolbarDisplayName;
-    globalFireDbInfo.database = bootstrap.database || "demo";
-    globalFireDbInfo.churchId = bootstrap.churchId || "";
-  }, []);
 
   const applyOfflineBootstrapFallback = useCallback(() => {
     setAuthServerStatus("offline");
@@ -1073,6 +1156,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
           if (restoredSession.bootstrap) {
             applyBootstrap(restoredSession.bootstrap);
+            if (
+              isPackagedElectronRenderer() &&
+              restoredSession.humanApiToken
+            ) {
+              setHumanApiToken(restoredSession.humanApiToken);
+            }
             return;
           }
 
@@ -1588,14 +1677,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       });
 
       if (response.bootstrap) {
-        setPendingEmailVerificationId(null);
-        setPendingEmailCodeSignInMethod(null);
-        setLastSignInMethod(method);
-        dispatch({ type: "RESET" });
-        applyBootstrap(response.bootstrap);
-        reloadElectronDisplayWindows();
-        setAuthServerStatus("online");
-        navigate(getHumanPostAuthPath(location));
+        finalizeHumanSignIn({
+          bootstrap: response.bootstrap,
+          method,
+          humanApiToken: response.humanApiToken,
+        });
         return {};
       }
 
@@ -1650,13 +1736,68 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, [
     authenticateHumanWithFirebase,
-    applyBootstrap,
     authServerStatus,
-    dispatch,
+    finalizeHumanSignIn,
     isReachabilityError,
-    location,
-    navigate,
   ]);
+
+  const completeDesktopExchange = useCallback(
+    async ({
+      desktopAuthId,
+      desktopAuthSecret,
+      exchangeCode,
+      method,
+    }: {
+      desktopAuthId: string;
+      desktopAuthSecret: string;
+      exchangeCode: string;
+      method: Exclude<HumanAuthMethod, "password">;
+    }) => {
+      if (authServerStatus !== "online") {
+        setAuthError(
+          authServerStatus === "checking"
+            ? "Connecting to WorshipSync..."
+            : "Could not reach the server. Check the connection and try again.",
+        );
+        setLoginState("idle");
+        return false;
+      }
+
+      setLoginState("loading");
+      setAuthError("");
+      try {
+        const response = await exchangeDesktopAuthRequest({
+          desktopAuthId,
+          desktopAuthSecret,
+          exchangeCode,
+        });
+        finalizeHumanSignIn({
+          bootstrap: response.bootstrap,
+          method,
+          humanApiToken: response.humanApiToken,
+        });
+        return true;
+      } catch (error) {
+        console.error("completeDesktopExchange error:", error);
+        if (isReachabilityError(error)) {
+          setAuthServerStatus("offline");
+          setAuthError(
+            "Could not reach the server. Check the connection and try again.",
+          );
+          setLoginState("idle");
+          return false;
+        }
+        setAuthError(
+          error instanceof AuthApiError
+            ? error.message
+            : "Could not finish sign-in. Try again.",
+        );
+        setLoginState("error");
+        return false;
+      }
+    },
+    [authServerStatus, finalizeHumanSignIn, isReachabilityError],
+  );
 
   const verifyEmailCode = useCallback(async ({
     pendingAuthId,
@@ -1682,15 +1823,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         platform: navigator.platform,
         deviceLabel: getTrustedDeviceLabel(),
       });
-      setPendingEmailVerificationId(null);
       const completedMethod =
         consumePendingEmailCodeSignInMethod() ?? "password";
-      setLastSignInMethod(completedMethod);
-      dispatch({ type: "RESET" });
-      applyBootstrap(response.bootstrap);
-      reloadElectronDisplayWindows();
-      setAuthServerStatus("online");
-      navigate(getHumanPostAuthPath(location));
+      setPendingDesktopEmailResendState(null);
+      finalizeHumanSignIn({
+        bootstrap: response.bootstrap,
+        method: completedMethod,
+        humanApiToken: response.humanApiToken,
+      });
       return true;
     } catch (error) {
       console.error("verifyEmailCode error:", error);
@@ -1705,12 +1845,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       return false;
     }
   }, [
-    applyBootstrap,
     authServerStatus,
-    dispatch,
+    finalizeHumanSignIn,
     isReachabilityError,
-    location,
-    navigate,
   ]);
 
   const resendEmailCode = useCallback(
@@ -1727,15 +1864,23 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setAuthError("");
       const auth = getHumanAuth();
       const user = auth.currentUser;
-      if (!user) {
+      const desktopResend =
+        !user && isElectron() ? getPendingDesktopEmailResendState() : null;
+      if (!user && !desktopResend) {
         setAuthError("Sign in again to continue.");
         return {};
       }
 
       try {
-        const idToken = await user.getIdToken(true);
+        const idToken = user ? await user.getIdToken(true) : undefined;
         const response = await resendEmailCodeRequest({
-          idToken,
+          ...(idToken ? { idToken } : {}),
+          ...(desktopResend
+            ? {
+              desktopAuthId: desktopResend.desktopAuthId,
+              desktopAuthSecret: desktopResend.desktopAuthSecret,
+            }
+            : {}),
           pendingAuthId,
           deviceId: getOrCreateDeviceId(),
           userAgent: navigator.userAgent,
@@ -1744,15 +1889,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         });
 
         if (response.bootstrap) {
-          setPendingEmailVerificationId(null);
           const completedMethod =
             consumePendingEmailCodeSignInMethod() ?? "password";
-          setLastSignInMethod(completedMethod);
-          dispatch({ type: "RESET" });
-          applyBootstrap(response.bootstrap);
-          reloadElectronDisplayWindows();
-          setAuthServerStatus("online");
-          navigate(getHumanPostAuthPath(location));
+          finalizeHumanSignIn({
+            bootstrap: response.bootstrap,
+            method: completedMethod,
+            humanApiToken: response.humanApiToken,
+          });
           return {};
         }
 
@@ -1779,14 +1922,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         return {};
       }
     },
-    [
-      applyBootstrap,
-      authServerStatus,
-      dispatch,
-      isReachabilityError,
-      location,
-      navigate,
-    ]
+    [authServerStatus, finalizeHumanSignIn, isReachabilityError]
   );
 
   const createChurchAccountHandler = useCallback(async ({
@@ -1997,6 +2133,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       database,
       uploadPreset,
       login,
+      completeDesktopExchange,
       verifyEmailCode,
       resendEmailCode,
       createChurchAccount: createChurchAccountHandler,
@@ -2044,6 +2181,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       database,
       uploadPreset,
       login,
+      completeDesktopExchange,
       verifyEmailCode,
       resendEmailCode,
       createChurchAccountHandler,

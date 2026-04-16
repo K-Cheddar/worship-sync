@@ -106,10 +106,13 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const isAuthenticatedSession = loginState === "success";
   const isGuestSession = loginState === "guest";
+  const isLoginAuthSurface =
+    location.pathname === "/login" ||
+    location.pathname.startsWith("/login/");
   const shouldInitializeControllerData =
     (isAuthenticatedSession || isGuestSession) &&
     location.pathname !== "/" &&
-    location.pathname !== "/login";
+    !isLoginAuthSurface;
   const activeDatabaseKey = (database || DEMO_DATABASE_KEY).toLowerCase();
   const broadcastDatabaseKey = isGuestSession
     ? `${DEMO_DATABASE_KEY}-guest`

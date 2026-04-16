@@ -70,7 +70,7 @@ const types: ItemTypesType[] = [
   {
     type: "free",
     label: "Custom Item",
-    access: ["full"],
+    access: ["full", "music"],
   },
   {
     type: "timer",

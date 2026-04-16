@@ -30,8 +30,10 @@ import { isFirebaseAuthError } from "../utils/authUserMessages";
 import {
   getOrCreateDeviceId,
   inferLastSignInMethodFromProviderIds,
+  setHumanApiToken,
   setPendingEmailCodeSignInMethod,
 } from "../utils/authStorage";
+import { isPackagedElectronRenderer } from "../utils/environment";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
 import {
   INVALID_EMAIL_FORMAT_MESSAGE,
@@ -311,6 +313,9 @@ const InviteAccept = () => {
 
     clearCredentials();
     if (session.bootstrap) {
+      if (isPackagedElectronRenderer() && session.humanApiToken) {
+        setHumanApiToken(session.humanApiToken);
+      }
       await context?.refreshAuthBootstrap();
       const confirmed = await getAuthBootstrap({
         workstationToken: undefined,
@@ -497,7 +502,18 @@ const InviteAccept = () => {
       const authResult = await context?.authenticateHumanWithFirebase({
         method,
       });
-      if (!authResult || authResult.status === "requires-existing-method") {
+      if (!authResult) {
+        navigate("/login", {
+          replace: true,
+          state: { from: { pathname: "/invite" } },
+        });
+        return;
+      }
+      if (authResult.status === "redirect-started") {
+        setIsSaving(false);
+        return;
+      }
+      if (authResult.status === "requires-existing-method") {
         navigate("/login", {
           replace: true,
           state: { from: { pathname: "/invite" } },

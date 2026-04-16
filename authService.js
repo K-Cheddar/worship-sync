@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getDatabase } from "firebase-admin/database";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { Resend } from "resend";
 import {
   renderAccountRestoredEmail,
@@ -49,6 +49,24 @@ const PAIRING_EXPIRES_MINUTES = Math.max(1, Math.round(PAIRING_TTL_MS / 60000));
 const INVITE_TTL_MS = Number(
   process.env.AUTH_INVITE_TTL_MS || 7 * 24 * 60 * 60 * 1000,
 );
+const DESKTOP_AUTH_TTL_MS = Number(
+  process.env.AUTH_DESKTOP_AUTH_TTL_MS || 15 * 60 * 1000,
+);
+const DESKTOP_AUTH_EXCHANGE_TTL_MS = Number(
+  process.env.AUTH_DESKTOP_AUTH_EXCHANGE_TTL_MS || 5 * 60 * 1000,
+);
+const DESKTOP_AUTH_POLL_INTERVAL_MS = Number(
+  process.env.AUTH_DESKTOP_AUTH_POLL_INTERVAL_MS || 1500,
+);
+/** Firestore TTL field `ttlExpireAt` (Timestamp): purge completed/failed/expired broker rows after this delay. */
+const DESKTOP_AUTH_DOC_PURGE_AFTER_MS = Number(
+  process.env.AUTH_DESKTOP_AUTH_DOC_PURGE_AFTER_MS || 7 * 24 * 60 * 60 * 1000,
+);
+/** Non-terminal broker docs: ttlExpireAt = request expiresAt + this buffer (abandoned handshakes). */
+const DESKTOP_AUTH_IN_FLIGHT_TTL_BUFFER_MS = Number(
+  process.env.AUTH_DESKTOP_AUTH_IN_FLIGHT_TTL_BUFFER_MS ||
+    30 * 24 * 60 * 60 * 1000,
+);
 const RECOVERY_TTL_MS = Number(
   process.env.AUTH_RECOVERY_TTL_MS || 24 * 60 * 60 * 1000,
 );
@@ -64,6 +82,7 @@ const COLLECTIONS = {
   users: "users",
   memberships: "memberships",
   invites: "invites",
+  desktopAuthRequests: "desktopAuthRequests",
   trustedHumanDevices: "trustedHumanDevices",
   workstationPairings: "workstationPairings",
   workstationDevices: "workstationDevices",
@@ -72,6 +91,7 @@ const COLLECTIONS = {
   adminRecoveryRequests: "adminRecoveryRequests",
   securityEvents: "securityEvents",
   emailCodeChallenges: "emailCodeChallenges",
+  humanApiCredentials: "humanApiCredentials",
 };
 
 const normalizeEmail = (email = "") => email.trim().toLowerCase();
@@ -82,11 +102,24 @@ const hashValue = (value) =>
   crypto.createHash("sha256").update(String(value)).digest("hex");
 const randomSecret = (bytes = 32) => crypto.randomBytes(bytes).toString("hex");
 const APP_ACCESS_VALUES = new Set(["full", "music", "view"]);
+const DESKTOP_AUTH_PROVIDER_VALUES = new Set(["google", "microsoft"]);
+const DESKTOP_AUTH_STATUS_PENDING = "pending";
+const DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE = "awaiting_exchange";
+const DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE = "requires_email_code";
+const DESKTOP_AUTH_STATUS_COMPLETED = "completed";
+const DESKTOP_AUTH_STATUS_EXPIRED = "expired";
+const DESKTOP_AUTH_STATUS_FAILED = "failed";
 const normalizeAppAccess = (value, fallback = "view") => {
   const normalized = String(value || "")
     .trim()
     .toLowerCase();
   return APP_ACCESS_VALUES.has(normalized) ? normalized : fallback;
+};
+const normalizeDesktopAuthProvider = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return DESKTOP_AUTH_PROVIDER_VALUES.has(normalized) ? normalized : "";
 };
 
 const httpError = (statusCode, message) => {
@@ -270,6 +303,7 @@ const memoryState = {
   users: new Map(),
   memberships: new Map(),
   invites: new Map(),
+  desktopAuthRequests: new Map(),
   trustedHumanDevices: new Map(),
   workstationPairings: new Map(),
   workstationDevices: new Map(),
@@ -278,6 +312,7 @@ const memoryState = {
   adminRecoveryRequests: new Map(),
   securityEvents: new Map(),
   emailCodeChallenges: new Map(),
+  humanApiCredentials: new Map(),
 };
 
 const collectionMap = {
@@ -285,6 +320,7 @@ const collectionMap = {
   [COLLECTIONS.users]: memoryState.users,
   [COLLECTIONS.memberships]: memoryState.memberships,
   [COLLECTIONS.invites]: memoryState.invites,
+  [COLLECTIONS.desktopAuthRequests]: memoryState.desktopAuthRequests,
   [COLLECTIONS.trustedHumanDevices]: memoryState.trustedHumanDevices,
   [COLLECTIONS.workstationPairings]: memoryState.workstationPairings,
   [COLLECTIONS.workstationDevices]: memoryState.workstationDevices,
@@ -293,6 +329,7 @@ const collectionMap = {
   [COLLECTIONS.adminRecoveryRequests]: memoryState.adminRecoveryRequests,
   [COLLECTIONS.securityEvents]: memoryState.securityEvents,
   [COLLECTIONS.emailCodeChallenges]: memoryState.emailCodeChallenges,
+  [COLLECTIONS.humanApiCredentials]: memoryState.humanApiCredentials,
 };
 
 const rateLimits = new Map();
@@ -379,6 +416,89 @@ const parseDeviceTokens = (req) => {
       cookies.worshipsync_display ||
       null,
   };
+};
+
+const parseAuthorizationBearerToken = (req) => {
+  const raw = String(
+    req.headers.authorization || req.headers.Authorization || "",
+  ).trim();
+  const match = /^Bearer\s+(\S+)/i.exec(raw);
+  return match ? match[1].trim() : "";
+};
+
+const humanApiCredentialDocId = (userId, deviceId) =>
+  `hac_${hashValue(`${userId}|${deviceId || ""}`)}`;
+
+const humanApiCredentialWithinAbsoluteTtl = (credential) => {
+  const createdMs = new Date(credential?.createdAt || "").getTime();
+  return (
+    Number.isFinite(createdMs) &&
+    createdMs > 0 &&
+    Date.now() - createdMs <= SESSION_ABSOLUTE_TTL_MS
+  );
+};
+
+const revokeHumanApiCredentialSlot = async (userId, deviceId) => {
+  const uid = String(userId || "").trim();
+  if (!uid) return;
+  await setDoc(
+    COLLECTIONS.humanApiCredentials,
+    humanApiCredentialDocId(uid, deviceId),
+    { revokedAt: nowIso() },
+    { merge: true },
+  );
+};
+
+const revokeHumanApiCredentialByBearerHeader = async (req) => {
+  const rawToken = parseAuthorizationBearerToken(req);
+  if (!rawToken) return;
+  const [credential] = await queryDocs(
+    COLLECTIONS.humanApiCredentials,
+    [{ field: "credentialHash", value: hashValue(rawToken) }],
+    { limit: 1 },
+  );
+  if (!credential) return;
+  await setDoc(
+    COLLECTIONS.humanApiCredentials,
+    credential.id,
+    { revokedAt: nowIso() },
+    { merge: true },
+  );
+};
+
+const issueHumanApiCredential = async ({ req, userId, churchId, deviceId }) => {
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+  const churchIdTrim = String(churchId || "").trim();
+  const deviceIdTrim = deviceId ? String(deviceId).trim() : null;
+  const id = humanApiCredentialDocId(uid, deviceIdTrim);
+  const csrfToken = ensureSessionCsrfToken(req);
+  const plaintext = `wsh_${randomSecret(32)}`;
+  await setDoc(
+    COLLECTIONS.humanApiCredentials,
+    id,
+    {
+      credentialHash: hashValue(plaintext),
+      userId: uid,
+      churchId: churchIdTrim,
+      deviceId: deviceIdTrim,
+      csrfToken,
+      createdAt: nowIso(),
+      revokedAt: null,
+    },
+    { merge: false },
+  );
+  return plaintext;
+};
+
+const appendHumanApiToken = async (req, payload, { user, church, device }) => {
+  const humanApiToken = await issueHumanApiCredential({
+    req,
+    userId: user.uid,
+    churchId: church.churchId,
+    deviceId: device?.deviceId || null,
+  });
+  return humanApiToken ? { ...payload, humanApiToken } : payload;
 };
 
 /** Resend tag names/values may only use ASCII letters, numbers, underscores, or dashes. */
@@ -537,6 +657,51 @@ const readDeviceFingerprint = (body = {}) =>
     }),
   );
 
+/** Firestore TTL: policy on `desktopAuthRequests.ttlExpireAt` (Timestamp) — configure in Firebase console. */
+const desktopAuthTtlExpireAtActive = (expiresAtIso) => {
+  const ms = new Date(String(expiresAtIso || "")).getTime();
+  const base = Number.isFinite(ms) ? ms : Date.now();
+  return Timestamp.fromMillis(base + DESKTOP_AUTH_IN_FLIGHT_TTL_BUFFER_MS);
+};
+
+const desktopAuthTtlExpireAtAfterTerminal = () =>
+  Timestamp.fromMillis(Date.now() + DESKTOP_AUTH_DOC_PURGE_AFTER_MS);
+
+const finalizeDesktopAuthAfterEmailVerification = async ({ challenge }) => {
+  const desktopAuthId = String(challenge?.desktopAuthId || "").trim();
+  if (!desktopAuthId) {
+    return;
+  }
+  const desk = await getDoc(COLLECTIONS.desktopAuthRequests, desktopAuthId);
+  if (!desk) {
+    return;
+  }
+  if (desk.status !== DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE) {
+    return;
+  }
+  if (String(desk.pendingAuthId || "") !== String(challenge.pendingAuthId)) {
+    return;
+  }
+  if (String(desk.userId || "") !== String(challenge.userId)) {
+    return;
+  }
+  await setDoc(
+    COLLECTIONS.desktopAuthRequests,
+    desktopAuthId,
+    {
+      status: DESKTOP_AUTH_STATUS_COMPLETED,
+      secretHash: null,
+      exchangeCodeHash: null,
+      exchangeCodeExpiresAt: null,
+      exchangeCodePlaintext: null,
+      pendingAuthId: null,
+      completedAt: nowIso(),
+      ttlExpireAt: desktopAuthTtlExpireAtAfterTerminal(),
+    },
+    { merge: true },
+  );
+};
+
 const sessionExpired = (authSession) =>
   Boolean(authSession?.issuedAt) &&
   Date.now() - authSession.issuedAt > SESSION_ABSOLUTE_TTL_MS;
@@ -552,7 +717,25 @@ const ensureSessionCsrfToken = (req) => {
  * CSRF for mutating routes that already require an authenticated session.
  * If there is no session auth yet, we skip (caller must enforce auth first).
  */
-const assertCsrf = (req) => {
+const assertCsrf = async (req) => {
+  const cookieHuman = await getHumanBootstrap(req);
+  if (cookieHuman) {
+    const expected = cookieHuman.csrfToken;
+    const provided = String(req.headers["x-csrf-token"] || "").trim();
+    if (!expected || !provided || provided !== expected) {
+      throw httpError(403, "Could not verify this request.");
+    }
+    return;
+  }
+  const bearerHuman = await getHumanBootstrapFromBearerToken(req);
+  if (bearerHuman) {
+    const expected = bearerHuman.csrfToken;
+    const provided = String(req.headers["x-csrf-token"] || "").trim();
+    if (!expected || !provided || provided !== expected) {
+      throw httpError(403, "Could not verify this request.");
+    }
+    return;
+  }
   if (!req.session?.auth) return;
   const expected = ensureSessionCsrfToken(req);
   const provided = String(req.headers["x-csrf-token"] || "").trim();
@@ -632,6 +815,133 @@ const addSecurityEvent = async (event) => {
   await setDoc(COLLECTIONS.securityEvents, eventId, payload);
   logAuthEvent("log", event.type || "security_event", payload);
   return payload;
+};
+
+const buildDesktopAuthBrowserUrl = ({ desktopAuthId, provider }) =>
+  `${APP_BASE_URL}/#/login?desktopAuthId=${encodeURIComponent(
+    desktopAuthId,
+  )}&provider=${encodeURIComponent(provider)}`;
+
+const isDesktopAuthRequestExpired = (request) => {
+  const expiresAt = request?.expiresAt
+    ? new Date(request.expiresAt).getTime()
+    : 0;
+  return expiresAt > 0 && expiresAt <= Date.now();
+};
+
+const expireDesktopAuthRequestIfNeeded = async (request) => {
+  if (!request || request.status === DESKTOP_AUTH_STATUS_COMPLETED) {
+    return request;
+  }
+  if (!isDesktopAuthRequestExpired(request)) {
+    return request;
+  }
+  if (request.status !== DESKTOP_AUTH_STATUS_EXPIRED) {
+    await setDoc(
+      COLLECTIONS.desktopAuthRequests,
+      request.id,
+      {
+        status: DESKTOP_AUTH_STATUS_EXPIRED,
+        expiredAt: nowIso(),
+        exchangeCodeHash: null,
+        exchangeCodeExpiresAt: null,
+        exchangeCodePlaintext: null,
+        ttlExpireAt: desktopAuthTtlExpireAtAfterTerminal(),
+      },
+      { merge: true },
+    );
+  }
+  return {
+    ...request,
+    status: DESKTOP_AUTH_STATUS_EXPIRED,
+    expiredAt: request.expiredAt || nowIso(),
+    exchangeCodeHash: null,
+    exchangeCodeExpiresAt: null,
+    exchangeCodePlaintext: null,
+  };
+};
+
+/** Serialize exchange-code minting per request to avoid duplicate codes under concurrent polls. */
+const desktopAuthExchangeIssueChains = new Map();
+const runSerializedDesktopAuthExchangeIssue = async (desktopAuthId, fn) => {
+  const previous =
+    desktopAuthExchangeIssueChains.get(desktopAuthId) || Promise.resolve();
+  const next = previous.catch(() => undefined).then(() => fn());
+  desktopAuthExchangeIssueChains.set(desktopAuthId, next);
+  try {
+    return await next;
+  } finally {
+    if (desktopAuthExchangeIssueChains.get(desktopAuthId) === next) {
+      desktopAuthExchangeIssueChains.delete(desktopAuthId);
+    }
+  }
+};
+
+/**
+ * Issues or returns the existing short-lived exchange code for a desktop request
+ * in `awaiting_exchange`. Plaintext is stored only until exchange completes or TTL passes
+ * so Electron can poll reliably without rotating the code each poll.
+ */
+const issueDesktopAuthExchangeCode = async (desktopAuthId) =>
+  runSerializedDesktopAuthExchangeIssue(desktopAuthId, async () => {
+    const request = await expireDesktopAuthRequestIfNeeded(
+      await getDoc(COLLECTIONS.desktopAuthRequests, desktopAuthId),
+    );
+    if (!request || request.status !== DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE) {
+      throw httpError(
+        409,
+        "This desktop sign-in request is not ready for confirmation.",
+      );
+    }
+    const exchangeExpiresAtMs = request.exchangeCodeExpiresAt
+      ? new Date(request.exchangeCodeExpiresAt).getTime()
+      : 0;
+    if (
+      request.exchangeCodeHash &&
+      request.exchangeCodePlaintext &&
+      exchangeExpiresAtMs > Date.now()
+    ) {
+      return {
+        exchangeCode: request.exchangeCodePlaintext,
+        exchangeCodeExpiresAt: request.exchangeCodeExpiresAt,
+      };
+    }
+    const exchangeCode = randomSecret(18);
+    const exchangeCodeExpiresAt = new Date(
+      Date.now() + DESKTOP_AUTH_EXCHANGE_TTL_MS,
+    ).toISOString();
+    await setDoc(
+      COLLECTIONS.desktopAuthRequests,
+      desktopAuthId,
+      {
+        exchangeCodeHash: hashValue(exchangeCode),
+        exchangeCodePlaintext: exchangeCode,
+        exchangeCodeExpiresAt,
+        completedBrowserAt: nowIso(),
+        ttlExpireAt: desktopAuthTtlExpireAtActive(request.expiresAt),
+      },
+      { merge: true },
+    );
+    return { exchangeCode, exchangeCodeExpiresAt };
+  });
+
+const readDesktopAuthRequestForSecret = async ({
+  desktopAuthId,
+  desktopAuthSecret,
+}) => {
+  const request = await expireDesktopAuthRequestIfNeeded(
+    await getDoc(COLLECTIONS.desktopAuthRequests, desktopAuthId),
+  );
+  if (!request) {
+    throw httpError(
+      404,
+      "This desktop sign-in request was not found. Start again in WorshipSync.",
+    );
+  }
+  if (request.secretHash !== hashValue(desktopAuthSecret)) {
+    throw httpError(403, "This desktop sign-in request is not valid.");
+  }
+  return request;
 };
 
 const addWebhookDeliveryEvent = async (deliveryId, event) => {
@@ -1192,6 +1502,7 @@ const buildHumanBootstrap = ({
   membership,
   device,
   profileDisplayName = "",
+  csrfToken: csrfTokenOverride = undefined,
 }) => ({
   authenticated: true,
   sessionKind: SESSION_KIND_HUMAN,
@@ -1199,7 +1510,10 @@ const buildHumanBootstrap = ({
   churchName: church.name || "",
   churchStatus: church.status,
   recoveryEmail: church.recoveryEmail || "",
-  csrfToken: ensureSessionCsrfToken(req),
+  csrfToken:
+    typeof csrfTokenOverride === "string" && csrfTokenOverride
+      ? csrfTokenOverride
+      : ensureSessionCsrfToken(req),
   database: church.contentDatabaseKey,
   uploadPreset: church.cloudinaryUploadPreset || "bpqu4ma5",
   role: membership.role,
@@ -1275,7 +1589,7 @@ const buildRealtimeAuthUid = ({ sessionKind, userId, deviceId }) => {
 };
 
 export const resolveRequestBootstrap = async (req) => {
-  const humanBootstrap = await getHumanBootstrap(req);
+  const humanBootstrap = await resolveHumanBootstrap(req);
   if (humanBootstrap) {
     return humanBootstrap;
   }
@@ -1495,6 +1809,61 @@ const findActiveEmailChallengeForDevice = async ({
   return valid[0];
 };
 
+const resolveHumanSignInDecision = async ({
+  user,
+  church,
+  membership,
+  fingerprintHash,
+  deviceLabel,
+  platformType,
+  requestNewCode = true,
+}) => {
+  const trustedDevice = await getTrustedHumanDeviceByFingerprint({
+    userId: user.uid,
+    fingerprintHash,
+  });
+  if (trustedDevice) {
+    await setDoc(
+      COLLECTIONS.trustedHumanDevices,
+      trustedDevice.deviceId,
+      { lastSeenAt: nowIso() },
+      { merge: true },
+    );
+    return {
+      type: "trusted_device",
+      trustedDevice,
+    };
+  }
+
+  const existingChallenge = await findActiveEmailChallengeForDevice({
+    userId: user.uid,
+    fingerprintHash,
+  });
+  if (existingChallenge) {
+    return {
+      type: "requires_email_code",
+      pendingAuthId: existingChallenge.id,
+    };
+  }
+
+  if (requestNewCode === false) {
+    return { type: "no_new_code" };
+  }
+
+  const pending = await createEmailChallenge({
+    user,
+    church,
+    membership,
+    fingerprintHash,
+    deviceLabel,
+    platformType,
+  });
+  return {
+    type: "requires_email_code",
+    pendingAuthId: pending.pendingAuthId,
+  };
+};
+
 const verifySupportPrincipal = async (req) => {
   const token = getBearerToken(req);
   if (!token) {
@@ -1618,6 +1987,9 @@ const acceptInviteMembership = async ({ invite, user }) => {
       }
       const inviteData = inviteSnap.data();
       if (inviteData.status !== "pending") {
+        if (inviteData.status === "revoked") {
+          throw httpError(400, "This invite was revoked.");
+        }
         throw httpError(400, "This invite is not active");
       }
       if (new Date(inviteData.expiresAt).getTime() < Date.now()) {
@@ -1691,6 +2063,22 @@ const acceptInviteMembership = async ({ invite, user }) => {
       throw httpError(400, "This invite has expired");
     }
   } else {
+    const latestInvite = await getDoc(COLLECTIONS.invites, invite.inviteId);
+    if (!latestInvite || latestInvite.status !== "pending") {
+      if (latestInvite?.status === "revoked") {
+        throw httpError(400, "This invite was revoked.");
+      }
+      throw httpError(400, "This invite is not active");
+    }
+    if (new Date(latestInvite.expiresAt).getTime() < Date.now()) {
+      await setDoc(
+        COLLECTIONS.invites,
+        invite.inviteId,
+        { status: "expired" },
+        { merge: true },
+      );
+      throw httpError(400, "This invite has expired");
+    }
     const activeRows = await queryDocs(
       COLLECTIONS.memberships,
       [
@@ -2092,6 +2480,10 @@ const getHumanBootstrap = async (req) => {
     return null;
   }
   if (sessionExpired(authSession)) {
+    await revokeHumanApiCredentialSlot(
+      authSession.userId,
+      authSession.deviceId,
+    );
     await destroySession(req);
     return null;
   }
@@ -2110,6 +2502,10 @@ const getHumanBootstrap = async (req) => {
       userId: authSession.userId || null,
       churchId: authSession.churchId || null,
     });
+    await revokeHumanApiCredentialSlot(
+      authSession.userId,
+      authSession.deviceId,
+    );
     await destroySession(req);
     return null;
   }
@@ -2120,6 +2516,10 @@ const getHumanBootstrap = async (req) => {
       (item) => item.deviceId === authSession.deviceId && !item.revokedAt,
     ) || null;
   if (authSession.deviceId && !device) {
+    await revokeHumanApiCredentialSlot(
+      authSession.userId,
+      authSession.deviceId,
+    );
     await destroySession(req);
     return null;
   }
@@ -2132,6 +2532,55 @@ const getHumanBootstrap = async (req) => {
     device,
     profileDisplayName,
   });
+};
+
+const getHumanBootstrapFromBearerToken = async (req) => {
+  const rawToken = parseAuthorizationBearerToken(req);
+  if (!rawToken) return null;
+  const [credential] = await queryDocs(
+    COLLECTIONS.humanApiCredentials,
+    [{ field: "credentialHash", value: hashValue(rawToken) }],
+    { limit: 1 },
+  );
+  if (!credential || credential.revokedAt) return null;
+  if (!humanApiCredentialWithinAbsoluteTtl(credential)) return null;
+  let humanContext;
+  try {
+    humanContext = await getHumanContext({
+      uid: credential.userId,
+      churchId: credential.churchId || undefined,
+    });
+  } catch {
+    return null;
+  }
+  const { user, membership, church } = humanContext;
+  const devices = await listTrustedHumanDevicesForUser(user.uid);
+  let device = null;
+  if (credential.deviceId) {
+    device =
+      devices.find(
+        (item) => item.deviceId === credential.deviceId && !item.revokedAt,
+      ) || null;
+    if (!device) {
+      return null;
+    }
+  }
+  const profileDisplayName = await resolveHumanProfileDisplayName(user);
+  return buildHumanBootstrap({
+    req,
+    user,
+    church,
+    membership,
+    device,
+    profileDisplayName,
+    csrfToken: credential.csrfToken || undefined,
+  });
+};
+
+const resolveHumanBootstrap = async (req) => {
+  const cookieHuman = await getHumanBootstrap(req);
+  if (cookieHuman) return cookieHuman;
+  return getHumanBootstrapFromBearerToken(req);
 };
 
 const resolveWorkstationFromSession = async (req) => {
@@ -2206,8 +2655,8 @@ const getDisplayBootstrap = async (req, token) => {
 };
 
 const requireHumanSession = async (req) => {
-  const bootstrap = await getHumanBootstrap(req);
-  if (!bootstrap) {
+  const bootstrap = await resolveHumanBootstrap(req);
+  if (!bootstrap || bootstrap.sessionKind !== SESSION_KIND_HUMAN) {
     throw httpError(401, "Authentication required");
   }
   return bootstrap;
@@ -2248,10 +2697,94 @@ const resolveAuthenticatedWorkstation = async (req) => {
   return { deviceId: workstation.id, ...workstation };
 };
 
+/**
+ * True when server tests may seed human API credentials into the in-memory Maps.
+ * Refuses Firestore-backed mode so automated tests never write auth docs to a real project.
+ */
+export const canSeedHumanBearerAuthForServerTests = () =>
+  process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT === "1" &&
+  !authRuntimeInfo.hasFirestore;
+
+/**
+ * Seeds churches/users/memberships in the dev in-memory store and issues a human API token.
+ * Only for server/humanApiBearerAuth.test.js (set WORSHIPSYNC_SERVER_TEST_SUPPORT=1 before importing authService).
+ */
+export const seedActiveHumanBearerForServerTests = async ({
+  req,
+  userId,
+  email,
+  churchId,
+  churchName = "Human bearer test church",
+}) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "seedActiveHumanBearerForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "seedActiveHumanBearerForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  const normalizedEmail = normalizeEmail(email);
+  const membershipId = membershipIdFor({ churchId, userId });
+  const church = {
+    churchId,
+    name: churchName,
+    status: CHURCH_STATUS_ACTIVE,
+    adminCount: 1,
+    recoveryEmail: normalizedEmail,
+    contentDatabaseKey: `rtdb_${churchId}`,
+    firebaseNamespace: churchId,
+    cloudinaryUploadPreset: "bpqu4ma5",
+    createdAt: nowIso(),
+    createdByUid: userId,
+  };
+  await setDoc(COLLECTIONS.churches, churchId, church);
+  await setDoc(
+    COLLECTIONS.memberships,
+    membershipId,
+    {
+      membershipId,
+      churchId,
+      userId,
+      role: "admin",
+      appAccess: "full",
+      status: "active",
+      createdAt: nowIso(),
+      createdByUid: userId,
+    },
+    { merge: false },
+  );
+  await setDoc(
+    COLLECTIONS.users,
+    userId,
+    {
+      uid: userId,
+      email: normalizedEmail,
+      primaryEmail: normalizedEmail,
+      normalizedEmail,
+      displayName: "Human bearer test user",
+      linkedMethods: ["password"],
+      createdAt: nowIso(),
+      lastLoginAt: nowIso(),
+      migrationSource: "server-test",
+    },
+    { merge: false },
+  );
+  const humanApiToken = await issueHumanApiCredential({
+    req,
+    userId,
+    churchId,
+    deviceId: null,
+  });
+  return { humanApiToken, churchId, membershipId };
+};
+
 export const authHandlers = {
   async getAuthMe(req, res) {
     try {
-      const humanBootstrap = await getHumanBootstrap(req);
+      const humanBootstrap = await resolveHumanBootstrap(req);
       if (humanBootstrap) {
         return res.json(humanBootstrap);
       }
@@ -2472,64 +3005,58 @@ export const authHandlers = {
       const { church, membership } = await getHumanContext({
         uid: verified.uid,
       });
-      const fingerprintHash = readDeviceFingerprint(req.body);
-      const trustedDevice = await getTrustedHumanDeviceByFingerprint({
-        userId: user.uid,
-        fingerprintHash,
+      const signInDecision = await resolveHumanSignInDecision({
+        user,
+        church,
+        membership,
+        fingerprintHash: readDeviceFingerprint(req.body),
+        deviceLabel,
+        platformType: platform,
+        requestNewCode,
       });
 
-      if (trustedDevice) {
-        await setDoc(
-          COLLECTIONS.trustedHumanDevices,
-          trustedDevice.deviceId,
-          { lastSeenAt: nowIso() },
-          { merge: true },
-        );
+      if (signInDecision.type === "trusted_device") {
         const bootstrap = await establishHumanSession({
           req,
           user,
           church,
           membership,
-          device: trustedDevice,
+          device: signInDecision.trustedDevice,
         });
         await addSecurityEvent({
           type: "human_login_trusted_device",
           churchId: church.churchId,
           userId: user.uid,
-          deviceId: trustedDevice.deviceId,
+          deviceId: signInDecision.trustedDevice.deviceId,
         });
-        return res.json({ success: true, bootstrap });
+        return res.json(
+          await appendHumanApiToken(
+            req,
+            { success: true, bootstrap },
+            {
+              user,
+              church,
+              device: signInDecision.trustedDevice,
+            },
+          ),
+        );
       }
 
-      const existingChallenge = await findActiveEmailChallengeForDevice({
-        userId: user.uid,
-        fingerprintHash,
-      });
-      if (existingChallenge) {
+      if (signInDecision.type === "requires_email_code") {
         return res.json({
           success: true,
           requiresEmailCode: true,
-          pendingAuthId: existingChallenge.id,
+          pendingAuthId: signInDecision.pendingAuthId,
         });
       }
 
-      // Session restore (requestNewCode: false): do not email; user must sign in or use Resend.
-      if (requestNewCode === false) {
+      if (signInDecision.type === "no_new_code") {
         return res.json({
           success: true,
           requiresEmailCode: false,
         });
       }
-
-      const pending = await createEmailChallenge({
-        user,
-        church,
-        membership,
-        fingerprintHash,
-        deviceLabel,
-        platformType: platform,
-      });
-      return res.json({ success: true, ...pending });
+      throw httpError(500, "Could not sign in");
     } catch (error) {
       logAuthEvent("warn", "auth.session.error", { message: error.message });
       return res.status(error.statusCode || 500).json({
@@ -2539,19 +3066,532 @@ export const authHandlers = {
     }
   },
 
-  async resendEmailCode(req, res) {
+  async startDesktopAuth(req, res) {
     try {
       enforceRateLimit({
+        scope: "desktop-auth-start",
+        key: `${getClientIp(req)}:${readDeviceFingerprint(req.body)}`,
+        limit: 8,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 15 * 60 * 1000,
+      });
+
+      const provider = normalizeDesktopAuthProvider(req.body?.provider);
+      if (!provider) {
+        throw httpError(400, "A valid desktop sign-in provider is required.");
+      }
+
+      const desktopAuthId = createId("desktop_auth");
+      const desktopAuthSecret = randomSecret(24);
+      const expiresAt = new Date(
+        Date.now() + DESKTOP_AUTH_TTL_MS,
+      ).toISOString();
+      await setDoc(COLLECTIONS.desktopAuthRequests, desktopAuthId, {
+        provider,
+        status: DESKTOP_AUTH_STATUS_PENDING,
+        secretHash: hashValue(desktopAuthSecret),
+        fingerprintHash: readDeviceFingerprint(req.body),
+        deviceId: String(req.body?.deviceId || "").trim(),
+        deviceLabel: String(req.body?.deviceLabel || "").trim(),
+        platformType: String(req.body?.platform || "").trim(),
+        userAgent: String(req.body?.userAgent || "").trim(),
+        requestedPath: String(req.body?.requestedPath || "").trim(),
+        pendingAuthId: null,
+        userId: null,
+        churchId: null,
+        membershipId: null,
+        trustedDeviceId: null,
+        exchangeCodeHash: null,
+        exchangeCodeExpiresAt: null,
+        exchangeCodePlaintext: null,
+        createdAt: nowIso(),
+        expiresAt,
+        ttlExpireAt: desktopAuthTtlExpireAtActive(expiresAt),
+        completedAt: null,
+        expiredAt: null,
+        failedAt: null,
+      });
+
+      return res.json({
+        success: true,
+        desktopAuthId,
+        desktopAuthSecret,
+        browserUrl: buildDesktopAuthBrowserUrl({ desktopAuthId, provider }),
+        expiresAt,
+        pollIntervalMs: DESKTOP_AUTH_POLL_INTERVAL_MS,
+      });
+    } catch (error) {
+      logAuthEvent("warn", "desktop-auth.start.error", {
+        message: error.message,
+      });
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not start desktop sign-in",
+      });
+    }
+  },
+
+  async completeDesktopAuth(req, res) {
+    const desktopAuthId = String(req.body?.desktopAuthId || "").trim();
+    try {
+      enforceRateLimit({
+        scope: "desktop-auth-complete",
+        key: `${getClientIp(req)}:${req.body?.desktopAuthId || "unknown"}`,
+        limit: 12,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 15 * 60 * 1000,
+      });
+
+      const idToken = String(req.body?.idToken || "").trim();
+      if (!desktopAuthId || !idToken) {
+        throw httpError(
+          400,
+          "Desktop sign-in request and identity token are required.",
+        );
+      }
+
+      const request = await expireDesktopAuthRequestIfNeeded(
+        await getDoc(COLLECTIONS.desktopAuthRequests, desktopAuthId),
+      );
+      if (!request) {
+        throw httpError(
+          404,
+          "This desktop sign-in request was not found. Start again in WorshipSync.",
+        );
+      }
+      if (request.status === DESKTOP_AUTH_STATUS_EXPIRED) {
+        throw httpError(
+          400,
+          "This desktop sign-in request expired. Start again in WorshipSync.",
+        );
+      }
+      if (request.status === DESKTOP_AUTH_STATUS_COMPLETED) {
+        return res.json({ success: true, status: request.status });
+      }
+
+      const verified = await verifyIdToken(idToken);
+      const user = await upsertProfileFromVerifiedToken(verified);
+      if (request.userId && request.userId !== user.uid) {
+        throw httpError(
+          409,
+          "This desktop sign-in request is already in use. Start again in WorshipSync.",
+        );
+      }
+      const { church, membership } = await getHumanContext({
+        uid: verified.uid,
+      });
+      const signInDecision = await resolveHumanSignInDecision({
+        user,
+        church,
+        membership,
+        fingerprintHash: request.fingerprintHash,
+        deviceLabel: request.deviceLabel,
+        platformType: request.platformType,
+        requestNewCode: true,
+      });
+
+      if (signInDecision.type === "trusted_device") {
+        await setDoc(
+          COLLECTIONS.desktopAuthRequests,
+          desktopAuthId,
+          {
+            status: DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE,
+            userId: user.uid,
+            churchId: church.churchId,
+            membershipId: membership.membershipId,
+            trustedDeviceId: signInDecision.trustedDevice.deviceId,
+            pendingAuthId: null,
+            exchangeCodeHash: null,
+            exchangeCodeExpiresAt: null,
+            exchangeCodePlaintext: null,
+            completedBrowserAt: nowIso(),
+            ttlExpireAt: desktopAuthTtlExpireAtActive(request.expiresAt),
+          },
+          { merge: true },
+        );
+        return res.json({
+          success: true,
+          status: DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE,
+        });
+      }
+
+      if (signInDecision.type === "requires_email_code") {
+        await setDoc(
+          COLLECTIONS.desktopAuthRequests,
+          desktopAuthId,
+          {
+            status: DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE,
+            userId: user.uid,
+            churchId: church.churchId,
+            membershipId: membership.membershipId,
+            trustedDeviceId: null,
+            pendingAuthId: signInDecision.pendingAuthId,
+            exchangeCodeHash: null,
+            exchangeCodeExpiresAt: null,
+            exchangeCodePlaintext: null,
+            ttlExpireAt: desktopAuthTtlExpireAtActive(request.expiresAt),
+          },
+          { merge: true },
+        );
+        await setDoc(
+          COLLECTIONS.emailCodeChallenges,
+          signInDecision.pendingAuthId,
+          { desktopAuthId },
+          { merge: true },
+        );
+        return res.json({
+          success: true,
+          status: DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE,
+          pendingAuthId: signInDecision.pendingAuthId,
+        });
+      }
+
+      throw httpError(500, "Could not complete desktop sign-in.");
+    } catch (error) {
+      try {
+        if (desktopAuthId) {
+          const request = await getDoc(
+            COLLECTIONS.desktopAuthRequests,
+            desktopAuthId,
+          );
+          if (
+            request &&
+            request.status !== DESKTOP_AUTH_STATUS_COMPLETED &&
+            request.status !== DESKTOP_AUTH_STATUS_EXPIRED
+          ) {
+            await setDoc(
+              COLLECTIONS.desktopAuthRequests,
+              desktopAuthId,
+              {
+                status: DESKTOP_AUTH_STATUS_FAILED,
+                failedAt: nowIso(),
+                exchangeCodeHash: null,
+                exchangeCodeExpiresAt: null,
+                exchangeCodePlaintext: null,
+                ttlExpireAt: desktopAuthTtlExpireAtAfterTerminal(),
+              },
+              { merge: true },
+            );
+          }
+        }
+      } catch (markFailedError) {
+        logAuthEvent("warn", "desktop-auth.complete.mark-failed.error", {
+          message: markFailedError.message,
+        });
+      }
+      logAuthEvent("warn", "desktop-auth.complete.error", {
+        message: error.message,
+      });
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not complete desktop sign-in",
+      });
+    }
+  },
+
+  async getDesktopAuthStatus(req, res) {
+    try {
+      const desktopAuthId = String(req.body?.desktopAuthId || "").trim();
+      const desktopAuthSecret = String(
+        req.body?.desktopAuthSecret || "",
+      ).trim();
+      if (!desktopAuthId || !desktopAuthSecret) {
+        throw httpError(
+          400,
+          "Desktop sign-in request and secret are required.",
+        );
+      }
+
+      const request = await readDesktopAuthRequestForSecret({
+        desktopAuthId,
+        desktopAuthSecret,
+      });
+
+      if (request.status === DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE) {
+        const { exchangeCode, exchangeCodeExpiresAt } =
+          await issueDesktopAuthExchangeCode(desktopAuthId);
+        return res.json({
+          success: true,
+          status: DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE,
+          exchangeCode,
+          exchangeCodeExpiresAt,
+        });
+      }
+
+      if (request.status === DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE) {
+        return res.json({
+          success: true,
+          status: DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE,
+          pendingAuthId: request.pendingAuthId || null,
+        });
+      }
+
+      return res.json({
+        success: true,
+        status: request.status || DESKTOP_AUTH_STATUS_PENDING,
+      });
+    } catch (error) {
+      logAuthEvent("warn", "desktop-auth.status.error", {
+        message: error.message,
+      });
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not load desktop sign-in status",
+      });
+    }
+  },
+
+  async exchangeDesktopAuth(req, res) {
+    try {
+      enforceRateLimit({
+        scope: "desktop-auth-exchange",
+        key: `${getClientIp(req)}:${req.body?.desktopAuthId || "unknown"}`,
+        limit: 20,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 15 * 60 * 1000,
+      });
+
+      const desktopAuthId = String(req.body?.desktopAuthId || "").trim();
+      const desktopAuthSecret = String(
+        req.body?.desktopAuthSecret || "",
+      ).trim();
+      const exchangeCode = String(req.body?.exchangeCode || "").trim();
+      if (!desktopAuthId || !desktopAuthSecret || !exchangeCode) {
+        throw httpError(
+          400,
+          "Desktop sign-in request, secret, and exchange code are required.",
+        );
+      }
+
+      const request = await readDesktopAuthRequestForSecret({
+        desktopAuthId,
+        desktopAuthSecret,
+      });
+      if (request.status !== DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE) {
+        throw httpError(
+          409,
+          "This desktop sign-in request is not ready to finish. Return to your browser and try again.",
+        );
+      }
+      const exchangeExpiresAt = request.exchangeCodeExpiresAt
+        ? new Date(request.exchangeCodeExpiresAt).getTime()
+        : 0;
+      if (
+        !request.exchangeCodeHash ||
+        exchangeExpiresAt <= Date.now() ||
+        request.exchangeCodeHash !== hashValue(exchangeCode)
+      ) {
+        throw httpError(
+          409,
+          "This desktop sign-in confirmation expired. Return to your browser and try again.",
+        );
+      }
+
+      const trustedDevice = request.trustedDeviceId
+        ? await getDoc(COLLECTIONS.trustedHumanDevices, request.trustedDeviceId)
+        : null;
+      if (!trustedDevice || trustedDevice.revokedAt) {
+        throw httpError(
+          409,
+          "This trusted device is no longer available. Sign in again to continue.",
+        );
+      }
+
+      const { user, church, membership } = await getHumanContext({
+        uid: request.userId,
+        churchId: request.churchId,
+      });
+      const bootstrap = await establishHumanSession({
+        req,
+        user,
+        church,
+        membership,
+        device: {
+          deviceId: trustedDevice.id,
+          ...trustedDevice,
+        },
+      });
+      await setDoc(
+        COLLECTIONS.desktopAuthRequests,
+        desktopAuthId,
+        {
+          status: DESKTOP_AUTH_STATUS_COMPLETED,
+          secretHash: null,
+          exchangeCodeHash: null,
+          exchangeCodeExpiresAt: null,
+          exchangeCodePlaintext: null,
+          completedAt: nowIso(),
+          ttlExpireAt: desktopAuthTtlExpireAtAfterTerminal(),
+        },
+        { merge: true },
+      );
+      return res.json(
+        await appendHumanApiToken(
+          req,
+          { success: true, bootstrap },
+          {
+            user,
+            church,
+            device: {
+              deviceId: trustedDevice.id,
+              ...trustedDevice,
+            },
+          },
+        ),
+      );
+    } catch (error) {
+      logAuthEvent("warn", "desktop-auth.exchange.error", {
+        message: error.message,
+      });
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not finish desktop sign-in",
+      });
+    }
+  },
+
+  async resendEmailCode(req, res) {
+    try {
+      const {
+        idToken,
+        pendingAuthId,
+        deviceLabel,
+        platform,
+        desktopAuthId,
+        desktopAuthSecret,
+      } = req.body || {};
+      const desktopAuthIdTrim = String(desktopAuthId || "").trim();
+      const desktopAuthSecretTrim = String(desktopAuthSecret || "").trim();
+      const hasDesktopHandshake =
+        Boolean(desktopAuthIdTrim) && Boolean(desktopAuthSecretTrim);
+
+      enforceRateLimit({
         scope: "resend-email-code",
-        key: `${getClientIp(req)}:${hashValue(req.body?.idToken || "")}`,
+        key: hasDesktopHandshake
+          ? `${getClientIp(req)}:desktop:${desktopAuthIdTrim}`
+          : `${getClientIp(req)}:${hashValue(req.body?.idToken || "")}`,
         limit: 5,
         windowMs: 15 * 60 * 1000,
         blockMs: 15 * 60 * 1000,
       });
 
-      const { idToken, pendingAuthId, deviceLabel, platform } = req.body || {};
-      if (!idToken) {
+      if (!idToken && !hasDesktopHandshake) {
         throw httpError(400, "Identity token is required.");
+      }
+
+      if (hasDesktopHandshake) {
+        const desktopRequest = await readDesktopAuthRequestForSecret({
+          desktopAuthId: desktopAuthIdTrim,
+          desktopAuthSecret: desktopAuthSecretTrim,
+        });
+        if (desktopRequest.status !== DESKTOP_AUTH_STATUS_REQUIRES_EMAIL_CODE) {
+          throw httpError(
+            400,
+            "This desktop sign-in request is not waiting for a verification code.",
+          );
+        }
+        const resolvedPendingId =
+          String(pendingAuthId || "").trim() ||
+          String(desktopRequest.pendingAuthId || "").trim();
+        if (!resolvedPendingId) {
+          throw httpError(400, "Pending sign-in is required.");
+        }
+        if (
+          desktopRequest.pendingAuthId &&
+          desktopRequest.pendingAuthId !== resolvedPendingId
+        ) {
+          throw httpError(
+            400,
+            "That verification request does not match this desktop sign-in.",
+          );
+        }
+        const fingerprintHash = readDeviceFingerprint(req.body);
+        if (fingerprintHash !== desktopRequest.fingerprintHash) {
+          throw httpError(
+            403,
+            "This resend request is not valid for this device.",
+          );
+        }
+        const storedUser = await getDoc(
+          COLLECTIONS.users,
+          desktopRequest.userId,
+        );
+        if (!storedUser) {
+          throw httpError(400, "Could not load this account.");
+        }
+        const user = {
+          uid: storedUser.id || desktopRequest.userId,
+          ...storedUser,
+        };
+        const { church, membership } = await getHumanContext({
+          uid: user.uid,
+          churchId: desktopRequest.churchId,
+        });
+        const trustedDevice = await getTrustedHumanDeviceByFingerprint({
+          userId: user.uid,
+          fingerprintHash,
+        });
+        if (trustedDevice) {
+          await setDoc(
+            COLLECTIONS.trustedHumanDevices,
+            trustedDevice.deviceId,
+            { lastSeenAt: nowIso() },
+            { merge: true },
+          );
+          const bootstrap = await establishHumanSession({
+            req,
+            user,
+            church,
+            membership,
+            device: trustedDevice,
+          });
+          await addSecurityEvent({
+            type: "human_login_trusted_device",
+            churchId: church.churchId,
+            userId: user.uid,
+            deviceId: trustedDevice.deviceId,
+          });
+          return res.json(
+            await appendHumanApiToken(
+              req,
+              { success: true, bootstrap },
+              { user, church, device: trustedDevice },
+            ),
+          );
+        }
+        const challenge = await getEmailChallenge(resolvedPendingId);
+        if (
+          challenge &&
+          challenge.userId === user.uid &&
+          challenge.fingerprintHash === fingerprintHash
+        ) {
+          await deleteDoc(COLLECTIONS.emailCodeChallenges, resolvedPendingId);
+        }
+        const pending = await createEmailChallenge({
+          user,
+          church,
+          membership,
+          fingerprintHash,
+          deviceLabel,
+          platformType: platform,
+        });
+        const nextPendingId = pending.pendingAuthId;
+        await setDoc(
+          COLLECTIONS.desktopAuthRequests,
+          desktopAuthIdTrim,
+          {
+            pendingAuthId: nextPendingId,
+            ttlExpireAt: desktopAuthTtlExpireAtActive(desktopRequest.expiresAt),
+          },
+          { merge: true },
+        );
+        await setDoc(
+          COLLECTIONS.emailCodeChallenges,
+          nextPendingId,
+          { desktopAuthId: desktopAuthIdTrim },
+          { merge: true },
+        );
+        return res.json({ success: true, ...pending });
       }
 
       const verified = await verifyIdToken(idToken);
@@ -2586,7 +3626,13 @@ export const authHandlers = {
           userId: user.uid,
           deviceId: trustedDevice.deviceId,
         });
-        return res.json({ success: true, bootstrap });
+        return res.json(
+          await appendHumanApiToken(
+            req,
+            { success: true, bootstrap },
+            { user, church, device: trustedDevice },
+          ),
+        );
       }
 
       if (pendingAuthId) {
@@ -2677,6 +3723,7 @@ export const authHandlers = {
         label: deviceLabel || challenge.deviceLabel,
         platformType: platform || challenge.platformType,
       });
+      await finalizeDesktopAuthAfterEmailVerification({ challenge });
       const bootstrap = await establishHumanSession({
         req,
         user,
@@ -2684,7 +3731,17 @@ export const authHandlers = {
         membership,
         device,
       });
-      await deleteDoc(COLLECTIONS.emailCodeChallenges, pendingAuthId);
+      try {
+        await deleteDoc(COLLECTIONS.emailCodeChallenges, pendingAuthId);
+      } catch (deleteErr) {
+        logAuthEvent("warn", "email-code.verify.delete-challenge.error", {
+          message: deleteErr.message,
+          pendingAuthId,
+        });
+        await revokeHumanApiCredentialSlot(user.uid, device.deviceId);
+        await destroySession(req);
+        throw httpError(500, "Could not finish sign-in. Try again.");
+      }
 
       await addSecurityEvent({
         type: "human_login_verified",
@@ -2693,7 +3750,13 @@ export const authHandlers = {
         deviceId: device.deviceId,
       });
 
-      return res.json({ success: true, bootstrap });
+      return res.json(
+        await appendHumanApiToken(
+          req,
+          { success: true, bootstrap },
+          { user, church, device },
+        ),
+      );
     } catch (error) {
       logAuthEvent("warn", "email-code.verify.error", {
         message: error.message,
@@ -2707,7 +3770,15 @@ export const authHandlers = {
 
   async logout(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
+      await revokeHumanApiCredentialByBearerHeader(req);
+      const authSession = req.session?.auth;
+      if (authSession?.sessionKind === SESSION_KIND_HUMAN) {
+        await revokeHumanApiCredentialSlot(
+          authSession.userId,
+          authSession.deviceId,
+        );
+      }
       await destroySession(req);
       res.clearCookie(sessionCookieName, {
         path: process.env.AUTH_COOKIE_PATH || "/",
@@ -2774,7 +3845,7 @@ export const authHandlers = {
 
   async updateOwnProfile(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const session = await requireHumanSession(req);
       const displayName = String(req.body?.displayName || "").trim();
       if (!displayName) {
@@ -2826,7 +3897,7 @@ export const authHandlers = {
 
   async revokeTrustedHumanDevice(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireHumanSession(req);
       await requireAdminSession(req, admin.churchId);
       const device = await getDoc(
@@ -2953,7 +4024,7 @@ export const authHandlers = {
 
   async updateRecoveryEmail(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const recoveryEmail = normalizeEmail(req.body?.recoveryEmail);
       if (!recoveryEmail) {
@@ -2992,7 +4063,7 @@ export const authHandlers = {
 
   async updateChurchBranding(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const branding = normalizeChurchBrandingForStorage(req.body);
       const rtdb = requireRealtimeDatabase();
@@ -3018,7 +4089,7 @@ export const authHandlers = {
 
   async createInvite(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const email = normalizeEmail(req.body?.email);
       const role = req.body?.role || "admin";
@@ -3093,6 +4164,47 @@ export const authHandlers = {
     }
   },
 
+  async revokeChurchInvite(req, res) {
+    try {
+      await assertCsrf(req);
+      const admin = await requireAdminSession(req, req.params.churchId);
+      const inviteId = String(req.params.inviteId || "").trim();
+      if (!inviteId) {
+        throw httpError(400, "Invite id is required.");
+      }
+      const invite = await getDoc(COLLECTIONS.invites, inviteId);
+      if (!invite || invite.churchId !== req.params.churchId) {
+        throw httpError(404, "Invite not found.");
+      }
+      if (invite.status !== "pending") {
+        throw httpError(400, "Only pending invites can be revoked.");
+      }
+      await setDoc(
+        COLLECTIONS.invites,
+        inviteId,
+        {
+          status: "revoked",
+          revokedAt: nowIso(),
+          revokedByUid: admin.user.uid,
+        },
+        { merge: true },
+      );
+      await addSecurityEvent({
+        type: "invite_revoked",
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+        inviteId,
+        email: invite.email || null,
+      });
+      return res.json({ success: true });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message || "Could not revoke this invite",
+      });
+    }
+  },
+
   async getInvitePreview(req, res) {
     try {
       enforceRateLimit({
@@ -3109,6 +4221,9 @@ export const authHandlers = {
       const invite = await findDocByTokenHash(COLLECTIONS.invites, token);
       if (!invite) {
         throw httpError(404, "Invite not found.");
+      }
+      if (invite.status === "revoked") {
+        throw httpError(400, "This invite was revoked.");
       }
       const church = await getChurchById(invite.churchId);
       const churchName =
@@ -3141,6 +4256,9 @@ export const authHandlers = {
       }
       const invite = await findDocByTokenHash(COLLECTIONS.invites, token);
       if (!invite || invite.status !== "pending") {
+        if (invite && invite.status === "revoked") {
+          throw httpError(400, "This invite was revoked.");
+        }
         throw httpError(400, "This invite is not active.");
       }
       if (new Date(invite.expiresAt).getTime() < Date.now()) {
@@ -3189,7 +4307,7 @@ export const authHandlers = {
 
   async removeAdmin(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const targetUserId = req.params.userId;
       if (targetUserId === admin.user.uid) {
@@ -3242,7 +4360,7 @@ export const authHandlers = {
 
   async removeMember(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const targetUserId = req.params.userId;
       if (targetUserId === admin.user.uid) {
@@ -3292,7 +4410,7 @@ export const authHandlers = {
 
   async updateMemberAccess(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const appAccess = normalizeAppAccess(req.body?.appAccess, "");
       if (!appAccess) {
@@ -3333,7 +4451,7 @@ export const authHandlers = {
 
   async requestAdminAccess(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const bootstrap = await requireHumanSession(req);
       if (bootstrap.churchId !== req.params.churchId) {
         throw httpError(403, "This request does not match the current church.");
@@ -3530,7 +4648,7 @@ export const authHandlers = {
 
   async createWorkstationPairing(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       enforceRateLimit({
         scope: "workstation-pairing-create",
@@ -3676,7 +4794,7 @@ export const authHandlers = {
 
   async revokeWorkstation(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const workstation = await getDoc(
         COLLECTIONS.workstationDevices,
@@ -3713,7 +4831,7 @@ export const authHandlers = {
   async unlinkWorkstation(req, res) {
     try {
       if (req.session?.auth?.sessionKind === SESSION_KIND_WORKSTATION) {
-        assertCsrf(req);
+        await assertCsrf(req);
       }
       const workstation = await resolveAuthenticatedWorkstation(req);
       if (req.params.deviceId !== workstation.deviceId) {
@@ -3759,7 +4877,7 @@ export const authHandlers = {
   async updateWorkstationOperator(req, res) {
     try {
       if (req.session?.auth?.sessionKind === SESSION_KIND_WORKSTATION) {
-        assertCsrf(req);
+        await assertCsrf(req);
       }
       const workstation = await resolveAuthenticatedWorkstation(req);
       const operatorName = String(req.body?.operatorName || "").trim();
@@ -3803,7 +4921,7 @@ export const authHandlers = {
 
   async createDisplayPairing(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       enforceRateLimit({
         scope: "display-pairing-create",
@@ -3856,7 +4974,7 @@ export const authHandlers = {
 
   async sendPairingCodeEmail(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       enforceRateLimit({
         scope: "pairing-code-email",
@@ -3975,7 +5093,7 @@ export const authHandlers = {
 
   async revokeDisplayDevice(req, res) {
     try {
-      assertCsrf(req);
+      await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const display = await getDoc(
         COLLECTIONS.displayDevices,

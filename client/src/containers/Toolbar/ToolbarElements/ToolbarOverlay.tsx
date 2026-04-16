@@ -72,33 +72,35 @@ const ToolbarOverlay = ({
               Quick Links
             </ToolbarButton>
           )}
-          {access !== "view" && overlayControllerPanel === "credits" && (
-            <div className="flex shrink-0 items-center gap-1">
-              <ToolbarButton
-                svg={generateCredits.justGenerated ? Check : RefreshCcw}
-                onClick={() => generateCredits.generateFromOverlays()}
-                disabled={
-                  !generateCredits.hasOverlays || generateCredits.isGenerating
-                }
-                isActive={generateCredits.justGenerated}
-              >
-                {generateCredits.isGenerating
-                  ? "Generating..."
-                  : generateCredits.justGenerated
-                    ? "Generated."
-                    : "Generate Credits"}
-              </ToolbarButton>
-              <ToolbarButton
-                svg={Settings}
-                onClick={() =>
-                  dispatch(setOverlayCreditsSettingsDrawerOpen(true))
-                }
-                aria-label="Credits settings"
-              >
-                Settings
-              </ToolbarButton>
-            </div>
-          )}
+          {access !== "view" &&
+            access !== "music" &&
+            overlayControllerPanel === "credits" && (
+              <div className="flex shrink-0 items-center gap-1">
+                <ToolbarButton
+                  svg={generateCredits.justGenerated ? Check : RefreshCcw}
+                  onClick={() => generateCredits.generateFromOverlays()}
+                  disabled={
+                    !generateCredits.hasOverlays || generateCredits.isGenerating
+                  }
+                  isActive={generateCredits.justGenerated}
+                >
+                  {generateCredits.isGenerating
+                    ? "Generating..."
+                    : generateCredits.justGenerated
+                      ? "Generated."
+                      : "Generate Credits"}
+                </ToolbarButton>
+                <ToolbarButton
+                  svg={Settings}
+                  onClick={() =>
+                    dispatch(setOverlayCreditsSettingsDrawerOpen(true))
+                  }
+                  aria-label="Credits settings"
+                >
+                  Settings
+                </ToolbarButton>
+              </div>
+            )}
         </div>
       </div>
       <hr className="sticky left-0 w-full border-t-2 border-gray-500" />
@@ -118,7 +120,7 @@ const ToolbarOverlay = ({
         >
           Overlays
         </ToolbarButton>
-        {access !== "view" && (
+        {access !== "view" && access !== "music" && (
           <ToolbarButton
             ref={(el) => {
               overlayPanelTabRefs.current.credits = el;

@@ -5,9 +5,12 @@ import GlobalInfoProvider from "./globalInfo";
 import { GlobalInfoContext } from "./globalInfo";
 import * as authApi from "../api/auth";
 import * as firebaseApps from "../firebase/apps";
+import * as environmentUtils from "../utils/environment";
 import {
+  getPendingDesktopEmailResendState,
   getPendingLinkCredentialState,
   getPendingLinkState,
+  setPendingDesktopEmailResendState,
   setPendingLinkCredentialState,
   setPendingLinkState,
   getWorkstationSessionOperatorName,
@@ -43,6 +46,8 @@ const signInWithCustomTokenMock = jest.fn<any, any[]>(() => Promise.resolve({}))
 const signOutMock = jest.fn<any, any[]>(() => Promise.resolve());
 const signInWithEmailAndPasswordMock = jest.fn<any, any[]>(() => Promise.resolve({}));
 const signInWithPopupMock = jest.fn<any, any[]>(() => Promise.resolve({}));
+const getRedirectResultMock = jest.fn<any, any[]>(() => Promise.resolve(null));
+const signInWithRedirectMock = jest.fn<any, any[]>(() => Promise.resolve());
 const fetchSignInMethodsForEmailMock = jest.fn<any, any[]>(() => Promise.resolve([]));
 const linkWithCredentialMock = jest.fn<any, any[]>(() => Promise.resolve({}));
 const updateProfileMock = jest.fn<any, any[]>(() => Promise.resolve());
@@ -84,8 +89,10 @@ jest.mock("../api/auth", () => ({
   ),
   createHumanSession: jest.fn(),
   createChurchAccount: jest.fn(),
+  exchangeDesktopAuth: jest.fn(),
   forgotPassword: jest.fn(),
   logoutSession: jest.fn(),
+  resendEmailCode: jest.fn(),
   unlinkWorkstation: jest.fn(() => Promise.resolve({ success: true })),
   verifyEmailCode: jest.fn(),
   updateWorkstationOperator: jest.fn(() =>
@@ -97,6 +104,13 @@ jest.mock("../firebase/apps", () => ({
   getHumanAuth: jest.fn(() => mockHumanAuth),
   getSharedDataAuth: jest.fn(() => ({})),
   getSharedDataDatabase: jest.fn(() => ({ name: "firebase-db" })),
+}));
+
+jest.mock("../utils/environment", () => ({
+  ...jest.requireActual("../utils/environment"),
+  isElectron: jest.fn(() => false),
+  isPackagedElectronRenderer: jest.fn(() => false),
+  reloadElectronDisplayWindows: jest.fn(),
 }));
 
 jest.mock("firebase/auth", () => ({
@@ -160,6 +174,9 @@ jest.mock("firebase/auth", () => ({
   ) => signInWithEmailAndPasswordMock(auth, email, password),
   signInWithPopup: (auth: unknown, provider: unknown) =>
     signInWithPopupMock(auth, provider),
+  getRedirectResult: (auth: unknown) => getRedirectResultMock(auth),
+  signInWithRedirect: (auth: unknown, provider: unknown) =>
+    signInWithRedirectMock(auth, provider),
   signOut: (auth?: unknown) => signOutMock(auth),
   createUserWithEmailAndPassword: jest.fn(() => Promise.resolve({ user: {} })),
   updateProfile: (user: unknown, profile: unknown) =>
@@ -347,6 +364,23 @@ const AuthActionsProbe = () => {
   );
 };
 
+const CodeActionsProbe = () => {
+  const context = useContext(GlobalInfoContext);
+  if (!context) return null;
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        void context.resendEmailCode({
+          pendingAuthId: "pending-auth-code",
+        })
+      }
+    >
+      Resend code
+    </button>
+  );
+};
+
 describe("GlobalInfoProvider presentation listener contracts", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -361,6 +395,10 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     signOutMock.mockClear();
     signInWithEmailAndPasswordMock.mockReset();
     signInWithPopupMock.mockReset();
+    getRedirectResultMock.mockReset();
+    signInWithRedirectMock.mockReset();
+    getRedirectResultMock.mockResolvedValue(null);
+    signInWithRedirectMock.mockResolvedValue(undefined);
     fetchSignInMethodsForEmailMock.mockReset();
     linkWithCredentialMock.mockReset();
     updateProfileMock.mockReset();
@@ -374,6 +412,8 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     (authApi.updateWorkstationOperator as jest.Mock).mockReset();
     (authApi.createHumanSession as jest.Mock).mockReset();
     (authApi.createChurchAccount as jest.Mock).mockReset();
+    (authApi.exchangeDesktopAuth as jest.Mock).mockReset();
+    (authApi.resendEmailCode as jest.Mock).mockReset();
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(demoBootstrap);
     (authApi.getSharedDataToken as jest.Mock).mockResolvedValue({
       success: true,
@@ -400,6 +440,16 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       requiresEmailCode: true,
       pendingAuthId: "pending-123",
     });
+    (authApi.resendEmailCode as jest.Mock).mockResolvedValue({
+      success: true,
+      requiresEmailCode: true,
+      pendingAuthId: "pending-auth-code-next",
+    });
+    (environmentUtils.isElectron as jest.Mock).mockReturnValue(false);
+    (environmentUtils.isPackagedElectronRenderer as jest.Mock).mockReturnValue(
+      false,
+    );
+    setPendingDesktopEmailResendState(null);
     (firebaseApps.getSharedDataDatabase as jest.Mock).mockImplementation(() =>
       getDatabaseMock()
     );
@@ -953,6 +1003,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
 describe("GlobalInfoProvider auth regression coverage", () => {
   beforeEach(() => {
     sessionStorage.clear();
+    setPendingDesktopEmailResendState(null);
     setPendingLinkState(null);
     setPendingLinkCredentialState(null);
     mockHumanAuth.currentUser = null;
@@ -969,12 +1020,22 @@ describe("GlobalInfoProvider auth regression coverage", () => {
       requiresEmailCode: true,
       pendingAuthId: "pending-123",
     });
+    (authApi.resendEmailCode as jest.Mock).mockReset();
+    (authApi.resendEmailCode as jest.Mock).mockResolvedValue({
+      success: true,
+      requiresEmailCode: true,
+      pendingAuthId: "pending-auth-code-next",
+    });
     signInWithEmailAndPasswordMock.mockReset();
     signInWithEmailAndPasswordMock.mockResolvedValue({
       user: mockHumanAuth.currentUser,
     });
     signInWithPopupMock.mockReset();
     signInWithPopupMock.mockResolvedValue({ user: mockHumanAuth.currentUser });
+    getRedirectResultMock.mockReset();
+    signInWithRedirectMock.mockReset();
+    getRedirectResultMock.mockResolvedValue(null);
+    signInWithRedirectMock.mockResolvedValue(undefined);
     fetchSignInMethodsForEmailMock.mockReset();
     fetchSignInMethodsForEmailMock.mockResolvedValue([]);
     linkWithCredentialMock.mockReset();
@@ -982,6 +1043,10 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     googleCredentialFromErrorMock.mockReset();
     microsoftCredentialFromErrorMock.mockReset();
     googleCredentialFactoryMock.mockClear();
+    (environmentUtils.isElectron as jest.Mock).mockReturnValue(false);
+    (environmentUtils.isPackagedElectronRenderer as jest.Mock).mockReturnValue(
+      false,
+    );
   });
 
   it("clears stale pending-link UI state when no linkable credential remains", async () => {
@@ -1190,6 +1255,62 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     expect(updateProfileMock).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(signOutMock).toHaveBeenCalledWith(mockHumanAuth);
+    });
+  });
+
+  it("blocks popup provider auth in packaged Electron renderer", async () => {
+    (environmentUtils.isPackagedElectronRenderer as jest.Mock).mockReturnValue(
+      true,
+    );
+    renderProvider(<AuthActionsProbe />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Google sign in" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-error")).toHaveTextContent(
+        "Provider sign-in opens in your browser from the desktop app. Use Continue with Google or Microsoft on the sign-in screen.",
+      );
+    });
+    expect(signInWithPopupMock).not.toHaveBeenCalled();
+    expect(authApi.createHumanSession).not.toHaveBeenCalled();
+  });
+
+  it("resends email code with desktop broker handshake in Electron when no Firebase user exists", async () => {
+    (environmentUtils.isElectron as jest.Mock).mockReturnValue(true);
+    mockHumanAuth.currentUser = null;
+    setPendingDesktopEmailResendState({
+      desktopAuthId: "desktop-auth-1",
+      desktopAuthSecret: "desktop-secret-1",
+    });
+    renderProvider(
+      <>
+        <AuthActionsProbe />
+        <CodeActionsProbe />
+      </>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("probe-auth-status")).toHaveTextContent("online");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Resend code" }));
+
+    await waitFor(() => {
+      expect(authApi.resendEmailCode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pendingAuthId: "pending-auth-code",
+          desktopAuthId: "desktop-auth-1",
+          desktopAuthSecret: "desktop-secret-1",
+        }),
+      );
+    });
+    expect(getPendingDesktopEmailResendState()).toEqual({
+      desktopAuthId: "desktop-auth-1",
+      desktopAuthSecret: "desktop-secret-1",
     });
   });
 });

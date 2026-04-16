@@ -113,7 +113,9 @@ const ItemSlides = () => {
   const { isMobile } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
 
-  const canEdit = access === "full" || (access === "music" && type === "song");
+  const canEdit =
+    access === "full" ||
+    (access === "music" && (type === "song" || type === "free"));
   const isMusic = useMemo(() => access === "music", [access]);
   const shouldPrepareFreeMonitorSlides =
     type === "free" && shouldSendTo.monitor && monitorShowNextSlide;

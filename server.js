@@ -458,6 +458,10 @@ app.get("/api/auth/me", authHandlers.getAuthMe);
 app.get("/api/auth/shared-data-token", authHandlers.createSharedDataToken);
 app.post("/api/auth/churches/create", authHandlers.createChurchAccount);
 app.post("/api/auth/session", authHandlers.createHumanSession);
+app.post("/api/auth/desktop/start", authHandlers.startDesktopAuth);
+app.post("/api/auth/desktop/complete", authHandlers.completeDesktopAuth);
+app.post("/api/auth/desktop/status", authHandlers.getDesktopAuthStatus);
+app.post("/api/auth/desktop/exchange", authHandlers.exchangeDesktopAuth);
 app.post("/api/auth/resend-email-code", authHandlers.resendEmailCode);
 app.post("/api/auth/verify-email-code", authHandlers.verifyEmailCode);
 app.post("/api/auth/logout", authHandlers.logout);
@@ -476,6 +480,10 @@ app.post(
 );
 app.post("/api/churches/:churchId/branding", authHandlers.updateChurchBranding);
 app.post("/api/churches/:churchId/invites", authHandlers.createInvite);
+app.post(
+  "/api/churches/:churchId/invites/:inviteId/revoke",
+  authHandlers.revokeChurchInvite,
+);
 app.get("/api/invites/preview", authHandlers.getInvitePreview);
 app.post("/api/invites/accept", authHandlers.acceptInvite);
 app.post(
