@@ -1,3 +1,10 @@
+## [2.1.2](https://github.com/K-Cheddar/worship-sync/compare/v2.1.1...v2.1.2) (2026-04-16)
+
+
+### Bug Fixes
+
+* Improve media folders ux ([2b2a012](https://github.com/K-Cheddar/worship-sync/commit/2b2a0124c752448a428bf95453a3171bbc74b93e))
+
 ## [2.1.1](https://github.com/K-Cheddar/worship-sync/compare/v2.1.0...v2.1.1) (2026-04-16)
 
 
