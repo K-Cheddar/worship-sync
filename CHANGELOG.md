@@ -1,3 +1,10 @@
+## [2.1.1](https://github.com/K-Cheddar/worship-sync/compare/v2.1.0...v2.1.1) (2026-04-16)
+
+
+### Bug Fixes
+
+* Fixed board controllers not working on electron ([8678d7c](https://github.com/K-Cheddar/worship-sync/commit/8678d7c0b785f7a57ec5bb3c28f8e6d5d351868d))
+
 # [2.1.0](https://github.com/K-Cheddar/worship-sync/compare/v2.0.4...v2.1.0) (2026-04-16)
 
 
