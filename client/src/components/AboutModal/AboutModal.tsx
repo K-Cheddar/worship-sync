@@ -10,8 +10,15 @@ import {
 import { isElectron } from "../../utils/environment";
 import * as serviceWorkerRegistration from "../../serviceWorkerRegistration";
 import { RefreshCw, RotateCw } from "lucide-react";
+import { humanizeUpdateError } from "./updateMessages";
 
-type UpdateStatus = "idle" | "checking" | "upToDate" | "updateAvailable" | "downloading" | "updateDownloaded" | "error";
+type UpdateStatus =
+  | "idle"
+  | "checking"
+  | "upToDate"
+  | "downloading"
+  | "updateDownloaded"
+  | "error";
 
 interface AboutModalProps {
   isOpen: boolean;
@@ -88,7 +95,7 @@ const AboutModal = ({
       const result = await window.electronAPI.checkForUpdates();
       if (result.error) {
         setUpdateStatus("error");
-        setUpdateError(result.error);
+        setUpdateError(humanizeUpdateError(result.error));
       } else if (result.message) {
         setUpdateStatus("upToDate");
         setUpdateMessage(result.message);
@@ -97,7 +104,14 @@ const AboutModal = ({
         const current = version || (await getAppVersion()) || "";
         if (isNewerVersion(newVer, current)) {
           setUpdateVersion(newVer);
-          setUpdateStatus("updateAvailable");
+          // autoDownload is on in main: progress events may arrive before this IPC
+          // returns. Never downgrade downloading / downloaded back to "available".
+          setUpdateStatus((prev) => {
+            if (prev === "updateDownloaded") return prev;
+            if (prev === "downloading") return prev;
+            return "downloading";
+          });
+          setDownloadPercent((p) => (p > 0 ? p : 0));
         } else {
           setUpdateStatus("upToDate");
         }
@@ -106,7 +120,11 @@ const AboutModal = ({
       }
     } catch {
       setUpdateStatus("error");
-      setUpdateError("Failed to check for updates.");
+      setUpdateError(
+        humanizeUpdateError(
+          "Could not check for updates. Check your connection and try again.",
+        ),
+      );
     }
   }, [version]);
 
@@ -143,12 +161,20 @@ const AboutModal = ({
       getAppVersion().then((current) => {
         if (current && isNewerVersion(info.version, current)) {
           setUpdateVersion(info.version);
-          setUpdateStatus("updateAvailable");
+          setUpdateStatus((prev) => {
+            if (prev === "updateDownloaded") return prev;
+            return "downloading";
+          });
+          setDownloadPercent((p) => (p > 0 ? p : 0));
         }
       });
     });
     const unsubNotAvailable = window.electronAPI.onUpdateNotAvailable?.(() => {
-      setUpdateStatus("upToDate");
+      setUpdateStatus((prev) => {
+        if (prev === "downloading" || prev === "updateDownloaded") return prev;
+        if (prev === "error") return prev;
+        return "upToDate";
+      });
     });
     const unsubDownloaded = window.electronAPI.onUpdateDownloaded?.((info) => {
       setUpdateVersion(info.version);
@@ -161,7 +187,7 @@ const AboutModal = ({
     });
     const unsubError = window.electronAPI.onUpdateError?.((error) => {
       setUpdateStatus("error");
-      setUpdateError(error.message);
+      setUpdateError(humanizeUpdateError(error.message));
     });
     return () => {
       unsubAvailable?.();
@@ -211,19 +237,23 @@ const AboutModal = ({
           )}
         {showUpdateSection && (
           <div className="border-t border-gray-700 pt-4 mt-4 space-y-3 w-full flex flex-col gap-2 items-center">
-            {updateStatus === "error" && (
-              <p className="text-sm text-red-400">{updateError}</p>
-            )}
-            {updateStatus === "upToDate" && (
-              <p className="text-sm text-gray-400">{updateMessage || "You're up to date."}</p>
-            )}
-            {(updateStatus === "updateAvailable" || updateStatus === "downloading") && (
-              <p className="text-sm text-gray-300">
-                {updateStatus === "downloading"
-                  ? `Downloading update ${updateVersion}… ${Math.round(downloadPercent)}%`
-                  : `Update available: ${updateVersion}`}
-              </p>
-            )}
+            <div className="min-h-5 w-full" aria-live="polite">
+              {updateStatus === "error" && (
+                <p className="text-sm text-red-400">{updateError}</p>
+              )}
+              {updateStatus === "upToDate" && (
+                <p className="text-sm text-gray-400">
+                  {updateMessage || "You're up to date."}
+                </p>
+              )}
+              {updateStatus === "downloading" && (
+                <p className="text-sm text-gray-300">
+                  {downloadPercent > 0
+                    ? `Downloading update ${updateVersion}… ${Math.round(downloadPercent)}%`
+                    : `Downloading update ${updateVersion}…`}
+                </p>
+              )}
+            </div>
             {updateStatus === "updateDownloaded" && (
               <>
                 <p className="text-sm text-gray-300">Update {updateVersion} ready to install.</p>
@@ -241,7 +271,16 @@ const AboutModal = ({
               onClick={handleCheckForUpdates}
               svg={RefreshCw}
               isLoading={updateStatus === "checking"}
-              disabled={updateStatus === "checking"}
+              disabled={
+                updateStatus === "checking" ||
+                updateStatus === "downloading" ||
+                updateStatus === "updateDownloaded"
+              }
+              aria-label={
+                updateStatus === "downloading"
+                  ? "Update download in progress"
+                  : undefined
+              }
             >
               {updateStatus === "checking" ? "Checking…" : "Check for updates"}
             </Button>

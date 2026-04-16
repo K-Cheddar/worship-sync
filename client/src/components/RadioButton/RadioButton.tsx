@@ -16,6 +16,11 @@ export type RadioButtonProps = Omit<
   className?: string;
   textSize?: string;
   labelClassName?: string;
+  /** Secondary line under the label (muted; linked with `aria-describedby` on the control). */
+  helperText?: string;
+  helperTextClassName?: string;
+  /** When true, the label is shown without a trailing colon (for full-sentence options). */
+  hideLabelColon?: boolean;
   disabled?: boolean;
   id?: string;
 };
@@ -26,12 +31,33 @@ const RadioButton = ({
   className = "",
   textSize = "text-sm",
   labelClassName = "",
+  helperText,
+  helperTextClassName = "",
+  hideLabelColon = false,
   disabled = false,
   id: idProp,
   ...rest
 }: RadioButtonProps) => {
   const generatedId = useId();
   const itemId = idProp || generatedId;
+  const helperId = `${itemId}-helper`;
+
+  const labelBlock = (
+    <label
+      className={cn(
+        "min-w-0 leading-snug transition-colors duration-150 ease-out",
+        helperText ? "font-semibold" : "flex-1 font-semibold",
+        !disabled &&
+          "cursor-pointer group-hover/radio-row:text-white",
+        disabled && "cursor-not-allowed",
+        labelClassName
+      )}
+      htmlFor={itemId}
+    >
+      {label}
+      {!hideLabelColon ? ":" : null}
+    </label>
+  );
 
   return (
     <div
@@ -43,22 +69,27 @@ const RadioButton = ({
       )}
       {...rest}
     >
-      <label
-        className={cn(
-          "min-w-0 flex-1 font-semibold leading-snug transition-colors duration-150 ease-out",
-          !disabled &&
-            "cursor-pointer group-hover/radio-row:text-white",
-          disabled && "cursor-not-allowed",
-          labelClassName
-        )}
-        htmlFor={itemId}
-      >
-        {label}:
-      </label>
+      {helperText ? (
+        <div className="min-w-0 flex-1 flex flex-col gap-1">
+          {labelBlock}
+          <p
+            id={helperId}
+            className={cn(
+              "text-xs font-normal leading-snug text-gray-400",
+              helperTextClassName
+            )}
+          >
+            {helperText}
+          </p>
+        </div>
+      ) : (
+        labelBlock
+      )}
       <RadioGroupPrimitive.Item
         value={optionValue}
         disabled={disabled}
         id={itemId}
+        aria-describedby={helperText ? helperId : undefined}
         className={cn(
           "group relative size-5 shrink-0 rounded-full outline-none",
           "ring-1 ring-inset ring-white/20 transition-[background-color,box-shadow] duration-150 ease-out",

@@ -36,6 +36,16 @@ export function getChildFolders(
     );
 }
 
+/** True when the folder has no child folders and no media assigned to it (safe to delete without a choice modal). */
+export function isMediaLibraryFolderEmpty(
+  folderId: string,
+  folders: MediaFolder[],
+  list: MediaType[],
+): boolean {
+  if (getChildFolders(folderId, folders).length > 0) return false;
+  return !list.some((m) => m.folderId === folderId);
+}
+
 export function collectSubtreeFolderIds(
   rootId: string,
   folders: MediaFolder[],
