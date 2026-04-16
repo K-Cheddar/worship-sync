@@ -141,6 +141,22 @@ const createMockBoardDb = () => {
         hidden: false,
         highlighted: false,
       },
+      {
+        _id: "post:board-current:3",
+        _rev: "1-g",
+        type: "post" as const,
+        docType: "board-post" as const,
+        id: "3",
+        aliasId: "sunday",
+        boardId: "board-current",
+        database: "test",
+        author: "Morgan",
+        text: "Withdrawn message",
+        timestamp: 25,
+        hidden: false,
+        highlighted: false,
+        deleted: true,
+      },
     ],
     "board-old": [
       {
@@ -350,6 +366,19 @@ describe("BoardControllerContent", () => {
     expect(postTexts[1]).toHaveTextContent("Visible question");
   });
 
+  it("disables Hide on posts the author deleted while moderating the current session", async () => {
+    renderPage();
+
+    await screen.findByText(/Withdrawn message/i);
+    const article = screen
+      .getAllByRole("article")
+      .find((el) => within(el).queryByText(/Withdrawn message/i));
+    expect(article).toBeDefined();
+    expect(
+      within(article as HTMLElement).getByRole("button", { name: /^Hide$/i }),
+    ).toBeDisabled();
+  });
+
   it("stores the selected alias for the board display page", async () => {
     renderPage();
 
@@ -482,7 +511,7 @@ describe("BoardControllerContent", () => {
     const user = userEvent.setup();
     renderPage();
 
-    expect(await screen.findAllByRole("button", { name: /^Hide$/i })).toHaveLength(2);
+    expect(await screen.findAllByRole("button", { name: /^Hide$/i })).toHaveLength(3);
 
     await openBoardToolsSheetIfMobile(user);
     await user.click(screen.getByLabelText(/Show posts from/i));

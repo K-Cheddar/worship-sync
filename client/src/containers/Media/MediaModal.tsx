@@ -40,7 +40,12 @@ import { updateMediaItemFields } from "../../store/mediaSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { MediaUploadInputRef } from "./MediaUploadInput";
 import { useCachedMediaUrl, useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
-import { MEDIA_LIBRARY_ROOT_VIEW, getChildFolders, moveMediaToFolder } from "../../utils/mediaFolderMutations";
+import {
+  MEDIA_LIBRARY_ROOT_VIEW,
+  getChildFolders,
+  isMediaLibraryFolderEmpty,
+  moveMediaToFolder,
+} from "../../utils/mediaFolderMutations";
 import {
   buildFolderTreeSelectOptions,
   MEDIA_LIBRARY_MOVE_TO_NEW_FOLDER,
@@ -428,6 +433,32 @@ const MediaModal = ({
       onSelectLibraryFilter(folderId);
     },
     [clearModalSelection, onSelectLibraryFilter],
+  );
+
+  const handleRequestFolderDelete = useCallback(() => {
+    if (!selectedRealFolder) return;
+    if (isMediaLibraryFolderEmpty(selectedRealFolder.id, folders, fullList)) {
+      onDeleteFolderKeepContents(selectedRealFolder.id);
+      navigateToFolder(
+        selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW,
+      );
+      return;
+    }
+    setFolderDeleteOpen(true);
+  }, [
+    selectedRealFolder,
+    folders,
+    fullList,
+    onDeleteFolderKeepContents,
+    navigateToFolder,
+  ]);
+
+  const handleNewFolderCreated = useCallback(
+    (nf: MediaFolder) => {
+      if (!showAll) return;
+      navigateToFolder(nf.parentId ?? MEDIA_LIBRARY_ROOT_VIEW);
+    },
+    [showAll, navigateToFolder],
   );
 
   const handleShowAllChange = useCallback(
@@ -955,6 +986,7 @@ const MediaModal = ({
                       list={fullList}
                       parentForNewFolder={parentForNewFolder}
                       onUpdateFoldersAndList={onUpdateFoldersAndList}
+                      onFolderCreated={handleNewFolderCreated}
                       onClose={() => setNewFolderOpen(false)}
                     />
                   </PopoverContent>
@@ -991,7 +1023,7 @@ const MediaModal = ({
                   </Popover>
                 ) : null
               }
-              onDeleteFolder={() => setFolderDeleteOpen(true)}
+              onDeleteFolder={handleRequestFolderDelete}
               showFolderRenameDelete={Boolean(selectedRealFolder)}
               showMediaRename={modalSelectedMediaIds.size === 1}
               mediaRenameOpen={mediaRenameOpen}
@@ -1039,6 +1071,7 @@ const MediaModal = ({
                     list={fullList}
                     parentForNewFolder={parentForNewFolder}
                     onUpdateFoldersAndList={onUpdateFoldersAndList}
+                    onFolderCreated={handleNewFolderCreated}
                     adjustListAfterCreate={(nf, _nextFolders, listBefore) =>
                       moveMediaToFolder(
                         modalSelectedMediaIds,

@@ -703,6 +703,13 @@ app.whenReady().then(() => {
 
   windowStateManager = new WindowStateManager();
   mediaCacheManager = new MediaCacheManager();
+
+  // `autoHideMenuBar` only affects Windows/Linux (in-window menu). On macOS the menu lives in
+  // the system menu bar and Electron still installs a default app menu unless we clear it.
+  if (!isDev && process.platform === "darwin") {
+    Menu.setApplicationMenu(null);
+  }
+
   createWindow();
 
   // Configure auto-updater and check before boot (only in production)

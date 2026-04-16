@@ -16,12 +16,16 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "../../components/ui/Popover";
+import { useCallback } from "react";
 import { useDispatch } from "../../hooks";
 import MediaUploadInput from "./MediaUploadInput";
 import {
   setIsMediaExpanded,
 } from "../../store/preferencesSlice";
-import { moveMediaToFolder } from "../../utils/mediaFolderMutations";
+import {
+  MEDIA_LIBRARY_ROOT_VIEW,
+  moveMediaToFolder,
+} from "../../utils/mediaFolderMutations";
 import {
   MediaLibraryFolderModals,
   MediaLibraryNewFolderForm,
@@ -38,6 +42,7 @@ import MediaModal from "./MediaModal";
 import MediaProviderRetryModal from "./MediaProviderRetryModal";
 import MediaLibraryGrid from "./MediaLibraryGrid";
 import { useMediaLibraryController } from "./useMediaLibraryController";
+import type { MediaFolder } from "../../types";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -51,7 +56,16 @@ type MediaProps = {
 const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const dispatch = useDispatch();
   const c = useMediaLibraryController({ variant, pageMode });
+  const { showAll, navigateToFolder } = c;
   const selectedCount = c.selectedMediaIds.size;
+
+  const handleNewFolderCreated = useCallback(
+    (nf: MediaFolder) => {
+      if (!showAll) return;
+      navigateToFolder(nf.parentId ?? MEDIA_LIBRARY_ROOT_VIEW);
+    },
+    [showAll, navigateToFolder],
+  );
 
   return (
     <ErrorBoundary>
@@ -171,6 +185,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                           list={c.list}
                           parentForNewFolder={c.parentForNewFolder}
                           onUpdateFoldersAndList={c.applyFoldersAndList}
+                          onFolderCreated={handleNewFolderCreated}
                           onClose={() => c.setNewFolderOpen(false)}
                         />
                       </PopoverContent>
@@ -204,7 +219,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                       </Popover>
                     ) : null
                   }
-                  onDeleteFolder={() => c.setFolderDeleteOpen(true)}
+                  onDeleteFolder={c.handleRequestFolderDelete}
                   showFolderRenameDelete={Boolean(c.selectedRealFolder)}
                   showMediaRename={selectedCount === 1}
                   mediaRenameOpen={c.mediaRenameOpen}
@@ -236,6 +251,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                         list={c.list}
                         parentForNewFolder={c.parentForNewFolder}
                         onUpdateFoldersAndList={c.applyFoldersAndList}
+                        onFolderCreated={handleNewFolderCreated}
                         adjustListAfterCreate={(nf, _nextFolders, listBefore) =>
                           moveMediaToFolder(
                             c.selectedMediaIds,

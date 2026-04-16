@@ -1205,7 +1205,7 @@ export const BoardControllerContent = () => {
                                     await updateBoardPostHidden(post._id, !post.hidden);
                                   })
                                 }
-                                disabled={isActing}
+                                disabled={isActing || post.deleted}
                               >
                                 {post.hidden ? "Unhide" : "Hide"}
                               </Button>

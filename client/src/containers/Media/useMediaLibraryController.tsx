@@ -30,6 +30,7 @@ import {
   deleteFolderAndSubtree,
   deleteFolderKeepContents,
   getChildFolders,
+  isMediaLibraryFolderEmpty,
   getMediaRouteFolderRepairs,
   moveMediaToFolder,
 } from "../../utils/mediaFolderMutations";
@@ -757,6 +758,30 @@ export function useMediaLibraryController({
     [dispatch, folders, list, mediaRouteFolders],
   );
 
+  const handleRequestFolderDelete = useCallback(() => {
+    if (
+      !selectedLibraryFilter ||
+      selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW
+    ) {
+      return;
+    }
+    const folder = folders.find((f) => f.id === selectedLibraryFilter);
+    if (!folder) return;
+    if (isMediaLibraryFolderEmpty(folder.id, folders, list)) {
+      handleDeleteFolderKeepContents(folder.id);
+      navigateToFolder(folder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW);
+      return;
+    }
+    setFolderDeleteOpen(true);
+  }, [
+    selectedLibraryFilter,
+    folders,
+    list,
+    handleDeleteFolderKeepContents,
+    navigateToFolder,
+    setFolderDeleteOpen,
+  ]);
+
   const handleDeleteFolderSubtree = useCallback(
     async (folderId: string) => {
       const target = folders.find((f) => f.id === folderId);
@@ -1220,6 +1245,7 @@ export function useMediaLibraryController({
     setFolderRenameOpen,
     selectedRealFolder,
     setFolderDeleteOpen,
+    handleRequestFolderDelete,
     handleActionBarMediaRenameOpenChange,
     handleRenameMediaSave,
     closeMediaRenamePopover: () => setRenamePopoverOpen(false),

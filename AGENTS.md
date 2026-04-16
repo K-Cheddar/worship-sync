@@ -162,6 +162,10 @@ When possible, reviewers should verify relevant commands:
 - Client lint: `cd client && npm run lint:check`
 - Client type/build validation: `cd client && npm run build:strict`
 
+**`testing-library/no-node-access`**
+
+- Client lint enforces this rule: **avoid direct Node access; prefer using the methods from Testing Library** (`screen` / `within` / `getBy*` / `findBy*` / `queryBy*`, including `getByRole` with `name` when appropriate). Do not chain DOM traversal APIs on queried elements (for example `closest`, `parentElement`, `querySelector` on a node returned from a query) to reach a parent or sibling; that is what the rule flags.
+
 If full verification is not practical, the review should say exactly what was and was not validated.
 If confidence is limited, the review should say so clearly rather than implying the change is safe.
 
