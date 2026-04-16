@@ -12,9 +12,9 @@ import {
 import React, { type ReactNode } from "react";
 import { getDefaultEmailLogoUrl } from "./emailLogoUrl";
 
-/** Matches Login / controller surfaces: gray-700 page, gray-800 card, cyan CTA and links */
+/** Matches auth surfaces: same hue as `--color-homepage-canvas` in client/src/styles/globals.css */
 export const worshipSyncEmailBrand = {
-  pageBg: "#374151",
+  pageBg: "#2b3544",
   cardBg: "#1f2937",
   cardBorder: "#6b7280",
   textPrimary: "#f9fafb",

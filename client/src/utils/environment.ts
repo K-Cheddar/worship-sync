@@ -130,6 +130,40 @@ export const getApiBasePath = (): string => {
   return import.meta.env.VITE_API_BASE_PATH || "/";
 };
 
+const shareablePrefixFromHttpApiBase = (apiBase: string): string => {
+  const parsed = new URL(apiBase);
+  const path = parsed.pathname.replace(/\/+$/, "");
+  const normalizedPath = path === "" || path === "/" ? "" : path;
+  return `${parsed.origin}${normalizedPath}${parsed.search}`;
+};
+
+/**
+ * Origin + path + query for the **web** app, used before the `#` in hash routes.
+ * Packaged Electron uses `file://` here; share/copy must use the public HTTPS origin instead
+ * (same host as {@link getApiBasePath} in production builds).
+ */
+export const getShareableHashRouterUrlPrefix = (): string => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  if (isPackagedElectronRenderer()) {
+    try {
+      return shareablePrefixFromHttpApiBase(getApiBasePath());
+    } catch {
+      return "https://www.worshipsync.net";
+    }
+  }
+  return `${window.location.origin}${window.location.pathname}${window.location.search}`;
+};
+
+/** Full URL for a hash-router path (e.g. `/boards/x`), safe to copy from Electron. */
+export const buildShareableHashRouterUrl = (hashRoute: string): string => {
+  const prefix = getShareableHashRouterUrlPrefix();
+  const trimmed = hashRoute.replace(/^#/, "");
+  const path = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return `${prefix}#${path}`;
+};
+
 /**
  * Get the development mode status (async, for Electron)
  */

@@ -553,7 +553,13 @@ const assertValidPairingNotifyEmail = (raw) => {
   return email;
 };
 
-const sendPairingSetupEmailInternal = async ({ to, kind, label, token }) => {
+const sendPairingSetupEmailInternal = async ({
+  to,
+  kind,
+  churchName,
+  label,
+  token,
+}) => {
   if (!resendClient || !resendFromEmail) {
     throw httpError(503, "Email is not configured on this server.");
   }
@@ -561,6 +567,7 @@ const sendPairingSetupEmailInternal = async ({ to, kind, label, token }) => {
   const setupUrl = buildPairingSetupUrl(kind, token);
   const { html, text } = await renderPairingSetupCodeEmail({
     kind,
+    churchName: churchName || "",
     label,
     code: token,
     setupUrl,
@@ -5009,9 +5016,14 @@ export const authHandlers = {
       if (new Date(pairing.expiresAt).getTime() < Date.now()) {
         throw httpError(400, "This pairing code has expired.");
       }
+      const church = await getChurchById(req.params.churchId);
+      if (!church) {
+        throw httpError(404, "Church not found");
+      }
       await sendPairingSetupEmailInternal({
         to,
         kind,
+        churchName: church.name || "",
         label: pairing.label,
         token,
       });

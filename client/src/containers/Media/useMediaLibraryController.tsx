@@ -65,9 +65,15 @@ import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
 import { alertMediaLibraryFlushFailed } from "./mediaLibraryFlushAlerts";
 import { fill } from "@cloudinary/url-gen/actions/resize";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
+import { useLoadMoreOnScroll } from "../../hooks/useLoadMoreOnScroll";
 import { ActionCreators } from "redux-undo";
 import { useToast } from "../../context/toastContext";
 import type { ToastVariant } from "../../components/Toast/Toast";
+import {
+  MEDIA_GRID_LOAD_THRESHOLD_PX,
+  MEDIA_GRID_PROGRESSIVE_BATCH,
+  MEDIA_GRID_PROGRESSIVE_INITIAL,
+} from "./mediaGridProgressiveLoad";
 
 export type MediaLibraryPageMode = "default" | "overlayController";
 export type MediaLibraryVariant = "default" | "panel";
@@ -219,19 +225,60 @@ export function useMediaLibraryController({
     selectedLibraryFilter !== MEDIA_LIBRARY_ROOT_VIEW,
   );
 
-  const filteredList = list.filter((item) => {
-    const matchesSearch = item.name
-      ?.toLowerCase()
-      .includes(searchTerm.toLowerCase());
-    if (!matchesSearch) return false;
-    if (typeFilter !== "all" && item.type !== typeFilter) return false;
-    if (selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW) {
-      return !item.folderId;
-    }
-    if (selectedLibraryFilter) {
-      return item.folderId === selectedLibraryFilter;
-    }
-    return true;
+  const filteredList = useMemo(() => {
+    return list.filter((item) => {
+      const matchesSearch = item.name
+        ?.toLowerCase()
+        .includes(searchTerm.toLowerCase());
+      if (!matchesSearch) return false;
+      if (typeFilter !== "all" && item.type !== typeFilter) return false;
+      if (selectedLibraryFilter === MEDIA_LIBRARY_ROOT_VIEW) {
+        return !item.folderId;
+      }
+      if (selectedLibraryFilter) {
+        return item.folderId === selectedLibraryFilter;
+      }
+      return true;
+    });
+  }, [list, searchTerm, typeFilter, selectedLibraryFilter]);
+
+  const mediaGridProgressKey = `${routeKey}|${String(selectedLibraryFilter)}|${searchTerm}|${typeFilter}`;
+  const [numShownMediaItems, setNumShownMediaItems] = useState(
+    MEDIA_GRID_PROGRESSIVE_INITIAL,
+  );
+
+  const filteredListLengthRef = useRef(filteredList.length);
+  filteredListLengthRef.current = filteredList.length;
+
+  useEffect(() => {
+    setNumShownMediaItems(
+      Math.min(
+        MEDIA_GRID_PROGRESSIVE_INITIAL,
+        filteredListLengthRef.current,
+      ),
+    );
+  }, [mediaGridProgressKey]);
+
+  const visibleFilteredList = useMemo(
+    () => filteredList.slice(0, numShownMediaItems),
+    [filteredList, numShownMediaItems],
+  );
+
+  const isMediaGridFullyLoaded = filteredList.length <= numShownMediaItems;
+
+  useLoadMoreOnScroll({
+    scrollRef: mediaListRef,
+    enabled:
+      isMediaExpanded &&
+      !isMediaLoading &&
+      !isMediaGridFullyLoaded &&
+      filteredList.length > 0,
+    totalAvailable: filteredList.length,
+    batchSize: MEDIA_GRID_PROGRESSIVE_BATCH,
+    setShownCount: setNumShownMediaItems,
+    shownCount: numShownMediaItems,
+    rescheduleKey: mediaGridProgressKey,
+    thresholdPx: MEDIA_GRID_LOAD_THRESHOLD_PX,
   });
 
   // Use shared selection hook
@@ -1189,6 +1236,8 @@ export function useMediaLibraryController({
     handleDeleteFolderKeepContents,
     folderDeleteOpen,
     filteredList,
+    visibleFilteredList,
+    isMediaGridFullyLoaded,
     showNamesInPanelGrid,
     childFolders,
     canGoUp,

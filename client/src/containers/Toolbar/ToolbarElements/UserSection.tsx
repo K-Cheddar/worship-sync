@@ -44,7 +44,6 @@ const UserSection = () => {
     loginState,
     churchName,
     churchBranding,
-    linkedAuthMethods,
     updateSelfDisplayName,
     exitGuestMode,
     endWorkstationOperatorSession,
@@ -89,7 +88,6 @@ const UserSection = () => {
     [churchBranding],
   );
   const emailLine = userEmail?.trim() ?? "";
-  const linkedMethodsLine = (linkedAuthMethods || []).join(", ");
 
   useEffect(() => {
     setNameDraft(fullDisplayName || "");
@@ -245,16 +243,6 @@ const UserSection = () => {
               Email
             </span>
             <span className="wrap-break-word text-sm text-gray-300">{emailLine}</span>
-          </div>
-        ) : null}
-        {linkedMethodsLine ? (
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-              Sign-in methods
-            </span>
-            <span className="wrap-break-word text-sm text-gray-300">
-              {linkedMethodsLine}
-            </span>
           </div>
         ) : null}
         {sessionKind === "human" && updateSelfDisplayName ? (

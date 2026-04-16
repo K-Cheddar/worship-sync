@@ -22,11 +22,21 @@ describe("firstNameFromDisplayName", () => {
 });
 
 describe("resolveAccountDisplayNameForAudit", () => {
-  it("prefers Firebase display name for human sessions", () => {
+  it("prefers bootstrap user for human sessions when both are set (server label is current)", () => {
     expect(
       resolveAccountDisplayNameForAudit({
         sessionKind: "human",
-        user: "from@bootstrap.com",
+        user: "Kevin",
+        firebaseHumanDisplayName: "hello",
+      }),
+    ).toBe("Kevin");
+  });
+
+  it("falls back to Firebase display name for human when bootstrap user is empty", () => {
+    expect(
+      resolveAccountDisplayNameForAudit({
+        sessionKind: "human",
+        user: "",
         firebaseHumanDisplayName: "Jane Pastor",
       }),
     ).toBe("Jane Pastor");

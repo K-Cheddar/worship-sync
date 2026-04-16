@@ -275,12 +275,13 @@ const Login = () => {
     if (!pendingId || !clearPending) {
       return;
     }
+    context?.clearAuthError();
     setPendingAuthId(pendingId);
     setMode("code");
     setFieldErrors({});
     setInfoBanner("");
     clearPending();
-  }, [context?.pendingEmailVerificationId, context?.clearPendingEmailVerification]);
+  }, [context]);
 
   useEffect(() => {
     const codeParam = searchParams.get("code");
@@ -353,6 +354,7 @@ const Login = () => {
         response.status === "requires_email_code" &&
         response.pendingAuthId
       ) {
+        context?.clearAuthError();
         setPendingEmailCodeSignInMethod(pendingDesktopAuth.provider);
         setPendingAuthId(response.pendingAuthId);
         setMode("code");
@@ -403,6 +405,7 @@ const Login = () => {
     async (method: DesktopAuthProvider) => {
       setInfoBanner("");
       setLocalAuthError("");
+      context?.clearAuthError();
       setFieldErrors({});
       setIsStartingDesktopAuth(true);
       try {
@@ -441,7 +444,7 @@ const Login = () => {
         setIsStartingDesktopAuth(false);
       }
     },
-    [clearPendingDesktopAuth, location.state, openDesktopBrowserUrl],
+    [clearPendingDesktopAuth, context, location.state, openDesktopBrowserUrl],
   );
 
   const handleHostedDesktopBrowserCompletion = useCallback(async () => {
@@ -455,6 +458,7 @@ const Login = () => {
     setDesktopBrowserFlowStatus("loading");
     setInfoBanner("");
     setLocalAuthError("");
+    context?.clearAuthError();
     try {
       const authResult = await context.authenticateHumanWithFirebase({
         method: desktopBrowserProvider,
@@ -701,6 +705,7 @@ const Login = () => {
     setFieldErrors({});
     setInfoBanner("");
     setLocalAuthError("");
+    context?.clearAuthError();
     setForgotPasswordHasSubmit(false);
     setForgotPasswordEmailSent(false);
     setCode("");
@@ -825,7 +830,7 @@ const Login = () => {
     }
     if (isHostedDesktopBrowserFlow) {
       if (desktopBrowserFlowStatus === "loading") {
-        return "Use the same Google or Microsoft account you use for WorshipSync.";
+        return "";
       }
       return "Use the same Google or Microsoft account you use for WorshipSync. If something went wrong, use the button below to try again.";
     }
@@ -1226,7 +1231,7 @@ const Login = () => {
                 </Button>
               )}
 
-              {mode !== "forgotPassword" ? (
+              {mode === "signIn" ? (
                 <Button
                   type="button"
                   variant="tertiary"

@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import MediaLibraryFolderGridItems from "./MediaLibraryFolderGridItems";
 import MediaLibraryGridMediaTile from "./MediaLibraryGridMediaTile";
+import Spinner from "../../components/Spinner/Spinner";
 import cn from "classnames";
 import type { MediaFolder, MediaType } from "../../types";
 
@@ -20,6 +21,9 @@ export type MediaLibraryGridProps = {
   mediaItemsPerRow: number;
   mediaListRef: RefObject<HTMLUListElement | null>;
   filteredList: MediaType[];
+  /** Subset of `filteredList` mounted in the grid; grows while scrolling (see `useLoadMoreOnScroll`). */
+  visibleMediaItems: MediaType[];
+  isMediaGridFullyLoaded: boolean;
   showAll: boolean;
   showNamesInPanelGrid: boolean;
   searchTerm: string;
@@ -45,6 +49,8 @@ export default function MediaLibraryGrid({
   mediaItemsPerRow,
   mediaListRef,
   filteredList,
+  visibleMediaItems,
+  isMediaGridFullyLoaded,
   showAll,
   showNamesInPanelGrid,
   searchTerm,
@@ -91,7 +97,7 @@ export default function MediaLibraryGrid({
               onGoUp={onGoUp}
               onOpenFolder={onOpenFolder}
             />
-            {filteredList.map((mediaItem, index) => {
+            {visibleMediaItems.map((mediaItem, index) => {
               const { id } = mediaItem;
               const isSelected = id === selectedMedia.id;
               const isMultiSelected = selectedMediaIds.has(id);
@@ -113,6 +119,16 @@ export default function MediaLibraryGrid({
                 </li>
               );
             })}
+            {!isMediaGridFullyLoaded && filteredList.length > 0 && (
+              <li
+                className="col-span-full flex w-full items-center justify-center border-t border-white/10 bg-black/20 py-3"
+                role="status"
+                aria-live="polite"
+                aria-label="Loading more media"
+              >
+                <Spinner width="26px" borderWidth="3px" className="opacity-75" />
+              </li>
+            )}
             {!showAll && searchTerm && filteredList.length === 0 && (
               <li className="col-span-full py-1">
                 <p className="text-sm text-gray-400">

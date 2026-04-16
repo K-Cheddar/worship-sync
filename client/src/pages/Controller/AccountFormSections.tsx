@@ -26,6 +26,7 @@ import Select from "../../components/Select/Select";
 import Spinner from "../../components/Spinner/Spinner";
 import TextArea from "../../components/TextArea/TextArea";
 import { useToast } from "../../context/toastContext";
+import { buildShareableHashRouterUrl } from "../../utils/environment";
 import {
   createAdminInvite,
   createDisplayPairing,
@@ -314,12 +315,8 @@ const PairingCodeBanner = ({
   const setupPath = `${route}?token=${encodeURIComponent(token)}`;
   const instructionTarget =
     variant === "workstation" ? "shared workstation" : "display screen";
-  const setupUrl = (() => {
-    if (typeof window === "undefined") return "";
-    const url = new URL(window.location.href);
-    url.hash = setupPath;
-    return url.toString();
-  })();
+  const setupUrl =
+    typeof window === "undefined" ? "" : buildShareableHashRouterUrl(setupPath);
 
   const copyText = async (value: string, successMessage: string) => {
     if (!value) {

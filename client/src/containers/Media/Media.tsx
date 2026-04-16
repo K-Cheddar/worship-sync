@@ -274,6 +274,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           mediaItemsPerRow={c.mediaItemsPerRow}
           mediaListRef={c.mediaListRef}
           filteredList={c.filteredList}
+          visibleMediaItems={c.visibleFilteredList}
+          isMediaGridFullyLoaded={c.isMediaGridFullyLoaded}
           showAll={c.showAll}
           showNamesInPanelGrid={c.showNamesInPanelGrid}
           searchTerm={c.searchTerm}
