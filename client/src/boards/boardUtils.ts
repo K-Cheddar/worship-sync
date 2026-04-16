@@ -1,4 +1,5 @@
 import { DBBoard, DBBoardAlias, DBBoardPost } from "../types";
+import { buildShareableHashRouterUrl } from "../utils/environment";
 
 export const BOARD_REMOTE_DB_NAME = "worship-sync-boards";
 export const BOARD_ALIAS_ID_PREFIX = "alias:";
@@ -190,10 +191,8 @@ export const buildBoardPresentRoute = (aliasId: string): string =>
 
 export const buildBoardDisplayRoute = (): string => "/boards/display";
 
-const buildBoardHashRouteUrl = (route: string): string => {
-  const pathname = `${window.location.origin}${window.location.pathname}${window.location.search}`;
-  return `${pathname}#${route}`;
-};
+const buildBoardHashRouteUrl = (route: string): string =>
+  buildShareableHashRouterUrl(route);
 
 export const buildBoardPublicUrl = (
   aliasId: string,

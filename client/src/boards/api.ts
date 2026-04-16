@@ -1,6 +1,9 @@
-import { getApiBasePath } from "../utils/environment";
+import {
+  getApiBasePath,
+  isPackagedElectronRenderer,
+} from "../utils/environment";
 import { DBBoard, DBBoardAlias, DBBoardPost } from "../types";
-import { getWorkstationToken } from "../utils/authStorage";
+import { getHumanApiToken, getWorkstationToken } from "../utils/authStorage";
 
 type JsonRequestInit = Omit<RequestInit, "body"> & {
   body?: Record<string, unknown> | string;
@@ -13,6 +16,10 @@ export const createBoardRequestHeaders = (initHeaders?: HeadersInit) => {
   const workstationToken = getWorkstationToken();
   if (workstationToken) {
     headers.set("x-workstation-token", workstationToken);
+  }
+  const humanApiToken = getHumanApiToken();
+  if (isPackagedElectronRenderer() && humanApiToken) {
+    headers.set("Authorization", `Bearer ${humanApiToken}`);
   }
   return headers;
 };

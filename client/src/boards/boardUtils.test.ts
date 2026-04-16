@@ -1,4 +1,5 @@
 import {
+  buildBoardPublicUrl,
   filterHighlightedBoardPosts,
   filterVisibleBoardPosts,
   generateAnonymousDisplayName,
@@ -31,6 +32,15 @@ const createPost = (overrides: Partial<DBBoardPost>): DBBoardPost => ({
 });
 
 describe("boardUtils", () => {
+  it("builds board public URLs from the current window location in the browser", () => {
+    expect(buildBoardPublicUrl("sunday", "board")).toBe(
+      `${window.location.origin}${window.location.pathname}${window.location.search}#/boards/sunday`,
+    );
+    expect(buildBoardPublicUrl("sunday", "present")).toBe(
+      `${window.location.origin}${window.location.pathname}${window.location.search}#/boards/present/sunday`,
+    );
+  });
+
   it("normalizes alias ids for routes and docs", () => {
     expect(normalizeAliasId(" Sunday Guests / Questions ")).toBe(
       "sunday-guests-questions",

@@ -130,6 +130,18 @@ export function PasswordResetEmail({ resetUrl }: PasswordResetEmailProps) {
           {resetUrl}
         </Link>
       </Text>
+      <Text style={finePrint}>
+        This link expires in about one hour. If it has expired, go back to the
+        WorshipSync sign-in page and choose{" "}
+        <strong style={{ color: worshipSyncEmailBrand.textPrimary }}>
+          Forgot password
+        </strong>{" "}
+        to send a new link.
+      </Text>
+      <Text style={finePrint}>
+        If you did not request a password reset, you can ignore this email. Your
+        password will stay the same.
+      </Text>
     </WorshipSyncEmailLayout>
   );
 }
@@ -226,6 +238,8 @@ type AccountRestoredEmailProps = {
 
 type PairingSetupCodeEmailProps = {
   kind: "workstation" | "display";
+  /** Church display name (shown in the opening line). */
+  churchName: string;
   label: string;
   code: string;
   setupUrl: string;
@@ -234,6 +248,7 @@ type PairingSetupCodeEmailProps = {
 
 export function PairingSetupCodeEmail({
   kind,
+  churchName,
   label,
   code,
   setupUrl,
@@ -241,11 +256,16 @@ export function PairingSetupCodeEmail({
 }: PairingSetupCodeEmailProps) {
   const deviceKind =
     kind === "workstation" ? "shared workstation" : "display screen";
-  const preview = `WorshipSync setup for ${label}`;
+  const churchDisplay = churchName.trim() || "your church";
+  const preview = `${churchDisplay}: WorshipSync setup for ${label}`;
   return (
     <WorshipSyncEmailLayout previewText={preview} title="Device setup code">
       <Text style={bodyText}>
-        A church admin sent you a setup code for the{" "}
+        An admin at{" "}
+        <strong style={{ color: worshipSyncEmailBrand.textPrimary }}>
+          {churchDisplay}
+        </strong>{" "}
+        sent you a setup code for the{" "}
         <strong style={{ color: worshipSyncEmailBrand.textPrimary }}>
           {label}
         </strong>{" "}

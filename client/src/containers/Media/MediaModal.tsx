@@ -32,6 +32,7 @@ import {
   PopoverTrigger,
 } from "../../components/ui/Popover";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
+import { useLoadMoreOnScroll } from "../../hooks/useLoadMoreOnScroll";
 import type { MediaFolder, MediaRouteKey, MediaType } from "../../types";
 import cn from "classnames";
 import { RootState } from "../../store/store";
@@ -66,6 +67,12 @@ import {
   MEDIA_LIBRARY_ORANGE_FOLDER_CLASS,
   MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE,
 } from "./mediaLibraryOrangeFolderIcon";
+import {
+  MEDIA_GRID_LOAD_THRESHOLD_PX,
+  MEDIA_GRID_PROGRESSIVE_BATCH,
+  MEDIA_GRID_PROGRESSIVE_INITIAL,
+} from "./mediaGridProgressiveLoad";
+import Spinner from "../../components/Spinner/Spinner";
 
 const sizeMap: Map<number, string> = new Map([
   [7, "grid-cols-7"],
@@ -252,6 +259,46 @@ const MediaModal = ({
   const modalZoomSliderMax = Math.max(0, modalLayoutBaseCols - 2);
 
   const filteredList = mediaList;
+
+  const modalGridProgressKey = `${String(selectedLibraryFilter)}|${searchTerm}|${typeFilter}`;
+  const [numShownModalItems, setNumShownModalItems] = useState(
+    MEDIA_GRID_PROGRESSIVE_INITIAL,
+  );
+
+  const modalFilteredLengthRef = useRef(filteredList.length);
+  modalFilteredLengthRef.current = filteredList.length;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setNumShownModalItems(
+      Math.min(
+        MEDIA_GRID_PROGRESSIVE_INITIAL,
+        modalFilteredLengthRef.current,
+      ),
+    );
+  }, [isOpen, modalGridProgressKey]);
+
+  const visibleModalMediaItems = useMemo(
+    () => filteredList.slice(0, numShownModalItems),
+    [filteredList, numShownModalItems],
+  );
+
+  const isModalMediaGridFullyLoaded =
+    filteredList.length <= numShownModalItems;
+
+  useLoadMoreOnScroll({
+    scrollRef: modalGridRef,
+    enabled:
+      isOpen &&
+      !isModalMediaGridFullyLoaded &&
+      filteredList.length > 0,
+    totalAvailable: filteredList.length,
+    batchSize: MEDIA_GRID_PROGRESSIVE_BATCH,
+    setShownCount: setNumShownModalItems,
+    shownCount: numShownModalItems,
+    rescheduleKey: modalGridProgressKey,
+    thresholdPx: MEDIA_GRID_LOAD_THRESHOLD_PX,
+  });
 
   // Use shared selection hook for modal - independent from Media component
   const {
@@ -1044,7 +1091,7 @@ const MediaModal = ({
                 onGoUp={handleGoUp}
                 onOpenFolder={(id) => navigateToFolder(id)}
               />
-              {filteredList.map((mediaItem, index) => {
+              {visibleModalMediaItems.map((mediaItem, index) => {
                 const { id, name } = mediaItem;
                 const isSelected = id === modalSelectedMedia.id;
                 const isMultiSelected = modalSelectedMediaIds.has(id);
@@ -1065,6 +1112,16 @@ const MediaModal = ({
                   </li>
                 );
               })}
+              {!isModalMediaGridFullyLoaded && filteredList.length > 0 && (
+                <li
+                  className="col-span-full flex w-full items-center justify-center border-t border-white/10 bg-black/20 py-3"
+                  role="status"
+                  aria-live="polite"
+                  aria-label="Loading more media"
+                >
+                  <Spinner width="26px" borderWidth="3px" className="opacity-75" />
+                </li>
+              )}
               {!showAll &&
                 searchTerm &&
                 filteredList.length === 0 && (

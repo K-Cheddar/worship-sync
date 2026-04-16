@@ -54,6 +54,7 @@ interface ElectronAPI {
   getPlatform: () => Promise<string>;
   isElectron: () => Promise<boolean>;
   isDev: () => Promise<boolean>;
+  openExternalUrl: (url: string) => Promise<boolean>;
 
   // Window management - all generic handlers
   openWindow: (windowType: WindowType) => Promise<boolean>;
@@ -72,6 +73,9 @@ interface ElectronAPI {
   getWindowStates: () => Promise<WindowStatesInfo>;
   /** Reload open projector/monitor/board windows (e.g. after sign-in). */
   refreshDisplayWindows: () => Promise<number>;
+  onDesktopAuthCallback: (
+    callback: (payload: { desktopAuthId: string }) => void,
+  ) => () => void;
 
   // Event listeners
   onWindowStateChanged: (callback: () => void) => () => void;

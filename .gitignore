@@ -38,3 +38,6 @@ client/dist-electron/
 *.AppImage
 *.deb
 *.rpm
+
+# Local HTML from `npm run email:preview`
+email-templates/.preview/

@@ -2,7 +2,10 @@ import type { SessionKind } from "../api/authTypes";
 
 /**
  * Full name shown in the account toolbar and used for Pouch audit `updatedBy` / `createdBy`.
- * For human sessions, prefers Firebase Auth profile display name when set (same as UserSection).
+ * For human sessions, prefers the bootstrap toolbar label (`user`) first: it is resolved on the
+ * server (Firebase Admin + profile) on every session refresh. The client Firebase Auth
+ * `displayName` can lag behind Admin updates until `reload()` runs, which previously made the
+ * toolbar disagree with `activeInstanceName` (which already prefers `user`).
  */
 export function resolveAccountDisplayNameForAudit(opts: {
   sessionKind: SessionKind;
@@ -10,11 +13,14 @@ export function resolveAccountDisplayNameForAudit(opts: {
   firebaseHumanDisplayName: string;
 }): string {
   const { sessionKind, user, firebaseHumanDisplayName } = opts;
+  const trimmedUser = (user ?? "").trim();
+  const fromAuth = firebaseHumanDisplayName.trim();
   if (sessionKind === "human") {
-    const fromAuth = firebaseHumanDisplayName.trim();
+    if (trimmedUser) return trimmedUser;
     if (fromAuth) return fromAuth;
+    return "";
   }
-  return (user ?? "").trim();
+  return trimmedUser;
 }
 
 /** First token before the first space; if no space, returns the trimmed string. */

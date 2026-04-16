@@ -20,6 +20,7 @@ import {
   signInWithCustomToken,
   signInWithEmailAndPassword,
   signOut,
+  reload,
   type Auth,
   type AuthCredential,
   type User,
@@ -351,6 +352,7 @@ type GlobalInfoContextType = {
   churchBrandingStatus: ChurchBrandingStatus;
   role: string;
   authError: string;
+  clearAuthError: () => void;
   /** Set when session restore needs email verification; Login should open the code step. */
   pendingEmailVerificationId: string | null;
   clearPendingEmailVerification: () => void;
@@ -694,6 +696,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     globalFireDbInfo.user = toolbarDisplayName;
     globalFireDbInfo.database = bootstrap.database || "demo";
     globalFireDbInfo.churchId = bootstrap.churchId || "";
+    if (bootstrap.sessionKind === "human") {
+      const humanUser = getHumanAuth().currentUser;
+      if (humanUser) {
+        void reload(humanUser).catch(() => {
+          // Toolbar label already matches server via bootstrap; ignore transient reload errors.
+        });
+      }
+    }
   }, []);
 
   const finalizeHumanSignIn = useCallback(
@@ -1027,6 +1037,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setPendingEmailVerificationId(null);
   }, []);
 
+  const clearAuthError = useCallback(() => {
+    setAuthError("");
+  }, []);
+
   const enterGuestMode = useCallback(
     (nextPath = "/controller") => {
       hasRehydratedTimersRef.current = false;
@@ -1179,7 +1193,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             setAuthError("Verify this device to continue.");
           } else if (restoredSession.requiresEmailCode === false) {
             setAuthError(
-              "Your sign-in code expired. Sign in again with your password to receive a new code."
+              "There is no active sign-in code for this device. Sign in again to receive a new code.",
             );
           }
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
@@ -2156,6 +2170,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       churchBrandingStatus,
       role,
       authError,
+      clearAuthError,
       pendingEmailVerificationId,
       clearPendingEmailVerification,
       operatorName,
@@ -2204,6 +2219,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       churchBrandingStatus,
       role,
       authError,
+      clearAuthError,
       pendingEmailVerificationId,
       clearPendingEmailVerification,
       operatorName,

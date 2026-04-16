@@ -54,6 +54,7 @@ export async function renderAccountRestoredEmail(props: {
 
 export async function renderPairingSetupCodeEmail(props: {
   kind: "workstation" | "display";
+  churchName: string;
   label: string;
   code: string;
   setupUrl: string;
