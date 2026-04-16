@@ -4,7 +4,8 @@ import { ControllerInfoContext } from "../context/controllerInfo";
 import { putCreditDoc } from "../utils/dbUtils";
 import getScheduleFromExcel from "../utils/getScheduleFromExcel";
 import { updateList } from "../store/creditsSlice";
-import { broadcastCreditsUpdate } from "../store/store";
+import store, { broadcastCreditsUpdate } from "../store/store";
+import { flushCreditsHistoryFromLatestList } from "../utils/creditsHistoryFlush";
 
 /**
  * Shared "Generate credits from overlays + schedule" action for Credits Editor and overlay toolbar.
@@ -63,9 +64,7 @@ export function useGenerateCreditsFromOverlays() {
             overlay.event?.toLowerCase().includes("offertory"),
           )?.name || "",
         special: overlays
-          .filter((overlay) =>
-            overlay.event?.toLowerCase().includes("special"),
-          )
+          .filter((overlay) => overlay.event?.toLowerCase().includes("special"))
           .map((overlay) => overlay.name)
           .join("\n")
           .trim(),
@@ -79,7 +78,8 @@ export function useGenerateCreditsFromOverlays() {
       const year = now.getFullYear();
       const quarter = Math.floor(now.getMonth() / 3) + 1;
       const quarterNames = ["1st", "2nd", "3rd", "4th"];
-      const fallbackScheduleName = `${quarterNames[quarter - 1]
+      const fallbackScheduleName = `${
+        quarterNames[quarter - 1]
       } Quarter ${year} - Schedule`;
 
       const schedule = await getScheduleFromExcel(
@@ -126,12 +126,16 @@ export function useGenerateCreditsFromOverlays() {
 
       dispatch(updateList(updatedList));
 
+      await flushCreditsHistoryFromLatestList(
+        dispatch,
+        () => store.getState(),
+        db,
+      );
+
       if (db && outlineIdForCredits) {
         const oid = outlineIdForCredits;
         const docsToBroadcast = (
-          await Promise.all(
-            updatedList.map((c) => putCreditDoc(db!, oid, c)),
-          )
+          await Promise.all(updatedList.map((c) => putCreditDoc(db!, oid, c)))
         ).filter((doc): doc is NonNullable<typeof doc> => doc != null);
         if (docsToBroadcast.length > 0) {
           broadcastCreditsUpdate(docsToBroadcast);

@@ -773,6 +773,91 @@ describe("presentationSlice", () => {
       );
     });
 
+    it.each([
+      {
+        label: "participant",
+        send: () =>
+          presentationSlice.actions.updateParticipantOverlayInfo({
+            id: "part-b",
+            type: "participant",
+            name: "Jordan",
+          } as never),
+        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+          expect(state.streamInfo.participantOverlayInfo?.name).toBe("Jordan");
+        },
+      },
+      {
+        label: "stb",
+        send: () =>
+          presentationSlice.actions.updateStbOverlayInfo({
+            id: "stb-b",
+            type: "stick-to-bottom",
+            heading: "Service starts soon",
+          } as never),
+        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+          expect(state.streamInfo.stbOverlayInfo?.heading).toBe(
+            "Service starts soon",
+          );
+        },
+      },
+      {
+        label: "qr",
+        send: () =>
+          presentationSlice.actions.updateQrCodeOverlayInfo({
+            id: "qr-b",
+            type: "qr-code",
+            url: "https://example.com/connect",
+            description: "Connect",
+          } as never),
+        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+          expect(state.streamInfo.qrCodeOverlayInfo?.url).toBe(
+            "https://example.com/connect",
+          );
+        },
+      },
+    ])(
+      "sending %s after full clearStream does not replay prior participant exit",
+      ({ send, assert }) => {
+        jest.useFakeTimers();
+        jest.setSystemTime(9100);
+
+        const base = presentationSlice.getInitialState();
+        const store = createStore({
+          presentation: {
+            ...base,
+            isStreamTransmitting: true,
+          },
+        });
+
+        store.dispatch(
+          presentationSlice.actions.updateImageOverlayInfo({
+            id: "img-a",
+            type: "image",
+            imageUrl: "https://img.example/a.jpg",
+          } as never),
+        );
+        store.dispatch(
+          presentationSlice.actions.updateParticipantOverlayInfo({
+            id: "part-a",
+            type: "participant",
+            name: "Alex",
+          } as never),
+        );
+
+        store.dispatch(presentationSlice.actions.clearStream());
+        expect(
+          store.getState().presentation.prevStreamInfo.participantOverlayInfo
+            ?.name,
+        ).toBe("Alex");
+
+        store.dispatch(send());
+
+        const end = store.getState().presentation;
+        expect(end.prevStreamInfo.participantOverlayInfo?.name).toBe("");
+        assert(end);
+      },
+    );
+
     it("clearStreamOverlaysOnly drops stale cross-type prev overlay so only live overlay exits", () => {
       jest.useFakeTimers();
       jest.setSystemTime(5000);
@@ -1454,6 +1539,222 @@ describe("presentationSlice", () => {
       expect(p.streamInfo.type).toBe("song");
     });
 
+    it("updateStream snapshots live formatted text into prev when switching to a stream slide", () => {
+      const slide = {
+        id: "s1",
+        type: "song" as const,
+        name: "Song",
+        boxes: [{ id: "b1", width: 10, height: 10, words: "Lyric" }],
+      };
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          isStreamTransmitting: true,
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            type: "free",
+            formattedTextDisplayInfo: {
+              text: "Announcements here",
+              time: 3,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateStream({
+          slide,
+          type: "song",
+          name: "Song",
+        } as never),
+      );
+
+      const p = store.getState().presentation;
+      expect(p.prevStreamInfo.formattedTextDisplayInfo?.text).toBe(
+        "Announcements here",
+      );
+      expect(p.streamInfo.formattedTextDisplayInfo?.text).toBe("");
+      expect(p.streamInfo.type).toBe("song");
+    });
+
+    it("updateStream leaves prev bible unchanged when stream bible is already empty", () => {
+      const slide = {
+        id: "s1",
+        type: "song" as const,
+        name: "Song",
+        boxes: [{ id: "b1", width: 10, height: 10, words: "Lyric" }],
+      };
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          isStreamTransmitting: true,
+          prevStreamInfo: {
+            ...presentationSlice.getInitialState().prevStreamInfo,
+            bibleDisplayInfo: {
+              title: "AlreadyInPrev",
+              text: "saved",
+              time: 1,
+            },
+          },
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            type: "bible",
+            bibleDisplayInfo: { title: "", text: "", time: 99 },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateStream({
+          slide,
+          type: "song",
+          name: "Song",
+        } as never),
+      );
+
+      expect(
+        store.getState().presentation.prevStreamInfo.bibleDisplayInfo?.title,
+      ).toBe("AlreadyInPrev");
+    });
+
+    it("updateStreamFromRemote snapshots live bible into prev when switching to a stream slide", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            type: "bible",
+            bibleDisplayInfo: {
+              title: "Gal 2:20",
+              text: "Christ lives in me",
+              time: 5,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateStreamFromRemote(
+          createPresentation({
+            type: "song",
+            name: "Song",
+            slide: { id: "sl", type: "Media", name: "m", boxes: [] },
+            time: 10,
+            displayType: "stream",
+          }),
+        ),
+      );
+
+      const p = store.getState().presentation;
+      expect(p.prevStreamInfo.bibleDisplayInfo?.title).toBe("Gal 2:20");
+      expect(p.streamInfo.bibleDisplayInfo?.title).toBe("");
+      expect(p.streamInfo.type).toBe("song");
+    });
+
+    it("updateStreamFromRemote snapshots live formatted text into prev when switching to a stream slide", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            type: "free",
+            formattedTextDisplayInfo: {
+              text: "Potluck signup",
+              time: 2,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateStreamFromRemote(
+          createPresentation({
+            type: "song",
+            name: "Song",
+            slide: { id: "sl", type: "Media", name: "m", boxes: [] },
+            time: 10,
+            displayType: "stream",
+          }),
+        ),
+      );
+
+      const p = store.getState().presentation;
+      expect(p.prevStreamInfo.formattedTextDisplayInfo?.text).toBe(
+        "Potluck signup",
+      );
+      expect(p.streamInfo.formattedTextDisplayInfo?.text).toBe("");
+    });
+
+    it("updateBibleDisplayInfoFromRemote moves live formatted text to prev and clears stream slot", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            formattedTextDisplayInfo: {
+              text: "Hello church",
+              time: 2,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfoFromRemote({
+          title: "Mt 5:3",
+          text: "Blessed are the poor in spirit",
+          time: 10,
+        }),
+      );
+
+      const p = store.getState().presentation;
+      expect(p.streamInfo.formattedTextDisplayInfo?.text).toBe("");
+      expect(p.prevStreamInfo.formattedTextDisplayInfo?.text).toBe(
+        "Hello church",
+      );
+      expect(p.streamInfo.bibleDisplayInfo?.title).toBe("Mt 5:3");
+      expect(p.streamInfo.type).toBe("bible");
+    });
+
+    it("updateFormattedTextDisplayInfoFromRemote after empty bible keeps prev bible (remote ItemSlides order)", () => {
+      const store = createStore({
+        presentation: {
+          ...presentationSlice.getInitialState(),
+          streamInfo: {
+            ...presentationSlice.getInitialState().streamInfo,
+            type: "bible",
+            bibleDisplayInfo: {
+              title: "Col 3:1",
+              text: "Seek things above",
+              time: 1,
+            },
+          },
+        },
+      });
+
+      store.dispatch(
+        presentationSlice.actions.updateBibleDisplayInfoFromRemote({
+          title: "",
+          text: "",
+          time: 2,
+        }),
+      );
+      store.dispatch(
+        presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote({
+          text: "Picnic Sunday",
+          time: 3,
+        } as never),
+      );
+
+      expect(
+        store.getState().presentation.prevStreamInfo.bibleDisplayInfo?.title,
+      ).toBe("Col 3:1");
+      expect(
+        store.getState().presentation.streamInfo.formattedTextDisplayInfo?.text,
+      ).toBe("Picnic Sunday");
+      expect(store.getState().presentation.streamInfo.type).toBe("free");
+    });
+
     it("updateFormattedTextDisplayInfoFromRemote with empty text does not clear live bible (firebase echo order)", () => {
       const store = createStore({
         presentation: {
@@ -2104,6 +2405,91 @@ describe("presentationSlice", () => {
         "https://img.example/b.jpg",
       );
     });
+
+    it.each([
+      {
+        label: "participant",
+        send: () =>
+          presentationSlice.actions.updateParticipantOverlayInfoFromRemote({
+            id: "p-b",
+            type: "participant",
+            name: "Jordan",
+            time: 12,
+          } as never),
+        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+          expect(state.streamInfo.participantOverlayInfo?.name).toBe("Jordan");
+        },
+      },
+      {
+        label: "stb",
+        send: () =>
+          presentationSlice.actions.updateStbOverlayInfoFromRemote({
+            id: "stb-b",
+            type: "stick-to-bottom",
+            heading: "Service starts soon",
+            time: 12,
+          } as never),
+        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+          expect(state.streamInfo.stbOverlayInfo?.heading).toBe(
+            "Service starts soon",
+          );
+        },
+      },
+      {
+        label: "qr",
+        send: () =>
+          presentationSlice.actions.updateQrCodeOverlayInfoFromRemote({
+            id: "qr-b",
+            type: "qr-code",
+            url: "https://example.com/connect",
+            description: "Connect",
+            time: 12,
+          } as never),
+        assert: (state: ReturnType<typeof presentationSlice.getInitialState>) => {
+          expect(state.streamInfo.qrCodeOverlayInfo?.url).toBe(
+            "https://example.com/connect",
+          );
+        },
+      },
+    ])(
+      "remote sequence image -> participant -> clear -> %s does not replay participant exit",
+      ({ send, assert }) => {
+        jest.useFakeTimers();
+        jest.setSystemTime(10000);
+
+        const base = presentationSlice.getInitialState();
+        const store = createStore({
+          presentation: {
+            ...base,
+            isStreamTransmitting: true,
+          },
+        });
+
+        store.dispatch(
+          presentationSlice.actions.updateImageOverlayInfoFromRemote({
+            id: "img-a",
+            type: "image",
+            imageUrl: "https://img.example/a.jpg",
+            time: 10,
+          } as never),
+        );
+        store.dispatch(
+          presentationSlice.actions.updateParticipantOverlayInfoFromRemote({
+            id: "p-a",
+            type: "participant",
+            name: "Alex",
+            time: 11,
+          } as never),
+        );
+
+        store.dispatch(presentationSlice.actions.clearStreamOverlaysOnly());
+        store.dispatch(send());
+
+        const end = store.getState().presentation;
+        expect(end.prevStreamInfo.participantOverlayInfo?.name).toBe("");
+        assert(end);
+      },
+    );
 
     it("remote late clear after cross-type switch clears stale prev image", () => {
       const base = presentationSlice.getInitialState();

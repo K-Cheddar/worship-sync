@@ -38,9 +38,7 @@ import { RootState } from "../../store/store";
 import { updateMediaItemFields } from "../../store/mediaSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { MediaUploadInputRef } from "./MediaUploadInput";
-import MediaTypeBadge from "./MediaTypeBadge";
 import { useCachedMediaUrl, useCachedVideoUrl } from "../../hooks/useCachedMediaUrl";
-import CachedMediaImage from "../../components/CachedMediaImage/CachedMediaImage";
 import { MEDIA_LIBRARY_ROOT_VIEW, getChildFolders, moveMediaToFolder } from "../../utils/mediaFolderMutations";
 import {
   buildFolderTreeSelectOptions,
@@ -49,6 +47,7 @@ import {
 import MediaLibraryToolbar from "./MediaLibraryToolbar";
 import { Slider } from "../../components/ui/Slider";
 import MediaLibraryFolderGridItems from "./MediaLibraryFolderGridItems";
+import MediaLibraryGridMediaTile from "./MediaLibraryGridMediaTile";
 import MediaLibraryActionBar, {
   MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
 } from "./MediaLibraryActionBar";
@@ -259,10 +258,12 @@ const MediaModal = ({
     selectedMedia: modalSelectedMedia,
     selectedMediaIds: modalSelectedMediaIds,
     previewMedia: modalPreviewMedia,
+    mediaMultiSelectMode: modalMediaMultiSelectMode,
     setSelectedMedia: setModalSelectedMedia,
     setSelectedMediaIds: setModalSelectedMediaIds,
     setPreviewMedia: setModalPreviewMedia,
     handleMediaClick: handleModalMediaClick,
+    enterMediaMultiSelectMode: enterModalMediaMultiSelectMode,
     clearSelection: clearModalSelection,
   } = useMediaSelection({
     mediaList: fullList,
@@ -545,6 +546,8 @@ const MediaModal = ({
     }
     const items = fullList.filter((x) => modalSelectedMediaIds.has(x.id));
     const multiMeta = summarizeMultiSelectMetadata(items);
+    const showSelectionAccent =
+      modalMediaMultiSelectMode || modalSelectedMediaIds.size > 1;
     return (
       <div
         className="min-w-0 truncate text-xs"
@@ -554,7 +557,13 @@ const MediaModal = ({
             : `${modalSelectedMediaIds.size} selected`
         }
       >
-        <span className="font-medium text-white">
+        <span
+          className={
+            showSelectionAccent
+              ? "font-medium text-cyan-400"
+              : "font-medium text-white"
+          }
+        >
           {modalSelectedMediaIds.size} selected
         </span>
         {multiMeta ? (
@@ -568,6 +577,7 @@ const MediaModal = ({
     modalSelectedMediaIds,
     selectedLibraryFilter,
     selectedRealFolder?.name,
+    modalMediaMultiSelectMode,
   ]);
 
   const parentForNewFolder =
@@ -997,6 +1007,8 @@ const MediaModal = ({
                   />
                 ) : null
               }
+              showMultiSelectDone={modalMediaMultiSelectMode}
+              onMultiSelectDone={clearModalSelection}
             />
           </div>
 
@@ -1033,56 +1045,23 @@ const MediaModal = ({
                 onOpenFolder={(id) => navigateToFolder(id)}
               />
               {filteredList.map((mediaItem, index) => {
-                const { id, thumbnail, name, type } = mediaItem;
+                const { id, name } = mediaItem;
                 const isSelected = id === modalSelectedMedia.id;
                 const isMultiSelected = modalSelectedMediaIds.has(id);
-                const shownName = name.includes("/")
-                  ? name.split("/").slice(1).join("/")
-                  : name;
 
                 return (
                   <li key={id}>
-                    <Button
-                      variant="none"
-                      padding="p-0"
-                      className={cn(
-                        "flex h-auto w-full flex-col items-center justify-center border-2",
-                        isMultiSelected
-                          ? "border-cyan-400 bg-cyan-400/10"
-                          : isSelected
-                            ? "border-cyan-400"
-                            : "border-gray-500 hover:border-gray-300"
-                      )}
-                      onClick={(e) => {
-                        handleModalMediaClick(e, mediaItem, index);
-                      }}
-                      onContextMenu={(e) => {
-                        if (!isMultiSelected && !isSelected) {
-                          handleModalMediaClick(e, mediaItem, index);
-                        }
-                      }}
-                    >
-                      <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden border-b border-gray-500">
-                        <CachedMediaImage
-                          className="max-w-full max-h-full"
-                          alt={id}
-                          src={thumbnail}
-                          loading="lazy"
-                        />
-                        <MediaTypeBadge type={type} />
-                      </div>
-
-                      {name && showName && (
-                        <div className="w-full px-1 py-1.5 text-center">
-                          <p
-                            className="text-sm font-medium text-gray-300 truncate"
-                            title={name}
-                          >
-                            {shownName}
-                          </p>
-                        </div>
-                      )}
-                    </Button>
+                    <MediaLibraryGridMediaTile
+                      mediaItem={mediaItem}
+                      index={index}
+                      isSelected={isSelected}
+                      isMultiSelected={isMultiSelected}
+                      mediaMultiSelectMode={modalMediaMultiSelectMode}
+                      onMediaTileClick={handleModalMediaClick}
+                      onEnterMediaMultiSelectMode={enterModalMediaMultiSelectMode}
+                      showBottomName={Boolean(name && showName)}
+                      bottomNameClassName="text-sm font-medium text-gray-300"
+                    />
                   </li>
                 );
               })}

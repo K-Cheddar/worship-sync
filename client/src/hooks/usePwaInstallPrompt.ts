@@ -26,7 +26,7 @@ const isStandaloneDisplayMode = (): boolean => {
 /** Safari < 14 use addListener/removeListener; modern browsers use addEventListener. */
 const subscribeMediaQueryChange = (
   mq: MediaQueryList,
-  onChange: () => void
+  onChange: () => void,
 ): (() => void) => {
   if (typeof mq.addEventListener === "function") {
     mq.addEventListener("change", onChange);
@@ -45,9 +45,7 @@ const subscribeMediaQueryChange = (
  */
 export const usePwaInstallPrompt = () => {
   const [deferredPrompt, setDeferredPrompt] =
-    useState<BeforeInstallPromptEvent | null>(
-      () => cachedBeforeInstallPrompt,
-    );
+    useState<BeforeInstallPromptEvent | null>(() => cachedBeforeInstallPrompt);
   const [isStandalone, setIsStandalone] = useState(isStandaloneDisplayMode);
 
   useEffect(() => {
@@ -61,7 +59,8 @@ export const usePwaInstallPrompt = () => {
     if (cachedBeforeInstallPrompt) {
       setDeferredPrompt(cachedBeforeInstallPrompt);
     }
-    return () => window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+    return () =>
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
   }, []);
 
   useEffect(() => {
@@ -82,5 +81,5 @@ export const usePwaInstallPrompt = () => {
 
   const canShowInstall = !isStandalone && deferredPrompt !== null;
 
-  return { canShowInstall, installPwa };
+  return { canShowInstall, installPwa, isStandalone };
 };

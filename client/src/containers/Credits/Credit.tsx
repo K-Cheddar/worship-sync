@@ -20,9 +20,10 @@ import {
 } from "react";
 import { useGSAP } from "@gsap/react";
 import { deleteCredit, updateCredit } from "../../store/creditsSlice";
-import { broadcastCreditsUpdate } from "../../store/store";
+import store, { broadcastCreditsUpdate } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { putCreditDoc } from "../../utils/dbUtils";
+import { flushCreditsHistoryFromLatestList } from "../../utils/creditsHistoryFlush";
 import Input from "../../components/Input/Input";
 import { getCreditsDocId, type DBCredits } from "../../types";
 import CreditHistoryTextArea from "./CreditHistoryTextArea";
@@ -132,8 +133,13 @@ const Credit = ({
         flushDraftToRedux();
       }
       if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
+      void flushCreditsHistoryFromLatestList(
+        dispatch,
+        () => store.getState(),
+        db,
+      );
     },
-    [flushDraftToRedux]
+    [flushDraftToRedux, dispatch, db]
   );
 
   const { attributes, listeners, setNodeRef, transform, transition } =
@@ -176,6 +182,11 @@ const Credit = ({
       reduxDebounceRef.current = null;
       flushDraftToRedux();
     }
+    void flushCreditsHistoryFromLatestList(
+      dispatch,
+      () => store.getState(),
+      db,
+    );
     setIsDeleting(true);
     setTimeout(async () => {
       if (db && outlineId) {
@@ -207,6 +218,11 @@ const Credit = ({
     const t = draftTextRef.current;
     dispatch(updateCredit({ id, heading: h, text: t, hidden: nextHidden }));
     hiddenRef.current = nextHidden;
+    void flushCreditsHistoryFromLatestList(
+      dispatch,
+      () => store.getState(),
+      db,
+    );
     if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
     persistTimeoutRef.current = setTimeout(
       () => persistCredit({ heading: h, text: t, hidden: nextHidden }),
@@ -239,6 +255,32 @@ const Credit = ({
     },
     [scheduleDebouncedRedux, bumpPersistTimeout]
   );
+
+  const handleCreditFieldBlur = useCallback(async () => {
+    if (readOnly) return;
+    if (reduxDebounceRef.current) {
+      clearTimeout(reduxDebounceRef.current);
+      reduxDebounceRef.current = null;
+    }
+    flushDraftToRedux();
+    if (persistTimeoutRef.current) {
+      clearTimeout(persistTimeoutRef.current);
+      persistTimeoutRef.current = null;
+    }
+    const payload = {
+      heading: draftHeadingRef.current,
+      text: draftTextRef.current,
+      hidden: hiddenRef.current,
+    };
+    if (db && outlineId) {
+      await persistCredit(payload);
+    }
+    await flushCreditsHistoryFromLatestList(
+      dispatch,
+      () => store.getState(),
+      db,
+    );
+  }, [readOnly, flushDraftToRedux, persistCredit, db, outlineId, dispatch]);
 
   return (
     <li
@@ -274,6 +316,7 @@ const Credit = ({
           placeholder="Heading"
           value={draftHeading}
           onChange={onHeadingChange}
+          onBlur={handleCreditFieldBlur}
           data-ignore-undo="true"
           disabled={readOnly}
         />
@@ -283,6 +326,7 @@ const Credit = ({
           historyLines={historyLines}
           onRemoveHistoryLine={onRemoveHistoryLine}
           disabled={readOnly}
+          onFieldBlur={handleCreditFieldBlur}
         />
       </div>
       {!readOnly && (

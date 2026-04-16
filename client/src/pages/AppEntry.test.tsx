@@ -35,19 +35,11 @@ describe("AppEntry", () => {
       "aria-disabled",
       "true",
     );
-    expect(screen.getByRole("link", { name: /Link as workstation/i })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    expect(screen.getByRole("link", { name: /Link as display/i })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    expect(screen.getAllByText("Connection required to verify this device.")).toHaveLength(2);
-
-    const guestDemo = screen.getByRole("link", { name: /Test as guest/i });
+    expect(screen.getByRole("button", { name: /Link with code/i })).toBeDisabled();
+    const guestDemo = screen.getByRole("button", { name: /Test as guest/i });
     expect(guestDemo).toBeInTheDocument();
-    expect(guestDemo).not.toHaveAttribute("aria-disabled");
+    expect(guestDemo).not.toBeDisabled();
+    expect(screen.getAllByText("Connection required")).toHaveLength(2);
 
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
 

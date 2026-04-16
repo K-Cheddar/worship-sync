@@ -16,9 +16,14 @@ type UpdateStatus = "idle" | "checking" | "upToDate" | "updateAvailable" | "down
 interface AboutModalProps {
   isOpen: boolean;
   onClose: () => void;
+  updateReadyVersion?: string;
 }
 
-const AboutModal = ({ isOpen, onClose }: AboutModalProps) => {
+const AboutModal = ({
+  isOpen,
+  onClose,
+  updateReadyVersion = "",
+}: AboutModalProps) => {
   const [version, setVersion] = useState<string>("");
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
@@ -64,6 +69,16 @@ const AboutModal = ({ isOpen, onClose }: AboutModalProps) => {
       fetchVersion();
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !updateReadyVersion) {
+      return;
+    }
+
+    setUpdateVersion(updateReadyVersion);
+    setUpdateStatus("updateDownloaded");
+    setDownloadPercent(100);
+  }, [isOpen, updateReadyVersion]);
 
   const handleCheckForUpdates = useCallback(async () => {
     if (!isElectron() || !window.electronAPI?.checkForUpdates) return;

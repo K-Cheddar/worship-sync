@@ -70,6 +70,31 @@ export const isMacBrowser = (): boolean => {
 };
 
 /**
+ * True when running in a normal browser on desktop Linux (not Electron).
+ * Android browsers often include "Linux" in the user agent; those are excluded.
+ * Used to show Linux desktop installer actions on the web home page.
+ */
+export const isLinuxBrowser = (): boolean => {
+  if (typeof window === "undefined" || isElectron()) {
+    return false;
+  }
+  if (isWindowsBrowser() || isMacBrowser()) {
+    return false;
+  }
+  const ua = navigator.userAgent;
+  if (/Android/i.test(ua)) {
+    return false;
+  }
+  const uaDataPlatform = (
+    navigator as Navigator & { userAgentData?: { platform?: string } }
+  ).userAgentData?.platform;
+  if (uaDataPlatform === "Linux") {
+    return true;
+  }
+  return /Linux/i.test(navigator.platform) || /\bLinux\b/i.test(ua);
+};
+
+/**
  * Get the API base path based on the environment
  * In Electron, we'll use the production server or localhost
  * In web, we'll use the environment variable

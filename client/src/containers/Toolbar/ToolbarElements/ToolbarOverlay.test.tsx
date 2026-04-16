@@ -24,12 +24,14 @@ jest.mock("./ToolbarButton", () => ({
     children,
     onClick,
     disabled,
+    "aria-label": ariaLabel,
   }: {
     children?: ReactNode;
     onClick?: () => void;
     disabled?: boolean;
+    "aria-label"?: string;
   }) => (
-    <button type="button" onClick={onClick} disabled={disabled}>
+    <button type="button" onClick={onClick} disabled={disabled} aria-label={ariaLabel}>
       {children}
     </button>
   ),
@@ -57,7 +59,7 @@ const renderOverlay = ({
   overlayPanel = "overlays" as const,
 }: {
   access?: "full" | "music" | "view";
-  overlayPanel?: "overlays" | "credits";
+  overlayPanel?: "overlays" | "credits" | "serviceTimes";
 } = {}) => {
   mockState = {
     undoable: {
@@ -106,6 +108,25 @@ describe("ToolbarOverlay", () => {
     expect(screen.queryByRole("button", { name: "Quick Links" })).not.toBeInTheDocument();
   });
 
+  it("hides Quick Links and Generate Credits on service times tab", () => {
+    renderOverlay({ access: "full", overlayPanel: "serviceTimes" });
+    expect(screen.queryByRole("button", { name: "Quick Links" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Generate Credits" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("dispatches open overlay credits settings when Settings is clicked on credits tab", () => {
+    renderOverlay({ access: "full", overlayPanel: "credits" });
+    screen.getByRole("button", { name: "Credits settings" }).click();
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "preferences/setOverlayCreditsSettingsDrawerOpen",
+        payload: true,
+      }),
+    );
+  });
+
   it("disables Generate Credits when there are no overlays", () => {
     mockGenerateCredits = {
       generateFromOverlays: jest.fn(),
@@ -149,10 +170,26 @@ describe("ToolbarOverlay", () => {
     );
   });
 
+  it("dispatches setOverlayControllerPanel when Service Times is clicked", () => {
+    renderOverlay({ access: "full", overlayPanel: "overlays" });
+
+    screen.getByRole("button", { name: "Service Times" }).click();
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "preferences/setOverlayControllerPanel",
+        payload: "serviceTimes",
+      }),
+    );
+  });
+
   it("hides Credits Editor tab for view access", () => {
     renderOverlay({ access: "view", overlayPanel: "overlays" });
     expect(
       screen.queryByRole("button", { name: "Credits Editor" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Service Times" }),
     ).not.toBeInTheDocument();
   });
 });

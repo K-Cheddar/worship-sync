@@ -1,22 +1,15 @@
 import { useMemo } from "react";
-import { useSelector } from "../../hooks";
-import { RootState } from "../../store/store";
-import { formatTime } from "../DisplayWindow/TimerDisplay";
+import ServiceTimeCountdownFace, {
+  serviceTimeStreamInfoFaceLayoutProps,
+} from "../../containers/ServiceTimes/ServiceTimeCountdownFace";
 import { ServiceTime } from "../../types";
 
 type Props = {
   upcomingService?: ServiceTime | null;
+  timeText: string | null;
 };
 
-const StreamInfo = ({ upcomingService }: Props) => {
-  const timers = useSelector((state: RootState) => state.timers.timers);
-
-  const timer = useMemo(() => {
-    if (!timers?.length) return undefined;
-    const nextServiceTimer = timers.find((t) => t.id === "next-service");
-    return nextServiceTimer;
-  }, [timers]);
-
+const StreamInfo = ({ upcomingService, timeText }: Props) => {
   const positionClasses = useMemo(() => {
     const pos = upcomingService?.position ?? "top-right";
     switch (pos) {
@@ -34,34 +27,17 @@ const StreamInfo = ({ upcomingService }: Props) => {
     }
   }, [upcomingService?.position]);
 
-  if (!timer) return null;
-
-  const nameFontsize = (upcomingService?.nameFontSize ?? 12) / 10;
-  const timeFontSize = (upcomingService?.timeFontSize ?? 35) / 10;
-  const shouldShowName = upcomingService?.shouldShowName ?? true;
+  if (!upcomingService || !timeText) return null;
 
   return (
     <div className="fixed inset-0 pointer-events-none background-transparent">
-      <div
-        className={`absolute ${positionClasses} transform px-[1%] py-[0.5%] rounded-[5%/10%] font-semibold select-none flex flex-col items-center justify-center`}
-        style={{
-          color: upcomingService?.color || undefined,
-          backgroundColor: upcomingService?.background || undefined,
-        }}
-      >
-        {shouldShowName && (
-          <div style={{ fontSize: `${nameFontsize}vw` }}>
-            {upcomingService?.name} begins in
-          </div>
-        )}
-        <div
-          className="leading-none tabular-nums"
-          style={{ fontSize: `${timeFontSize}vw` }}
-        >
-          {timer.timerType === "countdown" && timer.status === "stopped"
-            ? timer.countdownTime || "00:00"
-            : formatTime(timer.remainingTime || 0, timer.showMinutesOnly)}
-        </div>
+      <div className={`absolute ${positionClasses} transform`}>
+        <ServiceTimeCountdownFace
+          {...serviceTimeStreamInfoFaceLayoutProps}
+          service={upcomingService}
+          timeText={timeText}
+          timeDisplay="livePulseAtZero"
+        />
       </div>
     </div>
   );

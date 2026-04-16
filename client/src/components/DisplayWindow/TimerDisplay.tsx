@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useSelector } from "react-redux";
 import { TimerInfo } from "../../types";
 import { RootState } from "../../store/store";
@@ -7,22 +8,41 @@ interface TimerDisplayProps {
   words: string;
 }
 
-export const formatTime = (
+export function formatTime(
   seconds: number,
   showMinutesOnly?: boolean,
-  separateSections = false
-) => {
-  const hours = Math.floor(seconds / 3600)
+  separateSections?: false,
+): string;
+export function formatTime(
+  seconds: number,
+  showMinutesOnly: boolean | undefined,
+  separateSections: true,
+): ReactNode;
+export function formatTime(
+  seconds: number,
+  showMinutesOnly?: boolean,
+  separateSections = false,
+): string | ReactNode {
+  const totalSec = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(totalSec / 3600)
     .toString()
     .padStart(2, "0");
-  const minutes = Math.floor((seconds % 3600) / 60)
+  const minutes = Math.floor((totalSec % 3600) / 60)
     .toString()
     .padStart(2, "0");
-  const secs = (seconds % 60).toString().padStart(2, "0");
+  const secs = (totalSec % 60).toString().padStart(2, "0");
 
   if (showMinutesOnly) {
-    const totalMinutes = Math.floor(seconds / 60);
+    const totalMinutes = Math.floor(totalSec / 60);
     return totalMinutes.toString();
+  }
+
+  if (hours === "00" && totalSec < 60) {
+    const secOnly = String(totalSec);
+    if (separateSections) {
+      return <span className="inline-block">{secOnly}</span>;
+    }
+    return secOnly;
   }
 
   if (hours === "00" && separateSections) {
@@ -49,7 +69,7 @@ export const formatTime = (
   }
 
   return [hours, minutes, secs].join(":");
-};
+}
 
 const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   const timer = useSelector((state: RootState) =>

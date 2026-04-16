@@ -10,6 +10,8 @@ type ToggleProps = {
   className?: string;
   /** Merged onto the text label when `label` is set (e.g. `text-xs`). */
   labelClassName?: string;
+  /** `stacked`: label row then switch (e.g. form grids). Default keeps label and switch on one row. */
+  layout?: "inline" | "stacked";
   id?: string;
   color?: string;
   icon?: LucideIcon;
@@ -21,47 +23,64 @@ const Toggle = ({
   onChange,
   className,
   labelClassName,
+  layout = "inline",
   id: idProp,
   color,
   icon: Icon,
 }: ToggleProps) => {
   const generatedId = useId();
   const id = idProp || generatedId;
+  const isStacked = layout === "stacked";
+
+  const labelEl = label ? (
+    <label
+      className={cn(
+        "cursor-pointer text-sm font-semibold transition-colors duration-150 ease-out group-hover/toggle:text-white",
+        isStacked && "self-start",
+        labelClassName,
+      )}
+      htmlFor={id}
+    >
+      {typeof label === "string" ? `${label}:` : label}
+    </label>
+  ) : null;
+
+  const switchEl = (
+    <Switch
+      checked={value}
+      onCheckedChange={onChange}
+      id={id}
+      color={color}
+      icon={
+        Icon && (
+          <Icon
+            className={cn(
+              "h-3 w-3 shrink-0 text-foreground",
+              // Dark unchecked thumb is near-white; use page background token for a dark glyph.
+              "dark:group-data-[state=unchecked]:text-background",
+            )}
+          />
+        )
+      }
+    />
+  );
+
   return (
     <div
       className={cn(
-        "group/toggle relative flex cursor-pointer items-center gap-1",
-        className
+        "group/toggle relative flex cursor-pointer",
+        isStacked
+          ? "min-w-0 w-full flex-col items-stretch gap-1"
+          : "items-center gap-1",
+        className,
       )}
     >
-      {label && (
-        <label
-          className={cn(
-            "cursor-pointer text-sm font-semibold transition-colors duration-150 ease-out group-hover/toggle:text-white",
-            labelClassName
-          )}
-          htmlFor={id}
-        >
-          {typeof label === "string" ? `${label}:` : label}
-        </label>
+      {labelEl}
+      {isStacked ? (
+        <div className="flex justify-end">{switchEl}</div>
+      ) : (
+        switchEl
       )}
-      <Switch
-        checked={value}
-        onCheckedChange={onChange}
-        id={id}
-        color={color}
-        icon={
-          Icon && (
-            <Icon
-              className={cn(
-                "w-3 h-3 shrink-0 text-foreground",
-                // Dark unchecked thumb is near-white; use page background token for a dark glyph.
-                "dark:group-data-[state=unchecked]:text-background"
-              )}
-            />
-          )
-        }
-      />
     </div>
   );
 };

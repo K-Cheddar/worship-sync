@@ -239,9 +239,11 @@ export function useMediaLibraryController({
     selectedMedia,
     selectedMediaIds,
     previewMedia,
+    mediaMultiSelectMode,
     setPreviewMedia,
     setSelectedMediaIds,
     handleMediaClick,
+    enterMediaMultiSelectMode,
     clearSelection,
   } = useMediaSelection({
     mediaList: list,
@@ -577,6 +579,8 @@ export function useMediaLibraryController({
     }
     const items = list.filter((x) => selectedMediaIds.has(x.id));
     const multiMeta = summarizeMultiSelectMetadata(items);
+    const showSelectionAccent =
+      mediaMultiSelectMode || selectedMediaIds.size > 1;
     return (
       <div
         className="min-w-0 truncate text-xs"
@@ -586,7 +590,13 @@ export function useMediaLibraryController({
             : `${selectedMediaIds.size} selected`
         }
       >
-        <span className="font-medium text-white">
+        <span
+          className={
+            showSelectionAccent
+              ? "font-medium text-cyan-400"
+              : "font-medium text-white"
+          }
+        >
           {selectedMediaIds.size} selected
         </span>
         {multiMeta ? (
@@ -600,6 +610,7 @@ export function useMediaLibraryController({
     selectedMedia,
     selectedMediaIds,
     selectedRealFolder?.name,
+    mediaMultiSelectMode,
   ]);
 
   const parentForNewFolder =
@@ -1183,6 +1194,8 @@ export function useMediaLibraryController({
     canGoUp,
     handleGoUp,
     handleMediaClick,
+    enterMediaMultiSelectMode,
+    mediaMultiSelectMode,
     moveToNewFolderOpen,
     handleActionBarMoveToNewFolderOpenChange,
     closeMoveToNewFolderPopover: () => setMoveToNewFolderPopoverOpen(false),

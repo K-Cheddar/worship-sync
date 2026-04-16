@@ -8,23 +8,19 @@ import {
 } from "react";
 import StreamInfoComponent from "../components/StreamInfo/StreamInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
-import { ServiceTime, TimerInfo } from "../types";
+import { ServiceTime } from "../types";
 import { onValue, ref } from "firebase/database";
-import {
-  getClosestUpcomingService,
-  getEffectiveTargetTime,
-} from "../utils/serviceTimes";
-import { useDispatch, useSelector } from "../hooks";
-import { RootState } from "../store/store";
-import { addTimer, deleteTimer } from "../store/timersSlice";
+import { getClosestUpcomingService, getEffectiveTargetTime } from "../utils/serviceTimes";
+import { useDispatch } from "../hooks";
+import useNextServiceCountdownText from "../hooks/useNextServiceCountdownText";
 import { updateService } from "../store/serviceTimesSlice";
 import { getChurchDataPath } from "../utils/firebasePaths";
+import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../constants/nextServiceTimer";
 
 const StreamInfo = () => {
-  const { churchId, firebaseDb, hostId, loginState } =
+  const { churchId, firebaseDb, loginState } =
     useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
-  const timers = useSelector((s: RootState) => s.timers.timers);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const [upcomingService, setUpcomingService] = useState<{
     service: ServiceTime;
@@ -56,48 +52,10 @@ const StreamInfo = () => {
 
   const targetIso = useMemo(() => {
     if (!upcomingService) return null;
-
-    // Get the effective target time (considers override if set)
     const effectiveTime = getEffectiveTargetTime(upcomingService.service);
     return effectiveTime ? effectiveTime.toISOString() : null;
   }, [upcomingService]);
-
-  useEffect(() => {
-    const service = upcomingService?.service;
-    if (!targetIso || !service) return;
-
-    const id = `next-service`;
-    const existing = timers.find((t) => t.id === id);
-
-    const target = new Date(targetIso);
-    const now = new Date();
-    const remainingSeconds = Math.max(
-      0,
-      Math.floor((target.getTime() - now.getTime()) / 1000)
-    );
-    if (remainingSeconds <= 0) return;
-
-    const timerInfo: TimerInfo = {
-      hostId: hostId || "stream-info",
-      id,
-      name: service.name || "Next Service",
-      color: service.color,
-      timerType: "timer",
-      status: "running",
-      isActive: true,
-      duration: remainingSeconds,
-      remainingTime: remainingSeconds,
-      endTime: targetIso || undefined,
-      showMinutesOnly: false,
-    };
-
-    if (existing) {
-      dispatch(deleteTimer(id));
-    }
-    dispatch(addTimer(timerInfo));
-    // We intentionally exclude `timers` here to avoid an update loop when updating the timer
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dispatch, targetIso, upcomingService?.service?.id]);
+  const timeText = useNextServiceCountdownText(targetIso);
 
   // when the current upcomingService reaches 0, wait 15 minutes, then refresh
   useEffect(() => {
@@ -111,16 +69,14 @@ const StreamInfo = () => {
     const now = new Date();
     const target = new Date(targetIso);
     const msUntilTarget = target.getTime() - now.getTime();
-    const fifteenMin = 15 * 60 * 1000;
-
     let delayMs: number;
     if (msUntilTarget > 0) {
-      // schedule at target time + 15 minutes
-      delayMs = msUntilTarget + fifteenMin;
+      // schedule at target time + grace window
+      delayMs = msUntilTarget + NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS;
     } else {
-      // already past target; wait the remaining time in the 15-minute window, or refresh now if beyond it
+      // already past target; wait the remaining time in the grace window, or refresh now if beyond it
       const pastMs = Math.abs(msUntilTarget);
-      delayMs = Math.max(0, fifteenMin - pastMs);
+      delayMs = Math.max(0, NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS - pastMs);
     }
 
     if (delayMs === 0) {
@@ -171,7 +127,12 @@ const StreamInfo = () => {
     return () => clearInterval(interval);
   }, [dispatch, services]);
 
-  return <StreamInfoComponent upcomingService={upcomingService?.service} />;
+  return (
+    <StreamInfoComponent
+      upcomingService={upcomingService?.service}
+      timeText={timeText}
+    />
+  );
 };
 
 export default StreamInfo;

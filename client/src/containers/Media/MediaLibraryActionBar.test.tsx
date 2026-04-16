@@ -85,4 +85,34 @@ describe("MediaLibraryActionBar", () => {
     expect(renameInput).toHaveValue("Current media updated");
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
+
+  it("shows Done and calls handler when multi-select done is enabled", async () => {
+    const user = userEvent.setup();
+    const onMultiSelectDone = jest.fn();
+    const action: MediaLibraryBarAction = {
+      id: "send-projector",
+      label: "Send to projector",
+      onClick: jest.fn(),
+    };
+
+    render(
+      <MediaLibraryActionBar
+        detailsRow={<div>2 selected</div>}
+        showFolderActions={false}
+        newFolderPopover={null}
+        showFolderRenameDelete={false}
+        showMediaRename={false}
+        onDeleteFolder={jest.fn()}
+        mediaActions={[action]}
+        showMoveSelect={false}
+        moveSelectOptions={[]}
+        onMoveTo={jest.fn()}
+        showMultiSelectDone
+        onMultiSelectDone={onMultiSelectDone}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(onMultiSelectDone).toHaveBeenCalledTimes(1);
+  });
 });

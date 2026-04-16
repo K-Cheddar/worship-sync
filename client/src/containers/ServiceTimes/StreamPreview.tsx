@@ -1,5 +1,8 @@
 import { memo, useMemo } from "react";
 import { ServiceTimePosition } from "../../types";
+import ServiceTimeCountdownFace, {
+  serviceTimeEditPreviewFaceLayoutProps,
+} from "./ServiceTimeCountdownFace";
 
 type Props = {
   name: string;
@@ -9,6 +12,8 @@ type Props = {
   timeSize: number;
   shouldShowName: boolean;
   position?: ServiceTimePosition;
+  /** Desktop: cap total column height to match the edit form column (px). */
+  maxColumnHeightPx?: number | null;
 };
 
 const StreamPreview = ({
@@ -19,10 +24,8 @@ const StreamPreview = ({
   timeSize,
   shouldShowName,
   position = "top-right",
+  maxColumnHeightPx = null,
 }: Props) => {
-  const nameFontSize = nameSize / 10 / (100 / 50);
-  const timeFontSize = timeSize / 10 / (100 / 50);
-
   const positionClasses = useMemo(() => {
     switch (position) {
       case "top-left":
@@ -39,30 +42,47 @@ const StreamPreview = ({
     }
   }, [position]);
 
-  return (
-    <div className="flex flex-col gap-2 flex-1 max-h-full max-md:w-[calc(100vw-2rem)]">
-      <div className="text-sm text-gray-300">Preview</div>
-      <div className="relative aspect-video overflow-hidden rounded-md border border-white/12 bg-black/30">
-        <div
-          className={`absolute ${positionClasses} transform px-[1%] py-[0.5%] rounded-[5%_/_10%] font-semibold select-none flex flex-col items-center justify-center text-center`}
-          style={{ color, backgroundColor: background, maxWidth: "90%" }}
-        >
-          {shouldShowName && (
-            <div
-              className="leading-none"
-              style={{ fontSize: `${nameFontSize}vw` }}
-            >
-              {name || "Service Name"} begins in
-            </div>
-          )}
-          <div
-            className="leading-none"
-            style={{ fontSize: `${timeFontSize}vw` }}
-          >
-            12:34
-          </div>
-        </div>
+  const hasHeightCap = maxColumnHeightPx != null;
+  const columnStyle = hasHeightCap
+    ? { maxHeight: maxColumnHeightPx }
+    : undefined;
+
+  const frame = (
+    <div
+      className={`relative aspect-video w-full max-w-full overflow-hidden rounded-md border border-white/12 bg-black/30 @container${hasHeightCap ? " max-h-full" : ""
+        }`}
+    >
+      <div className={`absolute ${positionClasses} transform`}>
+        <ServiceTimeCountdownFace
+          {...serviceTimeEditPreviewFaceLayoutProps}
+          service={{
+            name: name || "Service Name",
+            color,
+            background,
+            nameFontSize: nameSize,
+            timeFontSize: timeSize,
+            shouldShowName,
+          }}
+          timeText="12:34"
+          extraSurfaceStyle={{ maxWidth: "90%" }}
+        />
       </div>
+    </div>
+  );
+
+  return (
+    <div
+      className="flex w-full min-w-0 flex-col gap-2 md:min-h-0 md:min-w-0 md:flex-1"
+      style={columnStyle}
+    >
+      <p className="shrink-0 text-sm text-gray-300">Preview</p>
+      {hasHeightCap ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          {frame}
+        </div>
+      ) : (
+        frame
+      )}
     </div>
   );
 };

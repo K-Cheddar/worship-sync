@@ -194,6 +194,11 @@ const emptyImageOverlay = (t: number): OverlayInfo => ({
   id: generateRandomId(),
 });
 
+const isEmptySlotFromSameTransition = (
+  overlay: OverlayInfo | undefined,
+  t: number,
+) => Boolean(overlay?.time != null && overlay.time === t);
+
 /**
  * Clears `prevStreamInfo` overlay slots other than `keep` before a live send.
  * After Clear, unrelated types can still sit in `prev` for exit; sending a new
@@ -208,20 +213,35 @@ const clearStalePrevStreamOverlaySlotsExcept = (
   const { streamInfo, prevStreamInfo } = state;
   // Only clear a prev slot when stream has no live data for that type. Otherwise
   // we wipe the outgoing overlay before preserve can copy stream → prev (e.g.
-  // participant still on air when sending an image).
+  // participant still on air when sending an image). Keep `prev` when the slot
+  // was just cleared at the same timestamp as the incoming live send; that is
+  // the same cross-type transition arriving clear-first from sync.
   if (
     keep !== "participant" &&
-    !hasParticipantOverlayData(streamInfo.participantOverlayInfo)
+    !hasParticipantOverlayData(streamInfo.participantOverlayInfo) &&
+    !isEmptySlotFromSameTransition(streamInfo.participantOverlayInfo, t)
   ) {
     prevStreamInfo.participantOverlayInfo = emptyParticipantOverlay(t);
   }
-  if (keep !== "stb" && !hasStbOverlayData(streamInfo.stbOverlayInfo)) {
+  if (
+    keep !== "stb" &&
+    !hasStbOverlayData(streamInfo.stbOverlayInfo) &&
+    !isEmptySlotFromSameTransition(streamInfo.stbOverlayInfo, t)
+  ) {
     prevStreamInfo.stbOverlayInfo = emptyStbOverlay(t);
   }
-  if (keep !== "qr" && !hasQrOverlayData(streamInfo.qrCodeOverlayInfo)) {
+  if (
+    keep !== "qr" &&
+    !hasQrOverlayData(streamInfo.qrCodeOverlayInfo) &&
+    !isEmptySlotFromSameTransition(streamInfo.qrCodeOverlayInfo, t)
+  ) {
     prevStreamInfo.qrCodeOverlayInfo = emptyQrOverlay(t);
   }
-  if (keep !== "image" && !hasImageOverlayData(streamInfo.imageOverlayInfo)) {
+  if (
+    keep !== "image" &&
+    !hasImageOverlayData(streamInfo.imageOverlayInfo) &&
+    !isEmptySlotFromSameTransition(streamInfo.imageOverlayInfo, t)
+  ) {
     prevStreamInfo.imageOverlayInfo = emptyImageOverlay(t);
   }
 };
@@ -423,6 +443,9 @@ export const presentationSlice = createSlice({
     ) => {
       if (!state.isStreamTransmitting) return;
       const t = getNextStreamOverlayTimestamp(state);
+      if (action.payload.name || action.payload.title || action.payload.event) {
+        clearStalePrevStreamOverlaySlotsExcept(state, "participant", t);
+      }
       state.prevStreamInfo.participantOverlayInfo =
         state.streamInfo.participantOverlayInfo;
       state.streamInfo.participantOverlayInfo = {
@@ -437,6 +460,9 @@ export const presentationSlice = createSlice({
     updateStbOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
       if (!state.isStreamTransmitting) return;
       const t = getNextStreamOverlayTimestamp(state);
+      if (action.payload.heading || action.payload.subHeading) {
+        clearStalePrevStreamOverlaySlotsExcept(state, "stb", t);
+      }
       state.prevStreamInfo.stbOverlayInfo = state.streamInfo.stbOverlayInfo;
       state.streamInfo.stbOverlayInfo = { ...action.payload, time: t };
       if (action.payload.heading || action.payload.subHeading) {
@@ -447,6 +473,9 @@ export const presentationSlice = createSlice({
     updateQrCodeOverlayInfo: (state, action: PayloadAction<OverlayInfo>) => {
       if (!state.isStreamTransmitting) return;
       const t = getNextStreamOverlayTimestamp(state);
+      if (action.payload.url || action.payload.description) {
+        clearStalePrevStreamOverlaySlotsExcept(state, "qr", t);
+      }
       state.prevStreamInfo.qrCodeOverlayInfo =
         state.streamInfo.qrCodeOverlayInfo;
       state.streamInfo.qrCodeOverlayInfo = { ...action.payload, time: t };
@@ -511,6 +540,9 @@ export const presentationSlice = createSlice({
       }
 
       const nextHasLines = Boolean(next.name || next.title || next.event);
+      if (nextHasLines) {
+        clearStalePrevStreamOverlaySlotsExcept(state, "participant", t);
+      }
       if (hasParticipantOverlayData(cur) || nextHasLines) {
         state.prevStreamInfo.participantOverlayInfo = cur;
       } else if (
@@ -542,6 +574,9 @@ export const presentationSlice = createSlice({
       }
 
       const nextHasStb = Boolean(next.heading || next.subHeading);
+      if (nextHasStb) {
+        clearStalePrevStreamOverlaySlotsExcept(state, "stb", t);
+      }
       if (hasStbOverlayData(cur) || nextHasStb) {
         state.prevStreamInfo.stbOverlayInfo = cur;
       } else if (!nextHasStb) {
@@ -569,6 +604,9 @@ export const presentationSlice = createSlice({
       }
 
       const nextHasQr = Boolean(next.url || next.description);
+      if (nextHasQr) {
+        clearStalePrevStreamOverlaySlotsExcept(state, "qr", t);
+      }
       if (hasQrOverlayData(cur) || nextHasQr) {
         state.prevStreamInfo.qrCodeOverlayInfo = cur;
       } else if (!nextHasQr) {

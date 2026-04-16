@@ -72,6 +72,41 @@ export const fetchLatestMacInstallerUrl = async (): Promise<string | null> => {
 };
 
 /**
+ * Resolve a Linux desktop artifact URL for the latest GitHub release.
+ * Prefers `WorshipSync-Setup-<version>.AppImage` (portable), then any AppImage,
+ * then a matching `.deb`, then any `.deb`.
+ */
+export const fetchLatestLinuxInstallerUrl = async (): Promise<
+  string | null
+> => {
+  if (isElectron()) {
+    return null;
+  }
+  try {
+    const res = await fetch(latestReleaseApiUrl, {
+      headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as GitHubReleaseLatest;
+    const assets = data.assets ?? [];
+    const setupAppImage = assets.find((a) =>
+      /^WorshipSync-Setup-.+\.AppImage$/i.test(a.name),
+    );
+    const anyAppImage = assets.find((a) =>
+      a.name.toLowerCase().endsWith(".appimage"),
+    );
+    const setupDeb = assets.find((a) =>
+      /^WorshipSync-Setup-.+\.deb$/i.test(a.name),
+    );
+    const anyDeb = assets.find((a) => a.name.toLowerCase().endsWith(".deb"));
+    const chosen = setupAppImage ?? anyAppImage ?? setupDeb ?? anyDeb;
+    return chosen?.browser_download_url ?? null;
+  } catch {
+    return null;
+  }
+};
+
+/**
  * Get the latest release download URL for Windows
  */
 export const getWindowsDownloadUrl = (): string => {

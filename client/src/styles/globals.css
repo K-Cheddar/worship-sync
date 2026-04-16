@@ -123,10 +123,65 @@
   /* Midpoint between Tailwind gray-700 (#374151) and gray-800 (#1f2937); large empty canvases (e.g. home). */
   --color-homepage-canvas: #2b3544;
   /* Side sheets / drawers: same hue as homepage canvas, slightly darker for elevation. */
-  --color-sheet-surface: color-mix(in oklab, var(--color-homepage-canvas) 90%, black);
+  --color-sheet-surface: color-mix(
+    in oklab,
+    var(--color-homepage-canvas) 90%,
+    black
+  );
   /* Alternating list rows: admin panels, library search, import-section picker (see listRowStripes). */
   --color-admin-row-a: rgb(255 255 255 / 0.055);
   --color-admin-row-b: rgb(255 255 255 / 0.2);
+  /* Next-service “starting” ellipses (ServiceTimeCountdownFace): wave waits until row fade-in finishes. */
+  --service-time-live-after-fade-delay: 0.85s;
+  /* 2.2s wave + 1s hold on dim frame before loop repeats. */
+  /* `backwards`: during delay (incl. parent fade-in) stay on 0% = dim / scaled down. */
+  --animate-service-time-ellipsis-1: service-time-ellipsis-wave 3.2s ease-in-out
+    var(--service-time-live-after-fade-delay) infinite backwards;
+  --animate-service-time-ellipsis-2: service-time-ellipsis-wave 3.2s ease-in-out
+    calc(var(--service-time-live-after-fade-delay) + 0.4s) infinite backwards;
+  --animate-service-time-ellipsis-3: service-time-ellipsis-wave 3.2s ease-in-out
+    calc(var(--service-time-live-after-fade-delay) + 0.8s) infinite backwards;
+  /* “0” → live indicator handoff (ServiceTimeCountdownFace). */
+  --animate-service-time-fade-out-zero: service-time-fade-out-zero 3s
+    cubic-bezier(0.4, 0, 1, 1) forwards;
+  --animate-service-time-fade-in-live: service-time-fade-in-live
+    var(--service-time-live-after-fade-delay) cubic-bezier(0.22, 1, 0.36, 1)
+    forwards;
+}
+
+@keyframes service-time-ellipsis-wave {
+  /* Active wave for first 2.2s of 3.2s period (68.75%), then 1s pause on dim. */
+  0% {
+    opacity: 0.28;
+    transform: scaleX(0.88) scaleY(0.82);
+  }
+  34.375% {
+    opacity: 1;
+    transform: scaleX(1) scaleY(1);
+  }
+  68.75%,
+  100% {
+    opacity: 0.28;
+    transform: scaleX(0.88) scaleY(0.82);
+  }
+}
+
+@keyframes service-time-fade-out-zero {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes service-time-fade-in-live {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @layer base {

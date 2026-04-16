@@ -69,9 +69,11 @@ jest.mock("../../../hooks", () => ({
     selectedMedia: mockSelectedMedia,
     selectedMediaIds: mockSelectedMediaIds,
     previewMedia: null,
+    mediaMultiSelectMode: false,
     setPreviewMedia: jest.fn(),
     setSelectedMediaIds: jest.fn(),
     handleMediaClick: mockSelectionHandleClick,
+    enterMediaMultiSelectMode: jest.fn(),
     clearSelection: mockClearSelection,
   }),
 }));

@@ -60,8 +60,10 @@ type PreferencesState = {
   bibleFontMode: BibleFontMode;
   scrollbarWidth: ScrollbarWidth;
   isInitialized: boolean;
-  /** Overlay controller main column: overlays list vs embedded credits editor (not persisted). */
-  overlayControllerPanel: "overlays" | "credits";
+  /** Overlay controller main column: overlays vs embedded credits vs service times (not persisted). */
+  overlayControllerPanel: "overlays" | "credits" | "serviceTimes";
+  /** Overlay credits tab: open Credits settings drawer from toolbar (not persisted). */
+  overlayCreditsSettingsDrawerOpen: boolean;
   /** Last-selected media library folder per controller route; `null` = All media */
   mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
 };
@@ -128,6 +130,7 @@ const initialState: PreferencesState = {
   scrollbarWidth: "thin",
   isInitialized: false,
   overlayControllerPanel: "overlays",
+  overlayCreditsSettingsDrawerOpen: false,
   mediaRouteFolders: {},
 };
 
@@ -499,9 +502,18 @@ export const preferencesSlice = createSlice({
     },
     setOverlayControllerPanel: (
       state,
-      action: PayloadAction<"overlays" | "credits">,
+      action: PayloadAction<"overlays" | "credits" | "serviceTimes">,
     ) => {
       state.overlayControllerPanel = action.payload;
+      if (action.payload !== "credits") {
+        state.overlayCreditsSettingsDrawerOpen = false;
+      }
+    },
+    setOverlayCreditsSettingsDrawerOpen: (
+      state,
+      action: PayloadAction<boolean>,
+    ) => {
+      state.overlayCreditsSettingsDrawerOpen = action.payload;
     },
     setIsMediaExpanded: (state, action: PayloadAction<boolean>) => {
       state.isMediaExpanded = action.payload;
@@ -609,6 +621,7 @@ export const {
   setShouldShowStreamFormat,
   setToolbarSection,
   setOverlayControllerPanel,
+  setOverlayCreditsSettingsDrawerOpen,
   setIsMediaExpanded,
   increaseMediaItems,
   decreaseMediaItems,

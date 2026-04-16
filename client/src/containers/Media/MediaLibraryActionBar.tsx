@@ -40,8 +40,20 @@ import type {
   MediaLibraryBarAction,
   MediaLibraryBarMenuEntry,
 } from "./mediaLibraryActions";
+import {
+  MEDIA_LIBRARY_ACTION_BAR_BTN_BASE_CLASS,
+  MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+  MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS,
+  MEDIA_LIBRARY_ACTION_MENU_MOVE_ITEM_CLASS,
+  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+  MEDIA_LIBRARY_MEDIA_ACTION_RENAME_ICON_CLASS,
+  classNameForMediaLibraryBarAction,
+  classNameForMediaLibraryOverflowMenuItem,
+} from "./mediaLibraryMediaActionUi";
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import cn from "classnames";
+
+export { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS } from "./mediaLibraryMediaActionUi";
 
 function SectionColorBadge({ typeKey }: { typeKey?: string }) {
   if (!typeKey) return null;
@@ -59,7 +71,8 @@ function SectionColorBadge({ typeKey }: { typeKey?: string }) {
 }
 
 const ACTION_GAP_PX = 4;
-const OVERFLOW_TRIGGER_PX = 44;
+/** Reserve width for the More (⋯) trigger; keep in sync with mobile button height. */
+const OVERFLOW_TRIGGER_PX = 52;
 /** Ignore flex width until layout is real (avoids sending every action to overflow on first paint). */
 const MIN_MEASURED_ROW_WIDTH_PX = 24;
 
@@ -104,7 +117,7 @@ function MediaActionDropdownMenuItems({
           key={mi.id}
           disabled={mi.disabled}
           variant="default"
-          className="text-xs text-white focus:text-white"
+          className={MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS}
           onSelect={(e) => {
             e.preventDefault();
             mi.onClick();
@@ -141,7 +154,7 @@ function MoveToFolderMenuItems({
           <Fragment key={opt.value}>
             <DropdownMenuItem
               variant="default"
-              className="text-xs text-white focus:text-white"
+              className={MEDIA_LIBRARY_ACTION_MENU_MOVE_ITEM_CLASS}
               onSelect={() => {
                 if (opt.value === "__root__") onMoveTo(null);
                 else if (isNewFolderRow) onPickMoveToNewFolder?.();
@@ -175,10 +188,6 @@ function MoveToFolderMenuItems({
   );
 }
 
-/** Compact controls for folder + media actions (also use on Popover triggers). */
-export const MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS =
-  "min-h-8 h-8 max-md:min-h-8 gap-1 px-1 py-0 text-xs [&_svg:not([class*='size-'])]:!size-3.5";
-
 type MediaLibraryActionBarProps = {
   className?: string;
   detailsRow: React.ReactNode;
@@ -205,6 +214,9 @@ type MediaLibraryActionBarProps = {
   moveToNewFolderOpen?: boolean;
   onMoveToNewFolderOpenChange?: (open: boolean) => void;
   moveToNewFolderContent?: ReactNode | null;
+  /** Exit media selection mode (long-press / right-click) and clear selection. */
+  showMultiSelectDone?: boolean;
+  onMultiSelectDone?: () => void;
 };
 
 function sumInlineWidths(widths: number[], count: number): number {
@@ -234,6 +246,8 @@ const MediaLibraryActionBar = ({
   moveToNewFolderOpen = false,
   onMoveToNewFolderOpenChange,
   moveToNewFolderContent = null,
+  showMultiSelectDone = false,
+  onMultiSelectDone,
 }: MediaLibraryActionBarProps) => {
   const actionsFlexRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
@@ -400,12 +414,7 @@ const MediaLibraryActionBar = ({
             <DropdownMenuTrigger asChild>
               <Button
                 variant="tertiary"
-                className={cn(
-                  MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-                  "shrink-0",
-                  a.variant === "destructive" &&
-                  "text-white [&_svg]:text-red-500!",
-                )}
+                className={classNameForMediaLibraryBarAction(a)}
                 disabled={a.disabled}
                 title={a.label}
               >
@@ -417,9 +426,9 @@ const MediaLibraryActionBar = ({
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="start"
-              className="min-w-48 text-xs"
+              className="min-w-48 text-xs [&_svg]:text-cyan-400"
             >
-              <DropdownMenuLabel className="flex items-center gap-1.5 text-xs font-normal text-gray-400">
+              <DropdownMenuLabel className="flex items-center gap-1.5 text-xs font-normal text-gray-400 [&_svg]:text-cyan-400">
                 {a.icon}
                 {a.label}
               </DropdownMenuLabel>
@@ -433,12 +442,7 @@ const MediaLibraryActionBar = ({
       <Button
         key={a.id}
         variant="tertiary"
-        className={cn(
-          MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-          "shrink-0",
-          a.variant === "destructive" &&
-          "text-white [&_svg]:text-red-500!",
-        )}
+        className={classNameForMediaLibraryBarAction(a)}
         disabled={a.disabled}
         onClick={a.onClick}
         title={a.label}
@@ -477,10 +481,20 @@ const MediaLibraryActionBar = ({
           <DropdownMenuTrigger asChild>
             <Button
               variant="tertiary"
-              className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+              className={cn(
+                "shrink-0",
+                MEDIA_LIBRARY_ACTION_BAR_BTN_BASE_CLASS,
+              )}
               title="Choose a folder to move selected media into"
             >
-              Move to folder
+              <span className="flex items-center gap-1">
+                <Folder
+                  {...MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE}
+                  className={MEDIA_LIBRARY_ORANGE_FOLDER_CLASS}
+                  aria-hidden
+                />
+                Move to folder
+              </span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -517,7 +531,7 @@ const MediaLibraryActionBar = ({
       >
         <div className="min-w-0 text-xs leading-snug">{detailsRow}</div>
 
-        <div className="relative flex min-h-8 min-w-0 flex-wrap items-center gap-1">
+        <div className="relative flex min-h-8 max-md:min-h-12 min-w-0 flex-wrap items-center gap-1">
           {showFolderActions && (
             <>
               {newFolderPopover}
@@ -527,7 +541,7 @@ const MediaLibraryActionBar = ({
                   variant="tertiary"
                   className={cn(
                     MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-                    "text-red-400",
+                    "text-red-400 [&_svg]:text-red-400!",
                   )}
                   svg={Trash2}
                   onClick={onDeleteFolder}
@@ -538,10 +552,22 @@ const MediaLibraryActionBar = ({
               )}
             </>
           )}
+          {showMultiSelectDone && onMultiSelectDone ? (
+            <Button
+              variant="tertiary"
+              type="button"
+              className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+              onClick={onMultiSelectDone}
+              title="Done selecting"
+              aria-label="Done"
+            >
+              Done
+            </Button>
+          ) : null}
           <div
             ref={actionsFlexRef}
             data-media-library-actions-flex
-            className="flex min-h-8 min-w-0 flex-1 items-center gap-2"
+            className="flex min-h-8 max-md:min-h-12 min-w-0 flex-1 items-center gap-2"
           >
             <div
               ref={measureRef}
@@ -555,7 +581,7 @@ const MediaLibraryActionBar = ({
                     key={`m-${slot.action.id}-${i}`}
                     data-measure-action-btn
                     variant="tertiary"
-                    className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+                    className={classNameForMediaLibraryBarAction(slot.action)}
                     tabIndex={-1}
                     aria-hidden
                   >
@@ -569,12 +595,18 @@ const MediaLibraryActionBar = ({
                     key={`m-rename-${i}`}
                     data-measure-action-btn
                     variant="tertiary"
-                    className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+                    className={cn(
+                      "shrink-0",
+                      MEDIA_LIBRARY_ACTION_BAR_BTN_BASE_CLASS,
+                    )}
                     tabIndex={-1}
                     aria-hidden
                   >
                     <span className="flex items-center gap-1">
-                      <Pencil className="size-3.5" />
+                      <Pencil
+                        className={MEDIA_LIBRARY_MEDIA_ACTION_RENAME_ICON_CLASS}
+                        aria-hidden
+                      />
                       Rename
                     </span>
                   </Button>
@@ -583,11 +615,21 @@ const MediaLibraryActionBar = ({
                     key={`m-move-${i}`}
                     data-measure-action-btn
                     variant="tertiary"
-                    className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+                    className={cn(
+                      "shrink-0",
+                      MEDIA_LIBRARY_ACTION_BAR_BTN_BASE_CLASS,
+                    )}
                     tabIndex={-1}
                     aria-hidden
                   >
-                    Move to folder
+                    <span className="flex items-center gap-1">
+                      <Folder
+                        {...MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE}
+                        className={MEDIA_LIBRARY_ORANGE_FOLDER_CLASS}
+                        aria-hidden
+                      />
+                      Move to folder
+                    </span>
                   </Button>
                 ),
               )}
@@ -602,12 +644,20 @@ const MediaLibraryActionBar = ({
                   <PopoverAnchor asChild key={`rename-inline-${i}`}>
                     <Button
                       variant="tertiary"
-                      className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
-                      svg={Pencil}
+                      className={cn(
+                        "shrink-0",
+                        MEDIA_LIBRARY_ACTION_BAR_BTN_BASE_CLASS,
+                      )}
                       onClick={() => onMediaRenameOpenChange?.(true)}
                       title="Rename media"
                     >
-                      Rename
+                      <span className="flex items-center gap-1">
+                        <Pencil
+                          className={MEDIA_LIBRARY_MEDIA_ACTION_RENAME_ICON_CLASS}
+                          aria-hidden
+                        />
+                        Rename
+                      </span>
                     </Button>
                   </PopoverAnchor>
                 );
@@ -654,7 +704,9 @@ const MediaLibraryActionBar = ({
                               key={slot.action.id}
                               disabled={slot.action.disabled}
                               variant="default"
-                              className="text-xs text-white focus:text-white"
+                              className={classNameForMediaLibraryOverflowMenuItem(
+                                slot.action,
+                              )}
                               onSelect={(e) => {
                                 e.preventDefault();
                                 const a = slot.action;
@@ -677,10 +729,8 @@ const MediaLibraryActionBar = ({
                               key={slot.action.id}
                               disabled={slot.action.disabled}
                               variant="default"
-                              className={cn(
-                                "text-xs text-white focus:text-white",
-                                slot.action.variant === "destructive" &&
-                                "[&_svg]:text-red-500!",
+                              className={classNameForMediaLibraryOverflowMenuItem(
+                                slot.action,
                               )}
                               onSelect={(e) => {
                                 e.preventDefault();
@@ -697,7 +747,7 @@ const MediaLibraryActionBar = ({
                           <DropdownMenuItem
                             key="rename-media-overflow"
                             variant="default"
-                            className="text-xs text-white focus:text-white"
+                            className={MEDIA_LIBRARY_ACTION_MENU_MOVE_ITEM_CLASS}
                             onSelect={() => {
                               // No preventDefault — menu closes; parent opens rename in
                               // handleOverflowMenuOpenChange(false) after pending ref is set.
@@ -706,7 +756,10 @@ const MediaLibraryActionBar = ({
                             }}
                           >
                             <span className="flex items-center gap-1.5">
-                              <Pencil className="size-3.5" />
+                              <Pencil
+                                className={MEDIA_LIBRARY_MEDIA_ACTION_RENAME_ICON_CLASS}
+                                aria-hidden
+                              />
                               Rename
                             </span>
                           </DropdownMenuItem>
@@ -714,7 +767,7 @@ const MediaLibraryActionBar = ({
                           <DropdownMenuItem
                             key="move-to-folder-overflow"
                             variant="default"
-                            className="text-xs text-white focus:text-white"
+                            className={MEDIA_LIBRARY_ACTION_MENU_MOVE_ITEM_CLASS}
                             onSelect={(e) => {
                               e.preventDefault();
                               setOverflowNestedMenu(null);
@@ -737,7 +790,7 @@ const MediaLibraryActionBar = ({
                     <>
                       <DropdownMenuItem
                         variant="default"
-                        className="text-xs text-white focus:text-white"
+                        className={MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS}
                         onSelect={(e) => {
                           e.preventDefault();
                           setOverflowMenuView("actions");
@@ -745,12 +798,15 @@ const MediaLibraryActionBar = ({
                         }}
                       >
                         <span className="flex items-center gap-1.5">
-                          <ChevronLeft className="size-3.5" />
+                          <ChevronLeft
+                            className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE}
+                            aria-hidden
+                          />
                           Back
                         </span>
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuLabel className="flex items-center gap-1.5 text-xs font-normal text-gray-400">
+                      <DropdownMenuLabel className="flex items-center gap-1.5 text-xs font-normal text-gray-400 [&_svg]:text-cyan-400">
                         {overflowNestedMenu.icon}
                         {overflowNestedMenu.label}
                       </DropdownMenuLabel>
@@ -762,14 +818,17 @@ const MediaLibraryActionBar = ({
                     <>
                       <DropdownMenuItem
                         variant="default"
-                        className="text-xs text-white focus:text-white"
+                        className={MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS}
                         onSelect={(e) => {
                           e.preventDefault();
                           setOverflowMenuView("actions");
                         }}
                       >
                         <span className="flex items-center gap-1.5">
-                          <ChevronLeft className="size-3.5" />
+                          <ChevronLeft
+                            className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE}
+                            aria-hidden
+                          />
                           Back
                         </span>
                       </DropdownMenuItem>

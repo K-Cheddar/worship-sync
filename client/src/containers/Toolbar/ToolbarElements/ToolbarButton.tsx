@@ -11,6 +11,7 @@ export type ToolbarButtonProps = {
   hidden?: boolean;
   isActive?: boolean;
   children: React.ReactNode;
+  "aria-label"?: string;
 };
 
 /** Shared with outline switcher and other toolbar-row controls that should match tab styling. */
@@ -23,15 +24,22 @@ export const toolbarTabClassName = (isActive: boolean, hidden: boolean) =>
     hidden && "hidden"
   );
 
-const ToolbarButton: React.FC<ToolbarButtonProps> = ({
-  svg,
-  to,
-  onClick,
-  disabled = false,
-  hidden = false,
-  isActive = false,
-  children,
-}) => {
+const ToolbarButton = React.forwardRef<
+  HTMLButtonElement | HTMLAnchorElement,
+  ToolbarButtonProps
+>(function ToolbarButton(
+  {
+    svg,
+    to,
+    onClick,
+    disabled = false,
+    hidden = false,
+    isActive = false,
+    children,
+    "aria-label": ariaLabel,
+  },
+  ref,
+) {
   const variant = isActive ? "none" : "tertiary";
   const color = isActive ? "#ffffff" : undefined;
   const className = toolbarTabClassName(isActive, hidden);
@@ -39,6 +47,7 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = ({
   if (to) {
     return (
       <Button
+        ref={ref}
         variant={variant}
         svg={svg}
         color={color}
@@ -46,6 +55,7 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = ({
         to={to}
         disabled={disabled}
         className={className}
+        aria-label={ariaLabel}
       >
         {children}
       </Button>
@@ -54,16 +64,18 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = ({
 
   return (
     <Button
+      ref={ref}
       variant={variant}
       svg={svg}
       color={color}
       onClick={onClick}
       disabled={disabled}
       className={className}
+      aria-label={ariaLabel}
     >
       {children}
     </Button>
   );
-};
+});
 
 export default ToolbarButton;

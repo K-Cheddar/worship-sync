@@ -21,7 +21,6 @@ import ProjectorFull from "./pages/ProjectorFull";
 import CreditsEditor from "./pages/CreditsEditor/CreditsEditor";
 import TimerManager from "./components/TimerManager/TimerManager";
 import StreamInfo from "./pages/StreamInfo";
-import InfoController from "./pages/InfoController";
 import BoardController from "./pages/BoardController";
 import BoardDisplay from "./pages/BoardDisplay";
 import BoardPage from "./pages/BoardPage";
@@ -55,7 +54,7 @@ const isBootstrapSplashRoute = (pathname: string) => {
   if (pathname === "/overlay-controller") return true;
   if (pathname === "/boards/controller") return true;
   if (pathname === "/boards/display") return true;
-  if (pathname === "/credits-editor" || pathname === "/info-controller") return true;
+  if (pathname === "/credits-editor") return true;
   if (pathname === "/workstation/pair" || pathname === "/workstation/operator") {
     return true;
   }
@@ -186,16 +185,6 @@ const AppRoutes = () => {
             element={
               <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
                 <CreditsEditor />
-              </AuthGate>
-            }
-          />
-          <Route
-            path="/info-controller"
-            element={
-              <AuthGate allowedKinds={["human", "workstation"]} allowGuest>
-                <ViewAccessBlockedRedirect>
-                  <InfoController />
-                </ViewAccessBlockedRedirect>
               </AuthGate>
             }
           />

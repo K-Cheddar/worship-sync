@@ -143,7 +143,7 @@ const VerificationCodeInput = ({
             pattern="[0-9]*"
             autoComplete={index === 0 ? "one-time-code" : "off"}
             name={index === 0 ? "one-time-code" : undefined}
-            maxLength={1}
+            maxLength={index === 0 ? LENGTH : 1}
             disabled={disabled}
             value={char}
             aria-label={`Digit ${index + 1} of ${LENGTH}`}

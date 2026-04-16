@@ -250,6 +250,53 @@ describe("store module", () => {
     });
   });
 
+  it("does not write empty published credits to RTDB when store RESET runs", () => {
+    let setMock: jest.Mock;
+
+    jest.isolateModules(() => {
+      setMock = jest.fn();
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: undefined,
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: {
+          db: "firebase-db",
+          database: "main",
+          churchId: "church-test",
+        },
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn((_db: unknown, path: string) => path),
+        set: setMock,
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { initiateItemLists } = require("./itemListsSlice");
+      const store = storeModule.default;
+
+      store.dispatch(
+        initiateItemLists([{ _id: "outline-a", name: "Service A" }]),
+      );
+      setMock.mockClear();
+
+      store.dispatch({ type: "RESET" });
+    });
+
+    const clearedPublishedList = setMock!.mock.calls.some(
+      (call) =>
+        typeof call[0] === "string" &&
+        call[0].includes("publishedList") &&
+        Array.isArray(call[1]) &&
+        call[1].length === 0,
+    );
+    expect(clearedPublishedList).toBe(false);
+  });
+
   it("fallback initialization completes when credits slice becomes initialized", () => {
     jest.useFakeTimers();
 

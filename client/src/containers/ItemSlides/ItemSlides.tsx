@@ -1,10 +1,10 @@
-import { ListChecks, Plus, Trash2, Copy, ZoomIn, ZoomOut } from "lucide-react";
+import { ImageOff, Plus, Trash2, Copy, ZoomIn, ZoomOut } from "lucide-react";
 import Button from "../../components/Button/Button";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import {
   clearBackgroundTargetSelection,
-  clearBackgroundTargetSlideIdsOnly,
-  removeSlide,
+  clearSlideBackgroundsOnSubset,
+  removeSlidesByIds,
   setBackgroundTargetSlideIds,
   setBackgroundTargetRangeAnchorId,
   setMobileBackgroundTargetSelectMode,
@@ -85,6 +85,9 @@ const ItemSlides = () => {
 
   const backgroundTargetSlideIds = backgroundTargetSlideIdsRaw ?? [];
   const mobileBackgroundTargetSelectMode = mobileBgSelectModeRaw ?? false;
+  /** Subset selection, clear backgrounds, multi-delete (all item types). */
+  const showBackgroundTargetActionBar =
+    mobileBackgroundTargetSelectMode || backgroundTargetSlideIds.length > 0;
 
   const { projectorInfo, monitorInfo, streamInfo } = useSelector(
     (state: RootState) => state.presentation
@@ -236,6 +239,13 @@ const ItemSlides = () => {
   /** Latest selected slide; read in selectSlide before dispatch so transitionDirection uses the prior index. */
   const selectedSlideRef = useRef(selectedSlide);
   selectedSlideRef.current = selectedSlide;
+
+  /** After a touch long-press, ignore the synthetic click so it does not toggle selection off. */
+  const skipNextSlideGridClickRef = useRef(false);
+  /** Ignore duplicate enter for the same slide when long-press and context-menu handling both fire. */
+  const lastEnterSameSlideAtRef = useRef<{ index: number; t: number } | null>(
+    null,
+  );
 
   const [debouncedSlides, setDebouncedSlides] = useState(slides);
   const [draggedSection, setDraggedSection] = useState<string | null>(null);
@@ -402,8 +412,51 @@ const ItemSlides = () => {
     ]
   );
 
+  const enterBackgroundTargetSelectModeFromSlide = useCallback(
+    (index: number, options?: { skipNextClick?: boolean }) => {
+      const pressedId = slides[index]?.id;
+      if (!pressedId || !canEdit) return;
+
+      const now = Date.now();
+      const last = lastEnterSameSlideAtRef.current;
+      if (last && last.index === index && now - last.t < 400) return;
+      lastEnterSameSlideAtRef.current = { index, t: now };
+
+      const currentSelectedIndex = selectedSlideRef.current;
+      const selectedId = slides[currentSelectedIndex]?.id;
+
+      const ids =
+        index !== currentSelectedIndex && selectedId
+          ? [selectedId, pressedId]
+          : [pressedId];
+
+      dispatch(setBackgroundTargetSlideIds([...new Set(ids)]));
+      dispatch(setBackgroundTargetRangeAnchorId(pressedId));
+      dispatch(setMobileBackgroundTargetSelectMode(true));
+      if (options?.skipNextClick) {
+        skipNextSlideGridClickRef.current = true;
+      }
+      selectSlide(index);
+    },
+    [slides, canEdit, dispatch, selectSlide],
+  );
+
+  const cannotDeleteSelectedSlides = useMemo(() => {
+    if (type !== "free") return true;
+    const ids = backgroundTargetSlideIdsRaw ?? [];
+    if (ids.length === 0) return true;
+    const idSet = new Set(ids);
+    const remaining = slides.filter((s) => !idSet.has(s.id)).length;
+    return remaining < 1;
+  }, [type, backgroundTargetSlideIdsRaw, slides]);
+
   const onSlideGridClick = useCallback(
     (e: React.MouseEvent, index: number) => {
+      if (skipNextSlideGridClickRef.current) {
+        skipNextSlideGridClickRef.current = false;
+        e.preventDefault();
+        return;
+      }
       if (!canEdit) {
         selectSlide(index);
         return;
@@ -747,84 +800,104 @@ const ItemSlides = () => {
                 <>
                   <Button
                     variant="tertiary"
-                    className="ml-auto"
+                    className="ml-auto min-h-7 gap-1.5 px-2"
                     svg={Plus}
+                    gap="gap-1.5"
+                    disabled={showBackgroundTargetActionBar}
                     onClick={() => addSlide()}
-                  />
-                  <Button variant="tertiary" svg={Copy} onClick={copySlide} />
+                  >
+                    Add
+                  </Button>
                   <Button
                     variant="tertiary"
-                    svg={Trash2}
-                    onClick={() =>
-                      dispatch(removeSlide({ index: selectedSlide }))
-                    }
-                  />
+                    className="min-h-7 gap-1.5 px-2"
+                    svg={Copy}
+                    gap="gap-1.5"
+                    disabled={showBackgroundTargetActionBar}
+                    onClick={copySlide}
+                  >
+                    Copy
+                  </Button>
                 </>
-              )}
-              {canEdit && hasSlides && (
-                <Button
-                  variant="tertiary"
-                  className={cn(
-                    type === "free" ? "" : "ml-auto",
-                    mobileBackgroundTargetSelectMode && "bg-white/15",
-                  )}
-                  svg={ListChecks}
-                  title={
-                    mobileBackgroundTargetSelectMode
-                      ? "Exit slide selection mode"
-                      : "Select slides for background targets"
-                  }
-                  onClick={() => {
-                    if (mobileBackgroundTargetSelectMode) {
-                      dispatch(clearBackgroundTargetSelection());
-                    } else {
-                      dispatch(setMobileBackgroundTargetSelectMode(true));
-                    }
-                  }}
-                >
-                  {isMobile ? "Select" : "Select slides"}
-                </Button>
               )}
             </div>
             {canEdit && hasSlides && (
               <div
                 className={cn(
                   "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-                  mobileBackgroundTargetSelectMode
+                  showBackgroundTargetActionBar
                     ? "grid-rows-[1fr]"
                     : "grid-rows-[0fr]",
                 )}
               >
                 <div
                   className="min-h-0 overflow-hidden"
-                  inert={mobileBackgroundTargetSelectMode ? undefined : true}
+                  inert={showBackgroundTargetActionBar ? undefined : true}
                 >
                   <div className="flex items-center justify-between gap-2 border-t border-white/10 px-2 py-1.5">
-                    <span className="text-xs text-gray-400">
-                      {backgroundTargetSlideIds.length} slide
-                      {backgroundTargetSlideIds.length === 1 ? "" : "s"}{" "}
-                      selected
-                    </span>
-                    <span className="flex shrink-0 gap-1">
+                    <div
+                      className="flex min-w-0 flex-1 items-baseline gap-1 text-xs"
+                      aria-live="polite"
+                    >
+                      <span className="shrink-0 font-semibold tabular-nums text-cyan-400">
+                        {backgroundTargetSlideIds.length}
+                      </span>
+                      <span className="truncate text-gray-400">
+                        {backgroundTargetSlideIds.length === 1
+                          ? "slide selected"
+                          : "slides selected"}
+                      </span>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
                       <Button
                         variant="tertiary"
-                        className="min-h-7 h-7 px-2 text-xs"
+                        className="min-h-7 gap-1.5 px-2 text-xs"
+                        svg={ImageOff}
+                        gap="gap-1.5"
+                        disabled={backgroundTargetSlideIds.length === 0}
                         onClick={() =>
-                          dispatch(clearBackgroundTargetSlideIdsOnly())
+                          dispatch(
+                            clearSlideBackgroundsOnSubset({
+                              slideIds: [...backgroundTargetSlideIds],
+                            }),
+                          )
                         }
                       >
-                        Clear
+                        Clear background
                       </Button>
+                      {type === "free" ? (
+                        <Button
+                          variant="tertiary"
+                          className="min-h-7 gap-1.5 px-2 text-xs text-red-300 [&_svg]:text-red-400"
+                          svg={Trash2}
+                          gap="gap-1.5"
+                          disabled={cannotDeleteSelectedSlides}
+                          title={
+                            cannotDeleteSelectedSlides
+                              ? "Select at least one slide and keep one slide in the item"
+                              : "Delete selected slides"
+                          }
+                          onClick={() =>
+                            dispatch(
+                              removeSlidesByIds({
+                                slideIds: [...backgroundTargetSlideIds],
+                              }),
+                            )
+                          }
+                        >
+                          Delete
+                        </Button>
+                      ) : null}
                       <Button
                         variant="tertiary"
-                        className="min-h-7 h-7 px-2 text-xs"
+                        className="min-h-7 px-2 text-xs"
                         onClick={() =>
                           dispatch(clearBackgroundTargetSelection())
                         }
                       >
                         Done
                       </Button>
-                    </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -868,6 +941,11 @@ const ItemSlides = () => {
                       slide.id,
                     )}
                     onSlideGridClick={onSlideGridClick}
+                    onEnterBackgroundTargetSelectMode={
+                      canEdit && hasSlides
+                        ? enterBackgroundTargetSelectModeFromSlide
+                        : undefined
+                    }
                   />
                 ))}
               </SortableContext>

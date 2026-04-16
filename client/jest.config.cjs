@@ -35,7 +35,6 @@ module.exports = {
     "<rootDir>/src/components/DisplayWindow/DisplayBox\\.tsx$",
     "<rootDir>/src/containers/Credits/CreditHistoryDrawer\\.tsx$",
     "<rootDir>/src/containers/Preferences/QuickLinks\\.tsx$",
-    "<rootDir>/src/pages/InfoController\\.tsx$",
     "<rootDir>/src/components/RoutePersistence/RoutePersistence\\.tsx$",
     "<rootDir>/src/components/DisplayWindow/DisplayQrCodeOverlay\\.tsx$",
     "<rootDir>/src/components/DisplayWindow/MonitorDisplayBox\\.tsx$",

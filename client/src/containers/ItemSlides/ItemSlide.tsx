@@ -5,15 +5,8 @@ import { ItemSlideType, TimerInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import cn from "classnames";
-import ContextMenu from "../../components/ContextMenu/ContextMenu";
-import { ImageOff } from "lucide-react";
-import { useDispatch } from "../../hooks";
-import {
-  clearSlideBackgroundsOnSubset,
-  updateSlideBackground,
-} from "../../store/itemSlice";
-import { memo, useContext, useMemo } from "react";
-import { ControllerInfoContext } from "../../context/controllerInfo";
+import MultiSelectSubsetTick from "../../components/MultiSelectSubsetTick/MultiSelectSubsetTick";
+import { memo, useEffect, useRef } from "react";
 import { useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
 
@@ -36,6 +29,11 @@ type ItemSlideProps = {
   canEdit?: boolean;
   isBackgroundTargetSelected?: boolean;
   onSlideGridClick: (e: React.MouseEvent, index: number) => void;
+  /** Long-press (touch) or right-click enters background-target selection mode from this slide. */
+  onEnterBackgroundTargetSelectMode?: (
+    index: number,
+    options?: { skipNextClick?: boolean },
+  ) => void;
 };
 
 const ItemSlide = ({
@@ -56,15 +54,15 @@ const ItemSlide = ({
   canEdit = true,
   isBackgroundTargetSelected = false,
   onSlideGridClick,
+  onEnterBackgroundTargetSelectMode,
 }: ItemSlideProps) => {
-  const dispatch = useDispatch();
-  const { db } = useContext(ControllerInfoContext) || {};
-  const isLoading = useSelector(
-    (state: RootState) => state.undoable.present.item.isLoading,
-  );
   const backgroundTargetSlideIds = useSelector(
     (state: RootState) =>
       state.undoable.present.item.backgroundTargetSlideIds ?? [],
+  );
+  const mobileBackgroundTargetSelectMode = useSelector(
+    (state: RootState) =>
+      state.undoable.present.item.mobileBackgroundTargetSelectMode ?? false,
   );
 
   const {
@@ -86,6 +84,10 @@ const ItemSlide = ({
 
   const isFree = itemType === "free";
 
+  const showBackgroundTargetSelectionChrome =
+    canEdit &&
+    (mobileBackgroundTargetSelectMode || backgroundTargetSlideIds.length > 0);
+
   // Check if this slide is in the same section as the dragged slide
   const sectionMatch = slide.name?.match(/Section (\d+)/);
   const isInDraggedSection = sectionMatch && sectionMatch[1] === draggedSection;
@@ -100,64 +102,34 @@ const ItemSlide = ({
       }
       : undefined;
 
-  const contextMenuItems = useMemo(
-    () =>
-      canEdit
-        ? [
-          {
-            label: "Clear Background",
-            onClick: () => {
-              if (!db) return;
-              const slideId = slide.id;
-              const subsetActive =
-                backgroundTargetSlideIds.length > 0 &&
-                Boolean(slideId) &&
-                backgroundTargetSlideIds.includes(slideId);
-              if (subsetActive) {
-                dispatch(
-                  clearSlideBackgroundsOnSubset({
-                    slideIds: [...backgroundTargetSlideIds],
-                  }),
-                );
-              } else {
-                dispatch(
-                  updateSlideBackground({
-                    background: "",
-                  }),
-                );
-              }
-            },
-            icon: <ImageOff className="w-4 h-4" />,
-            disabled: isLoading,
-          },
-        ]
-        : [],
-    [canEdit, db, dispatch, isLoading, backgroundTargetSlideIds, slide.id],
-  );
+  const LONG_PRESS_MS = 500;
+  const LONG_PRESS_MOVE_PX = 10;
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  const contextMenuHeader = useMemo(() => {
-    const n = backgroundTargetSlideIds.length;
-    const slideId = slide.id;
-    if (
-      slideId &&
-      n > 1 &&
-      backgroundTargetSlideIds.includes(slideId)
-    ) {
-      return {
-        title: `${n} slides selected`,
-        subtitle: "Background selection",
-      };
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
     }
-    return {
-      title: slide.name || `Slide ${index + 1}`,
-      subtitle: "Item Slide",
-    };
-  }, [
-    backgroundTargetSlideIds,
-    slide.id,
-    slide.name,
-    index,
-  ]);
+  };
+
+  useEffect(() => () => clearLongPressTimer(), []);
+
+  const handleSlideContextMenu = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!canEdit) return;
+    if (onEnterBackgroundTargetSelectMode) {
+      if (!isFree && e.shiftKey) {
+        if (!isSelected) {
+          selectSlide(index);
+        }
+        return;
+      }
+      onEnterBackgroundTargetSelectMode(index);
+    }
+  };
 
   return (
     <li
@@ -191,85 +163,127 @@ const ItemSlide = ({
       )}
       id={`item-slide-${index}`}
     >
-      <ContextMenu
-        menuItems={contextMenuItems}
-        header={contextMenuHeader}
-        onOpen={() => {
-          if (!isSelected) {
-            selectSlide(index);
+      <div
+        className="relative"
+        onContextMenu={handleSlideContextMenu}
+        onClick={(e) => onSlideGridClick(e, index)}
+        onPointerDown={(e) => {
+          if (
+            e.pointerType !== "touch" ||
+            !canEdit ||
+            !onEnterBackgroundTargetSelectMode
+          ) {
+            return;
+          }
+          longPressStartRef.current = { x: e.clientX, y: e.clientY };
+          clearLongPressTimer();
+          longPressTimerRef.current = window.setTimeout(() => {
+            longPressTimerRef.current = null;
+            longPressStartRef.current = null;
+            onEnterBackgroundTargetSelectMode(index, {
+              skipNextClick: true,
+            });
+          }, LONG_PRESS_MS);
+        }}
+        onPointerMove={(e) => {
+          if (
+            e.pointerType !== "touch" ||
+            longPressTimerRef.current == null ||
+            !longPressStartRef.current
+          ) {
+            return;
+          }
+          const { x, y } = longPressStartRef.current;
+          if (
+            Math.abs(e.clientX - x) > LONG_PRESS_MOVE_PX ||
+            Math.abs(e.clientY - y) > LONG_PRESS_MOVE_PX
+          ) {
+            clearLongPressTimer();
+            longPressStartRef.current = null;
           }
         }}
+        onPointerUp={(e) => {
+          if (e.pointerType !== "touch") return;
+          clearLongPressTimer();
+          longPressStartRef.current = null;
+        }}
+        onPointerCancel={(e) => {
+          if (e.pointerType !== "touch") return;
+          clearLongPressTimer();
+          longPressStartRef.current = null;
+        }}
       >
-        <div
-          className="relative"
-          onClick={(e) => onSlideGridClick(e, index)}
-        >
-          {isLive ? (
-            <span
-              className="pointer-events-none absolute bottom-1 right-1 z-20 rounded bg-green-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow"
-              aria-label="Live on output"
-            >
-              Live
-            </span>
-          ) : null}
-          <h4
-            className={cn(
-              "rounded-t-md truncate px-2 text-center flex w-full",
-              hSize,
-              itemSectionBgColorMap.get(slide.type)
-            )}
+        <MultiSelectSubsetTick
+          modeActive={showBackgroundTargetSelectionChrome}
+          isSelected={isBackgroundTargetSelected}
+          frameClassName="absolute left-1 top-1 z-30 flex h-6 w-6 items-center justify-center"
+          checkClassName="h-3.5 w-3.5 shrink-0 stroke-[3]"
+        />
+        {isLive ? (
+          <span
+            className="pointer-events-none absolute bottom-1 right-1 z-20 rounded bg-green-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow"
+            aria-label="Live on output"
           >
-            {slide.name?.split(/\u200B(.*?)\u200B/).map((part, index) => {
-              // Even indices are regular text, odd indices are special parts
-              if (index % 2 === 1) {
-                return (
-                  <span key={index} className="text-gray-400">
-                    {part}
-                  </span>
-                );
+            Live
+          </span>
+        ) : null}
+        <h4
+          className={cn(
+            "rounded-t-md truncate px-2 text-center flex w-full",
+            hSize,
+            itemSectionBgColorMap.get(slide.type)
+          )}
+        >
+          {slide.name?.split(/\u200B(.*?)\u200B/).map((part, index) => {
+            // Even indices are regular text, odd indices are special parts
+            if (index % 2 === 1) {
+              return (
+                <span key={index} className="text-gray-400">
+                  {part}
+                </span>
+              );
+            }
+            if (part.trim()) {
+              return (
+                <span className="flex-1" key={index}>
+                  {part}
+                </span>
+              );
+            }
+            return null;
+          })}
+        </h4>
+        <DisplayWindow
+          showBorder
+          boxes={
+            isStreamFormat && (itemType === "free" || itemType === "bible")
+              ? []
+              : slide.boxes
+          }
+          displayType={isStreamFormat ? "stream" : "slide"}
+          timerInfo={timerInfo}
+          bibleDisplayInfo={
+            itemType === "bible" ? getBibleInfo(index) : undefined
+          }
+          formattedTextDisplayInfo={
+            itemType === "free"
+              ? {
+                text: slide.boxes[1]?.words?.trim() || "",
+                backgroundColor:
+                  slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
+                textColor:
+                  slide.formattedTextDisplayInfo?.textColor || "#ffffff",
+                fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
+                paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
+                paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
+                isBold: slide.formattedTextDisplayInfo?.isBold || false,
+                isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
+                align: slide.formattedTextDisplayInfo?.align || "left",
               }
-              if (part.trim()) {
-                return (
-                  <span className="flex-1" key={index}>
-                    {part}
-                  </span>
-                );
-              }
-              return null;
-            })}
-          </h4>
-          <DisplayWindow
-            showBorder
-            boxes={
-              isStreamFormat && (itemType === "free" || itemType === "bible")
-                ? []
-                : slide.boxes
-            }
-            displayType={isStreamFormat ? "stream" : "slide"}
-            timerInfo={timerInfo}
-            bibleDisplayInfo={
-              itemType === "bible" ? getBibleInfo(index) : undefined
-            }
-            formattedTextDisplayInfo={
-              itemType === "free"
-                ? {
-                  text: slide.boxes[1]?.words?.trim() || "",
-                  backgroundColor:
-                    slide.formattedTextDisplayInfo?.backgroundColor || "#eb8934",
-                  textColor:
-                    slide.formattedTextDisplayInfo?.textColor || "#ffffff",
-                  fontSize: slide.formattedTextDisplayInfo?.fontSize || 1.5,
-                  paddingX: slide.formattedTextDisplayInfo?.paddingX || 2,
-                  paddingY: slide.formattedTextDisplayInfo?.paddingY || 1,
-                  isBold: slide.formattedTextDisplayInfo?.isBold || false,
-                  isItalic: slide.formattedTextDisplayInfo?.isItalic || false,
-                  align: slide.formattedTextDisplayInfo?.align || "left",
-                }
-                : undefined
-            }
-          />
-        </div>
-      </ContextMenu>
+              : undefined
+          }
+        />
+      </div>
     </li>
   );
 };
