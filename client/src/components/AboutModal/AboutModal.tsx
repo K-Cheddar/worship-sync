@@ -9,7 +9,7 @@ import {
 } from "../../utils/versionUtils";
 import { isElectron } from "../../utils/environment";
 import * as serviceWorkerRegistration from "../../serviceWorkerRegistration";
-import { RefreshCw, RotateCw } from "lucide-react";
+import { Download, RefreshCw, RotateCw } from "lucide-react";
 import { humanizeUpdateError } from "./updateMessages";
 
 type UpdateStatus =
@@ -19,6 +19,11 @@ type UpdateStatus =
   | "downloading"
   | "updateDownloaded"
   | "error";
+
+type DesktopUpdateCaps = {
+  autoUpdate: boolean;
+  manualReleaseDownload: boolean;
+};
 
 interface AboutModalProps {
   isOpen: boolean;
@@ -41,6 +46,10 @@ const AboutModal = ({
   const [isGettingLatestVersion, setIsGettingLatestVersion] =
     useState<boolean>(false);
   const [reloadMessage, setReloadMessage] = useState<string>("");
+  const [updateCaps, setUpdateCaps] = useState<DesktopUpdateCaps | null>(null);
+  const [isRestartingInstall, setIsRestartingInstall] = useState(false);
+  const [isOpeningReleaseDownload, setIsOpeningReleaseDownload] =
+    useState(false);
 
   useEffect(() => {
     if (!isOpen) {
@@ -50,6 +59,9 @@ const AboutModal = ({
       setLatestVersion(null);
       setReloadMessage("");
       setIsGettingLatestVersion(false);
+      setUpdateCaps(null);
+      setIsRestartingInstall(false);
+      setIsOpeningReleaseDownload(false);
     }
   }, [isOpen]);
 
@@ -86,6 +98,32 @@ const AboutModal = ({
     setUpdateStatus("updateDownloaded");
     setDownloadPercent(100);
   }, [isOpen, updateReadyVersion]);
+
+  useEffect(() => {
+    if (
+      !isOpen ||
+      !isElectron() ||
+      !window.electronAPI?.getDesktopUpdateCapabilities
+    ) {
+      return;
+    }
+    let cancelled = false;
+    void window.electronAPI
+      .getDesktopUpdateCapabilities()
+      .then((c) => {
+        if (!cancelled) {
+          setUpdateCaps(c);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUpdateCaps({ autoUpdate: true, manualReleaseDownload: false });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   const handleCheckForUpdates = useCallback(async () => {
     if (!isElectron() || !window.electronAPI?.checkForUpdates) return;
@@ -128,9 +166,49 @@ const AboutModal = ({
     }
   }, [version]);
 
-  const handleRestartToInstall = useCallback(() => {
+  const handleRestartToInstall = useCallback(async () => {
     if (!isElectron() || !window.electronAPI?.installUpdate) return;
-    window.electronAPI.installUpdate();
+    setIsRestartingInstall(true);
+    setUpdateError("");
+    try {
+      const result = await window.electronAPI.installUpdate();
+      if (!result.ok) {
+        setUpdateStatus("error");
+        const raw = result.error || "Could not restart to install.";
+        setUpdateError(humanizeUpdateError(raw));
+      }
+    } catch {
+      setUpdateStatus("error");
+      setUpdateError(
+        humanizeUpdateError("Could not restart to install. Try again."),
+      );
+    } finally {
+      setIsRestartingInstall(false);
+    }
+  }, []);
+
+  const handleOpenDesktopReleaseDownload = useCallback(async () => {
+    if (!isElectron() || !window.electronAPI?.openDesktopReleaseDownload) {
+      return;
+    }
+    setIsOpeningReleaseDownload(true);
+    setUpdateError("");
+    try {
+      const res = await window.electronAPI.openDesktopReleaseDownload();
+      if (!res.ok) {
+        setUpdateError(
+          humanizeUpdateError(
+            res.error || "Could not open the download page.",
+          ),
+        );
+      }
+    } catch {
+      setUpdateError(
+        humanizeUpdateError("Could not open the download page."),
+      );
+    } finally {
+      setIsOpeningReleaseDownload(false);
+    }
   }, []);
 
   const handleGetLatestVersion = useCallback(async () => {
@@ -156,7 +234,14 @@ const AboutModal = ({
   }, []);
 
   useEffect(() => {
-    if (!isOpen || !isElectron() || !window.electronAPI) return;
+    if (
+      !isOpen ||
+      !isElectron() ||
+      !window.electronAPI ||
+      !updateCaps?.autoUpdate
+    ) {
+      return;
+    }
     const unsubAvailable = window.electronAPI.onUpdateAvailable?.((info) => {
       getAppVersion().then((current) => {
         if (current && isNewerVersion(info.version, current)) {
@@ -196,9 +281,12 @@ const AboutModal = ({
       unsubProgress?.();
       unsubError?.();
     };
-  }, [isOpen]);
+  }, [isOpen, updateCaps?.autoUpdate]);
 
-  const showUpdateSection = isElectron() && window.electronAPI?.checkForUpdates;
+  const showDesktopUpdateSection =
+    isElectron() &&
+    updateCaps != null &&
+    (updateCaps.autoUpdate || updateCaps.manualReleaseDownload);
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="About WorshipSync" size="sm">
@@ -235,55 +323,88 @@ const AboutModal = ({
               </Button>
             </div>
           )}
-        {showUpdateSection && (
+        {showDesktopUpdateSection && (
           <div className="border-t border-gray-700 pt-4 mt-4 space-y-3 w-full flex flex-col gap-2 items-center">
-            <div className="min-h-5 w-full" aria-live="polite">
-              {updateStatus === "error" && (
-                <p className="text-sm text-red-400">{updateError}</p>
-              )}
-              {updateStatus === "upToDate" && (
-                <p className="text-sm text-gray-400">
-                  {updateMessage || "You're up to date."}
+            {updateCaps?.manualReleaseDownload && (
+              <div className="w-full flex flex-col gap-2 items-center">
+                <p className="text-sm text-gray-400 max-w-sm">
+                  macOS builds install from the disk image on GitHub. Your
+                  browser will download the latest release.
                 </p>
-              )}
-              {updateStatus === "downloading" && (
-                <p className="text-sm text-gray-300">
-                  {downloadPercent > 0
-                    ? `Downloading update ${updateVersion}… ${Math.round(downloadPercent)}%`
-                    : `Downloading update ${updateVersion}…`}
-                </p>
-              )}
-            </div>
-            {updateStatus === "updateDownloaded" && (
-              <>
-                <p className="text-sm text-gray-300">Update {updateVersion} ready to install.</p>
+                {updateError && !updateCaps?.autoUpdate ? (
+                  <p className="text-sm text-red-400">{updateError}</p>
+                ) : null}
                 <Button
                   variant="cta"
-                  onClick={handleRestartToInstall}
-                  svg={RotateCw}
-                  className="w-full"
+                  onClick={() => void handleOpenDesktopReleaseDownload()}
+                  svg={Download}
+                  className="w-full justify-center gap-2"
+                  isLoading={isOpeningReleaseDownload}
+                  disabled={isOpeningReleaseDownload}
                 >
-                  Restart to install
+                  Download latest version
                 </Button>
+              </div>
+            )}
+            {updateCaps?.autoUpdate && (
+              <>
+                <div className="min-h-5 w-full" aria-live="polite">
+                  {updateStatus === "error" && (
+                    <p className="text-sm text-red-400">{updateError}</p>
+                  )}
+                  {updateStatus === "upToDate" && (
+                    <p className="text-sm text-gray-400">
+                      {updateMessage || "You're up to date."}
+                    </p>
+                  )}
+                  {updateStatus === "downloading" && (
+                    <p className="text-sm text-gray-300">
+                      {downloadPercent > 0
+                        ? `Downloading update ${updateVersion}… ${Math.round(downloadPercent)}%`
+                        : `Downloading update ${updateVersion}…`}
+                    </p>
+                  )}
+                </div>
+                {updateStatus === "updateDownloaded" && (
+                  <>
+                    <p className="text-sm text-gray-300">
+                      Update {updateVersion} ready to install.
+                    </p>
+                    <Button
+                      variant="cta"
+                      onClick={() => void handleRestartToInstall()}
+                      svg={RotateCw}
+                      className="w-full justify-center gap-2"
+                      isLoading={isRestartingInstall}
+                      disabled={isRestartingInstall}
+                    >
+                      Restart to install
+                    </Button>
+                  </>
+                )}
+                {updateStatus !== "updateDownloaded" && (
+                  <Button
+                    onClick={handleCheckForUpdates}
+                    svg={RefreshCw}
+                    className="w-full justify-center gap-2"
+                    isLoading={updateStatus === "checking"}
+                    disabled={
+                      updateStatus === "checking" ||
+                      updateStatus === "downloading"
+                    }
+                    aria-label={
+                      updateStatus === "downloading"
+                        ? "Update download in progress"
+                        : undefined
+                    }
+                  >
+                    {updateStatus === "checking"
+                      ? "Checking…"
+                      : "Check for updates"}
+                  </Button>
+                )}
               </>
             )}
-            <Button
-              onClick={handleCheckForUpdates}
-              svg={RefreshCw}
-              isLoading={updateStatus === "checking"}
-              disabled={
-                updateStatus === "checking" ||
-                updateStatus === "downloading" ||
-                updateStatus === "updateDownloaded"
-              }
-              aria-label={
-                updateStatus === "downloading"
-                  ? "Update download in progress"
-                  : undefined
-              }
-            >
-              {updateStatus === "checking" ? "Checking…" : "Check for updates"}
-            </Button>
           </div>
         )}
       </div>

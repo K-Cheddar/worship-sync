@@ -32,6 +32,7 @@ import { useLocation } from "react-router-dom";
 import { delay } from "./utils/generalUtils";
 import ErrorBoundary from "./components/ErrorBoundary";
 import AuthGate from "./components/AuthGate";
+import AuthScreenMain from "./components/AuthScreenMain";
 import ViewAccessBlockedRedirect from "./components/ViewAccessBlockedRedirect/ViewAccessBlockedRedirect";
 import WorkstationPair from "./pages/WorkstationPair";
 import WorkstationOperator from "./pages/WorkstationOperator";
@@ -83,7 +84,7 @@ const BootstrapSplash = () => {
     { retryCount: context?.authServerRetryCount ?? 0 }
   );
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-6 text-white">
+    <AuthScreenMain>
       <div className="flex max-w-md flex-col items-center gap-6">
         <img
           src={WorshipSyncIcon}
@@ -99,7 +100,7 @@ const BootstrapSplash = () => {
           {description}
         </p>
       </div>
-    </main>
+    </AuthScreenMain>
   );
 };
 

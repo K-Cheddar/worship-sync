@@ -13,6 +13,7 @@ import {
   signOut,
   updateProfile,
 } from "firebase/auth";
+import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
 import { GoogleMark, MicrosoftMark } from "../components/AuthProviderMarks";
 import {
@@ -538,7 +539,7 @@ const InviteAccept = () => {
   };
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
+    <AuthScreenMain>
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         <h1 className="text-2xl font-semibold">{joinHeadline}</h1>
         <p className="mt-2 text-sm text-gray-200">
@@ -678,7 +679,7 @@ const InviteAccept = () => {
           </form>
         )}
       </div>
-    </main>
+    </AuthScreenMain>
   );
 };
 

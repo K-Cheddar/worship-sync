@@ -101,7 +101,7 @@ export function useMediaLibraryController({
     [showToast],
   );
 
-  const { db, cloud, isMobile, updater } =
+  const { db, cloud, isMobile, updater, isGuestSession = false } =
     useContext(ControllerInfoContext) || {};
 
   const { list, folders, isInitialized: mediaStoreInitialized } = useSelector(
@@ -1070,6 +1070,13 @@ export function useMediaLibraryController({
     duration,
     is_audio,
   }: mediaInfoType) => {
+    if (isGuestSession) {
+      notifyMediaAction(
+        "Guest mode uses sample media only. Sign in to upload images or videos.",
+        "error",
+      );
+      return;
+    }
     let placeholderImage = "";
     let thumbnailUrl = "";
     if (resource_type === "video") {
@@ -1122,6 +1129,13 @@ export function useMediaLibraryController({
     thumbnailUrl: string;
     name: string;
   }) => {
+    if (isGuestSession) {
+      notifyMediaAction(
+        "Guest mode uses sample media only. Sign in to upload videos.",
+        "error",
+      );
+      return;
+    }
     const currentTime = new Date().toISOString();
 
     const newMedia: MediaType = {
@@ -1146,6 +1160,17 @@ export function useMediaLibraryController({
 
     dispatch(addItemToMediaList(newMedia));
   };
+
+  const requestMediaUpload = useCallback(() => {
+    if (isGuestSession) {
+      notifyMediaAction(
+        "Guest mode uses sample media only. Sign in to upload your own files.",
+        "error",
+      );
+      return;
+    }
+    mediaUploadInputRef.current?.openModal();
+  }, [isGuestSession, notifyMediaAction]);
 
   const handleProviderRetry = async () => {
     setProviderRetryBusy(true);
@@ -1226,10 +1251,12 @@ export function useMediaLibraryController({
   return {
     dispatch,
     isPanelVariant,
+    isGuestSession,
     isMediaExpanded,
     setSearchTerm,
     mediaUploadInputRef,
     uploadProgress,
+    requestMediaUpload,
     addNewBackground,
     addMuxVideo,
     handleUploadActiveChange,

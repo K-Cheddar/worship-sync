@@ -49,6 +49,12 @@ import { assertAllowedOpenExternalUrl } from "./openExternalUrlAllowlist";
 
 const { autoUpdater } = updaterPkg;
 
+/** Matches `publish` in `electron-builder.config.js`. */
+const DESKTOP_RELEASE_OWNER = "K-Cheddar";
+const DESKTOP_RELEASE_REPO = "worship-sync";
+const DESKTOP_RELEASE_API_URL = `https://api.github.com/repos/${DESKTOP_RELEASE_OWNER}/${DESKTOP_RELEASE_REPO}/releases/latest`;
+const DESKTOP_RELEASE_PAGE_URL = `https://github.com/${DESKTOP_RELEASE_OWNER}/${DESKTOP_RELEASE_REPO}/releases/latest`;
+
 /** Returns true only when newVersion is strictly greater than currentVersion (semver-style). */
 function isNewerVersion(newVersion: string, currentVersion: string): boolean {
   const v1Parts = newVersion.split(".").map(Number);
@@ -66,6 +72,25 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
+
+/**
+ * In-app auto-updates on macOS require Apple code signing + notarization.
+ * Until that is configured, keep the updater off by default and ship the GitHub download path instead.
+ * Set `WORSHIPSYNC_MAC_USE_AUTO_UPDATE=1` when signed builds should use electron-updater again.
+ */
+const useElectronAutoUpdaterInMain = (): boolean =>
+  !isDev &&
+  (process.platform !== "darwin" ||
+    process.env.WORSHIPSYNC_MAC_USE_AUTO_UPDATE === "1");
+
+function shouldForwardUpdaterErrorToRenderer(message: string): boolean {
+  const m = message.toLowerCase();
+  if (m.includes("code signature") && m.includes("validation")) return false;
+  if (m.includes("not pass validation")) return false;
+  if (m.includes("secerror") || m.includes("secerrordomain")) return false;
+  if (m.includes("failed to verify") && m.includes("signature")) return false;
+  return true;
+}
 
 /**
  * Get the icon path for the current platform
@@ -712,9 +737,9 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // Configure auto-updater and check before boot (only in production)
+  // Configure auto-updater and check before boot (only in production, non-mac or mac+env)
   // Per electron-builder docs: https://www.electron.build/auto-update
-  if (!isDev) {
+  if (useElectronAutoUpdaterInMain()) {
     // Silent background updates: auto-download and install on quit
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
@@ -787,9 +812,13 @@ app.whenReady().then(() => {
 
     autoUpdater.on("error", (error) => {
       console.error("[Auto-Updater] Error:", error);
+      const msg = (error as Error).message;
+      if (!shouldForwardUpdaterErrorToRenderer(msg)) {
+        return;
+      }
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("update-error", {
-          message: (error as Error).message,
+          message: msg,
         });
       }
     });
@@ -858,6 +887,13 @@ ipcMain.handle("check-for-updates", async () => {
       message: "Updates are disabled in development.",
     };
   }
+  if (!useElectronAutoUpdaterInMain()) {
+    return {
+      available: false,
+      message:
+        "Use Download latest version to install the current release from GitHub.",
+    };
+  }
   try {
     const result = await autoUpdater.checkForUpdates();
     const updateInfo = result?.updateInfo;
@@ -870,11 +906,123 @@ ipcMain.handle("check-for-updates", async () => {
   }
 });
 
-ipcMain.handle("quit-and-install", () => {
-  if (!isDev) {
-    autoUpdater.quitAndInstall(false, true);
+ipcMain.handle("get-desktop-update-capabilities", () => {
+  const autoUpdate = useElectronAutoUpdaterInMain();
+  const manualReleaseDownload =
+    !isDev &&
+    process.platform === "darwin" &&
+    process.env.WORSHIPSYNC_MAC_USE_AUTO_UPDATE !== "1";
+  return { autoUpdate, manualReleaseDownload };
+});
+
+ipcMain.handle("open-desktop-release-download", async () => {
+  if (isDev) {
+    return { ok: false as const, error: "disabled_in_dev" as const };
+  }
+  try {
+    const response = await net.fetch(DESKTOP_RELEASE_API_URL, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "WorshipSync-Desktop",
+      },
+    });
+    if (!response.ok) {
+      await shell.openExternal(DESKTOP_RELEASE_PAGE_URL);
+      return { ok: true as const };
+    }
+    const data = (await response.json()) as {
+      assets?: Array<{ name: string; browser_download_url: string }>;
+    };
+    const assets = data.assets ?? [];
+    const pickUrl = (): string | undefined => {
+      if (process.platform === "darwin") {
+        return (
+          assets.find((a) => a.name.toLowerCase().endsWith(".dmg"))
+            ?.browser_download_url ||
+          assets.find((a) => a.name.toLowerCase().endsWith(".zip"))
+            ?.browser_download_url
+        );
+      }
+      if (process.platform === "win32") {
+        return assets.find((a) => a.name.toLowerCase().endsWith(".exe"))
+          ?.browser_download_url;
+      }
+      return (
+        assets.find((a) => a.name.endsWith(".AppImage"))
+          ?.browser_download_url ||
+        assets.find((a) => a.name.endsWith(".deb"))?.browser_download_url
+      );
+    };
+    const targetUrl = pickUrl() ?? DESKTOP_RELEASE_PAGE_URL;
+    await shell.openExternal(targetUrl);
+    return { ok: true as const };
+  } catch (err) {
+    console.error("[Desktop] open-desktop-release-download:", err);
+    try {
+      await shell.openExternal(DESKTOP_RELEASE_PAGE_URL);
+      return { ok: true as const };
+    } catch {
+      return { ok: false as const, error: (err as Error).message };
+    }
   }
 });
+
+ipcMain.handle(
+  "quit-and-install",
+  async (): Promise<
+    | { ok: true }
+    | { ok: false; reason: "dev" | "manual_update_channel"; error?: string }
+  > => {
+    if (isDev) {
+      return { ok: false, reason: "dev" };
+    }
+    if (!useElectronAutoUpdaterInMain()) {
+      return { ok: false, reason: "manual_update_channel" };
+    }
+    try {
+      type DownloadHelper = {
+        downloadedFileInfo: unknown;
+        file: string | null;
+      } | null;
+      const helper = (
+        autoUpdater as { downloadedUpdateHelper?: DownloadHelper }
+      ).downloadedUpdateHelper;
+      const ready =
+        helper != null &&
+        helper.downloadedFileInfo != null &&
+        helper.file != null;
+      if (!ready) {
+        const checkResult = await autoUpdater.checkForUpdates();
+        if (checkResult?.downloadPromise) {
+          await checkResult.downloadPromise;
+        }
+      }
+    } catch (err) {
+      console.error("[Auto-Updater] quit-and-install prepare failed:", err);
+      return {
+        ok: false,
+        reason: "manual_update_channel",
+        error: (err as Error).message,
+      };
+    }
+
+    return await new Promise((resolve) => {
+      setImmediate(() => {
+        try {
+          autoUpdater.quitAndInstall(false, true);
+          resolve({ ok: true as const });
+        } catch (err) {
+          console.error("[Auto-Updater] quitAndInstall failed:", err);
+          resolve({
+            ok: false as const,
+            reason: "manual_update_channel" as const,
+            error: (err as Error).message,
+          });
+        }
+      });
+    });
+  },
+);
 
 // Generic window creation helper
 const createWindowByType = (windowType: WindowType): void => {

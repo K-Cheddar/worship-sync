@@ -4,18 +4,11 @@ import DeleteModal from "../../components/Modal/DeleteModal";
 import {
   ChevronDown,
   ChevronUp,
-  FolderInput,
-  FolderPlus,
   LayoutGrid,
   Maximize,
   Plus,
   X,
 } from "lucide-react";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "../../components/ui/Popover";
 import { useCallback } from "react";
 import { useDispatch } from "../../hooks";
 import MediaUploadInput from "./MediaUploadInput";
@@ -32,9 +25,7 @@ import {
   MediaLibraryRenameFolderForm,
   MediaLibraryRenameMediaForm,
 } from "./MediaLibraryFolderModals";
-import MediaLibraryActionBar, {
-  MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-} from "./MediaLibraryActionBar";
+import MediaLibraryActionBar from "./MediaLibraryActionBar";
 import cn from "classnames";
 import Toggle from "../../components/Toggle/Toggle";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
@@ -66,6 +57,13 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     },
     [showAll, navigateToFolder],
   );
+
+  let toolbarAddMediaTitle = "Add Media";
+  if (c.uploadProgress.isUploading) {
+    toolbarAddMediaTitle = `Uploading... ${Math.round(c.uploadProgress.progress)}%`;
+  } else if (c.isGuestSession) {
+    toolbarAddMediaTitle = "Guest mode: sample media only. Sign in to upload.";
+  }
 
   return (
     <ErrorBoundary>
@@ -101,12 +99,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             <Button
               variant="tertiary"
               svg={Plus}
-              onClick={() => c.mediaUploadInputRef.current?.openModal()}
-              title={
-                c.uploadProgress.isUploading
-                  ? `Uploading... ${Math.round(c.uploadProgress.progress)}%`
-                  : "Add Media"
-              }
+              onClick={() => void c.requestMediaUpload()}
+              title={toolbarAddMediaTitle}
               disabled={c.uploadProgress.isUploading}
             >
               {c.uploadProgress.isUploading
@@ -129,6 +123,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           uploadPreset="bpqu4ma5"
           cloudName="portable-media"
           onUploadActiveChange={c.handleUploadActiveChange}
+          uploadDisabled={c.isGuestSession}
         />
         {!c.isMediaLoading && c.isMediaExpanded && (
           <>
@@ -164,50 +159,27 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                 <MediaLibraryActionBar
                   detailsRow={c.actionBarDetails}
                   showFolderActions={selectedCount === 0}
-                  newFolderPopover={
-                    <Popover
-                      open={c.newFolderOpen}
-                      onOpenChange={c.setNewFolderOpen}
-                    >
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="tertiary"
-                          className={MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS}
-                          svg={FolderPlus}
-                          title="New folder"
-                        >
-                          New folder
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent align="start" className={MEDIA_LIBRARY_FORM_POPOVER_CLASS}>
-                        <MediaLibraryNewFolderForm
-                          folders={c.folders}
-                          list={c.list}
-                          parentForNewFolder={c.parentForNewFolder}
-                          onUpdateFoldersAndList={c.applyFoldersAndList}
-                          onFolderCreated={handleNewFolderCreated}
-                          onClose={() => c.setNewFolderOpen(false)}
-                        />
-                      </PopoverContent>
-                    </Popover>
-                  }
-                  renameFolderPopover={
-                    c.selectedRealFolder ? (
-                      <Popover
-                        open={c.folderRenameOpen}
-                        onOpenChange={c.setFolderRenameOpen}
-                      >
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="tertiary"
-                            className={MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS}
-                            svg={FolderInput}
-                            title="Rename folder"
-                          >
-                            Rename
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent align="start" className={MEDIA_LIBRARY_FORM_POPOVER_CLASS}>
+                  folderNew={{
+                    open: c.newFolderOpen,
+                    onOpenChange: c.setNewFolderOpen,
+                    content: (
+                      <MediaLibraryNewFolderForm
+                        folders={c.folders}
+                        list={c.list}
+                        parentForNewFolder={c.parentForNewFolder}
+                        onUpdateFoldersAndList={c.applyFoldersAndList}
+                        onFolderCreated={handleNewFolderCreated}
+                        onClose={() => c.setNewFolderOpen(false)}
+                      />
+                    ),
+                    contentClassName: MEDIA_LIBRARY_FORM_POPOVER_CLASS,
+                  }}
+                  folderRename={
+                    c.selectedRealFolder
+                      ? {
+                        open: c.folderRenameOpen,
+                        onOpenChange: c.setFolderRenameOpen,
+                        content: (
                           <MediaLibraryRenameFolderForm
                             folders={c.folders}
                             list={c.list}
@@ -215,9 +187,10 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                             onUpdateFoldersAndList={c.applyFoldersAndList}
                             onClose={() => c.setFolderRenameOpen(false)}
                           />
-                        </PopoverContent>
-                      </Popover>
-                    ) : null
+                        ),
+                        contentClassName: MEDIA_LIBRARY_FORM_POPOVER_CLASS,
+                      }
+                      : null
                   }
                   onDeleteFolder={c.handleRequestFolderDelete}
                   showFolderRenameDelete={Boolean(c.selectedRealFolder)}
@@ -364,6 +337,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           onPreviewChange={c.setPreviewMedia}
           mediaUploadInputRef={c.mediaUploadInputRef}
           uploadProgress={c.uploadProgress}
+          onAddMediaClick={c.requestMediaUpload}
+          mediaUploadDisabled={c.isGuestSession}
         />
       </div>
     </ErrorBoundary>

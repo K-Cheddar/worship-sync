@@ -1,4 +1,11 @@
-import { useState, useRef, useImperativeHandle, forwardRef, useEffect } from "react";
+import {
+  useState,
+  useRef,
+  useImperativeHandle,
+  forwardRef,
+  useEffect,
+  useCallback,
+} from "react";
 import { createPortal } from "react-dom";
 import { Upload, Minimize2 } from "lucide-react";
 import Button from "../../components/Button/Button";
@@ -17,7 +24,18 @@ import { UploadStatusDisplay } from "./components/UploadStatusDisplay";
 import { ProgressPopup } from "./components/ProgressPopup";
 
 const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
-  ({ onImageComplete, onVideoComplete, showButton = true, uploadPreset = "bpqu4ma5", cloudName = "portable-media", onUploadActiveChange }, ref) => {
+  (
+    {
+      onImageComplete,
+      onVideoComplete,
+      showButton = true,
+      uploadPreset = "bpqu4ma5",
+      cloudName = "portable-media",
+      onUploadActiveChange,
+      uploadDisabled = false,
+    },
+    ref,
+  ) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isMinimized, setIsMinimized] = useState(false);
     const [isMinimizedToButton, setIsMinimizedToButton] = useState(false);
@@ -33,6 +51,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
     const pollingTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
 
     const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (uploadDisabled) return;
       const files = Array.from(event.target.files || []);
       if (files.length === 0) return;
 
@@ -126,6 +145,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
     };
 
     const handleUpload = async () => {
+      if (uploadDisabled) return;
       if (selectedFiles.length === 0) {
         setError("Please select at least one file");
         return;
@@ -221,22 +241,27 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       }
     };
 
-    const openModal = () => {
+    const openModal = useCallback(() => {
+      if (uploadDisabled) return;
       setIsModalOpen(true);
       setIsMinimized(false);
       setIsMinimizedToButton(false);
-    };
-
-    useImperativeHandle(ref, () => ({
-      openModal,
-      getUploadStatus: () => ({
-        isUploading,
-        progress: overallProgress,
-        status: uploadStatus,
-      }),
-    }));
+    }, [uploadDisabled]);
 
     const isUploading = uploadStatus === "uploading" || uploadStatus === "processing";
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        openModal,
+        getUploadStatus: () => ({
+          isUploading,
+          progress: overallProgress,
+          status: uploadStatus,
+        }),
+      }),
+      [openModal, isUploading, overallProgress, uploadStatus],
+    );
     const showProgressPopup = (isUploading || uploadStatus === "ready" || uploadStatus === "error") && isMinimized && !isMinimizedToButton;
 
     useEffect(() => {
@@ -299,6 +324,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
             svg={Upload}
             onClick={openModal}
             title="Upload Media"
+            disabled={uploadDisabled}
           >
             Add
           </Button>
@@ -355,13 +381,13 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
                 accept="image/*,video/*"
                 multiple
                 onChange={handleFileSelect}
-                disabled={isUploading}
+                disabled={isUploading || uploadDisabled}
                 className="hidden"
               />
               <div className="flex flex-col items-center gap-2">
                 <Button
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading}
+                  disabled={isUploading || uploadDisabled}
                   className="w-full justify-center"
                 >
                   Choose Files

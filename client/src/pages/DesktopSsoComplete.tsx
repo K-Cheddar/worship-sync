@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import AuthScreenMain from "../components/AuthScreenMain";
 import {
   readDesktopSsoCompleteFlashOnce,
   type DesktopSsoCompleteFlashPayload,
@@ -12,7 +13,7 @@ const DesktopSsoComplete = () => {
   const provider = flash?.provider;
 
   return (
-    <main className="relative flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
+    <AuthScreenMain>
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6 text-center">
         <h1 className="text-2xl font-semibold">
           {provider ? `Signed in with ${providerLabel(provider)}` : "You are all set"}
@@ -23,7 +24,7 @@ const DesktopSsoComplete = () => {
             : "This confirmation was already used, or you opened this page directly. You can close this browser tab."}
         </p>
       </div>
-    </main>
+    </AuthScreenMain>
   );
 };
 

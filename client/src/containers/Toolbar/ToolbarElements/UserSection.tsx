@@ -2,7 +2,6 @@ import { useContext, useState, useEffect, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import {
-  CloudOff,
   Cloud,
   Users,
   Save,
@@ -138,7 +137,7 @@ const UserSection = () => {
     } else {
       label = `Account: ${fullDisplayName}, ${churchLine}`;
     }
-    if (!isMobile) {
+    if (!isMobile && !isDemo) {
       label = `${label}. ${activeCount} active ${activeCount === 1 ? "session" : "sessions"}`;
     }
     return label;
@@ -158,7 +157,7 @@ const UserSection = () => {
           <div
             className={`flex min-w-0 flex-col gap-1 items-start text-left ${ACCOUNT_TRIGGER_MAX_W}`}
           >
-            {showToolbarAutosaveStatus ? (
+            {showToolbarAutosaveStatus && (!isDemo || anyAutosavePending) ? (
               <div className="flex w-full min-w-0 items-center gap-1">
                 <div
                   className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium"
@@ -171,8 +170,6 @@ const UserSection = () => {
                   >
                     {anyAutosavePending ? (
                       <Loader2 className="size-3.5 animate-spin text-gray-400" />
-                    ) : isDemo ? (
-                      <CloudOff className="size-3.5 shrink-0 text-emerald-400" />
                     ) : (
                       <Cloud className="size-3.5 shrink-0 text-emerald-400" />
                     )}
@@ -183,7 +180,7 @@ const UserSection = () => {
                     {anyAutosavePending ? "Syncing..." : "Synced"}
                   </span>
                 </div>
-                {!isMobile ? (
+                {!isMobile && !isDemo ? (
                   <span className="flex items-center gap-1">
                     <span
                       className="inline-flex shrink-0"
@@ -212,7 +209,7 @@ const UserSection = () => {
               ) : null}
             </div>
           </div>
-          {!isMobile && !showToolbarAutosaveStatus ? (
+          {!isMobile && !showToolbarAutosaveStatus && !isDemo ? (
             <>
               <span className="inline-flex shrink-0" title="Active sessions">
                 <Icon

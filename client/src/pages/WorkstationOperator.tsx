@@ -1,5 +1,6 @@
 import { type FormEvent, useContext, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
+import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
 import WorkstationUnpairConfirmModal, {
@@ -32,14 +33,14 @@ const WorkstationOperator = () => {
     loginState === "loading"
   ) {
     return (
-      <div className="flex min-h-dvh w-full items-center justify-center bg-homepage-canvas px-6 text-white">
+      <AuthScreenMain>
         <div className="max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-8 text-center">
           <h1 className="text-2xl font-semibold">Preparing this workstation...</h1>
           <p className="mt-3 text-sm text-gray-200">
             Please wait while WorshipSync validates this session.
           </p>
         </div>
-      </div>
+      </AuthScreenMain>
     );
   }
 
@@ -80,7 +81,7 @@ const WorkstationOperator = () => {
   };
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
+    <AuthScreenMain>
       <form
         className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6"
         onSubmit={handleSubmit}
@@ -171,7 +172,7 @@ const WorkstationOperator = () => {
           </div>
         ) : null}
       </form>
-    </main>
+    </AuthScreenMain>
   );
 };
 

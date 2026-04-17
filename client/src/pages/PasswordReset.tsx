@@ -8,6 +8,7 @@ import {
 import { confirmPasswordReset, verifyPasswordResetCode } from "firebase/auth";
 import { Eye, EyeOff } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
 import PasswordStrengthIndicator from "../components/PasswordStrengthIndicator/PasswordStrengthIndicator";
@@ -122,7 +123,7 @@ const PasswordReset = () => {
   const isPostSuccess = redirectSecondsRemaining !== null;
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
+    <AuthScreenMain>
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         <h1 className="text-2xl font-semibold">Reset password</h1>
         {!isPostSuccess ? (
@@ -196,7 +197,7 @@ const PasswordReset = () => {
           </form>
         )}
       </div>
-    </main>
+    </AuthScreenMain>
   );
 };
 
