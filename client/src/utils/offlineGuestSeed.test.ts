@@ -75,13 +75,14 @@ describe("offlineGuestSeed", () => {
     }>;
 
     expect(itemDocs.length).toBeGreaterThan(0);
-    for (const doc of itemDocs) {
-      if (String(doc.type) === "timer") {
-        expect(doc.background).toBe("");
-      } else {
-        expect(doc.background).toMatch(/^https:\/\//);
-      }
-    }
+    const timerDocs = itemDocs.filter((doc) => String(doc.type) === "timer");
+    const nonTimerDocs = itemDocs.filter((doc) => String(doc.type) !== "timer");
+    expect(timerDocs.every((doc) => doc.background === "")).toBe(true);
+    expect(
+      nonTimerDocs.every((doc) =>
+        /^https:\/\//.test(String(doc.background ?? "")),
+      ),
+    ).toBe(true);
 
     const slideBoxBackgrounds = itemDocs.flatMap((doc) => [
       ...(doc.slides ?? []).flatMap((slide) =>
