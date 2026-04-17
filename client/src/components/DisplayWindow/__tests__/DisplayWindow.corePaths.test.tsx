@@ -189,6 +189,20 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("display-formatted-text-mock")).toBeInTheDocument();
   });
 
+  it("wraps width=100 output in a centered black viewport stage (letterbox/pillarbox)", () => {
+    render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[baseBox]}
+        prevBoxes={[]}
+        width={100}
+      />,
+    );
+
+    const stage = screen.getByTestId("display-full-viewport-stage");
+    expect(stage).toHaveClass("bg-black", "items-center", "justify-center");
+  });
+
   it("unmounts the previous display layer after the display transition window", () => {
     jest.useFakeTimers();
 

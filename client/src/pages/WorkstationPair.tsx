@@ -2,6 +2,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
+import AuthScreenMain from "../components/AuthScreenMain";
 import SetupScreenBackButton from "../components/SetupScreenBackButton";
 import { redeemDisplayPairing, redeemWorkstationPairing } from "../api/auth";
 import {
@@ -122,7 +123,7 @@ const WorkstationPair = ({
   }, [handlePair, isLoading, tokenFromQuery]);
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
+    <AuthScreenMain>
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         <SetupScreenBackButton />
         <h1 className="text-2xl font-semibold">Link this device</h1>
@@ -183,7 +184,7 @@ const WorkstationPair = ({
           </div>
         </div>
       </div>
-    </main>
+    </AuthScreenMain>
   );
 };
 

@@ -13,6 +13,7 @@ describe("MediaLibraryActionBar", () => {
       .spyOn(HTMLElement.prototype, "clientWidth", "get")
       .mockImplementation(function clientWidthMock(this: HTMLElement) {
         if (
+          this.hasAttribute("data-media-library-toolbar-row") ||
           this.hasAttribute("data-media-library-actions-flex") ||
           this.hasAttribute("data-media-library-inline-measure-row")
         )
@@ -23,7 +24,11 @@ describe("MediaLibraryActionBar", () => {
     offsetWidthSpy = jest
       .spyOn(HTMLElement.prototype, "offsetWidth", "get")
       .mockImplementation(function offsetWidthMock(this: HTMLElement) {
-        if (this.hasAttribute("data-measure-action-btn")) return 96;
+        if (
+          this.hasAttribute("data-measure-action-btn") ||
+          this.hasAttribute("data-measure-folder-action-btn")
+        )
+          return 96;
         return 0;
       });
   });
@@ -48,7 +53,7 @@ describe("MediaLibraryActionBar", () => {
         <MediaLibraryActionBar
           detailsRow={<div>Selected media</div>}
           showFolderActions={false}
-          newFolderPopover={null}
+          folderNew={null}
           showFolderRenameDelete={false}
           showMediaRename
           mediaRenameOpen={mediaRenameOpen}
@@ -99,7 +104,7 @@ describe("MediaLibraryActionBar", () => {
       <MediaLibraryActionBar
         detailsRow={<div>2 selected</div>}
         showFolderActions={false}
-        newFolderPopover={null}
+        folderNew={null}
         showFolderRenameDelete={false}
         showMediaRename={false}
         onDeleteFolder={jest.fn()}

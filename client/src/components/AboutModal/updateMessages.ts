@@ -8,6 +8,22 @@ export function humanizeUpdateError(message: string): string {
     return "Could not reach the update server. Check your connection and try again.";
   }
   const lower = m.toLowerCase();
+  if (lower.includes("not signed by the application owner")) {
+    return "The downloaded update did not match the expected publisher. Try Check for updates again, or install manually from GitHub.";
+  }
+  if (
+    lower.includes("code signature") ||
+    lower.includes("not pass validation") ||
+    lower.includes("secerrordomain")
+  ) {
+    return "This Mac build cannot install updates automatically yet. Use Download latest version to get the current release from GitHub.";
+  }
+  if (
+    lower.includes("no update filepath") ||
+    lower.includes("can't quit and install")
+  ) {
+    return "The installer is not ready yet. Try Check for updates, wait for the download to finish, then use Restart to install.";
+  }
   if (
     lower.includes("net::") ||
     lower.includes("network") ||

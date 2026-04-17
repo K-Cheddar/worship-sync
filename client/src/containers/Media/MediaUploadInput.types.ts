@@ -1,6 +1,11 @@
 import { mediaInfoType } from "./cloudinaryTypes";
 
-export type UploadStatus = "idle" | "uploading" | "processing" | "ready" | "error";
+export type UploadStatus =
+  | "idle"
+  | "uploading"
+  | "processing"
+  | "ready"
+  | "error";
 export type FileType = "image" | "video";
 
 export type FileUploadProgress = {
@@ -25,6 +30,8 @@ export type MediaUploadInputProps = {
   cloudName?: string;
   /** Called when upload starts (true) or ends (false). Use to start/stop external progress polling. */
   onUploadActiveChange?: (active: boolean) => void;
+  /** When true, the upload modal cannot be opened and file upload is disabled (e.g. guest mode). */
+  uploadDisabled?: boolean;
 };
 
 export type MediaUploadInputRef = {

@@ -14,6 +14,7 @@ import Input from "../components/Input/Input";
 import Button from "../components/Button/Button";
 import { GoogleMark, MicrosoftMark } from "../components/AuthProviderMarks";
 import SetupScreenBackButton from "../components/SetupScreenBackButton";
+import AuthScreenMain from "../components/AuthScreenMain";
 import HostedDesktopBrowserLogin from "./HostedDesktopBrowserLogin";
 import VerificationCodeInput from "../components/VerificationCodeInput/VerificationCodeInput";
 import {
@@ -429,9 +430,7 @@ const Login = () => {
         setPendingDesktopAuth(nextPendingAuth);
         setPendingDesktopAuthState(nextPendingAuth);
         await openDesktopBrowserUrl(response.browserUrl);
-        setInfoBanner(
-          "Leave WorshipSync open. When the browser finishes, this window updates automatically.",
-        );
+        setInfoBanner("");
       } catch (error) {
         clearPendingDesktopAuth();
         setInfoBanner("");
@@ -835,7 +834,7 @@ const Login = () => {
       return "Use the same Google or Microsoft account you use for WorshipSync. If something went wrong, use the button below to try again.";
     }
     if (hasPendingDesktopAuth) {
-      return "Keep WorshipSync open. When the browser finishes, this window updates automatically. Use Reopen browser if you closed the sign-in tab.";
+      return "";
     }
     if (mode === "code") {
       return "We sent a six-digit code to your email. Enter it below to trust this device.";
@@ -850,8 +849,8 @@ const Login = () => {
   })();
 
   return (
-    <main
-      className="relative flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white"
+    <AuthScreenMain
+      className="relative"
       aria-busy={
         showWebSessionNavigatingChrome ||
         context?.loginState === "loading" ||
@@ -879,9 +878,22 @@ const Login = () => {
           ) : (
             <SetupScreenBackButton disabled={showWebSessionNavigatingChrome} />
           ))}
-        <h1 className="text-2xl font-semibold">{loginHeadline}</h1>
-        {loginSubtext ? (
-          <p className="mt-2 text-sm text-gray-200">{loginSubtext}</p>
+        <h1 className="text-balance text-2xl font-semibold tracking-tight text-white">
+          {loginHeadline}
+        </h1>
+        {hasPendingDesktopAuth ? (
+          <div className="mt-3 space-y-1.5">
+            <p className="text-base font-medium leading-snug text-gray-100">
+              Finish{" "}
+              {pendingDesktopAuth?.provider === "google" ? "Google" : "Microsoft"} sign-in
+              in your browser.
+            </p>
+            <p className="text-sm leading-relaxed text-gray-400">
+              This window updates when sign-in completes.
+            </p>
+          </div>
+        ) : loginSubtext ? (
+          <p className="mt-2 text-sm leading-relaxed text-gray-300">{loginSubtext}</p>
         ) : null}
 
         {globalBannerMessage && (
@@ -922,20 +934,15 @@ const Login = () => {
             {mode === "signIn" && (
               <>
                 {hasPendingDesktopAuth ? (
-                  <div className="mt-4 rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4">
-                    <p className="text-sm text-gray-100">
-                      We opened your browser to sign in with{" "}
-                      {pendingDesktopAuth?.provider === "google"
-                        ? "Google"
-                        : "Microsoft"}
-                      .
+                  <div className="mt-5 rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200/90">
+                      Having trouble?
                     </p>
-                    <p className="mt-2 text-sm text-gray-200">
-                      Keep WorshipSync open here. When the browser finishes, this
-                      window updates on its own. Use Reopen browser if you closed
-                      the sign-in tab. Cancel abandons this attempt.
+                    <p className="mt-2 text-sm leading-relaxed text-gray-300">
+                      Closed the sign-in tab? Use Reopen browser. To go back to other sign-in
+                      options, use Cancel.
                     </p>
-                    <div className="mt-3 flex flex-col gap-2">
+                    <div className="mt-4 flex flex-col gap-2">
                       <Button
                         type="button"
                         variant="primary"
@@ -1007,76 +1014,80 @@ const Login = () => {
                     </div>
                   </div>
                 ) : null}
-                <div className="relative mt-3 min-h-6 text-center text-sm leading-6 text-gray-400">
-                  <span>Or use email and password</span>
-                  <div
-                    className="pointer-events-none absolute inset-y-0 right-0 flex items-center"
-                    aria-hidden={lastSignInMethod !== "password"}
-                  >
-                    <LastUsedBadge show={lastSignInMethod === "password"} />
-                  </div>
-                </div>
-                <Input
-                  className="mt-4"
-                  id="email"
-                  label="Email"
-                  type="email"
-                  value={email}
-                  errorText={fieldErrors.email}
-                  onChange={(value) => {
-                    setEmail(String(value));
-                    setInfoBanner("");
-                    if (fieldErrors.email) {
-                      setFieldErrors((prev) => ({ ...prev, email: undefined }));
-                    }
-                  }}
-                  autoComplete="email"
-                  disabled={isSignInFormFieldsLocked}
-                />
-                <Input
-                  className="mt-3"
-                  id="password"
-                  label="Password"
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  errorText={fieldErrors.password}
-                  onChange={(value) => {
-                    setPassword(String(value));
-                    setInfoBanner("");
-                    if (fieldErrors.password) {
-                      setFieldErrors((prev) => ({ ...prev, password: undefined }));
-                    }
-                  }}
-                  svg={showPassword ? EyeOff : Eye}
-                  svgAction={() => setShowPassword((current) => !current)}
-                  svgActionAriaLabel={showPassword ? "Hide password" : "Show password"}
-                  autoComplete="current-password"
-                  disabled={isSignInFormFieldsLocked}
-                />
-                <div className="mt-2 flex justify-end">
-                  <Button
-                    type="button"
-                    variant="textLink"
-                    disabled={isSignInFormFieldsLocked}
-                    aria-disabled={isSignInFormFieldsLocked}
-                    onClick={() => {
-                      window.clearTimeout(forgotPasswordSubmitBlockTimeoutRef.current);
-                      setForgotPasswordSubmitBlocked(false);
-                      setFieldErrors({});
-                      setInfoBanner("");
-                      setForgotPasswordHasSubmit(false);
-                      setForgotPasswordEmailSent(false);
-                      setMode("forgotPassword");
-                    }}
-                  >
-                    Forgot password
-                  </Button>
-                </div>
-                {pendingLinkState ? (
-                  <p className="mt-2 text-sm text-amber-200">
-                    This email already exists. Sign in with the existing method to link{" "}
-                    {pendingLinkState.providerId === "google.com" ? "Google" : "Microsoft"}.
-                  </p>
+                {!hasPendingDesktopAuth ? (
+                  <>
+                    <div className="relative mt-3 min-h-6 text-center text-sm leading-6 text-gray-400">
+                      <span>Or use email and password</span>
+                      <div
+                        className="pointer-events-none absolute inset-y-0 right-0 flex items-center"
+                        aria-hidden={lastSignInMethod !== "password"}
+                      >
+                        <LastUsedBadge show={lastSignInMethod === "password"} />
+                      </div>
+                    </div>
+                    <Input
+                      className="mt-4"
+                      id="email"
+                      label="Email"
+                      type="email"
+                      value={email}
+                      errorText={fieldErrors.email}
+                      onChange={(value) => {
+                        setEmail(String(value));
+                        setInfoBanner("");
+                        if (fieldErrors.email) {
+                          setFieldErrors((prev) => ({ ...prev, email: undefined }));
+                        }
+                      }}
+                      autoComplete="email"
+                      disabled={isSignInFormFieldsLocked}
+                    />
+                    <Input
+                      className="mt-3"
+                      id="password"
+                      label="Password"
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      errorText={fieldErrors.password}
+                      onChange={(value) => {
+                        setPassword(String(value));
+                        setInfoBanner("");
+                        if (fieldErrors.password) {
+                          setFieldErrors((prev) => ({ ...prev, password: undefined }));
+                        }
+                      }}
+                      svg={showPassword ? EyeOff : Eye}
+                      svgAction={() => setShowPassword((current) => !current)}
+                      svgActionAriaLabel={showPassword ? "Hide password" : "Show password"}
+                      autoComplete="current-password"
+                      disabled={isSignInFormFieldsLocked}
+                    />
+                    <div className="mt-2 flex justify-end">
+                      <Button
+                        type="button"
+                        variant="textLink"
+                        disabled={isSignInFormFieldsLocked}
+                        aria-disabled={isSignInFormFieldsLocked}
+                        onClick={() => {
+                          window.clearTimeout(forgotPasswordSubmitBlockTimeoutRef.current);
+                          setForgotPasswordSubmitBlocked(false);
+                          setFieldErrors({});
+                          setInfoBanner("");
+                          setForgotPasswordHasSubmit(false);
+                          setForgotPasswordEmailSent(false);
+                          setMode("forgotPassword");
+                        }}
+                      >
+                        Forgot password
+                      </Button>
+                    </div>
+                    {pendingLinkState ? (
+                      <p className="mt-2 text-sm text-amber-200">
+                        This email already exists. Sign in with the existing method to link{" "}
+                        {pendingLinkState.providerId === "google.com" ? "Google" : "Microsoft"}.
+                      </p>
+                    ) : null}
+                  </>
                 ) : null}
               </>
             )}
@@ -1205,7 +1216,7 @@ const Login = () => {
                     Send reset link
                   </Button>
                 )
-              ) : (
+              ) : !(mode === "signIn" && hasPendingDesktopAuth) ? (
                 <Button
                   type="submit"
                   variant="cta"
@@ -1218,7 +1229,7 @@ const Login = () => {
                 >
                   Sign in
                 </Button>
-              )}
+              ) : null}
 
               {authServerStatus === "offline" && authServerRetryCount === 0 && (
                 <Button
@@ -1231,7 +1242,7 @@ const Login = () => {
                 </Button>
               )}
 
-              {mode === "signIn" ? (
+              {mode === "signIn" && !hasPendingDesktopAuth ? (
                 <Button
                   type="button"
                   variant="tertiary"
@@ -1246,7 +1257,7 @@ const Login = () => {
           </form>
         )}
       </div>
-    </main>
+    </AuthScreenMain>
   );
 };
 

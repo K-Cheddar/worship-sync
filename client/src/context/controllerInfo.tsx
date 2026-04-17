@@ -28,6 +28,8 @@ type ControllerInfoContextType = {
   bibleDb: PouchDB.Database | undefined;
   cloud: Cloudinary;
   updater: EventTarget;
+  /** True while `loginState === "guest"` (local demo DB; no remote sync). */
+  isGuestSession: boolean;
   isMobile: boolean;
   isPhone: boolean;
   dbProgress: number;
@@ -714,6 +716,7 @@ const ControllerInfoProvider = ({ children }: any) => {
       db,
       cloud,
       updater: updater.current,
+      isGuestSession,
       bibleDb,
       bibleDbProgress,
       logout: _logout,
@@ -731,6 +734,7 @@ const ControllerInfoProvider = ({ children }: any) => {
       bibleDb,
       bibleDbProgress,
       dbProgress,
+      isGuestSession,
       isMobile,
       isPhone,
       connectionStatus,

@@ -32,7 +32,8 @@ const ToolbarMenu = ({
 }: {
   variant?: "default" | "overlay";
 }) => {
-  const { access } = useContext(GlobalInfoContext) || {};
+  const { access, loginState, exitGuestMode } = useContext(GlobalInfoContext) || {};
+  const isGuest = loginState === "guest";
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [updateReadyVersion, setUpdateReadyVersion] = useState("");
@@ -84,11 +85,30 @@ const ToolbarMenu = ({
       return;
     }
 
-    const unsubscribe = window.electronAPI.onUpdateDownloaded((info) => {
-      setUpdateReadyVersion(info.version);
-    });
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+
+    void window.electronAPI
+      .getDesktopUpdateCapabilities?.()
+      .then((caps) => {
+        if (cancelled || !caps?.autoUpdate) {
+          return;
+        }
+        unsubscribe = window.electronAPI?.onUpdateDownloaded?.((info) => {
+          setUpdateReadyVersion(info.version);
+        });
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        unsubscribe = window.electronAPI?.onUpdateDownloaded?.((info) => {
+          setUpdateReadyVersion(info.version);
+        });
+      });
 
     return () => {
+      cancelled = true;
       unsubscribe?.();
     };
   }, [isElectron]);
@@ -175,12 +195,18 @@ const ToolbarMenu = ({
       element: (
         <div className="flex items-center gap-2 max-md:min-h-12">
           <Icon svg={Home} color="#d1d5dc" />
-          Home
+          {isGuest ? "Return to start" : "Home"}
         </div>
       ),
-      to: "/",
+      ...(isGuest
+        ? {
+          onClick: () => {
+            void exitGuestMode?.();
+          },
+        }
+        : { to: "/" }),
     },
-    ...(access !== "music"
+    ...(access !== "music" && !isGuest
       ? [
         {
           element: (
@@ -193,7 +219,7 @@ const ToolbarMenu = ({
         },
       ]
       : []),
-    ...(variant === "overlay" || access === "view" || access === "music"
+    ...(variant === "overlay" || access === "view" || access === "music" || isGuest
       ? []
       : [
         {

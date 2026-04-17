@@ -1065,7 +1065,21 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       );
     };
 
-    return (
+    /** Projector, monitor, stream, and Electron projector use 100vw; letterbox/pillarbox in black and center on non-16:9 displays. */
+    const fillsViewport = width === 100;
+
+    const innerStyle: React.CSSProperties = {
+      width: fillsViewport
+        ? "min(100vw, calc(100dvh * 16 / 9))"
+        : width
+          ? `${width}vw`
+          : "100%",
+      fontFamily: "Inter, sans-serif",
+      contain: "layout size",
+      isolation: "isolate",
+    };
+
+    const inner = (
       <div
         className={cn(
           "relative overflow-hidden overflow-anywhere text-white aspect-video",
@@ -1074,17 +1088,21 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         )}
         ref={containerRef}
         id={isEditor ? "display-editor" : undefined}
-        style={{
-          // Ensure parent has defined width to constrain scaled content; otherwise fill (e.g. w-full via className).
-          width: width ? `${width}vw` : "100%",
-          fontFamily: "Inter, sans-serif",
-          // Prevent scaled inner container from affecting layout
-          contain: "layout size",
-          isolation: "isolate",
-        }}
+        style={innerStyle}
       >
         {renderContent()}
       </div>
+    );
+
+    return fillsViewport ? (
+      <div
+        className="flex h-dvh w-dvw items-center justify-center overflow-hidden bg-black"
+        data-testid="display-full-viewport-stage"
+      >
+        {inner}
+      </div>
+    ) : (
+      inner
     );
   }
 );

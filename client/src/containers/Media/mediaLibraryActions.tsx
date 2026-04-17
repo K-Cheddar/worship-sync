@@ -377,14 +377,28 @@ export function buildMediaLibraryBarActions(args: {
         {
           id: "apply-to-subset",
           label: "Apply to…",
-          icon: <Layers className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
+          icon: (
+            <Layers
+              className={cn(
+                MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                "text-cyan-400",
+              )}
+            />
+          ),
           disabled: applyDisabled,
           menuItems: applyMenuItems,
         },
         {
           id: "clear-background-subset",
           label: "Clear…",
-          icon: <ImageOff className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
+          icon: (
+            <ImageOff
+              className={cn(
+                MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                "text-cyan-400",
+              )}
+            />
+          ),
           disabled: isLoading || !db,
           menuItems: clearMenuItems,
         },

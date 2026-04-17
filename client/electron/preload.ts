@@ -8,7 +8,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPlatform: () => ipcRenderer.invoke("get-platform"),
   isElectron: () => ipcRenderer.invoke("is-electron"),
   isDev: () => ipcRenderer.invoke("is-dev"),
-  openExternalUrl: (url: string) => ipcRenderer.invoke("open-external-url", url),
+  openExternalUrl: (url: string) =>
+    ipcRenderer.invoke("open-external-url", url),
 
   // Window management - all generic handlers
   openWindow: (windowType: WindowType) =>
@@ -37,7 +38,25 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Auto-updater
   checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
-  installUpdate: () => ipcRenderer.invoke("quit-and-install"),
+  getDesktopUpdateCapabilities: () =>
+    ipcRenderer.invoke("get-desktop-update-capabilities") as Promise<{
+      autoUpdate: boolean;
+      manualReleaseDownload: boolean;
+    }>,
+  openDesktopReleaseDownload: () =>
+    ipcRenderer.invoke("open-desktop-release-download") as Promise<{
+      ok: boolean;
+      error?: string;
+    }>,
+  installUpdate: () =>
+    ipcRenderer.invoke("quit-and-install") as Promise<
+      | { ok: true }
+      | {
+          ok: false;
+          reason?: string;
+          error?: string;
+        }
+    >,
   onUpdateAvailable: (
     callback: (info: { version: string; releaseDate?: string }) => void,
   ) => {

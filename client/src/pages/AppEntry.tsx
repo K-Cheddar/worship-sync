@@ -1,6 +1,7 @@
 import { useContext, useMemo, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { ArrowLeft, KeyRound, UserRound } from "lucide-react";
+import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { getAuthRedirectPathnameFromState } from "../utils/authRedirectPath";
@@ -97,8 +98,8 @@ const AppEntry = () => {
   }
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center overflow-hidden bg-homepage-canvas px-4 py-8 text-white">
-      <div className="flex min-h-0 max-h-[calc(100dvh-4rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-500 bg-gray-800 p-6 sm:p-8">
+    <AuthScreenMain>
+      <div className="flex w-full max-w-2xl flex-col rounded-2xl border border-gray-500 bg-gray-800 p-6 sm:p-8">
         <div className="shrink-0">
           <h1 className="text-2xl font-semibold sm:text-3xl">
             {isStoredServerSessionBlocked
@@ -145,7 +146,7 @@ const AppEntry = () => {
           ) : null}
         </div>
 
-        <div className="mt-8 min-h-0 flex-1 space-y-8 overflow-y-auto overscroll-y-contain">
+        <div className="mt-8 space-y-8">
           {setupStep === "link" ? (
             <section aria-labelledby="entry-link-heading">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -294,7 +295,7 @@ const AppEntry = () => {
           )}
         </div>
       </div>
-    </main>
+    </AuthScreenMain>
   );
 };
 

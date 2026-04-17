@@ -21,16 +21,9 @@ import {
   Minimize,
   Plus,
   Folder,
-  FolderInput,
-  FolderPlus,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "../../components/ui/Popover";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
 import { useLoadMoreOnScroll } from "../../hooks/useLoadMoreOnScroll";
 import type { MediaFolder, MediaRouteKey, MediaType } from "../../types";
@@ -54,9 +47,7 @@ import MediaLibraryToolbar from "./MediaLibraryToolbar";
 import { Slider } from "../../components/ui/Slider";
 import MediaLibraryFolderGridItems from "./MediaLibraryFolderGridItems";
 import MediaLibraryGridMediaTile from "./MediaLibraryGridMediaTile";
-import MediaLibraryActionBar, {
-  MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-} from "./MediaLibraryActionBar";
+import MediaLibraryActionBar from "./MediaLibraryActionBar";
 import {
   MediaLibraryFolderModals,
   MediaLibraryNewFolderForm,
@@ -178,6 +169,10 @@ type MediaModalProps = {
   onPreviewChange: (media: MediaType | null) => void;
   mediaUploadInputRef?: React.MutableRefObject<MediaUploadInputRef | null>;
   uploadProgress?: { isUploading: boolean; progress: number };
+  /** When set, Add Media uses this instead of opening the ref directly (e.g. guest guard + toast). */
+  onAddMediaClick?: () => void;
+  /** When true, Add Media shows the guest-mode tooltip (upload still routes through `onAddMediaClick`). */
+  mediaUploadDisabled?: boolean;
 };
 
 const MediaModal = ({
@@ -207,6 +202,8 @@ const MediaModal = ({
   onPreviewChange,
   mediaUploadInputRef,
   uploadProgress,
+  onAddMediaClick,
+  mediaUploadDisabled = false,
 }: MediaModalProps) => {
   const dispatch = useDispatch();
   const location = useLocation();
@@ -219,6 +216,20 @@ const MediaModal = ({
     },
     [showToast],
   );
+
+  const fullscreenAddMediaTitle = useMemo(() => {
+    if (uploadProgress?.isUploading) {
+      return `Uploading... ${Math.round(uploadProgress.progress)}%`;
+    }
+    if (mediaUploadDisabled) {
+      return "Guest mode: sample media only. Sign in to upload.";
+    }
+    return "Add Media";
+  }, [
+    uploadProgress?.isUploading,
+    uploadProgress?.progress,
+    mediaUploadDisabled,
+  ]);
 
   const item = useSelector((state: RootState) => state.undoable.present.item);
   const isLoading = item.isLoading;
@@ -872,12 +883,12 @@ const MediaModal = ({
                     <Button
                       variant="tertiary"
                       svg={Plus}
-                      onClick={() => mediaUploadInputRef.current?.openModal()}
-                      title={
-                        uploadProgress?.isUploading
-                          ? `Uploading... ${Math.round(uploadProgress.progress)}%`
-                          : "Add Media"
+                      onClick={() =>
+                        onAddMediaClick
+                          ? onAddMediaClick()
+                          : mediaUploadInputRef.current?.openModal()
                       }
+                      title={fullscreenAddMediaTitle}
                       disabled={uploadProgress?.isUploading}
                     >
                       {uploadProgress?.isUploading
@@ -950,12 +961,12 @@ const MediaModal = ({
                   <Button
                     variant="tertiary"
                     svg={Plus}
-                    onClick={() => mediaUploadInputRef.current?.openModal()}
-                    title={
-                      uploadProgress?.isUploading
-                        ? `Uploading... ${Math.round(uploadProgress.progress)}%`
-                        : "Add Media"
+                    onClick={() =>
+                      onAddMediaClick
+                        ? onAddMediaClick()
+                        : mediaUploadInputRef.current?.openModal()
                     }
+                    title={fullscreenAddMediaTitle}
                     disabled={uploadProgress?.isUploading}
                   >
                     {uploadProgress?.isUploading
@@ -972,53 +983,28 @@ const MediaModal = ({
               className="mx-0 rounded-none border-x-0"
               detailsRow={actionBarDetails}
               showFolderActions={modalSelectedMediaIds.size === 0}
-              newFolderPopover={
-                <Popover open={newFolderOpen} onOpenChange={setNewFolderOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="tertiary"
-                      className={MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS}
-                      svg={FolderPlus}
-                      title="New folder"
-                    >
-                      New folder
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="start"
-                    className="w-72 border border-gray-600 bg-gray-900 p-3 text-white"
-                  >
-                    <MediaLibraryNewFolderForm
-                      folders={folders}
-                      list={fullList}
-                      parentForNewFolder={parentForNewFolder}
-                      onUpdateFoldersAndList={onUpdateFoldersAndList}
-                      onFolderCreated={handleNewFolderCreated}
-                      onClose={() => setNewFolderOpen(false)}
-                    />
-                  </PopoverContent>
-                </Popover>
-              }
-              renameFolderPopover={
-                selectedRealFolder ? (
-                  <Popover
-                    open={folderRenameOpen}
-                    onOpenChange={setFolderRenameOpen}
-                  >
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="tertiary"
-                        className={MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS}
-                        svg={FolderInput}
-                        title="Rename folder"
-                      >
-                        Rename
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      align="start"
-                      className="w-72 border border-gray-600 bg-gray-900 p-3 text-white"
-                    >
+              folderNew={{
+                open: newFolderOpen,
+                onOpenChange: setNewFolderOpen,
+                content: (
+                  <MediaLibraryNewFolderForm
+                    folders={folders}
+                    list={fullList}
+                    parentForNewFolder={parentForNewFolder}
+                    onUpdateFoldersAndList={onUpdateFoldersAndList}
+                    onFolderCreated={handleNewFolderCreated}
+                    onClose={() => setNewFolderOpen(false)}
+                  />
+                ),
+                contentClassName:
+                  "w-72 border border-gray-600 bg-gray-900 p-3 text-white",
+              }}
+              folderRename={
+                selectedRealFolder
+                  ? {
+                    open: folderRenameOpen,
+                    onOpenChange: setFolderRenameOpen,
+                    content: (
                       <MediaLibraryRenameFolderForm
                         folders={folders}
                         list={fullList}
@@ -1026,9 +1012,11 @@ const MediaModal = ({
                         onUpdateFoldersAndList={onUpdateFoldersAndList}
                         onClose={() => setFolderRenameOpen(false)}
                       />
-                    </PopoverContent>
-                  </Popover>
-                ) : null
+                    ),
+                    contentClassName:
+                      "w-72 border border-gray-600 bg-gray-900 p-3 text-white",
+                  }
+                  : null
               }
               onDeleteFolder={handleRequestFolderDelete}
               showFolderRenameDelete={Boolean(selectedRealFolder)}

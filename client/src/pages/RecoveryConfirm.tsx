@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
 import { confirmRecoveryRequest } from "../api/auth";
 
@@ -32,7 +33,7 @@ const RecoveryConfirm = () => {
   };
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
+    <AuthScreenMain>
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
         <h1 className="text-2xl font-semibold">Approve admin recovery</h1>
         <p className="mt-2 text-sm text-gray-200">
@@ -61,7 +62,7 @@ const RecoveryConfirm = () => {
           </Button>
         </div>
       </div>
-    </main>
+    </AuthScreenMain>
   );
 };
 

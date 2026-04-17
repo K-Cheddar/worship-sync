@@ -87,8 +87,14 @@ interface ElectronAPI {
     error?: string;
     message?: string;
   }>;
-  downloadUpdate: () => Promise<boolean>;
-  installUpdate: () => Promise<void>;
+  getDesktopUpdateCapabilities: () => Promise<{
+    autoUpdate: boolean;
+    manualReleaseDownload: boolean;
+  }>;
+  openDesktopReleaseDownload: () => Promise<{ ok: boolean; error?: string }>;
+  installUpdate: () => Promise<
+    { ok: true } | { ok: false; reason?: string; error?: string }
+  >;
 
   // Update event listeners
   onUpdateAvailable?: (

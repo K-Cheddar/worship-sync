@@ -1,6 +1,7 @@
 import { ReactNode, useCallback, useContext, useMemo } from "react";
 import { getAuthBootstrapLoadingDescription } from "../utils/authUserMessages";
 import { Navigate, useLocation } from "react-router-dom";
+import AuthScreenMain from "./AuthScreenMain";
 import Button from "./Button/Button";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
@@ -18,7 +19,7 @@ const ValidationScreen = ({
   description: string;
   actions?: ReactNode;
 }) => (
-  <div className="flex min-h-dvh w-full items-center justify-center bg-homepage-canvas px-6 text-white">
+  <AuthScreenMain>
     <div className="max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-8 text-center">
       <h1 className="text-2xl font-semibold">{title}</h1>
       <p className="mt-3 text-sm text-gray-200" aria-live="polite">
@@ -26,7 +27,7 @@ const ValidationScreen = ({
       </p>
       {actions ? <div className="mt-6 flex flex-wrap justify-center gap-2">{actions}</div> : null}
     </div>
-  </div>
+  </AuthScreenMain>
 );
 
 const DisplayBlockedScreen = () => {

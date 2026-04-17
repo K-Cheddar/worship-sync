@@ -213,9 +213,10 @@ const Input = ({
     );
   }
 
+  /** `flex` + `w-full`/`flex-1`: Safari mishandles `width:100%` on inline spans, which can collapse password fields. */
   const inputWrapClassName = cn(
-    "relative",
-    isInlineLabel ? "min-w-0 shrink-0" : "w-full"
+    "relative flex min-w-0 items-stretch",
+    isInlineLabel ? "flex-1" : "w-full"
   );
 
   const inputControl = (
