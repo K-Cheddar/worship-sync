@@ -1,3 +1,11 @@
+## [2.1.4](https://github.com/K-Cheddar/worship-sync/compare/v2.1.3...v2.1.4) (2026-04-17)
+
+
+### Bug Fixes
+
+* Add max width to search bar ([2a1dec3](https://github.com/K-Cheddar/worship-sync/commit/2a1dec3de7c9732c70c4d23b7e0aa9ec0b7c6b09))
+* Fix updating on desktop ([da912dc](https://github.com/K-Cheddar/worship-sync/commit/da912dc86a3459ae70bad95cdbd2db9e0c6ea51e))
+
 ## [2.1.3](https://github.com/K-Cheddar/worship-sync/compare/v2.1.2...v2.1.3) (2026-04-16)
 
 
