@@ -322,13 +322,13 @@ const FilteredItems = ({
       {isLoading && (
         <h3 className="text-lg text-center">{heading} are loading...</h3>
       )}
-      <div className="mb-4 flex w-full gap-2">
+      <div className="mb-4 flex w-full gap-2 justify-center">
         <SongSearchInput
           value={searchValue}
           disabled={isLoading}
           onChange={setSearchValue}
           label="Search"
-          className="text-base flex flex-1 gap-2 items-center"
+          className="text-base flex flex-1 gap-2 items-center max-w-2xl"
           placeholder=""
           showSearchIconWhenEmpty={false}
         />
