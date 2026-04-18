@@ -1,3 +1,11 @@
+## [2.1.5](https://github.com/K-Cheddar/worship-sync/compare/v2.1.4...v2.1.5) (2026-04-18)
+
+
+### Bug Fixes
+
+* quick patch for background ([7d4f635](https://github.com/K-Cheddar/worship-sync/commit/7d4f63547271d9c1935e836249c7cd2bfb5c444a))
+* test ([1d96ea9](https://github.com/K-Cheddar/worship-sync/commit/1d96ea905de33bd5b907fc0ce9a7ef02eb0ebe78))
+
 ## [2.1.4](https://github.com/K-Cheddar/worship-sync/compare/v2.1.3...v2.1.4) (2026-04-17)
 
 
