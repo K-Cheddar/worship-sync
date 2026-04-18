@@ -1096,7 +1096,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     return fillsViewport ? (
       <div
-        className="flex h-dvh w-dvw items-center justify-center overflow-hidden bg-black"
+        className="flex h-dvh w-dvw items-center justify-center overflow-hidden"
         data-testid="display-full-viewport-stage"
       >
         {inner}
