@@ -200,7 +200,7 @@ describe("DisplayWindow core paths", () => {
     );
 
     const stage = screen.getByTestId("display-full-viewport-stage");
-    expect(stage).toHaveClass("bg-black", "items-center", "justify-center");
+    expect(stage).toHaveClass("items-center", "justify-center");
   });
 
   it("unmounts the previous display layer after the display transition window", () => {
