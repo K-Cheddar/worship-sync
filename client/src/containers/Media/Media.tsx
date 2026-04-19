@@ -127,11 +127,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         />
         {!c.isMediaLoading && c.isMediaExpanded && (
           <>
-            <div
-              ref={c.mediaLibraryChromeRef}
-              onPointerDownCapture={c.markChromeInteraction}
-              className="w-full min-w-0"
-            >
+            <div className="w-full min-w-0">
               <div className="mx-2 flex items-center gap-2 border-b border-gray-500 bg-black/60 px-4 py-2">
                 <Input
                   type="text"
@@ -159,6 +155,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                 <MediaLibraryActionBar
                   detailsRow={c.actionBarDetails}
                   showFolderActions={selectedCount === 0}
+                  showNewFolderAction={selectedCount > 0}
                   folderNew={{
                     open: c.newFolderOpen,
                     onOpenChange: c.setNewFolderOpen,
@@ -207,6 +204,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                     ) : null
                   }
                   mediaActions={selectedCount > 0 ? c.mediaBarActions : []}
+                  slideBackgroundFeedbackId={c.slideBackgroundFeedbackId}
                   showMoveSelect={selectedCount > 0}
                   moveSelectOptions={c.moveSelectOptions}
                   onMoveTo={c.handleMoveTo}

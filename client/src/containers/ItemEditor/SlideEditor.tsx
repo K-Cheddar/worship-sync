@@ -114,6 +114,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     isSectionLoading,
     restoreFocusToBox,
     hasRemoteUpdate,
+    hasPendingUpdate,
     songMetadata,
     baseItem,
   } = item;
@@ -210,6 +211,11 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
   }, [dispatch]);
 
   useEffect(() => {
+    if (hasRemoteUpdate && !isEditMode && !hasPendingUpdate) {
+      handleReloadRemote();
+      return;
+    }
+
     if (!hasRemoteUpdate || isEditMode) {
       if (remoteUpdateToastIdRef.current && removeToast) {
         removeToast(remoteUpdateToastIdRef.current);
@@ -256,6 +262,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
     handleKeepLocalEdits,
     handleReloadRemote,
     hasRemoteUpdate,
+    hasPendingUpdate,
     itemTypeLabel,
     isEditMode,
     removeToast,

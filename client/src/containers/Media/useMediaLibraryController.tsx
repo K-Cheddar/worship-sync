@@ -101,6 +101,32 @@ export function useMediaLibraryController({
     [showToast],
   );
 
+  const slideBackgroundFeedbackTimeoutRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [slideBackgroundFeedbackId, setSlideBackgroundFeedbackId] = useState<
+    string | null
+  >(null);
+
+  const triggerSlideBackgroundFeedback = useCallback((feedbackId: string) => {
+    setSlideBackgroundFeedbackId(feedbackId);
+    if (slideBackgroundFeedbackTimeoutRef.current != null) {
+      clearTimeout(slideBackgroundFeedbackTimeoutRef.current);
+    }
+    slideBackgroundFeedbackTimeoutRef.current = setTimeout(() => {
+      slideBackgroundFeedbackTimeoutRef.current = null;
+      setSlideBackgroundFeedbackId(null);
+    }, 1000);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (slideBackgroundFeedbackTimeoutRef.current != null) {
+        clearTimeout(slideBackgroundFeedbackTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
   const { db, cloud, isMobile, updater, isGuestSession = false } =
     useContext(ControllerInfoContext) || {};
 
@@ -179,9 +205,6 @@ export function useMediaLibraryController({
   const [uploadProgress, setUploadProgress] = useState<{ isUploading: boolean; progress: number }>({ isUploading: false, progress: 0 });
   const mediaUploadInputRef = useRef<MediaUploadInputRef>(null);
   const mediaListRef = useRef<HTMLUListElement>(null);
-  /** Search row + action bar; outside-click guard uses contains() so overflow triggers are reliably “inside”. */
-  const mediaLibraryChromeRef = useRef<HTMLDivElement>(null);
-  const lastChromePointerDownAtRef = useRef(0);
   const uploadPollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastBrowseFolderIdRef = useRef<string>(MEDIA_LIBRARY_ROOT_VIEW);
   const [folderRenameOpen, setFolderRenameOpen] = useState(false);
@@ -561,6 +584,7 @@ export function useMediaLibraryController({
             }
             : undefined,
         notify: notifyMediaAction,
+        onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
       }),
     [
       routeFlags,
@@ -577,6 +601,7 @@ export function useMediaLibraryController({
       handleSendSelectedMediaToProjector,
       handleCreateCustomItemFromMedia,
       notifyMediaAction,
+      triggerSlideBackgroundFeedback,
     ],
   );
 
@@ -899,81 +924,6 @@ export function useMediaLibraryController({
 
   useGlobalBroadcast(updateMediaListFromExternal);
 
-  const markChromeInteraction = useCallback(() => {
-    lastChromePointerDownAtRef.current = Date.now();
-  }, []);
-
-
-
-  // Clear selection when clicking outside the grid and outside protected chrome (action bar, portaled menus).
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (isFullscreen) return;
-      if (mediaRenameOpenRef.current || moveToNewFolderOpenRef.current) return;
-      if (Date.now() - lastChromePointerDownAtRef.current < 500) return;
-
-      const listEl = mediaListRef.current;
-      const chromeEl = mediaLibraryChromeRef.current;
-      const path = e.composedPath();
-
-      const nodeInside = (root: HTMLElement | null) =>
-        root &&
-        path.some((n) => n instanceof Node && root.contains(n));
-
-      if (nodeInside(listEl)) return;
-      if (nodeInside(chromeEl)) return;
-
-      const touchesPortaledOrOverlay = path.some((node) => {
-        if (!(node instanceof Element)) return false;
-        const ds = node.getAttribute("data-slot");
-        if (
-          ds === "dropdown-menu-content" ||
-          ds === "dropdown-menu-item" ||
-          ds === "dropdown-menu-sub-content" ||
-          ds === "dropdown-menu-sub-trigger" ||
-          ds === "dropdown-menu-trigger" ||
-          ds === "popover-content" ||
-          ds === "popover-trigger" ||
-          ds === "select-content" ||
-          ds === "select-item"
-        ) {
-          return true;
-        }
-        if (node.closest("[data-media-library-action-bar]")) return true;
-        const role = node.getAttribute("role");
-        if (
-          role === "dialog" ||
-          role === "alertdialog" ||
-          role === "menu" ||
-          role === "menuitem"
-        ) {
-          return true;
-        }
-        if (
-          node.closest('[role="dialog"]') ||
-          node.closest('[role="alertdialog"]')
-        ) {
-          return true;
-        }
-        const cl = node.classList;
-        return cl?.contains("fixed") && cl?.contains("z-50");
-      });
-
-      if (touchesPortaledOrOverlay) return;
-
-      if (listEl) clearSelection();
-    };
-
-    if (selectedMediaIds.size > 0) {
-      document.addEventListener("click", handleClickOutside);
-      return () => {
-        document.removeEventListener("click", handleClickOutside);
-      };
-    }
-  }, [selectedMediaIds.size, isFullscreen, clearSelection]);
-
-
-
   const handleConfirmDelete = async () => {
     if (deleteConfirmLockRef.current) return;
     deleteConfirmLockRef.current = true;
@@ -1211,7 +1161,6 @@ export function useMediaLibraryController({
   const handleActionBarMediaRenameOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
-        markChromeInteraction();
         ignoreRenameAutoCloseUntilRef.current = Date.now() + 750;
         setMoveToNewFolderPopoverOpen(false);
         setRenamePopoverOpen(true);
@@ -1220,7 +1169,6 @@ export function useMediaLibraryController({
       handleRenamePopoverOpenChange(false);
     },
     [
-      markChromeInteraction,
       setRenamePopoverOpen,
       setMoveToNewFolderPopoverOpen,
       handleRenamePopoverOpenChange,
@@ -1230,7 +1178,6 @@ export function useMediaLibraryController({
   const handleActionBarMoveToNewFolderOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
-        markChromeInteraction();
         ignoreRenameAutoCloseUntilRef.current = Date.now() + 750;
         setRenamePopoverOpen(false);
         setMoveSelectKey((k) => k + 1);
@@ -1240,7 +1187,6 @@ export function useMediaLibraryController({
       handleMoveToNewFolderPopoverOpenChange(false);
     },
     [
-      markChromeInteraction,
       setRenamePopoverOpen,
       setMoveSelectKey,
       setMoveToNewFolderPopoverOpen,
@@ -1261,8 +1207,6 @@ export function useMediaLibraryController({
     addMuxVideo,
     handleUploadActiveChange,
     isMediaLoading,
-    mediaLibraryChromeRef,
-    markChromeInteraction,
     searchTerm,
     showAll,
     handleShowAllChange,
@@ -1285,6 +1229,7 @@ export function useMediaLibraryController({
     selectedMediaIds,
     selectedMedia,
     mediaBarActions,
+    slideBackgroundFeedbackId,
     moveSelectOptions,
     handleMoveTo,
     moveSelectKey,

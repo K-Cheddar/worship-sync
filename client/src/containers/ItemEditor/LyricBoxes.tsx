@@ -31,6 +31,7 @@ type FormattedLyricsProps = {
   onFormattedLyricsDelete: (index: number) => void;
   isMobile: boolean;
   selectedSectionId?: string | null;
+  linkedSongOrderName?: string | null;
   recentlyMovedSectionId?: string | null;
   focusSectionId?: string | null;
   onMovedSectionTracked?: (sectionId: string) => void;
@@ -50,6 +51,7 @@ const LyricBoxes = ({
   onFormattedLyricsDelete,
   isMobile,
   selectedSectionId,
+  linkedSongOrderName,
   recentlyMovedSectionId,
   focusSectionId,
   onMovedSectionTracked,
@@ -218,6 +220,7 @@ const LyricBoxes = ({
           lyric={lyric}
           index={index}
           selected={selectedSectionId === lyric.id}
+          linked={!!(linkedSongOrderName && selectedSectionId !== lyric.id && lyric.name === linkedSongOrderName)}
           justMoved={glowingSectionId === lyric.id}
           availableSections={availableSections}
           availableSectionsKey={availableSectionsKey}

@@ -65,7 +65,7 @@ const LyricBoxSkeleton = () => (
 
 /** Matches `SongSection` row: accent strip + label + trailing control. */
 const SongOrderRowSkeleton = () => (
-  <li className="flex items-stretch overflow-hidden rounded-md border border-white/10 bg-gray-900/80">
+  <li className="flex shrink-0 items-stretch overflow-hidden rounded-md border border-white/10 bg-gray-900/80">
     <Bar className="w-1.5 shrink-0 rounded-none bg-black/40" />
     <div className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-1 pl-2">
       <Bar className="h-4 flex-1 rounded-sm" />
@@ -157,23 +157,25 @@ const LyricsEditorLoadingSkeleton = () => (
         <SectionPreviewSkeleton />
       </section>
 
-      <section className="mr-4 hidden h-full min-h-0 max-w-64 shrink-0 flex-col gap-3 pt-4 lg:flex">
-        <Bar className="h-5 w-28 shrink-0" />
-        <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-white/10 bg-gray-950/50 p-2">
-          <ul
-            id="song-sections-list-skeleton"
-            className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden"
-          >
-            <SongOrderRowSkeleton />
-            <SongOrderRowSkeleton />
-            <SongOrderRowSkeleton />
-            <SongOrderRowSkeleton />
-          </ul>
+      <section className="mr-4 hidden min-h-0 w-48 shrink-0 flex-col gap-3 pt-4 lg:flex">
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3">
+          <Bar className="h-6 w-full shrink-0" />
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-white/10 p-2">
+            <ul
+              id="song-sections-list-skeleton"
+              className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden"
+            >
+              <SongOrderRowSkeleton />
+              <SongOrderRowSkeleton />
+              <SongOrderRowSkeleton />
+              <SongOrderRowSkeleton />
+            </ul>
+          </div>
+          <div className="shrink-0">
+            <Bar className="h-9 w-full rounded-md" />
+          </div>
         </div>
-        <div className="shrink-0">
-          <Bar className="h-9 w-full rounded-md" />
-        </div>
-        <div className="mt-4 flex shrink-0 gap-2 border-t border-gray-600 pt-4">
+        <div className="flex shrink-0 justify-end gap-2 mt-4 pt-4 border-t border-gray-600">
           <Bar className="h-10 flex-1 rounded-md" />
           <Bar className="h-10 flex-1 rounded-md" />
         </div>

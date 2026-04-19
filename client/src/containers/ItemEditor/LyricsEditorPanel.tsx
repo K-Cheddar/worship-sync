@@ -99,6 +99,7 @@ const LyricsEditorPanel = () => {
     arrangements,
     selectedArrangement,
     hasRemoteUpdate,
+    hasPendingUpdate,
     pendingRemoteItem,
     songMetadata,
   } = item;
@@ -125,6 +126,8 @@ const LyricsEditorPanel = () => {
   const [previewTick, setPreviewTick] = useState(0);
   const [previewSlides, setPreviewSlides] = useState<ItemSlideType[]>([]);
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+  const [selectedSongOrderIndex, setSelectedSongOrderIndex] = useState(0);
+  const [crossHighlightSource, setCrossHighlightSource] = useState<"lyricBox" | "songOrder" | null>(null);
   const [recentlyMovedSectionId, setRecentlyMovedSectionId] = useState<string | null>(null);
   const [pendingFocusSectionId, setPendingFocusSectionId] = useState<string | null>(null);
   const [addNewSectionsToSongOrder, setAddNewSectionsToSongOrder] = useState(true);
@@ -736,6 +739,11 @@ const LyricsEditorPanel = () => {
   }, [dispatch, localSelectedArrangement, resetLocalEditorState]);
 
   useEffect(() => {
+    if (isEditMode && hasRemoteUpdate && !hasPendingUpdate && !hasPendingChanges) {
+      handleReloadRemote();
+      return;
+    }
+
     if (!isEditMode || !hasRemoteUpdate) {
       if (remoteUpdateToastIdRef.current && removeToast) {
         removeToast(remoteUpdateToastIdRef.current);
@@ -782,6 +790,8 @@ const LyricsEditorPanel = () => {
     handleKeepLocalEdits,
     handleReloadRemote,
     hasRemoteUpdate,
+    hasPendingChanges,
+    hasPendingUpdate,
     itemTypeLabel,
     isEditMode,
     removeToast,
@@ -1006,6 +1016,7 @@ const LyricsEditorPanel = () => {
                   onFormattedLyricsDelete={onFormattedLyricsDelete}
                   isMobile={isMobile || false}
                   selectedSectionId={selectedSectionId}
+                  linkedSongOrderName={songOrder[selectedSongOrderIndex]?.name ?? null}
                   recentlyMovedSectionId={recentlyMovedSectionId}
                   focusSectionId={pendingFocusSectionId}
                   onMovedSectionTracked={(sectionId) =>
@@ -1013,7 +1024,7 @@ const LyricsEditorPanel = () => {
                       currentId === sectionId ? null : currentId
                     )
                   }
-                  onSectionSelect={setSelectedSectionId}
+                  onSectionSelect={(id) => { setSelectedSectionId(id); setCrossHighlightSource("lyricBox"); }}
                 />
               </div>
               {!isMobile && selectedSectionIndex !== null && (
@@ -1027,11 +1038,14 @@ const LyricsEditorPanel = () => {
             </div>
           </section>
           {(!showLeftSection || !isMobile) && (
-            <section className="mr-4 flex min-h-0 max-w-64 shrink-0 flex-col gap-3 pt-4">
+            <section className="mr-4 flex min-h-0 max-w-48 shrink-0 flex-col gap-3 pt-4">
               <SongSections
                 songOrder={songOrder}
                 setSongOrder={updateSongOrder}
                 currentSections={currentSections}
+                selectedIndex={selectedSongOrderIndex}
+                onSelectedIndexChange={(i) => { setSelectedSongOrderIndex(i); setCrossHighlightSource("songOrder"); }}
+                linkedSectionName={crossHighlightSource === "lyricBox" ? (selectedSection?.name ?? null) : null}
               />
               {!isMobile && (
                 <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-gray-600">

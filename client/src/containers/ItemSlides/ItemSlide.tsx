@@ -219,12 +219,12 @@ const ItemSlide = ({
         <MultiSelectSubsetTick
           modeActive={showBackgroundTargetSelectionChrome}
           isSelected={isBackgroundTargetSelected}
-          frameClassName="absolute left-1 top-1 z-30 flex h-6 w-6 items-center justify-center"
+          frameClassName="absolute left-1 top-1 z-1 flex h-6 w-6 items-center justify-center"
           checkClassName="h-3.5 w-3.5 shrink-0 stroke-[3]"
         />
         {isLive ? (
           <span
-            className="pointer-events-none absolute bottom-1 right-1 z-20 rounded bg-green-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow"
+            className="pointer-events-none absolute bottom-1 right-1 z-1 rounded bg-green-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow"
             aria-label="Live on output"
           >
             Live

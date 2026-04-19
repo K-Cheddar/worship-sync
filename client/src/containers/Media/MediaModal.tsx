@@ -217,6 +217,32 @@ const MediaModal = ({
     [showToast],
   );
 
+  const slideBackgroundFeedbackTimeoutRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [slideBackgroundFeedbackId, setSlideBackgroundFeedbackId] = useState<
+    string | null
+  >(null);
+
+  const triggerSlideBackgroundFeedback = useCallback((feedbackId: string) => {
+    setSlideBackgroundFeedbackId(feedbackId);
+    if (slideBackgroundFeedbackTimeoutRef.current != null) {
+      clearTimeout(slideBackgroundFeedbackTimeoutRef.current);
+    }
+    slideBackgroundFeedbackTimeoutRef.current = setTimeout(() => {
+      slideBackgroundFeedbackTimeoutRef.current = null;
+      setSlideBackgroundFeedbackId(null);
+    }, 1000);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (slideBackgroundFeedbackTimeoutRef.current != null) {
+        clearTimeout(slideBackgroundFeedbackTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
   const fullscreenAddMediaTitle = useMemo(() => {
     if (uploadProgress?.isUploading) {
       return `Uploading... ${Math.round(uploadProgress.progress)}%`;
@@ -565,6 +591,7 @@ const MediaModal = ({
         onDeleteMultiple: handleModalDeleteMultipleClick,
         itemSlideContext,
         notify: notifyMediaAction,
+        onItemSlideBackgroundFeedback: triggerSlideBackgroundFeedback,
       }),
     [
       routeFlags,
@@ -580,6 +607,7 @@ const MediaModal = ({
       handleModalDeleteMultipleClick,
       itemSlideContext,
       notifyMediaAction,
+      triggerSlideBackgroundFeedback,
     ],
   );
 
@@ -983,6 +1011,7 @@ const MediaModal = ({
               className="mx-0 rounded-none border-x-0"
               detailsRow={actionBarDetails}
               showFolderActions={modalSelectedMediaIds.size === 0}
+              showNewFolderAction={modalSelectedMediaIds.size > 0}
               folderNew={{
                 open: newFolderOpen,
                 onOpenChange: setNewFolderOpen,
@@ -1053,6 +1082,7 @@ const MediaModal = ({
               mediaActions={
                 modalSelectedMediaIds.size > 0 ? mediaBarActions : []
               }
+              slideBackgroundFeedbackId={slideBackgroundFeedbackId}
               showMoveSelect={modalSelectedMediaIds.size > 0}
               moveSelectOptions={moveSelectOptions}
               onMoveTo={handleMoveTo}

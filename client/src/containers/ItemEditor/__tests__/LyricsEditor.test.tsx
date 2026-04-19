@@ -611,7 +611,9 @@ describe("LyricsEditor", () => {
       undoable: {
         present: {
           item: {
+            _id: "song-remote",
             hasRemoteUpdate: true,
+            hasPendingUpdate: true,
             pendingRemoteItem: {
               _id: "song-remote",
               type: "song",
@@ -651,6 +653,45 @@ describe("LyricsEditor", () => {
       type: "item/discardPendingRemoteItem",
     });
     expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("applies a buffered remote song immediately when the lyrics editor has no local changes", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "song-remote",
+            hasRemoteUpdate: true,
+            hasPendingUpdate: false,
+            pendingRemoteItem: {
+              _id: "song-remote",
+              type: "song",
+              selectedArrangement: 0,
+              arrangements: [
+                {
+                  id: "arr-1",
+                  name: "Master",
+                  slides: [],
+                  formattedLyrics: [],
+                  songOrder: [],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    renderWithToastContext();
+    await waitForLyricsEditorPanelReady();
+
+    await waitFor(() => {
+      expect(mockApplyPendingRemoteItem).toHaveBeenCalled();
+    });
+    expect(mockDispatch).toHaveBeenCalledWith({
+      type: "item/applyPendingRemoteItem",
+    });
+    expect(mockShowToast).not.toHaveBeenCalled();
   });
 
   it("adds an empty section and appends it to song order by default", async () => {

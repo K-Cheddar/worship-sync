@@ -8,6 +8,7 @@ import cn from "classnames";
 import {
   songOrderSectionSelectedClass,
   songOrderSectionUnselectedClass,
+  songOrderSectionLinkedClass,
 } from "../../utils/sortableRowStyles";
 
 type SongSectionProps = {
@@ -18,6 +19,7 @@ type SongSectionProps = {
   id: string;
   selectedIndex: number;
   setSelectedIndex: (index: number) => void;
+  linkedSectionName?: string | null;
 };
 
 const SongSection = ({
@@ -28,6 +30,7 @@ const SongSection = ({
   id,
   selectedIndex,
   setSelectedIndex,
+  linkedSectionName,
 }: SongSectionProps) => {
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
@@ -44,25 +47,31 @@ const SongSection = ({
     itemSectionBgColorMap.get(sectionKey) ?? "bg-stone-600";
 
   const isSelected = selectedIndex === index;
+  const isLinked = !isSelected && !!linkedSectionName && name === linkedSectionName;
 
   return (
     <li
       id={`song-section-${index}`}
       className={cn(
-        "flex min-h-0 cursor-grab items-stretch overflow-hidden rounded-md border transition-colors active:cursor-grabbing",
+        "flex shrink-0 items-stretch overflow-hidden rounded-md border transition-colors",
         isSelected
           ? songOrderSectionSelectedClass
-          : songOrderSectionUnselectedClass,
+          : isLinked
+            ? songOrderSectionLinkedClass
+            : songOrderSectionUnselectedClass,
       )}
       {...attributes}
-      {...listeners}
       style={style}
       ref={setNodeRef}
       onClick={() => setSelectedIndex(index)}
     >
       <div
-        className={cn("w-1.5 shrink-0 self-stretch", accentBarClass)}
+        className={cn(
+          "w-1.5 shrink-0 cursor-grab self-stretch touch-none active:cursor-grabbing",
+          accentBarClass,
+        )}
         aria-hidden
+        {...listeners}
       />
       <div className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-1 pl-2 max-lg:py-2">
         <p className="min-w-0 flex-1 truncate text-sm font-medium text-gray-100">

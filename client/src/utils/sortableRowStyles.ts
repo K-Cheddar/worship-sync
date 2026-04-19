@@ -7,3 +7,6 @@ export const songOrderSectionSelectedClass =
 
 export const songOrderSectionUnselectedClass =
   "border-white/10 bg-gray-900/80 hover:border-white/20";
+
+export const songOrderSectionLinkedClass =
+  "border-white/40 bg-white/5 hover:border-white/50";

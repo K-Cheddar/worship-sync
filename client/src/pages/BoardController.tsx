@@ -965,6 +965,9 @@ export const BoardControllerContent = () => {
                     onClick={() => {
                       setSelectedAliasId(alias.aliasId);
                       setSelectedBoardId("");
+                      if (isMobileStack) {
+                        setMobileBoardPanel("live");
+                      }
                     }}
                   >
                     <span className="block truncate font-semibold leading-snug">

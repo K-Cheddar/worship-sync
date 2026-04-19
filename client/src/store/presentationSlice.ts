@@ -113,6 +113,7 @@ const isSameImageOverlayEcho = (cur?: OverlayInfo, next?: OverlayInfo) =>
     next &&
     hasImageOverlayData(cur) &&
     hasImageOverlayData(next) &&
+    cur.time === next.time &&
     cur.id === next.id &&
     cur.imageUrl === next.imageUrl,
   );
@@ -123,6 +124,7 @@ const isSameParticipantOverlayEcho = (cur?: OverlayInfo, next?: OverlayInfo) =>
     next &&
     hasParticipantOverlayData(cur) &&
     hasParticipantOverlayData(next) &&
+    cur.time === next.time &&
     cur.id === next.id &&
     cur.name === next.name &&
     cur.title === next.title &&
@@ -135,6 +137,7 @@ const isSameStbOverlayEcho = (cur?: OverlayInfo, next?: OverlayInfo) =>
     next &&
     hasStbOverlayData(cur) &&
     hasStbOverlayData(next) &&
+    cur.time === next.time &&
     cur.id === next.id &&
     cur.heading === next.heading &&
     cur.subHeading === next.subHeading,
@@ -146,6 +149,7 @@ const isSameQrOverlayEcho = (cur?: OverlayInfo, next?: OverlayInfo) =>
     next &&
     hasQrOverlayData(cur) &&
     hasQrOverlayData(next) &&
+    cur.time === next.time &&
     cur.id === next.id &&
     cur.url === next.url &&
     cur.description === next.description,

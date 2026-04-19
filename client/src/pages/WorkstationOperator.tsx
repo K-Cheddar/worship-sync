@@ -1,5 +1,5 @@
 import { type FormEvent, useContext, useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
@@ -9,9 +9,12 @@ import WorkstationUnpairConfirmModal, {
 import { GlobalInfoContext } from "../context/globalInfo";
 import { getWorkstationToken } from "../utils/authStorage";
 import { updateWorkstationOperator } from "../api/auth";
+import { getAuthRedirectPathnameFromState } from "../utils/authRedirectPath";
+import { getAllowedRouteOrDefault } from "../utils/sessionRouteAccess";
 
 const WorkstationOperator = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const context = useContext(GlobalInfoContext);
   const [operatorName, setOperatorName] = useState("");
   const [nameFieldError, setNameFieldError] = useState("");
@@ -70,7 +73,18 @@ const WorkstationOperator = () => {
         token
       );
       context?.setOperatorName(operatorName.trim());
-      navigate("/controller", { replace: true });
+      const routeContext = {
+        loginState: context.loginState,
+        sessionKind: context.sessionKind,
+        access: context.access,
+        operatorName: operatorName.trim(),
+        displaySurfaceType: context.device?.surfaceType,
+      };
+      const requestedPath = getAuthRedirectPathnameFromState(location.state);
+      const pathnameForRestore =
+        requestedPath === "/workstation/operator" ? undefined : requestedPath;
+      const nextPath = getAllowedRouteOrDefault(pathnameForRestore, routeContext);
+      navigate(nextPath, { replace: true });
     } catch (error) {
       setBannerError(
         error instanceof Error ? error.message : "Could not save the operator name"

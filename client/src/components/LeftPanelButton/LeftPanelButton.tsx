@@ -99,10 +99,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           )}
           <p
             title={title}
-            className={cn(
-              "line-clamp-3 min-w-0 flex-1 wrap-break-word pl-1 text-left text-white",
-              isSelected ? "font-bold" : "font-semibold",
-            )}
+            className="line-clamp-3 min-w-0 flex-1 wrap-break-word pl-1 text-left font-semibold text-white"
           >
             {title}
           </p>
