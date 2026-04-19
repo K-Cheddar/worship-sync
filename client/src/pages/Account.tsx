@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { useContext, useMemo } from "react";
 import { House, LogIn } from "lucide-react";
 import Button from "../components/Button/Button";
@@ -5,9 +6,14 @@ import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import { resolveChurchToolbarLogoUrl } from "../utils/churchBranding";
+import { useSelector } from "../hooks";
+import type { RootState } from "../store/store";
 import AccountManagement from "./Controller/Account";
 
 const AccountPage = () => {
+  const scrollbarWidth = useSelector(
+    (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
+  );
   const { loginState, churchBranding, churchName } =
     useContext(GlobalInfoContext) || {};
   const isLoggedIn = loginState === "success";
@@ -18,7 +24,14 @@ const AccountPage = () => {
   const churchNameTrimmed = churchName?.trim() ?? "";
 
   return (
-    <main className="flex h-dvh min-h-0 flex-col overflow-hidden bg-homepage-canvas text-white">
+    <main
+      className="flex h-dvh min-h-0 flex-col overflow-hidden bg-homepage-canvas text-white"
+      style={
+        {
+          "--scrollbar-width": scrollbarWidth,
+        } as CSSProperties
+      }
+    >
       <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col px-4 pb-6">
         <div className="grid w-full shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-gray-700 py-3 text-lg">
           <div className="flex flex-wrap items-center gap-2 justify-self-start">

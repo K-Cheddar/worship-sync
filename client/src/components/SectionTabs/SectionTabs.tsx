@@ -78,7 +78,7 @@ export function SectionTabs<T extends string>({
     >
       <div
         className={cn(
-          "sticky top-0 z-10 -mx-1 overflow-hidden rounded-xl border border-gray-700 bg-gray-950 px-0 pb-0",
+          "sticky top-0 z-10 -mx-1 overflow-hidden rounded-xl bg-gray-950 px-0 pb-0",
           tabBarClassName
         )}
       >

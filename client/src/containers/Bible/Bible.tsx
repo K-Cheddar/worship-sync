@@ -1,4 +1,4 @@
-import { useRef, useContext, useEffect, useMemo, useState } from "react";
+import { useRef, useContext, useEffect, useMemo, useState, useCallback } from "react";
 import Select from "../../components/Select/Select";
 import BibleSection from "./BibleSection";
 import { bookType, chapterType, DBBibleChapter, verseType } from "../../types";
@@ -15,6 +15,7 @@ import {
   setChapters,
   setSearch,
   setLoadingChapter,
+  openBibleAtLocation,
 } from "../../store/bibleSlice";
 import { bibleVersions } from "../../utils/bibleVersions";
 import { getVerses as getVersesApi } from "../../api/getVerses";
@@ -95,6 +96,7 @@ const Bible = () => {
   );
 
   const createItemName = decodeURI(searchParams.get("name") || "");
+  const hasNavigatedFromUrl = useRef(false);
 
   const {
     db,
@@ -318,7 +320,7 @@ const Bible = () => {
     }
   }, [book, books, dispatch]);
 
-  const handleSearch = (val: string) => {
+  const handleSearch = useCallback((val: string) => {
     dispatch(setSearch(val));
     if (!val) {
       dispatch(setSearchValue({ type: "book", value: "" }));
@@ -375,7 +377,38 @@ const Bible = () => {
       dispatch(setSearchValue({ type: "endVerse", value: verseEndStr }));
       dispatch(setEndVerse(parseInt(verseEndStr)));
     }
-  };
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (hasNavigatedFromUrl.current || !books.length) return;
+
+    const searchParam = searchParams.get("search");
+    const bookParam = searchParams.get("book");
+    const chapterParam = searchParams.get("chapter");
+    const versionParam = searchParams.get("version");
+    const versesParam = searchParams.get("verses");
+
+    if (searchParam) {
+      hasNavigatedFromUrl.current = true;
+      if (versionParam) {
+        dispatch(setVersion(versionParam.toLowerCase()));
+      }
+      handleSearch(searchParam);
+      return;
+    }
+
+    if (bookParam && chapterParam) {
+      hasNavigatedFromUrl.current = true;
+      dispatch(
+        openBibleAtLocation({
+          book: bookParam,
+          chapter: chapterParam,
+          version: versionParam ?? version,
+          verseRange: versesParam ?? undefined,
+        })
+      );
+    }
+  }, [books, dispatch, handleSearch, searchParams, version]);
 
   const versesDisplaySection = books && chapters && verses && (
     <div

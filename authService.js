@@ -26,6 +26,10 @@ import {
   normalizeChurchBrandingForStorage,
   pickPublicBoardHeaderLogoUrl,
 } from "./server/churchBranding.js";
+import {
+  getChurchIntegrationsPath,
+  normalizeChurchIntegrationsForStorage,
+} from "./server/churchIntegrations.js";
 
 const SESSION_KIND_HUMAN = "human";
 const SESSION_KIND_WORKSTATION = "workstation";
@@ -4085,6 +4089,34 @@ export const authHandlers = {
       return res.json({
         success: true,
         branding,
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: error.message,
+      });
+    }
+  },
+
+  async updateChurchIntegrations(req, res) {
+    try {
+      await assertCsrf(req);
+      const admin = await requireAdminSession(req, req.params.churchId);
+      const integrations = normalizeChurchIntegrationsForStorage(req.body);
+      const rtdb = requireRealtimeDatabase();
+
+      await rtdb
+        .ref(getChurchIntegrationsPath(req.params.churchId))
+        .set(integrations);
+      await addSecurityEvent({
+        type: "church_integrations_updated",
+        churchId: req.params.churchId,
+        userId: admin.user.uid,
+      });
+
+      return res.json({
+        success: true,
+        integrations,
       });
     } catch (error) {
       return res.status(error.statusCode || 500).json({

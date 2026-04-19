@@ -19,7 +19,6 @@ import ToolbarButton from "./ToolbarButton";
 import Outlines from "./Outlines";
 import { useGenerateCreditsFromOverlays } from "../../../hooks/useGenerateCreditsFromOverlays";
 import { scrollToolbarTabIntoViewIfNeeded } from "../../../utils/scrollToolbarTabIntoView";
-
 export type ToolbarOverlayProps = {
   isEditMode: boolean;
   quickLinksDrawerOpen: boolean;
@@ -37,9 +36,11 @@ const ToolbarOverlay = ({
 }: ToolbarOverlayProps) => {
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
+
   const overlayControllerPanel = useSelector(
     (state) => state.undoable.present.preferences.overlayControllerPanel,
   );
+
   const generateCredits = useGenerateCreditsFromOverlays();
 
   const overlayPanelTabRefs = useRef<{

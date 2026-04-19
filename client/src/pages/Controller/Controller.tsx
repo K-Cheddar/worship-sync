@@ -29,6 +29,7 @@ import { RootState } from "../../store/store";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 import ControllerPageShell from "../../components/ControllerPageShell/ControllerPageShell";
 import ControllerViewRouteGuard from "../../components/ControllerViewRouteGuard/ControllerViewRouteGuard";
+import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
 
 const Controller = () => {
   const dispatch = useDispatch();
@@ -132,6 +133,7 @@ const Controller = () => {
             <Route path="account" element={<Navigate to="/account" replace />} />
             <Route path="quick-links" element={<QuickLinks />} />
             <Route path="monitor-settings" element={<MonitorSettings />} />
+            <Route path="service-planning" element={<ServicePlanningImportPanel />} />
           </Routes>
         </ControllerViewRouteGuard>
       </div>

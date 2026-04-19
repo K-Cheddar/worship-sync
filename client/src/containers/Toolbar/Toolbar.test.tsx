@@ -137,9 +137,11 @@ jest.mock("../../hooks/useGenerateCreditsFromOverlays", () => ({
 const renderToolbar = ({
   access,
   itemType,
+  lastControllerConfigurationRoute,
 }: {
   access: "full" | "music" | "view";
   itemType: string;
+  lastControllerConfigurationRoute?: string;
 }) => {
   mockState = {
     undoable: {
@@ -148,7 +150,12 @@ const renderToolbar = ({
           isEditMode: false,
           type: itemType,
         },
-        preferences: preferencesSlice.getInitialState(),
+        preferences: {
+          ...preferencesSlice.getInitialState(),
+          ...(lastControllerConfigurationRoute
+            ? { lastControllerConfigurationRoute }
+            : {}),
+        },
       },
     },
   };
@@ -235,20 +242,33 @@ describe("Toolbar", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders Settings as a link to preferences for non-view access", () => {
+  it("renders Configurations as a link to the last saved configuration route", () => {
+    renderToolbar({
+      access: "full",
+      itemType: "song",
+      lastControllerConfigurationRoute: "/controller/service-planning",
+    });
+
+    const settings = screen.getByRole("link", { name: "Configurations" });
+    expect(settings).toHaveAttribute("href", "/controller/service-planning");
+  });
+
+  it("falls back to preferences for Configurations when no other tab was saved", () => {
     renderToolbar({ access: "full", itemType: "song" });
 
-    const settings = screen.getByRole("link", { name: "Settings" });
+    const settings = screen.getByRole("link", { name: "Configurations" });
     expect(settings).toHaveAttribute("href", "/controller/preferences");
   });
 
-  it("renders Settings as a button for view access", () => {
+  it("renders Configurations as a button for view access", () => {
     renderToolbar({ access: "view", itemType: "song" });
 
     expect(
-      screen.queryByRole("link", { name: "Settings" }),
+      screen.queryByRole("link", { name: "Configurations" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Configurations" }),
+    ).toBeInTheDocument();
   });
 
   it("overlay variant shows Overlays, Credits Editor, and Service Times tabs", () => {

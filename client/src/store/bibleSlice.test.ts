@@ -129,6 +129,23 @@ describe("bibleSlice", () => {
       expect(state.isLoadingChapter).toBe(true);
     });
 
+    it("normalizes version and applies verse range from routed location", async () => {
+      const store = createStore();
+      const payload: OpenBibleAtLocationPayload = {
+        book: "Genesis",
+        chapter: "1",
+        version: "NIV",
+        verseRange: "1-8",
+      };
+      await store.dispatch(openBibleAtLocation(payload) as never);
+      const state = store.getState().bible;
+      expect(state.version).toBe("niv");
+      expect(state.startVerse).toBe(0);
+      expect(state.endVerse).toBe(7);
+      expect(state.searchValues.startVerse).toBe("1");
+      expect(state.searchValues.endVerse).toBe("8");
+    });
+
     it("navigates to different book and chapter", async () => {
       const store = createStore();
       const payload: OpenBibleAtLocationPayload = {
@@ -147,6 +164,28 @@ describe("bibleSlice", () => {
         bibleStructure.books[exodusIndex].chapters,
       );
       expect(state.isLoadingChapter).toBe(true);
+    });
+
+    it("resolves routed Psalm references to the Psalms book", async () => {
+      const store = createStore();
+      const payload: OpenBibleAtLocationPayload = {
+        book: "Psalm",
+        chapter: "78",
+        version: "NIV",
+        verseRange: "1-8",
+      };
+
+      await store.dispatch(openBibleAtLocation(payload) as never);
+
+      const state = store.getState().bible;
+      const psalmsIndex = bibleStructure.books.findIndex(
+        (b) => b.name === "Psalms",
+      );
+      expect(state.book).toBe(psalmsIndex);
+      expect(state.chapter).toBe(77);
+      expect(state.version).toBe("niv");
+      expect(state.startVerse).toBe(0);
+      expect(state.endVerse).toBe(7);
     });
 
     it("does not update state when book name is unknown", async () => {

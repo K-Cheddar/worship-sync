@@ -78,6 +78,7 @@ import {
 import serviceTimesSliceReducer, {
   serviceTimesSlice,
 } from "./serviceTimesSlice";
+import { servicePlanningImportSlice } from "./servicePlanningImportSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
@@ -96,6 +97,15 @@ const safePostMessage = (message: any) => {
     globalBroadcastRef.postMessage(message);
   }
 };
+
+const POUCH_CONFLICT_STATUS = 409;
+const OVERLAY_PUT_MAX_ATTEMPTS = 4;
+
+const isPouchConflict = (e: unknown): boolean =>
+  typeof e === "object" &&
+  e !== null &&
+  "status" in e &&
+  (e as { status?: number }).status === POUCH_CONFLICT_STATUS;
 
 /** Broadcast credit doc(s) to other tabs. Components that persist credits directly call this after db.put. */
 export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
@@ -876,37 +886,73 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    let state = listenerApi.getState() as RootState;
-    if (overlaySlice.actions.selectOverlay.match(action)) {
-      state = listenerApi.getOriginalState() as RootState;
-    } else {
+    const persistOutgoingSelection =
+      overlaySlice.actions.selectOverlay.match(action);
+
+    if (!persistOutgoingSelection) {
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
     }
 
-    // update overlay
-    const { selectedOverlay } = state.undoable.present.overlay;
+    const readOverlayToPersist = (): OverlayInfo | undefined => {
+      if (persistOutgoingSelection) {
+        return (listenerApi.getOriginalState() as RootState).undoable.present
+          .overlay.selectedOverlay;
+      }
+      return (listenerApi.getState() as RootState).undoable.present.overlay
+        .selectedOverlay;
+    };
 
-    if (!selectedOverlay?.id) {
+    let overlayToPersist = readOverlayToPersist();
+
+    if (!overlayToPersist?.id) {
       listenerApi.throwIfCancelled();
       listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
       return;
     }
     if (!db) return;
-    const db_overlay: DBOverlay = await listenerApi.pause(
-      db.get(`overlay-${selectedOverlay.id}`),
-    );
-    const merged: DBOverlay = applyPouchAudit(
-      db_overlay,
-      {
-        ...db_overlay,
-        ...selectedOverlay,
-        updatedAt: new Date().toISOString(),
-      },
-      { isNew: false },
-    );
-    const result = await listenerApi.pause(db.put(merged));
-    const persisted: DBOverlay = { ...merged, _rev: result.rev };
+
+    let persisted: DBOverlay | undefined;
+
+    for (let attempt = 0; attempt < OVERLAY_PUT_MAX_ATTEMPTS; attempt++) {
+      listenerApi.throwIfCancelled();
+
+      overlayToPersist = readOverlayToPersist();
+      if (!overlayToPersist?.id) {
+        listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
+        return;
+      }
+
+      const db_overlay: DBOverlay = await listenerApi.pause(
+        db.get(`overlay-${overlayToPersist.id}`),
+      );
+      const merged: DBOverlay = applyPouchAudit(
+        db_overlay,
+        {
+          ...db_overlay,
+          ...overlayToPersist,
+          updatedAt: new Date().toISOString(),
+        },
+        { isNew: false },
+      );
+
+      try {
+        const result = await listenerApi.pause(db.put(merged));
+        persisted = { ...merged, _rev: result.rev };
+        break;
+      } catch (e) {
+        if (isPouchConflict(e) && attempt < OVERLAY_PUT_MAX_ATTEMPTS - 1) {
+          continue;
+        }
+        console.error("overlay persist failed", e);
+        throw e;
+      }
+    }
+
+    if (!persisted) {
+      listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
+      return;
+    }
 
     listenerApi.throwIfCancelled();
     listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
@@ -1456,6 +1502,7 @@ listenerMiddleware.startListening({
       preferencesSlice.actions.setIsMediaExpanded,
       preferencesSlice.actions.setShouldShowStreamFormat,
       preferencesSlice.actions.setToolbarSection,
+      preferencesSlice.actions.setLastControllerConfigurationRoute,
       preferencesSlice.actions.setOverlayControllerPanel,
       preferencesSlice.actions.setIsLoading,
       preferencesSlice.actions.setSelectedPreference,
@@ -2335,8 +2382,7 @@ listenerMiddleware.startListening({
     if (currentState === previousState) return false;
 
     const state = currentState as RootState;
-    const ready =
-      isCreditsPageReady(state) || areControllerSlicesReady(state);
+    const ready = isCreditsPageReady(state) || areControllerSlicesReady(state);
     return ready;
   },
 
@@ -2375,6 +2421,7 @@ const combinedReducers = combineReducers({
   mediaCacheMap: mediaCacheMapReducer,
   overlayTemplates: overlayTemplatesSlice.reducer,
   autosaveIndicator: autosaveIndicatorSlice.reducer,
+  servicePlanningImport: servicePlanningImportSlice.reducer,
 });
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {

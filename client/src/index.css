@@ -3,7 +3,7 @@
 
 @layer utilities {
   .scrollbar-variable {
-    scrollbar-width: var(--scrollbar-width);
+    scrollbar-width: var(--scrollbar-width, thin);
   }
   /**
    * Scroll areas rendered in a portal (e.g. Radix dropdown) are outside

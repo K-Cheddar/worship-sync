@@ -145,4 +145,32 @@ describe("Bible", () => {
 
     expect(store.getState().createItem).toEqual(initialCreateItemState);
   });
+
+  it("hydrates Bible from routed search and version params", async () => {
+    const store = createBibleStore();
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <MemoryRouter
+            initialEntries={["/controller/bible?search=John%203:1&version=NIV"]}
+          >
+            <Bible />
+          </MemoryRouter>
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(store.getState().bible.searchValues.startVerse).toBe("1");
+    });
+
+    const state = store.getState().bible;
+    expect(state.version).toBe("niv");
+    expect(state.search).toBe("John 3:1");
+    expect(state.searchValues.book).toBe("John");
+    expect(state.searchValues.chapter).toBe("3");
+  });
 });

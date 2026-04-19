@@ -6,6 +6,7 @@ import {
   RectangleEllipsis,
   Pencil,
   MonitorPlay,
+  CalendarDays,
 } from "lucide-react";
 import Menu from "./ToolbarElements/Menu";
 import ToolbarOverlay from "./ToolbarElements/ToolbarOverlay";
@@ -30,6 +31,8 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import cn from "classnames";
 import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
 import {
+  type ControllerConfigurationRoute,
+  setLastControllerConfigurationRoute,
   setShouldShowStreamFormat,
   setToolbarSection,
 } from "../../store/preferencesSlice";
@@ -43,15 +46,32 @@ import {
 } from "../../store/itemSlice";
 import { ItemState } from "../../types";
 import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIntoView";
-
 type sections =
-  | "settings"
+  | "configurations"
   | "slide-tools"
   | "stream-format"
   | "item-tools"
   | "box-tools";
 
 export type ToolbarVariant = "default" | "overlay";
+
+const getControllerConfigurationRoute = (
+  pathname: string,
+): ControllerConfigurationRoute | null => {
+  if (pathname.includes("service-planning")) {
+    return "/controller/service-planning";
+  }
+  if (pathname.includes("quick-links")) {
+    return "/controller/quick-links";
+  }
+  if (pathname.includes("monitor-settings")) {
+    return "/controller/monitor-settings";
+  }
+  if (pathname.includes("preferences")) {
+    return "/controller/preferences";
+  }
+  return null;
+};
 
 const Toolbar = ({
   className,
@@ -66,7 +86,11 @@ const Toolbar = ({
   const { isEditMode, type: itemType } = useSelector(
     (state) => state.undoable.present.item
   );
-  const [section, setSection] = useState<sections>("settings");
+  const lastControllerConfigurationRoute = useSelector(
+    (state) =>
+      state.undoable.present.preferences.lastControllerConfigurationRoute,
+  );
+  const [section, setSection] = useState<sections>("configurations");
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
@@ -75,14 +99,16 @@ const Toolbar = ({
     Partial<Record<sections, HTMLButtonElement | HTMLAnchorElement | null>>
   >({});
 
-  const settingsSubTabRefs = useRef<{
+  const configurationsSubTabRefs = useRef<{
     preferences: HTMLButtonElement | HTMLAnchorElement | null;
     quickLinks: HTMLButtonElement | HTMLAnchorElement | null;
     monitor: HTMLButtonElement | HTMLAnchorElement | null;
+    servicePlanning: HTMLButtonElement | HTMLAnchorElement | null;
   }>({
     preferences: null,
     quickLinks: null,
     monitor: null,
+    servicePlanning: null,
   });
 
   const updateItem = useCallback(
@@ -115,18 +141,29 @@ const Toolbar = ({
         (itemType === "song" || itemType === "free")),
     [access, itemType]
   );
+  const activeControllerConfigurationRoute = useMemo(
+    () => getControllerConfigurationRoute(location.pathname),
+    [location.pathname],
+  );
 
   useEffect(() => {
     if (onItemPage) {
       setSection(
         access === "view" || !canShowSlideAndBoxTools
-          ? "settings"
+          ? "configurations"
           : "slide-tools"
       );
     } else {
-      setSection("settings");
+      setSection("configurations");
     }
   }, [onItemPage, access, canShowSlideAndBoxTools]);
+
+  useEffect(() => {
+    if (!activeControllerConfigurationRoute) return;
+    dispatch(
+      setLastControllerConfigurationRoute(activeControllerConfigurationRoute),
+    );
+  }, [activeControllerConfigurationRoute, dispatch]);
 
   useEffect(() => {
     dispatch(setToolbarSection(section));
@@ -142,14 +179,16 @@ const Toolbar = ({
   }, [section]);
 
   useLayoutEffect(() => {
-    if (section !== "settings") return;
+    if (section !== "configurations") return;
     const path = location.pathname;
-    const subKey = path.includes("quick-links")
-      ? "quickLinks"
-      : path.includes("monitor-settings")
-        ? "monitor"
-        : "preferences";
-    scrollToolbarTabIntoViewIfNeeded(settingsSubTabRefs.current[subKey]);
+    const subKey = path.includes("service-planning")
+      ? "servicePlanning"
+      : path.includes("quick-links")
+        ? "quickLinks"
+        : path.includes("monitor-settings")
+          ? "monitor"
+          : "preferences";
+    scrollToolbarTabIntoViewIfNeeded(configurationsSubTabRefs.current[subKey]);
   }, [section, location.pathname]);
 
   return (
@@ -177,24 +216,24 @@ const Toolbar = ({
                 {access !== "view" ? (
                   <ToolbarButton
                     ref={(el) => {
-                      primaryToolbarTabRefs.current.settings = el;
+                      primaryToolbarTabRefs.current.configurations = el;
                     }}
                     svg={Settings}
-                    to="/controller/preferences"
-                    isActive={section === "settings"}
+                    to={lastControllerConfigurationRoute}
+                    isActive={section === "configurations"}
                   >
-                    Settings
+                    Configurations
                   </ToolbarButton>
                 ) : (
                   <ToolbarButton
                     ref={(el) => {
-                      primaryToolbarTabRefs.current.settings = el;
+                      primaryToolbarTabRefs.current.configurations = el;
                     }}
                     svg={Settings}
-                    onClick={() => setSection("settings")}
-                    isActive={section === "settings"}
+                    onClick={() => setSection("configurations")}
+                    isActive={section === "configurations"}
                   >
-                    Settings
+                    Configurations
                   </ToolbarButton>
                 )}
                 <ToolbarButton
@@ -256,11 +295,11 @@ const Toolbar = ({
                 {access !== "view" && (
                   <ToolbarButton
                     ref={(el) => {
-                      settingsSubTabRefs.current.preferences = el;
+                      configurationsSubTabRefs.current.preferences = el;
                     }}
                     svg={Settings}
                     to="/controller/preferences"
-                    hidden={section !== "settings"}
+                    hidden={section !== "configurations"}
                     isActive={
                       location.pathname.includes("preferences") &&
                       !location.pathname.includes("quick-links")
@@ -272,10 +311,10 @@ const Toolbar = ({
                 {access === "full" && (
                   <ToolbarButton
                     ref={(el) => {
-                      settingsSubTabRefs.current.quickLinks = el;
+                      configurationsSubTabRefs.current.quickLinks = el;
                     }}
                     svg={RectangleEllipsis}
-                    hidden={section !== "settings"}
+                    hidden={section !== "configurations"}
                     isActive={location.pathname.includes("quick-links")}
                     to="/controller/quick-links"
                   >
@@ -285,14 +324,27 @@ const Toolbar = ({
                 {access === "full" && (
                   <ToolbarButton
                     ref={(el) => {
-                      settingsSubTabRefs.current.monitor = el;
+                      configurationsSubTabRefs.current.monitor = el;
                     }}
                     svg={Monitor}
                     to="/controller/monitor-settings"
-                    hidden={section !== "settings"}
+                    hidden={section !== "configurations"}
                     isActive={location.pathname.includes("monitor-settings")}
                   >
                     Monitor Settings
+                  </ToolbarButton>
+                )}
+                {access === "full" && (
+                  <ToolbarButton
+                    ref={(el) => {
+                      configurationsSubTabRefs.current.servicePlanning = el;
+                    }}
+                    svg={CalendarDays}
+                    to="/controller/service-planning"
+                    hidden={section !== "configurations"}
+                    isActive={location.pathname.includes("service-planning")}
+                  >
+                    Service Planning
                   </ToolbarButton>
                 )}
                 <SlideEditTools

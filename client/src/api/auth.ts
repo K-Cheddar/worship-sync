@@ -3,6 +3,7 @@ import {
   isPackagedElectronRenderer,
 } from "../utils/environment";
 import { getCsrfToken, getHumanApiToken } from "../utils/authStorage";
+import type { ChurchIntegrations } from "../types/integrations";
 import type {
   AuthBootstrap,
   ChurchBranding,
@@ -272,6 +273,18 @@ export const updateChurchBranding = async (
   }>(`api/churches/${churchId}/branding`, {
     method: "POST",
     body: JSON.stringify(branding),
+  });
+
+export const updateChurchIntegrations = async (
+  churchId: string,
+  integrations: ChurchIntegrations,
+) =>
+  apiFetch<{
+    success: boolean;
+    integrations: ChurchIntegrations;
+  }>(`api/churches/${churchId}/integrations`, {
+    method: "POST",
+    body: JSON.stringify(integrations),
   });
 
 export const createAdminInvite = async (churchId: string, body: JsonBody) =>

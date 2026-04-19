@@ -1,5 +1,5 @@
 import Button from "../../components/Button/Button";
-import { Plus, Check, Download, RefreshCw, FolderOpen, History } from "lucide-react";
+import { Plus, Check, FolderOpen, History } from "lucide-react";
 
 import { useDispatch, useSelector } from "../../hooks";
 import { useStore } from "react-redux";
@@ -61,9 +61,6 @@ import {
 import { normalizeOverlayForSync } from "../../utils/overlayUtils";
 import { putOverlayHistoryDocs } from "../../utils/dbUtils";
 import { DBOverlayTemplates } from "../../types";
-import PopOver from "../../components/PopOver/PopOver";
-import Input from "../../components/Input/Input";
-import { getNamesFromUrl } from "./eventParser";
 
 const Overlays = () => {
   const { list, initialList, overlayHistory } = useSelector(
@@ -115,8 +112,6 @@ const Overlays = () => {
   const [isAddExistingOpen, setIsAddExistingOpen] = useState(false);
   const [isOverlayHistoryDrawerOpen, setIsOverlayHistoryDrawerOpen] =
     useState(false);
-  const [url, setUrl] = useState("");
-  const [isGettingNames, setIsGettingNames] = useState(false);
   const [isApplyingFormattingToAll, setIsApplyingFormattingToAll] =
     useState(false);
   useEffect(() => {
@@ -437,138 +432,6 @@ const Overlays = () => {
     }
   };
 
-  const getNames = async (url: string) => {
-    setIsGettingNames(true);
-    const names = await getNamesFromUrl(url);
-
-    // Compare names with existing overlays - find closest match for each element
-    const matches: { leader: string; overlayEvent: string }[] = [];
-
-    // Process each event data item sequentially to handle async database operations
-    for (const eventData of names) {
-      let bestOverlay: any = null;
-      let bestSimilarity = 0;
-      const elementLower = eventData.element.toLowerCase().trim();
-
-      // Clean up the element text - remove extra song details and common prefixes
-      const cleanElement = elementLower
-        .replace(/song of praise.*?\([^)]+\)/g, "song of praise")
-        .replace(/congregational hymn.*?\([^)]+\)/g, "hymn")
-        .replace(/welcome song.*?\([^)]+\)/g, "welcome song")
-        .replace(/appeal song.*?\([^)]+\)/g, "appeal song")
-        .replace(/after glow.*?\([^)]+\)/g, "after glow")
-        .replace(/appreciation.*?\([^)]+\)/g, "appreciation")
-        .replace(/call to (praise|prayer)/g, "call to $1")
-        .replace(/reading the word.*?-.*$/g, "reading")
-        .replace(/sermon.*?-.*$/g, "sermon")
-        .replace(/children.*?-.*$/g, "children")
-        .replace(/mission.*?-.*$/g, "mission")
-        .replace(/sabbath school.*?-.*$/g, "sabbath school")
-        .replace(/pastoral greetings.*\/.*$/g, "announcements")
-        .trim();
-
-      list.forEach((overlay) => {
-        const overlayEventLower = overlay.event?.toLowerCase().trim() || "";
-        if (!overlayEventLower) return; // Skip empty events
-
-        let similarity = 0;
-
-        // Calculate similarity score with better matching logic
-        if (cleanElement === overlayEventLower) {
-          similarity = 100; // Exact match
-        } else if (cleanElement.includes(overlayEventLower)) {
-          // Element contains overlay event - reward longer matches
-          similarity = Math.max(
-            30,
-            (overlayEventLower.length / cleanElement.length) * 80
-          );
-        } else if (overlayEventLower.includes(cleanElement)) {
-          // Overlay contains element - reward longer overlay events
-          similarity = Math.max(
-            30,
-            (cleanElement.length / overlayEventLower.length) * 80
-          );
-        } else {
-          // Check for word-based similarity (split by spaces and check for word matches)
-          const elementWords = cleanElement.split(/\s+/);
-          const overlayWords = overlayEventLower.split(/\s+/);
-          const matchingWords = elementWords.filter(
-            (word) =>
-              word.length > 2 &&
-              overlayWords.some((ow) => ow.includes(word) || word.includes(ow))
-          );
-
-          if (matchingWords.length > 0) {
-            similarity = Math.max(
-              25,
-              (matchingWords.length /
-                Math.max(elementWords.length, overlayWords.length)) *
-              60
-            );
-          }
-        }
-
-        // Keep track of the best match
-        if (similarity > bestSimilarity && similarity >= 25) {
-          // Minimum threshold
-          bestOverlay = overlay;
-          bestSimilarity = similarity;
-        }
-      });
-
-      // Add the best match if found and update the overlay
-      if (bestOverlay && bestSimilarity >= 25) {
-        matches.push({
-          leader: eventData.leader,
-          overlayEvent: bestOverlay.event || "No event name",
-        });
-
-        // Update the overlay in the database
-        try {
-          if (db) {
-            // Get the current overlay from database
-            const dbOverlay = await db.get(`overlay-${bestOverlay.id}`);
-
-            // Update with new name and timestamp
-            const updatedAt = new Date().toISOString();
-            const updatedOverlay = applyPouchAudit(
-              dbOverlay as DBOverlay,
-              {
-                ...(dbOverlay as DBOverlay),
-                name: eventData.leader,
-                updatedAt,
-              },
-              { isNew: false },
-            );
-
-            // Save back to database
-            await db.put(updatedOverlay);
-
-            // Update in Redux state
-            dispatch(
-              updateOverlayInList({
-                ...bestOverlay,
-                name: eventData.leader,
-              })
-            );
-          }
-        } catch (error) {
-          console.error(`Failed to update overlay ${bestOverlay.id}:`, error);
-        }
-      }
-    }
-
-    if (matches.length > 0) {
-      console.log(
-        `Successfully updated ${matches.length} overlays with new names`
-      );
-    } else {
-      console.log("No matches found - no overlays were updated");
-    }
-
-    setIsGettingNames(false);
-  };
-
   const addButtonText =
     selectedOverlay.name || selectedOverlay.url
       ? "Copy Overlay"
@@ -604,35 +467,6 @@ const Overlays = () => {
                     iconSize="sm"
                   />
                 )}
-                <PopOver
-                  TriggeringButton={
-                    <Button
-                      className="text-sm hidden"
-                      padding="px-1"
-                      variant="tertiary"
-                      color="#06b6d4"
-                      svg={RefreshCw}
-                    >
-                      Get Names
-                    </Button>
-                  }
-                >
-                  <div className="flex gap-2">
-                    <Input
-                      label="Service Planning URL"
-                      className="flex gap-2"
-                      value={url}
-                      onChange={(val) => setUrl(val as string)}
-                    />
-                    <Button
-                      variant="primary"
-                      onClick={() => getNames(url)}
-                      isLoading={isGettingNames}
-                      svg={Download}
-                      color="#06b6d4"
-                    />
-                  </div>
-                </PopOver>
               </div>
             </div>
             <OverlayHistoryDrawer
