@@ -1,6 +1,9 @@
 import { configureStore } from "@reduxjs/toolkit";
 import { preferencesSlice } from "./preferencesSlice";
-import type { PreferencesTabType } from "./preferencesSlice";
+import type {
+  ControllerConfigurationRoute,
+  PreferencesTabType,
+} from "./preferencesSlice";
 
 jest.mock("../utils/generateRandomId", () => ({
   __esModule: true,
@@ -41,6 +44,18 @@ describe("preferencesSlice", () => {
       const store = createStore();
       store.dispatch(preferencesSlice.actions.setShouldShowItemEditor(false));
       expect(store.getState().preferences.shouldShowItemEditor).toBe(false);
+    });
+
+    it("setLastControllerConfigurationRoute updates the remembered controller tab", () => {
+      const store = createStore();
+      store.dispatch(
+        preferencesSlice.actions.setLastControllerConfigurationRoute(
+          "/controller/service-planning" as ControllerConfigurationRoute,
+        ),
+      );
+      expect(store.getState().preferences.lastControllerConfigurationRoute).toBe(
+        "/controller/service-planning",
+      );
     });
 
     it("setQuickLinks replaces quickLinks", () => {

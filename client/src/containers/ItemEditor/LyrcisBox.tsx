@@ -14,6 +14,7 @@ export type LyrcisBoxProps = {
   lyric: FormattedLyricsType;
   index: number;
   selected: boolean;
+  linked?: boolean;
   justMoved: boolean;
   availableSections: Option[];
   availableSectionsKey: string;
@@ -31,6 +32,7 @@ const LyrcisBox = memo(
     lyric,
     index,
     selected,
+    linked,
     justMoved,
     availableSections,
     availableSectionsKey,
@@ -82,7 +84,7 @@ const LyrcisBox = memo(
         id={lyric.id ? `lyric-box-${lyric.id}` : undefined}
         className={cn(
           "text-sm border-4 rounded-lg",
-          selected ? "border-cyan-500" : "border-transparent",
+          selected ? "border-cyan-500" : linked ? "border-white/50" : "border-transparent",
           justMoved && "section-track-move"
         )}
         style={{
@@ -176,6 +178,7 @@ const LyrcisBox = memo(
       prev.lyric === next.lyric &&
       prev.index === next.index &&
       prev.selected === next.selected &&
+      prev.linked === next.linked &&
       prev.justMoved === next.justMoved &&
       prev.isMobile === next.isMobile &&
       prev.availableSectionsKey === next.availableSectionsKey &&

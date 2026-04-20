@@ -120,4 +120,53 @@ describe("MediaLibraryActionBar", () => {
     await user.click(screen.getByRole("button", { name: "Done" }));
     expect(onMultiSelectDone).toHaveBeenCalledTimes(1);
   });
+
+  it("shows New folder alongside media actions when showNewFolderAction is set", () => {
+    clientWidthSpy.mockRestore();
+    clientWidthSpy = jest
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockImplementation(function clientWidthWideToolbar(this: HTMLElement) {
+        if (
+          this.hasAttribute("data-media-library-toolbar-row") ||
+          this.hasAttribute("data-media-library-actions-flex") ||
+          this.hasAttribute("data-media-library-inline-measure-row")
+        )
+          return 1200;
+        return 360;
+      });
+
+    const action: MediaLibraryBarAction = {
+      id: "send-projector",
+      label: "Send to projector",
+      onClick: jest.fn(),
+    };
+
+    render(
+      <MediaLibraryActionBar
+        detailsRow={<div>2 selected</div>}
+        showFolderActions={false}
+        showNewFolderAction
+        folderNew={{
+          open: false,
+          onOpenChange: jest.fn(),
+          content: <div>New folder form</div>,
+          contentClassName: "w-72",
+        }}
+        showFolderRenameDelete={false}
+        showMediaRename={false}
+        onDeleteFolder={jest.fn()}
+        mediaActions={[action]}
+        showMoveSelect
+        moveSelectOptions={[{ value: "a", label: "Folder A" }]}
+        onMoveTo={jest.fn()}
+      />,
+    );
+
+    const moveBtn = screen.getByRole("button", { name: /move to folder/i });
+    const newFolderBtn = screen.getByRole("button", { name: /^new folder$/i });
+    expect(
+      moveBtn.compareDocumentPosition(newFolderBtn) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });

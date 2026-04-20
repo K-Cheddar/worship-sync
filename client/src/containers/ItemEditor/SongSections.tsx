@@ -21,16 +21,21 @@ type SongSectionsProps = {
   songOrder: SongOrder[];
   setSongOrder: (songOrder: SongOrder[]) => void;
   currentSections: { value: string; label: string }[];
+  selectedIndex: number;
+  onSelectedIndexChange: (index: number) => void;
+  linkedSectionName?: string | null;
 };
 
 const SongSections = ({
   songOrder,
   setSongOrder,
   currentSections,
+  selectedIndex,
+  onSelectedIndexChange: setSelectedIndex,
+  linkedSectionName,
 }: SongSectionsProps) => {
   /** Remount Radix Select after each add so the same option can be chosen again. */
   const [addSectionSelectKey, setAddSectionSelectKey] = useState(0);
-  const [selectedIndex, setSelectedIndex] = useState(songOrder.length - 1);
   const [repeatPopoverOpen, setRepeatPopoverOpen] = useState(false);
   const [lastAddedSectionName, setLastAddedSectionName] = useState<
     string | null
@@ -88,7 +93,7 @@ const SongSections = ({
     setSongOrder(updatedSongOrder);
     setSelectedIndex(nextIndex);
     setAddSectionSelectKey((k) => k + 1);
-  }, [setSongOrder]);
+  }, [setSongOrder, setSelectedIndex]);
 
   const lastAddedDisplayLabel =
     lastAddedSectionName &&
@@ -133,10 +138,10 @@ const SongSections = ({
               ref={setNodeRef}
             >
               {songOrder.length === 0 ? (
-                <li className="px-1 py-6 text-center text-sm leading-snug text-gray-400">
+                <li className="shrink-0 px-1 py-6 text-center text-sm leading-snug text-gray-400">
                   No sections in the order yet. Use{" "}
                   <span className="font-medium text-gray-300">Add section</span>{" "}
-                  or add lyrics—new sections can follow your “Add to Song Order”
+                  or add lyrics—new sections can follow your "Add to Song Order"
                   setting.
                 </li>
               ) : (
@@ -151,6 +156,7 @@ const SongSections = ({
                       id={id}
                       selectedIndex={selectedIndex}
                       setSelectedIndex={setSelectedIndex}
+                      linkedSectionName={linkedSectionName}
                     />
                   ))}
                 </SortableContext>

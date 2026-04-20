@@ -23,6 +23,7 @@ import {
   PopoverContent,
 } from "../../components/ui/Popover";
 import {
+  Check,
   ChevronLeft,
   Folder,
   FolderInput,
@@ -101,7 +102,9 @@ const DELETE_IDS = new Set(["delete", "delete-multiple"]);
 type MediaActionSlot =
   | { kind: "action"; action: MediaLibraryBarAction }
   | { kind: "renameMedia" }
-  | { kind: "move" };
+  | { kind: "move" }
+  /** Empty-folder control while media is selected; appears after Move to folder. */
+  | { kind: "folderNewToolbar"; panel: MediaLibraryFolderPopoverPanel };
 
 /** Primary actions, then Rename (single selection), then Move to folder, then Delete — overflow follows that priority. */
 function buildMediaActionSlots(
@@ -138,8 +141,7 @@ function MediaActionDropdownMenuItems({
           disabled={mi.disabled}
           variant="default"
           className={MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS}
-          onSelect={(e) => {
-            e.preventDefault();
+          onSelect={() => {
             mi.onClick();
           }}
         >
@@ -212,6 +214,8 @@ type MediaLibraryActionBarProps = {
   className?: string;
   detailsRow: React.ReactNode;
   showFolderActions: boolean;
+  /** When media is selected, still show **New folder** (empty folder); omit rename/delete folder actions. */
+  showNewFolderAction?: boolean;
   /** New-folder form; shown in the anchored popover when `open`. */
   folderNew?: MediaLibraryFolderPopoverPanel | null;
   /** Rename-folder form when a real folder is selected. */
@@ -226,6 +230,8 @@ type MediaLibraryActionBarProps = {
   onMediaRenameOpenChange?: (open: boolean) => void;
   onDeleteFolder: () => void;
   mediaActions: MediaLibraryBarAction[];
+  /** Brief check + disabled state on item slide apply/clear actions (no toast). */
+  slideBackgroundFeedbackId?: string | null;
   showMoveSelect: boolean;
   moveSelectOptions: Option[];
   onMoveTo: (targetFolderId: string | null) => void;
@@ -320,6 +326,7 @@ const MediaLibraryActionBar = ({
   className,
   detailsRow,
   showFolderActions,
+  showNewFolderAction = false,
   folderNew = null,
   folderRename = null,
   renameMediaContent = null,
@@ -338,6 +345,7 @@ const MediaLibraryActionBar = ({
   moveToNewFolderContent = null,
   showMultiSelectDone = false,
   onMultiSelectDone,
+  slideBackgroundFeedbackId = null,
 }: MediaLibraryActionBarProps) => {
   const toolbarRowRef = useRef<HTMLDivElement>(null);
   const actionsFlexRef = useRef<HTMLDivElement>(null);
@@ -356,15 +364,36 @@ const MediaLibraryActionBar = ({
     }
     return out;
   }, [showFolderActions, showFolderRenameDelete, folderNew, folderRename]);
-  const mediaSlots = useMemo(
-    () =>
-      buildMediaActionSlots(
-        mediaActions,
-        showMoveSelect,
-        showMediaRename,
-      ),
-    [mediaActions, showMoveSelect, showMediaRename],
-  );
+  const mediaSlots = useMemo((): MediaActionSlot[] => {
+    const base = buildMediaActionSlots(
+      mediaActions,
+      showMoveSelect,
+      showMediaRename,
+    );
+    if (!showNewFolderAction || !folderNew) return base;
+    const moveIdx = base.findIndex((s) => s.kind === "move");
+    let insertIdx: number;
+    if (moveIdx >= 0) {
+      insertIdx = moveIdx + 1;
+    } else {
+      const firstDeleteIdx = base.findIndex(
+        (s) =>
+          s.kind === "action" && DELETE_IDS.has(s.action.id),
+      );
+      insertIdx = firstDeleteIdx >= 0 ? firstDeleteIdx : base.length;
+    }
+    return [
+      ...base.slice(0, insertIdx),
+      { kind: "folderNewToolbar", panel: folderNew },
+      ...base.slice(insertIdx),
+    ];
+  }, [
+    mediaActions,
+    showMoveSelect,
+    showMediaRename,
+    showNewFolderAction,
+    folderNew,
+  ]);
   const [folderInlineCount, setFolderInlineCount] = useState(folderSlots.length);
   const [mediaInlineCount, setMediaInlineCount] = useState(mediaSlots.length);
   /** More (⋯) menu: drill-in panels replace content (no side submenus). */
@@ -409,7 +438,19 @@ const MediaLibraryActionBar = ({
       if (!open) {
         setOverflowMenuView("actions");
         setOverflowNestedMenu(null);
-        if (pendingMoveToNewFolderAfterOverflowCloseRef.current) {
+        if (pendingFolderNewAfterOverflowCloseRef.current) {
+          pendingFolderNewAfterOverflowCloseRef.current = false;
+          if (pendingAnchoredPopoverOpenTimeoutRef.current != null) {
+            window.clearTimeout(pendingAnchoredPopoverOpenTimeoutRef.current);
+          }
+          pendingAnchoredPopoverOpenTimeoutRef.current = window.setTimeout(
+            () => {
+              pendingAnchoredPopoverOpenTimeoutRef.current = null;
+              folderNew?.onOpenChange(true);
+            },
+            0,
+          );
+        } else if (pendingMoveToNewFolderAfterOverflowCloseRef.current) {
           pendingMoveToNewFolderAfterOverflowCloseRef.current = false;
           if (pendingAnchoredPopoverOpenTimeoutRef.current != null) {
             window.clearTimeout(pendingAnchoredPopoverOpenTimeoutRef.current);
@@ -437,12 +478,13 @@ const MediaLibraryActionBar = ({
           suppressOverflowCloseAutoFocusRef.current = false;
         }
       } else {
+        pendingFolderNewAfterOverflowCloseRef.current = false;
         pendingMediaRenameAfterOverflowCloseRef.current = false;
         pendingMoveToNewFolderAfterOverflowCloseRef.current = false;
         suppressOverflowCloseAutoFocusRef.current = false;
       }
     },
-    [onMediaRenameOpenChange, onMoveToNewFolderOpenChange],
+    [folderNew, onMediaRenameOpenChange, onMoveToNewFolderOpenChange],
   );
 
   const handleFolderOverflowMenuOpenChange = useCallback(
@@ -562,8 +604,13 @@ const MediaLibraryActionBar = ({
     () => folderSlots.findIndex((s) => s.kind === "folderRename"),
     [folderSlots],
   );
+  const folderNewToolbarIsInline = useMemo(
+    () => inlineMediaSlots.some((s) => s.kind === "folderNewToolbar"),
+    [inlineMediaSlots],
+  );
   const folderNewIsInline =
-    folderNewSlotIndex >= 0 && folderNewSlotIndex < folderInlineCount;
+    (folderNewSlotIndex >= 0 && folderNewSlotIndex < folderInlineCount) ||
+    folderNewToolbarIsInline;
   const folderRenameIsInline =
     folderRenameSlotIndex >= 0 && folderRenameSlotIndex < folderInlineCount;
 
@@ -589,7 +636,19 @@ const MediaLibraryActionBar = ({
     if (folderOverflowSlots.length === 0) setFolderOverflowMenuOpen(false);
   }, [folderOverflowSlots.length]);
 
+  const slideBgAck = (id: string) => slideBackgroundFeedbackId === id;
+  const slideBgAckIcon = (
+    <Check
+      className={cn(
+        MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+        "text-emerald-400",
+      )}
+      aria-hidden
+    />
+  );
+
   const renderActionButton = (a: MediaLibraryBarAction) => {
+    const ack = slideBgAck(a.id);
     if (isMenuAction(a)) {
       return (
         <div key={a.id} className="shrink-0">
@@ -598,11 +657,11 @@ const MediaLibraryActionBar = ({
               <Button
                 variant="tertiary"
                 className={classNameForMediaLibraryBarAction(a)}
-                disabled={a.disabled}
+                disabled={a.disabled || ack}
                 title={a.label}
               >
                 <span className="flex items-center gap-1">
-                  {a.icon}
+                  {ack ? slideBgAckIcon : a.icon}
                   {a.label}
                 </span>
               </Button>
@@ -612,7 +671,7 @@ const MediaLibraryActionBar = ({
               className="min-w-48 text-xs [&_svg]:text-cyan-400"
             >
               <DropdownMenuLabel className="flex items-center gap-1.5 text-xs font-normal text-gray-400 [&_svg]:text-cyan-400">
-                {a.icon}
+                {ack ? slideBgAckIcon : a.icon}
                 {a.label}
               </DropdownMenuLabel>
               <MediaActionDropdownMenuItems items={a.menuItems} />
@@ -626,12 +685,12 @@ const MediaLibraryActionBar = ({
         key={a.id}
         variant="tertiary"
         className={classNameForMediaLibraryBarAction(a)}
-        disabled={a.disabled}
+        disabled={a.disabled || ack}
         onClick={a.onClick}
         title={a.label}
       >
         <span className="flex items-center gap-1">
-          {a.icon}
+          {ack ? slideBgAckIcon : a.icon}
           {a.label}
         </span>
       </Button>
@@ -902,6 +961,29 @@ const MediaLibraryActionBar = ({
                       Rename
                     </span>
                   </Button>
+                ) : slot.kind === "folderNewToolbar" ? (
+                  <Button
+                    key={`m-fn-${i}`}
+                    data-measure-action-btn
+                    variant="tertiary"
+                    className={cn(
+                      "shrink-0",
+                      MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+                    )}
+                    tabIndex={-1}
+                    aria-hidden
+                  >
+                    <span className="flex items-center gap-1">
+                      <FolderPlus
+                        className={cn(
+                          MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                          "text-cyan-400",
+                        )}
+                        aria-hidden
+                      />
+                      New folder
+                    </span>
+                  </Button>
                 ) : (
                   <Button
                     key={`m-move-${i}`}
@@ -1090,6 +1172,24 @@ const MediaLibraryActionBar = ({
                   </PopoverAnchor>
                 );
               }
+              if (slot.kind === "folderNewToolbar") {
+                return (
+                  <PopoverAnchor asChild key={`folder-new-toolbar-${i}`}>
+                    <Button
+                      variant="tertiary"
+                      className={cn(
+                        "shrink-0",
+                        MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+                      )}
+                      svg={FolderPlus}
+                      title="New folder"
+                      onClick={() => slot.panel.onOpenChange(true)}
+                    >
+                      New folder
+                    </Button>
+                  </PopoverAnchor>
+                );
+              }
               return renderMoveToDropdown(`inline-${i}`);
             })}
 
@@ -1130,7 +1230,10 @@ const MediaLibraryActionBar = ({
                           isMenuAction(slot.action) ? (
                             <DropdownMenuItem
                               key={slot.action.id}
-                              disabled={slot.action.disabled}
+                              disabled={
+                                slot.action.disabled ||
+                                slideBgAck(slot.action.id)
+                              }
                               variant="default"
                               className={classNameForMediaLibraryOverflowMenuItem(
                                 slot.action,
@@ -1148,14 +1251,19 @@ const MediaLibraryActionBar = ({
                               }}
                             >
                               <span className="flex items-center gap-1.5">
-                                {slot.action.icon}
+                                {slideBgAck(slot.action.id)
+                                  ? slideBgAckIcon
+                                  : slot.action.icon}
                                 {slot.action.label}
                               </span>
                             </DropdownMenuItem>
                           ) : (
                             <DropdownMenuItem
                               key={slot.action.id}
-                              disabled={slot.action.disabled}
+                              disabled={
+                                slot.action.disabled ||
+                                slideBgAck(slot.action.id)
+                              }
                               variant="default"
                               className={classNameForMediaLibraryOverflowMenuItem(
                                 slot.action,
@@ -1166,7 +1274,9 @@ const MediaLibraryActionBar = ({
                               }}
                             >
                               <span className="flex items-center gap-1.5">
-                                {slot.action.icon}
+                                {slideBgAck(slot.action.id)
+                                  ? slideBgAckIcon
+                                  : slot.action.icon}
                                 {slot.action.label}
                               </span>
                             </DropdownMenuItem>
@@ -1189,6 +1299,27 @@ const MediaLibraryActionBar = ({
                                 aria-hidden
                               />
                               Rename
+                            </span>
+                          </DropdownMenuItem>
+                        ) : slot.kind === "folderNewToolbar" ? (
+                          <DropdownMenuItem
+                            key="folder-new-toolbar-overflow"
+                            variant="default"
+                            className={MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS}
+                            onSelect={() => {
+                              pendingFolderNewAfterOverflowCloseRef.current = true;
+                              suppressOverflowCloseAutoFocusRef.current = true;
+                            }}
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <FolderPlus
+                                className={cn(
+                                  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                                  "text-cyan-400",
+                                )}
+                                aria-hidden
+                              />
+                              New folder
                             </span>
                           </DropdownMenuItem>
                         ) : (

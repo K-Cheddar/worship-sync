@@ -33,6 +33,8 @@ import {
   RecoveryEmailForm,
   WorkstationPairingForm,
 } from "./AccountFormSections";
+import { IntegrationsSettingsPanel } from "./IntegrationsSettingsPanel";
+import { createDefaultChurchIntegrations } from "../../types/integrations";
 
 type Member = {
   membershipId: string;
@@ -127,7 +129,7 @@ const memberAccessOptions: {
     { value: "view", label: "View access" },
   ];
 
-type AccountTabId = "people" | "setup" | "branding";
+type AccountTabId = "people" | "setup" | "branding" | "integrations";
 
 const ACCOUNT_TABS: {
   id: AccountTabId;
@@ -149,6 +151,12 @@ const ACCOUNT_TABS: {
       id: "branding",
       label: "Branding",
       description: "Mission, vision, logos, and brand colors for controllers.",
+    },
+    {
+      id: "integrations",
+      label: "Integrations",
+      description:
+        "Service Planning and future connections to sync names and overlay fields.",
     },
   ];
 
@@ -602,7 +610,7 @@ const AccountPage = () => {
         <div>
           <h2 className="text-2xl font-semibold">Overview</h2>
           <p className="mt-1 max-w-xl text-sm text-gray-300">
-            Invite people, link shared devices, manage recovery, and save church branding in one place.
+            Invite people, link shared devices, manage recovery, save church branding, and configure integrations in one place.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 sm:flex-nowrap">
@@ -1171,6 +1179,20 @@ const AccountPage = () => {
                   colors: [],
                 }}
                 brandingStatus={context?.churchBrandingStatus || "loading"}
+              />
+            ),
+          },
+          {
+            value: "integrations",
+            label: ACCOUNT_TABS.find((t) => t.id === "integrations")!.label,
+            description: ACCOUNT_TABS.find((t) => t.id === "integrations")!.description,
+            content: (
+              <IntegrationsSettingsPanel
+                churchId={churchId}
+                integrations={
+                  context?.churchIntegrations ?? createDefaultChurchIntegrations()
+                }
+                integrationsStatus={context?.churchIntegrationsStatus ?? "loading"}
               />
             ),
           },

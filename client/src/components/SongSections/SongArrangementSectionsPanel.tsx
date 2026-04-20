@@ -1,4 +1,5 @@
 import Select from "../Select/Select";
+import Button from "../Button/Button";
 import SongSectionLyricCard from "./SongSectionLyricCard";
 import { SongSectionLyricCardMode } from "./SongSectionLyricCard";
 import { DBItem, FormattedLyrics } from "../../types";
@@ -17,6 +18,9 @@ export type SongArrangementSectionsPanelProps = {
   arrangementSelectId: string;
   selectedSectionIds?: string[];
   onToggleSection?: (sectionId: string) => void;
+  allSelected?: boolean;
+  onSelectAll?: () => void;
+  onDeselectAll?: () => void;
 };
 
 const SongArrangementSectionsPanel = ({
@@ -28,6 +32,9 @@ const SongArrangementSectionsPanel = ({
   arrangementSelectId,
   selectedSectionIds = [],
   onToggleSection,
+  allSelected,
+  onSelectAll,
+  onDeselectAll,
 }: SongArrangementSectionsPanelProps) => {
   const arrangements = song.arrangements || [];
   const selectedArrangement = arrangements[arrangementIndex];
@@ -66,9 +73,20 @@ const SongArrangementSectionsPanel = ({
         />
       </div>
 
-      <p className="shrink-0 text-sm text-gray-400">
-        <span className="font-medium text-gray-300">Source:</span> {song.name}
-      </p>
+      <div className="flex shrink-0 items-center justify-between">
+        <p className="text-sm text-gray-400">
+          <span className="font-medium text-gray-300">Source:</span> {song.name}
+        </p>
+        {mode === "import" && arrangementSections.length > 0 && (onSelectAll || onDeselectAll) && (
+          <Button
+            variant="tertiary"
+            className="text-xs shrink-0"
+            onClick={allSelected ? onDeselectAll : onSelectAll}
+          >
+            {allSelected ? "Deselect all" : "Select all"}
+          </Button>
+        )}
+      </div>
 
       {arrangementSections.length === 0 ? (
         <p className="text-sm text-gray-400">

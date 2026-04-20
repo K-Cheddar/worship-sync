@@ -479,6 +479,10 @@ app.post(
   authHandlers.updateRecoveryEmail,
 );
 app.post("/api/churches/:churchId/branding", authHandlers.updateChurchBranding);
+app.post(
+  "/api/churches/:churchId/integrations",
+  authHandlers.updateChurchIntegrations,
+);
 app.post("/api/churches/:churchId/invites", authHandlers.createInvite);
 app.post(
   "/api/churches/:churchId/invites/:inviteId/revoke",

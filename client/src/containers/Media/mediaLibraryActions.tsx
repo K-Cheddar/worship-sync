@@ -123,6 +123,8 @@ export function buildMediaLibraryBarActions(args: {
   controllerFromSelectedMedia?: ControllerFromSelectedMediaActions;
   /** Success / info toasts after actions complete (omit delete; those use the confirm modal). */
   notify?: (message: string, variant?: ToastVariant) => void;
+  /** Item slide apply/clear: no toast — parent shows a brief check + disabled state on the action control. */
+  onItemSlideBackgroundFeedback?: (feedbackId: string) => void;
 }): MediaLibraryBarAction[] {
   const {
     flags,
@@ -140,10 +142,15 @@ export function buildMediaLibraryBarActions(args: {
     itemSlideContext,
     controllerFromSelectedMedia,
     notify,
+    onItemSlideBackgroundFeedback,
   } = args;
 
   const toast = (message: string, variant: ToastVariant = "success") => {
     notify?.(message, variant);
+  };
+
+  const slideBgAck = (feedbackId: string) => {
+    onItemSlideBackgroundFeedback?.(feedbackId);
   };
 
   if (hasMultipleSelection) {
@@ -163,12 +170,19 @@ export function buildMediaLibraryBarActions(args: {
   const out: MediaLibraryBarAction[] = [];
 
   if (flags.itemSlides) {
-    out.push(
-      {
-        id: "set-all-slides",
-        label: "Set All Slides",
-        icon: <Images className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
-        disabled: isLoading || !m.background,
+    const manualIdsForSubset = itemSlideContext
+      ? filterExistingSlideIds(
+          itemSlideContext.slides,
+          itemSlideContext.backgroundTargetSlideIds,
+        )
+      : [];
+    const applyMultiManualSlideTargets = manualIdsForSubset.length > 1;
+
+    const setAllSlidesAction: MediaLibraryBarAction = {
+      id: "set-all-slides",
+      label: "Set All Slides",
+      icon: <Images className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
+      disabled: isLoading || !m.background,
         onClick: () => {
           if (m.background && db) {
             dispatch(
@@ -177,36 +191,57 @@ export function buildMediaLibraryBarActions(args: {
                 mediaInfo: m,
               }),
             );
-            toast("Applied this media to all slides.");
+            slideBgAck("set-all-slides");
           }
         },
-      },
-      {
-        id: "set-selected-slide",
-        label: "Set Selected Slide",
-        icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
-        disabled: isLoading || !m.background,
-        onClick: () => {
-          if (m.background && db) {
+    };
+
+    if (applyMultiManualSlideTargets) {
+      out.push(
+        {
+          id: "apply-selected-slides",
+          label: `Apply to selected slides (${manualIdsForSubset.length})`,
+          icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
+          disabled: isLoading || !m.background || !db,
+          onClick: () => {
+            if (!m.background || !db) return;
             dispatch(
-              updateSlideBackground({
+              updateSlideBackgroundsOnSubset({
+                slideIds: manualIdsForSubset,
                 background: m.background,
                 mediaInfo: m,
               }),
             );
-            toast(`Applied "${mediaLabel}" to the selected slide.`);
-          }
+            slideBgAck("apply-selected-slides");
+          },
         },
-      },
-    );
+        setAllSlidesAction,
+      );
+    } else {
+      out.push(
+        {
+          id: "set-selected-slide",
+          label: "Set Selected Slide",
+          icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
+          disabled: isLoading || !m.background,
+          onClick: () => {
+            if (m.background && db) {
+              dispatch(
+                updateSlideBackground({
+                  background: m.background,
+                  mediaInfo: m,
+                }),
+              );
+              slideBgAck("set-selected-slide");
+            }
+          },
+        },
+        setAllSlidesAction,
+      );
+    }
 
     if (itemSlideContext) {
-      const {
-        itemType,
-        slides,
-        selectedSlide,
-        backgroundTargetSlideIds,
-      } = itemSlideContext;
+      const { itemType, slides, selectedSlide } = itemSlideContext;
       const sectionIds = getThisSectionSlideIds(
         slides,
         selectedSlide,
@@ -230,10 +265,7 @@ export function buildMediaLibraryBarActions(args: {
           ? normalizeSongSlideSectionName(slides[selectedSlide].name) ||
           "this section"
           : "this section";
-      const manualIds = filterExistingSlideIds(
-        slides,
-        backgroundTargetSlideIds,
-      );
+      const manualIds = manualIdsForSubset;
       const currentType = slides[selectedSlide]?.type;
       const typeLabel = currentType
         ? slideTypeLabelForMenu(currentType)
@@ -256,7 +288,7 @@ export function buildMediaLibraryBarActions(args: {
                 mediaInfo: m,
               }),
             );
-            toast(`Applied "${mediaLabel}" to the section.`);
+            slideBgAck("apply-to-subset");
           },
         },
       ];
@@ -275,7 +307,7 @@ export function buildMediaLibraryBarActions(args: {
                 mediaInfo: m,
               }),
             );
-            toast(`Applied "${mediaLabel}" to matching slides.`);
+            slideBgAck("apply-to-subset");
           },
         });
       }
@@ -294,11 +326,11 @@ export function buildMediaLibraryBarActions(args: {
                 mediaInfo: m,
               }),
             );
-            toast(`Applied "${mediaLabel}" to all ${typeLabel}.`);
+            slideBgAck("apply-to-subset");
           },
         });
       }
-      if (manualIds.length > 0) {
+      if (manualIds.length > 0 && !applyMultiManualSlideTargets) {
         applyMenuItems.push({
           id: "apply-manual",
           label: `Selected slides (${manualIds.length})`,
@@ -313,7 +345,7 @@ export function buildMediaLibraryBarActions(args: {
                 mediaInfo: m,
               }),
             );
-            toast(`Applied "${mediaLabel}" to the selected slides.`);
+            slideBgAck("apply-to-subset");
           },
         });
       }
@@ -327,7 +359,7 @@ export function buildMediaLibraryBarActions(args: {
           onClick: () => {
             if (!db || sectionIds.length === 0) return;
             dispatch(clearSlideBackgroundsOnSubset({ slideIds: sectionIds }));
-            toast("Cleared backgrounds for the section.");
+            slideBgAck("clear-background-subset");
           },
         },
       ];
@@ -342,7 +374,7 @@ export function buildMediaLibraryBarActions(args: {
             dispatch(
               clearSlideBackgroundsOnSubset({ slideIds: allNamedSectionIds }),
             );
-            toast("Cleared backgrounds for matching slides.");
+            slideBgAck("clear-background-subset");
           },
         });
       }
@@ -355,7 +387,7 @@ export function buildMediaLibraryBarActions(args: {
           onClick: () => {
             if (!db || allTypeIds.length === 0) return;
             dispatch(clearSlideBackgroundsOnSubset({ slideIds: allTypeIds }));
-            toast(`Cleared backgrounds for all ${typeLabel}.`);
+            slideBgAck("clear-background-subset");
           },
         });
       }
@@ -368,7 +400,7 @@ export function buildMediaLibraryBarActions(args: {
           onClick: () => {
             if (!db) return;
             dispatch(clearSlideBackgroundsOnSubset({ slideIds: manualIds }));
-            toast("Cleared backgrounds for the selected slides.");
+            slideBgAck("clear-background-subset");
           },
         });
       }

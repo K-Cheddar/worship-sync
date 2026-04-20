@@ -8,16 +8,6 @@ import { RootState } from "../../store/store";
 import Button from "../../components/Button/Button";
 import { Minimize2, Maximize2 } from "lucide-react";
 
-const sizeMap: Map<number, string> = new Map([
-  [7, "grid-cols-7"],
-  [6, "grid-cols-6"],
-  [5, "grid-cols-5"],
-  [4, "grid-cols-4"],
-  [3, "grid-cols-3"],
-  [2, "grid-cols-2"],
-  [1, "grid-cols-1"],
-]);
-
 type SectionPreviewProps = {
   selectedSection: {
     name: string;
@@ -42,8 +32,10 @@ const SectionPreview = ({ selectedSection, previewSlides, isMinimized, onMinimiz
     return (formattedLyricsPerRow || 4) + 1;
   }, [formattedLyricsPerRow]);
 
-  const gridColsClass = useMemo(() => {
-    return sizeMap.get(columnsPerRow) || "grid-cols-5";
+  /** Thumbnail width matches one column of the former full-width grid (density slider). */
+  const slideThumbnailWidth = useMemo(() => {
+    const gapCount = Math.max(0, columnsPerRow - 1);
+    return `calc((100% - ${gapCount * 0.5}rem) / ${columnsPerRow})`;
   }, [columnsPerRow]);
 
   if (!selectedSection || previewSlides.length === 0) {
@@ -67,19 +59,20 @@ const SectionPreview = ({ selectedSection, previewSlides, isMinimized, onMinimiz
         />
       </div>
       {!isMinimized && (
-        <div
-          className={cn(
-            "grid gap-x-2 gap-y-0.5 overflow-y-auto overflow-x-hidden pb-2 scrollbar-variable min-w-0 mt-2 max-h-[min(45vh,28rem)]",
-            gridColsClass,
-          )}
-        >
+        <div className="mt-2 flex min-w-0 flex-nowrap gap-x-2 gap-y-0 overflow-x-auto overflow-y-hidden pb-2 scrollbar-variable">
           {previewSlides.map((slide, index) => (
-            <div key={slide.id} className="flex flex-col justify-start">
+            <div
+              key={slide.id}
+              className="flex shrink-0 flex-col justify-start"
+              style={{ width: slideThumbnailWidth }}
+            >
               <div className="w-full aspect-video shrink-0 relative">
                 <DisplayWindow
                   displayType="projector"
                   showBorder
-                  boxes={slide.boxes}
+                  boxes={slide.boxes.map((box, i) =>
+                    i === 0 ? { ...box, background: "", mediaInfo: undefined } : box
+                  )}
                   className="w-full h-full"
                 />
               </div>

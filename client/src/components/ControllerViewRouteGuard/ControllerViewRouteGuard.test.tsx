@@ -26,6 +26,10 @@ const renderGuarded = (
               element={<div>Preferences page</div>}
             />
             <Route
+              path="/controller/service-planning"
+              element={<div>Service Planning page</div>}
+            />
+            <Route
               path="/controller/item/:a/:b"
               element={<div>Item view</div>}
             />
@@ -61,6 +65,12 @@ describe("ControllerViewRouteGuard", () => {
   it("redirects view access away from preferences", () => {
     renderGuarded("view", "/controller/preferences");
     expect(screen.queryByText("Preferences page")).not.toBeInTheDocument();
+    expect(screen.getByText("Controller home")).toBeInTheDocument();
+  });
+
+  it("redirects view access away from service planning", () => {
+    renderGuarded("view", "/controller/service-planning");
+    expect(screen.queryByText("Service Planning page")).not.toBeInTheDocument();
     expect(screen.getByText("Controller home")).toBeInTheDocument();
   });
 });

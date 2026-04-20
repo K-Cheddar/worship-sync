@@ -18,6 +18,11 @@ import generateRandomId from "../utils/generateRandomId";
 import { migrateLegacyMediaRouteFolders } from "../utils/mediaRouteKey";
 
 export type PreferencesTabType = "defaults" | "quickLinks";
+export type ControllerConfigurationRoute =
+  | "/controller/preferences"
+  | "/controller/quick-links"
+  | "/controller/monitor-settings"
+  | "/controller/service-planning";
 
 export type SelectedPreferenceType =
   | "defaultSongBackground"
@@ -66,6 +71,8 @@ type PreferencesState = {
   overlayCreditsSettingsDrawerOpen: boolean;
   /** Last-selected media library folder per controller route; `null` = All media */
   mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
+  /** Controller toolbar: last configuration sub-page visited (local only; not persisted). */
+  lastControllerConfigurationRoute: ControllerConfigurationRoute;
 };
 
 const initialState: PreferencesState = {
@@ -132,6 +139,7 @@ const initialState: PreferencesState = {
   overlayControllerPanel: "overlays",
   overlayCreditsSettingsDrawerOpen: false,
   mediaRouteFolders: {},
+  lastControllerConfigurationRoute: "/controller/preferences",
 };
 
 /** Defaults when `loadPreferencesBundle` fails so controller surfaces can finish init. */
@@ -500,6 +508,12 @@ export const preferencesSlice = createSlice({
     setToolbarSection: (state, action: PayloadAction<string>) => {
       state.toolbarSection = action.payload;
     },
+    setLastControllerConfigurationRoute: (
+      state,
+      action: PayloadAction<ControllerConfigurationRoute>,
+    ) => {
+      state.lastControllerConfigurationRoute = action.payload;
+    },
     setOverlayControllerPanel: (
       state,
       action: PayloadAction<"overlays" | "credits" | "serviceTimes">,
@@ -620,6 +634,7 @@ export const {
   setShouldShowItemEditor,
   setShouldShowStreamFormat,
   setToolbarSection,
+  setLastControllerConfigurationRoute,
   setOverlayControllerPanel,
   setOverlayCreditsSettingsDrawerOpen,
   setIsMediaExpanded,

@@ -290,6 +290,18 @@ const AddSongSectionsDrawer = ({
     );
   };
 
+  const selectAllSections = () => {
+    setSelectedSectionIds(arrangementSections.map((s) => s.id));
+  };
+
+  const deselectAllSections = () => {
+    setSelectedSectionIds([]);
+  };
+
+  const allSectionsSelected =
+    arrangementSections.length > 0 &&
+    arrangementSections.every((s) => selectedSectionIds.includes(s.id));
+
   const handleImport = () => {
     if (sectionsToImport.length === 0 || isImporting) {
       return;
@@ -367,6 +379,9 @@ const AddSongSectionsDrawer = ({
         arrangementSelectId="import-song-arrangement"
         selectedSectionIds={selectedSectionIds}
         onToggleSection={toggleSection}
+        allSelected={allSectionsSelected}
+        onSelectAll={selectAllSections}
+        onDeselectAll={deselectAllSections}
       />
     );
   };

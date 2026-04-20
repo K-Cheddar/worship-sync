@@ -7,6 +7,7 @@ export type OpenBibleAtLocationPayload = {
   book: string;
   chapter: string;
   version: string;
+  verseRange?: string;
 };
 
 type BibleState = {
@@ -40,6 +41,58 @@ const initialState: BibleState = {
   isLoadingChapter: false,
   searchValues: { book: "", chapter: "", startVerse: "", endVerse: "" },
   search: "",
+};
+
+const normalizeBibleVersion = (value: string): string =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
+const normalizeBibleBookName = (value: string): string =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+const BIBLE_BOOK_ALIASES: Record<string, string> = {
+  psalm: "Psalms",
+  psalms: "Psalms",
+  "song of songs": "Song of Solomon",
+  "song of solomon": "Song of Solomon",
+};
+
+const resolveBibleBookIndex = (books: bookType[], bookName: string): number => {
+  const normalizedBookName = normalizeBibleBookName(bookName);
+  const canonicalBookName =
+    BIBLE_BOOK_ALIASES[normalizedBookName] || bookName.trim();
+
+  const exactIndex = books.findIndex(
+    (book) =>
+      normalizeBibleBookName(book.name) ===
+      normalizeBibleBookName(canonicalBookName),
+  );
+  if (exactIndex !== -1) return exactIndex;
+
+  return books.findIndex(
+    (book) => normalizeBibleBookName(book.name) === normalizedBookName,
+  );
+};
+
+const parseVerseRange = (
+  value?: string,
+): { startVerse: number; endVerse: number } | null => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return null;
+
+  const match = trimmed.match(/^(\d+)(?:-(\d+))?$/);
+  if (!match) return null;
+
+  const startVerse = Number(match[1]);
+  const endVerse = Number(match[2] || match[1]);
+  if (!Number.isInteger(startVerse) || !Number.isInteger(endVerse)) return null;
+  if (startVerse < 1 || endVerse < startVerse) return null;
+
+  return { startVerse, endVerse };
 };
 
 export const bibleSlice = createSlice({
@@ -81,7 +134,7 @@ export const bibleSlice = createSlice({
       action: PayloadAction<{
         type: "book" | "chapter" | "startVerse" | "endVerse";
         value: string;
-      }>
+      }>,
     ) => {
       const { type } = action.payload;
       state.searchValues[type] = action.payload.value;
@@ -126,29 +179,57 @@ export const openBibleAtLocation = createAsyncThunk<
   void,
   OpenBibleAtLocationPayload,
   { state: RootState }
->(
-  "bible/openBibleAtLocation",
-  (payload, { getState, dispatch }) => {
-    const { book: bookName, chapter: chapterName, version: versionVal } =
-      payload;
-    const { books } = getState().bible;
-    const bookIndex = books.findIndex((b) => b.name === bookName);
-    if (bookIndex === -1) return;
-    const bookChapters = books[bookIndex]?.chapters;
-    const chapterIndex =
-      bookChapters?.findIndex((c) => c.name === chapterName) ?? -1;
-    if (chapterIndex === -1) return;
-    dispatch(bibleSlice.actions.setLoadingChapter(true));
-    dispatch(bibleSlice.actions.setSearch(""));
-    dispatch(bibleSlice.actions.setSearchValue({ type: "book", value: "" }));
-    dispatch(bibleSlice.actions.setSearchValue({ type: "chapter", value: "" }));
-    dispatch(bibleSlice.actions.setSearchValue({ type: "startVerse", value: "" }));
-    dispatch(bibleSlice.actions.setSearchValue({ type: "endVerse", value: "" }));
-    dispatch(bibleSlice.actions.setBook(bookIndex));
-    dispatch(bibleSlice.actions.setChapters(bookChapters || []));
-    dispatch(bibleSlice.actions.setChapter(chapterIndex));
-    dispatch(bibleSlice.actions.setVersion(versionVal));
-  },
-);
+>("bible/openBibleAtLocation", (payload, { getState, dispatch }) => {
+  const {
+    book: bookName,
+    chapter: chapterName,
+    version: versionVal,
+    verseRange,
+  } = payload;
+  const { books } = getState().bible;
+  const bookIndex = resolveBibleBookIndex(books, bookName);
+  if (bookIndex === -1) return;
+  const bookChapters = books[bookIndex]?.chapters;
+  const chapterIndex =
+    bookChapters?.findIndex((c) => c.name === chapterName) ?? -1;
+  if (chapterIndex === -1) return;
+  const parsedVerseRange = parseVerseRange(
+    typeof verseRange === "string" ? verseRange.trim() : verseRange,
+  );
+
+  dispatch(bibleSlice.actions.setLoadingChapter(true));
+  dispatch(bibleSlice.actions.setSearch(""));
+  dispatch(bibleSlice.actions.setSearchValue({ type: "book", value: "" }));
+  dispatch(bibleSlice.actions.setSearchValue({ type: "chapter", value: "" }));
+  dispatch(bibleSlice.actions.setBook(bookIndex));
+  dispatch(bibleSlice.actions.setChapters(bookChapters || []));
+  dispatch(bibleSlice.actions.setChapter(chapterIndex));
+  dispatch(bibleSlice.actions.setVersion(normalizeBibleVersion(versionVal)));
+
+  if (parsedVerseRange) {
+    dispatch(
+      bibleSlice.actions.setSearchValue({
+        type: "startVerse",
+        value: parsedVerseRange.startVerse.toString(),
+      }),
+    );
+    dispatch(
+      bibleSlice.actions.setSearchValue({
+        type: "endVerse",
+        value: parsedVerseRange.endVerse.toString(),
+      }),
+    );
+    dispatch(bibleSlice.actions.setStartVerse(parsedVerseRange.startVerse - 1));
+    dispatch(bibleSlice.actions.setEndVerse(parsedVerseRange.endVerse - 1));
+    return;
+  }
+
+  dispatch(
+    bibleSlice.actions.setSearchValue({ type: "startVerse", value: "" }),
+  );
+  dispatch(bibleSlice.actions.setSearchValue({ type: "endVerse", value: "" }));
+  dispatch(bibleSlice.actions.setStartVerse(0));
+  dispatch(bibleSlice.actions.setEndVerse(0));
+});
 
 export default bibleSlice.reducer;

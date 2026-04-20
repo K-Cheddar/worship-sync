@@ -189,7 +189,7 @@ describe("DisplayWindow core paths", () => {
     expect(screen.getByTestId("display-formatted-text-mock")).toBeInTheDocument();
   });
 
-  it("wraps width=100 output in a centered black viewport stage (letterbox/pillarbox)", () => {
+  it("wraps width=100 projector/monitor output in a centered black viewport stage (letterbox/pillarbox)", () => {
     render(
       <DisplayWindow
         displayType="projector"
@@ -201,6 +201,19 @@ describe("DisplayWindow core paths", () => {
 
     const stage = screen.getByTestId("display-full-viewport-stage");
     expect(stage).toHaveClass("items-center", "justify-center");
+  });
+
+  it("does not use the fullscreen viewport stage for stream when width is 100", () => {
+    render(
+      <DisplayWindow
+        displayType="stream"
+        boxes={[baseBox]}
+        prevBoxes={[]}
+        width={100}
+      />,
+    );
+
+    expect(screen.queryByTestId("display-full-viewport-stage")).not.toBeInTheDocument();
   });
 
   it("unmounts the previous display layer after the display transition window", () => {

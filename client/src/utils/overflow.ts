@@ -142,7 +142,7 @@ export const formatSection = ({
         fontSize: fontSizePx,
         fontColor: selectedSlide.boxes[selectedBox].fontColor,
         slideIndex: formattedSlides.length,
-        background: selectedSlide.boxes[0].background || undefined,
+        background: currentBoxes[0].background || undefined,
         isBold: selectedSlide.boxes[selectedBox].isBold,
         isItalic: selectedSlide.boxes[selectedBox].isItalic,
         formattedTextDisplayInfo: selectedSlide.formattedTextDisplayInfo,

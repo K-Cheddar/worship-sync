@@ -15,6 +15,10 @@ WorshipSync is a live presentation application with:
 - Real-time sync across controller, projector, monitor, and stream surfaces
 - Media-heavy workflows including video playback, overlays, timers, and multi-window behavior
 
+### Product requirements
+
+- **Stream surface:** The stream output must **always use a transparent background**. Do not add opaque black (or other solid page backgrounds) behind stream composition so OBS, browser captures, or other tools can composite or show content behind it. Projector and monitor surfaces may still use intentional black bars or stages where product behavior calls for them.
+
 Changes should be reviewed with the mindset that this software is used live and mistakes are highly visible.
 
 Treat every change as if it could be exercised during a live event with little time to recover.
@@ -204,6 +208,15 @@ Be careful when changing shared display code. A change in one surface may affect
 - Monitor display
 - Stream display
 - Electron windows
+
+**Stream overlay behavior**
+
+On the stream surface, overlays are intended to behave as a **temporary top layer**, not as a destructive replacement for the underlying item. The live item layer (slide text, Bible text, or formatted text) should remain available underneath and fade back in after the overlay finishes unless the operator has explicitly hidden stream content.
+
+- Treat the stream as having **one active overlay lane at a time** for participant, stick-to-bottom, QR, and image overlays. Switching overlay types should feel like a handoff, not a hard cut or stacked pile-up.
+- Preserve the intent of **current + previous** stream state for transitions. Outgoing overlays may remain briefly only to animate off cleanly; stale prior overlay data must not replay or keep the item layer hidden longer than intended.
+- Keep stream transitions **calm and readable**. The stream should favor smooth fade/slide exits and returns over abrupt flashes, flicker, or overly busy animation.
+- Do not break the distinction between **overlay activity** and **operator-controlled overlay-only mode**. Automatic overlay display may temporarily hide the item layer, while the explicit stream content toggle should remain a separate, deliberate operator action.
 
 **Linked display sessions (pairing vs routing)**
 

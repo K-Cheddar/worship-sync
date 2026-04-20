@@ -119,6 +119,9 @@ import {
   emptyChurchBranding,
   normalizeChurchBranding,
 } from "../utils/churchBranding";
+import type { ChurchIntegrations } from "../types/integrations";
+import { createDefaultChurchIntegrations } from "../types/integrations";
+import { normalizeChurchIntegrations } from "../utils/churchIntegrations";
 
 /** Firebase client calls are Promise-like in production but may return void in tests. */
 function signOutFirebaseAuth(auth: Auth): Promise<void> {
@@ -258,6 +261,7 @@ type LoginStateType = "idle" | "loading" | "error" | "success" | "guest";
 type BootstrapStatus = "loading" | "ready";
 type AuthServerStatus = "checking" | "online" | "offline";
 type ChurchBrandingStatus = "loading" | "ready";
+type ChurchIntegrationsStatus = "loading" | "ready";
 export type HumanAuthMethod = "password" | "google" | "microsoft";
 
 export type AccessType = "full" | "music" | "view";
@@ -350,6 +354,8 @@ type GlobalInfoContextType = {
   recoveryEmail: string;
   churchBranding: ChurchBranding;
   churchBrandingStatus: ChurchBrandingStatus;
+  churchIntegrations: ChurchIntegrations;
+  churchIntegrationsStatus: ChurchIntegrationsStatus;
   role: string;
   authError: string;
   clearAuthError: () => void;
@@ -449,6 +455,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     useState<ChurchBrandingStatus>("loading");
   const [churchBrandingListenGeneration, setChurchBrandingListenGeneration] =
     useState(0);
+  const [churchIntegrations, setChurchIntegrations] =
+    useState<ChurchIntegrations>(createDefaultChurchIntegrations());
+  const [churchIntegrationsStatus, setChurchIntegrationsStatus] =
+    useState<ChurchIntegrationsStatus>("loading");
+  const [churchIntegrationsListenGeneration, setChurchIntegrationsListenGeneration] =
+    useState(0);
   const [role, setRole] = useState("");
   const [authError, setAuthError] = useState("");
   const [pendingEmailVerificationId, setPendingEmailVerificationId] =
@@ -467,6 +479,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const churchBrandingGateKeyRef = useRef("");
   const churchBrandingPermissionRetryRef = useRef(0);
   const churchBrandingRemintAttemptsRef = useRef(0);
+  const churchIntegrationsGateKeyRef = useRef("");
+  const churchIntegrationsPermissionRetryRef = useRef(0);
+  const churchIntegrationsRemintAttemptsRef = useRef(0);
   const location = useLocation();
   const isOnController = useMemo(() => {
     const path = location.pathname;
@@ -517,6 +532,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     churchBrandingRemintAttemptsRef.current = 0;
+    churchIntegrationsRemintAttemptsRef.current = 0;
   }, [sharedDataSessionScope]);
 
   useEffect(() => {
@@ -1634,6 +1650,89 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     churchBrandingListenGeneration,
   ]);
 
+  useEffect(() => {
+    if (loginState !== "success" || !churchId) {
+      setChurchIntegrations(createDefaultChurchIntegrations());
+      setChurchIntegrationsStatus("ready");
+      return;
+    }
+
+    if (!firebaseDb || !isSharedDataScopeReady) {
+      setChurchIntegrationsStatus("loading");
+      return;
+    }
+
+    const integrationsGateKey = `${sharedDataSessionScope}|${sharedDataTokenRemintNonce}`;
+    if (churchIntegrationsGateKeyRef.current !== integrationsGateKey) {
+      churchIntegrationsGateKeyRef.current = integrationsGateKey;
+      churchIntegrationsPermissionRetryRef.current = 0;
+    }
+
+    setChurchIntegrationsStatus("loading");
+    let cancelled = false;
+    let permissionDeniedRetryTimeout: ReturnType<typeof setTimeout> | undefined;
+
+    const integrationsRef = ref(
+      firebaseDb,
+      getChurchDataPath(churchId, "integrations"),
+    );
+    const unsubscribe = onValue(
+      integrationsRef,
+      (snapshot) => {
+        churchIntegrationsPermissionRetryRef.current = 0;
+        churchIntegrationsRemintAttemptsRef.current = 0;
+        setChurchIntegrations(
+          snapshot.exists()
+            ? normalizeChurchIntegrations(snapshot.val())
+            : createDefaultChurchIntegrations(),
+        );
+        setChurchIntegrationsStatus("ready");
+      },
+      (error) => {
+        if (cancelled) return;
+        if (isFirebasePermissionDenied(error)) {
+          const listenAttempt = churchIntegrationsPermissionRetryRef.current;
+          if (listenAttempt < CHURCH_BRANDING_PERMISSION_LISTEN_RETRY_MAX) {
+            churchIntegrationsPermissionRetryRef.current += 1;
+            permissionDeniedRetryTimeout = setTimeout(() => {
+              if (!cancelled) {
+                setChurchIntegrationsListenGeneration((g) => g + 1);
+              }
+            }, brandingListenRetryDelayMs(listenAttempt));
+            return;
+          }
+          if (
+            churchIntegrationsRemintAttemptsRef.current <
+            CHURCH_BRANDING_SHARED_TOKEN_REMINT_MAX
+          ) {
+            churchIntegrationsRemintAttemptsRef.current += 1;
+            setSharedDataTokenRemintNonce((n) => n + 1);
+            return;
+          }
+        }
+        console.error("Could not subscribe to church integrations:", error);
+        setChurchIntegrations(createDefaultChurchIntegrations());
+        setChurchIntegrationsStatus("ready");
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      if (permissionDeniedRetryTimeout) {
+        clearTimeout(permissionDeniedRetryTimeout);
+      }
+      unsubscribe();
+    };
+  }, [
+    churchId,
+    firebaseDb,
+    isSharedDataScopeReady,
+    loginState,
+    sharedDataSessionScope,
+    sharedDataTokenRemintNonce,
+    churchIntegrationsListenGeneration,
+  ]);
+
   // Handle navigation away from the app - set up once when component mounts
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -2168,6 +2267,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       recoveryEmail,
       churchBranding,
       churchBrandingStatus,
+      churchIntegrations,
+      churchIntegrationsStatus,
       role,
       authError,
       clearAuthError,
@@ -2217,6 +2318,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       recoveryEmail,
       churchBranding,
       churchBrandingStatus,
+      churchIntegrations,
+      churchIntegrationsStatus,
       role,
       authError,
       clearAuthError,

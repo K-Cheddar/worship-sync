@@ -132,7 +132,7 @@ const AuthGate = ({
       !operatorName?.trim() &&
       !isWorkstationDisplaySurfacePath(location.pathname);
     if (needsOperator) {
-      return <Navigate to="/workstation/operator" replace />;
+      return <Navigate to="/workstation/operator" replace state={{ from: location }} />;
     }
     return <>{children}</>;
   }

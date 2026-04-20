@@ -2,7 +2,13 @@ import Button from "../../components/Button/Button";
 import { Plus, Check, FolderOpen } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import { selectCredit, updateList } from "../../store/creditsSlice";
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import Credit from "./Credit";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import cn from "classnames";
@@ -86,42 +92,53 @@ const CreditsEditor = ({ className }: { className?: string }) => {
     [creditsHistory, db, dispatch],
   );
 
-  const onDragEnd = (event: DragEndEvent) => {
-    if (readOnly) return;
-    const { over, active } = event;
-    if (!over || !active) return;
-
-    const { id: overId } = over;
-    const { id: activeId } = active;
-    const updatedCredits = [...list];
-    const newIndex = updatedCredits.findIndex((credit) => credit.id === overId);
-    const oldIndex = updatedCredits.findIndex(
-      (credit) => credit.id === activeId,
+  /** Scroll selected row into view; keyed off selection only so blur-driven list edits do not scroll to the wrong row. */
+  const scrollSelectedCreditIntoView = useCallback(() => {
+    if (!selectedCreditId) return;
+    const creditElement = document.getElementById(
+      `credit-editor-${selectedCreditId}`,
     );
-    const element = list[oldIndex];
-    updatedCredits.splice(oldIndex, 1);
-    updatedCredits.splice(newIndex, 0, element);
-    dispatch(updateList(updatedCredits));
-  };
-
-  // keep the selected credit in view
-  useEffect(() => {
-    const selectedCredit = list.find(
-      (credit) => credit.id === selectedCreditId
-    );
-    if (selectedCredit) {
-      const creditElement = document.getElementById(
-        `credit-editor-${selectedCreditId}`
-      );
-      const creditsList = document.getElementById("credits-list");
-      if (creditElement && creditsList) {
-        keepElementInView({
-          child: creditElement,
-          parent: creditsList,
-        });
-      }
+    const creditsList = document.getElementById("credits-list");
+    if (creditElement && creditsList) {
+      keepElementInView({
+        child: creditElement,
+        parent: creditsList,
+      });
     }
-  }, [selectedCreditId, list]);
+  }, [selectedCreditId]);
+
+  const onDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      if (readOnly) return;
+      const { over, active } = event;
+      if (!over || !active) return;
+
+      const { id: overId } = over;
+      const { id: activeId } = active;
+      const updatedCredits = [...list];
+      const newIndex = updatedCredits.findIndex(
+        (credit) => credit.id === overId,
+      );
+      const oldIndex = updatedCredits.findIndex(
+        (credit) => credit.id === activeId,
+      );
+      if (oldIndex === newIndex) return;
+
+      const element = list[oldIndex];
+      updatedCredits.splice(oldIndex, 1);
+      updatedCredits.splice(newIndex, 0, element);
+      dispatch(updateList(updatedCredits));
+
+      requestAnimationFrame(() => {
+        scrollSelectedCreditIntoView();
+      });
+    },
+    [readOnly, list, dispatch, scrollSelectedCreditIntoView],
+  );
+
+  useEffect(() => {
+    scrollSelectedCreditIntoView();
+  }, [scrollSelectedCreditIntoView]);
 
   return (
     <DndContext onDragEnd={onDragEnd} sensors={sensors}>

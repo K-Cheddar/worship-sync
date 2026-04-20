@@ -1065,8 +1065,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       );
     };
 
-    /** Projector, monitor, stream, and Electron projector use 100vw; letterbox/pillarbox in black and center on non-16:9 displays. */
-    const fillsViewport = width === 100;
+    /** Fullscreen projector/monitor only: letterbox/pillarbox in black and center on non-16:9 displays. Stream uses width 100vw without this stage or a black outer wrapper. */
+    const fillsViewport =
+      width === 100 &&
+      (displayType === "projector" || displayType === "monitor");
 
     const innerStyle: React.CSSProperties = {
       width: fillsViewport
@@ -1096,7 +1098,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     return fillsViewport ? (
       <div
-        className="flex h-dvh w-dvw items-center justify-center overflow-hidden"
+        className="flex h-dvh w-dvw items-center justify-center overflow-hidden bg-black"
         data-testid="display-full-viewport-stage"
       >
         {inner}

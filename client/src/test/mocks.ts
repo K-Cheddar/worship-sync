@@ -2,6 +2,7 @@ import { Database } from "firebase/database";
 import { Cloudinary } from "@cloudinary/url-gen";
 import type PouchDB from "pouchdb-browser";
 import { emptyChurchBranding } from "../utils/churchBranding";
+import { createDefaultChurchIntegrations } from "../types/integrations";
 
 /** Mock EventTarget for testing (broadcast, updater, etc.) */
 export class MockEventTarget implements EventTarget {
@@ -113,6 +114,8 @@ export function createMockGlobalContext(
     recoveryEmail: "admin@example.com",
     churchBranding: emptyChurchBranding(),
     churchBrandingStatus: "ready" as const,
+    churchIntegrations: createDefaultChurchIntegrations(),
+    churchIntegrationsStatus: "ready" as const,
     role: "admin",
     authError: "",
     clearAuthError: jest.fn(),
@@ -166,6 +169,8 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     recoveryEmail: "admin@example.com",
     churchBranding: emptyChurchBranding(),
     churchBrandingStatus: "ready" as const,
+    churchIntegrations: createDefaultChurchIntegrations(),
+    churchIntegrationsStatus: "ready" as const,
     role: "admin",
     authError: "",
     clearAuthError: jest.fn(),

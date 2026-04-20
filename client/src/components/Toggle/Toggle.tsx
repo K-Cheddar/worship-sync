@@ -7,6 +7,7 @@ type ToggleProps = {
   label?: string | ReactNode;
   value: boolean;
   onChange: (value: boolean) => void;
+  disabled?: boolean;
   className?: string;
   /** Merged onto the text label when `label` is set (e.g. `text-xs`). */
   labelClassName?: string;
@@ -21,6 +22,7 @@ const Toggle = ({
   label,
   value,
   onChange,
+  disabled,
   className,
   labelClassName,
   layout = "inline",
@@ -35,7 +37,10 @@ const Toggle = ({
   const labelEl = label ? (
     <label
       className={cn(
-        "cursor-pointer text-sm font-semibold transition-colors duration-150 ease-out group-hover/toggle:text-white",
+        "text-sm font-semibold transition-colors duration-150 ease-out",
+        disabled
+          ? "cursor-not-allowed text-gray-500"
+          : "cursor-pointer group-hover/toggle:text-white",
         isStacked && "self-start",
         labelClassName,
       )}
@@ -49,6 +54,7 @@ const Toggle = ({
     <Switch
       checked={value}
       onCheckedChange={onChange}
+      disabled={disabled}
       id={id}
       color={color}
       icon={
@@ -68,7 +74,8 @@ const Toggle = ({
   return (
     <div
       className={cn(
-        "group/toggle relative flex cursor-pointer",
+        "group/toggle relative flex",
+        disabled ? "cursor-not-allowed" : "cursor-pointer",
         isStacked
           ? "min-w-0 w-full flex-col items-stretch gap-1"
           : "items-center gap-1",

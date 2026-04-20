@@ -29,6 +29,8 @@ import { RootState } from "../../store/store";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 import ControllerPageShell from "../../components/ControllerPageShell/ControllerPageShell";
 import ControllerViewRouteGuard from "../../components/ControllerViewRouteGuard/ControllerViewRouteGuard";
+import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
+import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
 
 const Controller = () => {
   const dispatch = useDispatch();
@@ -67,12 +69,15 @@ const Controller = () => {
   }, [location.pathname, dispatch]);
 
   const handleElementClick = (element: React.MouseEvent) => {
-    if (!leftPanelRef.current?.contains(element.target as Node) && isLeftPanelOpen) {
+    if (
+      !sidePanelInteractionShouldRemainOpen(leftPanelRef, element) &&
+      isLeftPanelOpen
+    ) {
       setIsLeftPanelOpen(false);
     }
 
     if (
-      !rightPanelRef.current?.contains(element.target as Node) &&
+      !sidePanelInteractionShouldRemainOpen(rightPanelRef, element) &&
       isRightPanelOpen
     ) {
       setIsRightPanelOpen(false);
@@ -132,6 +137,7 @@ const Controller = () => {
             <Route path="account" element={<Navigate to="/account" replace />} />
             <Route path="quick-links" element={<QuickLinks />} />
             <Route path="monitor-settings" element={<MonitorSettings />} />
+            <Route path="service-planning" element={<ServicePlanningImportPanel />} />
           </Routes>
         </ControllerViewRouteGuard>
       </div>

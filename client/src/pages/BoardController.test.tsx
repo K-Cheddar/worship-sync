@@ -408,6 +408,31 @@ describe("BoardControllerContent", () => {
     openSpy.mockRestore();
   });
 
+  it("selecting a discussion board switches to the Live tab on mobile", async () => {
+    const user = userEvent.setup();
+    mockUseMediaQuery.mockImplementation(() => false);
+    renderPage();
+
+    await screen.findByRole("tab", { name: /^Boards$/i });
+    expect(screen.getByRole("tab", { name: /^Boards$/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    await user.click(
+      await screen.findByTitle("Sunday Board (sunday)"),
+    );
+
+    expect(screen.getByRole("tab", { name: /^Live$/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: /^Boards$/i })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+  });
+
   it("renames a discussion board without changing its alias", async () => {
     const user = userEvent.setup();
     renderPage();

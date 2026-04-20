@@ -334,6 +334,7 @@ describe("SlideEditor", () => {
         present: {
           item: {
             hasRemoteUpdate: true,
+            hasPendingUpdate: true,
             isEditMode: false,
           },
         },
@@ -358,6 +359,28 @@ describe("SlideEditor", () => {
       type: "item/applyPendingRemoteItem",
     });
     expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("applies a buffered remote update immediately when the item is not dirty", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            hasRemoteUpdate: true,
+            hasPendingUpdate: false,
+            isEditMode: false,
+          },
+        },
+      },
+    });
+
+    renderWithToastContext();
+
+    expect(mockApplyPendingRemoteItem).toHaveBeenCalled();
+    expect(mockDispatch).toHaveBeenCalledWith({
+      type: "item/applyPendingRemoteItem",
+    });
+    expect(mockShowToast).not.toHaveBeenCalled();
   });
 
   it("updates free section text and dispatches debounced reformat update", () => {

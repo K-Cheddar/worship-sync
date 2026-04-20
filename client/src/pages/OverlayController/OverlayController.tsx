@@ -14,6 +14,7 @@ import { ArrowRightFromLine, ArrowLeftFromLine } from "lucide-react";
 import ControllerPageShell from "../../components/ControllerPageShell/ControllerPageShell";
 import CreditsEditor from "../CreditsEditor/CreditsEditor";
 import ServiceTimes from "../../containers/ServiceTimes/ServiceTimes";
+import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
 
 const OverlayController = () => {
   const dispatch = useDispatch();
@@ -42,7 +43,7 @@ const OverlayController = () => {
 
   const handleElementClick = (element: React.MouseEvent) => {
     if (
-      !rightPanelRef.current?.contains(element.target as Node) &&
+      !sidePanelInteractionShouldRemainOpen(rightPanelRef, element) &&
       isRightPanelOpen
     ) {
       setIsRightPanelOpen(false);

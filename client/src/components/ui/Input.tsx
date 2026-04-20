@@ -12,7 +12,7 @@ const Input = ({
       type={type}
       data-slot="input"
       className={cn(
-        "border border-neutral-700 bg-neutral-900 text-neutral-100 placeholder:text-neutral-400",
+        "border border-neutral-500 bg-neutral-900 text-neutral-100 placeholder:text-neutral-400",
         "file:text-neutral-100 selection:bg-neutral-700 selection:text-neutral-100",
         "box-border min-h-9 w-full min-w-0 rounded-md px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none",
         "file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium",
