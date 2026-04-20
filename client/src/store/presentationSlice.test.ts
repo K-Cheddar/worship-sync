@@ -2091,7 +2091,7 @@ describe("presentationSlice", () => {
           id: "img-1",
           type: "image",
           imageUrl: "https://img.example/a.jpg",
-          time: 999,
+          time: 100,
         } as never),
       );
 
@@ -2131,7 +2131,7 @@ describe("presentationSlice", () => {
           name: "Alex",
           title: "Host",
           event: "Sunday",
-          time: 999,
+          time: 50,
         } as never),
       );
 
@@ -2166,7 +2166,7 @@ describe("presentationSlice", () => {
           id: "stb-1",
           heading: "Welcome",
           subHeading: "Today",
-          time: 999,
+          time: 50,
         } as never),
       );
 
@@ -2201,7 +2201,7 @@ describe("presentationSlice", () => {
           id: "qr-1",
           url: "https://example.com/x",
           description: "Scan",
-          time: 999,
+          time: 50,
         } as never),
       );
 
