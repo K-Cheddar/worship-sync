@@ -349,9 +349,13 @@ const ServicePlanningImportPanel = () => {
   const hasInsertableOutlineItems = Boolean(
     preview?.outlineCandidates.some(
       (candidate) =>
-        candidate.outlineItemType === "song" &&
         Boolean(candidate.headingName) &&
-        Boolean(candidate.matchedLibraryItem),
+        (
+          (candidate.outlineItemType === "song" &&
+            Boolean(candidate.matchedLibraryItem)) ||
+          (candidate.outlineItemType === "bible" &&
+            Boolean(candidate.parsedRef))
+        ),
     ),
   );
   const hasOverlayPlan = Boolean(preview?.overlayPlan.length);

@@ -9,7 +9,7 @@ import WorkstationUnpairConfirmModal, {
 import { GlobalInfoContext } from "../context/globalInfo";
 import { getWorkstationToken } from "../utils/authStorage";
 import { updateWorkstationOperator } from "../api/auth";
-import { getAuthRedirectPathnameFromState } from "../utils/authRedirectPath";
+import { getAuthRedirectToFromState } from "../utils/authRedirectPath";
 import { getAllowedRouteOrDefault } from "../utils/sessionRouteAccess";
 
 const WorkstationOperator = () => {
@@ -80,10 +80,18 @@ const WorkstationOperator = () => {
         operatorName: operatorName.trim(),
         displaySurfaceType: context.device?.surfaceType,
       };
-      const requestedPath = getAuthRedirectPathnameFromState(location.state);
-      const pathnameForRestore =
-        requestedPath === "/workstation/operator" ? undefined : requestedPath;
-      const nextPath = getAllowedRouteOrDefault(pathnameForRestore, routeContext);
+      const requestedTo = getAuthRedirectToFromState(location.state);
+      const requestedPathOnly = requestedTo?.includes("?")
+        ? requestedTo.slice(0, requestedTo.indexOf("?"))
+        : requestedTo;
+      const redirectAfterOperator =
+        requestedPathOnly === "/workstation/operator"
+          ? undefined
+          : requestedTo;
+      const nextPath = getAllowedRouteOrDefault(
+        redirectAfterOperator,
+        routeContext,
+      );
       navigate(nextPath, { replace: true });
     } catch (error) {
       setBannerError(

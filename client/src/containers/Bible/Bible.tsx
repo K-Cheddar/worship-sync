@@ -36,6 +36,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { resetCreateItem } from "../../store/createItemSlice";
+import { useStore } from "react-redux";
 import { RootState } from "../../store/store";
 import useDebouncedEffect from "../../hooks/useDebouncedEffect";
 import Spinner from "../../components/Spinner/Spinner";
@@ -45,6 +46,7 @@ import cn from "classnames";
 
 const Bible = () => {
   const dispatch = useDispatch();
+  const store = useStore<RootState>();
   const [searchParams] = useSearchParams();
 
   const {
@@ -215,11 +217,12 @@ const Bible = () => {
               }
             }
             dispatch(setVerses(newVerses));
-            if (!searchValues.endVerse) {
+            const latestSearchValues = store.getState().bible.searchValues;
+            if (!latestSearchValues.endVerse) {
               dispatch(setEndVerse(newVerses.length - 1) || 0);
             }
 
-            if (!searchValues.startVerse) {
+            if (!latestSearchValues.startVerse) {
               dispatch(setStartVerse(0));
             }
           }
@@ -229,7 +232,7 @@ const Bible = () => {
       };
       getChapter();
     },
-    [chapter, dispatch, bibleDb, version, books, book, isOfflineGuest],
+    [chapter, dispatch, bibleDb, version, books, book, isOfflineGuest, store],
     500,
     true
   );
@@ -404,7 +407,7 @@ const Bible = () => {
           book: bookParam,
           chapter: chapterParam,
           version: versionParam ?? version,
-          verseRange: versesParam ?? undefined,
+          verseRange: versesParam?.trim() ? versesParam : undefined,
         })
       );
     }

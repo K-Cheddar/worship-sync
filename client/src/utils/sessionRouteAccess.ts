@@ -199,11 +199,16 @@ export const getDefaultRouteForSession = (
 };
 
 export const getAllowedRouteOrDefault = (
-  pathname: string | null | undefined,
+  to: string | null | undefined,
   context: RouteSessionContext,
 ): string => {
-  if (pathname && isRouteAllowedForSession(pathname, context)) {
-    return pathname;
+  if (!to || to === "/") {
+    return getDefaultRouteForSession(context);
+  }
+  const pathnameOnly = to.includes("?") ? to.slice(0, to.indexOf("?")) : to;
+  const searchSuffix = to.includes("?") ? to.slice(to.indexOf("?")) : "";
+  if (isRouteAllowedForSession(pathnameOnly, context)) {
+    return `${pathnameOnly}${searchSuffix}`;
   }
   return getDefaultRouteForSession(context);
 };

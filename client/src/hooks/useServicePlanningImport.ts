@@ -23,6 +23,7 @@ import {
   addExistingOverlayToList,
   updateOverlayInList,
 } from "../store/overlaysSlice";
+import { addItemToAllItemsList } from "../store/allItemsSlice";
 import {
   buildClonedParticipantOverlay,
   findParticipantTemplateForSync,
@@ -31,7 +32,6 @@ import {
 import { applyPouchAudit } from "../utils/pouchAudit";
 import generateRandomId from "../utils/generateRandomId";
 import { getMatchForString } from "../utils/generalUtils";
-import { createNewHeading } from "../utils/itemUtil";
 import { updateItemList } from "../store/itemListSlice";
 import type { DBOverlay, OverlayInfo, ServiceItem } from "../types";
 import type { RootState } from "../store/store";
@@ -40,6 +40,7 @@ import type {
   OverlaySyncPlanItem,
   ServicePlanningPreview,
 } from "../types/servicePlanningImport";
+import { insertServicePlanningOutlineCandidates } from "../utils/servicePlanningOutlineImport";
 
 export type ServicePlanningImportOptions = {
   overlays: boolean;
@@ -109,10 +110,15 @@ export const dedupeOutlineCandidatesForPreview = (
 export const useServicePlanningImport = () => {
   const dispatch = useDispatch();
   const store = useStore<RootState>();
-  const { db } = useContext(ControllerInfoContext) || {};
+  const { db, bibleDb } = useContext(ControllerInfoContext) || {};
   const { churchIntegrations, churchIntegrationsStatus } =
     useContext(GlobalInfoContext) || {};
   const allItems = useSelector((s: RootState) => s.allItems.list);
+  const {
+    defaultBibleBackground,
+    defaultBibleBackgroundBrightness,
+    defaultBibleFontMode,
+  } = useSelector((s: RootState) => s.undoable.present.preferences.preferences);
   const selectedOverlayId = useSelector(
     (s: RootState) => s.undoable.present.overlay?.selectedOverlay?.id,
   );
@@ -224,7 +230,11 @@ export const useServicePlanningImport = () => {
 
       for (const section of sections) {
         const sectionRule = sp.sectionRules.find((r) =>
-          matchesSectionName(section.sectionName, r.matchSectionName, r.matchMode),
+          matchesSectionName(
+            section.sectionName,
+            r.matchSectionName,
+            r.matchMode,
+          ),
         );
         const headingName = sectionRule?.headingName ?? null;
 
@@ -236,7 +246,11 @@ export const useServicePlanningImport = () => {
               filter: (rule) => rule.outlineSync?.enabled ?? false,
             },
           );
-          if (!elementRule?.outlineSync || elementRule.outlineSync.itemType === "none") continue;
+          if (
+            !elementRule?.outlineSync ||
+            elementRule.outlineSync.itemType === "none"
+          )
+            continue;
 
           const outlineItemType = elementRule.outlineSync.itemType;
           let matchedLibraryItem: ServiceItem | null = null;
@@ -247,7 +261,10 @@ export const useServicePlanningImport = () => {
             let bestScore = SONG_MATCH_THRESHOLD;
             const searchValue = cleanedTitle.toLowerCase();
             for (const song of songs) {
-              const score = getMatchForString({ string: song.name, searchValue });
+              const score = getMatchForString({
+                string: song.name,
+                searchValue,
+              });
               if (score > bestScore) {
                 bestScore = score;
                 matchedLibraryItem = song;
@@ -300,13 +317,31 @@ export const useServicePlanningImport = () => {
           );
 
           if (!target) {
-            const template = findParticipantTemplateForSync(list, cand.patch.event);
+            const template = findParticipantTemplateForSync(
+              list,
+              cand.patch.event,
+            );
             if (template?.type === "participant") {
               const newId = generateRandomId();
-              const built = buildClonedParticipantOverlay(template, cand.patch, newId);
-              dispatch(addExistingOverlayToList({ overlay: built, insertAfterId: template.id }));
+              const built = buildClonedParticipantOverlay(
+                template,
+                cand.patch,
+                newId,
+              );
+              dispatch(
+                addExistingOverlayToList({
+                  overlay: built,
+                  insertAfterId: template.id,
+                }),
+              );
               usedOverlayIds.add(newId);
-              await persistNewParticipantOverlayClone(db, template.id, newId, cand.patch, built);
+              await persistNewParticipantOverlayClone(
+                db,
+                template.id,
+                newId,
+                cand.patch,
+                built,
+              );
               updated += 1;
               continue;
             }
@@ -323,7 +358,8 @@ export const useServicePlanningImport = () => {
             const cur = store
               .getState()
               .undoable.present.overlays.list.find((o) => o.id === target.id);
-            if (cur) dispatch(updateOverlay({ ...cur, ...next } as OverlayInfo));
+            if (cur)
+              dispatch(updateOverlay({ ...cur, ...next } as OverlayInfo));
           }
 
           if (db) {
@@ -352,92 +388,45 @@ export const useServicePlanningImport = () => {
   );
 
   const runOutlineInsert = useCallback(
-    async (outlineCandidates: OutlineItemCandidate[]): Promise<{ inserted: number }> => {
+    async (
+      outlineCandidates: OutlineItemCandidate[],
+    ): Promise<{ inserted: number }> => {
       const currentList = [...store.getState().undoable.present.itemList.list];
+      const result = await insertServicePlanningOutlineCandidates({
+        outlineCandidates,
+        currentList,
+        allItems,
+        db,
+        bibleDb,
+        defaultBibleBackground: defaultBibleBackground.background,
+        defaultBibleMediaInfo: defaultBibleBackground.mediaInfo,
+        defaultBibleBackgroundBrightness,
+        defaultBibleFontMode,
+      });
 
-      // Group candidates by headingName, preserving encounter order
-      type HeadingGroup = { headingName: string; candidates: OutlineItemCandidate[] };
-      const groups: HeadingGroup[] = [];
-      const seenHeadings = new Set<string>();
-      for (const c of outlineCandidates) {
-        if (
-          c.outlineItemType !== "song" ||
-          !c.headingName ||
-          !c.matchedLibraryItem
-        ) {
-          continue;
-        }
-        if (!seenHeadings.has(c.headingName)) {
-          seenHeadings.add(c.headingName);
-          groups.push({ headingName: c.headingName, candidates: [] });
-        }
-        groups.find((g) => g.headingName === c.headingName)!.candidates.push(c);
+      if (result.listChanged) {
+        dispatch(updateItemList(result.newList));
       }
 
-      if (groups.length === 0) return { inserted: 0 };
-
-      let newList = [...currentList];
-      let inserted = 0;
-
-      for (const group of groups) {
-        let headingIndex = newList.findIndex(
-          (item) =>
-            item.type === "heading" &&
-            item.name.toLowerCase() === group.headingName.toLowerCase(),
-        );
-
-        if (headingIndex === -1) {
-          const result = await createNewHeading({
-            name: group.headingName,
-            list: newList,
-            db,
-          });
-          const headingItem: ServiceItem = { ...result, listId: generateRandomId() };
-          newList = [...newList, headingItem];
-          headingIndex = newList.length - 1;
-        }
-
-        // Collect names already under this heading (up to next heading)
-        const existingNames = new Set<string>();
-        for (let i = headingIndex + 1; i < newList.length; i++) {
-          if (newList[i].type === "heading") break;
-          existingNames.add(newList[i].name.toLowerCase());
-        }
-
-        // Insert after all existing items under this heading
-        let insertAfter = headingIndex;
-        for (let i = headingIndex + 1; i < newList.length; i++) {
-          if (newList[i].type === "heading") break;
-          insertAfter = i;
-        }
-
-        for (const candidate of group.candidates) {
-          if (!candidate.matchedLibraryItem) continue;
-          const nameLower = candidate.matchedLibraryItem.name.toLowerCase();
-          if (existingNames.has(nameLower)) continue;
-
-          const newItem: ServiceItem = {
-            ...candidate.matchedLibraryItem,
-            listId: generateRandomId(),
-          };
-          newList = [
-            ...newList.slice(0, insertAfter + 1),
-            newItem,
-            ...newList.slice(insertAfter + 1),
-          ];
-          existingNames.add(nameLower);
-          insertAfter++;
-          inserted++;
-        }
+      if (result.createdAllItems.length > 0) {
+        result.createdAllItems.forEach((item) => {
+          dispatch(addItemToAllItemsList(item));
+        });
       }
 
-      if (inserted > 0) {
-        dispatch(updateItemList(newList));
-      }
-
-      return { inserted };
+      return { inserted: result.inserted };
     },
-    [db, dispatch, store],
+    [
+      allItems,
+      bibleDb,
+      db,
+      defaultBibleBackground.background,
+      defaultBibleBackground.mediaInfo,
+      defaultBibleBackgroundBrightness,
+      defaultBibleFontMode,
+      dispatch,
+      store,
+    ],
   );
 
   const runImport = useCallback(
@@ -471,7 +460,12 @@ export const useServicePlanningImport = () => {
 
       return { overlaysUpdated, overlaysSkipped, outlineInserted, reasons };
     },
-    [churchIntegrations, churchIntegrationsStatus, runOverlaySync, runOutlineInsert],
+    [
+      churchIntegrations,
+      churchIntegrationsStatus,
+      runOverlaySync,
+      runOutlineInsert,
+    ],
   );
 
   return {
