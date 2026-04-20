@@ -1,3 +1,16 @@
+# [2.2.0](https://github.com/K-Cheddar/worship-sync/compare/v2.1.5...v2.2.0) (2026-04-20)
+
+
+### Bug Fixes
+
+* Allow bible verses to be added to outline from service planning ([4f9f95b](https://github.com/K-Cheddar/worship-sync/commit/4f9f95befb2343e1587c69a709c367680b64beed))
+
+
+### Features
+
+* Highlight song sections on selection within lyrics editor ([3273a28](https://github.com/K-Cheddar/worship-sync/commit/3273a288d5c47aa7a1b6cb8ca37120296d0facc5))
+* Import overlays, songs, and scriptures from service planning ([b86275c](https://github.com/K-Cheddar/worship-sync/commit/b86275ce931b41ffa9808308d8ab2293e07b487e))
+
 ## [2.1.5](https://github.com/K-Cheddar/worship-sync/compare/v2.1.4...v2.1.5) (2026-04-18)
 
 
