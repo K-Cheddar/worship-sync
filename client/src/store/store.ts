@@ -82,7 +82,7 @@ import { servicePlanningImportSlice } from "./servicePlanningImportSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
-import { applyPouchAudit } from "../utils/pouchAudit";
+import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
 import {
@@ -97,15 +97,6 @@ const safePostMessage = (message: any) => {
     globalBroadcastRef.postMessage(message);
   }
 };
-
-const POUCH_CONFLICT_STATUS = 409;
-const OVERLAY_PUT_MAX_ATTEMPTS = 4;
-
-const isPouchConflict = (e: unknown): boolean =>
-  typeof e === "object" &&
-  e !== null &&
-  "status" in e &&
-  (e as { status?: number }).status === POUCH_CONFLICT_STATUS;
 
 /** Broadcast credit doc(s) to other tabs. Components that persist credits directly call this after db.put. */
 export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
@@ -912,41 +903,21 @@ listenerMiddleware.startListening({
     }
     if (!db) return;
 
+    listenerApi.throwIfCancelled();
+    overlayToPersist = readOverlayToPersist();
+    if (!overlayToPersist?.id) {
+      listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
+      return;
+    }
+
     let persisted: DBOverlay | undefined;
-
-    for (let attempt = 0; attempt < OVERLAY_PUT_MAX_ATTEMPTS; attempt++) {
-      listenerApi.throwIfCancelled();
-
-      overlayToPersist = readOverlayToPersist();
-      if (!overlayToPersist?.id) {
-        listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
-        return;
-      }
-
-      const db_overlay: DBOverlay = await listenerApi.pause(
-        db.get(`overlay-${overlayToPersist.id}`),
+    try {
+      persisted = await listenerApi.pause(
+        persistExistingOverlayDoc(db, overlayToPersist),
       );
-      const merged: DBOverlay = applyPouchAudit(
-        db_overlay,
-        {
-          ...db_overlay,
-          ...overlayToPersist,
-          updatedAt: new Date().toISOString(),
-        },
-        { isNew: false },
-      );
-
-      try {
-        const result = await listenerApi.pause(db.put(merged));
-        persisted = { ...merged, _rev: result.rev };
-        break;
-      } catch (e) {
-        if (isPouchConflict(e) && attempt < OVERLAY_PUT_MAX_ATTEMPTS - 1) {
-          continue;
-        }
-        console.error("overlay persist failed", e);
-        throw e;
-      }
+    } catch (e) {
+      console.error("overlay persist failed", e);
+      throw e;
     }
 
     if (!persisted) {

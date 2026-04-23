@@ -390,6 +390,29 @@ describe("mapServicePlanningRows", () => {
     expect(hit?.id).toBe("host");
   });
 
+  it("findOverlayForServicePlanningCandidate ignores non-participant overlays", () => {
+    const list: OverlayInfo[] = [
+      { id: "image", type: "image", event: "Sabbath School Host" },
+      { id: "participant", type: "participant", event: "Sabbath School Host" },
+    ];
+    const hit = findOverlayForServicePlanningCandidate(
+      "Sabbath School Lesson Study",
+      "Sabbath School Host",
+      list,
+    );
+    expect(hit?.id).toBe("participant");
+  });
+
+  it("findOverlayForServicePlanningCandidate treats missing types as participant overlays", () => {
+    const list: OverlayInfo[] = [{ id: "legacy", event: "Sabbath School Host" }];
+    const hit = findOverlayForServicePlanningCandidate(
+      "Sabbath School Lesson Study",
+      "Sabbath School Host",
+      list,
+    );
+    expect(hit?.id).toBe("legacy");
+  });
+
   it("findOverlayForServicePlanningCandidate skips overlays already used for duplicate events", () => {
     const mk = (id: string, event: string): OverlayInfo => ({
       id,

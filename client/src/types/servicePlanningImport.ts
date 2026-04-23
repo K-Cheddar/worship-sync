@@ -1,6 +1,6 @@
 import type { ParsedBibleRef } from "../integrations/servicePlanning/parseBibleReference";
 import type { ServicePlanningMappedRow } from "../integrations/servicePlanning/mapServicePlanningToOverlays";
-import type { ServiceItem } from "./index";
+import type { ServiceItem } from "../types";
 
 export type OutlineItemCandidate = {
   sectionName: string;
@@ -21,7 +21,7 @@ export type OverlaySyncPlanItem = {
   ledBy: string;
   personIndex: number;
   rawNameToken: string;
-  action: "update" | "clone" | "skip";
+  action: "update" | "clone" | "create" | "skip";
   targetOverlayId?: string;
   targetOverlayName?: string;
   targetOverlayEvent?: string;

@@ -242,7 +242,10 @@ export const mapServicePlanningRows = (
   const out: ServicePlanningMappedRow[] = [];
 
   for (const row of rows) {
-    const rule = findBestMatchingElementRule(row.elementType, config.elementRules);
+    const rule = findBestMatchingElementRule(
+      row.elementType,
+      config.elementRules,
+    );
     if (!rule || !ruleAppliesToOverlaySync(rule)) continue;
 
     const merged = mergeColumns(row, rule.nameSources);
@@ -267,7 +270,7 @@ export const mapServicePlanningRows = (
       const titlesJoined = matchedPeople
         .map((p) => p.title)
         .filter(Boolean)
-        .join(" * ");
+        .join(" & ");
 
       const ctx: Record<string, string> = {
         displayName: eventDefaultLabel,
