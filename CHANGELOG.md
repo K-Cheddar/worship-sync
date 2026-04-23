@@ -1,3 +1,10 @@
+## [2.2.1](https://github.com/K-Cheddar/worship-sync/compare/v2.2.0...v2.2.1) (2026-04-23)
+
+
+### Bug Fixes
+
+* Improve importing from service planning ([b8fb1c5](https://github.com/K-Cheddar/worship-sync/commit/b8fb1c52bf25eaca403604f9a2e58e2b930930f6))
+
 # [2.2.0](https://github.com/K-Cheddar/worship-sync/compare/v2.1.5...v2.2.0) (2026-04-20)
 
 
