@@ -90,6 +90,7 @@ import {
   getCreditsByIds,
   migrateLegacyCreditsToActiveOutlineIfNeeded,
 } from "../utils/dbUtils";
+import { applyPouchAudit } from "@/utils/pouchAudit";
 
 // Helper function to safely post messages to the broadcast channel
 const safePostMessage = (message: any) => {
@@ -105,6 +106,12 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
+
+const isListenerCancelledTaskError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  (error as { code?: string }).code === "listener-cancelled";
 
 const sanitizeTransientItemState = (
   item: RootState["undoable"]["present"]["item"],
@@ -880,8 +887,8 @@ listenerMiddleware.startListening({
     const persistOutgoingSelection =
       overlaySlice.actions.selectOverlay.match(action);
 
+    listenerApi.cancelActiveListeners();
     if (!persistOutgoingSelection) {
-      listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
     }
 
@@ -916,6 +923,9 @@ listenerMiddleware.startListening({
         persistExistingOverlayDoc(db, overlayToPersist),
       );
     } catch (e) {
+      if (isListenerCancelledTaskError(e)) {
+        return;
+      }
       console.error("overlay persist failed", e);
       throw e;
     }

@@ -31,11 +31,13 @@ import ControllerPageShell from "../../components/ControllerPageShell/Controller
 import ControllerViewRouteGuard from "../../components/ControllerViewRouteGuard/ControllerViewRouteGuard";
 import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
+import { useServicePlanningSyncRunner } from "./useServicePlanningSyncRunner";
 
 const Controller = () => {
   const dispatch = useDispatch();
   const location = useLocation();
   const { layoutRef } = useControllerPageLifecycle();
+  useServicePlanningSyncRunner();
 
   const { dbProgress, connectionStatus } =
     useContext(ControllerInfoContext) || {};

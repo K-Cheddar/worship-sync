@@ -47,6 +47,11 @@ const ServiceItems = () => {
     selectedItemListId,
     insertPointIndex,
   } = useSelector((state) => state.undoable.present.itemList);
+  const isServicePlanningOutlineSyncRunning = useSelector(
+    (state) =>
+      state.servicePlanningImport.sync.status === "running" &&
+      state.servicePlanningImport.sync.phase === "outline"
+  );
   const prevItemsLengthRef = useRef(serviceItems.length);
 
   const { selectedList } = useSelector(
@@ -384,12 +389,16 @@ const ServiceItems = () => {
 
     if (isNewItem) {
       // Only delay if a new item was added
-      setTimeout(scrollToItem, 500);
+      setTimeout(scrollToItem, isServicePlanningOutlineSyncRunning ? 50 : 500);
     } else if (isSameLength) {
       // Scroll immediately for other cases
       scrollToItem();
     }
-  }, [selectedItemListId, serviceItems.length]);
+  }, [
+    isServicePlanningOutlineSyncRunning,
+    selectedItemListId,
+    serviceItems.length,
+  ]);
 
   return (
     <ErrorBoundary>

@@ -1,6 +1,33 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { ServicePlanningPreview } from "../types/servicePlanningImport";
 
+export type ServicePlanningSyncStatus =
+  | "idle"
+  | "running"
+  | "completed"
+  | "failed";
+
+export type ServicePlanningSyncMode = "outline" | "overlays" | "both";
+
+export type ServicePlanningSyncPhase = "outline" | "overlays" | "done" | null;
+
+export type ServicePlanningSyncSummary = {
+  runId: number;
+  status: ServicePlanningSyncStatus;
+  mode: ServicePlanningSyncMode | null;
+  phase: ServicePlanningSyncPhase;
+  currentStep: number;
+  totalSteps: number;
+  activeLabel: string;
+  overlaysUpdated: number;
+  overlaysCloned: number;
+  overlaysCreated: number;
+  overlaysSkipped: number;
+  outlineInserted: number;
+  reasons: string[];
+  error: string | null;
+};
+
 export type ServicePlanningImportState = {
   url: string;
   preview: ServicePlanningPreview | null;
@@ -8,6 +35,24 @@ export type ServicePlanningImportState = {
   overlaySummaryExpanded: boolean;
   /** Service Planning Import page: outline preview list expanded. */
   outlinePreviewExpanded: boolean;
+  sync: ServicePlanningSyncSummary;
+};
+
+const initialServicePlanningSyncSummary: ServicePlanningSyncSummary = {
+  runId: 0,
+  status: "idle",
+  mode: null,
+  phase: null,
+  currentStep: 0,
+  totalSteps: 0,
+  activeLabel: "",
+  overlaysUpdated: 0,
+  overlaysCloned: 0,
+  overlaysCreated: 0,
+  overlaysSkipped: 0,
+  outlineInserted: 0,
+  reasons: [],
+  error: null,
 };
 
 export const initialServicePlanningImportState: ServicePlanningImportState = {
@@ -15,6 +60,7 @@ export const initialServicePlanningImportState: ServicePlanningImportState = {
   preview: null,
   overlaySummaryExpanded: false,
   outlinePreviewExpanded: false,
+  sync: initialServicePlanningSyncSummary,
 };
 
 export const servicePlanningImportSlice = createSlice({
@@ -45,6 +91,88 @@ export const servicePlanningImportSlice = createSlice({
     ) => {
       state.outlinePreviewExpanded = action.payload;
     },
+    startServicePlanningSync: (
+      state,
+      action: PayloadAction<{ mode: ServicePlanningSyncMode }>,
+    ) => {
+      state.sync = {
+        ...initialServicePlanningSyncSummary,
+        runId: state.sync.runId + 1,
+        status: "running",
+        mode: action.payload.mode,
+        phase: action.payload.mode === "overlays" ? "overlays" : "outline",
+      };
+    },
+    setServicePlanningSyncPlanInfo: (
+      state,
+      action: PayloadAction<{
+        totalSteps: number;
+        overlaysSkipped?: number;
+        reasons?: string[];
+      }>,
+    ) => {
+      state.sync.totalSteps = action.payload.totalSteps;
+      state.sync.overlaysSkipped = action.payload.overlaysSkipped ?? 0;
+      state.sync.reasons = action.payload.reasons ?? [];
+    },
+    setServicePlanningSyncActiveStep: (
+      state,
+      action: PayloadAction<{
+        phase: Exclude<ServicePlanningSyncPhase, "done" | null>;
+        activeLabel: string;
+      }>,
+    ) => {
+      state.sync.phase = action.payload.phase;
+      state.sync.activeLabel = action.payload.activeLabel;
+    },
+    advanceServicePlanningSyncStep: (state) => {
+      state.sync.currentStep += 1;
+      state.sync.activeLabel = "";
+    },
+    setServicePlanningSyncPhase: (
+      state,
+      action: PayloadAction<Exclude<ServicePlanningSyncPhase, "done" | null>>,
+    ) => {
+      state.sync.phase = action.payload;
+      state.sync.activeLabel = "";
+    },
+    recordServicePlanningSyncResult: (
+      state,
+      action: PayloadAction<{
+        overlaysUpdated?: number;
+        overlaysCloned?: number;
+        overlaysCreated?: number;
+        overlaysSkipped?: number;
+        outlineInserted?: number;
+        reasons?: string[];
+      }>,
+    ) => {
+      state.sync.overlaysUpdated += action.payload.overlaysUpdated ?? 0;
+      state.sync.overlaysCloned += action.payload.overlaysCloned ?? 0;
+      state.sync.overlaysCreated += action.payload.overlaysCreated ?? 0;
+      state.sync.overlaysSkipped += action.payload.overlaysSkipped ?? 0;
+      state.sync.outlineInserted += action.payload.outlineInserted ?? 0;
+      if (action.payload.reasons?.length) {
+        state.sync.reasons.push(...action.payload.reasons);
+      }
+    },
+    completeServicePlanningSync: (state) => {
+      state.sync.status = "completed";
+      state.sync.phase = "done";
+      state.sync.activeLabel = "";
+      state.sync.error = null;
+    },
+    failServicePlanningSync: (state, action: PayloadAction<string>) => {
+      state.sync.status = "failed";
+      state.sync.error = action.payload;
+      state.sync.activeLabel = "";
+    },
+    clearServicePlanningSyncState: (state) => {
+      state.sync = {
+        ...initialServicePlanningSyncSummary,
+        runId: state.sync.runId,
+      };
+    },
     resetServicePlanningImportState: () => initialServicePlanningImportState,
   },
 });
@@ -55,6 +183,15 @@ export const {
   resetServicePlanningImportPreview,
   setServicePlanningImportOverlaySummaryExpanded,
   setServicePlanningImportOutlinePreviewExpanded,
+  startServicePlanningSync,
+  setServicePlanningSyncPlanInfo,
+  setServicePlanningSyncActiveStep,
+  advanceServicePlanningSyncStep,
+  setServicePlanningSyncPhase,
+  recordServicePlanningSyncResult,
+  completeServicePlanningSync,
+  failServicePlanningSync,
+  clearServicePlanningSyncState,
   resetServicePlanningImportState,
 } = servicePlanningImportSlice.actions;
 
