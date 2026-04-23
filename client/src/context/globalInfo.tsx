@@ -122,6 +122,7 @@ import {
 import type { ChurchIntegrations } from "../types/integrations";
 import { createDefaultChurchIntegrations } from "../types/integrations";
 import { normalizeChurchIntegrations } from "../utils/churchIntegrations";
+// import { useRealtimeDatabaseHealthCheck } from "@/hooks/useRealtimeDatabaseHealthCheck";
 
 /** Firebase client calls are Promise-like in production but may return void in tests. */
 function signOutFirebaseAuth(auth: Auth): Promise<void> {
@@ -1459,6 +1460,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     isOnController,
     sessionKind,
   ]);
+
+  // useRealtimeDatabaseHealthCheck({
+  //   onReconnect: () => {
+  //     console.log("Reattaching presentation listeners…");
+  //     refreshPresentationListeners();
+  //   },
+  // });
+
 
   // Monitor connection state and handle reconnection
   useEffect(() => {

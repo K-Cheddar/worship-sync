@@ -2,6 +2,8 @@ import type { OverlayInfo } from "../../types";
 import { normalizeElementTypeForMatch } from "./normalizeElementForMatch";
 
 const MIN_SCORE = 25;
+const isParticipantOverlay = (overlay: OverlayInfo): boolean =>
+  (overlay.type ?? "participant") === "participant";
 
 /** Similarity between normalized planning element text and overlay.event (ported from Overlays getNames). */
 export const scoreOverlayEventMatch = (
@@ -46,10 +48,11 @@ export const findBestOverlayMatch = (
   overlays: OverlayInfo[],
 ): { overlay: OverlayInfo; score: number } | null => {
   const normalized = normalizeElementTypeForMatch(planningElementType);
+  const participantOverlays = overlays.filter(isParticipantOverlay);
   let best: OverlayInfo | null = null;
   let bestScore = 0;
 
-  for (const overlay of overlays) {
+  for (const overlay of participantOverlays) {
     const score = scoreOverlayEventMatch(normalized, overlay.event);
     if (score > bestScore && score >= MIN_SCORE) {
       bestScore = score;
@@ -73,8 +76,8 @@ export const findOverlayForServicePlanningCandidate = (
 ): OverlayInfo | null => {
   const pool =
     excludeIds?.size && excludeIds.size > 0
-      ? list.filter((o) => !excludeIds.has(o.id))
-      : list;
+      ? list.filter((o) => !excludeIds.has(o.id) && isParticipantOverlay(o))
+      : list.filter(isParticipantOverlay);
   if (pool.length === 0) return null;
 
   if (targetEvent?.trim()) {

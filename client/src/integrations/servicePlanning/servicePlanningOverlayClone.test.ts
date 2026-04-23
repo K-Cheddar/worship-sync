@@ -1,6 +1,7 @@
 import type { OverlayInfo } from "../../types";
 import {
   buildClonedParticipantOverlay,
+  buildNewParticipantOverlay,
   findParticipantTemplateForSync,
 } from "./servicePlanningOverlayClone";
 
@@ -23,9 +24,9 @@ describe("findParticipantTemplateForSync", () => {
     ).toBe("b");
   });
 
-  it("falls back to first participant when event not found", () => {
+  it("returns null when there is no exact participant event template", () => {
     const list: OverlayInfo[] = [p("z", "Other")];
-    expect(findParticipantTemplateForSync(list, "Unknown Event")?.id).toBe("z");
+    expect(findParticipantTemplateForSync(list, "Unknown Event")).toBeNull();
   });
 });
 
@@ -43,5 +44,30 @@ describe("buildClonedParticipantOverlay", () => {
     expect(built.title).toBe("Teacher");
     expect(built.event).toBe("Sabbath School Co-Host");
     expect(built.formatting?.participantOverlayPosition).toBe("left");
+  });
+});
+
+describe("buildNewParticipantOverlay", () => {
+  it("creates a participant overlay with cleared non-participant fields", () => {
+    const built = buildNewParticipantOverlay(
+      { name: "Jane Doe", title: "Speaker", event: "Sermon" },
+      "new-id",
+    );
+
+    expect(built).toEqual(
+      expect.objectContaining({
+        id: "new-id",
+        type: "participant",
+        name: "Jane Doe",
+        title: "Speaker",
+        event: "Sermon",
+        heading: "",
+        subHeading: "",
+        url: "",
+        description: "",
+        imageUrl: "",
+      }),
+    );
+    expect(built.formatting).toBeTruthy();
   });
 });

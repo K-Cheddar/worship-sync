@@ -13,13 +13,15 @@ import {
 } from "../store/overlaysSlice";
 import {
   buildClonedParticipantOverlay,
+  buildNewParticipantOverlay,
   findParticipantTemplateForSync,
+  persistNewParticipantOverlay,
   persistNewParticipantOverlayClone,
 } from "../integrations/servicePlanning/servicePlanningOverlayClone";
-import { applyPouchAudit } from "../utils/pouchAudit";
 import generateRandomId from "../utils/generateRandomId";
-import type { DBOverlay, OverlayInfo } from "../types";
+import type { OverlayInfo } from "../types";
 import type { RootState } from "../store/store";
+import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
 
 type ServicePlanningSyncResult = {
   updated: number;
@@ -78,7 +80,7 @@ export const useServicePlanningSync = () => {
               list,
               cand.patch.event,
             );
-            if (template?.type === "participant") {
+            if (template) {
               const newId = generateRandomId();
               const built = buildClonedParticipantOverlay(
                 template,
@@ -102,9 +104,15 @@ export const useServicePlanningSync = () => {
               updated += 1;
               continue;
             }
-            skipped += 1;
+
+            const newId = generateRandomId();
+            const newOverlay = buildNewParticipantOverlay(cand.patch, newId);
+            dispatch(addExistingOverlayToList({ overlay: newOverlay }));
+            usedOverlayIds.add(newId);
+            await persistNewParticipantOverlay(db, newOverlay);
+            updated += 1;
             reasons.push(
-              `No overlay for "${cand.patch.event || block.source.elementType}"`,
+              `Created overlay for "${cand.patch.event || block.source.elementType}"`,
             );
             continue;
           }
@@ -130,16 +138,12 @@ export const useServicePlanningSync = () => {
             }
           }
 
-          if (db) {
+          if (db && selectedId !== target.id) {
             try {
-              const dbOverlay: DBOverlay = await db.get(`overlay-${target.id}`);
-              const updatedAt = new Date().toISOString();
-              const toSave = applyPouchAudit(
-                dbOverlay,
-                { ...dbOverlay, ...next, updatedAt },
-                { isNew: false },
-              );
-              await db.put(toSave);
+              await persistExistingOverlayDoc(db, {
+                ...target,
+                ...next,
+              });
             } catch (e) {
               console.error("Service Planning sync DB error", target.id, e);
             }

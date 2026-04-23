@@ -1,4 +1,4 @@
-import { forwardRef, useRef } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 import { OverlayInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -41,27 +41,47 @@ const DisplayImageOverlay = forwardRef<
       prevImageOverlayUrl && checkMediaType(prevImageOverlayUrl) === "video"
     );
 
+    // Track the URL that has been preloaded so GSAP only starts the full
+    // animation once the image has its natural dimensions (prevents the
+    // fit-content container from popping open mid-fade on first load).
+    const [loadedImageUrl, setLoadedImageUrl] = useState<string | undefined>();
+
+    useEffect(() => {
+      const url = imageOverlayInfo.imageUrl;
+      if (!url) {
+        setLoadedImageUrl(undefined);
+        return;
+      }
+
+      // Instant path for already-cached images.
+      const probe = new Image();
+      probe.src = url;
+      if (probe.complete && probe.naturalWidth > 0) {
+        setLoadedImageUrl(url);
+        return;
+      }
+
+      setLoadedImageUrl(undefined);
+      probe.onload = () => setLoadedImageUrl(url);
+      probe.onerror = () => setLoadedImageUrl(url);
+      return () => {
+        probe.onload = null;
+        probe.onerror = null;
+      };
+    }, [imageOverlayInfo.imageUrl]);
+
     useGSAP(
       () => {
-        // Handle both callback refs and object refs
-        const containerElement = typeof containerRef === 'function'
-          ? null
-          : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
-
-        if (
-          !imageOverlayRef.current ||
-          (typeof containerRef !== 'function' && !containerElement) ||
-          !shouldAnimate
-        )
-          return;
+        if (!imageOverlayRef.current || !shouldAnimate) return;
 
         overlayTimeline.current?.clear();
         overlayTimeline.current = gsap
           .timeline()
           .set(imageOverlayRef.current, { opacity: 0 });
 
-        // Only animate if there is an image set
-        if (imageOverlayInfo.imageUrl) {
+        // Only animate once the image has loaded so the fit-content container
+        // already has its natural size when the fade-in begins.
+        if (imageOverlayInfo.imageUrl && loadedImageUrl === imageOverlayInfo.imageUrl) {
           overlayTimeline.current
             .to(imageOverlayRef.current, {
               opacity: 1,
@@ -94,23 +114,13 @@ const DisplayImageOverlay = forwardRef<
       },
       {
         scope: imageOverlayRef,
-        dependencies: [imageOverlayInfo],
+        dependencies: [imageOverlayInfo, loadedImageUrl],
       }
     );
 
     useGSAP(
       () => {
-        // Handle both callback refs and object refs
-        const containerElement = typeof containerRef === 'function'
-          ? null
-          : (containerRef as React.MutableRefObject<HTMLDivElement>)?.current;
-
-        if (
-          !prevImageOverlayRef.current ||
-          !shouldAnimate ||
-          (typeof containerRef !== 'function' && !containerElement)
-        )
-          return;
+        if (!prevImageOverlayRef.current || !shouldAnimate) return;
 
         prevOverlayTimeline.current?.clear();
         const hasCurrentImageData = Boolean(imageOverlayInfo.imageUrl);

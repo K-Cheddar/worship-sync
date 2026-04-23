@@ -41,13 +41,17 @@ const OverlayPlanActionBadge = ({
       ? "bg-green-900/50 text-green-300"
       : action === "clone"
         ? "bg-cyan-900/50 text-cyan-300"
-        : "bg-red-900/40 text-red-300";
+        : action === "create"
+          ? "bg-blue-900/40 text-blue-300"
+          : "bg-red-900/40 text-red-300";
   const label =
     action === "update"
       ? "Update existing"
       : action === "clone"
         ? "Clone participant"
-        : "Skip";
+        : action === "create"
+          ? "Create new"
+          : "Skip";
 
   return (
     <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", tone)}>
@@ -63,7 +67,7 @@ const OverlayFieldSummary = ({
   label: string;
   value?: string;
 }) => (
-  <span className="rounded-md bg-gray-950/80 px-2 py-1 text-xs text-gray-300">
+  <span className="rounded-md bg-gray-950/80 px-2 py-1 text-sm text-gray-300">
     <span className="text-gray-500">{label}:</span>{" "}
     {value?.trim() ? value : "—"}
   </span>
@@ -80,6 +84,7 @@ const OverlaySummaryPanel = ({
 }) => {
   const updateCount = items.filter((item) => item.action === "update").length;
   const cloneCount = items.filter((item) => item.action === "clone").length;
+  const createCount = items.filter((item) => item.action === "create").length;
   const skipCount = items.filter((item) => item.action === "skip").length;
 
   return (
@@ -107,6 +112,9 @@ const OverlaySummaryPanel = ({
             <span className="rounded-full bg-cyan-900/40 px-2 py-1 text-cyan-300">
               {cloneCount} clone{cloneCount === 1 ? "" : "s"}
             </span>
+            <span className="rounded-full bg-blue-900/30 px-2 py-1 text-blue-300">
+              {createCount} create{createCount === 1 ? "" : "s"}
+            </span>
             <span className="rounded-full bg-red-900/30 px-2 py-1 text-red-300">
               {skipCount} skip{skipCount === 1 ? "" : "s"}
             </span>
@@ -130,44 +138,35 @@ const OverlaySummaryPanel = ({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <OverlayPlanActionBadge action={item.action} />
-                      <span className="text-sm font-medium text-white">
-                        {item.elementType}
-                      </span>
-                      {item.sectionName ? (
-                        <span className="text-xs text-gray-500">
-                          {item.sectionName}
-                        </span>
-                      ) : null}
+                      <OverlayFieldSummary label="Name" value={item.patch.name} />
+                      <OverlayFieldSummary label="Title" value={item.patch.title} />
+                      <OverlayFieldSummary label="Event" value={item.patch.event} />
                     </div>
-                    <p className="mt-1 text-xs text-gray-400">
-                      {item.title?.trim()
-                        ? item.title
-                        : item.ledBy?.trim()
-                          ? item.ledBy
-                          : item.rawNameToken || "No source text"}
-                    </p>
                   </div>
                   <div className="text-right text-xs text-gray-400">
                     {item.action === "skip" ? (
                       <span>{item.reason}</span>
                     ) : (
                       <span>
-                        {item.action === "clone" ? "Template" : "Target"}:{" "}
+                        {item.action === "clone"
+                          ? "Template"
+                          : item.action === "create"
+                            ? "New overlay"
+                            : "Current"}
+                        :{" "}
                         <span className="text-gray-200">
                           {item.targetOverlayName?.trim() ||
                             item.targetOverlayEvent?.trim() ||
-                            "Unnamed overlay"}
+                            (item.action === "create"
+                              ? item.patch.event?.trim() || "Participant overlay"
+                              : "Unnamed overlay")}
                         </span>
                       </span>
                     )}
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
-                  <OverlayFieldSummary label="Name" value={item.patch.name} />
-                  <OverlayFieldSummary label="Title" value={item.patch.title} />
-                  <OverlayFieldSummary label="Event" value={item.patch.event} />
-                </div>
+
               </li>
             ))}
           </ul>
@@ -283,6 +282,7 @@ const ServicePlanningImportPanel = () => {
     dispatch(setServicePlanningImportPreview(null));
     try {
       const result = await loadPreview(trimmed);
+      console.log({ result })
       dispatch(setServicePlanningImportPreview(result));
       if (result.outlineCandidates.length === 0 && result.overlayCandidates.length === 0) {
         showToast("No rows matched the current integration rules.", "info");

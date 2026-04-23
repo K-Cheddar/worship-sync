@@ -11,6 +11,7 @@ import {
   type ServicePlanningMappedRow,
 } from "../integrations/servicePlanning/mapServicePlanningToOverlays";
 import { findOverlayForServicePlanningCandidate } from "../integrations/servicePlanning/findBestOverlayMatch";
+import { findBestServicePlanningSongMatch } from "../integrations/servicePlanning/findServicePlanningSongMatch";
 import { cleanPlanningTitle } from "../integrations/servicePlanning/cleanPlanningTitle";
 import {
   parseBibleReference,
@@ -26,14 +27,14 @@ import {
 import { addItemToAllItemsList } from "../store/allItemsSlice";
 import {
   buildClonedParticipantOverlay,
+  buildNewParticipantOverlay,
   findParticipantTemplateForSync,
+  persistNewParticipantOverlay,
   persistNewParticipantOverlayClone,
 } from "../integrations/servicePlanning/servicePlanningOverlayClone";
-import { applyPouchAudit } from "../utils/pouchAudit";
 import generateRandomId from "../utils/generateRandomId";
-import { getMatchForString } from "../utils/generalUtils";
 import { updateItemList } from "../store/itemListSlice";
-import type { DBOverlay, OverlayInfo, ServiceItem } from "../types";
+import type { OverlayInfo, ServiceItem } from "../types";
 import type { RootState } from "../store/store";
 import type {
   OutlineItemCandidate,
@@ -41,6 +42,7 @@ import type {
   ServicePlanningPreview,
 } from "../types/servicePlanningImport";
 import { insertServicePlanningOutlineCandidates } from "../utils/servicePlanningOutlineImport";
+import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
 
 export type ServicePlanningImportOptions = {
   overlays: boolean;
@@ -54,16 +56,10 @@ export type ServicePlanningImportResult = {
   reasons: string[];
 };
 
-const SONG_MATCH_THRESHOLD = 1;
 const SERVICE_PLANNING_DISABLED_MESSAGE =
   "Service Planning is off. Ask an admin to enable it in Account > Integrations.";
 const SERVICE_PLANNING_LOADING_MESSAGE =
   "Integrations are still loading. Try again in a moment.";
-
-const getOverlaySkipReason = (
-  targetEvent: string | undefined,
-  fallbackElementType: string,
-): string => `No overlay for "${targetEvent || fallbackElementType}"`;
 
 const matchesSectionName = (
   sectionName: string,
@@ -188,7 +184,7 @@ export const useServicePlanningImport = () => {
             previewOverlays,
             candidate.patch.event,
           );
-          if (template?.type === "participant") {
+          if (template) {
             overlayPlan.push({
               sectionName,
               elementType: block.source.elementType,
@@ -205,7 +201,6 @@ export const useServicePlanningImport = () => {
             continue;
           }
 
-          allCandidatesResolvable = false;
           overlayPlan.push({
             sectionName,
             elementType: block.source.elementType,
@@ -213,12 +208,9 @@ export const useServicePlanningImport = () => {
             ledBy: block.source.ledBy,
             personIndex: candidate.personIndex,
             rawNameToken: candidate.rawNameToken,
-            action: "skip",
+            action: "create",
             patch: { ...candidate.patch },
-            reason: getOverlaySkipReason(
-              candidate.patch.event,
-              block.source.elementType,
-            ),
+            reason: `Create overlay for "${candidate.patch.event || block.source.elementType}"`,
           });
         }
 
@@ -258,18 +250,10 @@ export const useServicePlanningImport = () => {
           const cleanedTitle = cleanPlanningTitle(row.title || row.elementType);
 
           if (outlineItemType === "song") {
-            let bestScore = SONG_MATCH_THRESHOLD;
-            const searchValue = cleanedTitle.toLowerCase();
-            for (const song of songs) {
-              const score = getMatchForString({
-                string: song.name,
-                searchValue,
-              });
-              if (score > bestScore) {
-                bestScore = score;
-                matchedLibraryItem = song;
-              }
-            }
+            matchedLibraryItem = findBestServicePlanningSongMatch(
+              cleanedTitle,
+              songs,
+            );
           } else if (outlineItemType === "bible") {
             parsedRef = parseBibleReference(row.title);
           }
@@ -321,7 +305,7 @@ export const useServicePlanningImport = () => {
               list,
               cand.patch.event,
             );
-            if (template?.type === "participant") {
+            if (template) {
               const newId = generateRandomId();
               const built = buildClonedParticipantOverlay(
                 template,
@@ -345,9 +329,15 @@ export const useServicePlanningImport = () => {
               updated += 1;
               continue;
             }
-            skipped += 1;
+
+            const newId = generateRandomId();
+            const newOverlay = buildNewParticipantOverlay(cand.patch, newId);
+            dispatch(addExistingOverlayToList({ overlay: newOverlay }));
+            usedOverlayIds.add(newId);
+            await persistNewParticipantOverlay(db, newOverlay);
+            updated += 1;
             reasons.push(
-              getOverlaySkipReason(cand.patch.event, block.source.elementType),
+              `Created overlay for "${cand.patch.event || block.source.elementType}"`,
             );
             continue;
           }
@@ -362,16 +352,12 @@ export const useServicePlanningImport = () => {
               dispatch(updateOverlay({ ...cur, ...next } as OverlayInfo));
           }
 
-          if (db) {
+          if (db && selectedOverlayId !== target.id) {
             try {
-              const dbOverlay: DBOverlay = await db.get(`overlay-${target.id}`);
-              const updatedAt = new Date().toISOString();
-              const toSave = applyPouchAudit(
-                dbOverlay,
-                { ...dbOverlay, ...next, updatedAt },
-                { isNew: false },
-              );
-              await db.put(toSave);
+              await persistExistingOverlayDoc(db, {
+                ...target,
+                ...next,
+              });
             } catch (e) {
               console.error("Service Planning sync DB error", target.id, e);
             }
