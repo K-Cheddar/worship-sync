@@ -19,7 +19,7 @@ import {
 } from "../integrations/servicePlanning/parseBibleReference";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ControllerInfoContext } from "../context/controllerInfo";
-import { updateOverlay } from "../store/overlaySlice";
+import { selectOverlay, updateOverlay } from "../store/overlaySlice";
 import {
   addExistingOverlayToList,
   updateOverlayInList,
@@ -33,7 +33,7 @@ import {
   persistNewParticipantOverlayClone,
 } from "../integrations/servicePlanning/servicePlanningOverlayClone";
 import generateRandomId from "../utils/generateRandomId";
-import { updateItemList } from "../store/itemListSlice";
+import { setActiveItemInList, updateItemList } from "../store/itemListSlice";
 import type { OverlayInfo, ServiceItem } from "../types";
 import type { RootState } from "../store/store";
 import type {
@@ -41,7 +41,12 @@ import type {
   OverlaySyncPlanItem,
   ServicePlanningPreview,
 } from "../types/servicePlanningImport";
-import { insertServicePlanningOutlineCandidates } from "../utils/servicePlanningOutlineImport";
+import {
+  executeServicePlanningOutlineSyncStep as executeOutlineSyncUtilityStep,
+  insertServicePlanningOutlineCandidates,
+  planServicePlanningOutlineSyncSteps,
+  type ServicePlanningOutlineSyncStep,
+} from "../utils/servicePlanningOutlineImport";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
 
 export type ServicePlanningImportOptions = {
@@ -56,10 +61,23 @@ export type ServicePlanningImportResult = {
   reasons: string[];
 };
 
+export type ExecutableOverlaySyncPlanItem = OverlaySyncPlanItem & {
+  action: "update" | "clone" | "create";
+};
+
+export type ServicePlanningOverlayStepExecutionResult = {
+  overlaysUpdated: number;
+  overlaysCloned: number;
+  overlaysCreated: number;
+  overlaysSkipped: number;
+  reasons: string[];
+};
+
 const SERVICE_PLANNING_DISABLED_MESSAGE =
   "Service Planning is off. Ask an admin to enable it in Account > Integrations.";
 const SERVICE_PLANNING_LOADING_MESSAGE =
   "Integrations are still loading. Try again in a moment.";
+const OVERLAY_SELECTION_SCROLL_DELAY_MS = 75;
 
 const matchesSectionName = (
   sectionName: string,
@@ -454,9 +472,201 @@ export const useServicePlanningImport = () => {
     ],
   );
 
+  const planOutlineSyncSteps = useCallback(
+    (preview: ServicePlanningPreview): ServicePlanningOutlineSyncStep[] =>
+      planServicePlanningOutlineSyncSteps(preview.outlineCandidates),
+    [],
+  );
+
+  const planOverlaySyncSteps = useCallback(
+    (preview: ServicePlanningPreview) => {
+      const skipped = preview.overlayPlan.filter(
+        (item) => item.action === "skip",
+      );
+      const steps = preview.overlayPlan.filter(
+        (item): item is ExecutableOverlaySyncPlanItem => item.action !== "skip",
+      );
+
+      return {
+        steps,
+        skippedCount: skipped.length,
+        skipReasons: skipped
+          .map((item) => item.reason)
+          .filter((reason): reason is string => Boolean(reason?.trim())),
+      };
+    },
+    [],
+  );
+
+  const executeOutlineSyncStep = useCallback(
+    async (
+      step: ServicePlanningOutlineSyncStep,
+    ): Promise<{ inserted: number; activeLabel: string }> => {
+      const currentList = [...store.getState().undoable.present.itemList.list];
+      const result = await executeOutlineSyncUtilityStep({
+        step,
+        currentList,
+        allItems,
+        db,
+        bibleDb,
+        defaultBibleBackground: defaultBibleBackground.background,
+        defaultBibleMediaInfo: defaultBibleBackground.mediaInfo,
+        defaultBibleBackgroundBrightness,
+        defaultBibleFontMode,
+      });
+
+      if (result.listChanged) {
+        dispatch(updateItemList(result.newList));
+      }
+
+      if (result.createdAllItems.length > 0) {
+        result.createdAllItems.forEach((item) => {
+          dispatch(addItemToAllItemsList(item));
+        });
+      }
+
+      if (result.activeListId) {
+        dispatch(setActiveItemInList(result.activeListId));
+      }
+
+      const activeLabel =
+        step.kind === "ensureHeading"
+          ? step.headingName
+          : step.candidate.title ||
+            step.candidate.cleanedTitle ||
+            step.headingName;
+
+      return {
+        inserted: result.inserted,
+        activeLabel,
+      };
+    },
+    [
+      allItems,
+      bibleDb,
+      db,
+      defaultBibleBackground.background,
+      defaultBibleBackground.mediaInfo,
+      defaultBibleBackgroundBrightness,
+      defaultBibleFontMode,
+      dispatch,
+      store,
+    ],
+  );
+
+  const executeOverlaySyncStep = useCallback(
+    async (
+      step: ExecutableOverlaySyncPlanItem,
+    ): Promise<ServicePlanningOverlayStepExecutionResult> => {
+      const list = store.getState().undoable.present.overlays.list;
+
+      if (step.action === "update") {
+        const target =
+          (step.targetOverlayId &&
+            list.find((overlay) => overlay.id === step.targetOverlayId)) ||
+          null;
+        if (!target) {
+          return {
+            overlaysUpdated: 0,
+            overlaysCloned: 0,
+            overlaysCreated: 0,
+            overlaysSkipped: 1,
+            reasons: [
+              `Could not find overlay for "${step.patch.event || step.elementType}".`,
+            ],
+          };
+        }
+
+        dispatch(selectOverlay(target));
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const next = { ...target, ...step.patch } as OverlayInfo;
+        dispatch(updateOverlay(next));
+        dispatch(updateOverlayInList({ id: target.id, ...step.patch }));
+
+        return {
+          overlaysUpdated: 1,
+          overlaysCloned: 0,
+          overlaysCreated: 0,
+          overlaysSkipped: 0,
+          reasons: [],
+        };
+      }
+
+      if (step.action === "clone") {
+        const template =
+          (step.targetOverlayId &&
+            list.find((overlay) => overlay.id === step.targetOverlayId)) ||
+          null;
+        if (!template) {
+          return {
+            overlaysUpdated: 0,
+            overlaysCloned: 0,
+            overlaysCreated: 0,
+            overlaysSkipped: 1,
+            reasons: [
+              `Could not find template overlay for "${step.patch.event || step.elementType}".`,
+            ],
+          };
+        }
+
+        dispatch(selectOverlay(template));
+        await new Promise((resolve) =>
+          setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
+        );
+        const newId = generateRandomId();
+        const built = buildClonedParticipantOverlay(
+          template,
+          step.patch,
+          newId,
+        );
+        await persistNewParticipantOverlayClone(
+          db,
+          template.id,
+          newId,
+          step.patch,
+          built,
+        );
+        dispatch(
+          addExistingOverlayToList({
+            overlay: built,
+            insertAfterId: template.id,
+          }),
+        );
+        dispatch(selectOverlay(built));
+
+        return {
+          overlaysUpdated: 0,
+          overlaysCloned: 1,
+          overlaysCreated: 0,
+          overlaysSkipped: 0,
+          reasons: [],
+        };
+      }
+
+      const newId = generateRandomId();
+      const newOverlay = buildNewParticipantOverlay(step.patch, newId);
+      await persistNewParticipantOverlay(db, newOverlay);
+      dispatch(addExistingOverlayToList({ overlay: newOverlay }));
+      dispatch(selectOverlay(newOverlay));
+
+      return {
+        overlaysUpdated: 0,
+        overlaysCloned: 0,
+        overlaysCreated: 1,
+        overlaysSkipped: 0,
+        reasons: [],
+      };
+    },
+    [db, dispatch, store],
+  );
+
   return {
     loadPreview,
     runImport,
+    planOutlineSyncSteps,
+    planOverlaySyncSteps,
+    executeOutlineSyncStep,
+    executeOverlaySyncStep,
     isServicePlanningEnabled,
     servicePlanningAvailabilityMessage,
   };

@@ -484,10 +484,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const churchIntegrationsPermissionRetryRef = useRef(0);
   const churchIntegrationsRemintAttemptsRef = useRef(0);
   const location = useLocation();
-  const isOnController = useMemo(() => {
+  const isOnHumanPath = useMemo(() => {
     const path = location.pathname;
     return (
-      path.startsWith("/controller") || path.startsWith("/overlay-controller")
+      path.startsWith("/controller") || path.startsWith("/overlay-controller") || path.startsWith("/board-controller") || path.startsWith("/credits-editor") || path.startsWith("/boards/controller") || path === ("/home") || path.startsWith("/account")
     );
   }, [location.pathname]);
 
@@ -569,6 +569,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_qrCodeOverlayInfo: Unsubscribe | undefined;
     stream_imageOverlayInfo: Unsubscribe | undefined;
     stream_formattedTextDisplayInfo: Unsubscribe | undefined;
+    stream_boardPostStreamInfo: Unsubscribe | undefined;
     stream_itemContentBlocked: Unsubscribe | undefined;
     timerInfo: Unsubscribe | undefined;
   }>({
@@ -581,6 +582,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_qrCodeOverlayInfo: undefined,
     stream_imageOverlayInfo: undefined,
     stream_formattedTextDisplayInfo: undefined,
+    stream_boardPostStreamInfo: undefined,
     stream_itemContentBlocked: undefined,
     timerInfo: undefined,
   });
@@ -1008,6 +1010,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           info: data.stream_formattedTextDisplayInfo,
           updateAction: "debouncedUpdateFormattedTextDisplayInfo",
         },
+        stream_boardPostStreamInfo: {
+          info: data.stream_boardPostStreamInfo,
+          updateAction: "debouncedUpdateBoardPostStreamInfo",
+        },
         stream_itemContentBlocked: {
           info: data.stream_itemContentBlocked,
           updateAction: "debouncedUpdateStreamItemContentBlocked",
@@ -1419,7 +1425,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             name: activeInstanceName,
             database: database,
             hostId: hostId,
-            isOnController,
+            isOnController: isOnHumanPath,
             sessionKind,
             deviceLabel: device?.label || null,
           })
@@ -1457,7 +1463,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     firebaseDb,
     hostId,
     isSharedDataScopeReady,
-    isOnController,
+    isOnHumanPath,
     sessionKind,
   ]);
 
@@ -1477,7 +1483,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const unsubscribe = onValue(connectedRef, (snap) => {
       if (snap.val() === true) {
         // When we reconnect, re-establish the active instance if we're on the controller page
-        if (isOnController && instanceRef.current) {
+        if (isOnHumanPath && instanceRef.current) {
           void settleFirebaseWrite(
             set(instanceRef.current, {
               lastActive: new Date().toISOString(),
@@ -1485,7 +1491,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               name: activeInstanceName,
               database,
               hostId,
-              isOnController,
+              isOnController: isOnHumanPath,
               sessionKind,
               deviceLabel: device?.label || null,
             })
@@ -1503,7 +1509,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     device?.label,
     firebaseDb,
     hostId,
-    isOnController,
+    isOnHumanPath,
     isSharedDataScopeReady,
     sessionKind,
   ]);

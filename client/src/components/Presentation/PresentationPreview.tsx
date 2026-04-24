@@ -169,6 +169,8 @@ const PresentationPreview = ({
     bibleDisplayInfo: info.bibleDisplayInfo,
     formattedTextDisplayInfo: info.formattedTextDisplayInfo,
     prevFormattedTextDisplayInfo: prevInfo.formattedTextDisplayInfo,
+    boardPostStreamInfo: info.boardPostStreamInfo,
+    prevBoardPostStreamInfo: prevInfo.boardPostStreamInfo,
     timerInfo,
     prevTimerInfo,
     time: info.time,

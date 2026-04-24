@@ -44,6 +44,8 @@ const Stream = () => {
       prevImageOverlayInfo={prevStreamInfo.imageOverlayInfo}
       formattedTextDisplayInfo={streamInfo.formattedTextDisplayInfo}
       prevFormattedTextDisplayInfo={prevStreamInfo.formattedTextDisplayInfo}
+      boardPostStreamInfo={streamInfo.boardPostStreamInfo}
+      prevBoardPostStreamInfo={prevStreamInfo.boardPostStreamInfo}
       shouldAnimate
       width={100}
       timerInfo={streamTimer}

@@ -97,7 +97,7 @@ const BoardPresentationScreen = ({
 
         {!aliasId ? (
           <div className="flex flex-1 items-center justify-center">
-            <div className="max-w-3xl rounded-[2rem] border border-slate-700/70 bg-slate-900/60 px-10 py-12 text-center shadow-2xl">
+            <div className="max-w-3xl rounded-4xl border border-slate-700/70 bg-slate-900/60 px-10 py-12 text-center shadow-2xl">
               <p className="text-3xl font-semibold md:text-4xl">
                 {missingAliasTitle}
               </p>
@@ -108,7 +108,7 @@ const BoardPresentationScreen = ({
           </div>
         ) : !hasLoadedOnce && connectionStatus.status !== "failed" ? (
           <div className="flex flex-1 items-center justify-center">
-            <div className="max-w-3xl rounded-[2rem] border border-slate-700/70 bg-slate-900/60 px-10 py-12 text-center shadow-2xl">
+            <div className="max-w-3xl rounded-4xl border border-slate-700/70 bg-slate-900/60 px-10 py-12 text-center shadow-2xl">
               <p className="text-3xl font-semibold md:text-4xl">
                 {connectionStatus.status === "retrying"
                   ? "Connection failed. Retrying..."
@@ -123,7 +123,7 @@ const BoardPresentationScreen = ({
           </div>
         ) : !hasLoadedOnce ? (
           <div className="flex flex-1 items-center justify-center">
-            <div className="max-w-3xl rounded-[2rem] border border-red-300/30 bg-red-950/20 px-10 py-12 text-center shadow-2xl">
+            <div className="max-w-3xl rounded-4xl border border-red-300/30 bg-red-950/20 px-10 py-12 text-center shadow-2xl">
               <p className="text-3xl font-semibold md:text-4xl">
                 {error || "Could not load presentation."}
               </p>
@@ -137,7 +137,7 @@ const BoardPresentationScreen = ({
           </div>
         ) : highlightedPosts.length === 0 ? (
           <div className="flex flex-1 items-center justify-center">
-            <div className="max-w-3xl rounded-[2rem] border border-slate-700/70 bg-slate-900/60 px-10 py-12 text-center shadow-2xl">
+            <div className="max-w-3xl rounded-4xl border border-slate-700/70 bg-slate-900/60 px-10 py-12 text-center shadow-2xl">
               <p className="text-3xl font-semibold md:text-4xl">
                 No highlighted posts yet.
               </p>
@@ -152,7 +152,7 @@ const BoardPresentationScreen = ({
               {highlightedPosts.map((post, index) => (
                 <article
                   key={post._id}
-                  className={`rounded-[2rem] border border-cyan-300/20 bg-white/8 px-8 py-7 shadow-2xl backdrop-blur-sm ${index === highlightedPosts.length - 1 ? "ring-2 ring-cyan-300/40" : ""}`}
+                  className={`rounded-4xl border border-cyan-300/20 bg-white/8 px-8 py-7 shadow-2xl backdrop-blur-sm ${index === highlightedPosts.length - 1 ? "ring-2 ring-cyan-300/40" : ""}`}
                 >
                   <div
                     className="flex flex-wrap items-center gap-3 text-cyan-100/80"
@@ -171,7 +171,7 @@ const BoardPresentationScreen = ({
                     <span>{formatBoardTimestamp(post.timestamp)}</span>
                   </div>
                   <p
-                    className="mt-5 whitespace-pre-wrap font-medium leading-[1.25] text-white"
+                    className="mt-5 whitespace-pre-wrap font-medium leading-tight text-white"
                     style={{
                       fontSize: `clamp(${2.25 * presentationFontScale}rem, ${3 * presentationFontScale}vw, ${5 * presentationFontScale}rem)`,
                     }}

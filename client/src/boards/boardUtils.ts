@@ -156,6 +156,36 @@ const BOARD_AUTHOR_NAME_COLOR_CLASSES = [
   "text-amber-300",
 ] as const;
 
+/** Hex equivalents of BOARD_AUTHOR_NAME_COLOR_CLASSES (same order, same index). */
+const BOARD_AUTHOR_NAME_HEX_COLORS = [
+  "#7dd3fc", // sky-300
+  "#6ee7b7", // emerald-300
+  "#c4b5fd", // violet-300
+  "#fda4af", // rose-300
+  "#67e8f9", // cyan-300
+  "#f0abfc", // fuchsia-300
+  "#5eead4", // teal-300
+  "#fdba74", // orange-300
+  "#a5b4fc", // indigo-300
+  "#fcd34d", // amber-300
+] as const;
+
+const boardAuthorNameHashIndex = (post: {
+  author: string;
+  authorId?: string;
+}): number | null => {
+  const key =
+    normalizeBoardParticipantId(post.authorId) ||
+    normalizeBoardAuthorKey(post.author);
+  if (!key) return null;
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash) % BOARD_AUTHOR_NAME_COLOR_CLASSES.length;
+};
+
 /**
  * Deterministic display color per author, preferring `authorId` when set so renames keep the same hue.
  */
@@ -163,19 +193,19 @@ export const getBoardAuthorNameColorClass = (post: {
   author: string;
   authorId?: string;
 }): string => {
-  const key =
-    normalizeBoardParticipantId(post.authorId) ||
-    normalizeBoardAuthorKey(post.author);
-  if (!key) {
-    return "text-stone-200";
-  }
-  let hash = 2166136261;
-  for (let i = 0; i < key.length; i += 1) {
-    hash ^= key.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  const idx = Math.abs(hash) % BOARD_AUTHOR_NAME_COLOR_CLASSES.length;
+  const idx = boardAuthorNameHashIndex(post);
+  if (idx === null) return "text-stone-200";
   return BOARD_AUTHOR_NAME_COLOR_CLASSES[idx];
+};
+
+/** Hex equivalent of {@link getBoardAuthorNameColorClass} for use in inline styles. */
+export const getBoardAuthorNameHexColor = (post: {
+  author: string;
+  authorId?: string;
+}): string => {
+  const idx = boardAuthorNameHashIndex(post);
+  if (idx === null) return "#e7e5e4"; // stone-200
+  return BOARD_AUTHOR_NAME_HEX_COLORS[idx];
 };
 
 export const filterHighlightedBoardPosts = (

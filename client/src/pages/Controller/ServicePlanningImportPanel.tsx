@@ -12,7 +12,7 @@ import {
   bibleRefToSearchString,
 } from "../../integrations/servicePlanning/parseBibleReference";
 import {
-  resetServicePlanningImportPreview,
+  startServicePlanningSync,
   setServicePlanningImportOutlinePreviewExpanded,
   setServicePlanningImportOverlaySummaryExpanded,
   setServicePlanningImportPreview,
@@ -48,7 +48,7 @@ const OverlayPlanActionBadge = ({
     action === "update"
       ? "Update existing"
       : action === "clone"
-        ? "Clone participant"
+        ? "Copy participant"
         : action === "create"
           ? "Create new"
           : "Skip";
@@ -238,7 +238,7 @@ const OutlineStatusCell = ({
     }
     return (
       <span className="rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-400">
-        Bible (unrecognised)
+        Bible (unrecognized)
       </span>
     );
   }
@@ -252,7 +252,6 @@ const ServicePlanningImportPanel = () => {
   const { showToast } = useToast();
   const {
     loadPreview,
-    runImport,
     isServicePlanningEnabled,
     servicePlanningAvailabilityMessage,
   } = useServicePlanningImport();
@@ -265,8 +264,29 @@ const ServicePlanningImportPanel = () => {
   const outlinePreviewExpanded = useSelector(
     (s) => s.servicePlanningImport.outlinePreviewExpanded,
   );
+  const sync = useSelector((s) => s.servicePlanningImport.sync);
   const [isLoading, setIsLoading] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const isSyncing = sync.status === "running";
+  const matchedSongCount =
+    preview?.outlineCandidates.filter(
+      (candidate) =>
+        candidate.outlineItemType === "song" && Boolean(candidate.matchedLibraryItem),
+    ).length ?? 0;
+  const bibleCount =
+    preview?.outlineCandidates.filter(
+      (candidate) =>
+        candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef),
+    ).length ?? 0;
+  const missingSongCount =
+    preview?.outlineCandidates.filter(
+      (candidate) =>
+        candidate.outlineItemType === "song" && !candidate.matchedLibraryItem,
+    ).length ?? 0;
+  const unrecognizedBibleCount =
+    preview?.outlineCandidates.filter(
+      (candidate) =>
+        candidate.outlineItemType === "bible" && !candidate.parsedRef,
+    ).length ?? 0;
 
   const getErrorMessage = (error: unknown, fallback: string) =>
     error instanceof Error && error.message.trim() ? error.message : fallback;
@@ -282,9 +302,11 @@ const ServicePlanningImportPanel = () => {
     dispatch(setServicePlanningImportPreview(null));
     try {
       const result = await loadPreview(trimmed);
-      console.log({ result })
       dispatch(setServicePlanningImportPreview(result));
-      if (result.outlineCandidates.length === 0 && result.overlayCandidates.length === 0) {
+      if (
+        result.outlineCandidates.length === 0 &&
+        result.overlayCandidates.length === 0
+      ) {
         showToast("No rows matched the current integration rules.", "info");
       }
     } catch (error) {
@@ -300,24 +322,10 @@ const ServicePlanningImportPanel = () => {
     }
   };
 
-  const handleSync = async (overlays: boolean, outline: boolean) => {
+  const handleSync = (overlays: boolean, outline: boolean) => {
     if (!preview) return;
-    setIsSyncing(true);
-    try {
-      const result = await runImport(preview, { overlays, outline });
-      const parts: string[] = [];
-      if (overlays) parts.push(`${result.overlaysUpdated} overlay${result.overlaysUpdated !== 1 ? "s" : ""} updated`);
-      if (outline) parts.push(`${result.outlineInserted} outline item${result.outlineInserted !== 1 ? "s" : ""} inserted`);
-      showToast(parts.join(", ") || "Nothing to sync.", result.overlaysUpdated + result.outlineInserted > 0 ? "success" : "info");
-      if (result.reasons.length > 0) {
-        result.reasons.slice(0, 3).forEach((r) => showToast(r, "info"));
-      }
-      dispatch(resetServicePlanningImportPreview());
-    } catch (error) {
-      showToast(getErrorMessage(error, "Sync failed. Try again."), "error");
-    } finally {
-      setIsSyncing(false);
-    }
+    const mode = overlays && outline ? "both" : overlays ? "overlays" : "outline";
+    dispatch(startServicePlanningSync({ mode }));
   };
 
   const handleCreateClick = (title: string) => {
@@ -374,6 +382,7 @@ const ServicePlanningImportPanel = () => {
           label="Planning URL"
           value={url}
           onChange={(v) => dispatch(setServicePlanningImportUrl(String(v || "")))}
+          disabled={isSyncing}
           onKeyDown={(e) => {
             if (e.key === "Enter") void handleLoad();
           }}
@@ -385,7 +394,9 @@ const ServicePlanningImportPanel = () => {
           variant="cta"
           svg={isLoading ? undefined : RefreshCcw}
           isLoading={isLoading}
-          disabled={isLoading || !url.trim() || !isServicePlanningEnabled}
+          disabled={
+            isLoading || isSyncing || !url.trim() || !isServicePlanningEnabled
+          }
           onClick={() => void handleLoad()}
         >
           {isLoading ? "Loading…" : "Load"}
@@ -423,15 +434,35 @@ const ServicePlanningImportPanel = () => {
                   expandLabel="Expand outline preview"
                   collapseLabel="Collapse outline preview"
                 />
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-sm font-semibold text-white">
-                    Outline preview
-                  </h3>
-                  <p className="mt-1 text-xs text-gray-400">
-                    {preview.outlineCandidates.length} planning row
-                    {preview.outlineCandidates.length === 1 ? "" : "s"} · overlay
-                    match and library status
-                  </p>
+                <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-white">
+                      Outline preview
+                    </h3>
+                    <p className="mt-1 text-xs text-gray-400">
+                      {preview.outlineCandidates.length} planning row
+                      {preview.outlineCandidates.length === 1 ? "" : "s"} · overlay
+                      match and library status
+                    </p>
+                  </div>
+                  {!outlinePreviewExpanded ? (
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <span className="rounded-full bg-green-900/40 px-2 py-1 text-green-300">
+                        {matchedSongCount} song{matchedSongCount === 1 ? "" : "s"}
+                      </span>
+                      <span className="rounded-full bg-blue-900/30 px-2 py-1 text-blue-300">
+                        {bibleCount} bible{bibleCount === 1 ? "" : "s"}
+                      </span>
+                      <span className="rounded-full bg-red-900/30 px-2 py-1 text-red-300">
+                        {missingSongCount} not found
+                      </span>
+                      {unrecognizedBibleCount > 0 ? (
+                        <span className="rounded-full bg-gray-800 px-2 py-1 text-gray-300">
+                          {unrecognizedBibleCount} unrecognized
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               </div>
               {outlinePreviewExpanded ? (
@@ -503,7 +534,7 @@ const ServicePlanningImportPanel = () => {
               }
               onClick={() => void handleSync(false, true)}
             >
-              Insert Outline Items
+              Sync Outline
             </Button>
             <Button
               type="button"

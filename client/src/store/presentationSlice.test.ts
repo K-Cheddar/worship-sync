@@ -2276,7 +2276,7 @@ describe("presentationSlice", () => {
           name: "",
           title: "",
           event: "",
-          time: 11,
+          time: 10,
         } as never),
       );
 
@@ -2533,7 +2533,7 @@ describe("presentationSlice", () => {
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("Alex");
     });
 
-    it("clears stale cross-type outgoing image overlay in prevStreamInfo when remote updates arrive clear-last", () => {
+    it("preserves outgoing image overlay in prevStreamInfo for exit animation when remote updates arrive clear-last", () => {
       const store = createStore({
         presentation: {
           ...presentationSlice.getInitialState(),
@@ -2567,12 +2567,12 @@ describe("presentationSlice", () => {
       );
 
       const state = store.getState().presentation;
-      expect(state.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe("");
+      expect(state.prevStreamInfo.imageOverlayInfo?.imageUrl).toBe("https://img.example/current.jpg");
       expect(state.streamInfo.imageOverlayInfo?.imageUrl).toBe("");
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("Alex");
     });
 
-    it("clears stale cross-type outgoing QR overlay in prevStreamInfo when remote updates arrive clear-last", () => {
+    it("preserves outgoing QR overlay in prevStreamInfo for exit animation when remote updates arrive clear-last", () => {
       const store = createStore({
         presentation: {
           ...presentationSlice.getInitialState(),
@@ -2606,7 +2606,7 @@ describe("presentationSlice", () => {
       );
 
       const state = store.getState().presentation;
-      expect(state.prevStreamInfo.qrCodeOverlayInfo?.description).toBe("");
+      expect(state.prevStreamInfo.qrCodeOverlayInfo?.description).toBe("Scan here");
       expect(state.streamInfo.qrCodeOverlayInfo?.description).toBe("");
       expect(state.streamInfo.participantOverlayInfo?.name).toBe("Alex");
     });

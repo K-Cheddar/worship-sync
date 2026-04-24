@@ -1,6 +1,7 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import {
   BibleDisplayInfo,
+  BoardPostStreamInfo,
   FormattedTextDisplayInfo,
   ItemSlideType,
   OverlayInfo,
@@ -74,6 +75,12 @@ const initialState: PresentationState = {
       text: "",
       time: Date.now(),
     },
+    boardPostStreamInfo: {
+      author: "",
+      authorHexColor: "#e7e5e4",
+      text: "",
+      time: Date.now(),
+    },
   },
 };
 
@@ -90,7 +97,8 @@ const hasActiveStreamOverlay = (s: Presentation) => {
     stb?.subHeading ||
     qr?.url ||
     qr?.description ||
-    img?.imageUrl
+    img?.imageUrl ||
+    s.boardPostStreamInfo?.text?.trim()
   );
 };
 
@@ -170,6 +178,7 @@ const getNextStreamOverlayTimestamp = (state: PresentationState) =>
     state.streamInfo.stbOverlayInfo?.time,
     state.streamInfo.qrCodeOverlayInfo?.time,
     state.streamInfo.imageOverlayInfo?.time,
+    state.streamInfo.boardPostStreamInfo?.time,
   );
 
 const emptyParticipantOverlay = (t: number): OverlayInfo => ({
@@ -211,7 +220,7 @@ const isEmptySlotFromSameTransition = (
  */
 const clearStalePrevStreamOverlaySlotsExcept = (
   state: PresentationState,
-  keep: "participant" | "stb" | "qr" | "image",
+  keep: "participant" | "stb" | "qr" | "image" | "boardPost",
   t: number,
 ) => {
   const { streamInfo, prevStreamInfo } = state;
@@ -248,12 +257,15 @@ const clearStalePrevStreamOverlaySlotsExcept = (
   ) {
     prevStreamInfo.imageOverlayInfo = emptyImageOverlay(t);
   }
+  if (keep !== "boardPost" && !hasBoardPostData(streamInfo.boardPostStreamInfo)) {
+    prevStreamInfo.boardPostStreamInfo = emptyBoardPostStreamInfo(t);
+  }
 };
 
 /** Empty every stream overlay except the one that was just set (single-layer when overlay-only off). */
 const clearStreamOverlaysExcept = (
   si: Presentation,
-  keep: "participant" | "stb" | "qr" | "image",
+  keep: "participant" | "stb" | "qr" | "image" | "boardPost",
   t: number,
 ) => {
   if (keep !== "participant")
@@ -261,18 +273,30 @@ const clearStreamOverlaysExcept = (
   if (keep !== "stb") si.stbOverlayInfo = emptyStbOverlay(t);
   if (keep !== "qr") si.qrCodeOverlayInfo = emptyQrOverlay(t);
   if (keep !== "image") si.imageOverlayInfo = emptyImageOverlay(t);
+  if (keep !== "boardPost") si.boardPostStreamInfo = emptyBoardPostStreamInfo(t);
 };
+
+const emptyBoardPostStreamInfo = (t: number): BoardPostStreamInfo => ({
+  author: "",
+  authorHexColor: "#e7e5e4",
+  text: "",
+  time: t,
+});
+
+const hasBoardPostData = (info?: BoardPostStreamInfo) =>
+  Boolean(info?.text?.trim());
 
 const clearAllStreamOverlays = (si: Presentation, t: number) => {
   si.participantOverlayInfo = emptyParticipantOverlay(t);
   si.stbOverlayInfo = emptyStbOverlay(t);
   si.qrCodeOverlayInfo = emptyQrOverlay(t);
   si.imageOverlayInfo = emptyImageOverlay(t);
+  si.boardPostStreamInfo = emptyBoardPostStreamInfo(t);
 };
 
 const preserveClearedStreamOverlaysForTransition = (
   state: PresentationState,
-  keep: "participant" | "stb" | "qr" | "image",
+  keep: "participant" | "stb" | "qr" | "image" | "boardPost",
 ) => {
   const { streamInfo, prevStreamInfo } = state;
   if (
@@ -289,6 +313,9 @@ const preserveClearedStreamOverlaysForTransition = (
   }
   if (keep !== "image" && hasImageOverlayData(streamInfo.imageOverlayInfo)) {
     prevStreamInfo.imageOverlayInfo = streamInfo.imageOverlayInfo;
+  }
+  if (keep !== "boardPost" && hasBoardPostData(streamInfo.boardPostStreamInfo)) {
+    prevStreamInfo.boardPostStreamInfo = streamInfo.boardPostStreamInfo;
   }
 };
 
@@ -310,11 +337,13 @@ function clearAllStreamOverlaysForTransition(state: PresentationState) {
   const snapStb = streamInfo.stbOverlayInfo;
   const snapQr = streamInfo.qrCodeOverlayInfo;
   const snapImage = streamInfo.imageOverlayInfo;
+  const snapBoardPost = streamInfo.boardPostStreamInfo;
 
   const liveParticipant = hasParticipantOverlayData(snapParticipant);
   const liveStb = hasStbOverlayData(snapStb);
   const liveQr = hasQrOverlayData(snapQr);
   const liveImage = hasImageOverlayData(snapImage);
+  const liveBoardPost = hasBoardPostData(snapBoardPost);
   const prevParticipant = prevStreamInfo.participantOverlayInfo;
   const prevStb = prevStreamInfo.stbOverlayInfo;
   const prevQr = prevStreamInfo.qrCodeOverlayInfo;
@@ -337,6 +366,10 @@ function clearAllStreamOverlaysForTransition(state: PresentationState) {
       ? prevQr
       : { ...emptyQrOverlay(t), ...snapQr }
     : emptyQrOverlay(t);
+
+  prevStreamInfo.boardPostStreamInfo = liveBoardPost
+    ? snapBoardPost
+    : emptyBoardPostStreamInfo(t);
 
   prevStreamInfo.imageOverlayInfo = liveImage
     ? prevImage?.id && prevImage.id === snapImage?.id
@@ -519,7 +552,7 @@ export const presentationSlice = createSlice({
 
       if (hasImageOverlayData(cur) || next.imageUrl) {
         state.prevStreamInfo.imageOverlayInfo = cur;
-      } else if (!next.imageUrl) {
+      } else if (!isEmptySlotFromSameTransition(cur, t)) {
         state.prevStreamInfo.imageOverlayInfo = emptyImageOverlay(t);
       }
 
@@ -549,10 +582,8 @@ export const presentationSlice = createSlice({
       }
       if (hasParticipantOverlayData(cur) || nextHasLines) {
         state.prevStreamInfo.participantOverlayInfo = cur;
-      } else if (
-        !nextHasLines &&
-        !hasParticipantOverlayData(state.prevStreamInfo.participantOverlayInfo)
-      ) {
+      } else if (!isEmptySlotFromSameTransition(cur, t)) {
+        // Later empty received after a cross-type switch: prev data is stale, clear it.
         state.prevStreamInfo.participantOverlayInfo =
           emptyParticipantOverlay(t);
       }
@@ -583,7 +614,7 @@ export const presentationSlice = createSlice({
       }
       if (hasStbOverlayData(cur) || nextHasStb) {
         state.prevStreamInfo.stbOverlayInfo = cur;
-      } else if (!nextHasStb) {
+      } else if (!isEmptySlotFromSameTransition(cur, t)) {
         state.prevStreamInfo.stbOverlayInfo = emptyStbOverlay(t);
       }
 
@@ -613,7 +644,7 @@ export const presentationSlice = createSlice({
       }
       if (hasQrOverlayData(cur) || nextHasQr) {
         state.prevStreamInfo.qrCodeOverlayInfo = cur;
-      } else if (!nextHasQr) {
+      } else if (!isEmptySlotFromSameTransition(cur, t)) {
         state.prevStreamInfo.qrCodeOverlayInfo = emptyQrOverlay(t);
       }
 
@@ -762,6 +793,32 @@ export const presentationSlice = createSlice({
       };
       state.streamInfo.type = "free";
     },
+    updateBoardPostStreamInfo: (
+      state,
+      action: PayloadAction<BoardPostStreamInfo>,
+    ) => {
+      if (!state.isStreamTransmitting) return;
+      const t = getNextStreamOverlayTimestamp(state);
+      if (action.payload.text) {
+        clearStalePrevStreamOverlaySlotsExcept(state, "boardPost", t);
+      }
+      state.prevStreamInfo.boardPostStreamInfo =
+        state.streamInfo.boardPostStreamInfo;
+      state.streamInfo.boardPostStreamInfo = { ...action.payload, time: t };
+      if (action.payload.text) {
+        preserveClearedStreamOverlaysForTransition(state, "boardPost");
+        clearStreamOverlaysExcept(state.streamInfo, "boardPost", t);
+      }
+    },
+    updateBoardPostStreamInfoFromRemote: (
+      state,
+      action: PayloadAction<BoardPostStreamInfo>,
+    ) => {
+      const t = action.payload.time ?? Date.now();
+      state.prevStreamInfo.boardPostStreamInfo =
+        state.streamInfo.boardPostStreamInfo;
+      state.streamInfo.boardPostStreamInfo = { ...action.payload, time: t };
+    },
     clearProjector: (state) => {
       // set previous info for fading out
       state.prevProjectorInfo.slide = state.projectorInfo.slide;
@@ -807,6 +864,8 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
       state.prevStreamInfo.formattedTextDisplayInfo =
         state.streamInfo.formattedTextDisplayInfo;
+      state.prevStreamInfo.boardPostStreamInfo =
+        state.streamInfo.boardPostStreamInfo;
 
       state.streamInfo = {
         ...initialState.streamInfo,
@@ -834,6 +893,12 @@ export const presentationSlice = createSlice({
           id: generateRandomId(),
         },
         formattedTextDisplayInfo: {
+          text: "",
+          time: Date.now(),
+        },
+        boardPostStreamInfo: {
+          author: "",
+          authorHexColor: "#e7e5e4",
           text: "",
           time: Date.now(),
         },
@@ -869,6 +934,8 @@ export const presentationSlice = createSlice({
       state.prevStreamInfo.imageOverlayInfo = state.streamInfo.imageOverlayInfo;
       state.prevStreamInfo.formattedTextDisplayInfo =
         state.streamInfo.formattedTextDisplayInfo;
+      state.prevStreamInfo.boardPostStreamInfo =
+        state.streamInfo.boardPostStreamInfo;
 
       state.projectorInfo = {
         ...initialState.projectorInfo,
@@ -904,6 +971,12 @@ export const presentationSlice = createSlice({
           id: generateRandomId(),
         },
         formattedTextDisplayInfo: {
+          text: "",
+          time: Date.now(),
+        },
+        boardPostStreamInfo: {
+          author: "",
+          authorHexColor: "#e7e5e4",
           text: "",
           time: Date.now(),
         },
@@ -1100,6 +1173,8 @@ export const {
   updateImageOverlayInfoFromRemote,
   updateFormattedTextDisplayInfoFromRemote,
   updateFormattedTextDisplayInfo,
+  updateBoardPostStreamInfo,
+  updateBoardPostStreamInfoFromRemote,
 } = presentationSlice.actions;
 
 export default presentationSlice.reducer;

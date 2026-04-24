@@ -20,6 +20,7 @@ import {
   updateStbOverlayInfoFromRemote,
   updateStreamFromRemote,
   updateFormattedTextDisplayInfoFromRemote,
+  updateBoardPostStreamInfoFromRemote,
 } from "./presentationSlice";
 import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
@@ -90,6 +91,7 @@ import {
   getCreditsByIds,
   migrateLegacyCreditsToActiveOutlineIfNeeded,
 } from "../utils/dbUtils";
+import { applyPouchAudit } from "@/utils/pouchAudit";
 
 // Helper function to safely post messages to the broadcast channel
 const safePostMessage = (message: any) => {
@@ -105,6 +107,12 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
+
+const isListenerCancelledTaskError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  (error as { code?: string }).code === "listener-cancelled";
 
 const sanitizeTransientItemState = (
   item: RootState["undoable"]["present"]["item"],
@@ -231,6 +239,7 @@ export const writePresentationSnapshotToFirebase = (state: RootState) => {
     stream_qrCodeOverlayInfo: streamInfo.qrCodeOverlayInfo,
     stream_imageOverlayInfo: streamInfo.imageOverlayInfo,
     stream_formattedTextDisplayInfo: streamInfo.formattedTextDisplayInfo,
+    stream_boardPostStreamInfo: streamInfo.boardPostStreamInfo,
   };
 
   localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
@@ -259,6 +268,10 @@ export const writePresentationSnapshotToFirebase = (state: RootState) => {
   localStorage.setItem(
     "stream_formattedTextDisplayInfo",
     JSON.stringify(streamInfo.formattedTextDisplayInfo),
+  );
+  localStorage.setItem(
+    "stream_boardPostStreamInfo",
+    JSON.stringify(streamInfo.boardPostStreamInfo),
   );
   localStorage.setItem(
     "stream_itemContentBlocked",
@@ -880,8 +893,8 @@ listenerMiddleware.startListening({
     const persistOutgoingSelection =
       overlaySlice.actions.selectOverlay.match(action);
 
+    listenerApi.cancelActiveListeners();
     if (!persistOutgoingSelection) {
-      listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
     }
 
@@ -916,6 +929,9 @@ listenerMiddleware.startListening({
         persistExistingOverlayDoc(db, overlayToPersist),
       );
     } catch (e) {
+      if (isListenerCancelledTaskError(e)) {
+        return;
+      }
       console.error("overlay persist failed", e);
       throw e;
     }
@@ -1866,6 +1882,7 @@ listenerMiddleware.startListening({
       presentationSlice.actions.updateQrCodeOverlayInfoFromRemote,
       presentationSlice.actions.updateImageOverlayInfoFromRemote,
       presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote,
+      presentationSlice.actions.updateBoardPostStreamInfoFromRemote,
       presentationSlice.actions.setStreamItemContentBlockedFromRemote,
     );
     return (
@@ -2147,6 +2164,31 @@ listenerMiddleware.startListening({
       updateFormattedTextDisplayInfoFromRemote(
         action.payload as FormattedTextDisplayInfo,
       ),
+    );
+  },
+});
+
+// handle updating board post stream info from remote
+listenerMiddleware.startListening({
+  predicate: (action, currentState) => {
+    if (action.type !== "debouncedUpdateBoardPostStreamInfo") return false;
+    const state = (currentState as RootState).presentation;
+    const info = action.payload as { time?: number; text?: string };
+    if (!info.time) return false;
+    const current = state.streamInfo.boardPostStreamInfo;
+    // Always apply when incoming has content but local is empty (stream page opened after post was sent)
+    if (info.text?.trim() && !current?.text?.trim()) return true;
+    return !!(
+      (current?.time && info.time > current.time) ||
+      !current?.time
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+    listenerApi.dispatch(
+      updateBoardPostStreamInfoFromRemote(action.payload as Parameters<typeof updateBoardPostStreamInfoFromRemote>[0]),
     );
   },
 });

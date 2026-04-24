@@ -272,7 +272,7 @@ const Input = ({
       )}
     >
       {isInlineLabel ? (
-        <div className="flex min-w-0 flex-row flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="flex w-full min-w-0 flex-row flex-wrap items-center gap-x-2 gap-y-1">
           {labelEl}
           {inputControl}
         </div>
