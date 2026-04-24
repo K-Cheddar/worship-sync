@@ -1,3 +1,11 @@
+# [2.3.0](https://github.com/K-Cheddar/worship-sync/compare/v2.2.1...v2.3.0) (2026-04-24)
+
+
+### Features
+
+* Add the ability to post comments from the discussion board to the stream ([03c193d](https://github.com/K-Cheddar/worship-sync/commit/03c193dd8e60475030b92fa89360e0f981e37ffa))
+* Syncing Service Planning shows insertions as they happen ([d8c3d84](https://github.com/K-Cheddar/worship-sync/commit/d8c3d8483faa0fea410834586cb31770bb51709f))
+
 ## [2.2.1](https://github.com/K-Cheddar/worship-sync/compare/v2.2.0...v2.2.1) (2026-04-23)
 
 
