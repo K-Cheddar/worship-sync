@@ -3,7 +3,7 @@ import { BoardPostStreamInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 
-const DEFAULT_BG_COLOR = "#32353bd9";
+const DEFAULT_BG_COLOR = "#32353beb";
 const DEFAULT_FONT_SIZE = 1.5;
 const FADE_DURATION = 0.5;
 

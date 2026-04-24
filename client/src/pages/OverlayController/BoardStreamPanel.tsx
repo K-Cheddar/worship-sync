@@ -17,7 +17,7 @@ import {
 import { cn } from "@/utils/cnHelper";
 import { DBBoardPost } from "../../types";
 
-const DEFAULT_BG_COLOR = "#32353bd9";
+const DEFAULT_BG_COLOR = "#32353beb";
 const DEFAULT_FONT_SIZE = 1.5;
 const DEFAULT_DURATION = 15;
 
@@ -123,17 +123,16 @@ const BoardStreamPanel = () => {
             <li
               key={post._id}
               className={cn(
-                "flex w-full overflow-clip rounded-md leading-3 border-l-4 transition-colors border-t-1 border-r-1 border-b-1",
+                "flex w-full overflow-clip rounded-md leading-3 border-l-4 transition-colors border-t border-r border-b",
                 isSelected
                   ? "border-cyan-400 bg-cyan-950/40"
                   : "border-transparent bg-black/50",
               )}
             >
-
               <Button
                 variant="tertiary"
                 wrap
-                className="flex-col flex-1 h-full leading-4 items-start"
+                className="flex-col flex-1 h-full leading-4 items-start font-normal"
                 padding="px-2 py-1.5"
                 gap="gap-1"
                 onClick={() => setSelectedPost(post)}
@@ -178,7 +177,7 @@ const BoardStreamPanel = () => {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Left: highlighted post list */}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-r border-gray-600">
-          <p className="shrink-0 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
+          <p className="shrink-0 px-3 py-2 text-lg font-semibold text-slate-200 text-center">
             Highlighted Posts
           </p>
           {renderList()}

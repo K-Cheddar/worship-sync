@@ -484,10 +484,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const churchIntegrationsPermissionRetryRef = useRef(0);
   const churchIntegrationsRemintAttemptsRef = useRef(0);
   const location = useLocation();
-  const isOnController = useMemo(() => {
+  const isOnHumanPath = useMemo(() => {
     const path = location.pathname;
     return (
-      path.startsWith("/controller") || path.startsWith("/overlay-controller")
+      path.startsWith("/controller") || path.startsWith("/overlay-controller") || path.startsWith("/board-controller") || path.startsWith("/credits-editor") || path.startsWith("/boards/controller") || path === ("/home") || path.startsWith("/account")
     );
   }, [location.pathname]);
 
@@ -1425,7 +1425,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             name: activeInstanceName,
             database: database,
             hostId: hostId,
-            isOnController,
+            isOnController: isOnHumanPath,
             sessionKind,
             deviceLabel: device?.label || null,
           })
@@ -1463,7 +1463,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     firebaseDb,
     hostId,
     isSharedDataScopeReady,
-    isOnController,
+    isOnHumanPath,
     sessionKind,
   ]);
 
@@ -1483,7 +1483,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const unsubscribe = onValue(connectedRef, (snap) => {
       if (snap.val() === true) {
         // When we reconnect, re-establish the active instance if we're on the controller page
-        if (isOnController && instanceRef.current) {
+        if (isOnHumanPath && instanceRef.current) {
           void settleFirebaseWrite(
             set(instanceRef.current, {
               lastActive: new Date().toISOString(),
@@ -1491,7 +1491,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               name: activeInstanceName,
               database,
               hostId,
-              isOnController,
+              isOnController: isOnHumanPath,
               sessionKind,
               deviceLabel: device?.label || null,
             })
@@ -1509,7 +1509,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     device?.label,
     firebaseDb,
     hostId,
-    isOnController,
+    isOnHumanPath,
     isSharedDataScopeReady,
     sessionKind,
   ]);

@@ -1,5 +1,4 @@
 import { useContext, useState, useEffect, useMemo } from "react";
-import { useLocation } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   Cloud,
@@ -28,11 +27,6 @@ import { selectAnyAutosavePending } from "../../../store/autosaveIndicatorSlice"
 
 const ACCOUNT_TRIGGER_MAX_W = "max-w-[10rem]";
 
-const isToolbarAutosaveStatusRoute = (pathname: string) =>
-  pathname.startsWith("/controller") ||
-  pathname === "/overlay-controller" ||
-  pathname === "/credits-editor";
-
 const UserSection = () => {
   const {
     user,
@@ -54,8 +48,6 @@ const UserSection = () => {
   const [firebaseDisplayName, setFirebaseDisplayName] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [isSavingName, setIsSavingName] = useState(false);
-  const { pathname } = useLocation();
-  const showToolbarAutosaveStatus = isToolbarAutosaveStatusRoute(pathname);
   const anyAutosavePending = useSelector(selectAnyAutosavePending);
 
   useEffect(() => {
@@ -157,7 +149,7 @@ const UserSection = () => {
           <div
             className={`flex min-w-0 flex-col gap-1 items-start text-left ${ACCOUNT_TRIGGER_MAX_W}`}
           >
-            {showToolbarAutosaveStatus && (!isDemo || anyAutosavePending) ? (
+            {(!isDemo || anyAutosavePending) ? (
               <div className="flex w-full min-w-0 items-center gap-1">
                 <div
                   className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium"
@@ -209,19 +201,6 @@ const UserSection = () => {
               ) : null}
             </div>
           </div>
-          {!isMobile && !showToolbarAutosaveStatus && !isDemo ? (
-            <>
-              <span className="inline-flex shrink-0" title="Active sessions">
-                <Icon
-                  svg={Users}
-                  size="xs"
-                  color="#22d3ee"
-                  className={isPulsing ? "animate-pulse" : ""}
-                />
-              </span>
-              <span className="shrink-0 text-sm">{activeCount}</span>
-            </>
-          ) : null}
         </Button>
       }
     >

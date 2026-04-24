@@ -863,13 +863,9 @@ export const BoardControllerContent = () => {
             <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">
               Discussion boards
             </h1>
-            <div className="shrink-0">
-              <UserSection />
-            </div>
+            <UserSection />
           </div>
-          <p className="mt-0.5 hidden text-sm text-gray-300 lg:block">
-            Moderate posts, copy share links, and send highlights to the presentation screen.
-          </p>
+
         </div>
       </header>
 
