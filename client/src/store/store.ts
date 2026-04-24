@@ -20,6 +20,7 @@ import {
   updateStbOverlayInfoFromRemote,
   updateStreamFromRemote,
   updateFormattedTextDisplayInfoFromRemote,
+  updateBoardPostStreamInfoFromRemote,
 } from "./presentationSlice";
 import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
@@ -238,6 +239,7 @@ export const writePresentationSnapshotToFirebase = (state: RootState) => {
     stream_qrCodeOverlayInfo: streamInfo.qrCodeOverlayInfo,
     stream_imageOverlayInfo: streamInfo.imageOverlayInfo,
     stream_formattedTextDisplayInfo: streamInfo.formattedTextDisplayInfo,
+    stream_boardPostStreamInfo: streamInfo.boardPostStreamInfo,
   };
 
   localStorage.setItem("projectorInfo", JSON.stringify(projectorInfo));
@@ -266,6 +268,10 @@ export const writePresentationSnapshotToFirebase = (state: RootState) => {
   localStorage.setItem(
     "stream_formattedTextDisplayInfo",
     JSON.stringify(streamInfo.formattedTextDisplayInfo),
+  );
+  localStorage.setItem(
+    "stream_boardPostStreamInfo",
+    JSON.stringify(streamInfo.boardPostStreamInfo),
   );
   localStorage.setItem(
     "stream_itemContentBlocked",
@@ -1876,6 +1882,7 @@ listenerMiddleware.startListening({
       presentationSlice.actions.updateQrCodeOverlayInfoFromRemote,
       presentationSlice.actions.updateImageOverlayInfoFromRemote,
       presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote,
+      presentationSlice.actions.updateBoardPostStreamInfoFromRemote,
       presentationSlice.actions.setStreamItemContentBlockedFromRemote,
     );
     return (
@@ -2157,6 +2164,31 @@ listenerMiddleware.startListening({
       updateFormattedTextDisplayInfoFromRemote(
         action.payload as FormattedTextDisplayInfo,
       ),
+    );
+  },
+});
+
+// handle updating board post stream info from remote
+listenerMiddleware.startListening({
+  predicate: (action, currentState) => {
+    if (action.type !== "debouncedUpdateBoardPostStreamInfo") return false;
+    const state = (currentState as RootState).presentation;
+    const info = action.payload as { time?: number; text?: string };
+    if (!info.time) return false;
+    const current = state.streamInfo.boardPostStreamInfo;
+    // Always apply when incoming has content but local is empty (stream page opened after post was sent)
+    if (info.text?.trim() && !current?.text?.trim()) return true;
+    return !!(
+      (current?.time && info.time > current.time) ||
+      !current?.time
+    );
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+    listenerApi.dispatch(
+      updateBoardPostStreamInfoFromRemote(action.payload as Parameters<typeof updateBoardPostStreamInfoFromRemote>[0]),
     );
   },
 });

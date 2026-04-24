@@ -2,6 +2,7 @@ import { useContext, useLayoutEffect, useRef } from "react";
 import {
   RectangleEllipsis,
   Layers,
+  MessageSquare,
   ScrollText,
   Clock,
   Check,
@@ -45,10 +46,12 @@ const ToolbarOverlay = ({
 
   const overlayPanelTabRefs = useRef<{
     overlays: HTMLButtonElement | HTMLAnchorElement | null;
+    boardPosts: HTMLButtonElement | HTMLAnchorElement | null;
     credits: HTMLButtonElement | HTMLAnchorElement | null;
     serviceTimes: HTMLButtonElement | HTMLAnchorElement | null;
   }>({
     overlays: null,
+    boardPosts: null,
     credits: null,
     serviceTimes: null,
   });
@@ -121,6 +124,18 @@ const ToolbarOverlay = ({
         >
           Overlays
         </ToolbarButton>
+        {access === "full" && (
+          <ToolbarButton
+            ref={(el) => {
+              overlayPanelTabRefs.current.boardPosts = el;
+            }}
+            svg={MessageSquare}
+            onClick={() => dispatch(setOverlayControllerPanel("boardPosts"))}
+            isActive={overlayControllerPanel === "boardPosts"}
+          >
+            Board Posts
+          </ToolbarButton>
+        )}
         {access !== "view" && access !== "music" && (
           <ToolbarButton
             ref={(el) => {

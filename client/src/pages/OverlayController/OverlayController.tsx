@@ -2,6 +2,7 @@ import { useContext, useEffect, useRef, useState } from "react";
 import TransmitHandler from "../../containers/TransmitHandler/TransmitHandler";
 import Media from "../../containers/Media/Media";
 import Overlays from "../../containers/Overlays/Overlays";
+import BoardStreamPanel from "./BoardStreamPanel";
 import Button from "../../components/Button/Button";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -79,6 +80,19 @@ const OverlayController = () => {
         >
           <Overlays />
         </div>
+        {access === "full" && (
+          <div
+            className={cn(
+              "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden transition-none",
+              overlayControllerPanel === "boardPosts"
+                ? "z-10 opacity-100"
+                : "pointer-events-none z-0 opacity-0",
+            )}
+            aria-hidden={overlayControllerPanel !== "boardPosts"}
+          >
+            <BoardStreamPanel />
+          </div>
+        )}
         {access !== "view" && (
           <div
             className={cn(
@@ -111,7 +125,7 @@ const OverlayController = () => {
           <Button
             className={cn(
               "z-10 ml-2 h-1/4 justify-center text-sm lg:hidden",
-              overlayControllerPanel !== "overlays" && "hidden",
+              overlayControllerPanel !== "overlays" && overlayControllerPanel !== "boardPosts" && "hidden",
             )}
             svg={isRightPanelOpen ? ArrowRightFromLine : ArrowLeftFromLine}
             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
@@ -122,7 +136,7 @@ const OverlayController = () => {
               "lg:w-[min(46rem,46%)] lg:min-w-120 shrink-0",
               "max-lg:right-0 max-lg:absolute",
               isRightPanelOpen ? "w-[65%] max-lg:z-10" : "w-0 max-lg:z-[-1]",
-              overlayControllerPanel !== "overlays" && "hidden",
+              overlayControllerPanel !== "overlays" && overlayControllerPanel !== "boardPosts" && "hidden",
             )}
             ref={rightPanelRef}
           >
@@ -150,7 +164,7 @@ const OverlayController = () => {
         <div
           className={cn(
             "flex h-full shrink-0 flex-col border-l-2 border-gray-500 bg-homepage-canvas lg:w-[min(46rem,46%)] lg:min-w-120",
-            overlayControllerPanel !== "overlays" && "hidden",
+            overlayControllerPanel !== "overlays" && overlayControllerPanel !== "boardPosts" && "hidden",
           )}
         >
           <TransmitHandler

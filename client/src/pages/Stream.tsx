@@ -27,6 +27,8 @@ const Stream = () => {
     keepScreenOn();
   }, []);
 
+  console.log({ streamInfo, prevStreamInfo })
+
   return (
     <DisplayWindow
       boxes={streamInfo.slide?.boxes || []}
@@ -44,6 +46,8 @@ const Stream = () => {
       prevImageOverlayInfo={prevStreamInfo.imageOverlayInfo}
       formattedTextDisplayInfo={streamInfo.formattedTextDisplayInfo}
       prevFormattedTextDisplayInfo={prevStreamInfo.formattedTextDisplayInfo}
+      boardPostStreamInfo={streamInfo.boardPostStreamInfo}
+      prevBoardPostStreamInfo={prevStreamInfo.boardPostStreamInfo}
       shouldAnimate
       width={100}
       timerInfo={streamTimer}

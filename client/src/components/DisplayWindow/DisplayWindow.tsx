@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import {
   BibleDisplayInfo,
+  BoardPostStreamInfo,
   Box,
   DisplayType,
   FormattedTextDisplayInfo,
@@ -25,6 +26,7 @@ import DisplayEditor, { DisplayEditorChangeInfo } from "./DisplayEditor";
 import DisplayStreamText from "./DisplayStreamText";
 import DisplayImageOverlay from "./DisplayImageOverlay";
 import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
+import DisplayBoardPostOverlay from "./DisplayBoardPostOverlay";
 import HLSPlayer from "./HLSVideoPlayer";
 import MonitorView from "./MonitorView";
 import { useSelector } from "../../hooks";
@@ -35,6 +37,7 @@ const STREAM_OVERLAY_TOTAL_VISIBLE_MS = {
   stb: 3000,
   qr: 5000,
   image: 5000,
+  boardPost: 2000,
 } as const;
 
 const STREAM_PREV_OVERLAY_EXIT_MS = 1500;
@@ -51,6 +54,9 @@ const hasQrOverlayData = (overlay?: OverlayInfo) =>
   Boolean(overlay?.url || overlay?.description);
 
 const hasImageOverlayData = (overlay?: OverlayInfo) => Boolean(overlay?.imageUrl);
+
+const hasBoardPostData = (info?: BoardPostStreamInfo) =>
+  Boolean(info?.text?.trim());
 
 const getParticipantOverlayTotalVisibleMs = (overlay?: OverlayInfo) => {
   const lineCount = [overlay?.name, overlay?.title, overlay?.event].filter(
@@ -213,6 +219,8 @@ type DisplayWindowProps = {
   prevBibleDisplayInfo?: BibleDisplayInfo;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
   prevFormattedTextDisplayInfo?: FormattedTextDisplayInfo;
+  boardPostStreamInfo?: BoardPostStreamInfo;
+  prevBoardPostStreamInfo?: BoardPostStreamInfo;
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
   shouldAnimate?: boolean;
@@ -270,6 +278,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       selectedBox,
       formattedTextDisplayInfo,
       prevFormattedTextDisplayInfo,
+      boardPostStreamInfo,
+      prevBoardPostStreamInfo,
       isBoxLocked,
       boxCursorPositions,
       disabled = false,
@@ -457,6 +467,21 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           currentHasData: hasImageOverlayData(imageOverlayInfo),
           nowMs: streamOverlayNowMs,
         }),
+        getOverlayVisibleUntilMs({
+          hasData: hasBoardPostData(boardPostStreamInfo),
+          time: boardPostStreamInfo?.time,
+          duration: boardPostStreamInfo?.duration,
+          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.boardPost,
+        }),
+        getPrevOverlayVisibleUntilMs({
+          prevHasData: hasBoardPostData(prevBoardPostStreamInfo),
+          prevTime: prevBoardPostStreamInfo?.time,
+          prevDuration: prevBoardPostStreamInfo?.duration,
+          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.boardPost,
+          currentTime: boardPostStreamInfo?.time,
+          currentHasData: hasBoardPostData(boardPostStreamInfo),
+          nowMs: streamOverlayNowMs,
+        }),
       ].filter((value): value is number => value != null);
 
       if (visibleUntilValues.length === 0) return null;
@@ -466,8 +491,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
       return Math.max(...visibleUntilValues);
     }, [
+      boardPostStreamInfo,
       imageOverlayInfo,
       participantOverlayInfo,
+      prevBoardPostStreamInfo,
       prevImageOverlayInfo,
       prevParticipantOverlayInfo,
       prevQrCodeOverlayInfo,
@@ -603,6 +630,36 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           ? prevImageOverlayInfo
           : undefined,
       [imageOverlayInfo, prevImageOverlayInfo, streamOverlayNowMs],
+    );
+
+    const visibleBoardPostStreamInfo = useMemo(
+      () =>
+        isOverlayVisibleAtMs({
+          hasData: hasBoardPostData(boardPostStreamInfo),
+          time: boardPostStreamInfo?.time,
+          duration: boardPostStreamInfo?.duration,
+          totalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.boardPost,
+          nowMs: streamOverlayNowMs,
+        })
+          ? boardPostStreamInfo
+          : undefined,
+      [boardPostStreamInfo, streamOverlayNowMs],
+    );
+
+    const visiblePrevBoardPostStreamInfo = useMemo(
+      () =>
+        isPrevOverlayVisibleAtMs({
+          prevHasData: hasBoardPostData(prevBoardPostStreamInfo),
+          prevTime: prevBoardPostStreamInfo?.time,
+          prevDuration: prevBoardPostStreamInfo?.duration,
+          prevTotalVisibleMs: STREAM_OVERLAY_TOTAL_VISIBLE_MS.boardPost,
+          currentTime: boardPostStreamInfo?.time,
+          currentHasData: hasBoardPostData(boardPostStreamInfo),
+          nowMs: streamOverlayNowMs,
+        })
+          ? prevBoardPostStreamInfo
+          : undefined,
+      [boardPostStreamInfo, prevBoardPostStreamInfo, streamOverlayNowMs],
     );
 
     const hasActiveStreamOverlay =
@@ -983,6 +1040,16 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     imageOverlayInfo={visibleImageOverlayInfo}
                     prevImageOverlayInfo={visiblePrevImageOverlayInfo}
                     ref={containerRef}
+                  />
+                )}
+
+              {(visibleBoardPostStreamInfo != null ||
+                visiblePrevBoardPostStreamInfo != null) && (
+                  <DisplayBoardPostOverlay
+                    width={effectiveWidth}
+                    shouldAnimate={shouldAnimate}
+                    boardPostStreamInfo={visibleBoardPostStreamInfo}
+                    prevBoardPostStreamInfo={visiblePrevBoardPostStreamInfo}
                   />
                 )}
             </>

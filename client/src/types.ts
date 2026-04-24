@@ -301,6 +301,17 @@ export type Presentation = {
   qrCodeOverlayInfo?: OverlayInfo;
   imageOverlayInfo?: OverlayInfo;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
+  boardPostStreamInfo?: BoardPostStreamInfo;
+};
+
+export type BoardPostStreamInfo = {
+  author: string;
+  authorHexColor: string;
+  text: string;
+  backgroundColor?: string;
+  fontSize?: number;
+  duration?: number;
+  time?: number;
 };
 
 export type FormattedTextDisplayInfo = {

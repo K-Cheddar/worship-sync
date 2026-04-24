@@ -569,6 +569,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_qrCodeOverlayInfo: Unsubscribe | undefined;
     stream_imageOverlayInfo: Unsubscribe | undefined;
     stream_formattedTextDisplayInfo: Unsubscribe | undefined;
+    stream_boardPostStreamInfo: Unsubscribe | undefined;
     stream_itemContentBlocked: Unsubscribe | undefined;
     timerInfo: Unsubscribe | undefined;
   }>({
@@ -581,6 +582,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_qrCodeOverlayInfo: undefined,
     stream_imageOverlayInfo: undefined,
     stream_formattedTextDisplayInfo: undefined,
+    stream_boardPostStreamInfo: undefined,
     stream_itemContentBlocked: undefined,
     timerInfo: undefined,
   });
@@ -1007,6 +1009,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         stream_formattedTextDisplayInfo: {
           info: data.stream_formattedTextDisplayInfo,
           updateAction: "debouncedUpdateFormattedTextDisplayInfo",
+        },
+        stream_boardPostStreamInfo: {
+          info: data.stream_boardPostStreamInfo,
+          updateAction: "debouncedUpdateBoardPostStreamInfo",
         },
         stream_itemContentBlocked: {
           info: data.stream_itemContentBlocked,
