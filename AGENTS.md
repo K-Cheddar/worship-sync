@@ -209,6 +209,8 @@ Be careful when changing shared display code. A change in one surface may affect
 - Stream display
 - Electron windows
 
+For DisplayWindow-specific work, use `$display-window` before changing or reviewing projector, monitor, stream, preview, crossfade, media background, video playback, or display-layer behavior. This skill captures the current rendering model, known transition pitfalls, stream transparency constraints, and the expected verification checklist.
+
 **Stream overlay behavior**
 
 On the stream surface, overlays are intended to behave as a **temporary top layer**, not as a destructive replacement for the underlying item. The live item layer (slide text, Bible text, or formatted text) should remain available underneath and fade back in after the overlay finishes unless the operator has explicitly hidden stream content.

@@ -44,6 +44,30 @@ const STREAM_PREV_OVERLAY_EXIT_MS = 1500;
 const DISPLAY_PREV_LAYER_VISIBLE_MS = 500;
 const STREAM_PREV_TEXT_LAYER_VISIBLE_MS = 350;
 
+const getBoxesLayerKey = (boxes: Box[]) =>
+  boxes
+    .map((box) =>
+      [
+        box.id,
+        box.words,
+        box.background,
+        box.mediaInfo?.background,
+        box.mediaInfo?.type,
+        box.brightness,
+      ].join("~"),
+    )
+    .join("|");
+
+const getBoxVisualKey = (box: Box) =>
+  [
+    box.id,
+    box.words,
+    box.background,
+    box.mediaInfo?.background,
+    box.mediaInfo?.type,
+    box.brightness,
+  ].join("~");
+
 const hasParticipantOverlayData = (overlay?: OverlayInfo) =>
   Boolean(overlay?.name || overlay?.title || overlay?.event);
 
@@ -314,9 +338,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     const [actualWidthPx, setActualWidthPx] = useState<number>(0);
     const [actualHeightPx, setActualHeightPx] = useState<number>(0);
-    const [displayPrevLayerBoxes, setDisplayPrevLayerBoxes] = useState<Box[]>(
-      [],
-    );
+    const [displayPrevLayerState, setDisplayPrevLayerState] = useState({
+      key: "",
+      visible: false,
+    });
     const [streamPrevTextLayerBoxes, setStreamPrevTextLayerBoxes] = useState<
       Box[]
     >([]);
@@ -702,26 +727,57 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       () => boxes.some((box) => Boolean(box.words?.trim())),
       [boxes]
     );
+    const displayPrevLayerKey = useMemo(
+      () => getBoxesLayerKey(prevBoxes),
+      [prevBoxes],
+    );
+    const currentDisplayLayerKey = useMemo(
+      () => getBoxesLayerKey(boxes),
+      [boxes],
+    );
+    const displayTransitionKey = `${currentDisplayLayerKey}::${displayPrevLayerKey}`;
+    const shouldRenderIncomingDisplayPrevLayer =
+      isDisplay &&
+      !shouldUseFullMonitorLayout &&
+      prevBoxes.length > 0 &&
+      displayPrevLayerState.key !== displayTransitionKey;
+    const shouldRenderStoredDisplayPrevLayer =
+      isDisplay &&
+      !shouldUseFullMonitorLayout &&
+      prevBoxes.length > 0 &&
+      displayPrevLayerState.visible &&
+      displayPrevLayerState.key === displayTransitionKey;
+    const activeDisplayPrevLayerBoxes =
+      shouldRenderIncomingDisplayPrevLayer || shouldRenderStoredDisplayPrevLayer
+        ? prevBoxes
+        : [];
 
     useLayoutEffect(() => {
       if (!isDisplay || shouldUseFullMonitorLayout || prevBoxes.length === 0) {
-        setDisplayPrevLayerBoxes((current) =>
-          current.length === 0 ? current : [],
+        setDisplayPrevLayerState((current) =>
+          current.visible ? { key: current.key, visible: false } : current,
         );
         return;
       }
 
       const token = ++displayPrevLayerTokenRef.current;
-      setDisplayPrevLayerBoxes(prevBoxes);
+      setDisplayPrevLayerState({ key: displayTransitionKey, visible: true });
 
       const timeoutId = window.setTimeout(() => {
-        setDisplayPrevLayerBoxes((current) =>
-          displayPrevLayerTokenRef.current === token ? [] : current,
+        setDisplayPrevLayerState((current) =>
+          displayPrevLayerTokenRef.current === token
+            ? { key: current.key, visible: false }
+            : current,
         );
       }, DISPLAY_PREV_LAYER_VISIBLE_MS);
 
       return () => window.clearTimeout(timeoutId);
-    }, [isDisplay, shouldUseFullMonitorLayout, prevBoxes]);
+    }, [
+      displayTransitionKey,
+      isDisplay,
+      shouldUseFullMonitorLayout,
+      prevBoxes.length,
+    ]);
 
     useLayoutEffect(() => {
       if (!isStream || overlayPreviewMode || prevBoxes.length === 0) {
@@ -839,7 +895,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           <div className="absolute inset-0" data-testid="current-display-layer">
             {boxes.map((box, index) => (
               <DisplayBox
-                key={`current-${box.id}`}
+                key={`current-${getBoxVisualKey(box)}`}
                 box={box}
                 width={effectiveWidth}
                 showBackground={showBackground}
@@ -863,11 +919,11 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         ) : null;
 
       const prevDisplayLayer =
-        isDisplay && !shouldUseFullMonitorLayout && displayPrevLayerBoxes.length > 0 ? (
+        isDisplay && !shouldUseFullMonitorLayout && activeDisplayPrevLayerBoxes.length > 0 ? (
           <div className="absolute inset-0" data-testid="prev-display-layer">
-            {displayPrevLayerBoxes.map((box, index) => (
+            {activeDisplayPrevLayerBoxes.map((box, index) => (
               <DisplayBox
-                key={`prev-${box.id}`}
+                key={`prev-${getBoxVisualKey(box)}`}
                 box={box}
                 width={effectiveWidth}
                 showBackground={showBackground}
