@@ -44,10 +44,18 @@ const buildBaseTimer = (
 
 const finalizeTimerState = (
   timerInfo: TimerInfo,
-  existingTimer?: TimerInfo
+  existingTimer?: TimerInfo,
+  options: { ignoreExistingEndTimeOnStart?: boolean } = {}
 ): TimerInfo => {
   const previousStatus = existingTimer?.status;
-  const hasExplicitEndTime = timerInfo.endTime !== undefined;
+  const hasExplicitEndTime =
+    timerInfo.endTime !== undefined &&
+    !(
+      options.ignoreExistingEndTimeOnStart &&
+      timerInfo.status === "running" &&
+      previousStatus === "stopped" &&
+      timerInfo.endTime === existingTimer?.endTime
+    );
   const isStarting =
     timerInfo.status === "running" &&
     previousStatus === "stopped" &&
@@ -129,7 +137,8 @@ const applyTimerUpdate = (
       },
       existingTimer
     ),
-    existingTimer
+    existingTimer,
+    { ignoreExistingEndTimeOnStart: true }
   );
 
 export const timersSlice = createSlice({
