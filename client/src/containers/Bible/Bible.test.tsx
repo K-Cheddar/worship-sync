@@ -173,4 +173,35 @@ describe("Bible", () => {
     expect(state.searchValues.book).toBe("John");
     expect(state.searchValues.chapter).toBe("3");
   });
+
+  it("hydrates a Bible search with a trailing version code", async () => {
+    const store = createBibleStore();
+    store.dispatch(bibleSlice.actions.setVersion("esv"));
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <MemoryRouter
+            initialEntries={[
+              "/controller/bible?search=Psalm%2078%2040-64%20NKJV",
+            ]}
+          >
+            <Bible />
+          </MemoryRouter>
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(store.getState().bible.searchValues.endVerse).toBe("64");
+    });
+
+    const state = store.getState().bible;
+    expect(state.version).toBe("nkjv");
+    expect(state.searchValues.book).toBe("Psalm");
+    expect(state.searchValues.chapter).toBe("78");
+    expect(state.searchValues.startVerse).toBe("40");
+  });
 });

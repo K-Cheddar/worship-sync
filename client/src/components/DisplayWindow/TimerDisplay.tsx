@@ -24,20 +24,18 @@ export function formatTime(
   separateSections = false,
 ): string | ReactNode {
   const totalSec = Math.max(0, Math.floor(Number(seconds) || 0));
-  const hours = Math.floor(totalSec / 3600)
-    .toString()
-    .padStart(2, "0");
-  const minutes = Math.floor((totalSec % 3600) / 60)
-    .toString()
-    .padStart(2, "0");
-  const secs = (totalSec % 60).toString().padStart(2, "0");
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  const paddedMinutes = minutes.toString().padStart(2, "0");
+  const paddedSecs = secs.toString().padStart(2, "0");
 
   if (showMinutesOnly) {
     const totalMinutes = Math.floor(totalSec / 60);
     return totalMinutes.toString();
   }
 
-  if (hours === "00" && totalSec < 60) {
+  if (hours === 0 && totalSec < 60) {
     const secOnly = String(totalSec);
     if (separateSections) {
       return <span className="inline-block">{secOnly}</span>;
@@ -45,30 +43,30 @@ export function formatTime(
     return secOnly;
   }
 
-  if (hours === "00" && separateSections) {
+  if (hours === 0 && separateSections) {
     return (
       <>
         <span className="inline-block">{minutes}</span>
-        <span className="inline-block">:{secs}</span>
+        <span className="inline-block">:{paddedSecs}</span>
       </>
     );
   }
 
-  if (hours === "00") {
-    return [minutes, secs].join(":");
+  if (hours === 0) {
+    return [minutes, paddedSecs].join(":");
   }
 
   if (separateSections) {
     return (
       <>
         <span className="inline-block">{hours}</span>
-        <span className="inline-block">:{minutes}</span>
-        <span className="inline-block">:{secs}</span>
+        <span className="inline-block">:{paddedMinutes}</span>
+        <span className="inline-block">:{paddedSecs}</span>
       </>
     );
   }
 
-  return [hours, minutes, secs].join(":");
+  return [hours, paddedMinutes, paddedSecs].join(":");
 }
 
 const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {

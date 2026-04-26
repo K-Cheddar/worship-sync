@@ -52,7 +52,7 @@ describe("DisplayWindow timer and text helpers", () => {
       expect(formatTime(58, false)).toBe("58");
       expect(formatTime(9, false)).toBe("9");
       expect(formatTime(0, false)).toBe("0");
-      expect(formatTime(60, false)).toBe("01:00");
+      expect(formatTime(60, false)).toBe("1:00");
     });
 
     it("renders a single span for under-one-minute split formatting", () => {
@@ -65,15 +65,15 @@ describe("DisplayWindow timer and text helpers", () => {
     it("renders split spans when formatting mm:ss sections", () => {
       render(<div data-testid="format-root">{formatTime(65, false, true)}</div>);
       const root = screen.getByTestId("format-root");
-      expect(root).toHaveTextContent("01:05");
-      expect(within(root).getAllByText(/^(01|:05)$/)).toHaveLength(2);
+      expect(root).toHaveTextContent("1:05");
+      expect(within(root).getAllByText(/^(1|:05)$/)).toHaveLength(2);
     });
 
     it("renders split spans when formatting hh:mm:ss sections", () => {
       render(<div data-testid="format-root">{formatTime(3661, false, true)}</div>);
       const root = screen.getByTestId("format-root");
-      expect(root).toHaveTextContent("01:01:01");
-      expect(within(root).getAllByText(/^(01|:01)$/)).toHaveLength(3);
+      expect(root).toHaveTextContent("1:01:01");
+      expect(within(root).getAllByText(/^(1|:01)$/)).toHaveLength(3);
     });
 
     it("removes timer token when timerInfo is not provided", () => {
@@ -91,7 +91,7 @@ describe("DisplayWindow timer and text helpers", () => {
 
       render(<TimerDisplay timerInfo={timer} words={"Time: {{timer}}"} />);
 
-      const timerSpan = screen.getByText("01:01", { selector: "span" });
+      const timerSpan = screen.getByText("1:01", { selector: "span" });
       expect(timerSpan).toBeInTheDocument();
       expect(timerSpan).toHaveStyle({ color: "#112233" });
     });
@@ -123,8 +123,8 @@ describe("DisplayWindow timer and text helpers", () => {
 
       render(<DisplayTimer fontSize={20} />);
 
-      expect(screen.getByText("01:01:01")).toBeInTheDocument();
-      const timerEl = screen.getByText("01:01:01");
+      expect(screen.getByText("1:01:01")).toBeInTheDocument();
+      const timerEl = screen.getByText("1:01:01");
       expect(timerEl).toHaveStyle({ fontSize: "20px", color: "#445566" });
     });
 

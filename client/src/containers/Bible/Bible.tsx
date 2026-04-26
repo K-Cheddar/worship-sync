@@ -18,6 +18,7 @@ import {
   openBibleAtLocation,
 } from "../../store/bibleSlice";
 import { bibleVersions } from "../../utils/bibleVersions";
+import { parseBibleSearchReference } from "../../utils/bibleReferenceParser";
 import { getVerses as getVersesApi } from "../../api/getVerses";
 import BibleVersesList from "./BibleVersesList";
 import { hasRenderableVersesInRange } from "./bibleVerseRange";
@@ -333,8 +334,6 @@ const Bible = () => {
       return;
     }
 
-    const normalized = val.trim().replace(/[–—]/g, "-");
-
     // Matches:
     // "Genesis"
     // "John 3"
@@ -343,31 +342,23 @@ const Bible = () => {
     // "Gen 3:16-20"
     // "Gen 3:16 20"
     // "1 John 2 3-5"
-    const pattern = new RegExp(
-      [
-        "^\\s*",
-        "([1-3]?\\s*[A-Za-z]+(?:\\s+[A-Za-z]+)*)", // book (with optional leading number & multiple words)
+    // "Psalm 78 40-64 NKJV"
+    const parsedReference = parseBibleSearchReference(val);
+    if (!parsedReference) return;
 
-        // Optional chapter
-        "(?:\\s*(\\d+)",
-
-        // Optional verseStart: either ":" + spaces OR just spaces
-        "(?:(?:\\s*:\\s*|\\s+)(\\d+)",
-
-        // Optional verseEnd: either "-" + spaces OR just spaces
-        "(?:(?:-\\s*|\\s+)(\\d+))?",
-        ")?",
-
-        ")?\\s*$",
-      ].join("")
-    );
-    const match = normalized.match(pattern);
-    if (!match) return;
-
-    const [, bookStr, chapterStr, verseStartStr, verseEndStr] = match;
+    const {
+      book: bookStr,
+      chapter: chapterStr,
+      startVerse: verseStartStr,
+      endVerse: verseEndStr,
+      version: parsedVersion,
+    } = parsedReference;
 
     dispatch(setSearchValue({ type: "book", value: bookStr || "" }));
     dispatch(setSearchValue({ type: "chapter", value: chapterStr || "" }));
+    if (parsedVersion) {
+      dispatch(setVersion(parsedVersion));
+    }
     if (chapterStr) {
       dispatch(setSearchValue({ type: "chapter", value: chapterStr }));
       dispatch(setChapter(parseInt(chapterStr)));
