@@ -308,7 +308,7 @@ const Credit = ({
           tabIndex={-1}
         />
       )}
-      <div className="flex flex-col flex-1 min-h-0 leading-4 text-center px-2 py-1.5 gap-1">
+      <div className="flex flex-col flex-1 leading-4 text-center px-2 py-1.5 gap-1">
         <Input
           label="Heading"
           className="flex flex-col gap-1"
