@@ -172,73 +172,60 @@ export function buildMediaLibraryBarActions(args: {
   if (flags.itemSlides) {
     const manualIdsForSubset = itemSlideContext
       ? filterExistingSlideIds(
-          itemSlideContext.slides,
-          itemSlideContext.backgroundTargetSlideIds,
-        )
+        itemSlideContext.slides,
+        itemSlideContext.backgroundTargetSlideIds,
+      )
       : [];
     const applyMultiManualSlideTargets = manualIdsForSubset.length > 1;
 
     const setAllSlidesAction: MediaLibraryBarAction = {
-      id: "set-all-slides",
-      label: "Set All Slides",
+      id: "apply-all-slides",
+      label: "Apply to all slides",
       icon: <Images className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
       disabled: isLoading || !m.background,
-        onClick: () => {
-          if (m.background && db) {
-            dispatch(
-              updateAllSlideBackgrounds({
-                background: m.background,
-                mediaInfo: m,
-              }),
-            );
-            slideBgAck("set-all-slides");
-          }
-        },
+      onClick: () => {
+        if (m.background && db) {
+          dispatch(
+            updateAllSlideBackgrounds({
+              background: m.background,
+              mediaInfo: m,
+            }),
+          );
+          slideBgAck("apply-all-slides");
+        }
+      },
     };
 
-    if (applyMultiManualSlideTargets) {
-      out.push(
-        {
-          id: "apply-selected-slides",
-          label: `Apply to selected slides (${manualIdsForSubset.length})`,
-          icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
-          disabled: isLoading || !m.background || !db,
-          onClick: () => {
-            if (!m.background || !db) return;
+    out.push(
+      {
+        id: "apply-selected-slides",
+        label: `Apply to selected slides (${manualIdsForSubset.length || 1})`,
+        icon: <Image className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />,
+        disabled: isLoading || !m.background || !db,
+        onClick: () => {
+          if (!m.background || !db) return;
+          if (manualIdsForSubset.length === 0) {
             dispatch(
-              updateSlideBackgroundsOnSubset({
-                slideIds: manualIdsForSubset,
+              updateSlideBackground({
                 background: m.background,
                 mediaInfo: m,
               }),
             );
             slideBgAck("apply-selected-slides");
-          },
+            return;
+          }
+          dispatch(
+            updateSlideBackgroundsOnSubset({
+              slideIds: manualIdsForSubset,
+              background: m.background,
+              mediaInfo: m,
+            }),
+          );
+          slideBgAck("apply-selected-slides");
         },
-        setAllSlidesAction,
-      );
-    } else {
-      out.push(
-        {
-          id: "set-selected-slide",
-          label: "Set Selected Slide",
-          icon: <Image className={MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE} />,
-          disabled: isLoading || !m.background,
-          onClick: () => {
-            if (m.background && db) {
-              dispatch(
-                updateSlideBackground({
-                  background: m.background,
-                  mediaInfo: m,
-                }),
-              );
-              slideBgAck("set-selected-slide");
-            }
-          },
-        },
-        setAllSlidesAction,
-      );
-    }
+      },
+      setAllSlidesAction,
+    );
 
     if (itemSlideContext) {
       const { itemType, slides, selectedSlide } = itemSlideContext;

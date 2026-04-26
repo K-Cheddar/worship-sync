@@ -665,7 +665,6 @@ export const updateSlideBackgroundsOnSubset = createAsyncThunk(
     const item = state.undoable.present.item;
     const idSet = new Set(args.slideIds);
     if (idSet.size === 0) {
-      dispatch(itemSlice.actions.clearBackgroundTargetSelection());
       return;
     }
 
@@ -703,8 +702,6 @@ export const updateSlideBackgroundsOnSubset = createAsyncThunk(
         dispatch,
       });
     }
-
-    dispatch(itemSlice.actions.clearBackgroundTargetSelection());
   },
 );
 
@@ -715,7 +712,6 @@ export const clearSlideBackgroundsOnSubset = createAsyncThunk(
     const item = state.undoable.present.item;
     const idSet = new Set(args.slideIds);
     if (idSet.size === 0) {
-      dispatch(itemSlice.actions.clearBackgroundTargetSelection());
       return;
     }
     const patch = {
@@ -752,8 +748,6 @@ export const clearSlideBackgroundsOnSubset = createAsyncThunk(
         dispatch,
       });
     }
-
-    dispatch(itemSlice.actions.clearBackgroundTargetSelection());
   },
 );
 
