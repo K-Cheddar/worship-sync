@@ -99,9 +99,9 @@ const OverlaySummaryPanel = ({
         <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-white">
-              Overlay sync summary
+              Overlay preview
             </h3>
-            <p className="mt-1 text-sm text-gray-400">
+            <p className="mt-1 text-xs text-gray-400">
               Review the exact overlay changes before you sync.
             </p>
           </div>
@@ -185,7 +185,23 @@ const OutlineStatusCell = ({
   onCreateClick: (title: string) => void;
   onBibleClick: (candidate: OutlineItemCandidate) => void;
 }) => {
+  const alreadyPresentBadge = candidate.outlineAlreadyPresent ? (
+    <span className="rounded-full bg-gray-800 px-2 py-0.5 text-xs font-medium text-gray-300">
+      Already in outline
+    </span>
+  ) : null;
+
   if (candidate.outlineItemType === "song") {
+    if (candidate.matchedLibraryItem && candidate.outlineAlreadyPresent) {
+      return (
+        <span className="flex items-center gap-1">
+          <span className="rounded-full bg-green-900/50 px-2 py-0.5 text-xs font-medium text-green-300">
+            Song
+          </span>
+          {alreadyPresentBadge}
+        </span>
+      );
+    }
     if (candidate.matchedLibraryItem) {
       return (
         <span className="rounded-full bg-green-900/50 px-2 py-0.5 text-xs font-medium text-green-300">
@@ -215,6 +231,28 @@ const OutlineStatusCell = ({
   }
 
   if (candidate.outlineItemType === "bible") {
+    if (candidate.parsedRef && candidate.outlineAlreadyPresent) {
+      return (
+        <span className="flex items-center gap-1">
+          <span className="rounded-full bg-blue-900/40 px-2 py-0.5 text-xs font-medium text-blue-300">
+            Bible
+          </span>
+          {alreadyPresentBadge}
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={BookOpen}
+            iconSize="sm"
+            padding="px-1 py-0.5"
+            className="text-xs"
+            aria-label={`Open ${candidate.title} in Bible`}
+            onClick={() => onBibleClick(candidate)}
+          >
+            Open
+          </Button>
+        </span>
+      );
+    }
     if (candidate.parsedRef) {
       return (
         <span className="flex items-center gap-1">
@@ -287,6 +325,10 @@ const ServicePlanningImportPanel = () => {
       (candidate) =>
         candidate.outlineItemType === "bible" && !candidate.parsedRef,
     ).length ?? 0;
+  const outlineAlreadyPresentCount =
+    preview?.outlineCandidates.filter(
+      (candidate) => candidate.outlineAlreadyPresent,
+    ).length ?? 0;
 
   const getErrorMessage = (error: unknown, fallback: string) =>
     error instanceof Error && error.message.trim() ? error.message : fallback;
@@ -324,6 +366,27 @@ const ServicePlanningImportPanel = () => {
 
   const handleSync = (overlays: boolean, outline: boolean) => {
     if (!preview) return;
+    const hasSyncableOverlays = preview.overlayPlan.some(
+      (item) => item.action !== "skip",
+    );
+    const hasSyncableOutline = preview.outlineCandidates.some(
+      (candidate) =>
+        !candidate.outlineAlreadyPresent &&
+        Boolean(candidate.headingName) &&
+        (
+          (candidate.outlineItemType === "song" &&
+            Boolean(candidate.matchedLibraryItem)) ||
+          (candidate.outlineItemType === "bible" &&
+            Boolean(candidate.parsedRef))
+        ),
+    );
+    if (
+      (overlays && !outline && !hasSyncableOverlays) ||
+      (outline && !overlays && !hasSyncableOutline) ||
+      (overlays && outline && !hasSyncableOverlays && !hasSyncableOutline)
+    ) {
+      return;
+    }
     const mode = overlays && outline ? "both" : overlays ? "overlays" : "outline";
     dispatch(startServicePlanningSync({ mode }));
   };
@@ -354,9 +417,10 @@ const ServicePlanningImportPanel = () => {
     }
   }
 
-  const hasInsertableOutlineItems = Boolean(
+  const hasSyncableOutlineItems = Boolean(
     preview?.outlineCandidates.some(
       (candidate) =>
+        !candidate.outlineAlreadyPresent &&
         Boolean(candidate.headingName) &&
         (
           (candidate.outlineItemType === "song" &&
@@ -367,6 +431,10 @@ const ServicePlanningImportPanel = () => {
     ),
   );
   const hasOverlayPlan = Boolean(preview?.overlayPlan.length);
+  const hasSyncableOverlayItems = Boolean(
+    preview?.overlayPlan.some((item) => item.action !== "skip"),
+  );
+  const hasAnySyncableItems = hasSyncableOverlayItems || hasSyncableOutlineItems;
 
   return (
     <div className="flex flex-col gap-4 p-4 h-full overflow-y-auto">
@@ -461,6 +529,11 @@ const ServicePlanningImportPanel = () => {
                           {unrecognizedBibleCount} unrecognized
                         </span>
                       ) : null}
+                      {outlineAlreadyPresentCount > 0 ? (
+                        <span className="rounded-full bg-gray-800 px-2 py-1 text-gray-300">
+                          {outlineAlreadyPresentCount} already present
+                        </span>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -511,13 +584,23 @@ const ServicePlanningImportPanel = () => {
             </section>
           )}
 
+          {preview && !hasAnySyncableItems && (
+            <p className="text-sm text-zinc-400 mt-2">
+              Everything is already up to date.
+            </p>
+          )}
+
           <div className="flex flex-wrap gap-2 mt-2 pt-4 border-t border-gray-700">
             <Button
               type="button"
               variant="secondary"
               svg={Check}
               isLoading={isSyncing}
-              disabled={isSyncing || !isServicePlanningEnabled}
+              disabled={
+                isSyncing ||
+                !isServicePlanningEnabled ||
+                !hasSyncableOverlayItems
+              }
               onClick={() => void handleSync(true, false)}
             >
               Sync Overlays
@@ -530,7 +613,7 @@ const ServicePlanningImportPanel = () => {
               disabled={
                 isSyncing ||
                 !isServicePlanningEnabled ||
-                !hasInsertableOutlineItems
+                !hasSyncableOutlineItems
               }
               onClick={() => void handleSync(false, true)}
             >
@@ -541,7 +624,11 @@ const ServicePlanningImportPanel = () => {
               variant="cta"
               svg={Check}
               isLoading={isSyncing}
-              disabled={isSyncing || !isServicePlanningEnabled}
+              disabled={
+                isSyncing ||
+                !isServicePlanningEnabled ||
+                !hasAnySyncableItems
+              }
               onClick={() => void handleSync(true, true)}
             >
               Sync Both

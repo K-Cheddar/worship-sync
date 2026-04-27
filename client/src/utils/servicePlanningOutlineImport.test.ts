@@ -44,6 +44,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
             version: "NIV",
           },
           overlayReady: false,
+          outlineAlreadyPresent: false,
         },
       ],
       currentList: [
@@ -115,6 +116,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
         } as any,
         parsedRef: null,
         overlayReady: false,
+        outlineAlreadyPresent: false,
       },
     ]);
 
@@ -128,6 +130,42 @@ describe("insertServicePlanningOutlineCandidates", () => {
         headingName: "Scripture",
       }),
     ]);
+  });
+
+  it("does not plan steps for items already present under the matched heading", () => {
+    const candidate = {
+      sectionName: "Worship",
+      headingName: "Praise",
+      elementType: "Song of Praise",
+      title: "You Deserve It",
+      outlineItemType: "song" as const,
+      cleanedTitle: "You Deserve It",
+      matchedLibraryItem: {
+        _id: "song-you-deserve-it",
+        name: "You Deserve It",
+        type: "song",
+      } as any,
+      parsedRef: null,
+      overlayReady: false,
+      outlineAlreadyPresent: false,
+    };
+
+    const steps = planServicePlanningOutlineSyncSteps([candidate], [
+      {
+        _id: "heading-praise",
+        name: "Praise",
+        type: "heading",
+        listId: "list-heading-praise",
+      },
+      {
+        _id: "song-you-deserve-it",
+        name: "You Deserve It",
+        type: "song",
+        listId: "list-song-you-deserve-it",
+      },
+    ]);
+
+    expect(steps).toEqual([]);
   });
 
   it("executes one outline step at a time and skips duplicates under the same heading", async () => {
@@ -148,6 +186,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
         } as any,
         parsedRef: null,
         overlayReady: false,
+        outlineAlreadyPresent: false,
       },
     };
 
@@ -185,5 +224,57 @@ describe("insertServicePlanningOutlineCandidates", () => {
 
     expect(second.inserted).toBe(0);
     expect(second.newList).toHaveLength(first.newList.length);
+  });
+
+  it("skips an existing Bible item before creating a new Bible item", async () => {
+    const step = {
+      kind: "insertBible" as const,
+      headingName: "Scripture",
+      candidate: {
+        sectionName: "Message",
+        headingName: "Scripture",
+        elementType: "Scripture",
+        title: "John 3:16-17 NIV",
+        outlineItemType: "bible" as const,
+        cleanedTitle: "John 3:16-17 NIV",
+        matchedLibraryItem: null,
+        parsedRef: {
+          book: "John",
+          chapter: "3",
+          verseRange: "16-17",
+          version: "NIV",
+        },
+        overlayReady: false,
+        outlineAlreadyPresent: false,
+      },
+    };
+
+    const result = await executeServicePlanningOutlineSyncStep({
+      step,
+      currentList: [
+        {
+          _id: "heading-scripture",
+          name: "Scripture",
+          type: "heading",
+          listId: "list-heading-scripture",
+        },
+        {
+          _id: "bible-john-3",
+          name: "John 3:16-17 NIV",
+          type: "bible",
+          listId: "list-bible-john-3",
+        },
+      ],
+      allItems: [],
+      db: undefined,
+      bibleDb: undefined,
+      defaultBibleBackground: "#000",
+      defaultBibleBackgroundBrightness: 60,
+      defaultBibleFontMode: "separate",
+    });
+
+    expect(mockedCreateBibleItemFromParsedReference).not.toHaveBeenCalled();
+    expect(result.inserted).toBe(0);
+    expect(result.listChanged).toBe(false);
   });
 });

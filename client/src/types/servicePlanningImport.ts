@@ -12,6 +12,7 @@ export type OutlineItemCandidate = {
   matchedLibraryItem: ServiceItem | null;
   parsedRef: ParsedBibleRef | null;
   overlayReady: boolean;
+  outlineAlreadyPresent: boolean;
 };
 
 export type OverlaySyncPlanItem = {

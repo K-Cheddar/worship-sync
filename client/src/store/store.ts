@@ -898,6 +898,13 @@ listenerMiddleware.startListening({
       await listenerApi.delay(1500);
     }
 
+    if (
+      !(listenerApi.getState() as RootState).undoable.present.overlay
+        .hasPendingUpdate
+    ) {
+      return;
+    }
+
     const readOverlayToPersist = (): OverlayInfo | undefined => {
       if (persistOutgoingSelection) {
         return (listenerApi.getOriginalState() as RootState).undoable.present

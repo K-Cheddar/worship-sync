@@ -23,11 +23,20 @@ export const persistExistingOverlayDoc = async (
 
   for (let attempt = 0; attempt < OVERLAY_PUT_MAX_ATTEMPTS; attempt++) {
     const dbOverlay = (await db.get(`overlay-${overlay.id}`)) as DBOverlay;
+    const {
+      _id: _ignoredId,
+      _rev: _ignoredRev,
+      docType: _ignoredDocType,
+      ...overlayFields
+    } = overlay as OverlayInfo & Partial<DBOverlay>;
     const merged = applyPouchAudit(
       dbOverlay,
       {
         ...dbOverlay,
-        ...overlay,
+        ...overlayFields,
+        _id: dbOverlay._id,
+        _rev: dbOverlay._rev,
+        docType: dbOverlay.docType,
         updatedAt: new Date().toISOString(),
       },
       { isNew: false },

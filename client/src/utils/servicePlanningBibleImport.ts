@@ -120,12 +120,14 @@ export const loadBibleChapterVerses = async ({
     if (data?.verses?.length) {
       if (bibleDb) {
         const now = new Date().toISOString();
-        const nextDoc: DBBibleChapter = chapterDoc
+        const nextDoc = chapterDoc
           ? {
               ...chapterDoc,
+              key: bibleDbKey,
               verses: data.verses,
               book: canonicalBook,
-              chapter: chapterName,
+              name: chapterName,
+              index: chapterNumber - 1,
               version: normalizedVersion,
               lastUpdated: now,
               isFromBibleGateway: true,
@@ -133,9 +135,11 @@ export const loadBibleChapterVerses = async ({
             }
           : {
               _id: bibleDbKey,
+              key: bibleDbKey,
               verses: data.verses,
               book: canonicalBook,
-              chapter: chapterName,
+              name: chapterName,
+              index: chapterNumber - 1,
               version: normalizedVersion,
               lastUpdated: now,
               isFromBibleGateway: true,

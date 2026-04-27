@@ -32,6 +32,35 @@ type CreateSectionsType = {
   unformattedLyrics: string;
 };
 
+const SECTION_LABEL_MAP: Record<string, string> = {
+  verse: "Verse",
+  chorus: "Chorus",
+  "pre-chorus": "Pre-Chorus",
+  prechorus: "Pre-Chorus",
+  "pre chorus": "Pre-Chorus",
+  bridge: "Bridge",
+  intro: "Intro",
+  outro: "Outro",
+  tag: "Tag",
+  interlude: "Interlude",
+  hook: "Hook",
+  refrain: "Refrain",
+  vamp: "Vamp",
+  instrumental: "Instrumental",
+};
+
+const parseSectionBlock = (block: string): { type: string; words: string } => {
+  const newlineIndex = block.indexOf("\n");
+  if (newlineIndex !== -1) {
+    const firstLine = block.slice(0, newlineIndex).trim();
+    const canonical = SECTION_LABEL_MAP[firstLine.toLowerCase()];
+    if (canonical) {
+      return { type: canonical, words: block.slice(newlineIndex + 1).trimStart() };
+    }
+  }
+  return { type: "Verse", words: block };
+};
+
 export const createSections = ({
   formattedLyrics,
   songOrder,
@@ -47,13 +76,14 @@ export const createSections = ({
   const lines = unformattedLyrics.split("\n\n");
 
   for (let i = 0; i < lines.length; i++) {
-    const name = "Verse " + (newLyrics.length === 0 ? "" : newLyrics.length);
-    const index = newLyrics.findIndex((e) => e.words === lines[i]);
+    const { type, words } = parseSectionBlock(lines[i]);
+    const name = type + " " + (newLyrics.length === 0 ? "" : newLyrics.length);
+    const index = newLyrics.findIndex((e) => e.words === words);
     if (index === -1) {
       newLyrics.push({
-        type: "Verse",
+        type,
         name,
-        words: lines[i],
+        words,
         id: generateRandomId(),
         slideSpan: 1,
       });

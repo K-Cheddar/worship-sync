@@ -32,6 +32,7 @@ import ControllerViewRouteGuard from "../../components/ControllerViewRouteGuard/
 import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
 import { useServicePlanningSyncRunner } from "./useServicePlanningSyncRunner";
+import ServicePlanningSyncFloatingWindow from "./ServicePlanningSyncFloatingWindow";
 
 const Controller = () => {
   const dispatch = useDispatch();
@@ -96,6 +97,7 @@ const Controller = () => {
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
+      <ServicePlanningSyncFloatingWindow />
       {(access === "full" || access === "music") && <LyricsEditor />}
       <Button
         className={cn("lg:hidden mr-2 h-1/4 z-10", isEditMode && "hidden")}

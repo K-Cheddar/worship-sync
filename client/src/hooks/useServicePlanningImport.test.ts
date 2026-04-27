@@ -1,5 +1,9 @@
-import { dedupeOutlineCandidatesForPreview } from "./useServicePlanningImport";
+import {
+  dedupeOutlineCandidatesForPreview,
+  getChangedOverlayPatch,
+} from "./useServicePlanningImport";
 import type { OutlineItemCandidate } from "../types/servicePlanningImport";
+import type { OverlayInfo } from "../types";
 
 const makeSongCandidate = (
   overrides: Partial<OutlineItemCandidate> = {},
@@ -13,6 +17,7 @@ const makeSongCandidate = (
   matchedLibraryItem: null,
   parsedRef: null,
   overlayReady: false,
+  outlineAlreadyPresent: false,
   ...overrides,
 });
 
@@ -35,5 +40,35 @@ describe("dedupeOutlineCandidatesForPreview", () => {
     ]);
 
     expect(deduped).toHaveLength(2);
+  });
+});
+
+describe("getChangedOverlayPatch", () => {
+  const overlay: OverlayInfo = {
+    id: "overlay-1",
+    type: "participant",
+    name: "Avery",
+    title: "Host",
+    event: "Welcome",
+  };
+
+  it("returns no changes when the mapped fields already match", () => {
+    expect(
+      getChangedOverlayPatch(overlay, {
+        name: "Avery",
+        title: "Host",
+        event: "Welcome",
+      }),
+    ).toEqual({});
+  });
+
+  it("returns only fields that differ", () => {
+    expect(
+      getChangedOverlayPatch(overlay, {
+        name: "Avery",
+        title: "Speaker",
+        event: "Welcome",
+      }),
+    ).toEqual({ title: "Speaker" });
   });
 });

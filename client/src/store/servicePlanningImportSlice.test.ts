@@ -90,7 +90,7 @@ describe("servicePlanningImportSlice", () => {
       }),
     );
     store.dispatch(recordServicePlanningSyncResult({ outlineInserted: 1 }));
-    store.dispatch(advanceServicePlanningSyncStep());
+    store.dispatch(advanceServicePlanningSyncStep({ resolvedStatus: "updated" }));
     store.dispatch(setServicePlanningSyncPhase("overlays"));
     store.dispatch(
       setServicePlanningSyncActiveStep({
@@ -104,7 +104,7 @@ describe("servicePlanningImportSlice", () => {
         overlaysCreated: 1,
       }),
     );
-    store.dispatch(advanceServicePlanningSyncStep());
+    store.dispatch(advanceServicePlanningSyncStep({ resolvedStatus: "updated" }));
     store.dispatch(completeServicePlanningSync());
 
     const state = store.getState()

@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../../hooks";
-import { useToast } from "../../context/toastContext";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
+import { getBibleImportDisplayName } from "../../utils/servicePlanningBibleImport";
 import {
   advanceServicePlanningSyncStep,
-  clearServicePlanningSyncState,
   completeServicePlanningSync,
   failServicePlanningSync,
   recordServicePlanningSyncResult,
@@ -20,7 +19,6 @@ import type { ServicePlanningOutlineSyncStep } from "../../utils/servicePlanning
 
 const STEP_DELAY_MS = 300;
 const OVERLAYS_ROUTE = "/controller/overlays";
-const FINAL_TOAST_DISMISS_MS = 10000;
 
 type PreparedSyncRun = {
   runId: number;
@@ -33,118 +31,42 @@ const delay = (ms: number) =>
     setTimeout(resolve, ms);
   });
 
-const getOutlineStepLabel = (step: ServicePlanningOutlineSyncStep) => {
-  if (step.kind === "ensureHeading") return step.headingName;
-  return step.candidate.title || step.candidate.cleanedTitle || step.headingName;
+type StepLabel = { label: string; sublabel?: string };
+
+const getOutlineStepLabel = (step: ServicePlanningOutlineSyncStep): StepLabel => {
+  if (step.kind === "ensureHeading") return { label: "" };
+
+  const { candidate } = step;
+
+  if (candidate.outlineItemType === "bible" && candidate.parsedRef) {
+    const ref = getBibleImportDisplayName(candidate.parsedRef, candidate.parsedRef.version);
+    return { label: ref, sublabel: step.headingName || undefined };
+  }
+
+  if (candidate.outlineItemType === "song") {
+    const itemTitle =
+      candidate.matchedLibraryItem?.name || candidate.cleanedTitle || candidate.title;
+    return { label: itemTitle || step.headingName || "", sublabel: step.headingName && itemTitle ? step.headingName : undefined };
+  }
+
+  return { label: candidate.title || candidate.cleanedTitle || step.headingName || "" };
 };
 
-const getOverlayStepLabel = (step: ExecutableOverlaySyncPlanItem) =>
-  step.patch.event ||
-  step.patch.name ||
-  step.targetOverlayName ||
-  step.elementType;
-
-const ServicePlanningSyncToastContent = ({ toastId }: { toastId: string }) => {
-  const dispatch = useDispatch();
-  const { removeToast } = useToast();
-  const sync = useSelector((s: RootState) => s.servicePlanningImport.sync);
-
-  useEffect(() => {
-    if (sync.status !== "completed" && sync.status !== "failed") return undefined;
-
-    const timeout = window.setTimeout(() => {
-      removeToast(toastId);
-      dispatch(clearServicePlanningSyncState());
-    }, FINAL_TOAST_DISMISS_MS);
-
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [dispatch, removeToast, sync.status, toastId]);
-
-  if (sync.status === "running") {
-    return (
-      <div className="text-left">
-        <p className="text-sm font-semibold">
-          Syncing {sync.phase === "overlays" ? "overlays" : "outline"}
-        </p>
-        <p className="mt-1 text-sm">
-          Step {Math.min(sync.currentStep + 1, Math.max(sync.totalSteps, 1))} of{" "}
-          {Math.max(sync.totalSteps, 1)}
-        </p>
-        {sync.activeLabel ? (
-          <p className="mt-1 text-xs text-zinc-300">{sync.activeLabel}</p>
-        ) : null}
-      </div>
-    );
-  }
-
-  if (sync.status === "failed") {
-    return (
-      <div className="text-left">
-        <p className="text-sm font-semibold">Sync failed</p>
-        <p className="mt-1 text-sm">{sync.error || "Try again."}</p>
-      </div>
-    );
-  }
-
-  const lines: string[] = [];
-  if (sync.overlaysUpdated > 0) {
-    lines.push(
-      `${sync.overlaysUpdated} overlay${sync.overlaysUpdated === 1 ? "" : "s"} updated`,
-    );
-  }
-  if (sync.overlaysCreated > 0) {
-    lines.push(
-      `${sync.overlaysCreated} overlay${sync.overlaysCreated === 1 ? "" : "s"} created`,
-    );
-  }
-  if (sync.overlaysCloned > 0) {
-    lines.push(
-      `${sync.overlaysCloned} overlay${sync.overlaysCloned === 1 ? "" : "s"} copied`,
-    );
-  }
-  if (sync.outlineInserted > 0) {
-    lines.push(
-      `${sync.outlineInserted} outline item${sync.outlineInserted === 1 ? "" : "s"} inserted`,
-    );
-  }
-  if (sync.overlaysSkipped > 0) {
-    lines.push(
-      `${sync.overlaysSkipped} overlay step${sync.overlaysSkipped === 1 ? "" : "s"} skipped`,
-    );
-  }
-
-  return (
-    <div className="text-left">
-      <p className="text-sm font-semibold">
-        {lines.length > 0 ? "Sync complete" : "Nothing to sync"}
-      </p>
-      {lines.length > 0 ? (
-        <ul className="mt-1 list-disc pl-4 text-sm">
-          {lines.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      ) : null}
-      {sync.reasons.length > 0 ? (
-        <p className="mt-2 text-xs text-zinc-300">
-          {sync.reasons.slice(0, 3).join(" ")}
-        </p>
-      ) : null}
-    </div>
-  );
+const getOverlayStepLabel = (step: ExecutableOverlaySyncPlanItem): StepLabel => {
+  const event = step.patch.event || step.targetOverlayEvent || step.targetOverlayName || step.elementType;
+  const name = step.patch.name;
+  return name ? { label: name, sublabel: event || undefined } : { label: event || "" };
 };
 
 export const useServicePlanningSyncRunner = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const location = useLocation();
-  const { showToast, removeToast } = useToast();
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
   const sync = useSelector((s: RootState) => s.servicePlanningImport.sync);
   const {
     planOutlineSyncSteps,
+    planSyncItemsInOrder,
     planOverlaySyncSteps,
     executeOutlineSyncStep,
     executeOverlaySyncStep,
@@ -154,32 +76,11 @@ export const useServicePlanningSyncRunner = () => {
   const isExecutingRef = useRef(false);
   const handledCompletionRunIdRef = useRef<number | null>(null);
   const handledFailureRunIdRef = useRef<number | null>(null);
-  const shownToastRunIdRef = useRef<number | null>(null);
-  const syncToastIdRef = useRef<string | null>(null);
 
   const overlayRouteReady = useMemo(
     () => location.pathname === OVERLAYS_ROUTE,
     [location.pathname],
   );
-
-  useEffect(() => {
-    if (sync.status !== "running") return;
-    if (shownToastRunIdRef.current === sync.runId) return;
-
-    if (syncToastIdRef.current) {
-      removeToast(syncToastIdRef.current);
-    }
-    syncToastIdRef.current = showToast({
-      variant: "info",
-      position: "top-center",
-      persist: true,
-      showCloseButton: false,
-      children: (toastId: string) => (
-        <ServicePlanningSyncToastContent toastId={toastId} />
-      ),
-    });
-    shownToastRunIdRef.current = sync.runId;
-  }, [removeToast, showToast, sync.runId, sync.status]);
 
   useEffect(() => {
     if (sync.status !== "running") return;
@@ -209,11 +110,13 @@ export const useServicePlanningSyncRunner = () => {
         totalSteps: outlineSteps.length + overlayPlanning.steps.length,
         overlaysSkipped: overlayPlanning.skippedCount,
         reasons: overlayPlanning.skipReasons,
+        syncItems: planSyncItemsInOrder(preview, sync.mode ?? "both"),
       }),
     );
   }, [
     dispatch,
     planOutlineSyncSteps,
+    planSyncItemsInOrder,
     planOverlaySyncSteps,
     preview,
     sync.mode,
@@ -247,20 +150,18 @@ export const useServicePlanningSyncRunner = () => {
           }
 
           const step = run.outlineSteps[sync.currentStep];
+          const outlineLabel = getOutlineStepLabel(step);
           dispatch(
             setServicePlanningSyncActiveStep({
               phase: "outline",
-              activeLabel: getOutlineStepLabel(step),
+              activeLabel: outlineLabel.label,
+              activeSublabel: outlineLabel.sublabel,
             }),
           );
           const result = await executeOutlineSyncStep(step);
-          dispatch(
-            recordServicePlanningSyncResult({
-              outlineInserted: result.inserted,
-            }),
-          );
+          dispatch(recordServicePlanningSyncResult({ outlineInserted: result.inserted }));
           await delay(STEP_DELAY_MS);
-          dispatch(advanceServicePlanningSyncStep());
+          dispatch(advanceServicePlanningSyncStep({ resolvedStatus: "added" }));
           return;
         }
 
@@ -277,16 +178,20 @@ export const useServicePlanningSyncRunner = () => {
           }
 
           const step = run.overlaySteps[overlayIndex];
+          const overlayLabel = getOverlayStepLabel(step);
           dispatch(
             setServicePlanningSyncActiveStep({
               phase: "overlays",
-              activeLabel: getOverlayStepLabel(step),
+              activeLabel: overlayLabel.label,
+              activeSublabel: overlayLabel.sublabel,
             }),
           );
           const result = await executeOverlaySyncStep(step);
           dispatch(recordServicePlanningSyncResult(result));
           await delay(STEP_DELAY_MS);
-          dispatch(advanceServicePlanningSyncStep());
+          const overlayResolved =
+            result.overlaysCloned > 0 || result.overlaysCreated > 0 ? "created" : "updated";
+          dispatch(advanceServicePlanningSyncStep({ resolvedStatus: overlayResolved }));
         }
       } catch (error) {
         const message =
