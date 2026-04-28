@@ -132,8 +132,8 @@ describe("useServicePlanningSyncRunner", () => {
     await waitFor(() => {
       const sync = store.getState().servicePlanningImport.sync;
       expect(sync.totalSteps).toBe(2);
-      expect(sync.syncItems).toHaveLength(2);
     });
+    expect(store.getState().servicePlanningImport.sync.syncItems).toHaveLength(2);
 
     await waitFor(() => {
       expect(mockExecuteOutlineSyncStep).toHaveBeenCalledTimes(1);

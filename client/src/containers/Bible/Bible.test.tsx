@@ -1,6 +1,5 @@
 import { configureStore } from "@reduxjs/toolkit";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import Bible from "./Bible";
@@ -234,7 +233,6 @@ describe("Bible", () => {
   });
 
   it("imports multiple Bible references into a review view", async () => {
-    const user = userEvent.setup();
     const store = createBibleStore();
     mockedLoadBibleChapterVerses.mockResolvedValue([
       { name: "16", index: 15, text: "I will ask the Father" },
@@ -252,12 +250,11 @@ describe("Bible", () => {
       </Provider>
     );
 
-    await user.click(screen.getByRole("button", { name: "Import" }));
-    await user.type(
-      screen.getByLabelText(/Bible references/i),
-      "Main Text: John 14:16-18\nAll NKJV",
-    );
-    await user.click(screen.getByRole("button", { name: "Import multiple" }));
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    fireEvent.change(screen.getByLabelText(/Bible references/i), {
+      target: { value: "Main Text: John 14:16-18\nAll NKJV" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Import multiple" }));
 
     expect(
       await screen.findByRole("heading", { name: "Bible import review" }),
@@ -267,7 +264,6 @@ describe("Bible", () => {
   });
 
   it("adds selected imported Bible references one at a time", async () => {
-    const user = userEvent.setup();
     const store = createBibleStore();
     mockedLoadBibleChapterVerses.mockResolvedValue([
       { name: "16", index: 15, text: "I will ask the Father" },
@@ -292,15 +288,14 @@ describe("Bible", () => {
       </Provider>
     );
 
-    await user.click(screen.getByRole("button", { name: "Import" }));
-    await user.type(
-      screen.getByLabelText(/Bible references/i),
-      "John 14:16-18; Acts 1:4-8\nAll NKJV",
-    );
-    await user.click(screen.getByRole("button", { name: "Import multiple" }));
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    fireEvent.change(screen.getByLabelText(/Bible references/i), {
+      target: { value: "John 14:16-18; Acts 1:4-8\nAll NKJV" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Import multiple" }));
 
     await screen.findByRole("heading", { name: "Bible import review" });
-    await user.click(screen.getByRole("button", { name: "Add selected" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add selected" }));
 
     await waitFor(() => {
       expect(mockedCreateBibleItemFromParsedReference).toHaveBeenCalledTimes(2);
