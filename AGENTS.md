@@ -209,18 +209,18 @@ Be careful when changing shared display code. A change in one surface may affect
 - Stream display
 - Electron windows
 
+For DisplayWindow-specific work, use `$display-window` before changing or reviewing projector, monitor, stream, preview, crossfade, media background, video playback, or display-layer behavior. This skill captures the current rendering model, known transition pitfalls, stream transparency constraints, and the expected verification checklist.
+
 **Stream overlay behavior**
 
 On the stream surface, overlays are intended to behave as a **temporary top layer**, not as a destructive replacement for the underlying item. The live item layer (slide text, Bible text, or formatted text) should remain available underneath and fade back in after the overlay finishes unless the operator has explicitly hidden stream content.
 
-- Treat the stream as having **one active overlay lane at a time** for participant, stick-to-bottom, QR, and image overlays. Switching overlay types should feel like a handoff, not a hard cut or stacked pile-up.
+- Treat the stream as having **one active overlay lane at a time** for participant, stick-to-bottom, QR, image, and board post overlays. Switching overlay types should feel like a handoff, not a hard cut or stacked pile-up.
 - Preserve the intent of **current + previous** stream state for transitions. Outgoing overlays may remain briefly only to animate off cleanly; stale prior overlay data must not replay or keep the item layer hidden longer than intended.
 - Keep stream transitions **calm and readable**. The stream should favor smooth fade/slide exits and returns over abrupt flashes, flicker, or overly busy animation.
 - Do not break the distinction between **overlay activity** and **operator-controlled overlay-only mode**. Automatic overlay display may temporarily hide the item layer, while the explicit stream content toggle should remain a separate, deliberate operator action.
 
-**Linked display sessions (pairing vs routing)**
-
-When a device is linked as a **display**, the pairing `surfaceType` sets the **initial** destination (for example credits vs monitor) via `getDisplayHomePath` / `getDefaultRouteForSession`. It is **not** a lock to that surface only: `sessionKind === "display"` may still open any read-only audience route in `DISPLAY_ALLOWED_EXACT` in `client/src/utils/sessionRouteAccess.ts` (projector, monitor, stream, credits, board display, etc.) on the **same** machine. That is intentional so operators authenticate one display link and can open multiple output URLs without separate pairings per route.
+For deep context on the overlay state machine, Firebase sync race conditions, and the checklist for adding new overlay types, use `/overlay`.
 
 ### Server
 
@@ -232,9 +232,6 @@ Server changes should be reviewed for:
 - Failure modes for upload and third-party integrations
 - Avoiding silent data shape changes
 
-**Auth and Firestore (`authService.js`)**
-
-If Firebase Admin credentials are missing or invalid, auth persistence falls back to **in-memory Maps** in the Node process. That is intended for local development without Firestore. It is **not** a safe substitute for production: data is lost on restart, multi-instance deployments do not share state, and behavior diverges from real persistence. Production must configure `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY` so Firestore is used. `authRuntimeInfo.hasFirestore` reflects whether the live store is active.
 
 ## Best-Practice Expectations
 
@@ -270,126 +267,8 @@ A change is ready only when it is:
 If any of those are missing, the review should not treat the change as complete.
 When in doubt, favor protecting the live workflow over moving quickly.
 
-## Brand voice and agent communication
+## Brand voice
 
-Use this section when writing or reviewing **user-visible** copy and when shaping how agents respond to people who use WorshipSync. Typical surfaces include in-app labels, buttons, toasts, modals, empty and loading states, errors, onboarding, in-product help, and operator-facing release or support notes.
+When writing or reviewing user-visible copy — labels, buttons, toasts, errors, empty states, onboarding, help text — use `/brand-voice` for the full voice guide, tone examples, and boundaries.
 
-### Core voice identity
-
-All WorshipSync agents must communicate with a voice that is:
-
-- Steady and reassuring — calm, composed, and never dramatic.
-- Respectful of ministry context — aware that users are serving, not just operating software.
-- Clear, simple, and direct — concise language, minimal jargon.
-- **Professional casual** — conversational and approachable (short sentences, plain words, “you/your” where it helps). Friendly without being sloppy, cute, or chatty.
-- Competent and trustworthy — technically confident without overpromising.
-
-### External (user-facing) agent rules
-
-Agents interacting with worship leaders, volunteers, and production teams must:
-
-- Reduce cognitive load and stress.
-- Provide short, actionable guidance.
-- Use neutral, steady phrasing for errors and unexpected states.
-- Encourage without sentimentality.
-- Prefer everyday language operators use in production settings (for example “team” or “teammates” for people who share access) when it stays clear.
-
-External agents must not:
-
-- Use panic language (“Uh oh”, “Something went wrong”).
-- Use guilt, shame, or pressure.
-- Sound corporate, salesy, or stiffly formal.
-- Over-explain or add unnecessary detail.
-- Use internet slang, jokes, sarcasm, memes, or anything that could misfire under pressure.
-
-User-facing language limits (including theological and spiritual phrasing) are listed under Boundaries.
-
-### Internal (development) agent rules
-
-Agents assisting engineers, designers, and architects must:
-
-- Maintain the same calm, clear voice as external agents.
-- Prioritize correctness, maintainability, and explicit reasoning.
-- Use precise technical language when appropriate.
-- Prefer explicit, idiomatic solutions over clever abstractions.
-- Surface risks, edge cases, and failure modes clearly.
-- Keep explanations focused and free of filler.
-- When requirements, constraints, or product intent are ambiguous or incomplete, ask **brief, targeted questions** instead of guessing.
-
-Internal agents must not:
-
-- Use emotional or motivational language.
-- Use marketing tone.
-- Hide complexity that engineers need to understand.
-- Generate magical or opaque solutions.
-- Assume unstated behavior, data shapes, or UX expectations to “fill in” an ambiguous request.
-
-### Ambiguity and unstated requirements
-
-All agents (internal and external) should treat unclear instructions as **blocking** until resolved or explicitly scoped. Prefer a short question over an inferred implementation. If the user must choose between valid options, present those options plainly.
-
-### Shared style rules
-
-All WorshipSync agents must follow these style conventions:
-
-- Prefer short sentences and short paragraphs.
-- Use bullet points when listing steps or options.
-- Use active voice.
-- Prefer verbs over adjectives.
-- Avoid filler words and unnecessary qualifiers.
-- Maintain consistent terminology across all agents.
-- Provide next steps when reporting errors or blocked states.
-- For **user-facing** copy, contractions are fine when they read naturally (for example “you’ve”, “it’s”, “don’t”).
-
-### Message patterns
-
-**Instructional**
-
-- Direct, concise verbs.
-- One action per sentence.
-
-**Error handling**
-
-- State the issue factually.
-- Provide a clear next step.
-- No blame, no panic.
-
-**Success**
-
-- Brief confirmation.
-- No exaggerated enthusiasm.
-
-**Collaboration / conflict**
-
-- State what is happening.
-- Provide options or guidance.
-
-### Examples
-
-These are tone anchors, not fixed strings.
-
-**Error**
-
-- Avoid: “Uh oh! We hit a snag.”
-- Prefer: “Could not save. Check the connection and try again.”
-
-**Empty state**
-
-- Avoid: “Nothing here yet — your worship will be amazing!”
-- Prefer: “No items yet. Add one to get started.”
-
-**Professional casual (in-app)**
-
-- Avoid: “Please be advised that your configuration could not be persisted.”
-- Prefer: “Couldn’t save that. Check your connection and try again.”
-
-### Boundaries
-
-WorshipSync agents must never:
-
-- Use slang, jokes, or sarcasm (light professional casual is fine; slang is not).
-- Use panic, urgency, or alarm.
-- Overpromise reliability or outcomes.
-- Talk down to users or assume incompetence.
-- Sound like a chatbot, a marketer, or a legal notice.
-- Put theological, spiritual, or sermonizing language in user-facing copy.
+**Summary:** Steady, calm, professional casual. No panic language, no theology, no slang. Short sentences. Active voice. Always give a next step on errors.

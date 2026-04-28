@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Box, TimerInfo } from "../../types";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -12,6 +12,8 @@ import {
   DEFAULT_FONT_PX,
 } from "../../constants";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
+
+const DISPLAY_IMAGE_CACHE_SWAP_DEFER_MS = 650;
 
 type DisplayBoxProps = {
   prevBox?: Box;
@@ -67,7 +69,49 @@ const DisplayBox = ({
   const videoPlaceholderImage = box.mediaInfo?.placeholderImage;
   const rawImage = isVideoBg ? videoPlaceholderImage : background;
   const image = useCachedMediaUrl(rawImage);
+  const [displayImage, setDisplayImage] = useState(image);
+  const displayImageBoxIdRef = useRef(box.id);
+  const displayRawImageRef = useRef(rawImage);
   const targetCurrentImgOpacity = shouldImageBeHidden ? 0 : 1;
+  const skipTextAnimation =
+    prevBox && prevBox.words?.trim() === box.words?.trim();
+  const skipBackgroundAnimation =
+    (prevBox && prevBox.background === background) || shouldImageBeHidden;
+  const initialBackgroundOpacity = !shouldAnimate
+    ? undefined
+    : isPrev || skipBackgroundAnimation
+      ? targetCurrentImgOpacity
+      : 0;
+  const initialTextOpacity = !shouldAnimate
+    ? undefined
+    : isPrev || skipTextAnimation
+      ? 1
+      : 0;
+
+  useEffect(() => {
+    if (
+      displayImageBoxIdRef.current !== box.id ||
+      displayRawImageRef.current !== rawImage
+    ) {
+      displayImageBoxIdRef.current = box.id;
+      displayRawImageRef.current = rawImage;
+      setDisplayImage(image);
+      return;
+    }
+
+    if (displayImage === image) return;
+
+    if (!shouldAnimate) {
+      setDisplayImage(image);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setDisplayImage(image);
+    }, DISPLAY_IMAGE_CACHE_SWAP_DEFER_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [box.id, displayImage, image, rawImage, shouldAnimate]);
 
   useGSAP(
     () => {
@@ -75,11 +119,6 @@ const DisplayBox = ({
 
       boxTimeline.current?.clear();
 
-      const skipTextAnimation =
-        prevBox && prevBox.words?.trim() === box.words?.trim();
-      const skipBackgroundAnimation =
-        (prevBox && prevBox.background === background) || shouldImageBeHidden;
-      const textDuration = skipTextAnimation ? 0 : 0.35;
       const backgroundDuration = skipBackgroundAnimation ? 0 : 0.5;
 
       boxTimeline.current = gsap.timeline();
@@ -89,12 +128,16 @@ const DisplayBox = ({
         if (!skipBackgroundAnimation && shouldShowBackground) {
           boxTimeline.current.set(".display-box-background", { opacity: 1 });
         }
-        boxTimeline.current.fromTo(
-          ".display-box-text",
-          { opacity: 1 },
-          { opacity: 0, duration: textDuration, ease: "power1.inOut" },
-          "fadeOut"
-        );
+        if (skipTextAnimation) {
+          boxTimeline.current.set(".display-box-text", { opacity: 1 }, "fadeOut");
+        } else {
+          boxTimeline.current.fromTo(
+            ".display-box-text",
+            { opacity: 1 },
+            { opacity: 0, duration: 0.35, ease: "power1.inOut" },
+            "fadeOut"
+          );
+        }
         if (shouldShowBackground) {
           boxTimeline.current.to(
             ".display-box-background",
@@ -107,12 +150,16 @@ const DisplayBox = ({
         if (!skipBackgroundAnimation && shouldShowBackground) {
           boxTimeline.current.set(".display-box-background", { opacity: 0 });
         }
-        boxTimeline.current.fromTo(
-          ".display-box-text",
-          { opacity: 0 },
-          { opacity: 1, duration: textDuration, ease: "power1.inOut" },
-          "fadeIn"
-        );
+        if (skipTextAnimation) {
+          boxTimeline.current.set(".display-box-text", { opacity: 1 }, "fadeIn");
+        } else {
+          boxTimeline.current.fromTo(
+            ".display-box-text",
+            { opacity: 0 },
+            { opacity: 1, duration: 0.35, ease: "power1.inOut" },
+            "fadeIn"
+          );
+        }
         if (shouldShowBackground) {
           boxTimeline.current.to(
             ".display-box-background",
@@ -197,13 +244,19 @@ const DisplayBox = ({
             box.shouldKeepAspectRatio && "object-contain",
             shouldImageBeHidden ? "opacity-0" : "opacity-100"
           )}
-          src={image}
+          src={displayImage}
           alt={box.label}
+          style={{
+            opacity: initialBackgroundOpacity,
+          }}
         />
       )}
       <p
         className="display-box-text h-full w-full bg-transparent whitespace-pre-line absolute overflow-hidden"
-        style={textStyles}
+        style={{
+          ...textStyles,
+          opacity: initialTextOpacity,
+        }}
       >
         {renderContent()}
       </p>

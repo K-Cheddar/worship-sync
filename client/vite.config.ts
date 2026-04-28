@@ -47,7 +47,7 @@ export default defineConfig(({ mode }) => {
         srcDir: "src",
         filename: "service-worker.ts",
         injectManifest: {
-          maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB (main bundle ~3 MB)
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB (main bundle is over 4 MiB)
         },
       }),
     ],

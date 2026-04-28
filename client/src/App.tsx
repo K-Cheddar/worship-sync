@@ -31,6 +31,7 @@ import { useContext, useEffect, useLayoutEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { delay } from "./utils/generalUtils";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { FloatingWindowZIndexProvider } from "./components/FloatingWindow/FloatingWindowZIndexContext";
 import AuthGate from "./components/AuthGate";
 import AuthScreenMain from "./components/AuthScreenMain";
 import ViewAccessBlockedRedirect from "./components/ViewAccessBlockedRedirect/ViewAccessBlockedRedirect";
@@ -300,11 +301,13 @@ const App: React.FC = () => {
     <Provider store={store}>
       <Router>
         <GlobalInfoProvider>
+          <FloatingWindowZIndexProvider>
           <ToastProvider>
             <RoutePersistence />
             <TimerManager />
             <AppRoutes />
           </ToastProvider>
+          </FloatingWindowZIndexProvider>
         </GlobalInfoProvider>
       </Router>
     </Provider>

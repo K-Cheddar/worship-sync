@@ -240,12 +240,14 @@ const Overlays = () => {
 
   useEffect(() => {
     const selectedOverlayId = selectedOverlay.id;
-    const overlayElement = document.getElementById(
-      `overlay-${selectedOverlayId}`
-    );
-    const parentElement = document.getElementById("overlays-list");
+    if (!selectedOverlayId) return;
 
     const scrollToElement = () => {
+      const overlayElement = document.getElementById(
+        `overlay-${selectedOverlayId}`
+      );
+      const parentElement = document.getElementById("overlays-list");
+
       if (selectedOverlayId && overlayElement && parentElement) {
         keepElementInView({
           child: overlayElement,
@@ -255,13 +257,12 @@ const Overlays = () => {
     };
 
     if (isMobile) {
-      setTimeout(() => {
-        scrollToElement();
-      }, 100);
-    } else {
-      scrollToElement();
+      const timeoutId = window.setTimeout(scrollToElement, 100);
+      return () => window.clearTimeout(timeoutId);
     }
-  }, [selectedOverlay.id, list, isMobile]);
+
+    scrollToElement();
+  }, [selectedOverlay.id, isMobile]);
 
   useEffect(() => {
     return () => {

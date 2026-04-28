@@ -19,7 +19,11 @@ import {
 } from "../integrations/servicePlanning/parseBibleReference";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ControllerInfoContext } from "../context/controllerInfo";
-import { selectOverlay, updateOverlay } from "../store/overlaySlice";
+import {
+  markOverlayPersisted,
+  selectOverlay,
+  setHasPendingUpdate as setOverlayHasPendingUpdate,
+} from "../store/overlaySlice";
 import {
   addExistingOverlayToList,
   updateOverlayInList,
@@ -44,10 +48,14 @@ import type {
 import {
   executeServicePlanningOutlineSyncStep as executeOutlineSyncUtilityStep,
   insertServicePlanningOutlineCandidates,
+  isOutlineCandidatePresentInList,
   planServicePlanningOutlineSyncSteps,
   type ServicePlanningOutlineSyncStep,
 } from "../utils/servicePlanningOutlineImport";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
+import { getBibleImportDisplayName } from "../utils/servicePlanningBibleImport";
+import type { ServicePlanningSyncItem } from "../store/servicePlanningImportSlice";
+import { normalizeOverlayForSync } from "../utils/overlayUtils";
 
 export type ServicePlanningImportOptions = {
   overlays: boolean;
@@ -77,7 +85,27 @@ const SERVICE_PLANNING_DISABLED_MESSAGE =
   "Service Planning is off. Ask an admin to enable it in Account > Integrations.";
 const SERVICE_PLANNING_LOADING_MESSAGE =
   "Integrations are still loading. Try again in a moment.";
-const OVERLAY_SELECTION_SCROLL_DELAY_MS = 75;
+const OVERLAY_SELECTION_SCROLL_DELAY_MS = 500;
+
+const OVERLAY_PATCH_FIELDS = ["name", "title", "event"] as const;
+
+export const getChangedOverlayPatch = (
+  overlay: OverlayInfo,
+  patch: OverlaySyncPlanItem["patch"],
+): OverlaySyncPlanItem["patch"] => {
+  const changed: OverlaySyncPlanItem["patch"] = {};
+
+  for (const field of OVERLAY_PATCH_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(patch, field)) continue;
+    const currentValue = overlay[field] ?? "";
+    const nextValue = patch[field] ?? "";
+    if (currentValue !== nextValue) {
+      changed[field] = patch[field];
+    }
+  }
+
+  return changed;
+};
 
 const matchesSectionName = (
   sectionName: string,
@@ -133,9 +161,6 @@ export const useServicePlanningImport = () => {
     defaultBibleBackgroundBrightness,
     defaultBibleFontMode,
   } = useSelector((s: RootState) => s.undoable.present.preferences.preferences);
-  const selectedOverlayId = useSelector(
-    (s: RootState) => s.undoable.present.overlay?.selectedOverlay?.id,
-  );
   const isServicePlanningEnabled =
     churchIntegrationsStatus === "ready" &&
     Boolean(churchIntegrations?.servicePlanning.enabled);
@@ -182,6 +207,27 @@ export const useServicePlanningImport = () => {
           );
           if (target) {
             previewUsedOverlayIds.add(target.id);
+            const changedPatch = getChangedOverlayPatch(
+              target,
+              candidate.patch,
+            );
+            if (Object.keys(changedPatch).length === 0) {
+              overlayPlan.push({
+                sectionName,
+                elementType: block.source.elementType,
+                title: block.source.title,
+                ledBy: block.source.ledBy,
+                personIndex: candidate.personIndex,
+                rawNameToken: candidate.rawNameToken,
+                action: "skip",
+                targetOverlayId: target.id,
+                targetOverlayName: target.name || undefined,
+                targetOverlayEvent: target.event || undefined,
+                patch: { ...candidate.patch },
+                reason: `Overlay for "${candidate.patch.event || block.source.elementType}" is already up to date.`,
+              });
+              continue;
+            }
             overlayPlan.push({
               sectionName,
               elementType: block.source.elementType,
@@ -193,7 +239,7 @@ export const useServicePlanningImport = () => {
               targetOverlayId: target.id,
               targetOverlayName: target.name || undefined,
               targetOverlayEvent: target.event || undefined,
-              patch: { ...candidate.patch },
+              patch: changedPatch,
             });
             continue;
           }
@@ -286,17 +332,48 @@ export const useServicePlanningImport = () => {
             matchedLibraryItem,
             parsedRef,
             overlayReady: overlayReadyByRow.get(row) ?? false,
+            outlineAlreadyPresent: false,
           });
         }
       }
 
+      const activeOutlineList = store.getState().undoable.present.itemList.list;
+      const dedupedOutlineCandidates = dedupeOutlineCandidatesForPreview(
+        outlineCandidates,
+      ).map((candidate) => ({
+        ...candidate,
+        outlineAlreadyPresent: candidate.headingName
+          ? isOutlineCandidatePresentInList(
+              activeOutlineList,
+              candidate.headingName,
+              candidate,
+            )
+          : false,
+      }));
+
       return {
         overlayCandidates,
         overlayPlan,
-        outlineCandidates: dedupeOutlineCandidatesForPreview(outlineCandidates),
+        outlineCandidates: dedupedOutlineCandidates,
       };
     },
     [churchIntegrations, churchIntegrationsStatus, allItems, store],
+  );
+
+  const applyPersistedOverlayUpdate = useCallback(
+    (overlay: OverlayInfo, options: { select?: boolean } = {}) => {
+      const normalized = normalizeOverlayForSync(overlay);
+      dispatch(updateOverlayInList(normalized));
+
+      const selectedOverlayId =
+        store.getState().undoable.present.overlay.selectedOverlay?.id;
+      if (options.select || selectedOverlayId === normalized.id) {
+        dispatch(setOverlayHasPendingUpdate(false));
+        dispatch(selectOverlay(normalized));
+        dispatch(markOverlayPersisted(normalized));
+      }
+    },
+    [dispatch, store],
   );
 
   const runOverlaySync = useCallback(
@@ -360,25 +437,41 @@ export const useServicePlanningImport = () => {
             continue;
           }
 
-          const next: Partial<OverlayInfo> = { ...cand.patch };
-          dispatch(updateOverlayInList({ id: target.id, ...next }));
-          if (selectedOverlayId === target.id) {
-            const cur = store
-              .getState()
-              .undoable.present.overlays.list.find((o) => o.id === target.id);
-            if (cur)
-              dispatch(updateOverlay({ ...cur, ...next } as OverlayInfo));
+          const next = getChangedOverlayPatch(target, cand.patch);
+          if (Object.keys(next).length === 0) {
+            usedOverlayIds.add(target.id);
+            skipped += 1;
+            reasons.push(
+              `Overlay for "${cand.patch.event || block.source.elementType}" is already up to date.`,
+            );
+            continue;
           }
 
-          if (db && selectedOverlayId !== target.id) {
+          if (db) {
             try {
-              await persistExistingOverlayDoc(db, {
+              dispatch(setOverlayHasPendingUpdate(false));
+              dispatch(selectOverlay(target));
+              await new Promise((resolve) =>
+                setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
+              );
+              const persisted = await persistExistingOverlayDoc(db, {
                 ...target,
                 ...next,
               });
+              applyPersistedOverlayUpdate(persisted, { select: true });
             } catch (e) {
               console.error("Service Planning sync DB error", target.id, e);
             }
+          } else {
+            dispatch(setOverlayHasPendingUpdate(false));
+            dispatch(selectOverlay(target));
+            await new Promise((resolve) =>
+              setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
+            );
+            applyPersistedOverlayUpdate(
+              { ...target, ...next },
+              { select: true },
+            );
           }
 
           usedOverlayIds.add(target.id);
@@ -388,7 +481,7 @@ export const useServicePlanningImport = () => {
 
       return { updated, skipped, reasons };
     },
-    [db, dispatch, store, selectedOverlayId],
+    [applyPersistedOverlayUpdate, db, dispatch, store],
   );
 
   const runOutlineInsert = useCallback(
@@ -474,19 +567,19 @@ export const useServicePlanningImport = () => {
 
   const planOutlineSyncSteps = useCallback(
     (preview: ServicePlanningPreview): ServicePlanningOutlineSyncStep[] =>
-      planServicePlanningOutlineSyncSteps(preview.outlineCandidates),
-    [],
+      planServicePlanningOutlineSyncSteps(
+        preview.outlineCandidates,
+        store.getState().undoable.present.itemList.list,
+      ),
+    [store],
   );
 
   const planOverlaySyncSteps = useCallback(
     (preview: ServicePlanningPreview) => {
-      const skipped = preview.overlayPlan.filter(
-        (item) => item.action === "skip",
-      );
+      const skipped = preview.overlayPlan.filter((item) => item.action === "skip");
       const steps = preview.overlayPlan.filter(
         (item): item is ExecutableOverlaySyncPlanItem => item.action !== "skip",
       );
-
       return {
         steps,
         skippedCount: skipped.length,
@@ -496,6 +589,62 @@ export const useServicePlanningImport = () => {
       };
     },
     [],
+  );
+
+  const planSyncItemsInOrder = useCallback(
+    (
+      preview: ServicePlanningPreview,
+      mode: "outline" | "overlays" | "both",
+    ): ServicePlanningSyncItem[] => {
+      const currentList = store.getState().undoable.present.itemList.list;
+      const items: ServicePlanningSyncItem[] = [];
+
+      if (mode !== "overlays") {
+        for (const candidate of preview.outlineCandidates) {
+          if (!candidate.headingName) continue;
+          if (candidate.outlineItemType !== "song" && candidate.outlineItemType !== "bible") continue;
+
+          const alreadyPresent = isOutlineCandidatePresentInList(
+            currentList,
+            candidate.headingName,
+            candidate,
+          );
+
+          let label = "";
+          if (candidate.outlineItemType === "bible" && candidate.parsedRef) {
+            label = getBibleImportDisplayName(candidate.parsedRef, candidate.parsedRef.version);
+          } else if (candidate.outlineItemType === "song") {
+            label = candidate.matchedLibraryItem?.name || candidate.cleanedTitle || candidate.title;
+          }
+          if (!label) continue;
+
+          items.push({
+            label,
+            sublabel: candidate.headingName || undefined,
+            phase: "outline",
+            status: alreadyPresent ? "already-present" : "pending",
+          });
+        }
+      }
+
+      if (mode !== "outline") {
+        for (const item of preview.overlayPlan) {
+          if (item.action === "skip" && !item.targetOverlayId) continue;
+          const event =
+            item.patch.event || item.targetOverlayEvent || item.targetOverlayName || item.elementType;
+          const name = item.patch.name;
+          items.push({
+            label: name || event || "",
+            sublabel: name ? event : undefined,
+            phase: "overlays",
+            status: item.action === "skip" ? "already-present" : "pending",
+          });
+        }
+      }
+
+      return items;
+    },
+    [store],
   );
 
   const executeOutlineSyncStep = useCallback(
@@ -577,11 +726,31 @@ export const useServicePlanningImport = () => {
           };
         }
 
+        const changedPatch = getChangedOverlayPatch(target, step.patch);
+        if (Object.keys(changedPatch).length === 0) {
+          return {
+            overlaysUpdated: 0,
+            overlaysCloned: 0,
+            overlaysCreated: 0,
+            overlaysSkipped: 1,
+            reasons: [
+              `Overlay for "${step.patch.event || step.elementType}" is already up to date.`,
+            ],
+          };
+        }
+
+        const next = { ...target, ...changedPatch } as OverlayInfo;
+        dispatch(setOverlayHasPendingUpdate(false));
         dispatch(selectOverlay(target));
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        const next = { ...target, ...step.patch } as OverlayInfo;
-        dispatch(updateOverlay(next));
-        dispatch(updateOverlayInList({ id: target.id, ...step.patch }));
+        await new Promise((resolve) =>
+          setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
+        );
+        if (db) {
+          const persisted = await persistExistingOverlayDoc(db, next);
+          applyPersistedOverlayUpdate(persisted, { select: true });
+        } else {
+          applyPersistedOverlayUpdate(next, { select: true });
+        }
 
         return {
           overlaysUpdated: 1,
@@ -657,13 +826,14 @@ export const useServicePlanningImport = () => {
         reasons: [],
       };
     },
-    [db, dispatch, store],
+    [applyPersistedOverlayUpdate, db, dispatch, store],
   );
 
   return {
     loadPreview,
     runImport,
     planOutlineSyncSteps,
+    planSyncItemsInOrder,
     planOverlaySyncSteps,
     executeOutlineSyncStep,
     executeOverlaySyncStep,

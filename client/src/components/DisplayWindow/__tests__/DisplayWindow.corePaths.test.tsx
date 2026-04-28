@@ -15,8 +15,12 @@ jest.mock("../../../hooks/useCachedMediaUrl", () => ({
 
 jest.mock("../DisplayBox", () => ({
   __esModule: true,
-  default: ({ isPrev }: { isPrev?: boolean }) => (
-    <div data-testid={isPrev ? "display-box-prev" : "display-box"} />
+  default: ({ box, isPrev }: { box: Box; isPrev?: boolean }) => (
+    <div
+      data-testid={isPrev ? "display-box-prev" : "display-box"}
+      data-box-id={box.id}
+      data-words={box.words || ""}
+    />
   ),
 }));
 jest.mock("../DisplayStreamText", () => ({
@@ -246,6 +250,42 @@ describe("DisplayWindow core paths", () => {
     });
 
     expect(screen.queryByTestId("display-box-prev")).not.toBeInTheDocument();
+  });
+
+  it("renders the previous display layer when reused box ids have changed visual content", () => {
+    render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[{ ...baseBox, id: "same-box", words: "Current lyrics" }]}
+        prevBoxes={[{ ...baseBox, id: "same-box", words: "Previous lyrics" }]}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-prev")).toBeInTheDocument();
+  });
+
+  it("remounts the current display box when reused box ids receive changed visual content", () => {
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[{ ...baseBox, id: "same-box", words: "Before" }]}
+        prevBoxes={[]}
+      />,
+    );
+
+    const firstCurrentBox = screen.getByTestId("display-box");
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[{ ...baseBox, id: "same-box", words: "After" }]}
+        prevBoxes={[{ ...baseBox, id: "same-box", words: "Before" }]}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box")).not.toBe(firstCurrentBox);
+    expect(screen.getByTestId("display-box")).toHaveAttribute("data-words", "After");
+    expect(screen.getByTestId("display-box-prev")).toHaveAttribute("data-words", "Before");
   });
 
   it("unmounts the previous stream text layer after the stream transition window", () => {

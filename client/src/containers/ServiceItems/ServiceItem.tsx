@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import generateRandomId from "../../utils/generateRandomId";
-import { useDispatch } from "../../hooks";
+import { useDispatch, useSelector } from "../../hooks";
 import {
   addToInitialItems,
   removeItemFromList,
@@ -42,6 +42,16 @@ const ServiceItem = ({
   canMutateOutline = true,
 }: ServiceItemsProps) => {
   const dispatch = useDispatch();
+  const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
+
+  const arrangementSubtitle = useMemo(() => {
+    if (item.type !== "song") return undefined;
+    const doc = allSongDocs.find((d) => d._id === item._id);
+    if (!doc) return undefined;
+    const arr = doc.arrangements[doc.selectedArrangement];
+    if (!arr || arr.name.toLowerCase() === "master") return undefined;
+    return arr.name;
+  }, [item._id, item.type, allSongDocs]);
   const serviceItemRef = useRef<HTMLElement | null>(null);
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
@@ -171,6 +181,7 @@ const ServiceItem = ({
       }}
       data-list-id={item.listId}
       title={item.name}
+      subtitle={arrangementSubtitle}
       className={cn(
         "border-b-2 overflow-hidden",
         isSelected ? "border-l-cyan-500" : "border-transparent",

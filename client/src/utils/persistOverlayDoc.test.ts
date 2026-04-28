@@ -40,4 +40,40 @@ describe("persistExistingOverlayDoc", () => {
     expect(persisted._rev).toBe("3-c");
     expect(persisted.name).toBe("New Name");
   });
+
+  it("ignores stale revision fields from the caller payload", async () => {
+    const get = jest.fn().mockResolvedValue({
+      _id: "overlay-1",
+      _rev: "7-current",
+      id: "1",
+      type: "participant",
+      name: "Old",
+      event: "Welcome",
+      docType: "overlay",
+    });
+    const put = jest.fn().mockResolvedValue({ ok: true, rev: "8-next" });
+
+    const persisted = await persistExistingOverlayDoc(
+      { get, put },
+      {
+        _id: "overlay-1",
+        _rev: "2-stale",
+        id: "1",
+        type: "participant",
+        name: "New Name",
+        event: "Welcome",
+      } as any,
+    );
+
+    expect(put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "overlay-1",
+        _rev: "7-current",
+        name: "New Name",
+        docType: "overlay",
+      }),
+    );
+    expect(persisted._rev).toBe("8-next");
+    expect(persisted.name).toBe("New Name");
+  });
 });

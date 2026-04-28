@@ -166,7 +166,7 @@ const Overlay = ({
     }, 500);
   };
 
-  const overlayBaseClass = "flex items-center h-full text-wrap text-center";
+  const overlayBaseClass = "flex items-center text-wrap text-center";
 
   const overlayType = overlay.type || "participant";
   const borderColor =
@@ -175,7 +175,7 @@ const Overlay = ({
   return (
     <li
       className={cn(
-        "flex w-full items-center overflow-clip rounded-md leading-3 border-l-4 transition-colors",
+        "flex w-full overflow-clip rounded-md leading-3 border-l-4 transition-colors",
         isSelected
           ? cn(overlayRowSelectedClass, borderColor)
           : cn(overlayRowUnselectedClass, borderColor),
@@ -192,7 +192,7 @@ const Overlay = ({
       <Button
         variant="tertiary"
         wrap
-        className="flex-col flex-1 h-full leading-4 text-center"
+        className="flex-col flex-1 leading-4 text-center"
         padding="px-2 py-1.5"
         gap="gap-1"
         onClick={() => selectAndLoadOverlay(overlay.id)}
@@ -260,7 +260,7 @@ const Overlay = ({
       {!readOnly && (
         <Button
           variant="tertiary"
-          className="text-sm ml-auto h-full"
+          className="text-sm ml-auto"
           padding="px-2 py-1"
           svg={Trash2}
           onClick={deleteOverlayHandler}
@@ -270,7 +270,7 @@ const Overlay = ({
         <Button
           color={isStreamTransmitting ? "#22c55e" : "gray"}
           variant="tertiary"
-          className="text-sm ml-auto h-full"
+          className="text-sm ml-auto"
           padding="px-4 py-1"
           disabled={!isStreamTransmitting}
           svg={Airplay}

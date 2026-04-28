@@ -152,6 +152,93 @@ describe("timersSlice", () => {
       );
     });
 
+    it("starts a stopped timer with a fresh end time when it has stale completed runtime", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-04-05T12:00:00.000Z"));
+
+      const staleEndTime = new Date("2026-04-05T11:55:00.000Z").toISOString();
+      const store = createStore({
+        timers: {
+          timers: [
+            createTimerInfo({
+              id: "t1",
+              hostId: "h1",
+              status: "stopped",
+              isActive: false,
+              duration: 300,
+              remainingTime: 0,
+              endTime: staleEndTime,
+            }),
+          ],
+          shouldUpdateTimers: false,
+        },
+      });
+
+      store.dispatch(
+        timersSlice.actions.updateTimer({
+          id: "t1",
+          timerInfo: {
+            ...store.getState().timers.timers[0],
+            status: "running",
+            startedAt: new Date("2026-04-05T12:00:00.000Z").toISOString(),
+          },
+        }),
+      );
+
+      expect(store.getState().timers.timers[0]).toEqual(
+        expect.objectContaining({
+          status: "running",
+          isActive: true,
+          remainingTime: 300,
+          endTime: new Date("2026-04-05T12:05:00.000Z").toISOString(),
+        }),
+      );
+    });
+
+    it("keeps a restarted timer running on the first tick after stale completion", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-04-05T12:00:00.000Z"));
+
+      const store = createStore({
+        timers: {
+          timers: [
+            createTimerInfo({
+              id: "t1",
+              hostId: "h1",
+              status: "stopped",
+              isActive: false,
+              duration: 300,
+              remainingTime: 0,
+              endTime: new Date("2026-04-05T11:55:00.000Z").toISOString(),
+            }),
+          ],
+          shouldUpdateTimers: false,
+        },
+      });
+
+      store.dispatch(
+        timersSlice.actions.updateTimer({
+          id: "t1",
+          timerInfo: {
+            ...store.getState().timers.timers[0],
+            status: "running",
+            startedAt: new Date("2026-04-05T12:00:00.000Z").toISOString(),
+          },
+        }),
+      );
+
+      jest.setSystemTime(new Date("2026-04-05T12:00:01.000Z"));
+      store.dispatch(timersSlice.actions.tickTimers());
+
+      expect(store.getState().timers.timers[0]).toEqual(
+        expect.objectContaining({
+          status: "running",
+          isActive: true,
+          remainingTime: 299,
+        }),
+      );
+    });
+
     it("reconcileTimersFromRemote removes stale remote timers but keeps own timers", () => {
       const store = createStore({
         timers: {

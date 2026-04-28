@@ -9,6 +9,35 @@ import {
 let initialRouteRestoreStatus: "pending" | "done" = "pending";
 let initialRouteRestoreTimeout: ReturnType<typeof setTimeout> | null = null;
 
+export const resetRoutePersistenceForTests = () => {
+  initialRouteRestoreStatus = "pending";
+  if (initialRouteRestoreTimeout !== null) {
+    clearTimeout(initialRouteRestoreTimeout);
+    initialRouteRestoreTimeout = null;
+  }
+};
+
+const RESTORE_STARTUP_ROUTES = new Set([
+  "/",
+  "/login",
+  "/login/desktop-sso-complete",
+  "/home",
+  "/workstation/operator",
+]);
+
+const ROUTES_TO_SKIP_SAVE = new Set([
+  "/login",
+  "/login/desktop-sso-complete",
+  "/workstation/pair",
+  "/workstation/operator",
+  "/projector",
+  "/projector-full",
+  "/monitor",
+  "/stream",
+  "/stream-info",
+  "/credits",
+]);
+
 /**
  * Component that persists and restores the current route in Electron
  * Saves the route whenever it changes and restores it on app startup
@@ -41,12 +70,7 @@ const RoutePersistence: React.FC = () => {
     if (!isElectron || !bootstrapReady || initialRouteRestoreStatus === "done") return;
     if (initialRouteRestoreTimeout !== null) return;
 
-    if (
-      location.pathname !== "/" &&
-      location.pathname !== "/login" &&
-      location.pathname !== "/login/desktop-sso-complete" &&
-      location.pathname !== "/home"
-    ) {
+    if (!RESTORE_STARTUP_ROUTES.has(location.pathname)) {
       initialRouteRestoreStatus = "done";
       return;
     }
@@ -88,19 +112,7 @@ const RoutePersistence: React.FC = () => {
   useEffect(() => {
     if (!isElectron || initialRouteRestoreStatus !== "done") return;
 
-    // Don't save certain routes (like sign-in, projector, monitor, stream)
-    const routesToSkip = [
-      "/login",
-      "/login/desktop-sso-complete",
-      "/projector",
-      "/projector-full",
-      "/monitor",
-      "/stream",
-      "/stream-info",
-      "/credits",
-    ];
-
-    if (routesToSkip.includes(location.pathname)) {
+    if (ROUTES_TO_SKIP_SAVE.has(location.pathname)) {
       return;
     }
 

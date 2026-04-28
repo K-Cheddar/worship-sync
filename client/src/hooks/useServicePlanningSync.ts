@@ -1,12 +1,16 @@
 import { useCallback, useContext } from "react";
 import { useStore } from "react-redux";
-import { useDispatch, useSelector } from "../hooks";
+import { useDispatch } from "../hooks";
 import { getNamesFromUrl } from "../containers/Overlays/eventParser";
 import { mapServicePlanningRows } from "../integrations/servicePlanning/mapServicePlanningToOverlays";
 import { findOverlayForServicePlanningCandidate } from "../integrations/servicePlanning/findBestOverlayMatch";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ControllerInfoContext } from "../context/controllerInfo";
-import { updateOverlay } from "../store/overlaySlice";
+import {
+  markOverlayPersisted,
+  selectOverlay,
+  setHasPendingUpdate as setOverlayHasPendingUpdate,
+} from "../store/overlaySlice";
 import {
   addExistingOverlayToList,
   updateOverlayInList,
@@ -22,6 +26,7 @@ import generateRandomId from "../utils/generateRandomId";
 import type { OverlayInfo } from "../types";
 import type { RootState } from "../store/store";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
+import { normalizeOverlayForSync } from "../utils/overlayUtils";
 
 type ServicePlanningSyncResult = {
   updated: number;
@@ -29,14 +34,29 @@ type ServicePlanningSyncResult = {
   reasons: string[];
 };
 
+const OVERLAY_SELECTION_SCROLL_DELAY_MS = 500;
+
 export const useServicePlanningSync = () => {
   const dispatch = useDispatch();
   const store = useStore<RootState>();
   const { db } = useContext(ControllerInfoContext) || {};
   const { churchIntegrations, churchIntegrationsStatus } =
     useContext(GlobalInfoContext) || {};
-  const selectedId = useSelector(
-    (s: RootState) => s.undoable.present.overlay?.selectedOverlay?.id,
+
+  const applyPersistedOverlayUpdate = useCallback(
+    (overlay: OverlayInfo, options: { select?: boolean } = {}) => {
+      const normalized = normalizeOverlayForSync(overlay);
+      dispatch(updateOverlayInList(normalized));
+
+      const selectedOverlayId =
+        store.getState().undoable.present.overlay.selectedOverlay?.id;
+      if (options.select || selectedOverlayId === normalized.id) {
+        dispatch(setOverlayHasPendingUpdate(false));
+        dispatch(selectOverlay(normalized));
+        dispatch(markOverlayPersisted(normalized));
+      }
+    },
+    [dispatch, store],
   );
 
   const runServicePlanningSync = useCallback(
@@ -118,35 +138,31 @@ export const useServicePlanningSync = () => {
           }
 
           const next: Partial<OverlayInfo> = { ...cand.patch };
-          dispatch(
-            updateOverlayInList({
-              id: target.id,
-              ...next,
-            }),
-          );
-          if (selectedId === target.id) {
-            const cur = store
-              .getState()
-              .undoable.present.overlays.list.find((o) => o.id === target.id);
-            if (cur) {
-              dispatch(
-                updateOverlay({
-                  ...cur,
-                  ...next,
-                } as OverlayInfo),
-              );
-            }
-          }
-
-          if (db && selectedId !== target.id) {
+          if (db) {
             try {
-              await persistExistingOverlayDoc(db, {
+              dispatch(setOverlayHasPendingUpdate(false));
+              dispatch(selectOverlay(target));
+              await new Promise((resolve) =>
+                setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
+              );
+              const persisted = await persistExistingOverlayDoc(db, {
                 ...target,
                 ...next,
               });
+              applyPersistedOverlayUpdate(persisted, { select: true });
             } catch (e) {
               console.error("Service Planning sync DB error", target.id, e);
             }
+          } else {
+            dispatch(setOverlayHasPendingUpdate(false));
+            dispatch(selectOverlay(target));
+            await new Promise((resolve) =>
+              setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
+            );
+            applyPersistedOverlayUpdate(
+              { ...target, ...next },
+              { select: true },
+            );
           }
 
           usedOverlayIds.add(target.id);
@@ -161,8 +177,8 @@ export const useServicePlanningSync = () => {
       churchIntegrationsStatus,
       db,
       dispatch,
+      applyPersistedOverlayUpdate,
       store,
-      selectedId,
     ],
   );
 

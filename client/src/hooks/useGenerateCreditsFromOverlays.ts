@@ -1,4 +1,4 @@
-import { useCallback, useContext, useState } from "react";
+import { useCallback, useContext, useMemo, useState } from "react";
 import { useDispatch, useSelector } from "../hooks";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { putCreditDoc } from "../utils/dbUtils";
@@ -23,6 +23,10 @@ export function useGenerateCreditsFromOverlays() {
   const { list: overlays } = useSelector(
     (state) => state.undoable.present.overlays,
   );
+  const participantOverlays = useMemo(
+    () => overlays.filter((overlay) => overlay.type === "participant"),
+    [overlays],
+  );
   const { db } = useContext(ControllerInfoContext) ?? {};
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -32,7 +36,7 @@ export function useGenerateCreditsFromOverlays() {
     setIsGenerating(true);
     try {
       const eventNameMapping: { [key: string]: string } = {
-        "sabbath school": overlays
+        "sabbath school": participantOverlays
           .filter((overlay) =>
             overlay.event?.toLowerCase().includes("sabbath school"),
           )
@@ -40,36 +44,36 @@ export function useGenerateCreditsFromOverlays() {
           .join("\n")
           .trim(),
         welcome:
-          overlays.find((overlay) =>
+          participantOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("welcome"),
           )?.name || "",
         "call to praise":
-          overlays.find((overlay) =>
+          participantOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("call to praise"),
           )?.name || "",
         invocation:
-          overlays.find((overlay) =>
+          participantOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("invocation"),
           )?.name || "",
         reading:
-          overlays.find((overlay) =>
+          participantOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("reading"),
           )?.name || "",
         intercessor:
-          overlays.find((overlay) =>
+          participantOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("intercessor"),
           )?.name || "",
         offertory:
-          overlays.find((overlay) =>
+          participantOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("offertory"),
           )?.name || "",
-        special: overlays
+        special: participantOverlays
           .filter((overlay) => overlay.event?.toLowerCase().includes("special"))
           .map((overlay) => overlay.name)
           .join("\n")
           .trim(),
         sermon:
-          overlays.find((overlay) =>
+          participantOverlays.find((overlay) =>
             overlay.event?.toLowerCase().includes("sermon"),
           )?.name || "",
       };
@@ -149,7 +153,14 @@ export function useGenerateCreditsFromOverlays() {
     } finally {
       setIsGenerating(false);
     }
-  }, [overlays, list, dispatch, scheduleName, db, outlineIdForCredits]);
+  }, [
+    participantOverlays,
+    list,
+    dispatch,
+    scheduleName,
+    db,
+    outlineIdForCredits,
+  ]);
 
   return {
     generateFromOverlays,

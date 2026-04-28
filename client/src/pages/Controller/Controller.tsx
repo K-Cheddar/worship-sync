@@ -24,6 +24,7 @@ import MonitorSettings from "./MonitorSettings";
 import Button from "../../components/Button/Button";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { setIsEditMode } from "../../store/itemSlice";
+import { setRequestOpenMediaPanel } from "../../store/preferencesSlice";
 import cn from "classnames";
 import { RootState } from "../../store/store";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
@@ -32,6 +33,7 @@ import ControllerViewRouteGuard from "../../components/ControllerViewRouteGuard/
 import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
 import { useServicePlanningSyncRunner } from "./useServicePlanningSyncRunner";
+import ServicePlanningSyncFloatingWindow from "./ServicePlanningSyncFloatingWindow";
 
 const Controller = () => {
   const dispatch = useDispatch();
@@ -49,6 +51,9 @@ const Controller = () => {
   );
   const scrollbarWidth = useSelector(
     (state) => state.undoable.present.preferences.scrollbarWidth
+  );
+  const requestOpenMediaPanel = useSelector(
+    (state: RootState) => state.undoable.present.preferences.requestOpenMediaPanel
   );
   const { access } = useContext(GlobalInfoContext) || {};
 
@@ -69,6 +74,12 @@ const Controller = () => {
       dispatch(setIsEditMode(false));
     }
   }, [location.pathname, dispatch]);
+
+  useEffect(() => {
+    if (!requestOpenMediaPanel) return;
+    setIsRightPanelOpen(true);
+    dispatch(setRequestOpenMediaPanel(false));
+  }, [requestOpenMediaPanel, dispatch]);
 
   const handleElementClick = (element: React.MouseEvent) => {
     if (
@@ -96,6 +107,7 @@ const Controller = () => {
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
+      <ServicePlanningSyncFloatingWindow />
       {(access === "full" || access === "music") && <LyricsEditor />}
       <Button
         className={cn("lg:hidden mr-2 h-1/4 z-10", isEditMode && "hidden")}

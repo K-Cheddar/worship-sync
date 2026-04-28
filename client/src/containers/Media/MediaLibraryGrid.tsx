@@ -29,6 +29,7 @@ export type MediaLibraryGridProps = {
   searchTerm: string;
   childFolders: MediaFolder[];
   canGoUp: boolean;
+  currentFolderName?: string;
   onGoUp: () => void;
   onOpenFolder: (id: string) => void;
   selectedMedia: MediaType;
@@ -56,6 +57,7 @@ export default function MediaLibraryGrid({
   searchTerm,
   childFolders,
   canGoUp,
+  currentFolderName,
   onGoUp,
   onOpenFolder,
   selectedMedia,
@@ -94,6 +96,7 @@ export default function MediaLibraryGrid({
               active={!showAll}
               childFolders={childFolders}
               canGoUp={canGoUp}
+              currentFolderName={currentFolderName}
               onGoUp={onGoUp}
               onOpenFolder={onOpenFolder}
             />
@@ -103,7 +106,7 @@ export default function MediaLibraryGrid({
               const isMultiSelected = selectedMediaIds.has(id);
 
               return (
-                <li key={id}>
+                <li key={id} data-media-id={id}>
                   <MediaLibraryGridMediaTile
                     mediaItem={mediaItem}
                     index={index}

@@ -20,6 +20,7 @@ import { getApiBasePath } from "../../utils/environment";
 import {
   setMediaItems,
   setMediaRouteFolder,
+  setFocusMediaId,
 } from "../../store/preferencesSlice";
 import { getMediaRouteKey } from "../../utils/mediaRouteKey";
 import { normalizeMediaDoc } from "../../utils/mediaDocUtils";
@@ -166,6 +167,7 @@ export function useMediaLibraryController({
     selectedPreference,
     selectedQuickLink,
     mediaRouteFolders,
+    focusMediaId,
     preferences: {
       defaultFreeFormBackgroundBrightness,
       defaultFreeFormFontMode,
@@ -274,13 +276,21 @@ export function useMediaLibraryController({
   const filteredListLengthRef = useRef(filteredList.length);
   filteredListLengthRef.current = filteredList.length;
 
+  // Tracks a pending "show in media" focus request across the folder-navigation render cycle.
+  const focusPendingIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    setNumShownMediaItems(
-      Math.min(
-        MEDIA_GRID_PROGRESSIVE_INITIAL,
-        filteredListLengthRef.current,
-      ),
-    );
+    if (focusPendingIdRef.current) {
+      // Show all items so the focused one is reachable.
+      setNumShownMediaItems(filteredListLengthRef.current);
+    } else {
+      setNumShownMediaItems(
+        Math.min(
+          MEDIA_GRID_PROGRESSIVE_INITIAL,
+          filteredListLengthRef.current,
+        ),
+      );
+    }
   }, [mediaGridProgressKey]);
 
   const visibleFilteredList = useMemo(
@@ -311,6 +321,7 @@ export function useMediaLibraryController({
     selectedMediaIds,
     previewMedia,
     mediaMultiSelectMode,
+    setSelectedMedia,
     setPreviewMedia,
     setSelectedMediaIds,
     handleMediaClick,
@@ -337,6 +348,40 @@ export function useMediaLibraryController({
     moveToNewFolderOpenRef.current = open;
     setMoveToNewFolderOpen(open);
   }, []);
+
+  // "Show in Media" — navigate to folder, select item, and scroll to it.
+  useEffect(() => {
+    if (!focusMediaId) return;
+    const mediaItem = list.find((m) => m.id === focusMediaId);
+    dispatch(setFocusMediaId(null));
+    if (!mediaItem) return;
+
+    focusPendingIdRef.current = focusMediaId;
+    const targetFolder = mediaItem.folderId ?? MEDIA_LIBRARY_ROOT_VIEW;
+    dispatch(setMediaRouteFolder({ key: routeKey, folderId: targetFolder }));
+    setSelectedMedia(mediaItem);
+    setSelectedMediaIds(new Set([mediaItem.id]));
+    setPreviewMedia(mediaItem);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusMediaId]);
+
+  // After folder navigation re-filters the list, scroll the focused tile into view.
+  useEffect(() => {
+    const pendingId = focusPendingIdRef.current;
+    if (!pendingId) return;
+    const idx = filteredList.findIndex((m) => m.id === pendingId);
+    if (idx < 0) return;
+
+    // Ensure the tile is mounted (progressive load).
+    setNumShownMediaItems((prev) => Math.max(prev, idx + 1));
+
+    requestAnimationFrame(() => {
+      mediaListRef.current
+        ?.querySelector(`[data-media-id="${pendingId}"]`)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      focusPendingIdRef.current = null;
+    });
+  }, [filteredList]);
 
   const handleRenamePopoverOpenChange = useCallback(
     (open: boolean) => {

@@ -72,6 +72,7 @@ describe("ServicePlanningImportPanel", () => {
             },
             parsedRef: null,
             overlayReady: true,
+            outlineAlreadyPresent: false,
           },
         ],
       } as any),
@@ -93,5 +94,64 @@ describe("ServicePlanningImportPanel", () => {
     expect(screen.getByRole("button", { name: "Sync Overlays" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Sync Outline" })).toBeDisabled();
     expect(screen.queryByText(/syncing outline/i)).not.toBeInTheDocument();
+  });
+
+  it("shows already-present outline items and disables sync when nothing would change", () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+      },
+    });
+
+    store.dispatch(
+      setServicePlanningImportPreview({
+        overlayCandidates: [],
+        overlayPlan: [
+          {
+            sectionName: "Welcome",
+            elementType: "Welcome",
+            title: "Welcome Song",
+            ledBy: "Praise Team",
+            personIndex: 0,
+            rawNameToken: "Praise Team",
+            action: "skip",
+            targetOverlayId: "overlay-1",
+            patch: { event: "Welcome Song" },
+            reason: "Overlay is already up to date.",
+          },
+        ],
+        outlineCandidates: [
+          {
+            sectionName: "Welcome",
+            headingName: "Welcome",
+            elementType: "Welcome Song",
+            title: "Welcome Song",
+            outlineItemType: "song",
+            cleanedTitle: "Welcome Song",
+            matchedLibraryItem: {
+              _id: "song-1",
+              name: "Welcome Song",
+              type: "song",
+            },
+            parsedRef: null,
+            overlayReady: true,
+            outlineAlreadyPresent: true,
+          },
+        ],
+      } as any),
+    );
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter>
+          <ServicePlanningImportPanel />
+        </MemoryRouter>
+      </Provider>,
+    );
+
+    expect(screen.getByText("1 already present")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync Both" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync Overlays" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync Outline" })).toBeDisabled();
   });
 });

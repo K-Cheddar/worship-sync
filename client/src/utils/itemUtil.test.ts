@@ -73,6 +73,55 @@ describe("itemUtil", () => {
       expect(result.formattedLyrics[0].id).toBe("fixed-id");
       expect(result.songOrder[0].id).toBe("fixed-id");
     });
+
+    it("strips section label from words and assigns correct type", () => {
+      const result = createSections({
+        unformattedLyrics: "Verse\nLine one\nLine two\n\nChorus\nHold on\nHold tight",
+      });
+      expect(result.formattedLyrics).toHaveLength(2);
+      expect(result.formattedLyrics[0].type).toBe("Verse");
+      expect(result.formattedLyrics[0].words).toBe("Line one\nLine two");
+      expect(result.formattedLyrics[1].type).toBe("Chorus");
+      expect(result.formattedLyrics[1].words).toBe("Hold on\nHold tight");
+    });
+
+    it("handles pre-chorus and bridge labels", () => {
+      const result = createSections({
+        unformattedLyrics:
+          "Verse\nVerse lyrics\n\nPre-Chorus\nPre-chorus lyrics\n\nChorus\nChorus lyrics\n\nBridge\nBridge lyrics",
+      });
+      const types = result.formattedLyrics.map((f) => f.type);
+      expect(types).toEqual(["Verse", "Pre-Chorus", "Chorus", "Bridge"]);
+      expect(result.formattedLyrics[1].words).toBe("Pre-chorus lyrics");
+      expect(result.formattedLyrics[2].words).toBe("Chorus lyrics");
+    });
+
+    it("is case-insensitive for section labels", () => {
+      const result = createSections({
+        unformattedLyrics: "CHORUS\nLoud and clear\n\nbridge\nSoft and low",
+      });
+      expect(result.formattedLyrics[0].type).toBe("Chorus");
+      expect(result.formattedLyrics[1].type).toBe("Bridge");
+    });
+
+    it("does not strip first line when it is not a known label", () => {
+      const result = createSections({
+        unformattedLyrics: "Amazing grace\nHow sweet the sound",
+      });
+      expect(result.formattedLyrics[0].type).toBe("Verse");
+      expect(result.formattedLyrics[0].words).toBe(
+        "Amazing grace\nHow sweet the sound",
+      );
+    });
+
+    it("reuses sections matched by stripped words across labels", () => {
+      const result = createSections({
+        unformattedLyrics: "Chorus\nSame words\n\nChorus\nSame words",
+      });
+      expect(result.formattedLyrics).toHaveLength(1);
+      expect(result.songOrder).toHaveLength(2);
+      expect(result.songOrder[0].name).toBe(result.songOrder[1].name);
+    });
   });
 
   describe("makeUnique", () => {

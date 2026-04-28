@@ -35,11 +35,19 @@ const DisplayBoardPostOverlay = ({
       cardTimeline.current?.clear();
       const el = cardRef.current;
       gsap.set(el, { opacity: 0 });
-      cardTimeline.current = gsap.timeline().fromTo(
-        el,
-        { opacity: 0 },
-        { opacity: 1, duration: FADE_DURATION, ease: "power1.inOut" },
-      );
+      cardTimeline.current = gsap
+        .timeline()
+        .fromTo(
+          el,
+          { opacity: 0 },
+          { opacity: 1, duration: FADE_DURATION, ease: "power1.inOut" },
+        )
+        .to(el, {
+          opacity: 0,
+          duration: FADE_DURATION,
+          delay: boardPostStreamInfo?.duration ?? 0,
+          ease: "power1.inOut",
+        });
     },
     { scope: cardRef, dependencies: [boardPostStreamInfo, shouldAnimate] },
   );
@@ -72,7 +80,7 @@ const DisplayBoardPostOverlay = ({
     if (!text) return null;
 
     const fontSize = info?.fontSize ?? DEFAULT_FONT_SIZE;
-    const bgColor = info?.backgroundColor ?? DEFAULT_BG_COLOR
+    const bgColor = info?.backgroundColor ?? DEFAULT_BG_COLOR;
     const fontSizeVw = `${fontSize * (width / 100)}vw`;
     const authorFontSizeVw = `${fontSize * 0.75 * (width / 100)}vw`;
 

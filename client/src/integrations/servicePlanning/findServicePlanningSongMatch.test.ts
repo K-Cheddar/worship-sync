@@ -30,6 +30,15 @@ describe("findServicePlanningSongMatch", () => {
     expect(match?._id).toBe("341\u2013To God Be the Glory");
   });
 
+  it("does not match when only a trailing common phrase overlaps", () => {
+    const match = findBestServicePlanningSongMatch("Joy is Coming", [
+      makeSong("The Lord is Coming"),
+      makeSong("Great Is Thy Faithfulness"),
+    ]);
+
+    expect(match).toBeNull();
+  });
+
   it("scores cleaned library titles higher than unrelated songs", () => {
     const matchScore = getServicePlanningSongMatchScore(
       "To God Be the Glory Hymn #341 (F)",

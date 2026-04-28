@@ -4,7 +4,10 @@ import type { BibleFontMode, MediaType, ServiceItem } from "../types";
 import type { OutlineItemCandidate } from "../types/servicePlanningImport";
 import generateRandomId from "./generateRandomId";
 import { createNewHeading } from "./itemUtil";
-import { createBibleItemFromParsedReference } from "./servicePlanningBibleImport";
+import {
+  createBibleItemFromParsedReference,
+  getBibleImportDisplayName,
+} from "./servicePlanningBibleImport";
 
 type InsertServicePlanningOutlineCandidatesArgs = {
   outlineCandidates: OutlineItemCandidate[];
@@ -97,25 +100,125 @@ const buildHeadingGroups = (
   return groups;
 };
 
+const normalizeOutlineItemName = (name: string): string =>
+  name.toLowerCase().replace(/\s+/g, " ").trim();
+
+const findHeadingIndex = (list: ServiceItem[], headingName: string): number =>
+  list.findIndex(
+    (item) =>
+      item.type === "heading" &&
+      normalizeOutlineItemName(item.name) ===
+        normalizeOutlineItemName(headingName),
+  );
+
+const getSectionEndIndex = (
+  list: ServiceItem[],
+  headingIndex: number,
+): number => {
+  for (let i = headingIndex + 1; i < list.length; i++) {
+    if (list[i].type === "heading") return i;
+  }
+  return list.length;
+};
+
+const getOutlineCandidateItemName = (
+  candidate: OutlineItemCandidate,
+): string | null => {
+  if (candidate.outlineItemType === "song") {
+    return candidate.matchedLibraryItem?.name ?? null;
+  }
+  if (candidate.outlineItemType === "bible" && candidate.parsedRef) {
+    return (
+      candidate.title?.trim() ||
+      getBibleImportDisplayName(
+        candidate.parsedRef,
+        candidate.parsedRef.version,
+      )
+    );
+  }
+  return null;
+};
+
+export const isOutlineCandidatePresentInList = (
+  list: ServiceItem[],
+  headingName: string,
+  candidate: OutlineItemCandidate,
+): boolean => {
+  const headingIndex = findHeadingIndex(list, headingName);
+  if (headingIndex === -1) return false;
+
+  const candidateName = getOutlineCandidateItemName(candidate);
+  if (!candidateName) return false;
+
+  const candidateNameLower = normalizeOutlineItemName(candidateName);
+  const sectionEndIndex = getSectionEndIndex(list, headingIndex);
+
+  return list
+    .slice(headingIndex + 1, sectionEndIndex)
+    .some((item) => normalizeOutlineItemName(item.name) === candidateNameLower);
+};
+
 export const planServicePlanningOutlineSyncSteps = (
   outlineCandidates: OutlineItemCandidate[],
+  currentList: ServiceItem[] = [],
 ): ServicePlanningOutlineSyncStep[] => {
   const groups = buildHeadingGroups(outlineCandidates);
   const steps: ServicePlanningOutlineSyncStep[] = [];
+  let plannedList = [...currentList];
 
   for (const group of groups) {
-    steps.push({
-      kind: "ensureHeading",
-      headingName: group.headingName,
-    });
+    const headingExists = findHeadingIndex(plannedList, group.headingName) !== -1;
+    const itemSteps: ServicePlanningOutlineSyncStep[] = [];
+    let groupList = plannedList;
+
+    if (!headingExists) {
+      groupList = [
+        ...plannedList,
+        {
+          _id: `planned-heading-${group.headingName}`,
+          name: group.headingName,
+          type: "heading",
+          listId: `planned-heading-${group.headingName}`,
+        },
+      ];
+    }
+
     for (const candidate of group.candidates) {
-      steps.push({
+      if (isOutlineCandidatePresentInList(groupList, group.headingName, candidate)) {
+        continue;
+      }
+      const candidateName = getOutlineCandidateItemName(candidate);
+      if (!candidateName) continue;
+
+      itemSteps.push({
         kind:
           candidate.outlineItemType === "bible" ? "insertBible" : "insertSong",
         headingName: group.headingName,
         candidate,
       });
+      groupList = [
+        ...groupList,
+        {
+          _id: `planned-item-${group.headingName}-${candidateName}`,
+          name: candidateName,
+          type: candidate.outlineItemType,
+          listId: `planned-item-${group.headingName}-${candidateName}`,
+        },
+      ];
     }
+
+    if (itemSteps.length === 0) {
+      continue;
+    }
+
+    if (!headingExists) {
+      steps.push({
+        kind: "ensureHeading",
+        headingName: group.headingName,
+      });
+    }
+    steps.push(...itemSteps);
+    plannedList = groupList;
   }
 
   return steps;
@@ -130,11 +233,7 @@ const ensureHeadingInList = async ({
   currentList: ServiceItem[];
   db: PouchDB.Database | undefined;
 }) => {
-  let headingIndex = currentList.findIndex(
-    (item) =>
-      item.type === "heading" &&
-      item.name.toLowerCase() === headingName.toLowerCase(),
-  );
+  let headingIndex = findHeadingIndex(currentList, headingName);
 
   if (headingIndex !== -1) {
     return {
@@ -196,6 +295,22 @@ export const executeServicePlanningOutlineSyncStep = async ({
   const createdAllItems: ServiceItem[] = [];
   const currentAllItems = [...allItems];
 
+  if (
+    isOutlineCandidatePresentInList(
+      ensured.newList,
+      step.headingName,
+      step.candidate,
+    )
+  ) {
+    return {
+      newList: ensured.newList,
+      inserted: 0,
+      createdAllItems,
+      listChanged: ensured.listChanged,
+      activeListId: ensured.createdHeadingListId,
+    };
+  }
+
   if (step.kind === "insertSong" && step.candidate.matchedLibraryItem) {
     sourceItem = step.candidate.matchedLibraryItem;
   } else if (step.kind === "insertBible" && step.candidate.parsedRef) {
@@ -221,23 +336,6 @@ export const executeServicePlanningOutlineSyncStep = async ({
   }
 
   if (!sourceItem) {
-    return {
-      newList: ensured.newList,
-      inserted: 0,
-      createdAllItems,
-      listChanged: ensured.listChanged,
-      activeListId: ensured.createdHeadingListId,
-    };
-  }
-
-  const existingNames = new Set<string>();
-  for (let i = ensured.headingIndex + 1; i < ensured.newList.length; i++) {
-    if (ensured.newList[i].type === "heading") break;
-    existingNames.add(ensured.newList[i].name.toLowerCase());
-  }
-
-  const nameLower = sourceItem.name.toLowerCase();
-  if (existingNames.has(nameLower)) {
     return {
       newList: ensured.newList,
       inserted: 0,
@@ -283,7 +381,10 @@ export const insertServicePlanningOutlineCandidates = async ({
   defaultBibleBackgroundBrightness,
   defaultBibleFontMode,
 }: InsertServicePlanningOutlineCandidatesArgs): Promise<InsertServicePlanningOutlineCandidatesResult> => {
-  const steps = planServicePlanningOutlineSyncSteps(outlineCandidates);
+  const steps = planServicePlanningOutlineSyncSteps(
+    outlineCandidates,
+    currentList,
+  );
 
   if (steps.length === 0) {
     return {

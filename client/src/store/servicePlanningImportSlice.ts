@@ -11,6 +11,23 @@ export type ServicePlanningSyncMode = "outline" | "overlays" | "both";
 
 export type ServicePlanningSyncPhase = "outline" | "overlays" | "done" | null;
 
+export type ServicePlanningSyncItemStatus =
+  | "pending"
+  | "updated"
+  | "created"
+  | "added"
+  | "already-present";
+
+export type ServicePlanningSyncItem = {
+  label: string;
+  sublabel?: string;
+  phase: Exclude<ServicePlanningSyncPhase, "done" | null>;
+  status: ServicePlanningSyncItemStatus;
+};
+
+/** @deprecated Use ServicePlanningSyncItem */
+export type ServicePlanningSyncCompletedItem = ServicePlanningSyncItem;
+
 export type ServicePlanningSyncSummary = {
   runId: number;
   status: ServicePlanningSyncStatus;
@@ -19,6 +36,8 @@ export type ServicePlanningSyncSummary = {
   currentStep: number;
   totalSteps: number;
   activeLabel: string;
+  activeSublabel: string;
+  syncItems: ServicePlanningSyncItem[];
   overlaysUpdated: number;
   overlaysCloned: number;
   overlaysCreated: number;
@@ -46,6 +65,8 @@ const initialServicePlanningSyncSummary: ServicePlanningSyncSummary = {
   currentStep: 0,
   totalSteps: 0,
   activeLabel: "",
+  activeSublabel: "",
+  syncItems: [],
   overlaysUpdated: 0,
   overlaysCloned: 0,
   overlaysCreated: 0,
@@ -109,25 +130,41 @@ export const servicePlanningImportSlice = createSlice({
         totalSteps: number;
         overlaysSkipped?: number;
         reasons?: string[];
+        syncItems?: ServicePlanningSyncItem[];
       }>,
     ) => {
       state.sync.totalSteps = action.payload.totalSteps;
       state.sync.overlaysSkipped = action.payload.overlaysSkipped ?? 0;
       state.sync.reasons = action.payload.reasons ?? [];
+      state.sync.syncItems = action.payload.syncItems ?? [];
     },
     setServicePlanningSyncActiveStep: (
       state,
       action: PayloadAction<{
         phase: Exclude<ServicePlanningSyncPhase, "done" | null>;
         activeLabel: string;
+        activeSublabel?: string;
       }>,
     ) => {
       state.sync.phase = action.payload.phase;
       state.sync.activeLabel = action.payload.activeLabel;
+      state.sync.activeSublabel = action.payload.activeSublabel ?? "";
     },
-    advanceServicePlanningSyncStep: (state) => {
+    advanceServicePlanningSyncStep: (
+      state,
+      action: PayloadAction<{ resolvedStatus: Exclude<ServicePlanningSyncItemStatus, "pending" | "already-present"> }>,
+    ) => {
+      if (state.sync.activeLabel) {
+        const idx = state.sync.syncItems.findIndex(
+          (item) => item.status === "pending" && item.label === state.sync.activeLabel,
+        );
+        if (idx !== -1) {
+          state.sync.syncItems[idx].status = action.payload.resolvedStatus;
+        }
+      }
       state.sync.currentStep += 1;
       state.sync.activeLabel = "";
+      state.sync.activeSublabel = "";
     },
     setServicePlanningSyncPhase: (
       state,
@@ -135,6 +172,7 @@ export const servicePlanningImportSlice = createSlice({
     ) => {
       state.sync.phase = action.payload;
       state.sync.activeLabel = "";
+      state.sync.activeSublabel = "";
     },
     recordServicePlanningSyncResult: (
       state,
@@ -160,12 +198,14 @@ export const servicePlanningImportSlice = createSlice({
       state.sync.status = "completed";
       state.sync.phase = "done";
       state.sync.activeLabel = "";
+      state.sync.activeSublabel = "";
       state.sync.error = null;
     },
     failServicePlanningSync: (state, action: PayloadAction<string>) => {
       state.sync.status = "failed";
       state.sync.error = action.payload;
       state.sync.activeLabel = "";
+      state.sync.activeSublabel = "";
     },
     clearServicePlanningSyncState: (state) => {
       state.sync = {
