@@ -1,3 +1,22 @@
+# [2.4.0](https://github.com/K-Cheddar/worship-sync/compare/v2.3.0...v2.4.0) (2026-04-28)
+
+
+### Bug Fixes
+
+* Improve bible parsing from service planning import and search ([95039de](https://github.com/K-Cheddar/worship-sync/commit/95039de0151dd631a8d12c2baf4236af97cc28b0))
+* Improve credits and overlay display on safari ([e3f491f](https://github.com/K-Cheddar/worship-sync/commit/e3f491fc73735312b193670825d14fcb2aed8db8))
+* Improve projector transition ([4c12926](https://github.com/K-Cheddar/worship-sync/commit/4c12926be6471620b6a4b179b23631270c087a32))
+* Improve responsiveness for board stream panel ([d592b89](https://github.com/K-Cheddar/worship-sync/commit/d592b895e52f93461beda15a8495a85caf80da43))
+* Improve route persistence ([fb4c35e](https://github.com/K-Cheddar/worship-sync/commit/fb4c35ea4f0b1e5f5544c83e6dba5398e3841064))
+* Timers now work again ([3960ec9](https://github.com/K-Cheddar/worship-sync/commit/3960ec9aa9f7e61c9d23a39105e71a0de9e3f468))
+* Unify wording on media action bar ([fb2bfb5](https://github.com/K-Cheddar/worship-sync/commit/fb2bfb5655ad931c76b662491a2c2e4e6d140d21))
+
+
+### Features
+
+* Add ability to import multiple verses and improve service planning import ([ad64554](https://github.com/K-Cheddar/worship-sync/commit/ad645543ea754a2ff607b362d590b1df8084c0c3))
+* Add ability to show media used on a slide in media panel ([21421b7](https://github.com/K-Cheddar/worship-sync/commit/21421b7cc053d06db181831864070633f64028ff))
+
 # [2.3.0](https://github.com/K-Cheddar/worship-sync/compare/v2.2.1...v2.3.0) (2026-04-24)
 
 
