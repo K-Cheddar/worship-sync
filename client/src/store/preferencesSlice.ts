@@ -73,6 +73,10 @@ type PreferencesState = {
   mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
   /** Controller toolbar: last configuration sub-page visited (local only; not persisted). */
   lastControllerConfigurationRoute: ControllerConfigurationRoute;
+  /** Media item to scroll to and select in the media panel (local only; not persisted). */
+  focusMediaId: string | null;
+  /** When true, Controller opens the right (media) panel then resets this flag (local only; not persisted). */
+  requestOpenMediaPanel: boolean;
 };
 
 const initialState: PreferencesState = {
@@ -140,6 +144,8 @@ const initialState: PreferencesState = {
   overlayCreditsSettingsDrawerOpen: false,
   mediaRouteFolders: {},
   lastControllerConfigurationRoute: "/controller/preferences",
+  focusMediaId: null,
+  requestOpenMediaPanel: false,
 };
 
 /** Defaults when `loadPreferencesBundle` fails so controller surfaces can finish init. */
@@ -599,6 +605,12 @@ export const preferencesSlice = createSlice({
       state.monitorSettings.showNextSlide = action.payload;
     },
     forceUpdate: () => {},
+    setFocusMediaId: (state, action: PayloadAction<string | null>) => {
+      state.focusMediaId = action.payload;
+    },
+    setRequestOpenMediaPanel: (state, action: PayloadAction<boolean>) => {
+      state.requestOpenMediaPanel = action.payload;
+    },
   },
 });
 
@@ -655,6 +667,8 @@ export const {
   updatePreferencesFromRemote,
   forceUpdate,
   setIsInitialized,
+  setFocusMediaId,
+  setRequestOpenMediaPanel,
 } = preferencesSlice.actions;
 
 export default preferencesSlice.reducer;

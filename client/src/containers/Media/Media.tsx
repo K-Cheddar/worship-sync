@@ -268,6 +268,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           searchTerm={c.searchTerm}
           childFolders={c.childFolders}
           canGoUp={c.canGoUp}
+          currentFolderName={c.selectedRealFolder?.name}
           onGoUp={c.handleGoUp}
           onOpenFolder={c.navigateToFolder}
           selectedMedia={c.selectedMedia}

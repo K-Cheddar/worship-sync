@@ -11,6 +11,7 @@ type LeftPanelButtonProps = {
   style?: React.CSSProperties | undefined;
   to: string;
   title: string;
+  subtitle?: string;
   type: string;
   id: string;
   onClick?: (e: React.MouseEvent) => void;
@@ -32,6 +33,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
       isSelected,
       to,
       title,
+      subtitle,
       type,
       actions,
       id,
@@ -97,12 +99,19 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
               {formatTime(timerValue || 0, false, true)}
             </span>
           )}
-          <p
-            title={title}
-            className="line-clamp-3 min-w-0 flex-1 wrap-break-word pl-1 text-left font-semibold text-white"
-          >
-            {title}
-          </p>
+          <div className="min-w-0 flex-1 pl-1">
+            <p
+              title={title}
+              className="line-clamp-3 wrap-break-word text-left font-semibold text-white"
+            >
+              {title}
+            </p>
+            {subtitle && (
+              <p className="truncate text-left text-xs font-normal text-white/55">
+                {subtitle}
+              </p>
+            )}
+          </div>
         </Button>
         {actions &&
           actions.map((action) => (

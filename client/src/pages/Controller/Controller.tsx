@@ -24,6 +24,7 @@ import MonitorSettings from "./MonitorSettings";
 import Button from "../../components/Button/Button";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { setIsEditMode } from "../../store/itemSlice";
+import { setRequestOpenMediaPanel } from "../../store/preferencesSlice";
 import cn from "classnames";
 import { RootState } from "../../store/store";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
@@ -51,6 +52,9 @@ const Controller = () => {
   const scrollbarWidth = useSelector(
     (state) => state.undoable.present.preferences.scrollbarWidth
   );
+  const requestOpenMediaPanel = useSelector(
+    (state: RootState) => state.undoable.present.preferences.requestOpenMediaPanel
+  );
   const { access } = useContext(GlobalInfoContext) || {};
 
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
@@ -70,6 +74,12 @@ const Controller = () => {
       dispatch(setIsEditMode(false));
     }
   }, [location.pathname, dispatch]);
+
+  useEffect(() => {
+    if (!requestOpenMediaPanel) return;
+    setIsRightPanelOpen(true);
+    dispatch(setRequestOpenMediaPanel(false));
+  }, [requestOpenMediaPanel, dispatch]);
 
   const handleElementClick = (element: React.MouseEvent) => {
     if (

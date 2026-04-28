@@ -2,12 +2,14 @@ import Button from "../../components/Button/Button";
 import type { MediaFolder } from "../../types";
 import { ArrowUp, Folder } from "lucide-react";
 import { MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE } from "./mediaLibraryOrangeFolderIcon";
+import cn from "classnames";
 
 type MediaLibraryFolderGridItemsProps = {
   /** When false (Show all), nothing is rendered */
   active: boolean;
   childFolders: MediaFolder[];
   canGoUp: boolean;
+  currentFolderName?: string;
   onGoUp: () => void;
   onOpenFolder: (folderId: string) => void;
 };
@@ -31,6 +33,7 @@ const MediaLibraryFolderGridItems = ({
   active,
   childFolders,
   canGoUp,
+  currentFolderName,
   onGoUp,
   onOpenFolder,
 }: MediaLibraryFolderGridItemsProps) => {
@@ -39,7 +42,7 @@ const MediaLibraryFolderGridItems = ({
   return (
     <>
       {canGoUp && (
-        <li key="media-library-up" className={rowLiClass}>
+        <li key="media-library-up" className={cn(rowLiClass, "flex items-center gap-2")}>
           <Button
             variant="none"
             padding="p-0"
@@ -48,11 +51,15 @@ const MediaLibraryFolderGridItems = ({
             title="Up one level"
           >
             <ArrowUp
-              className="h-3.5 w-3.5 shrink-0 text-zinc-200"
+              className="h-3.5 w-3.5 shrink-0 text-zinc-200 "
               aria-hidden
             />
-            <span className={labelClass}>Up</span>
+            <span className={labelClass}>
+              Up
+            </span>
           </Button>
+          <p className="text-xs text-zinc-200">{currentFolderName}</p>
+
         </li>
       )}
       {childFolders.map((f) => (

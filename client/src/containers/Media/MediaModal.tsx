@@ -1146,6 +1146,7 @@ const MediaModal = ({
                 active={!showAll}
                 childFolders={childFolders}
                 canGoUp={canGoUp}
+                currentFolderName={selectedRealFolder?.name}
                 onGoUp={handleGoUp}
                 onOpenFolder={(id) => navigateToFolder(id)}
               />
