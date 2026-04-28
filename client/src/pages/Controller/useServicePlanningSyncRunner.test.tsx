@@ -12,6 +12,7 @@ import { useServicePlanningSyncRunner } from "./useServicePlanningSyncRunner";
 const mockShowToast = jest.fn();
 const mockRemoveToast = jest.fn();
 const mockPlanOutlineSyncSteps = jest.fn();
+const mockPlanSyncItemsInOrder = jest.fn();
 const mockPlanOverlaySyncSteps = jest.fn();
 const mockExecuteOutlineSyncStep = jest.fn();
 const mockExecuteOverlaySyncStep = jest.fn();
@@ -26,6 +27,7 @@ jest.mock("../../context/toastContext", () => ({
 jest.mock("../../hooks/useServicePlanningImport", () => ({
   useServicePlanningImport: () => ({
     planOutlineSyncSteps: mockPlanOutlineSyncSteps,
+    planSyncItemsInOrder: mockPlanSyncItemsInOrder,
     planOverlaySyncSteps: mockPlanOverlaySyncSteps,
     executeOutlineSyncStep: mockExecuteOutlineSyncStep,
     executeOverlaySyncStep: mockExecuteOverlaySyncStep,
@@ -89,6 +91,18 @@ describe("useServicePlanningSyncRunner", () => {
       skippedCount: 0,
       skipReasons: [],
     });
+    mockPlanSyncItemsInOrder.mockReturnValue([
+      {
+        phase: "outline",
+        label: "Welcome Song",
+        status: "pending",
+      },
+      {
+        phase: "overlays",
+        label: "Welcome Song",
+        status: "pending",
+      },
+    ]);
     mockExecuteOutlineSyncStep.mockResolvedValue({
       inserted: 1,
       activeLabel: "Welcome Song",
@@ -115,15 +129,11 @@ describe("useServicePlanningSyncRunner", () => {
       store.dispatch(startServicePlanningSync({ mode: "both" }));
     });
 
-    expect(mockShowToast).toHaveBeenCalledTimes(1);
-    expect(mockShowToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        variant: "info",
-        position: "top-center",
-        persist: true,
-        showCloseButton: false,
-      }),
-    );
+    await waitFor(() => {
+      const sync = store.getState().servicePlanningImport.sync;
+      expect(sync.totalSteps).toBe(2);
+      expect(sync.syncItems).toHaveLength(2);
+    });
 
     await waitFor(() => {
       expect(mockExecuteOutlineSyncStep).toHaveBeenCalledTimes(1);
@@ -154,6 +164,5 @@ describe("useServicePlanningSyncRunner", () => {
 
     const state = store.getState().servicePlanningImport;
     expect(state.preview).toBeNull();
-    expect(mockShowToast).toHaveBeenCalledTimes(1);
   });
 });
