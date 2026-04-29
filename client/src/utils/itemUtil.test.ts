@@ -122,6 +122,118 @@ describe("itemUtil", () => {
       expect(result.songOrder).toHaveLength(2);
       expect(result.songOrder[0].name).toBe(result.songOrder[1].name);
     });
+
+    it("collapses 3+ consecutive newlines to 2", () => {
+      const result = createSections({
+        unformattedLyrics: "Line one\n\n\n\nLine two",
+      });
+      expect(result.formattedLyrics).toHaveLength(2);
+      expect(result.formattedLyrics[0].words).toBe("Line one");
+      expect(result.formattedLyrics[1].words).toBe("Line two");
+    });
+
+    it("parses bracketed section labels like [VERSE 1] and [CHORUS]", () => {
+      const result = createSections({
+        unformattedLyrics:
+          "[VERSE 1]\nLord, we need\nFill this place\n\n[CHORUS]\nHave Your way\nHave Your way",
+      });
+      expect(result.formattedLyrics).toHaveLength(2);
+      expect(result.formattedLyrics[0].type).toBe("Verse");
+      expect(result.formattedLyrics[0].words).toBe("Lord, we need\nFill this place");
+      expect(result.formattedLyrics[1].type).toBe("Chorus");
+      expect(result.formattedLyrics[1].words).toBe("Have Your way\nHave Your way");
+    });
+
+    it("parses parenthesis-wrapped labels like (VERSE 1)", () => {
+      const result = createSections({
+        unformattedLyrics: "(VERSE 1)\nLine one\n\n(CHORUS)\nChorus line",
+      });
+      expect(result.formattedLyrics[0].type).toBe("Verse");
+      expect(result.formattedLyrics[1].type).toBe("Chorus");
+    });
+
+    it("parses plain labels with numbers like VERSE 1", () => {
+      const result = createSections({
+        unformattedLyrics: "VERSE 1\nLine one\n\nCHORUS\nChorus line",
+      });
+      expect(result.formattedLyrics[0].type).toBe("Verse");
+      expect(result.formattedLyrics[1].type).toBe("Chorus");
+    });
+
+    it("groups all lines between bracket labels into one section", () => {
+      const result = createSections({
+        unformattedLyrics:
+          "[VERSE 1]\nLine one\n\nLine two\n\n[CHORUS]\nChorus line",
+      });
+      expect(result.formattedLyrics[0].words).toBe("Line one\nLine two");
+    });
+
+    it("treats a bracket label with no content as a repeat of that section type", () => {
+      const result = createSections({
+        unformattedLyrics:
+          "[VERSE 1]\nLord, we need\n\n[CHORUS]\nHave Your way\n\n[VERSE 2]\nSend Your glory\n\n[CHORUS]",
+      });
+      expect(result.formattedLyrics).toHaveLength(3);
+      expect(result.songOrder).toHaveLength(4);
+      expect(result.songOrder[3].name).toBe(result.songOrder[1].name);
+    });
+
+    it("handles the full worship song example with whitespace and repeats", () => {
+      const lyrics = `                   [VERSE 1]
+
+Lord, we need an outpour of your spirit
+
+Fill this place, have Your way
+
+
+
+                   [CHORUS]
+
+Have Your way, have Your way
+
+Have Your way, have Your way
+
+
+
+                   [VERSE 2]
+
+Send Your glory, send Your power
+
+We won't move until you do
+
+We need your spirit
+
+We need your presence
+
+Fill this place, have Your way
+
+
+
+
+
+                 [CHORUS]
+
+
+
+
+
+[BRIDGE]
+
+Ooh ooh ooh...
+
+
+
+[VAMP]
+
+Let Your fire fall`;
+
+      const result = createSections({ unformattedLyrics: lyrics });
+      const types = result.formattedLyrics.map((f) => f.type);
+      expect(types).toEqual(["Verse", "Chorus", "Verse", "Bridge", "Vamp"]);
+      expect(result.songOrder).toHaveLength(6);
+      // Second [CHORUS] repeats the first
+      expect(result.songOrder[3].name).toBe(result.songOrder[1].name);
+    });
   });
 
   describe("makeUnique", () => {

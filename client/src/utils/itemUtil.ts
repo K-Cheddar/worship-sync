@@ -49,7 +49,57 @@ const SECTION_LABEL_MAP: Record<string, string> = {
   instrumental: "Instrumental",
 };
 
-const parseSectionBlock = (block: string): { type: string; words: string } => {
+const WRAPPED_LABEL_RE = /^[\[(]([^\])]*)[\])]$/;
+
+const tryParseSectionLabel = (rawLine: string): string | null => {
+  const line = rawLine.trim();
+  const wrappedMatch = line.match(WRAPPED_LABEL_RE);
+  const inner = wrappedMatch ? wrappedMatch[1].trim() : line;
+  // Strip trailing number so "VERSE 1" → base "VERSE"
+  const base = inner.replace(/\s+\d+$/, "").trim();
+  return SECTION_LABEL_MAP[base.toLowerCase()] ?? null;
+};
+
+const normalizeLyricsText = (text: string): string =>
+  text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+type ParsedSection = { type: string; words: string };
+
+const parseWithSectionLabels = (normalizedText: string): ParsedSection[] => {
+  const lines = normalizedText.split("\n");
+  const sections: ParsedSection[] = [];
+  let currentType: string | null = null;
+  let contentLines: string[] = [];
+
+  const flush = () => {
+    if (currentType !== null) {
+      sections.push({
+        type: currentType,
+        words: contentLines.join("\n").replace(/\n{2,}/g, "\n").trim(),
+      });
+      contentLines = [];
+    }
+  };
+
+  for (const line of lines) {
+    const labelType = tryParseSectionLabel(line);
+    if (labelType !== null) {
+      flush();
+      currentType = labelType;
+    } else if (currentType !== null) {
+      contentLines.push(line);
+    }
+  }
+  flush();
+
+  return sections;
+};
+
+const parseSectionBlock = (block: string): ParsedSection => {
   const newlineIndex = block.indexOf("\n");
   if (newlineIndex !== -1) {
     const firstLine = block.slice(0, newlineIndex).trim();
@@ -73,11 +123,29 @@ export const createSections = ({
     ? [...formattedLyrics]
     : [];
   const newSongOrder: SongOrder[] = songOrder ? [...songOrder] : [];
-  const lines = unformattedLyrics.split("\n\n");
 
-  for (let i = 0; i < lines.length; i++) {
-    const { type, words } = parseSectionBlock(lines[i]);
+  const normalizedText = normalizeLyricsText(unformattedLyrics);
+
+  const hasSectionLabels = normalizedText
+    .split("\n")
+    .some((line) => tryParseSectionLabel(line) !== null);
+
+  const parsedSections: ParsedSection[] = hasSectionLabels
+    ? parseWithSectionLabels(normalizedText)
+    : normalizedText.split("\n\n").map(parseSectionBlock);
+
+  for (const { type, words } of parsedSections) {
     const name = type + " " + (newLyrics.length === 0 ? "" : newLyrics.length);
+
+    if (words === "") {
+      // Empty-content label → repeat the most recently defined section of this type
+      const existing = [...newLyrics].reverse().find((e) => e.type === type);
+      if (existing) {
+        newSongOrder.push({ name: existing.name, id: generateRandomId() });
+      }
+      continue;
+    }
+
     const index = newLyrics.findIndex((e) => e.words === words);
     if (index === -1) {
       newLyrics.push({

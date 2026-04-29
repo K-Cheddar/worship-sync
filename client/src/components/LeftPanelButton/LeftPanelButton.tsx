@@ -5,6 +5,7 @@ import cn from "classnames";
 import { iconColorMap, svgMap } from "../../utils/itemTypeMaps";
 import { formatTime } from "../DisplayWindow/TimerDisplay";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
+import MultiSelectSubsetTick from "../MultiSelectSubsetTick/MultiSelectSubsetTick";
 
 type LeftPanelButtonProps = {
   isSelected: boolean;
@@ -15,6 +16,7 @@ type LeftPanelButtonProps = {
   type: string;
   id: string;
   onClick?: (e: React.MouseEvent) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
   actions?: {
     action: (itemId: string) => void;
     svg: FunctionComponent<{}>;
@@ -25,6 +27,10 @@ type LeftPanelButtonProps = {
   displayId?: string;
   timerValue?: number;
   isActive?: boolean;
+  /** When provided, renders a multi-select tick badge on the left edge of the row. */
+  multiSelectMode?: boolean;
+  /** Whether this row is in the active multi-select subset. */
+  isMultiSelected?: boolean;
 };
 
 const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
@@ -44,6 +50,8 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
       timerValue,
       isActive,
       onClick,
+      multiSelectMode,
+      isMultiSelected,
       ...rest
     },
     ref
@@ -71,11 +79,16 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
               : "bg-transparent group-hover:bg-black/22 group-active:bg-black/32"
           )}
         />
+        {multiSelectMode !== undefined && (
+          <MultiSelectSubsetTick
+            modeActive={multiSelectMode}
+            isSelected={isMultiSelected ?? false}
+            frameClassName="absolute left-1.5 top-1/2 -translate-y-1/2 z-20 size-5"
+          />
+        )}
         <Button
           variant="none"
-          className={cn(
-            "relative z-10 flex min-h-8 min-w-0 flex-1 shrink items-center self-stretch bg-transparent text-sm rounded-tl-none rounded-bl-none",
-          )}
+          className="relative z-10 flex min-h-8 min-w-0 flex-1 shrink items-center self-stretch bg-transparent text-sm rounded-tl-none rounded-bl-none"
           iconSize="md"
           wrap
           svg={image || isActive ? undefined : svgMap.get(type) || FileQuestion}

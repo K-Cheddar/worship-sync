@@ -48,7 +48,7 @@ describe("LyricSectionTools", () => {
         addNewSectionsToSongOrder
         onAddNewSectionsToSongOrderChange={jest.fn()}
         onAddEmptySection={onAddEmptySection}
-        onOpenImportDrawer={jest.fn()}
+        onOpenImportDrawer={jest.fn()} onAddMultipleSections={jest.fn()}
       />,
     );
 
@@ -72,6 +72,7 @@ describe("LyricSectionTools", () => {
         onAddNewSectionsToSongOrderChange={onAddNewSectionsToSongOrderChange}
         onAddEmptySection={jest.fn()}
         onOpenImportDrawer={onOpenImportDrawer}
+        onAddMultipleSections={jest.fn()}
       />,
     );
 
@@ -94,6 +95,7 @@ describe("LyricSectionTools", () => {
         onAddNewSectionsToSongOrderChange={jest.fn()}
         onAddEmptySection={jest.fn()}
         onOpenImportDrawer={onOpenImportDrawer}
+        onAddMultipleSections={jest.fn()}
       />,
     );
 

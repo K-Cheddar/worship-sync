@@ -1,16 +1,19 @@
-import { useId, useState } from "react";
-import { BookCopy, ChevronDown, Plus } from "lucide-react";
+import { useId, useRef, useState } from "react";
+import { BookCopy, ChevronDown, Layers, Plus } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
 import { Switch } from "../../components/ui/Switch";
 import { itemSectionBgColorMap, sectionTypes } from "../../utils/slideColorMap";
 import cn from "classnames";
+import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
+import TextArea from "../../components/TextArea/TextArea";
 
 type LyricSectionToolsProps = {
   addNewSectionsToSongOrder: boolean;
   onAddNewSectionsToSongOrderChange: (value: boolean) => void;
   onAddEmptySection: (sectionType: string) => void;
   onOpenImportDrawer: () => void;
+  onAddMultipleSections: (text: string) => void;
   /** One-row trigger; full tools show when expanded (use on small screens). */
   collapsible?: boolean;
 };
@@ -31,14 +34,28 @@ const LyricSectionTools = ({
   onAddNewSectionsToSongOrderChange,
   onAddEmptySection,
   onOpenImportDrawer,
+  onAddMultipleSections,
   collapsible = false,
 }: LyricSectionToolsProps) => {
   /** Remount Radix Select after each add so the same section type can be chosen again. */
   const [addSectionSelectKey, setAddSectionSelectKey] = useState(0);
   const [expanded, setExpanded] = useState(false);
+  const [multipleSectionsOpen, setMultipleSectionsOpen] = useState(false);
+  const [multipleSectionsPosition, setMultipleSectionsPosition] = useState<{ x: number; y: number } | undefined>();
+  const [multipleLyricsText, setMultipleLyricsText] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const addMultipleButtonRef = useRef<HTMLButtonElement>(null);
+  const floatingWindowRef = useRef<FloatingWindowHandle>(null);
   const songOrderToggleId = useId();
   const songOrderDescriptionId = `${songOrderToggleId}-description`;
   const expandablePanelId = useId();
+
+  const handleAddMultipleSections = () => {
+    if (!multipleLyricsText.trim()) return;
+    onAddMultipleSections(multipleLyricsText);
+    setMultipleLyricsText("");
+    setMultipleSectionsOpen(false);
+  };
 
   const handleAddSection = (sectionType: string) => {
     if (!sectionType) return;
@@ -105,6 +122,61 @@ const LyricSectionTools = ({
         >
           Add empty section
         </Button>
+        <Button
+          ref={addMultipleButtonRef}
+          variant="tertiary"
+          svg={Layers}
+          color="#22d3ee"
+          className="w-full justify-center rounded-md border border-gray-500"
+          onClick={() => {
+            if (multipleSectionsOpen) {
+              floatingWindowRef.current?.restore();
+              return;
+            }
+            const rect = addMultipleButtonRef.current?.getBoundingClientRect();
+            if (rect) {
+              const windowWidth = 360;
+              setMultipleSectionsPosition({
+                x: Math.min(rect.right + 8, window.innerWidth - windowWidth - 8),
+                y: rect.top,
+              });
+            }
+            setMultipleSectionsOpen(true);
+          }}
+        >
+          Add multiple sections
+        </Button>
+        {multipleSectionsOpen && (
+          <FloatingWindow
+            ref={floatingWindowRef}
+            title="Add multiple sections"
+            onClose={() => {
+              setMultipleSectionsOpen(false);
+              setMultipleLyricsText("");
+            }}
+            defaultWidth={360}
+            autoHeight
+            defaultHeight={420}
+            defaultPosition={multipleSectionsPosition}
+          >
+            <TextArea
+              ref={textareaRef}
+              textareaClassName="min-h-48 rounded-md text-sm"
+              className="w-full"
+              label="Paste lyrics"
+              value={multipleLyricsText}
+              onChange={(val) => setMultipleLyricsText(val as string)}
+            />
+            <Button
+              variant="primary"
+              className="mt-2 w-full justify-center"
+              onClick={handleAddMultipleSections}
+              disabled={!multipleLyricsText.trim()}
+            >
+              Add sections
+            </Button>
+          </FloatingWindow>
+        )}
         <Button
           onClick={onOpenImportDrawer}
           variant="primary"

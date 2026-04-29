@@ -2,15 +2,14 @@ import { useDispatch, useSelector } from "../../hooks";
 import {
   updateItemList,
   addItemToItemList,
-  removeItemFromList,
   removeItemsFromList,
   setActiveItemInList,
 } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { useSensors } from "../../utils/dndUtils";
 import {
@@ -21,7 +20,7 @@ import ServiceItem from "./ServiceItem";
 import { keepElementInView } from "../../utils/generalUtils";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import Button from "../../components/Button/Button";
-import ContextMenu from "../../components/ContextMenu/ContextMenu";
+import Input from "../../components/Input/Input";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { createNewHeading, updateHeadingName } from "../../utils/itemUtil";
@@ -30,6 +29,19 @@ import HeadingItem from "./HeadingItem";
 import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
 import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../components/ui/DropdownMenu";
+import FloatingWindow from "../../components/FloatingWindow/FloatingWindow";
+import cn from "classnames";
+import {
+  MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+  MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS,
+  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+} from "../Media/mediaLibraryMediaActionUi";
 
 /** Matches LeftPanelButton link target (`/controller/${to}`) so keyboard nav is not relative to bible/songs/etc. */
 const getControllerItemPath = (item: Pick<ServiceItemType, "_id" | "listId">) =>
@@ -62,6 +74,13 @@ const ServiceItems = () => {
   const canMutateHeadingRow = access === "full";
   const musicCanOutlineMutateItem = (item: ServiceItemType) =>
     item.type === "song" || item.type === "free";
+  const canMultiSelectItem = useCallback(
+    (item: ServiceItemType) =>
+      item.type !== "heading" &&
+      (access === "full" ||
+        (access === "music" && musicCanOutlineMutateItem(item))),
+    [access],
+  );
   const canMutateServiceItemRow = (item: ServiceItemType) =>
     access === "full" ||
     (access === "music" && musicCanOutlineMutateItem(item));
@@ -71,12 +90,45 @@ const ServiceItems = () => {
   >(new Set());
   const [selectedListIds, setSelectedListIds] = useState<Set<string>>(new Set());
   const [anchorListId, setAnchorListId] = useState<string | null>(null);
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const skipNextServiceItemClickRef = useRef(false);
+  const actionBarRowRef = useRef<HTMLDivElement>(null);
+  const actionBarMeasureRef = useRef<HTMLDivElement>(null);
+  const [actionBarInlineCount, setActionBarInlineCount] = useState(99);
+  const [actionBarMenuOpen, setActionBarMenuOpen] = useState(false);
+  const [headingRenameOpen, setHeadingRenameOpen] = useState(false);
+  const [headingRenameDraft, setHeadingRenameDraft] = useState("");
+  const [headingRenamePosition, setHeadingRenamePosition] = useState({
+    x: Math.max(window.innerWidth - 340, 0),
+    y: 80,
+  });
+
+  const selectedHeading = useMemo(
+    () =>
+      access === "full"
+        ? serviceItems.find(
+          (item) =>
+            item.type === "heading" && item.listId === selectedItemListId,
+        )
+        : undefined,
+    [access, selectedItemListId, serviceItems],
+  );
+
+  useEffect(() => {
+    if (selectedHeading) {
+      setHeadingRenameDraft(selectedHeading.name);
+      return;
+    }
+    setHeadingRenameOpen(false);
+    setHeadingRenameDraft("");
+  }, [selectedHeading]);
 
   // Reset collapse and selection when switching outlines
   useEffect(() => {
     setCollapsedHeadingListIds(new Set());
     setSelectedListIds(new Set());
     setAnchorListId(null);
+    setMultiSelectMode(false);
   }, [selectedList?._id]);
 
   const hiddenListIds = useMemo(() => {
@@ -280,7 +332,7 @@ const ServiceItems = () => {
     });
   };
 
-  const handleSaveHeadingName = async (
+  const handleSaveHeadingName = useCallback(async (
     heading: ServiceItemType,
     newName: string
   ) => {
@@ -298,47 +350,139 @@ const ServiceItems = () => {
         newName,
       });
     }
-  };
+  }, [db, dispatch, serviceItems]);
 
-  const handleDeleteHeading = (listId: string) => {
-    dispatch(removeItemFromList(listId));
-  };
+  const openHeadingRenameWindow = useCallback(() => {
+    if (!selectedHeading) return;
+    const trigger = document.activeElement;
+    if (trigger instanceof HTMLElement) {
+      const rect = trigger.getBoundingClientRect();
+      setHeadingRenamePosition({
+        x: Math.min(Math.max(rect.left, 8), Math.max(window.innerWidth - 340, 0)),
+        y: Math.min(rect.bottom + 8, Math.max(window.innerHeight - 240, 8)),
+      });
+    }
+    setHeadingRenameDraft(selectedHeading.name);
+    setHeadingRenameOpen(true);
+  }, [selectedHeading]);
+
+  const handleSaveHeadingRename = useCallback(() => {
+    if (!selectedHeading) return;
+    const trimmed = headingRenameDraft.trim();
+    if (!trimmed) return;
+    void handleSaveHeadingName(selectedHeading, trimmed);
+    setHeadingRenameOpen(false);
+  }, [headingRenameDraft, handleSaveHeadingName, selectedHeading]);
+
+  const handleCancelHeadingRename = useCallback(() => {
+    setHeadingRenameDraft(selectedHeading?.name ?? "");
+    setHeadingRenameOpen(false);
+  }, [selectedHeading]);
 
   const handleItemClick = (listId: string, e: React.MouseEvent) => {
-    if (access === "view" || access === "music") {
+    if (skipNextServiceItemClickRef.current) {
+      skipNextServiceItemClickRef.current = false;
+      e.preventDefault();
+      return;
+    }
+
+    const row = serviceItems.find((item) => item.listId === listId);
+    const canMultiSelectRow = row != null && canMultiSelectItem(row);
+
+    if (access === "view" || !canMultiSelectRow) {
       setSelectedListIds(new Set([listId]));
       setAnchorListId(listId);
       dispatch(setActiveItemInList(listId));
       return;
     }
     if (e.shiftKey) {
+      e.preventDefault();
       const clickedIndex = serviceItems.findIndex((i) => i.listId === listId);
       const anchorIndex = anchorListId
         ? serviceItems.findIndex((i) => i.listId === anchorListId)
-        : clickedIndex;
-      const start = Math.min(clickedIndex, anchorIndex);
-      const end = Math.max(clickedIndex, anchorIndex);
+        : serviceItems.findIndex((i) => i.listId === selectedItemListId);
+      const resolvedAnchorIndex = anchorIndex >= 0 ? anchorIndex : clickedIndex;
+      const start = Math.min(clickedIndex, resolvedAnchorIndex);
+      const end = Math.max(clickedIndex, resolvedAnchorIndex);
       const rangeIds = new Set(
         serviceItems
           .slice(start, end + 1)
+          .filter(canMultiSelectItem)
           .map((i) => i.listId)
       );
       setSelectedListIds(rangeIds);
-    } else if (e.ctrlKey || e.metaKey) {
+      setMultiSelectMode(rangeIds.size > 1);
+      dispatch(setActiveItemInList(listId));
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
       setSelectedListIds((prev) => {
         const next = new Set(prev);
         if (next.has(listId)) next.delete(listId);
         else next.add(listId);
+        setMultiSelectMode(next.size > 1);
         return next;
       });
       setAnchorListId(listId);
-    } else {
-      setSelectedListIds(new Set([listId]));
+      dispatch(setActiveItemInList(listId));
+      return;
+    }
+    // Plain click in multi-select mode: toggle without navigating
+    if (multiSelectMode) {
+      e.preventDefault();
+      setSelectedListIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(listId)) next.delete(listId);
+        else next.add(listId);
+        if (next.size === 0) setMultiSelectMode(false);
+        return next;
+      });
+      setAnchorListId(listId);
+      return;
+    }
+    // Normal single click
+    setSelectedListIds(new Set([listId]));
+    setAnchorListId(listId);
+    dispatch(setActiveItemInList(listId));
+  };
+
+  const handleEnterMultiSelectMode = useCallback(
+    (listId: string, options?: { skipNextClick?: boolean }) => {
+      const currentRow = selectedItemListId
+        ? serviceItems.find((item) => item.listId === selectedItemListId)
+        : undefined;
+      const currentSelectionCanJoin =
+        currentRow != null && canMultiSelectItem(currentRow);
+      const ids =
+        selectedItemListId &&
+          selectedItemListId !== listId &&
+          selectedListIds.size <= 1 &&
+          currentSelectionCanJoin
+          ? [selectedItemListId, listId]
+          : [listId];
+      setMultiSelectMode(true);
+      setSelectedListIds(new Set(ids));
       setAnchorListId(listId);
       dispatch(setActiveItemInList(listId));
-      // Link handles navigation on single click
-    }
-  };
+      if (options?.skipNextClick) {
+        skipNextServiceItemClickRef.current = true;
+      }
+    },
+    [
+      canMultiSelectItem,
+      dispatch,
+      selectedItemListId,
+      selectedListIds.size,
+      serviceItems,
+    ],
+  );
+
+  const handleMultiSelectDone = useCallback(() => {
+    setMultiSelectMode(false);
+    setSelectedListIds(new Set());
+    setAnchorListId(null);
+  }, []);
 
   const handleDeleteSelected = () => {
     if (selectedListIds.size === 0) return;
@@ -351,22 +495,152 @@ const ServiceItems = () => {
       dispatch(removeItemsFromList(allowedIds));
       setSelectedListIds(new Set());
       setAnchorListId(null);
+      setMultiSelectMode(false);
       return;
     }
     dispatch(removeItemsFromList(Array.from(selectedListIds)));
     setSelectedListIds(new Set());
     setAnchorListId(null);
+    setMultiSelectMode(false);
   };
 
   const showBulkDeleteMenu =
-    access === "full" && selectedListIds.size > 0
+    access === "full" &&
+      selectedListIds.size > 0 &&
+      [...selectedListIds].every((id) => {
+        const row = serviceItems.find((i) => i.listId === id);
+        return Boolean(row && canMultiSelectItem(row));
+      })
       ? true
       : access === "music" &&
       selectedListIds.size > 0 &&
       [...selectedListIds].every((id) => {
         const row = serviceItems.find((i) => i.listId === id);
-        return Boolean(row && musicCanOutlineMutateItem(row));
+        return Boolean(row && canMultiSelectItem(row));
       });
+
+  type ActionBarItem = {
+    id: "add-heading" | "edit-heading" | "delete-selected" | "done";
+    label: string;
+    destructive?: boolean;
+    disabled?: boolean;
+    isLoading?: boolean;
+  };
+
+  const actionBarItems = useMemo((): ActionBarItem[] => {
+    const items: ActionBarItem[] = [];
+    if (multiSelectMode) {
+      items.push({ id: "done", label: "Done" });
+    }
+    if (selectedList && access === "full") {
+      items.push({
+        id: "add-heading",
+        label: "Add heading",
+        disabled: isAddingHeading,
+        isLoading: isAddingHeading,
+      });
+    }
+    if (selectedHeading) {
+      items.push({
+        id: "edit-heading",
+        label: "Edit name",
+      });
+    }
+    if (showBulkDeleteMenu) {
+      items.push({
+        id: "delete-selected",
+        label: `Delete selected (${selectedListIds.size})`,
+        destructive: true,
+      });
+    }
+
+    return items;
+  }, [selectedList, access, selectedHeading, showBulkDeleteMenu, selectedListIds.size, isAddingHeading, multiSelectMode]);
+
+  const recalcActionBarLayout = useCallback(() => {
+    const row = actionBarRowRef.current;
+    const measure = actionBarMeasureRef.current;
+    const total = actionBarItems.length;
+    if (!row || !measure || total === 0) {
+      setActionBarInlineCount(total);
+      return;
+    }
+    const btns = [...measure.querySelectorAll<HTMLElement>("[data-measure-si-action]")];
+    const widths = btns.map((b) => b.offsetWidth);
+    const W = row.clientWidth;
+    if (W < 24) {
+      setActionBarInlineCount(total);
+      return;
+    }
+    const GAP = 4;
+    const TRIGGER = 44;
+    let used = 0;
+    let inline = 0;
+    for (let i = 0; i < widths.length; i++) {
+      const gap = inline > 0 ? GAP : 0;
+      const end = used + gap + widths[i];
+      const isLast = i === widths.length - 1;
+      if (isLast ? end <= W : end + GAP + TRIGGER <= W) {
+        inline++;
+        used = end;
+      } else {
+        break;
+      }
+    }
+    setActionBarInlineCount(inline);
+  }, [actionBarItems]);
+
+  useLayoutEffect(() => {
+    recalcActionBarLayout();
+  }, [recalcActionBarLayout]);
+
+  useLayoutEffect(() => {
+    const row = actionBarRowRef.current;
+    if (!row) return;
+    const ro = new ResizeObserver(() => recalcActionBarLayout());
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [recalcActionBarLayout]);
+
+  useLayoutEffect(() => {
+    if (actionBarItems.length === 0) setActionBarMenuOpen(false);
+  }, [actionBarItems.length]);
+
+  const inlineActionCandidates = actionBarItems.filter(
+    (item) => item.id !== "edit-heading",
+  );
+  const forcedOverflowActionItems = actionBarItems.filter(
+    (item) => item.id === "edit-heading",
+  );
+  const inlineActionItems = inlineActionCandidates.slice(
+    0,
+    actionBarInlineCount,
+  );
+  const overflowActionItems = [
+    ...inlineActionCandidates.slice(actionBarInlineCount),
+    ...forcedOverflowActionItems,
+  ];
+
+  const getActionIcon = (id: ActionBarItem["id"]) => {
+    if (id === "add-heading") return <Plus className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
+    if (id === "edit-heading") return <Pencil className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
+    if (id === "delete-selected") return <Trash2 className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} aria-hidden />;
+    return null;
+  };
+
+  const getActionHandler = (id: ActionBarItem["id"]) => {
+    if (id === "add-heading") return handleAddHeading;
+    if (id === "edit-heading") return openHeadingRenameWindow;
+    if (id === "delete-selected") return handleDeleteSelected;
+    return handleMultiSelectDone;
+  };
+
+  const handleActionBarMenuOpenChange = useCallback(
+    (open: boolean) => {
+      setActionBarMenuOpen(open);
+    },
+    [],
+  );
 
   useEffect(() => {
     const itemElement = document.getElementById(
@@ -406,19 +680,158 @@ const ServiceItems = () => {
         <div className="min-h-0 border-b-2 border-white/25 bg-black/55 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
           <Outlines servicePanel className="w-full min-w-0" />
         </div>
-        {selectedList && access === "full" && (
-          <Button
-            svg={Plus}
-            variant="tertiary"
-            className="w-full justify-center text-xs"
-            iconSize="sm"
-            onClick={handleAddHeading}
-            disabled={isAddingHeading}
-            isLoading={isAddingHeading}
+        {actionBarItems.length > 0 && (
+          <div
+            ref={actionBarRowRef}
+            className="flex flex-nowrap items-center gap-1 border-b border-white/10 px-2 py-1 min-w-0"
           >
-            Add heading
-          </Button>
+              {/* Hidden measure row for overflow calculation */}
+              <div
+                ref={actionBarMeasureRef}
+                className="pointer-events-none fixed left-[-9999px] top-0 z-[-1] flex flex-nowrap items-center gap-1 opacity-0"
+                aria-hidden
+              >
+                {actionBarItems.map((item) => (
+                  <Button
+                    key={item.id}
+                    data-measure-si-action
+                    variant="tertiary"
+                    color="red"
+                    className={cn(
+                      "shrink-0",
+                      MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+                      item.destructive && "text-white [&_svg]:text-red-400!",
+                    )}
+                    tabIndex={-1}
+                  >
+                    <span className="flex items-center gap-1">
+                      {getActionIcon(item.id)}
+                      {item.label}
+                    </span>
+                  </Button>
+                ))}
+              </div>
+
+              {/* Inline buttons */}
+              {inlineActionItems.map((item) => {
+                const button = (
+                  <Button
+                    key={item.id}
+                    variant="tertiary"
+                    className={cn(
+                      "shrink-0",
+                      MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+                      item.destructive && "text-white [&_svg]:text-red-400!",
+                    )}
+                    onClick={getActionHandler(item.id)}
+                    disabled={item.disabled}
+                    isLoading={item.isLoading}
+                    title={item.label}
+                  >
+                    <span className="flex items-center gap-1">
+                      {getActionIcon(item.id)}
+                      {item.label}
+                    </span>
+                  </Button>
+                );
+                return button;
+              })}
+
+              {/* Overflow menu */}
+              {overflowActionItems.length > 0 && (
+                <DropdownMenu
+                  open={actionBarMenuOpen}
+                  onOpenChange={handleActionBarMenuOpenChange}
+                >
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="tertiary"
+                      className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+                      title="More actions"
+                      aria-label="More actions"
+                    >
+                      <MoreHorizontal
+                        className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE)}
+                        aria-hidden
+                      />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    className="min-w-48 text-xs"
+                  >
+                    {overflowActionItems.map((item) => (
+                      <DropdownMenuItem
+                        key={item.id}
+                        variant="default"
+                        className={cn(
+                          MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS,
+                          item.destructive && "[&_svg]:text-red-400!",
+                        )}
+                        disabled={item.disabled}
+                        onSelect={() => {
+                          if (item.id === "edit-heading") {
+                            openHeadingRenameWindow();
+                            return;
+                          }
+                          getActionHandler(item.id)();
+                        }}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          {getActionIcon(item.id)}
+                          {item.label}
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
         )}
+        {selectedHeading && headingRenameOpen ? (
+          <FloatingWindow
+            title="Edit heading name"
+            onClose={handleCancelHeadingRename}
+            defaultWidth={320}
+            defaultHeight={220}
+            defaultPosition={headingRenamePosition}
+            autoHeight
+          >
+            <form
+              className="flex flex-col gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSaveHeadingRename();
+              }}
+            >
+              <Input
+                label="Heading name"
+                value={headingRenameDraft}
+                onChange={(value) => setHeadingRenameDraft(String(value))}
+                placeholder="Name"
+                inputTextSize="text-sm"
+                inputWidth="w-full"
+                data-ignore-undo="true"
+              />
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  onClick={handleCancelHeadingRename}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="cta"
+                  disabled={!headingRenameDraft.trim()}
+                >
+                  Save
+                </Button>
+              </div>
+            </form>
+          </FloatingWindow>
+        ) : null}
         {!isLoading && serviceItems.length === 0 && (
           <p className="text-sm p-2">
             {access !== "view"
@@ -429,40 +842,7 @@ const ServiceItems = () => {
         {isLoading ? (
           <ServiceOutlineSkeleton />
         ) : (
-          <ContextMenu
-            className="flex-1 min-h-0 flex flex-col overflow-hidden"
-            menuItems={[
-              ...(showBulkDeleteMenu
-                ? [
-                  {
-                    label: `Delete selected (${selectedListIds.size})`,
-                    onClick: handleDeleteSelected,
-                    icon: <Trash2 className="w-4 h-4 shrink-0" />,
-                    variant: "destructive" as const,
-                  },
-                ]
-                : []),
-            ]}
-            header={
-              selectedListIds.size > 0
-                ? {
-                  title: `${selectedListIds.size} item${selectedListIds.size === 1 ? "" : "s"} selected`,
-                }
-                : undefined
-            }
-            onContextMenuOpen={(e) => {
-              const listId = (e.target as HTMLElement)
-                .closest("[data-list-id]")
-                ?.getAttribute("data-list-id");
-              if (listId && serviceItems.some((i) => i.listId === listId)) {
-                setSelectedListIds((prev) =>
-                  prev.has(listId) ? prev : new Set([listId])
-                );
-                setAnchorListId(listId);
-                dispatch(setActiveItemInList(listId));
-              }
-            }}
-          >
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             <ul
               ref={setNodeRef}
               className="scrollbar-variable overflow-y-auto overflow-x-hidden flex-1 pb-2 min-h-0"
@@ -487,10 +867,6 @@ const ServiceItems = () => {
                         onToggleCollapse={() =>
                           handleToggleHeadingCollapse(item.listId)
                         }
-                        onSaveName={(newName) =>
-                          handleSaveHeadingName(item, newName)
-                        }
-                        onDelete={() => handleDeleteHeading(item.listId)}
                         onItemClick={handleItemClick}
                         canMutateOutline={canMutateHeadingRow}
                       />
@@ -515,12 +891,14 @@ const ServiceItems = () => {
                       initialItems={initialItems}
                       onItemClick={handleItemClick}
                       canMutateOutline={canMutateServiceItemRow(item)}
+                      multiSelectMode={canMutateServiceItemRow(item) ? multiSelectMode : undefined}
+                      onEnterMultiSelectMode={canMutateServiceItemRow(item) ? handleEnterMultiSelectMode : undefined}
                     />
                   );
                 })}
               </SortableContext>
             </ul>
-          </ContextMenu>
+          </div>
         )}
       </DndContext>
     </ErrorBoundary>

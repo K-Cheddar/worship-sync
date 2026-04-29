@@ -1,23 +1,13 @@
-import { useState, useRef, useEffect } from "react";
 import {
   ChevronDown,
   ChevronRight,
-  Pencil,
-  Check,
-  X,
-  Trash2,
 } from "lucide-react";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import { ServiceItem as ServiceItemType } from "../../types";
 import Button from "../../components/Button/Button";
-import Input from "../../components/Input/Input";
 import cn from "classnames";
 import { getOutlineRowSelectionState } from "../../utils/outlineRowSelection";
-import {
-  INLINE_EDIT_CONFIRM_ICON_COLOR,
-  handleInlineTextInputKeyDown,
-} from "../../utils/inlineEdit";
 
 type HeadingItemProps = {
   item: ServiceItemType;
@@ -27,8 +17,6 @@ type HeadingItemProps = {
   selectedListIds: Set<string>;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
-  onSaveName: (newName: string) => Promise<void>;
-  onDelete: () => void;
   onItemClick: (listId: string, e: React.MouseEvent) => void;
   /** When false, heading cannot be reordered, renamed, or deleted (view-only access). */
   canMutateOutline?: boolean;
@@ -42,19 +30,13 @@ const HeadingItem = ({
   selectedListIds,
   isCollapsed,
   onToggleCollapse,
-  onSaveName,
-  onDelete,
   onItemClick,
   canMutateOutline = true,
 }: HeadingItemProps) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [localName, setLocalName] = useState(item.name);
-  const editWrapperRef = useRef<HTMLDivElement>(null);
-
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({
       id: item.listId,
-      disabled: isEditing || !canMutateOutline,
+      disabled: !canMutateOutline,
     });
 
   const style = {
@@ -70,48 +52,6 @@ const HeadingItem = ({
     insertPointIndex
   );
 
-  useEffect(() => {
-    setLocalName(item.name);
-  }, [item.name]);
-
-  useEffect(() => {
-    if (isEditing && editWrapperRef.current) {
-      const input = editWrapperRef.current.querySelector("input");
-      input?.focus();
-      input?.select();
-    }
-  }, [isEditing]);
-
-  const handleStartEdit = () => {
-    if (!canMutateOutline) return;
-    setLocalName(item.name);
-    setIsEditing(true);
-  };
-
-  const handleConfirm = async () => {
-    const trimmed = localName.trim();
-    if (trimmed && trimmed !== item.name) {
-      await onSaveName(trimmed);
-    } else {
-      setLocalName(item.name);
-    }
-    setIsEditing(false);
-  };
-
-  const handleDiscard = () => {
-    setLocalName(item.name);
-    setIsEditing(false);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    handleInlineTextInputKeyDown(e, {
-      onSave: () => {
-        void handleConfirm();
-      },
-      onCancel: handleDiscard,
-    });
-  };
-
   return (
     <li
       ref={setNodeRef}
@@ -120,7 +60,7 @@ const HeadingItem = ({
       style={style}
       onClick={(e) => onItemClick(item.listId, e)}
       className={cn(
-        "flex items-center gap-1 border-b-2 overflow-hidden",
+        "flex items-center gap-1 border-b-2 overflow-hidden pr-6",
         "bg-black/40 border-t border-white/20 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]",
         isSelected && "ring-1 ring-inset ring-cyan-500/30",
         isSelected ? "border-l-cyan-500" : "border-transparent",
@@ -130,92 +70,27 @@ const HeadingItem = ({
       )}
     >
       <div className="flex-1 min-w-0 flex items-center gap-1">
-        {!isEditing ? (
-          <>
-            <Button
-              variant="tertiary"
-              svg={isCollapsed ? ChevronRight : ChevronDown}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleCollapse();
-              }}
-              title={isCollapsed ? "Expand" : "Collapse"}
-              iconSize="sm"
-            />
-            <p
-              {...(canMutateOutline ? attributes : {})}
-              {...(canMutateOutline ? listeners : {})}
-              title={item.name}
-              className={cn(
-                "line-clamp-3 min-w-0 flex-1 wrap-break-word px-2 py-2 text-center text-[11px] font-semibold text-white",
-                canMutateOutline && "cursor-grab active:cursor-grabbing",
-              )}
-            >
-              {item.name}
-            </p>
-            {canMutateOutline && (
-              <Button
-                variant="tertiary"
-                svg={Pencil}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleStartEdit();
-                }}
-                iconSize="sm"
-                title="Edit heading name"
-              />
-            )}
-          </>
-        ) : (
-          <div
-            ref={editWrapperRef}
-            className="flex-1 min-w-0 flex items-center gap-1"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Input
-              value={localName}
-              onChange={(val) => setLocalName(String(val))}
-              onKeyDown={handleKeyDown}
-              className="flex-1 text-sm py-0.5 min-w-0"
-              hideLabel
-              data-ignore-undo="true"
-            />
-            <Button
-              variant="tertiary"
-              svg={Check}
-              onClick={(e) => {
-                e.stopPropagation();
-                void handleConfirm();
-              }}
-              className="shrink-0 p-1 min-w-6"
-              color={INLINE_EDIT_CONFIRM_ICON_COLOR}
-              title="Save"
-              iconSize="sm"
-            />
-            <Button
-              variant="tertiary"
-              svg={X}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDiscard();
-              }}
-              className="shrink-0 p-1 min-w-6"
-              title="Discard"
-              iconSize="sm"
-            />
-            <Button
-              variant="tertiary"
-              svg={Trash2}
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              className="shrink-0 p-1 min-w-6 text-red-500"
-              title="Delete heading"
-              iconSize="sm"
-            />
-          </div>
-        )}
+        <Button
+          variant="tertiary"
+          svg={isCollapsed ? ChevronRight : ChevronDown}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCollapse();
+          }}
+          title={isCollapsed ? "Expand" : "Collapse"}
+          iconSize="sm"
+        />
+        <p
+          {...(canMutateOutline ? attributes : {})}
+          {...(canMutateOutline ? listeners : {})}
+          title={item.name}
+          className={cn(
+            "line-clamp-3 min-w-0 flex-1 wrap-break-word px-2 py-2 text-center text-[11px] font-semibold text-white",
+            canMutateOutline && "cursor-grab active:cursor-grabbing",
+          )}
+        >
+          {item.name}
+        </p>
       </div>
     </li>
   );
