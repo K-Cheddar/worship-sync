@@ -9,7 +9,7 @@ import {
   Plus,
   X,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useDispatch } from "../../hooks";
 import MediaUploadInput from "./MediaUploadInput";
 import {
@@ -34,7 +34,7 @@ import MediaProviderRetryModal from "./MediaProviderRetryModal";
 import MediaLibraryGrid from "./MediaLibraryGrid";
 import { useMediaLibraryController } from "./useMediaLibraryController";
 import type { MediaFolder } from "../../types";
-import FloatingWindow from "../../components/FloatingWindow/FloatingWindow";
+import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -50,6 +50,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const c = useMediaLibraryController({ variant, pageMode });
   const { showAll, navigateToFolder } = c;
   const selectedCount = c.selectedMediaIds.size;
+  const mediaRenameWindowRef = useRef<FloatingWindowHandle>(null);
   const [mediaRenamePosition, setMediaRenamePosition] = useState({
     x: Math.max(window.innerWidth - 340, 0),
     y: 80,
@@ -65,6 +66,10 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
 
   const handleMediaRenameOpenChange = useCallback(
     (open: boolean) => {
+      if (open && c.mediaRenameOpen) {
+        mediaRenameWindowRef.current?.restore();
+        return;
+      }
       if (open) {
         const trigger = document.activeElement;
         if (trigger instanceof HTMLElement) {
@@ -358,6 +363,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         />
         {selectedCount === 1 && c.mediaRenameOpen ? (
           <FloatingWindow
+            ref={mediaRenameWindowRef}
             title="Rename media"
             onClose={c.closeMediaRenamePopover}
             defaultWidth={320}
