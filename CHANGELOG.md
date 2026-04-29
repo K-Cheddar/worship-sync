@@ -1,3 +1,10 @@
+## [2.5.1](https://github.com/K-Cheddar/worship-sync/compare/v2.5.0...v2.5.1) (2026-04-29)
+
+
+### Bug Fixes
+
+* Minor fixes ([7847965](https://github.com/K-Cheddar/worship-sync/commit/7847965eb3e5a1817c793b1b7e6e252f8e3f1cf0))
+
 # [2.5.0](https://github.com/K-Cheddar/worship-sync/compare/v2.4.0...v2.5.0) (2026-04-29)
 
 
