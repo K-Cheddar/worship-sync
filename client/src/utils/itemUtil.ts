@@ -49,7 +49,7 @@ const SECTION_LABEL_MAP: Record<string, string> = {
   instrumental: "Instrumental",
 };
 
-const WRAPPED_LABEL_RE = /^[\[(]([^\])]*)[\])]$/;
+const WRAPPED_LABEL_RE = /^[[(]([^\])]*)[\])]$/;
 
 const tryParseSectionLabel = (rawLine: string): string | null => {
   const line = rawLine.trim();
@@ -79,7 +79,10 @@ const parseWithSectionLabels = (normalizedText: string): ParsedSection[] => {
     if (currentType !== null) {
       sections.push({
         type: currentType,
-        words: contentLines.join("\n").replace(/\n{2,}/g, "\n").trim(),
+        words: contentLines
+          .join("\n")
+          .replace(/\n{2,}/g, "\n")
+          .trim(),
       });
       contentLines = [];
     }
@@ -105,7 +108,10 @@ const parseSectionBlock = (block: string): ParsedSection => {
     const firstLine = block.slice(0, newlineIndex).trim();
     const canonical = SECTION_LABEL_MAP[firstLine.toLowerCase()];
     if (canonical) {
-      return { type: canonical, words: block.slice(newlineIndex + 1).trimStart() };
+      return {
+        type: canonical,
+        words: block.slice(newlineIndex + 1).trimStart(),
+      };
     }
   }
   return { type: "Verse", words: block };

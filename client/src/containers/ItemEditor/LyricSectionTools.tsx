@@ -144,12 +144,12 @@ const LyricSectionTools = ({
             setMultipleSectionsOpen(true);
           }}
         >
-          Add multiple sections
+          Add from lyrics
         </Button>
         {multipleSectionsOpen && (
           <FloatingWindow
             ref={floatingWindowRef}
-            title="Add multiple sections"
+            title="Add from lyrics"
             onClose={() => {
               setMultipleSectionsOpen(false);
               setMultipleLyricsText("");
