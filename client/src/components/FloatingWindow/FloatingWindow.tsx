@@ -144,7 +144,17 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
 
     useEffect(() => () => clearAnimTimer(), []);
 
-    useImperativeHandle(ref, () => ({ restore: handleMinimize }), [handleMinimize]);
+    useImperativeHandle(
+      ref,
+      () => ({
+        restore: () => {
+          if (phaseRef.current === "minimized" || phaseRef.current === "minimizing") {
+            handleMinimize();
+          }
+        },
+      }),
+      [handleMinimize],
+    );
 
     // ── Drag ─────────────────────────────────────────────────────────────────
     const dragState = useRef<{
@@ -315,7 +325,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         ref={containerRef}
         onMouseDown={() => setActiveZ(bringToFront())}
         className={cn(
-          "flex flex-col overflow-hidden rounded-lg border border-white/10 bg-gray-800 shadow-2xl",
+          "flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-gray-800 shadow-2xl",
           isMinimized && "rounded-b-none",
           className,
         )}

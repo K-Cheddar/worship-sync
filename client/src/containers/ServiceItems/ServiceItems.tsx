@@ -520,7 +520,7 @@ const ServiceItems = () => {
       });
 
   type ActionBarItem = {
-    id: "add-heading" | "edit-heading" | "delete-selected" | "done";
+    id: "add-heading" | "edit-heading" | "delete-selected" | "delete-heading" | "done";
     label: string;
     destructive?: boolean;
     disabled?: boolean;
@@ -545,6 +545,11 @@ const ServiceItems = () => {
         id: "edit-heading",
         label: "Edit name",
       });
+      items.push({
+        id: "delete-heading",
+        label: "Delete heading",
+        destructive: true,
+      })
     }
     if (showBulkDeleteMenu) {
       items.push({
@@ -606,32 +611,27 @@ const ServiceItems = () => {
     if (actionBarItems.length === 0) setActionBarMenuOpen(false);
   }, [actionBarItems.length]);
 
-  const inlineActionCandidates = actionBarItems.filter(
-    (item) => item.id !== "edit-heading",
-  );
-  const forcedOverflowActionItems = actionBarItems.filter(
-    (item) => item.id === "edit-heading",
-  );
-  const inlineActionItems = inlineActionCandidates.slice(
-    0,
-    actionBarInlineCount,
-  );
-  const overflowActionItems = [
-    ...inlineActionCandidates.slice(actionBarInlineCount),
-    ...forcedOverflowActionItems,
-  ];
+  const inlineActionItems = actionBarItems.slice(0, actionBarInlineCount);
+  const overflowActionItems = actionBarItems.slice(actionBarInlineCount);
 
   const getActionIcon = (id: ActionBarItem["id"]) => {
     if (id === "add-heading") return <Plus className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
     if (id === "edit-heading") return <Pencil className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
     if (id === "delete-selected") return <Trash2 className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} aria-hidden />;
+    if (id === "delete-heading") return <Trash2 className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} aria-hidden />;
     return null;
+  };
+
+  const handleDeleteHeading = () => {
+    if (!selectedHeading) return;
+    dispatch(removeItemsFromList([selectedHeading.listId]));
   };
 
   const getActionHandler = (id: ActionBarItem["id"]) => {
     if (id === "add-heading") return handleAddHeading;
     if (id === "edit-heading") return openHeadingRenameWindow;
     if (id === "delete-selected") return handleDeleteSelected;
+    if (id === "delete-heading") return handleDeleteHeading;
     return handleMultiSelectDone;
   };
 
@@ -685,108 +685,108 @@ const ServiceItems = () => {
             ref={actionBarRowRef}
             className="flex flex-nowrap items-center gap-1 border-b border-white/10 px-2 py-1 min-w-0"
           >
-              {/* Hidden measure row for overflow calculation */}
-              <div
-                ref={actionBarMeasureRef}
-                className="pointer-events-none fixed left-[-9999px] top-0 z-[-1] flex flex-nowrap items-center gap-1 opacity-0"
-                aria-hidden
-              >
-                {actionBarItems.map((item) => (
-                  <Button
-                    key={item.id}
-                    data-measure-si-action
-                    variant="tertiary"
-                    color="red"
-                    className={cn(
-                      "shrink-0",
-                      MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-                      item.destructive && "text-white [&_svg]:text-red-400!",
-                    )}
-                    tabIndex={-1}
-                  >
-                    <span className="flex items-center gap-1">
-                      {getActionIcon(item.id)}
-                      {item.label}
-                    </span>
-                  </Button>
-                ))}
-              </div>
-
-              {/* Inline buttons */}
-              {inlineActionItems.map((item) => {
-                const button = (
-                  <Button
-                    key={item.id}
-                    variant="tertiary"
-                    className={cn(
-                      "shrink-0",
-                      MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-                      item.destructive && "text-white [&_svg]:text-red-400!",
-                    )}
-                    onClick={getActionHandler(item.id)}
-                    disabled={item.disabled}
-                    isLoading={item.isLoading}
-                    title={item.label}
-                  >
-                    <span className="flex items-center gap-1">
-                      {getActionIcon(item.id)}
-                      {item.label}
-                    </span>
-                  </Button>
-                );
-                return button;
-              })}
-
-              {/* Overflow menu */}
-              {overflowActionItems.length > 0 && (
-                <DropdownMenu
-                  open={actionBarMenuOpen}
-                  onOpenChange={handleActionBarMenuOpenChange}
+            {/* Hidden measure row for overflow calculation */}
+            <div
+              ref={actionBarMeasureRef}
+              className="pointer-events-none fixed left-[-9999px] top-0 z-[-1] flex flex-nowrap items-center gap-1 opacity-0"
+              aria-hidden
+            >
+              {actionBarItems.map((item) => (
+                <Button
+                  key={item.id}
+                  data-measure-si-action
+                  variant="tertiary"
+                  color="red"
+                  className={cn(
+                    "shrink-0",
+                    MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+                    item.destructive && "text-white [&_svg]:text-red-400!",
+                  )}
+                  tabIndex={-1}
                 >
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="tertiary"
-                      className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
-                      title="More actions"
-                      aria-label="More actions"
-                    >
-                      <MoreHorizontal
-                        className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE)}
-                        aria-hidden
-                      />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    className="min-w-48 text-xs"
-                  >
-                    {overflowActionItems.map((item) => (
-                      <DropdownMenuItem
-                        key={item.id}
-                        variant="default"
-                        className={cn(
-                          MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS,
-                          item.destructive && "[&_svg]:text-red-400!",
-                        )}
-                        disabled={item.disabled}
-                        onSelect={() => {
-                          if (item.id === "edit-heading") {
-                            openHeadingRenameWindow();
-                            return;
-                          }
-                          getActionHandler(item.id)();
-                        }}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          {getActionIcon(item.id)}
-                          {item.label}
-                        </span>
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+                  <span className="flex items-center gap-1">
+                    {getActionIcon(item.id)}
+                    {item.label}
+                  </span>
+                </Button>
+              ))}
             </div>
+
+            {/* Inline buttons */}
+            {inlineActionItems.map((item) => {
+              const button = (
+                <Button
+                  key={item.id}
+                  variant="tertiary"
+                  className={cn(
+                    "shrink-0",
+                    MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+                    item.destructive && "text-white [&_svg]:text-red-400!",
+                  )}
+                  onClick={getActionHandler(item.id)}
+                  disabled={item.disabled}
+                  isLoading={item.isLoading}
+                  title={item.label}
+                >
+                  <span className="flex items-center gap-1">
+                    {getActionIcon(item.id)}
+                    {item.label}
+                  </span>
+                </Button>
+              );
+              return button;
+            })}
+
+            {/* Overflow menu */}
+            {overflowActionItems.length > 0 && (
+              <DropdownMenu
+                open={actionBarMenuOpen}
+                onOpenChange={handleActionBarMenuOpenChange}
+              >
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="tertiary"
+                    className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+                    title="More actions"
+                    aria-label="More actions"
+                  >
+                    <MoreHorizontal
+                      className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE)}
+                      aria-hidden
+                    />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="end"
+                  className="min-w-48 text-xs"
+                >
+                  {overflowActionItems.map((item) => (
+                    <DropdownMenuItem
+                      key={item.id}
+                      variant="default"
+                      className={cn(
+                        MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS,
+                        item.destructive && "[&_svg]:text-red-400!",
+                      )}
+                      disabled={item.disabled}
+                      onSelect={() => {
+                        if (item.id === "edit-heading") {
+                          openHeadingRenameWindow();
+                          return;
+                        }
+                        getActionHandler(item.id)();
+                      }}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {getActionIcon(item.id)}
+                        {item.label}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
         )}
         {selectedHeading && headingRenameOpen ? (
           <FloatingWindow
