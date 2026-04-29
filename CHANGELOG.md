@@ -1,3 +1,10 @@
+# [2.5.0](https://github.com/K-Cheddar/worship-sync/compare/v2.4.0...v2.5.0) (2026-04-29)
+
+
+### Features
+
+* Improve pasting lyrics formatting ([c68f26f](https://github.com/K-Cheddar/worship-sync/commit/c68f26f77e5829195e90230bdd83dd028ea20bf7))
+
 # [2.4.0](https://github.com/K-Cheddar/worship-sync/compare/v2.3.0...v2.4.0) (2026-04-28)
 
 
