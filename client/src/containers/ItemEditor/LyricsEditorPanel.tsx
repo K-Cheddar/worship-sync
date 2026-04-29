@@ -1,5 +1,5 @@
 import { useSelector, useDispatch } from "../../hooks";
-import { Save, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Plus, Save, X, ZoomIn, ZoomOut } from "lucide-react";
 
 import Button from "../../components/Button/Button";
 import {
@@ -36,7 +36,7 @@ import {
 } from "../../types";
 import { itemSectionBgColorMap, sectionTypes } from "../../utils/slideColorMap";
 import Arrangement from "./Arrangement";
-import { updateFormattedSections } from "../../utils/itemUtil";
+import { createSections, updateFormattedSections } from "../../utils/itemUtil";
 import { sortList } from "../../utils/sort";
 import {
   formatSong,
@@ -61,6 +61,9 @@ import cn from "classnames";
 import { DEFAULT_FONT_PX } from "../../constants";
 import { getItemTypeLabel } from "../../utils/itemTypeMaps";
 import generateRandomId from "../../utils/generateRandomId";
+import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
+import Input from "../../components/Input/Input";
+import TextArea from "../../components/TextArea/TextArea";
 
 const ensureArrangementIds = (nextArrangements: Arrangment[]): Arrangment[] =>
   nextArrangements.map((arrangement) =>
@@ -131,6 +134,12 @@ const LyricsEditorPanel = () => {
   const [recentlyMovedSectionId, setRecentlyMovedSectionId] = useState<string | null>(null);
   const [pendingFocusSectionId, setPendingFocusSectionId] = useState<string | null>(null);
   const [addNewSectionsToSongOrder, setAddNewSectionsToSongOrder] = useState(true);
+  const [addArrangementOpen, setAddArrangementOpen] = useState(false);
+  const [addArrangementPosition, setAddArrangementPosition] = useState<{ x: number; y: number } | undefined>();
+  const [newArrangementName, setNewArrangementName] = useState("");
+  const [newArrangementLyrics, setNewArrangementLyrics] = useState("");
+  const addArrangementWindowRef = useRef<FloatingWindowHandle>(null);
+  const addArrangementButtonRef = useRef<HTMLButtonElement>(null);
   const dispatch = useDispatch();
   const setLyricsDensity = useCallback(
     (next: number) => {
@@ -568,6 +577,55 @@ const LyricsEditorPanel = () => {
     ],
   );
 
+  const handleAddMultipleSections = useCallback(
+    (text: string) => {
+      const { formattedLyrics: newLyrics, songOrder: newOrder } = createSections({
+        formattedLyrics: localFormattedLyrics,
+        songOrder,
+        unformattedLyrics: text,
+      });
+      const { formattedLyrics, songOrder: updatedOrder } = updateFormattedSections({
+        formattedLyrics: newLyrics,
+        songOrder: newOrder,
+      });
+      updateFormattedLyricsAndSongOrder(
+        formattedLyrics,
+        addNewSectionsToSongOrder
+          ? { songOrder: updatedOrder }
+          : { preserveEmptySongOrder: true },
+      );
+    },
+    [
+      addNewSectionsToSongOrder,
+      localFormattedLyrics,
+      songOrder,
+      updateFormattedLyricsAndSongOrder,
+    ],
+  );
+
+  const handleAddNewArrangement = useCallback(
+    (name: string, lyricsText: string) => {
+      const { formattedLyrics: rawLyrics, songOrder: rawOrder } = createSections({
+        unformattedLyrics: lyricsText,
+      });
+      const { formattedLyrics, songOrder: newOrder } = updateFormattedSections({
+        formattedLyrics: rawLyrics,
+        songOrder: rawOrder,
+      });
+      const currentSlides = localArrangements[localSelectedArrangement]?.slides ?? [];
+      const newArrangement: Arrangment = {
+        name,
+        formattedLyrics,
+        songOrder: newOrder,
+        slides: currentSlides,
+        id: generateRandomId(),
+      };
+      updateLocalArrangements((current) => [...current, newArrangement]);
+      setLocalSelectedArrangementId(newArrangement.id);
+    },
+    [localArrangements, localSelectedArrangement, updateLocalArrangements],
+  );
+
   // Debounce preview regeneration to avoid expensive formatting on every keystroke
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -946,12 +1004,82 @@ const LyricsEditorPanel = () => {
                     onAddNewSectionsToSongOrderChange={setAddNewSectionsToSongOrder}
                     onAddEmptySection={handleAddEmptySection}
                     onOpenImportDrawer={() => setShowImportDrawer(true)}
+                    onAddMultipleSections={handleAddMultipleSections}
                   />
                 </div>
               )}
-              <h3 className="shrink-0 text-base font-semibold text-gray-100">
-                Arrangements
-              </h3>
+              <div className="flex shrink-0 items-center justify-between gap-2 flex-col">
+                <h3 className="text-base font-semibold text-gray-100">Arrangements</h3>
+                <Button
+                  ref={addArrangementButtonRef}
+                  variant="tertiary"
+                  svg={Plus}
+                  color="#22d3ee"
+                  truncate
+                  iconSize="sm"
+                  className="rounded-md border border-gray-500 px-2 py-1 text-xs"
+                  onClick={() => {
+                    if (addArrangementOpen) {
+                      addArrangementWindowRef.current?.restore();
+                      return;
+                    }
+                    const rect = addArrangementButtonRef.current?.getBoundingClientRect();
+                    if (rect) {
+                      const w = 360;
+                      setAddArrangementPosition({
+                        x: Math.min(rect.right + 8, window.innerWidth - w - 8),
+                        y: rect.top,
+                      });
+                    }
+                    setAddArrangementOpen(true);
+                  }}
+                >
+                  Add new
+                </Button>
+              </div>
+              {addArrangementOpen && (
+                <FloatingWindow
+                  ref={addArrangementWindowRef}
+                  title="Add new arrangement"
+                  defaultWidth={360}
+                  autoHeight
+                  defaultHeight={480}
+                  defaultPosition={addArrangementPosition}
+                  onClose={() => {
+                    setAddArrangementOpen(false);
+                    setNewArrangementName("");
+                    setNewArrangementLyrics("");
+                  }}
+                >
+                  <div className="flex flex-col gap-3">
+                    <Input
+                      label="Name"
+                      value={newArrangementName}
+                      onChange={(v) => setNewArrangementName(v as string)}
+                      className="text-base"
+                    />
+                    <TextArea
+                      label="Paste Lyrics Here"
+                      value={newArrangementLyrics}
+                      onChange={(v) => setNewArrangementLyrics(v as string)}
+                      textareaClassName="min-h-48 rounded-md text-sm"
+                    />
+                    <Button
+                      variant="primary"
+                      className="w-full justify-center"
+                      disabled={!newArrangementName.trim()}
+                      onClick={() => {
+                        handleAddNewArrangement(newArrangementName.trim(), newArrangementLyrics);
+                        setAddArrangementOpen(false);
+                        setNewArrangementName("");
+                        setNewArrangementLyrics("");
+                      }}
+                    >
+                      Add arrangement
+                    </Button>
+                  </div>
+                </FloatingWindow>
+              )}
               <ul className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
                 {localArrangements.map((arrangement, index) => (
                   <Arrangement
@@ -989,6 +1117,7 @@ const LyricsEditorPanel = () => {
                   onAddNewSectionsToSongOrderChange={setAddNewSectionsToSongOrder}
                   onAddEmptySection={handleAddEmptySection}
                   onOpenImportDrawer={() => setShowImportDrawer(true)}
+                  onAddMultipleSections={handleAddMultipleSections}
                 />
               </div>
             ) : null}

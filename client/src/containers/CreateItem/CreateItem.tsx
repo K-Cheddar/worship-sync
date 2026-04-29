@@ -24,6 +24,7 @@ import {
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
+import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { ItemState, ItemType, ServiceItem } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
@@ -293,6 +294,7 @@ const CreateItem = () => {
     dispatch(setActiveItem(item));
     const addedAction = dispatch(addItemToItemList(listItem));
     dispatch(addItemToAllItemsList(listItem));
+    dispatch(upsertItemInAllDocs(item));
     goToItem(item._id, addedAction.payload.listId);
   };
 

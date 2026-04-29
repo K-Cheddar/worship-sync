@@ -63,9 +63,14 @@ export function MediaLibraryRenameMediaForm({
         inputTextSize="text-sm"
         inputWidth="w-full"
       />
-      <Button type="submit" variant="cta" className="w-full justify-center">
-        Save
-      </Button>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="tertiary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button type="submit" variant="cta">
+          Save
+        </Button>
+      </div>
     </form>
   );
 }

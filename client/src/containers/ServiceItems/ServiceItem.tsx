@@ -15,6 +15,9 @@ import { useGSAP } from "@gsap/react";
 import cn from "classnames";
 import { getOutlineRowSelectionState } from "../../utils/outlineRowSelection";
 
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_MOVE_PX = 10;
+
 type ServiceItemsProps = {
   isActive: boolean;
   timerValue?: number;
@@ -27,6 +30,13 @@ type ServiceItemsProps = {
   onItemClick: (listId: string, e: React.MouseEvent) => void;
   /** When false, outline cannot be reordered or removed (view-only access). */
   canMutateOutline?: boolean;
+  /** When provided, renders selection checkboxes. Plain click in this mode toggles selection. */
+  multiSelectMode?: boolean;
+  /** Called on touch long-press to enter multi-select mode. */
+  onEnterMultiSelectMode?: (
+    listId: string,
+    options?: { skipNextClick?: boolean },
+  ) => void;
 };
 
 const ServiceItem = ({
@@ -40,6 +50,8 @@ const ServiceItem = ({
   initialItems,
   onItemClick,
   canMutateOutline = true,
+  multiSelectMode,
+  onEnterMultiSelectMode,
 }: ServiceItemsProps) => {
   const dispatch = useDispatch();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
@@ -95,6 +107,49 @@ const ServiceItem = ({
     // track previousItem for highlighting
     previousItem.current = item;
   }, [item]);
+
+  useEffect(() => {
+    const el = serviceItemRef.current;
+    if (!el || !onEnterMultiSelectMode) return;
+    let timer: number | null = null;
+    let startPos: { x: number; y: number } | null = null;
+    const clearTimer = () => {
+      if (timer != null) { window.clearTimeout(timer); timer = null; }
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return;
+      startPos = { x: e.clientX, y: e.clientY };
+      clearTimer();
+      timer = window.setTimeout(() => {
+        timer = null;
+        startPos = null;
+        onEnterMultiSelectMode(item.listId, { skipNextClick: true });
+      }, LONG_PRESS_MS);
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (e.pointerType !== "touch" || timer == null || !startPos) return;
+      if (
+        Math.abs(e.clientX - startPos.x) > LONG_PRESS_MOVE_PX ||
+        Math.abs(e.clientY - startPos.y) > LONG_PRESS_MOVE_PX
+      ) {
+        clearTimer();
+        startPos = null;
+      }
+    };
+    const onPointerUp = (e: PointerEvent) => { if (e.pointerType === "touch") { clearTimer(); startPos = null; } };
+    const onPointerCancel = (e: PointerEvent) => { if (e.pointerType === "touch") { clearTimer(); startPos = null; } };
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", onPointerUp);
+    el.addEventListener("pointercancel", onPointerCancel);
+    return () => {
+      clearTimer();
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", onPointerUp);
+      el.removeEventListener("pointercancel", onPointerCancel);
+    };
+  }, [item.listId, onEnterMultiSelectMode]);
 
   useGSAP(
     () => {
@@ -201,6 +256,14 @@ const ServiceItem = ({
       id={item.listId}
       isActive={isActive}
       onClick={(e) => onItemClick(item.listId, e)}
+      onContextMenu={(e) => {
+        if (!onEnterMultiSelectMode) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onEnterMultiSelectMode(item.listId);
+      }}
+      multiSelectMode={multiSelectMode}
+      isMultiSelected={selectedListIds.has(item.listId)}
     />
   );
 };

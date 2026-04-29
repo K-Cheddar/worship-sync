@@ -23,8 +23,6 @@ const defaultProps = {
   selectedListIds: new Set<string>(),
   isCollapsed: false,
   onToggleCollapse: jest.fn(),
-  onSaveName: jest.fn(),
-  onDelete: jest.fn(),
   onItemClick: jest.fn(),
 };
 
@@ -62,7 +60,7 @@ describe("HeadingItem", () => {
     expect(defaultProps.onToggleCollapse).toHaveBeenCalled();
   });
 
-  it("exposes data-list-id for context menu targeting", () => {
+  it("exposes data-list-id for outline row targeting", () => {
     renderWithDnd(<HeadingItem {...defaultProps} />);
     expect(screen.getByRole("listitem")).toHaveAttribute(
       "data-list-id",

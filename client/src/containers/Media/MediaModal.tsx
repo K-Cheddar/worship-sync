@@ -199,7 +199,6 @@ const MediaModal = ({
   onShowNameToggle,
   onDeleteClick,
   onDeleteMultipleClick,
-  onPreviewChange,
   mediaUploadInputRef,
   uploadProgress,
   onAddMediaClick,
