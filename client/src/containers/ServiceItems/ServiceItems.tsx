@@ -35,7 +35,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../components/ui/DropdownMenu";
-import FloatingWindow from "../../components/FloatingWindow/FloatingWindow";
+import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import cn from "classnames";
 import {
   MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
@@ -97,6 +97,7 @@ const ServiceItems = () => {
   const [actionBarInlineCount, setActionBarInlineCount] = useState(99);
   const [actionBarMenuOpen, setActionBarMenuOpen] = useState(false);
   const [headingRenameOpen, setHeadingRenameOpen] = useState(false);
+  const headingRenameWindowRef = useRef<FloatingWindowHandle>(null);
   const [headingRenameDraft, setHeadingRenameDraft] = useState("");
   const [headingRenamePosition, setHeadingRenamePosition] = useState({
     x: Math.max(window.innerWidth - 340, 0),
@@ -354,6 +355,10 @@ const ServiceItems = () => {
 
   const openHeadingRenameWindow = useCallback(() => {
     if (!selectedHeading) return;
+    if (headingRenameOpen) {
+      headingRenameWindowRef.current?.restore();
+      return;
+    }
     const trigger = document.activeElement;
     if (trigger instanceof HTMLElement) {
       const rect = trigger.getBoundingClientRect();
@@ -364,7 +369,7 @@ const ServiceItems = () => {
     }
     setHeadingRenameDraft(selectedHeading.name);
     setHeadingRenameOpen(true);
-  }, [selectedHeading]);
+  }, [selectedHeading, headingRenameOpen]);
 
   const handleSaveHeadingRename = useCallback(() => {
     if (!selectedHeading) return;
@@ -790,6 +795,7 @@ const ServiceItems = () => {
         )}
         {selectedHeading && headingRenameOpen ? (
           <FloatingWindow
+            ref={headingRenameWindowRef}
             title="Edit heading name"
             onClose={handleCancelHeadingRename}
             defaultWidth={320}

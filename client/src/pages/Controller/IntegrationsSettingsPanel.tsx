@@ -433,8 +433,9 @@ const IntegrationsPersonCard = memo(function IntegrationsPersonCard({
             onChange={(names) => updatePerson(person.id, { names })}
           />
           <Input
-            label="Display name"
+            label="Display name (optional)"
             value={person.displayName}
+            placeholder={person.names.find(Boolean) || undefined}
             onChange={(v) =>
               updatePerson(person.id, { displayName: String(v || "") })
             }
