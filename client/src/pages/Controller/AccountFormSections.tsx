@@ -523,7 +523,7 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
     } finally {
       setIsSending(false);
     }
-  }, [churchId, inviteAccess, inviteEmail, onInvited, showApiError]);
+  }, [churchId, inviteAccess, inviteEmail, onInvited, showApiError, showToast]);
 
   return (
     <section className="rounded-xl border border-gray-600 bg-gray-900/25 p-4">
@@ -637,7 +637,7 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
     } finally {
       setIsGenerating(false);
     }
-  }, [churchId, onGenerated, pairLabel, showApiError, workstationAccess]);
+  }, [churchId, onGenerated, pairLabel, showApiError, showToast, workstationAccess]);
 
   return (
     <>
@@ -751,7 +751,7 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
     } finally {
       setIsGenerating(false);
     }
-  }, [churchId, displayLabel, displaySurface, onGenerated, showApiError]);
+  }, [churchId, displayLabel, displaySurface, onGenerated, showApiError, showToast]);
 
   return (
     <>
@@ -843,7 +843,7 @@ export const RecoveryEmailForm = memo(function RecoveryEmailForm({
     } finally {
       setIsSaving(false);
     }
-  }, [churchId, recoveryEmail, showApiError]);
+  }, [churchId, recoveryEmail, showApiError, showToast]);
 
   return (
     <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
@@ -1423,6 +1423,7 @@ export const BrandingForm = memo(function BrandingForm({
     pendingLogoFiles,
     resetPendingLogos,
     showApiError,
+    showToast,
   ]);
 
   const patchBrandColorSlot = useCallback(

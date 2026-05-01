@@ -19,7 +19,7 @@ export const useApiErrorToast = () => {
           children: () => (
             <div className="mt-2">
               <Button
-                variant="secondary"
+                variant="cta"
                 className="text-sm"
                 onClick={() => window.location.reload()}
               >

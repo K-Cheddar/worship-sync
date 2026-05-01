@@ -5,7 +5,8 @@
       "Bash(npx jest *)",
       "Bash(xargs grep *)",
       "PowerShell(Set-Location \"c:\\\\Users\\\\KPC\\\\Desktop\\\\github\\\\worship-sync\\\\client\"; $result = npx tsc --noEmit 2>&1; $result | Where-Object { $_ -match \"ServiceItem|HeadingItem|LeftPanelButton\" } | Select-Object -First 30; Write-Host \"Exit: $LASTEXITCODE\")",
-      "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")"
+      "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
+      "Bash(npx eslint *)"
     ]
   }
 }
