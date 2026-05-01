@@ -216,6 +216,43 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       [position, handleDragMouseMove, handleDragMouseUp],
     );
 
+    const handleDragTouchMove = useCallback(
+      (e: TouchEvent) => {
+        if (!dragState.current.isDragging) return;
+        e.preventDefault();
+        const touch = e.touches[0];
+        const dx = touch.clientX - dragState.current.startX;
+        const dy = touch.clientY - dragState.current.startY;
+        setPosition(
+          clampPosition(dragState.current.originX + dx, dragState.current.originY + dy),
+        );
+      },
+      [clampPosition],
+    );
+
+    const handleDragTouchEnd = useCallback(() => {
+      dragState.current.isDragging = false;
+      document.removeEventListener("touchmove", handleDragTouchMove);
+      document.removeEventListener("touchend", handleDragTouchEnd);
+    }, [handleDragTouchMove]);
+
+    const handleTitleTouchStart = useCallback(
+      (e: React.TouchEvent) => {
+        if ((e.target as HTMLElement).closest("button")) return;
+        const touch = e.touches[0];
+        dragState.current = {
+          isDragging: true,
+          startX: touch.clientX,
+          startY: touch.clientY,
+          originX: position.x,
+          originY: position.y,
+        };
+        document.addEventListener("touchmove", handleDragTouchMove, { passive: false });
+        document.addEventListener("touchend", handleDragTouchEnd);
+      },
+      [position, handleDragTouchMove, handleDragTouchEnd],
+    );
+
     // ── Resize ───────────────────────────────────────────────────────────────
     const resizeState = useRef<{
       isResizing: boolean;
@@ -269,14 +306,65 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       [handleResizeMouseMove, handleResizeMouseUp, userResized],
     );
 
+    const handleResizeTouchMove = useCallback((e: TouchEvent) => {
+      if (!resizeState.current.isResizing) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      const dx = touch.clientX - resizeState.current.startX;
+      const dy = touch.clientY - resizeState.current.startY;
+      setUserResized(true);
+      setSize({
+        width: Math.min(
+          Math.max(resizeState.current.startWidth + dx, MIN_WIDTH),
+          window.innerWidth,
+        ),
+        height: Math.min(
+          Math.max(resizeState.current.startHeight + dy, MIN_HEIGHT),
+          window.innerHeight,
+        ),
+      });
+    }, []);
+
+    const handleResizeTouchEnd = useCallback(() => {
+      resizeState.current.isResizing = false;
+      document.removeEventListener("touchmove", handleResizeTouchMove);
+      document.removeEventListener("touchend", handleResizeTouchEnd);
+    }, [handleResizeTouchMove]);
+
+    const handleResizeTouchStart = useCallback(
+      (e: React.TouchEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const touch = e.touches[0];
+        const actualHeight =
+          !userResized && containerRef.current
+            ? containerRef.current.offsetHeight
+            : sizeRef.current.height;
+        resizeState.current = {
+          isResizing: true,
+          startX: touch.clientX,
+          startY: touch.clientY,
+          startWidth: sizeRef.current.width,
+          startHeight: actualHeight,
+        };
+        document.addEventListener("touchmove", handleResizeTouchMove, { passive: false });
+        document.addEventListener("touchend", handleResizeTouchEnd);
+      },
+      [handleResizeTouchMove, handleResizeTouchEnd, userResized],
+    );
+
     useEffect(() => {
       return () => {
         document.removeEventListener("mousemove", handleDragMouseMove);
         document.removeEventListener("mouseup", handleDragMouseUp);
+        document.removeEventListener("touchmove", handleDragTouchMove);
+        document.removeEventListener("touchend", handleDragTouchEnd);
         document.removeEventListener("mousemove", handleResizeMouseMove);
         document.removeEventListener("mouseup", handleResizeMouseUp);
+        document.removeEventListener("touchmove", handleResizeTouchMove);
+        document.removeEventListener("touchend", handleResizeTouchEnd);
       };
-    }, [handleDragMouseMove, handleDragMouseUp, handleResizeMouseMove, handleResizeMouseUp]);
+    }, [handleDragMouseMove, handleDragMouseUp, handleDragTouchMove, handleDragTouchEnd, handleResizeMouseMove, handleResizeMouseUp, handleResizeTouchMove, handleResizeTouchEnd]);
 
     // ── Derived animation values ──────────────────────────────────────────────
     const isMinimized = phase === "minimized";
@@ -324,6 +412,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         style={windowStyle}
         ref={containerRef}
         onMouseDown={() => setActiveZ(bringToFront())}
+        onTouchStart={() => setActiveZ(bringToFront())}
         className={cn(
           "flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-gray-800 shadow-2xl",
           isMinimized && "rounded-b-none",
@@ -333,6 +422,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         {/* Title bar */}
         <div
           onMouseDown={handleTitleMouseDown}
+          onTouchStart={handleTitleTouchStart}
           className="flex shrink-0 cursor-grab items-center justify-between gap-2 bg-gray-700 px-3 py-2 select-none active:cursor-grabbing"
         >
           <span className="truncate text-sm font-semibold text-white">{title}</span>
@@ -366,6 +456,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           </div>
           <div
             onMouseDown={handleResizeMouseDown}
+            onTouchStart={handleResizeTouchStart}
             className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize"
             aria-hidden
           >

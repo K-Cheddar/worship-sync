@@ -15,6 +15,9 @@ import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 
 const DISPLAY_IMAGE_CACHE_SWAP_DEFER_MS = 650;
 
+const hasDynamicDisplayText = (words?: string) =>
+  Boolean(words?.includes("{{timer}}") || words?.includes("\u200C"));
+
 type DisplayBoxProps = {
   prevBox?: Box;
   box: Box;
@@ -74,7 +77,10 @@ const DisplayBox = ({
   const displayRawImageRef = useRef(rawImage);
   const targetCurrentImgOpacity = shouldImageBeHidden ? 0 : 1;
   const skipTextAnimation =
-    prevBox && prevBox.words?.trim() === box.words?.trim();
+    prevBox &&
+    prevBox.words?.trim() === box.words?.trim() &&
+    !hasDynamicDisplayText(box.words) &&
+    !hasDynamicDisplayText(prevBox.words);
   const skipBackgroundAnimation =
     (prevBox && prevBox.background === background) || shouldImageBeHidden;
   const initialBackgroundOpacity = !shouldAnimate

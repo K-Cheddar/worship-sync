@@ -1,6 +1,8 @@
+import { forwardRef } from "react";
 import { Plus, SquarePen, X } from "lucide-react";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
+import FontSizeField from "../../components/FontSizeField/FontSizeField";
 import Button from "../../components/Button/Button";
 import ColorField from "../../components/ColorField/ColorField";
 import {
@@ -47,7 +49,7 @@ type Props = {
   onCancel: () => void;
 };
 
-const ServiceTimesForm = ({
+const ServiceTimesForm = forwardRef<HTMLElement, Props>(({
   editingId,
   name,
   setName,
@@ -78,13 +80,13 @@ const ServiceTimesForm = ({
   canSave,
   onSave,
   onCancel,
-}: Props) => {
+}, ref) => {
   const fieldClass = "min-w-0 w-full";
   const stackedFieldClass = `flex min-w-0 w-full flex-col gap-1`;
   const labelClassName = "!p-0";
 
   return (
-    <article className="w-full max-w-full shrink-0 rounded-md border border-white/12 bg-black/30 p-4 md:w-fit md:max-w-lg">
+    <article ref={ref} className="w-full max-w-full shrink-0 self-start rounded-md border border-white/12 bg-black/30 p-4 md:w-fit md:max-w-lg">
       <h2 className="text-xl font-semibold">
         {editingId ? "Edit Service Timer" : "Create Service Timer"}
       </h2>
@@ -198,21 +200,25 @@ const ServiceTimesForm = ({
           onChange={setBackground}
         />
 
-        <Input
+        <FontSizeField
           className={stackedFieldClass}
           label="Name Font Size"
           labelClassName={labelClassName}
-          type="number"
-          value={String(nameSize)}
-          onChange={(v) => setNameSize(parseInt(String(v) || "0", 10))}
+          value={nameSize}
+          onChange={setNameSize}
+          min={5}
+          max={40}
+          defaultValue={12}
         />
-        <Input
+        <FontSizeField
           className={stackedFieldClass}
           label="Timer Font Size"
           labelClassName={labelClassName}
-          type="number"
-          value={String(timeSize)}
-          onChange={(v) => setTimeSize(parseInt(String(v) || "0", 10))}
+          value={timeSize}
+          onChange={setTimeSize}
+          min={10}
+          max={100}
+          defaultValue={35}
         />
         <Select
           className={stackedFieldClass}
@@ -265,6 +271,7 @@ const ServiceTimesForm = ({
       </section>
     </article>
   );
-};
+});
 
+ServiceTimesForm.displayName = "ServiceTimesForm";
 export default ServiceTimesForm;

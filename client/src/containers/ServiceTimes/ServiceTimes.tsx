@@ -77,7 +77,7 @@ const ServiceTimes = () => {
     nextAt: Date;
   } | null>(null);
   const upcomingRefreshTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const formColumnRef = useRef<HTMLDivElement | null>(null);
+  const formRef = useRef<HTMLElement | null>(null);
   const [previewMaxHeightPx, setPreviewMaxHeightPx] = useState<number | null>(
     null,
   );
@@ -294,7 +294,7 @@ const ServiceTimes = () => {
     const wide =
       typeof window !== "undefined" &&
       window.matchMedia("(min-width: 768px)").matches;
-    const el = formColumnRef.current;
+    const el = formRef.current;
     if (!wide || !el) {
       setPreviewMaxHeightPx(null);
       return;
@@ -310,7 +310,7 @@ const ServiceTimes = () => {
         : null;
     const onMq = () => syncPreviewMaxHeight();
     mq?.addEventListener("change", onMq);
-    const el = formColumnRef.current;
+    const el = formRef.current;
     const ro =
       el && typeof ResizeObserver !== "undefined"
         ? new ResizeObserver(() => syncPreviewMaxHeight())
@@ -334,8 +334,8 @@ const ServiceTimes = () => {
 
   const editorLayout = isFormOpen ? (
     <div className="flex w-full shrink-0 flex-col gap-4 md:flex-row md:items-stretch md:gap-6">
-      <div ref={formColumnRef} className="shrink-0">
-        <ServiceTimesForm
+      <ServiceTimesForm
+          ref={formRef}
           editingId={editingId}
           name={name}
           setName={setName}
@@ -367,7 +367,6 @@ const ServiceTimes = () => {
           onSave={onSave}
           onCancel={onCancel}
         />
-      </div>
       <StreamPreview
         name={name}
         color={color}
