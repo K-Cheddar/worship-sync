@@ -43,14 +43,19 @@ const StreamPreview = ({
   }, [position]);
 
   const hasHeightCap = maxColumnHeightPx != null;
-  const columnStyle = hasHeightCap
-    ? { maxHeight: maxColumnHeightPx }
+  // Derive the frame's max-width from the form's measured height so the aspect-ratio
+  // constraint is maintained without the frame ever exceeding the form's height.
+  const frameStyle = hasHeightCap
+    ? {
+      maxHeight: maxColumnHeightPx,
+      maxWidth: Math.floor(maxColumnHeightPx * (16 / 9)),
+    }
     : undefined;
 
   const frame = (
     <div
-      className={`relative aspect-video w-full max-w-full overflow-hidden rounded-md border border-white/12 bg-black/30 @container${hasHeightCap ? " max-h-full" : ""
-        }`}
+      className="relative aspect-video w-full max-w-full overflow-hidden rounded-md border border-white/12 bg-black/30 @container"
+      style={frameStyle}
     >
       <div className={`absolute ${positionClasses} transform`}>
         <ServiceTimeCountdownFace
@@ -73,11 +78,9 @@ const StreamPreview = ({
   return (
     <div
       className="flex w-full min-w-0 flex-col gap-2 md:min-h-0 md:min-w-0 md:flex-1"
-      style={columnStyle}
     >
-      <p className="shrink-0 text-sm text-gray-300">Preview</p>
       {hasHeightCap ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center">
+        <div className="flex min-h-0 flex-1 items-center">
           {frame}
         </div>
       ) : (

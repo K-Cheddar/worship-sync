@@ -7,6 +7,7 @@ import { SectionTabs } from "../../components/SectionTabs/SectionTabs";
 import DeleteModal from "../../components/Modal/DeleteModal";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useToast } from "../../context/toastContext";
+import { useApiErrorToast } from "../../hooks/useApiErrorToast";
 import { cn } from "@/utils/cnHelper";
 import { alternatingAdminListRowBg } from "../../utils/listRowStripes";
 import { getPlatformDisplayLabel } from "../../utils/deviceInfo";
@@ -258,6 +259,7 @@ const toMemberAccessOption = (value?: string): MemberAccessOption => {
 const AccountPage = () => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
+  const { showApiError } = useApiErrorToast();
   const churchId = context?.churchId || "";
   const isAdmin = context?.role === "admin";
   const canManage = isAdmin && Boolean(churchId);
@@ -299,12 +301,12 @@ const AccountPage = () => {
   );
 
   const showError = useCallback(
-    (message: string) => {
+    (error: unknown, message: string) => {
       setWorkstationPairingResetSignal((n) => n + 1);
       setDisplayPairingResetSignal((n) => n + 1);
-      showToast(message, "error");
+      showApiError(error, message);
     },
-    [showToast]
+    [showApiError]
   );
 
   const refresh = useCallback(async () => {
@@ -332,6 +334,7 @@ const AccountPage = () => {
       setDisplayDevices((displayResponse.displayDevices || []) as DisplayDevice[]);
     } catch (error) {
       showError(
+        error,
         formatAccountError(
           error,
           "Could not load account details. Try again."
@@ -352,6 +355,7 @@ const AccountPage = () => {
         await action();
       } catch (error) {
         showError(
+          error,
           formatAccountError(error, "Could not complete that. Try again.")
         );
       }
@@ -366,6 +370,7 @@ const AccountPage = () => {
         await action();
       } catch (error) {
         showError(
+          error,
           formatAccountError(error, "Could not complete that. Try again.")
         );
       } finally {
@@ -492,6 +497,7 @@ const AccountPage = () => {
       setDestructiveConfirm(null);
     } catch (error) {
       showError(
+        error,
         formatAccountError(error, "Could not complete that. Try again.")
       );
     } finally {

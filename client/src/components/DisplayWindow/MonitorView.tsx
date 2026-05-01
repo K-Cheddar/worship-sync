@@ -263,7 +263,7 @@ const MonitorView = ({
           )}
           {boxes.map((box, i) => (
             <DisplayBox
-              key={box.id}
+              key={`current-${box.id ?? i}`}
               box={box}
               width={effectiveWidth}
               showBackground={showBackground}
@@ -281,7 +281,7 @@ const MonitorView = ({
           ))}
           {prevBoxes.map((box, i) => (
             <DisplayBox
-              key={box.id}
+              key={`prev-${box.id ?? i}`}
               box={box}
               width={effectiveWidth}
               showBackground={showBackground}

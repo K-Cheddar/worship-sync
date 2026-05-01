@@ -28,6 +28,12 @@ export type ServicePlanningSyncItem = {
 /** @deprecated Use ServicePlanningSyncItem */
 export type ServicePlanningSyncCompletedItem = ServicePlanningSyncItem;
 
+export type ServicePlanningSyncFollowUpItem = {
+  label: string;
+  sublabel?: string;
+  reason: string;
+};
+
 export type ServicePlanningSyncSummary = {
   runId: number;
   status: ServicePlanningSyncStatus;
@@ -38,6 +44,7 @@ export type ServicePlanningSyncSummary = {
   activeLabel: string;
   activeSublabel: string;
   syncItems: ServicePlanningSyncItem[];
+  followUpItems: ServicePlanningSyncFollowUpItem[];
   overlaysUpdated: number;
   overlaysCloned: number;
   overlaysCreated: number;
@@ -67,6 +74,7 @@ const initialServicePlanningSyncSummary: ServicePlanningSyncSummary = {
   activeLabel: "",
   activeSublabel: "",
   syncItems: [],
+  followUpItems: [],
   overlaysUpdated: 0,
   overlaysCloned: 0,
   overlaysCreated: 0,
@@ -131,12 +139,14 @@ export const servicePlanningImportSlice = createSlice({
         overlaysSkipped?: number;
         reasons?: string[];
         syncItems?: ServicePlanningSyncItem[];
+        followUpItems?: ServicePlanningSyncFollowUpItem[];
       }>,
     ) => {
       state.sync.totalSteps = action.payload.totalSteps;
       state.sync.overlaysSkipped = action.payload.overlaysSkipped ?? 0;
       state.sync.reasons = action.payload.reasons ?? [];
       state.sync.syncItems = action.payload.syncItems ?? [];
+      state.sync.followUpItems = action.payload.followUpItems ?? [];
     },
     setServicePlanningSyncActiveStep: (
       state,

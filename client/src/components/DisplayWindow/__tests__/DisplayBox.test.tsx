@@ -31,6 +31,16 @@ jest.mock("../../../hooks/useCachedMediaUrl", () => ({
   useCachedMediaUrl: (url?: string) => url,
 }));
 
+jest.mock("../TimerDisplay", () => ({
+  __esModule: true,
+  default: () => <span data-testid="timer-display-mock" />,
+}));
+
+jest.mock("../NowDisplay", () => ({
+  __esModule: true,
+  default: () => <span data-testid="now-display-mock" />,
+}));
+
 const baseBox: Box = {
   id: "box-1",
   words: "Same lyric",
@@ -108,6 +118,32 @@ describe("DisplayBox", () => {
       expect.objectContaining({ opacity: 0 }),
       expect.anything(),
       "fadeIn",
+    );
+  });
+
+  it("does not skip the text fade when matching words use dynamic timer placeholders", () => {
+    render(
+      <DisplayBox
+        box={{ ...baseBox, words: "{{timer}}" }}
+        prevBox={{ ...baseBox, words: "{{timer}}", background: "previous.jpg" }}
+        width={100}
+        showBackground
+        index={0}
+        shouldAnimate
+        isPrev
+      />,
+    );
+
+    expect(mockTimeline.set).not.toHaveBeenCalledWith(
+      ".display-box-text",
+      { opacity: 1 },
+      "fadeOut",
+    );
+    expect(mockTimeline.fromTo).toHaveBeenCalledWith(
+      ".display-box-text",
+      { opacity: 1 },
+      expect.objectContaining({ opacity: 0, duration: 0.35 }),
+      "fadeOut",
     );
   });
 

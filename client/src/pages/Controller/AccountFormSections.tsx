@@ -26,6 +26,7 @@ import Select from "../../components/Select/Select";
 import Spinner from "../../components/Spinner/Spinner";
 import TextArea from "../../components/TextArea/TextArea";
 import { useToast } from "../../context/toastContext";
+import { useApiErrorToast } from "../../hooks/useApiErrorToast";
 import { buildShareableHashRouterUrl } from "../../utils/environment";
 import {
   createAdminInvite,
@@ -299,6 +300,7 @@ const PairingCodeBanner = ({
   churchId,
 }: PairingCodeBannerProps) => {
   const { showToast } = useToast();
+  const { showApiError } = useApiErrorToast();
   const title = variant === "workstation" ? "Workstation" : "Display";
   const [emailTo, setEmailTo] = useState("");
   const [emailError, setEmailError] = useState("");
@@ -360,9 +362,9 @@ const PairingCodeBanner = ({
       setEmailTo("");
       setEmailStepOpen(false);
     } catch (error) {
-      showToast(
+      showApiError(
+        error,
         formatAccountError(error, "Could not send that email. Try again."),
-        "error",
       );
     } finally {
       setEmailSending(false);
@@ -484,6 +486,7 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
   onInvited,
 }: InvitePeopleFormProps) {
   const { showToast } = useToast();
+  const { showApiError } = useApiErrorToast();
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteAccess, setInviteAccess] = useState<InviteAccessOption>("full");
   const [inviteEmailError, setInviteEmailError] = useState("");
@@ -513,14 +516,14 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
         "success",
       );
     } catch (error) {
-      showToast(
+      showApiError(
+        error,
         formatAccountError(error, "Could not complete that. Try again."),
-        "error",
       );
     } finally {
       setIsSending(false);
     }
-  }, [churchId, inviteAccess, inviteEmail, onInvited, showToast]);
+  }, [churchId, inviteAccess, inviteEmail, onInvited, showApiError]);
 
   return (
     <section className="rounded-xl border border-gray-600 bg-gray-900/25 p-4">
@@ -584,6 +587,7 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
   onGenerated,
 }: WorkstationPairingFormProps) {
   const { showToast } = useToast();
+  const { showApiError } = useApiErrorToast();
   const [pairLabel, setPairLabel] = useState("");
   const [workstationAccess, setWorkstationAccess] =
     useState<WorkstationAccessOption>("full");
@@ -626,14 +630,14 @@ export const WorkstationPairingForm = memo(function WorkstationPairingForm({
       });
       await onGenerated();
     } catch (error) {
-      showToast(
+      showApiError(
+        error,
         formatAccountError(error, "Could not complete that. Try again."),
-        "error",
       );
     } finally {
       setIsGenerating(false);
     }
-  }, [churchId, onGenerated, pairLabel, showToast, workstationAccess]);
+  }, [churchId, onGenerated, pairLabel, showApiError, workstationAccess]);
 
   return (
     <>
@@ -697,6 +701,7 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
   onGenerated,
 }: DisplayPairingFormProps) {
   const { showToast } = useToast();
+  const { showApiError } = useApiErrorToast();
   const [displayLabel, setDisplayLabel] = useState("");
   const [displaySurface, setDisplaySurface] =
     useState<DisplaySurfaceOption>("projector");
@@ -739,14 +744,14 @@ export const DisplayPairingForm = memo(function DisplayPairingForm({
       });
       await onGenerated();
     } catch (error) {
-      showToast(
+      showApiError(
+        error,
         formatAccountError(error, "Could not complete that. Try again."),
-        "error",
       );
     } finally {
       setIsGenerating(false);
     }
-  }, [churchId, displayLabel, displaySurface, onGenerated, showToast]);
+  }, [churchId, displayLabel, displaySurface, onGenerated, showApiError]);
 
   return (
     <>
@@ -808,6 +813,7 @@ export const RecoveryEmailForm = memo(function RecoveryEmailForm({
   recoveryEmailFromContext,
 }: RecoveryEmailFormProps) {
   const { showToast } = useToast();
+  const { showApiError } = useApiErrorToast();
   const [recoveryEmail, setRecoveryEmail] = useState(
     () => recoveryEmailFromContext || "",
   );
@@ -830,14 +836,14 @@ export const RecoveryEmailForm = memo(function RecoveryEmailForm({
       await updateRecoveryEmail(churchId, email);
       showToast("Recovery email saved.", "success");
     } catch (error) {
-      showToast(
+      showApiError(
+        error,
         formatAccountError(error, "Could not complete that. Try again."),
-        "error",
       );
     } finally {
       setIsSaving(false);
     }
-  }, [churchId, recoveryEmail, showToast]);
+  }, [churchId, recoveryEmail, showApiError]);
 
   return (
     <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
@@ -1140,6 +1146,7 @@ export const BrandingForm = memo(function BrandingForm({
   brandingStatus,
 }: BrandingFormProps) {
   const { showToast } = useToast();
+  const { showApiError } = useApiErrorToast();
   const [draftBranding, setDraftBranding] = useState<ChurchBranding>(() =>
     normalizeChurchBranding(branding),
   );
@@ -1405,7 +1412,7 @@ export const BrandingForm = memo(function BrandingForm({
       await cleanupLogoAssets(uploadedAssets);
       const message = formatBrandingSaveError(error);
       setFormError(message);
-      showToast(message, "error");
+      showApiError(error, message);
     } finally {
       setIsSaving(false);
     }
@@ -1415,7 +1422,7 @@ export const BrandingForm = memo(function BrandingForm({
     mergedBranding,
     pendingLogoFiles,
     resetPendingLogos,
-    showToast,
+    showApiError,
   ]);
 
   const patchBrandColorSlot = useCallback(

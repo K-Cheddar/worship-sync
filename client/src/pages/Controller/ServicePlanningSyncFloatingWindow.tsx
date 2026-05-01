@@ -107,8 +107,32 @@ const ServicePlanningSyncFloatingWindow = () => {
           </ul>
         )}
 
-        {isDone && sync.syncItems.length === 0 && !isFailed && (
+        {isDone && sync.syncItems.length === 0 && sync.followUpItems.length === 0 && !isFailed && (
           <p className="text-zinc-400">Nothing to update.</p>
+        )}
+
+        {isDone && sync.followUpItems.length > 0 && (
+          <div className="flex flex-col gap-1.5 border-t border-zinc-700 pt-2 mt-0.5">
+            <span className="text-xs text-zinc-400 font-medium">Needs follow up</span>
+            <ul className="flex flex-col gap-1.5">
+              {sync.followUpItems.map((item, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span className="mt-0.5 shrink-0 text-amber-400">○</span>
+                  <span className="flex flex-col min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5 flex-wrap">
+                      <span className="wrap-break-word leading-snug">{item.label}</span>
+                      <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium bg-amber-900/60 text-amber-300">
+                        {item.reason}
+                      </span>
+                    </span>
+                    {item.sublabel && (
+                      <span className="text-xs text-zinc-400 leading-snug">{item.sublabel}</span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
     </FloatingWindow>

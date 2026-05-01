@@ -99,6 +99,22 @@ export const useServicePlanningSyncRunner = () => {
         ? { steps: [], skippedCount: 0, skipReasons: [] as string[] }
         : planOverlaySyncSteps(preview);
 
+    const followUpItems =
+      sync.mode === "overlays"
+        ? []
+        : preview.outlineCandidates
+            .filter(
+              (c) =>
+                c.outlineItemType === "song" &&
+                !c.matchedLibraryItem &&
+                Boolean(c.cleanedTitle || c.title),
+            )
+            .map((c) => ({
+              label: c.cleanedTitle || c.title,
+              sublabel: c.headingName || undefined,
+              reason: "Not in your library yet.",
+            }));
+
     preparedRunRef.current = {
       runId: sync.runId,
       outlineSteps,
@@ -111,6 +127,7 @@ export const useServicePlanningSyncRunner = () => {
         overlaysSkipped: overlayPlanning.skippedCount,
         reasons: overlayPlanning.skipReasons,
         syncItems: planSyncItemsInOrder(preview, sync.mode ?? "both"),
+        followUpItems,
       }),
     );
   }, [
