@@ -1,3 +1,10 @@
+## [2.5.3](https://github.com/K-Cheddar/worship-sync/compare/v2.5.2...v2.5.3) (2026-05-01)
+
+
+### Bug Fixes
+
+* Fix timer cross fade and minor ui improvements ([1991e5a](https://github.com/K-Cheddar/worship-sync/commit/1991e5ac299e71e00e40524c51bca66db13d2d2b))
+
 ## [2.5.2](https://github.com/K-Cheddar/worship-sync/compare/v2.5.1...v2.5.2) (2026-04-29)
 
 
