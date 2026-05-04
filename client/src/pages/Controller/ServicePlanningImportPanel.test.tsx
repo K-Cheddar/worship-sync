@@ -214,7 +214,7 @@ describe("ServicePlanningImportPanel", () => {
     expect(screen.getByRole("button", { name: "Sync Outline" })).toBeDisabled();
   });
 
-  it("enables the open service plan button when a service outline is loaded", () => {
+  it("renders the open service plan button when a service outline preview is loaded", () => {
     const emptyStore = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
@@ -229,7 +229,9 @@ describe("ServicePlanningImportPanel", () => {
       </Provider>,
     );
 
-    expect(screen.getByRole("button", { name: "Open Service Plan" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Open Service Plan" }),
+    ).not.toBeInTheDocument();
 
     const loadedStore = configureStore({
       reducer: {

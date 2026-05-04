@@ -417,10 +417,10 @@ describe("BoardControllerContent", () => {
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     renderPage();
 
-    await findBoardToolsPanel();
+    await screen.findByRole("heading", { name: "Sunday Board" });
 
     await user.click(screen.getByRole("button", { name: /Open menu/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Open Board/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Open Board/i }));
 
     expect(openSpy).toHaveBeenCalledWith(
       expect.stringContaining("#/boards/display"),
@@ -431,29 +431,24 @@ describe("BoardControllerContent", () => {
     openSpy.mockRestore();
   });
 
-  it("selecting a discussion board switches to the Live tab on mobile", async () => {
+  it("selecting a discussion board closes the mobile manage boards sheet", async () => {
     const user = userEvent.setup();
     mockUseMediaQuery.mockImplementation(() => false);
     renderPage();
 
-    await screen.findByRole("tab", { name: /^Boards$/i });
-    expect(screen.getByRole("tab", { name: /^Boards$/i })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    await user.click(screen.getByRole("button", { name: /Board tools and management/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Manage boards/i }));
+    await screen.findAllByText("Manage boards");
 
-    await user.click(
-      await screen.findByTitle("Sunday Board (sunday)"),
-    );
+    const boardButtons = screen.getAllByTitle("Sunday Board (sunday)");
+    await user.click(boardButtons[boardButtons.length - 1]);
 
-    expect(screen.getByRole("tab", { name: /^Live$/i })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByRole("tab", { name: /^Boards$/i })).toHaveAttribute(
-      "aria-selected",
-      "false",
-    );
+    await waitFor(() => {
+      expect(screen.getAllByTitle("Sunday Board (sunday)")).toHaveLength(1);
+    });
+    expect(screen.getByRole("heading", { name: "Sunday Board" })).toBeInTheDocument();
+    expect(screen.getByText(/Current session:/i)).toBeInTheDocument();
   });
 
   it("renames a discussion board without changing its alias", async () => {
