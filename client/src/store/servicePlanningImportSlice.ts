@@ -1,5 +1,9 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import type { ServiceItem } from "../types";
+import type { ServiceOutline } from "../types/importedPlan";
 import type { ServicePlanningPreview } from "../types/servicePlanningImport";
+import { findBestServicePlanningSongMatch } from "../integrations/servicePlanning/findServicePlanningSongMatch";
+import { cleanPlanningTitle } from "../integrations/servicePlanning/cleanPlanningTitle";
 
 export type ServicePlanningSyncStatus =
   | "idle"
@@ -23,6 +27,7 @@ export type ServicePlanningSyncItem = {
   sublabel?: string;
   phase: Exclude<ServicePlanningSyncPhase, "done" | null>;
   status: ServicePlanningSyncItemStatus;
+  sourceLineItemKey?: string;
 };
 
 /** @deprecated Use ServicePlanningSyncItem */
@@ -56,7 +61,10 @@ export type ServicePlanningSyncSummary = {
 
 export type ServicePlanningImportState = {
   url: string;
+  serviceOutline: ServiceOutline | null;
   preview: ServicePlanningPreview | null;
+  floatingWindowDismissed: boolean;
+  floatingWindowRestoreId: number;
   /** Service Planning Import page: overlay sync summary list expanded. */
   overlaySummaryExpanded: boolean;
   /** Service Planning Import page: outline preview list expanded. */
@@ -86,7 +94,10 @@ const initialServicePlanningSyncSummary: ServicePlanningSyncSummary = {
 
 export const initialServicePlanningImportState: ServicePlanningImportState = {
   url: "",
+  serviceOutline: null,
   preview: null,
+  floatingWindowDismissed: true,
+  floatingWindowRestoreId: 0,
   overlaySummaryExpanded: false,
   outlinePreviewExpanded: false,
   sync: initialServicePlanningSyncSummary,
@@ -99,14 +110,29 @@ export const servicePlanningImportSlice = createSlice({
     setServicePlanningImportUrl: (state, action: PayloadAction<string>) => {
       state.url = action.payload;
     },
-    setServicePlanningImportPreview: (
+    setServicePlanningServiceOutline: (
       state,
-      action: PayloadAction<ServicePlanningPreview | null>,
+      action: PayloadAction<ServiceOutline | null>,
     ) => {
-      state.preview = action.payload;
+      state.serviceOutline = action.payload;
+      state.preview = action.payload?.preview ?? null;
+      if (action.payload?.sourceUrl) {
+        state.url = action.payload.sourceUrl;
+      }
     },
     resetServicePlanningImportPreview: (state) => {
+      state.serviceOutline = null;
       state.preview = null;
+      state.floatingWindowDismissed = true;
+    },
+    setServicePlanningFloatingWindowDismissed: (
+      state,
+      action: PayloadAction<boolean>,
+    ) => {
+      state.floatingWindowDismissed = action.payload;
+      if (!action.payload) {
+        state.floatingWindowRestoreId += 1;
+      }
     },
     setServicePlanningImportOverlaySummaryExpanded: (
       state,
@@ -224,13 +250,33 @@ export const servicePlanningImportSlice = createSlice({
       };
     },
     resetServicePlanningImportState: () => initialServicePlanningImportState,
+    refreshPreviewSongMatches: (state, action: PayloadAction<ServiceItem[]>) => {
+      if (!state.preview) return;
+      const songs = action.payload.filter((item) => item.type === "song");
+      for (const lineItem of state.preview.lineItems) {
+        if (lineItem.outlineItemType === "song" && !lineItem.matchedLibraryItem) {
+          const match = findBestServicePlanningSongMatch(
+            lineItem.cleanedTitle || cleanPlanningTitle(lineItem.title),
+            songs,
+          );
+          if (match) lineItem.matchedLibraryItem = match;
+        }
+      }
+      for (const candidate of state.preview.outlineCandidates) {
+        if (candidate.outlineItemType === "song" && !candidate.matchedLibraryItem) {
+          const match = findBestServicePlanningSongMatch(candidate.cleanedTitle, songs);
+          if (match) candidate.matchedLibraryItem = match;
+        }
+      }
+    },
   },
 });
 
 export const {
   setServicePlanningImportUrl,
-  setServicePlanningImportPreview,
+  setServicePlanningServiceOutline,
   resetServicePlanningImportPreview,
+  setServicePlanningFloatingWindowDismissed,
   setServicePlanningImportOverlaySummaryExpanded,
   setServicePlanningImportOutlinePreviewExpanded,
   startServicePlanningSync,
@@ -243,6 +289,7 @@ export const {
   failServicePlanningSync,
   clearServicePlanningSyncState,
   resetServicePlanningImportState,
+  refreshPreviewSongMatches,
 } = servicePlanningImportSlice.actions;
 
 export default servicePlanningImportSlice.reducer;

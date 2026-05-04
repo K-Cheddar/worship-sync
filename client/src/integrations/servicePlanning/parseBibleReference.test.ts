@@ -22,6 +22,15 @@ describe("parseBibleReference", () => {
     });
   });
 
+  it("parses v-style verse separators", () => {
+    expect(parseBibleReference("Psalms 119 v 23 NKJV")).toEqual({
+      book: "Psalms",
+      chapter: "119",
+      verseRange: "23",
+      version: "NKJV",
+    });
+  });
+
   it("builds Bible search strings from parsed references", () => {
     const ref = parseBibleReference("Psalm 78 40-64 NKJV");
 

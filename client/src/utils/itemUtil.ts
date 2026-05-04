@@ -40,7 +40,7 @@ const SECTION_LABEL_MAP: Record<string, string> = {
   "pre chorus": "Pre-Chorus",
   bridge: "Bridge",
   intro: "Intro",
-  outro: "Outro",
+  outro: "Ending",
   tag: "Tag",
   interlude: "Interlude",
   hook: "Hook",
@@ -225,12 +225,12 @@ export const createNewSong = async ({
     },
   ];
 
-  const _name = makeUnique({ value: name, property: "name", list });
+  const songId = `song-${generateRandomId()}`;
 
   const newItem: ItemState = {
-    name: _name,
+    name,
     type: "song",
-    _id: _name,
+    _id: songId,
     background:
       mediaInfo?.type === "video" ? mediaInfo?.placeholderImage : background,
     selectedArrangement: 0,

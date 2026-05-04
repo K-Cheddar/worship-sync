@@ -1,3 +1,5 @@
+import type { ServiceOutline } from "./types/importedPlan";
+
 export type Option = {
   label: string;
   value: string;
@@ -604,6 +606,7 @@ export type ItemListDetails = {
   name: string;
   items: ServiceItem[];
   overlays: string[];
+  serviceOutline?: ServiceOutline;
 };
 
 export type ItemLists = {
@@ -940,4 +943,6 @@ export type Instance = {
   name?: string;
   sessionKind?: "human" | "workstation" | "display" | null;
   deviceLabel?: string | null;
+  presenceSurface?: "controller" | "display" | null;
+  presenceRoute?: string | null;
 };

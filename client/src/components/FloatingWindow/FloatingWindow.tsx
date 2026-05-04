@@ -22,7 +22,7 @@ export interface FloatingWindowHandle {
 }
 
 interface FloatingWindowProps {
-  title: string;
+  title: React.ReactNode;
   children: React.ReactNode;
   onClose: () => void;
   defaultPosition?: { x: number; y: number };
@@ -52,6 +52,8 @@ type AnimPhase =
   | "minimized"
   | "restoring"
   | "closing";
+
+type ResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 
 const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
   function FloatingWindow(
@@ -90,6 +92,10 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           : Math.min(Math.max(p.y, 0), Math.max(window.innerHeight - defaultHeight, 0)),
       };
     });
+    const positionRef = useRef(position);
+    useEffect(() => {
+      positionRef.current = position;
+    }, [position]);
 
     const autoHeightRef = useRef(autoHeight);
     const bringToFront = useFloatingWindowBringToFront();
@@ -181,23 +187,39 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       };
     }, []);
 
-    const handleDragMouseMove = useCallback(
-      (e: MouseEvent) => {
+    const setGestureTransition = useCallback((active: boolean) => {
+      if (containerRef.current) {
+        containerRef.current.style.transition = active ? "none" : "";
+      }
+    }, []);
+
+    const applyDragPosition = useCallback(
+      (clientX: number, clientY: number) => {
         if (!dragState.current.isDragging) return;
-        const dx = e.clientX - dragState.current.startX;
-        const dy = e.clientY - dragState.current.startY;
-        setPosition(
-          clampPosition(dragState.current.originX + dx, dragState.current.originY + dy),
-        );
+        const dx = clientX - dragState.current.startX;
+        const dy = clientY - dragState.current.startY;
+        const pos = clampPosition(dragState.current.originX + dx, dragState.current.originY + dy);
+        positionRef.current = pos;
+        if (containerRef.current) {
+          containerRef.current.style.left = `${pos.x}px`;
+          containerRef.current.style.top = `${pos.y}px`;
+        }
       },
       [clampPosition],
     );
 
+    const handleDragMouseMove = useCallback(
+      (e: MouseEvent) => applyDragPosition(e.clientX, e.clientY),
+      [applyDragPosition],
+    );
+
     const handleDragMouseUp = useCallback(() => {
       dragState.current.isDragging = false;
+      setGestureTransition(false);
+      setPosition({ ...positionRef.current });
       document.removeEventListener("mousemove", handleDragMouseMove);
       document.removeEventListener("mouseup", handleDragMouseUp);
-    }, [handleDragMouseMove]);
+    }, [handleDragMouseMove, setGestureTransition]);
 
     const handleTitleMouseDown = useCallback(
       (e: React.MouseEvent) => {
@@ -210,10 +232,11 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           originX: position.x,
           originY: position.y,
         };
+        setGestureTransition(true);
         document.addEventListener("mousemove", handleDragMouseMove);
         document.addEventListener("mouseup", handleDragMouseUp);
       },
-      [position, handleDragMouseMove, handleDragMouseUp],
+      [position, handleDragMouseMove, handleDragMouseUp, setGestureTransition],
     );
 
     const handleDragTouchMove = useCallback(
@@ -221,20 +244,18 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         if (!dragState.current.isDragging) return;
         e.preventDefault();
         const touch = e.touches[0];
-        const dx = touch.clientX - dragState.current.startX;
-        const dy = touch.clientY - dragState.current.startY;
-        setPosition(
-          clampPosition(dragState.current.originX + dx, dragState.current.originY + dy),
-        );
+        applyDragPosition(touch.clientX, touch.clientY);
       },
-      [clampPosition],
+      [applyDragPosition],
     );
 
     const handleDragTouchEnd = useCallback(() => {
       dragState.current.isDragging = false;
+      setGestureTransition(false);
+      setPosition({ ...positionRef.current });
       document.removeEventListener("touchmove", handleDragTouchMove);
       document.removeEventListener("touchend", handleDragTouchEnd);
-    }, [handleDragTouchMove]);
+    }, [handleDragTouchMove, setGestureTransition]);
 
     const handleTitleTouchStart = useCallback(
       (e: React.TouchEvent) => {
@@ -247,94 +268,143 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           originX: position.x,
           originY: position.y,
         };
+        setGestureTransition(true);
         document.addEventListener("touchmove", handleDragTouchMove, { passive: false });
         document.addEventListener("touchend", handleDragTouchEnd);
       },
-      [position, handleDragTouchMove, handleDragTouchEnd],
+      [position, handleDragTouchMove, handleDragTouchEnd, setGestureTransition],
     );
 
     // ── Resize ───────────────────────────────────────────────────────────────
     const resizeState = useRef<{
       isResizing: boolean;
+      direction: ResizeDirection;
       startX: number;
       startY: number;
       startWidth: number;
       startHeight: number;
-    }>({ isResizing: false, startX: 0, startY: 0, startWidth: 0, startHeight: 0 });
+      startPosX: number;
+      startPosY: number;
+    }>({
+      isResizing: false,
+      direction: "se",
+      startX: 0,
+      startY: 0,
+      startWidth: 0,
+      startHeight: 0,
+      startPosX: 0,
+      startPosY: 0,
+    });
 
-    const handleResizeMouseMove = useCallback((e: MouseEvent) => {
+    const applyResize = useCallback((clientX: number, clientY: number) => {
       if (!resizeState.current.isResizing) return;
-      const dx = e.clientX - resizeState.current.startX;
-      const dy = e.clientY - resizeState.current.startY;
-      setUserResized(true);
-      setSize({
-        width: Math.min(
-          Math.max(resizeState.current.startWidth + dx, MIN_WIDTH),
-          window.innerWidth,
-        ),
-        height: Math.min(
-          Math.max(resizeState.current.startHeight + dy, MIN_HEIGHT),
-          window.innerHeight,
-        ),
-      });
+      const { direction, startX, startY, startWidth, startHeight, startPosX, startPosY } =
+        resizeState.current;
+      const dx = clientX - startX;
+      const dy = clientY - startY;
+
+      let newWidth = startWidth;
+      let newHeight = startHeight;
+      let newX = startPosX;
+      let newY = startPosY;
+
+      if (direction.includes("e")) {
+        newWidth = Math.min(
+          Math.max(startWidth + dx, MIN_WIDTH),
+          window.innerWidth - startPosX,
+        );
+      }
+      if (direction.includes("s")) {
+        newHeight = Math.min(
+          Math.max(startHeight + dy, MIN_HEIGHT),
+          window.innerHeight - startPosY,
+        );
+      }
+      if (direction.includes("w")) {
+        const proposed = startWidth - dx;
+        newWidth = Math.max(Math.min(proposed, startWidth + startPosX), MIN_WIDTH);
+        newX = startPosX + (startWidth - newWidth);
+      }
+      if (direction.includes("n")) {
+        const proposed = startHeight - dy;
+        newHeight = Math.max(Math.min(proposed, startHeight + startPosY), MIN_HEIGHT);
+        newY = startPosY + (startHeight - newHeight);
+      }
+
+      sizeRef.current = { width: newWidth, height: newHeight };
+      positionRef.current = { x: newX, y: newY };
+      if (containerRef.current) {
+        containerRef.current.style.width = `${newWidth}px`;
+        containerRef.current.style.height = `${newHeight}px`;
+        containerRef.current.style.left = `${newX}px`;
+        containerRef.current.style.top = `${newY}px`;
+      }
     }, []);
+
+    const handleResizeMouseMove = useCallback(
+      (e: MouseEvent) => applyResize(e.clientX, e.clientY),
+      [applyResize],
+    );
 
     const handleResizeMouseUp = useCallback(() => {
       resizeState.current.isResizing = false;
+      setGestureTransition(false);
+      setUserResized(true);
+      setSize({ ...sizeRef.current });
+      setPosition({ ...positionRef.current });
       document.removeEventListener("mousemove", handleResizeMouseMove);
       document.removeEventListener("mouseup", handleResizeMouseUp);
-    }, [handleResizeMouseMove]);
+    }, [handleResizeMouseMove, setGestureTransition]);
 
     const handleResizeMouseDown = useCallback(
       (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        const direction = (e.currentTarget as HTMLElement).dataset.resizeDir as ResizeDirection;
         const actualHeight =
           !userResized && containerRef.current
             ? containerRef.current.offsetHeight
             : sizeRef.current.height;
         resizeState.current = {
           isResizing: true,
+          direction,
           startX: e.clientX,
           startY: e.clientY,
           startWidth: sizeRef.current.width,
           startHeight: actualHeight,
+          startPosX: positionRef.current.x,
+          startPosY: positionRef.current.y,
         };
+        setGestureTransition(true);
         document.addEventListener("mousemove", handleResizeMouseMove);
         document.addEventListener("mouseup", handleResizeMouseUp);
       },
-      [handleResizeMouseMove, handleResizeMouseUp, userResized],
+      [handleResizeMouseMove, handleResizeMouseUp, userResized, setGestureTransition],
     );
 
-    const handleResizeTouchMove = useCallback((e: TouchEvent) => {
-      if (!resizeState.current.isResizing) return;
-      e.preventDefault();
-      const touch = e.touches[0];
-      const dx = touch.clientX - resizeState.current.startX;
-      const dy = touch.clientY - resizeState.current.startY;
-      setUserResized(true);
-      setSize({
-        width: Math.min(
-          Math.max(resizeState.current.startWidth + dx, MIN_WIDTH),
-          window.innerWidth,
-        ),
-        height: Math.min(
-          Math.max(resizeState.current.startHeight + dy, MIN_HEIGHT),
-          window.innerHeight,
-        ),
-      });
-    }, []);
+    const handleResizeTouchMove = useCallback(
+      (e: TouchEvent) => {
+        e.preventDefault();
+        applyResize(e.touches[0].clientX, e.touches[0].clientY);
+      },
+      [applyResize],
+    );
 
     const handleResizeTouchEnd = useCallback(() => {
       resizeState.current.isResizing = false;
+      setGestureTransition(false);
+      setUserResized(true);
+      setSize({ ...sizeRef.current });
+      setPosition({ ...positionRef.current });
       document.removeEventListener("touchmove", handleResizeTouchMove);
       document.removeEventListener("touchend", handleResizeTouchEnd);
-    }, [handleResizeTouchMove]);
+    }, [handleResizeTouchMove, setGestureTransition]);
 
     const handleResizeTouchStart = useCallback(
       (e: React.TouchEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        const direction = (e.currentTarget as HTMLElement).dataset.resizeDir as ResizeDirection;
         const touch = e.touches[0];
         const actualHeight =
           !userResized && containerRef.current
@@ -342,15 +412,19 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
             : sizeRef.current.height;
         resizeState.current = {
           isResizing: true,
+          direction,
           startX: touch.clientX,
           startY: touch.clientY,
           startWidth: sizeRef.current.width,
           startHeight: actualHeight,
+          startPosX: positionRef.current.x,
+          startPosY: positionRef.current.y,
         };
+        setGestureTransition(true);
         document.addEventListener("touchmove", handleResizeTouchMove, { passive: false });
         document.addEventListener("touchend", handleResizeTouchEnd);
       },
-      [handleResizeTouchMove, handleResizeTouchEnd, userResized],
+      [handleResizeTouchMove, handleResizeTouchEnd, userResized, setGestureTransition],
     );
 
     useEffect(() => {
@@ -390,7 +464,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       position: "fixed",
       left: position.x,
       top: resolvedTop,
-      width: size.width,
+      width: isMinimized ? 228 : size.width,
       ...(resolvedHeight !== undefined ? { height: resolvedHeight } : {}),
       ...(resolvedMaxHeight !== undefined ? { maxHeight: resolvedMaxHeight } : {}),
       zIndex: activeZ,
@@ -405,6 +479,12 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     const contentStyle: React.CSSProperties = {
       opacity: contentHidden ? 0 : 1,
       transition: phase === "minimized" ? "none" : `opacity ${ANIM_MS}ms ease`,
+    };
+
+    const resizeHandleProps = {
+      onMouseDown: handleResizeMouseDown,
+      onTouchStart: handleResizeTouchStart,
+      "aria-hidden": true as const,
     };
 
     return (
@@ -425,7 +505,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           onTouchStart={handleTitleTouchStart}
           className="flex shrink-0 cursor-grab items-center justify-between gap-2 bg-gray-700 px-3 py-2 select-none active:cursor-grabbing"
         >
-          <span className="truncate text-sm font-semibold text-white">{title}</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{title}</span>
           <div className="flex shrink-0 items-center gap-1">
             <Button
               variant="tertiary"
@@ -454,28 +534,23 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           >
             {children}
           </div>
-          <div
-            onMouseDown={handleResizeMouseDown}
-            onTouchStart={handleResizeTouchStart}
-            className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize"
-            aria-hidden
-          >
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 10 10"
-              className="absolute bottom-1 right-1 text-zinc-500"
-              fill="currentColor"
-            >
-              <path
-                d="M9 1L1 9M9 5L5 9M9 9L9 9"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
-          </div>
         </div>
+
+        {/* Resize handles — edges and corners */}
+        {!isMinimized && (
+          <>
+            {/* Edges */}
+            <div data-resize-dir="n" className="absolute top-0 left-3 right-3 h-1 cursor-ns-resize" {...resizeHandleProps} />
+            <div data-resize-dir="s" className="absolute bottom-0 left-3 right-3 h-1 cursor-ns-resize" {...resizeHandleProps} />
+            <div data-resize-dir="w" className="absolute left-0 top-3 bottom-3 w-1 cursor-ew-resize" {...resizeHandleProps} />
+            <div data-resize-dir="e" className="absolute right-0 top-3 bottom-3 w-1 cursor-ew-resize" {...resizeHandleProps} />
+            {/* Corners */}
+            <div data-resize-dir="nw" className="absolute top-0 left-0 h-3 w-3 cursor-nwse-resize" {...resizeHandleProps} />
+            <div data-resize-dir="ne" className="absolute top-0 right-0 h-3 w-3 cursor-nesw-resize" {...resizeHandleProps} />
+            <div data-resize-dir="sw" className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize" {...resizeHandleProps} />
+            <div data-resize-dir="se" className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize" {...resizeHandleProps} />
+          </>
+        )}
       </div>
     );
   },

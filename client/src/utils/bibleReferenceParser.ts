@@ -44,6 +44,15 @@ const normalizeBibleVersion = (value?: string) =>
     .trim()
     .toLowerCase();
 
+const normalizeBibleReferenceInput = (value: string) =>
+  value
+    .replace(/[–—]/g, "-")
+    .replace(/\u00a0/g, " ")
+    .replace(
+      /(\b(?:[1-3]?[ \t]*[A-Za-z]+(?:[ \t]+[A-Za-z]+)*)[ \t]+\d+)[ \t]+(?:v|vs|verse|verses)\.?\s*(\d+(?:\s*-\s*\d+)?)/gi,
+      "$1:$2",
+    );
+
 const normalizeBookName = (value: string) =>
   value.toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
 
@@ -135,7 +144,7 @@ const bookAliasPattern = Object.keys(bookAliases)
   .join("|");
 
 const findGlobalVersion = (input: string) => {
-  const normalized = input.replace(/[–—]/g, "-");
+  const normalized = normalizeBibleReferenceInput(input);
   const matches = [
     ...normalized.matchAll(
       /(?:^|\n|\b)(?:all\s+)?([A-Za-z][A-Za-z0-9]*)\s*$/gim,
@@ -161,7 +170,7 @@ const makeExtractionId = (
 export const parseBibleSearchReference = (
   value: string,
 ): ParsedBibleSearchReference | null => {
-  const normalized = value.trim().replace(/[–—]/g, "-");
+  const normalized = normalizeBibleReferenceInput(value).trim();
   if (!normalized) return null;
 
   const versionMatch = normalized.match(/\s+([A-Za-z][A-Za-z0-9]*)\s*$/);
@@ -204,7 +213,7 @@ export const extractBibleReferencesFromText = (
   input: string,
   currentVersion: string,
 ): ExtractedBibleReference[] => {
-  const normalizedInput = input.replace(/[–—]/g, "-").replace(/\u00a0/g, " ");
+  const normalizedInput = normalizeBibleReferenceInput(input);
   const globalVersion = findGlobalVersion(normalizedInput);
   const fallbackVersion =
     globalVersion || normalizeBibleVersion(currentVersion) || "nkjv";
@@ -215,7 +224,7 @@ export const extractBibleReferencesFromText = (
       "(\\d+)",
       "\\s*(?::|\\s)\\s*",
       "(\\d+(?:\\s*-\\s*\\d+)?)",
-      "(?:\\s+([A-Za-z][A-Za-z0-9]*))?",
+      "(?:[ \\t]+([A-Za-z][A-Za-z0-9]*))?",
       "(?:\\s*\\(([^)]*)\\))?",
     ].join(""),
     "gi",

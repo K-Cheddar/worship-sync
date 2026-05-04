@@ -9,7 +9,7 @@ import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { MoreHorizontal, PanelsTopLeft, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { useSensors } from "../../utils/dndUtils";
 import {
@@ -37,6 +37,7 @@ import {
 } from "../../components/ui/DropdownMenu";
 import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import cn from "classnames";
+import { setServicePlanningFloatingWindowDismissed } from "../../store/servicePlanningImportSlice";
 import {
   MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
   MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS,
@@ -63,6 +64,9 @@ const ServiceItems = () => {
     (state) =>
       state.servicePlanningImport.sync.status === "running" &&
       state.servicePlanningImport.sync.phase === "outline"
+  );
+  const serviceOutline = useSelector(
+    (state) => state.servicePlanningImport.serviceOutline,
   );
   const prevItemsLengthRef = useRef(serviceItems.length);
 
@@ -525,7 +529,7 @@ const ServiceItems = () => {
       });
 
   type ActionBarItem = {
-    id: "add-heading" | "edit-heading" | "delete-selected" | "delete-heading" | "done";
+    id: "add-heading" | "edit-heading" | "delete-selected" | "delete-heading" | "done" | "open-service-plan";
     label: string;
     destructive?: boolean;
     disabled?: boolean;
@@ -564,8 +568,14 @@ const ServiceItems = () => {
       });
     }
 
+    items.push({
+      id: "open-service-plan",
+      label: "Open Service Plan",
+      disabled: !serviceOutline,
+    });
+
     return items;
-  }, [selectedList, access, selectedHeading, showBulkDeleteMenu, selectedListIds.size, isAddingHeading, multiSelectMode]);
+  }, [selectedList, access, selectedHeading, showBulkDeleteMenu, selectedListIds.size, isAddingHeading, multiSelectMode, serviceOutline]);
 
   const recalcActionBarLayout = useCallback(() => {
     const row = actionBarRowRef.current;
@@ -624,6 +634,7 @@ const ServiceItems = () => {
     if (id === "edit-heading") return <Pencil className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
     if (id === "delete-selected") return <Trash2 className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} aria-hidden />;
     if (id === "delete-heading") return <Trash2 className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} aria-hidden />;
+    if (id === "open-service-plan") return <PanelsTopLeft className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
     return null;
   };
 
@@ -637,6 +648,7 @@ const ServiceItems = () => {
     if (id === "edit-heading") return openHeadingRenameWindow;
     if (id === "delete-selected") return handleDeleteSelected;
     if (id === "delete-heading") return handleDeleteHeading;
+    if (id === "open-service-plan") return () => dispatch(setServicePlanningFloatingWindowDismissed(false));
     return handleMultiSelectDone;
   };
 

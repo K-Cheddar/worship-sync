@@ -1,20 +1,10 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { BoardControllerContent } from "./BoardController";
 import { useBoardSync } from "../boards/BoardSyncContext";
 import { useElectronWindows } from "../hooks/useElectronWindows";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import {
-  createBoardAlias,
-  deleteBoardAlias,
-  hardResetBoardAlias,
-  softResetBoardAlias,
-  updateBoardAliasTitle,
-  updateBoardPresentationFontScale,
-  updateBoardPostHidden,
-  updateBoardPostHighlighted,
-} from "../boards/api";
 import { ToastProvider } from "../context/toastContext";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { createMockGlobalContext } from "../test/mocks";
@@ -48,13 +38,25 @@ jest.mock("../boards/api", () => ({
   updateBoardPostHighlighted: jest.fn(),
 }));
 
-const mockCreateBoardAlias = jest.mocked(createBoardAlias);
-const mockDeleteBoardAlias = jest.mocked(deleteBoardAlias);
-const mockSoftResetBoardAlias = jest.mocked(softResetBoardAlias);
-const mockUpdateBoardAliasTitle = jest.mocked(updateBoardAliasTitle);
-const mockUpdateBoardPresentationFontScale = jest.mocked(updateBoardPresentationFontScale);
-const mockUpdateBoardPostHidden = jest.mocked(updateBoardPostHidden);
-const mockUpdateBoardPostHighlighted = jest.mocked(updateBoardPostHighlighted);
+const mockedBoardApi = jest.requireMock("../boards/api") as {
+  createBoardAlias: jest.Mock;
+  deleteBoardAlias: jest.Mock;
+  hardResetBoardAlias: jest.Mock;
+  softResetBoardAlias: jest.Mock;
+  updateBoardAliasTitle: jest.Mock;
+  updateBoardPresentationFontScale: jest.Mock;
+  updateBoardPostHidden: jest.Mock;
+  updateBoardPostHighlighted: jest.Mock;
+};
+
+const mockCreateBoardAlias = mockedBoardApi.createBoardAlias;
+const mockDeleteBoardAlias = mockedBoardApi.deleteBoardAlias;
+const mockSoftResetBoardAlias = mockedBoardApi.softResetBoardAlias;
+const mockUpdateBoardAliasTitle = mockedBoardApi.updateBoardAliasTitle;
+const mockUpdateBoardPresentationFontScale =
+  mockedBoardApi.updateBoardPresentationFontScale;
+const mockUpdateBoardPostHidden = mockedBoardApi.updateBoardPostHidden;
+const mockUpdateBoardPostHighlighted = mockedBoardApi.updateBoardPostHighlighted;
 const mockUseBoardSync = jest.mocked(useBoardSync);
 const mockUseElectronWindows = jest.mocked(useElectronWindows);
 const mockUseMediaQuery = jest.mocked(useMediaQuery);
@@ -276,7 +278,7 @@ describe("BoardControllerContent", () => {
     mockUpdateBoardPresentationFontScale.mockResolvedValue({
       alias: { aliasId: "sunday", presentationFontScale: 1 },
     } as any);
-    jest.mocked(hardResetBoardAlias).mockResolvedValue({
+    mockedBoardApi.hardResetBoardAlias.mockResolvedValue({
       alias: { currentBoardId: "board-new" },
     } as any);
     mockUpdateBoardPostHidden.mockResolvedValue({ post: {} as any });
@@ -315,17 +317,36 @@ describe("BoardControllerContent", () => {
 
       await findBoardToolsPanel();
 
-      await user.click(screen.getAllByRole("button", { name: /^Hide$/i })[0]);
-      expect(mockUpdateBoardPostHidden).toHaveBeenCalledWith(
-        "post:board-current:2",
-        true,
-      );
+      const earlierQuestionArticle = screen
+        .getAllByRole("article")
+        .find((el) => within(el).queryByText(/Earlier question/i));
+      expect(earlierQuestionArticle).toBeDefined();
 
-      await user.click(screen.getAllByRole("button", { name: /^Highlight$/i })[0]);
-      expect(mockUpdateBoardPostHighlighted).toHaveBeenCalledWith(
-        "post:board-current:2",
-        true,
+      await user.click(
+        within(earlierQuestionArticle as HTMLElement).getByRole("button", {
+          name: /^Highlight$/i,
+        }),
       );
+      await waitFor(() => {
+        expect(
+          within(earlierQuestionArticle as HTMLElement).getByRole("button", {
+            name: /^Unhighlight$/i,
+          }),
+        ).toBeInTheDocument();
+      });
+
+      await user.click(
+        within(earlierQuestionArticle as HTMLElement).getByRole("button", {
+          name: /^Hide$/i,
+        }),
+      );
+      await waitFor(() => {
+        expect(
+          within(earlierQuestionArticle as HTMLElement).getByRole("button", {
+            name: /^Unhide$/i,
+          }),
+        ).toBeInTheDocument();
+      });
 
       await openBoardToolsSheetIfMobile(user);
       await user.click(
@@ -347,10 +368,12 @@ describe("BoardControllerContent", () => {
       expect(screen.getByText(/^new-board$/i)).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: /Create Discussion Board/i }));
 
-      expect(mockCreateBoardAlias).toHaveBeenCalledWith({
-        aliasId: "new-board",
-        title: "New Board",
-        database: "test",
+      await waitFor(() => {
+        expect(mockCreateBoardAlias).toHaveBeenCalledWith({
+          aliasId: "new-board",
+          title: "New Board",
+          database: "test",
+        });
       });
     },
     20000,
@@ -394,10 +417,10 @@ describe("BoardControllerContent", () => {
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     renderPage();
 
-    await findBoardToolsPanel();
+    await screen.findByRole("heading", { name: "Sunday Board" });
 
     await user.click(screen.getByRole("button", { name: /Open menu/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Open Board/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Open Board/i }));
 
     expect(openSpy).toHaveBeenCalledWith(
       expect.stringContaining("#/boards/display"),
@@ -408,29 +431,24 @@ describe("BoardControllerContent", () => {
     openSpy.mockRestore();
   });
 
-  it("selecting a discussion board switches to the Live tab on mobile", async () => {
+  it("selecting a discussion board closes the mobile manage boards sheet", async () => {
     const user = userEvent.setup();
     mockUseMediaQuery.mockImplementation(() => false);
     renderPage();
 
-    await screen.findByRole("tab", { name: /^Boards$/i });
-    expect(screen.getByRole("tab", { name: /^Boards$/i })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    await user.click(screen.getByRole("button", { name: /Board tools and management/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Manage boards/i }));
+    await screen.findAllByText("Manage boards");
 
-    await user.click(
-      await screen.findByTitle("Sunday Board (sunday)"),
-    );
+    const boardButtons = screen.getAllByTitle("Sunday Board (sunday)");
+    await user.click(boardButtons[boardButtons.length - 1]);
 
-    expect(screen.getByRole("tab", { name: /^Live$/i })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByRole("tab", { name: /^Boards$/i })).toHaveAttribute(
-      "aria-selected",
-      "false",
-    );
+    await waitFor(() => {
+      expect(screen.getAllByTitle("Sunday Board (sunday)")).toHaveLength(1);
+    });
+    expect(screen.getByRole("heading", { name: "Sunday Board" })).toBeInTheDocument();
+    expect(screen.getByText(/Current session:/i)).toBeInTheDocument();
   });
 
   it("renames a discussion board without changing its alias", async () => {

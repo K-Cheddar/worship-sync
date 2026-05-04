@@ -8,7 +8,6 @@ import {
   completeServicePlanningSync,
   failServicePlanningSync,
   recordServicePlanningSyncResult,
-  resetServicePlanningImportPreview,
   setServicePlanningSyncActiveStep,
   setServicePlanningSyncPhase,
   setServicePlanningSyncPlanInfo,
@@ -240,8 +239,6 @@ export const useServicePlanningSyncRunner = () => {
     if (handledCompletionRunIdRef.current === sync.runId) return;
     handledCompletionRunIdRef.current = sync.runId;
     preparedRunRef.current = null;
-
-    dispatch(resetServicePlanningImportPreview());
   }, [dispatch, sync.runId, sync.status]);
 
   useEffect(() => {

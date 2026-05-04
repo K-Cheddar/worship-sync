@@ -6,12 +6,20 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
 import servicePlanningImportReducer, {
-  setServicePlanningImportPreview,
+  setServicePlanningServiceOutline,
 } from "../../store/servicePlanningImportSlice";
 
 const mockShowToast = jest.fn();
 const mockRemoveToast = jest.fn();
 const mockLoadPreview = jest.fn();
+
+const wrapImport = (preview: any) => ({
+  source: "servicePlanning" as const,
+  loadedAt: "2026-05-03T12:00:00.000Z",
+  sourceUrl: "https://example.com/plan",
+  planLabel: "May 2, 2026 - 10 AM",
+  preview,
+});
 
 jest.mock("../../context/toastContext", () => ({
   useToast: () => ({
@@ -42,7 +50,7 @@ describe("ServicePlanningImportPanel", () => {
     });
 
     store.dispatch(
-      setServicePlanningImportPreview({
+      setServicePlanningServiceOutline(wrapImport({
         overlayCandidates: [],
         overlayPlan: [
           {
@@ -75,7 +83,26 @@ describe("ServicePlanningImportPanel", () => {
             outlineAlreadyPresent: false,
           },
         ],
-      } as any),
+        lineItems: [
+          {
+            sectionName: "Welcome",
+            headingName: "Welcome",
+            elementType: "Welcome Song",
+            title: "Welcome Song",
+            ledBy: "Praise Team",
+            selectedForOutline: true,
+            outlineItemType: "song",
+            matchedLibraryItem: {
+              _id: "song-1",
+              name: "Welcome Song",
+              type: "song",
+            },
+            parsedRef: null,
+            overlayReady: true,
+            outlineAlreadyPresent: false,
+          },
+        ],
+      }) as any),
     );
 
     render(
@@ -104,7 +131,7 @@ describe("ServicePlanningImportPanel", () => {
     });
 
     store.dispatch(
-      setServicePlanningImportPreview({
+      setServicePlanningServiceOutline(wrapImport({
         overlayCandidates: [],
         overlayPlan: [
           {
@@ -138,7 +165,39 @@ describe("ServicePlanningImportPanel", () => {
             outlineAlreadyPresent: true,
           },
         ],
-      } as any),
+        lineItems: [
+          {
+            sectionName: "Welcome",
+            headingName: "Welcome",
+            elementType: "Welcome Song",
+            title: "Welcome Song",
+            ledBy: "Praise Team",
+            selectedForOutline: true,
+            outlineItemType: "song",
+            matchedLibraryItem: {
+              _id: "song-1",
+              name: "Welcome Song",
+              type: "song",
+            },
+            parsedRef: null,
+            overlayReady: true,
+            outlineAlreadyPresent: true,
+          },
+          {
+            sectionName: "Welcome",
+            headingName: "Welcome",
+            elementType: "Announcement",
+            title: "Church Updates",
+            ledBy: "Pastoral Team",
+            selectedForOutline: false,
+            outlineItemType: "none",
+            matchedLibraryItem: null,
+            parsedRef: null,
+            overlayReady: false,
+            outlineAlreadyPresent: false,
+          },
+        ],
+      }) as any),
     );
 
     render(
@@ -153,5 +212,50 @@ describe("ServicePlanningImportPanel", () => {
     expect(screen.getByRole("button", { name: "Sync Both" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Sync Overlays" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Sync Outline" })).toBeDisabled();
+  });
+
+  it("renders the open service plan button when a service outline preview is loaded", () => {
+    const emptyStore = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+      },
+    });
+
+    const { rerender } = render(
+      <Provider store={emptyStore}>
+        <MemoryRouter>
+          <ServicePlanningImportPanel />
+        </MemoryRouter>
+      </Provider>,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Open Service Plan" }),
+    ).not.toBeInTheDocument();
+
+    const loadedStore = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+      },
+    });
+
+    loadedStore.dispatch(
+      setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [],
+        outlineCandidates: [],
+        lineItems: [],
+      }) as any),
+    );
+
+    rerender(
+      <Provider store={loadedStore}>
+        <MemoryRouter>
+          <ServicePlanningImportPanel />
+        </MemoryRouter>
+      </Provider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Open Service Plan" })).toBeEnabled();
   });
 });

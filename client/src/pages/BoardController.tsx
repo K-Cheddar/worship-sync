@@ -5,15 +5,16 @@ import {
   Home,
   Eye,
   EyeOff,
+  LayoutList,
   LoaderCircle,
   Menu as MenuIcon,
   MessageSquarePlus,
   Minus,
-  MoreHorizontal,
   Pencil,
   Plus,
   Presentation,
   RotateCcw,
+  SlidersHorizontal,
   Sparkles,
   StarOff,
   Trash2,
@@ -28,7 +29,6 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
-  SheetTrigger,
 } from "../components/ui/sheet";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { useToast } from "../context/toastContext";
@@ -61,6 +61,11 @@ import {
   sortBoardPostsAscending,
 } from "../boards/boardUtils";
 import {
+  BOARD_PANEL_BODY,
+  BOARD_PANEL_CARD,
+  BOARD_PANEL_HEADER,
+} from "../boards/boardPanelTheme";
+import {
   deleteBoardAlias,
   hardResetBoardAlias,
   softResetBoardAlias,
@@ -68,11 +73,6 @@ import {
   updateBoardPostHidden,
   updateBoardPostHighlighted,
 } from "../boards/api";
-import {
-  BOARD_PANEL_BODY,
-  BOARD_PANEL_CARD,
-  BOARD_PANEL_HEADER,
-} from "../boards/boardPanelTheme";
 import {
   DBBoard,
   DBBoardAlias,
@@ -148,7 +148,7 @@ const getAliasDocs = async (
   const result = (await db.allDocs({
     include_docs: true,
     startkey: "alias:",
-    endkey: "alias:\uffff",
+    endkey: "alias:￿",
   })) as AllDocsResult<DBBoardAlias>;
 
   return result.rows
@@ -187,6 +187,102 @@ const getBoardPosts = async (
     result.rows.flatMap((row) => (row.doc ? [row.doc] : [])),
   );
 };
+
+type ManageBoardsPanelBodyProps = {
+  database: string | undefined;
+  isActing: boolean;
+  runAction: (action: () => Promise<void>) => Promise<void>;
+  onCreated: (aliasId: string) => void;
+  aliases: DBBoardAlias[];
+  selectedAliasId: string;
+  onSelectAlias: (aliasId: string) => void;
+  onRenameAlias: (aliasId: string) => void;
+  onDeleteAlias: (alias: DBBoardAlias) => void;
+};
+
+const ManageBoardsPanelBody = ({
+  database,
+  isActing,
+  runAction,
+  onCreated,
+  aliases,
+  selectedAliasId,
+  onSelectAlias,
+  onRenameAlias,
+  onDeleteAlias,
+}: ManageBoardsPanelBodyProps) => (
+  <>
+    <BoardCreateDiscussionForm
+      database={database}
+      isActing={isActing}
+      runAction={runAction}
+      onCreated={onCreated}
+    />
+    <div className={cn("mt-4", BOARD_PANEL_CARD)}>
+      <div className={BOARD_PANEL_HEADER}>
+        <h2 className="text-base font-semibold">Discussion Boards</h2>
+      </div>
+      <div
+        className={cn(
+          "max-h-[55dvh] overflow-x-hidden overflow-y-auto overscroll-contain xl:max-h-[40dvh]",
+          BOARD_PANEL_BODY,
+        )}
+      >
+        {aliases.length === 0 && (
+          <p className="px-4 py-4 text-sm text-gray-300">
+            No discussion boards yet.
+          </p>
+        )}
+        {aliases.map((alias) => (
+          <div
+            key={alias.aliasId}
+            className={cn(
+              "flex cursor-pointer items-start gap-2 border-b border-gray-600 border-l-4 px-4 py-3 transition-colors last:border-b-0",
+              selectedAliasId === alias.aliasId
+                ? "border-l-cyan-500 bg-gray-900/55 hover:bg-gray-900/70"
+                : "border-l-transparent bg-gray-700/35 hover:bg-gray-700/50",
+            )}
+          >
+            <button
+              type="button"
+              aria-current={selectedAliasId === alias.aliasId ? "true" : undefined}
+              className="min-w-0 flex-1 cursor-pointer overflow-hidden text-left transition-colors hover:text-white"
+              title={`${alias.title} (${alias.aliasId})`}
+              onClick={() => onSelectAlias(alias.aliasId)}
+            >
+              <span className="block truncate font-semibold leading-snug">
+                {alias.title}
+              </span>
+              <span className="block truncate font-mono text-xs text-gray-400">
+                {alias.aliasId}
+              </span>
+            </button>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                variant="tertiary"
+                svg={Pencil}
+                padding="p-2"
+                className="min-h-0!"
+                aria-label={`Rename ${alias.title}`}
+                onClick={() => onRenameAlias(alias.aliasId)}
+                disabled={isActing}
+              />
+              <Button
+                variant="destructive"
+                svg={Trash2}
+                padding="p-2"
+                className="min-h-0!"
+                aria-label={`Delete ${alias.title}`}
+                onClick={() => onDeleteAlias(alias)}
+                disabled={isActing}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </>
+);
 
 const BoardControllerMenu = ({
   canOpenBoard,
@@ -345,6 +441,7 @@ type BoardToolsPanelBodyProps = {
   archiveOptions: string[];
   isViewingCurrent: boolean;
   presentationFontScale: number;
+  onFontScaleChange: (scale: number) => void;
   runAction: (action: () => Promise<void>) => Promise<void>;
   isActing: boolean;
   showToast: (message: string, variant: "success" | "error") => void;
@@ -364,6 +461,7 @@ const BoardToolsPanelBody = ({
   archiveOptions,
   isViewingCurrent,
   presentationFontScale,
+  onFontScaleChange,
   runAction,
   isActing,
   showToast,
@@ -379,7 +477,7 @@ const BoardToolsPanelBody = ({
 
   return (
     <>
-      <div className="lg:hidden">
+      <div className="xl:hidden">
         <p className="text-sm font-semibold text-gray-100" id="board-tools-share-label">
           Share links
         </p>
@@ -431,7 +529,7 @@ const BoardToolsPanelBody = ({
               value === selectedAlias.currentBoardId ? "" : value,
             )
           }
-          selectClassName="w-full max-md:min-h-14"
+          selectClassName="w-full max-xl:min-h-14"
         />
         {!isViewingCurrent && (
           <Button
@@ -462,19 +560,11 @@ const BoardToolsPanelBody = ({
             padding="p-2"
             className="min-h-0!"
             onClick={() =>
-              runAction(async () => {
-                await updateBoardPresentationFontScale(
-                  selectedAlias.aliasId,
-                  presentationFontScale -
-                  BOARD_PRESENTATION_FONT_SCALE_STEP,
-                );
-                showToast("Presentation text made smaller.", "success");
-              })
+              onFontScaleChange(
+                presentationFontScale - BOARD_PRESENTATION_FONT_SCALE_STEP,
+              )
             }
-            disabled={
-              isActing ||
-              presentationFontScale <= MIN_BOARD_PRESENTATION_FONT_SCALE
-            }
+            disabled={presentationFontScale <= MIN_BOARD_PRESENTATION_FONT_SCALE}
           />
           <span className="min-w-14 text-center text-sm font-semibold text-white">
             {Math.round(presentationFontScale * 100)}%
@@ -485,18 +575,11 @@ const BoardToolsPanelBody = ({
             className="min-h-0!"
             aria-label="Reset presentation text size"
             onClick={() =>
-              runAction(async () => {
-                await updateBoardPresentationFontScale(
-                  selectedAlias.aliasId,
-                  DEFAULT_BOARD_PRESENTATION_FONT_SCALE,
-                );
-                showToast("Presentation text reset.", "success");
-              })
+              onFontScaleChange(
+                DEFAULT_BOARD_PRESENTATION_FONT_SCALE,
+              )
             }
-            disabled={
-              isActing ||
-              presentationFontScale === DEFAULT_BOARD_PRESENTATION_FONT_SCALE
-            }
+            disabled={presentationFontScale === DEFAULT_BOARD_PRESENTATION_FONT_SCALE}
           >
             Reset
           </Button>
@@ -506,19 +589,11 @@ const BoardToolsPanelBody = ({
             padding="p-2"
             className="min-h-0!"
             onClick={() =>
-              runAction(async () => {
-                await updateBoardPresentationFontScale(
-                  selectedAlias.aliasId,
-                  presentationFontScale +
-                  BOARD_PRESENTATION_FONT_SCALE_STEP,
-                );
-                showToast("Presentation text made larger.", "success");
-              })
+              onFontScaleChange(
+                presentationFontScale + BOARD_PRESENTATION_FONT_SCALE_STEP,
+              )
             }
-            disabled={
-              isActing ||
-              presentationFontScale >= MAX_BOARD_PRESENTATION_FONT_SCALE
-            }
+            disabled={presentationFontScale >= MAX_BOARD_PRESENTATION_FONT_SCALE}
           />
         </div>
       </div>
@@ -605,19 +680,18 @@ export const BoardControllerContent = () => {
   const [posts, setPosts] = useState<DBBoardPost[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isActing, setIsActing] = useState(false);
+  const [actingPostIds, setActingPostIds] = useState<Set<string>>(new Set());
   const [renameAliasId, setRenameAliasId] = useState("");
   const [deleteAlias, setDeleteAlias] = useState<DBBoardAlias | null>(null);
-  const [mobileBoardPanel, setMobileBoardPanel] = useState<"manage" | "live">(
-    "manage",
-  );
+  const [manageBoardsOpen, setManageBoardsOpen] = useState(false);
+  const [boardToolsOpen, setBoardToolsOpen] = useState(false);
   const loadRequestIdRef = useRef(0);
+  const boardIdToViewRef = useRef("");
+  const selectedBoardIdRef = useRef("");
+  const selectedAliasIdRef = useRef("");
 
-  const isLgUp = useMediaQuery("(min-width: 1024px)");
-  const isMobileStack = !isLgUp;
-  const hideAsideOnMobile =
-    isMobileStack && (mobileBoardPanel === "live" || !db);
-  const hideSectionOnMobile =
-    isMobileStack && mobileBoardPanel === "manage" && Boolean(db);
+  const isXlUp = useMediaQuery("(min-width: 1280px)");
+  const isMobileStack = !isXlUp;
 
   const loadAliases = useCallback(async () => {
     if (!db || !database) return;
@@ -672,16 +746,85 @@ export const BoardControllerContent = () => {
   }, [db, selectedAliasId, selectedBoardId]);
 
   useEffect(() => {
+    selectedBoardIdRef.current = selectedBoardId;
+  }, [selectedBoardId]);
+
+  useEffect(() => {
+    selectedAliasIdRef.current = selectedAliasId;
+  }, [selectedAliasId]);
+
+  useEffect(() => {
     void loadAliases();
   }, [loadAliases]);
 
   useEffect(() => {
     if (!db) return;
     const changes = db
-      .changes({ since: "now", live: true })
-      .on("change", () => {
-        void loadAliases();
-        void loadSelectedAlias();
+      .changes({ since: "now", live: true, include_docs: true })
+      .on("change", (change) => {
+        if (!change || typeof change.id !== "string") {
+          void loadAliases();
+          void loadSelectedAlias();
+          return;
+        }
+        const boardId = boardIdToViewRef.current;
+        if (boardId && change.id.startsWith(`post:${boardId}:`)) {
+          if (change.deleted) {
+            setPosts((prev) => prev.filter((p) => p._id !== change.id));
+          } else {
+            const updated = change.doc as unknown as DBBoardPost;
+            setPosts((prev) => {
+              const idx = prev.findIndex((p) => p._id === updated._id);
+              if (idx !== -1) {
+                const next = [...prev];
+                next[idx] = updated;
+                return next;
+              }
+              return sortBoardPostsAscending([...prev, updated]);
+            });
+          }
+        } else if (!change.deleted && change.doc && change.id.startsWith("alias:")) {
+          const updatedAlias = change.doc as unknown as DBBoardAlias;
+          setAliases((prev) => {
+            const idx = prev.findIndex((a) => a.aliasId === updatedAlias.aliasId);
+            if (idx !== -1) {
+              const next = [...prev];
+              next[idx] = updatedAlias;
+              return next;
+            }
+            return [...prev, updatedAlias].sort((a, b) => a.title.localeCompare(b.title));
+          });
+          if (selectedAliasIdRef.current === updatedAlias.aliasId) {
+            const boardIds = Array.from(
+              new Set([updatedAlias.currentBoardId, ...updatedAlias.history]),
+            );
+            const selectedBoardId = selectedBoardIdRef.current;
+            const boardIdToView =
+              selectedBoardId && boardIds.includes(selectedBoardId)
+                ? selectedBoardId
+                : updatedAlias.currentBoardId;
+
+            setSelectedAlias(updatedAlias);
+            setSelectedBoardId(
+              boardIdToView === updatedAlias.currentBoardId ? "" : boardIdToView,
+            );
+
+            void (async () => {
+              try {
+                const nextBoards = await getBoardDocsById(db, boardIds);
+                const nextPosts = await getBoardPosts(db, boardIdToView);
+                if (selectedAliasIdRef.current !== updatedAlias.aliasId) return;
+                setBoardsById(nextBoards);
+                setPosts(nextPosts);
+              } catch (error) {
+                console.warn("Board link is not ready in local sync yet:", error);
+              }
+            })();
+          }
+        } else {
+          void loadAliases();
+          void loadSelectedAlias();
+        }
       });
 
     return () => {
@@ -698,15 +841,17 @@ export const BoardControllerContent = () => {
   }, [selectedAliasId]);
 
   useEffect(() => {
-    if (isMobileStack && !selectedAliasId) {
-      setMobileBoardPanel("manage");
+    if (isXlUp) {
+      setManageBoardsOpen(false);
+      setBoardToolsOpen(false);
     }
-  }, [isMobileStack, selectedAliasId]);
+  }, [isXlUp]);
 
   const currentBoard = selectedAlias
     ? boardsById[selectedAlias.currentBoardId]
     : undefined;
   const boardIdToView = selectedBoardId || selectedAlias?.currentBoardId || "";
+  boardIdToViewRef.current = boardIdToView;
   const isViewingCurrent = !selectedBoardId || isCurrentBoardView(selectedAlias, selectedBoardId);
   const publicBoardUrl = selectedAlias
     ? buildBoardPublicUrl(selectedAlias.aliasId, "board")
@@ -762,12 +907,61 @@ export const BoardControllerContent = () => {
     [pullFromRemote, showToast],
   );
 
+  const runPostAction = useCallback(
+    async (
+      postId: string,
+      action: () => Promise<unknown>,
+      optimisticFn: (post: DBBoardPost) => DBBoardPost,
+    ) => {
+      setActingPostIds((prev) => new Set([...prev, postId]));
+      setPosts((prev) => prev.map((p) => (p._id === postId ? optimisticFn(p) : p)));
+      try {
+        await action();
+      } catch (error) {
+        void loadSelectedAlias();
+        const message = error instanceof Error ? error.message : "Could not complete that action.";
+        showToast(message, "error");
+      } finally {
+        setActingPostIds((prev) => {
+          const next = new Set(prev);
+          next.delete(postId);
+          return next;
+        });
+      }
+    },
+    [showToast, loadSelectedAlias],
+  );
+
+  const runFontScaleAction = useCallback(
+    (newScale: number) => {
+      if (!selectedAlias) return;
+      const prevScale = selectedAlias.presentationFontScale;
+      setSelectedAlias((prev) => prev ? { ...prev, presentationFontScale: newScale } : prev);
+      void updateBoardPresentationFontScale(selectedAlias.aliasId, newScale)
+        .catch(() => {
+          setSelectedAlias((prev) => prev ? { ...prev, presentationFontScale: prevScale } : prev);
+        });
+    },
+    [selectedAlias],
+  );
+
   const handleBoardCreated = useCallback(
     (aliasId: string) => {
       setSelectedAliasId(aliasId);
       setSelectedBoardId("");
       if (isMobileStack) {
-        setMobileBoardPanel("live");
+        setManageBoardsOpen(false);
+      }
+    },
+    [isMobileStack],
+  );
+
+  const handleSelectAlias = useCallback(
+    (aliasId: string) => {
+      setSelectedAliasId(aliasId);
+      setSelectedBoardId("");
+      if (isMobileStack) {
+        setManageBoardsOpen(false);
       }
     },
     [isMobileStack],
@@ -802,6 +996,20 @@ export const BoardControllerContent = () => {
     resetKey: stickToBottomResetKey,
   });
   const renameAlias = aliases.find((alias) => alias.aliasId === renameAliasId) ?? null;
+
+  const manageBoardsContent = (
+    <ManageBoardsPanelBody
+      database={database}
+      isActing={isActing}
+      runAction={runAction}
+      onCreated={handleBoardCreated}
+      aliases={aliases}
+      selectedAliasId={selectedAliasId}
+      onSelectAlias={handleSelectAlias}
+      onRenameAlias={setRenameAliasId}
+      onDeleteAlias={setDeleteAlias}
+    />
+  );
 
   return (
     <main
@@ -849,6 +1057,63 @@ export const BoardControllerContent = () => {
         />
       )}
 
+      {/* Manage boards sheet (below xl) */}
+      <Sheet open={manageBoardsOpen} onOpenChange={setManageBoardsOpen}>
+        <SheetContent
+          side="left"
+          className="flex flex-col p-0"
+          aria-describedby={undefined}
+        >
+          <SheetHeader>
+            <SheetTitle>Manage boards</SheetTitle>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
+            {manageBoardsContent}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Board tools sheet (below xl) */}
+      {db && selectedAlias && (
+        <Sheet open={boardToolsOpen} onOpenChange={setBoardToolsOpen}>
+          <SheetContent
+            side="right"
+            className="flex flex-col p-0"
+            aria-describedby={undefined}
+          >
+            <SheetHeader>
+              <SheetTitle>Board tools</SheetTitle>
+            </SheetHeader>
+            <div
+              className={cn(
+                "min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4",
+                BOARD_PANEL_BODY,
+              )}
+            >
+              <BoardToolsPanelBody
+                isMobileStack={true}
+                handleCopy={handleCopy}
+                onOpenAttendeeLink={handleOpenAttendeeLink}
+                onOpenViewBoardLink={handleOpenViewBoardLink}
+                publicBoardUrl={publicBoardUrl}
+                publicPresentUrl={publicPresentUrl}
+                boardIdToView={boardIdToView}
+                setSelectedBoardId={setSelectedBoardId}
+                selectedAlias={selectedAlias}
+                boardsById={boardsById}
+                archiveOptions={archiveOptions}
+                isViewingCurrent={isViewingCurrent}
+                presentationFontScale={presentationFontScale}
+                onFontScaleChange={runFontScaleAction}
+                runAction={runAction}
+                isActing={isActing}
+                showToast={showToast}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
+
       <header className="flex flex-nowrap items-center gap-3 border-b-2 border-gray-500 bg-gray-800 px-4 py-3">
         <BoardControllerMenu
           canOpenBoard={Boolean(selectedAliasId)}
@@ -865,146 +1130,16 @@ export const BoardControllerContent = () => {
             </h1>
             <UserSection />
           </div>
-
         </div>
       </header>
 
-      {isMobileStack && db && (
-        <div
-          role="tablist"
-          aria-label="Discussion board views"
-          className="flex shrink-0 border-b-2 border-gray-500 bg-gray-800 px-4 py-2 lg:hidden"
-        >
-          <div className="inline-flex w-full rounded-lg border border-gray-600 bg-gray-900/70 p-1">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mobileBoardPanel === "manage"}
-              className={cn(
-                "min-h-11 flex-1 rounded-md px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400",
-                mobileBoardPanel === "manage"
-                  ? "bg-gray-800 text-white shadow"
-                  : "text-gray-400 hover:text-white",
-              )}
-              onClick={() => setMobileBoardPanel("manage")}
-            >
-              Boards
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mobileBoardPanel === "live"}
-              disabled={!selectedAliasId}
-              className={cn(
-                "min-h-11 flex-1 rounded-md px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400",
-                mobileBoardPanel === "live"
-                  ? "bg-gray-800 text-white shadow"
-                  : "text-gray-400 hover:text-white",
-                !selectedAliasId && "cursor-not-allowed opacity-50",
-              )}
-              onClick={() => {
-                if (selectedAliasId) {
-                  setMobileBoardPanel("live");
-                }
-              }}
-            >
-              Live
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <aside
-          className={cn(
-            "w-full border-b-2 border-gray-500 bg-gray-800 p-4 lg:w-88 lg:border-b-0 lg:border-r-2",
-            hideAsideOnMobile && "hidden",
-          )}
-        >
-          <BoardCreateDiscussionForm
-            database={database}
-            isActing={isActing}
-            runAction={runAction}
-            onCreated={handleBoardCreated}
-          />
-
-          <div className={cn("mt-4", BOARD_PANEL_CARD)}>
-            <div className={BOARD_PANEL_HEADER}>
-              <h2 className="text-base font-semibold">Discussion Boards</h2>
-            </div>
-            <div
-              className={cn(
-                "max-h-[55dvh] overflow-x-hidden overflow-y-auto overscroll-contain lg:max-h-[40dvh]",
-                BOARD_PANEL_BODY,
-              )}
-            >
-              {aliases.length === 0 && (
-                <p className="px-4 py-4 text-sm text-gray-300">
-                  No discussion boards yet.
-                </p>
-              )}
-              {aliases.map((alias) => (
-                <div
-                  key={alias.aliasId}
-                  className={cn(
-                    "flex cursor-pointer items-start gap-2 border-b border-gray-600 border-l-4 px-4 py-3 transition-colors last:border-b-0",
-                    selectedAliasId === alias.aliasId
-                      ? "border-l-cyan-500 bg-gray-900/55 hover:bg-gray-900/70"
-                      : "border-l-transparent bg-gray-700/35 hover:bg-gray-700/50",
-                  )}
-                >
-                  <button
-                    type="button"
-                    aria-current={selectedAliasId === alias.aliasId ? "true" : undefined}
-                    className="min-w-0 flex-1 cursor-pointer overflow-hidden text-left transition-colors hover:text-white"
-                    title={`${alias.title} (${alias.aliasId})`}
-                    onClick={() => {
-                      setSelectedAliasId(alias.aliasId);
-                      setSelectedBoardId("");
-                      if (isMobileStack) {
-                        setMobileBoardPanel("live");
-                      }
-                    }}
-                  >
-                    <span className="block truncate font-semibold leading-snug">
-                      {alias.title}
-                    </span>
-                    <span className="block truncate font-mono text-xs text-gray-400">
-                      {alias.aliasId}
-                    </span>
-                  </button>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                      variant="tertiary"
-                      svg={Pencil}
-                      padding="p-2"
-                      className="min-h-0!"
-                      aria-label={`Rename ${alias.title}`}
-                      onClick={() => setRenameAliasId(alias.aliasId)}
-                      disabled={isActing}
-                    />
-                    <Button
-                      variant="destructive"
-                      svg={Trash2}
-                      padding="p-2"
-                      className="min-h-0!"
-                      aria-label={`Delete ${alias.title}`}
-                      onClick={() => setDeleteAlias(alias)}
-                      disabled={isActing}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+      <div className="flex min-h-0 flex-1 flex-col xl:flex-row">
+        {/* Left aside — xl+ only */}
+        <aside className="hidden w-full border-b-2 border-gray-500 bg-gray-800 p-4 xl:block xl:w-88 xl:border-b-0 xl:border-r-2">
+          {manageBoardsContent}
         </aside>
 
-        <section
-          className={cn(
-            "flex min-h-0 flex-1 flex-col",
-            hideSectionOnMobile && "hidden",
-          )}
-        >
+        <section className="flex min-h-0 flex-1 flex-col">
           {!db && (
             <div className="flex flex-1 items-center justify-center p-6 text-center">
               <div>
@@ -1039,67 +1174,80 @@ export const BoardControllerContent = () => {
                     {selectedAlias.title}
                   </h2>
                   <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                    <div
-                      className="rounded-md border border-gray-500 px-3 py-1.5 text-sm text-gray-200"
-                      aria-live="polite"
-                    >
-                      {posts.length} total · {visibleCount} visible
-                    </div>
                     {isMobileStack && (
-                      <Sheet>
-                        <SheetTrigger asChild>
-                          <Button
-                            variant="tertiary"
-                            svg={MoreHorizontal}
-                            className="justify-center"
-                            aria-label="More board tools"
-                          >
-                            More tools
-                          </Button>
-                        </SheetTrigger>
-                        <SheetContent
-                          side="right"
-                          className="flex flex-col p-0"
-                          aria-describedby={undefined}
+                      <>
+                        {/* Direct buttons at sm+ */}
+                        <Button
+                          variant="tertiary"
+                          svg={LayoutList}
+                          gap="gap-1.5"
+                          className="hidden sm:flex"
+                          onClick={() => setManageBoardsOpen(true)}
                         >
-                          <SheetHeader>
-                            <SheetTitle>Board tools</SheetTitle>
-                          </SheetHeader>
-                          <div
-                            className={cn(
-                              "min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4",
-                              BOARD_PANEL_BODY,
-                            )}
-                          >
-                            <BoardToolsPanelBody
-                              isMobileStack={isMobileStack}
-                              handleCopy={handleCopy}
-                              onOpenAttendeeLink={handleOpenAttendeeLink}
-                              onOpenViewBoardLink={handleOpenViewBoardLink}
-                              publicBoardUrl={publicBoardUrl}
-                              publicPresentUrl={publicPresentUrl}
-                              boardIdToView={boardIdToView}
-                              setSelectedBoardId={setSelectedBoardId}
-                              selectedAlias={selectedAlias}
-                              boardsById={boardsById}
-                              archiveOptions={archiveOptions}
-                              isViewingCurrent={isViewingCurrent}
-                              presentationFontScale={presentationFontScale}
-                              runAction={runAction}
-                              isActing={isActing}
-                              showToast={showToast}
-                            />
-                          </div>
-                        </SheetContent>
-                      </Sheet>
+                          Manage boards
+                        </Button>
+                        <Button
+                          variant="tertiary"
+                          svg={SlidersHorizontal}
+                          gap="gap-1.5"
+                          className="hidden sm:flex"
+                          onClick={() => setBoardToolsOpen(true)}
+                        >
+                          Board tools
+                        </Button>
+                        {/* Overflow menu below sm */}
+                        <Menu
+                          align="end"
+                          menuItems={[
+                            {
+                              element: (
+                                <div className="flex items-center gap-2">
+                                  <LayoutList className="size-4 text-gray-300" />
+                                  Manage boards
+                                </div>
+                              ),
+                              onClick: () => setManageBoardsOpen(true),
+                            },
+                            {
+                              element: (
+                                <div className="flex items-center gap-2">
+                                  <SlidersHorizontal className="size-4 text-gray-300" />
+                                  Board tools
+                                </div>
+                              ),
+                              onClick: () => setBoardToolsOpen(true),
+                            },
+                          ]}
+                          TriggeringButton={
+                            <Button
+                              variant="tertiary"
+                              svg={MenuIcon}
+                              gap="gap-1.5"
+                              className="sm:hidden"
+                              aria-label="Board tools and management"
+                            >
+                              Tools
+                            </Button>
+                          }
+                        />
+                      </>
                     )}
                   </div>
                 </div>
                 <div className="min-w-0">
-                  <p className="mt-1 text-sm text-gray-300">
-                    Current session: {getBoardLabel(currentBoard)}
-                  </p>
-                  <p className="mt-2 hidden text-sm text-gray-300 lg:block">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm text-gray-300">
+                      Current session: {getBoardLabel(currentBoard)}
+                    </p>
+                    <div
+                      className="rounded-md border border-gray-500 px-3 py-0.5 text-sm text-gray-200"
+                      aria-live="polite"
+                    >
+                      {posts.length} total · {visibleCount} visible
+                    </div>
+
+                  </div>
+                  <p className="mt-2 hidden text-sm text-gray-300 xl:block">
                     Share attendee and board links, then moderate posts below. The links will stay the same even if you create a new session.
                   </p>
                   {!isViewingCurrent && (
@@ -1111,7 +1259,7 @@ export const BoardControllerContent = () => {
                         : "Use Board tools on the right to switch."}
                     </p>
                   )}
-                  <div className="mt-3 hidden flex-wrap items-start gap-3 lg:flex">
+                  <div className="mt-3 hidden flex-wrap items-start gap-3 xl:flex">
                     <BoardShareLinkGroup
                       heading="Attendee link"
                       onCopy={() => handleCopy(publicBoardUrl, "Attendee link")}
@@ -1199,12 +1347,14 @@ export const BoardControllerContent = () => {
                               <Button
                                 variant="tertiary"
                                 svg={post.hidden ? Eye : EyeOff}
-                                onClick={() =>
-                                  runAction(async () => {
-                                    await updateBoardPostHidden(post._id, !post.hidden);
-                                  })
-                                }
-                                disabled={isActing || post.deleted}
+                                onClick={() => {
+                                  void runPostAction(
+                                    post._id,
+                                    () => updateBoardPostHidden(post._id, !post.hidden),
+                                    (p) => ({ ...p, hidden: !p.hidden }),
+                                  );
+                                }}
+                                disabled={actingPostIds.has(post._id) || post.deleted}
                               >
                                 {post.hidden ? "Unhide" : "Hide"}
                               </Button>
@@ -1212,14 +1362,13 @@ export const BoardControllerContent = () => {
                                 variant="tertiary"
                                 svg={post.highlighted ? StarOff : Sparkles}
                                 onClick={() =>
-                                  runAction(async () => {
-                                    await updateBoardPostHighlighted(
-                                      post._id,
-                                      !post.highlighted,
-                                    );
-                                  })
+                                  void runPostAction(
+                                    post._id,
+                                    () => updateBoardPostHighlighted(post._id, !post.highlighted),
+                                    (p) => ({ ...p, highlighted: !p.highlighted }),
+                                  )
                                 }
-                                disabled={isActing || post.hidden || post.deleted}
+                                disabled={actingPostIds.has(post._id) || post.hidden || post.deleted}
                               >
                                 {post.highlighted ? "Unhighlight" : "Highlight"}
                               </Button>
@@ -1248,6 +1397,7 @@ export const BoardControllerContent = () => {
           )}
         </section>
 
+        {/* Right aside — xl+ only */}
         {!isMobileStack && db && selectedAlias && (
           <aside
             className="flex w-88 min-h-0 shrink-0 flex-col border-l-2 border-gray-500 bg-gray-800 p-4"
@@ -1277,6 +1427,7 @@ export const BoardControllerContent = () => {
                   archiveOptions={archiveOptions}
                   isViewingCurrent={isViewingCurrent}
                   presentationFontScale={presentationFontScale}
+                  onFontScaleChange={runFontScaleAction}
                   runAction={runAction}
                   isActing={isActing}
                   showToast={showToast}

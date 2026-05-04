@@ -6,6 +6,38 @@ import getScheduleFromExcel from "../utils/getScheduleFromExcel";
 import { updateList } from "../store/creditsSlice";
 import store, { broadcastCreditsUpdate } from "../store/store";
 import { flushCreditsHistoryFromLatestList } from "../utils/creditsHistoryFlush";
+import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImport";
+
+const PRAISE_TEAM_ROLE_ORDER = ["worship leader", "soprano", "alto", "tenor"];
+
+function praiseTeamSortKey(role: string): number {
+  const normalized = role.replace(/\s+Singer$/i, "").trim().toLowerCase();
+  const idx = PRAISE_TEAM_ROLE_ORDER.indexOf(normalized);
+  return idx === -1 ? PRAISE_TEAM_ROLE_ORDER.length : idx;
+}
+
+function buildTeamCreditsText(
+  assignments: ServicePlanningTeamAssignment[],
+  teamName: string,
+  format: "role-name" | "name-only",
+): string | null {
+  let members = assignments.filter(
+    (a) => a.teamName.toLowerCase() === teamName.toLowerCase(),
+  );
+  if (!members.length) return null;
+  if (teamName.toLowerCase() === "praise team") {
+    members = [...members].sort(
+      (a, b) => praiseTeamSortKey(a.role) - praiseTeamSortKey(b.role),
+    );
+  }
+  return members
+    .map((a) => {
+      if (format === "name-only") return a.name;
+      const role = a.role.replace(/\s+Singer$/i, "").trim();
+      return `${role} - ${a.name}`;
+    })
+    .join("\n");
+}
 
 /**
  * Shared "Generate credits from overlays + schedule" action for Credits Editor and overlay toolbar.
@@ -28,6 +60,10 @@ export function useGenerateCreditsFromOverlays() {
     [overlays],
   );
   const { db } = useContext(ControllerInfoContext) ?? {};
+  const teamAssignments = useSelector(
+    (state) =>
+      state.servicePlanningImport?.serviceOutline?.preview.teamAssignments ?? [],
+  );
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [justGenerated, setJustGenerated] = useState(false);
@@ -128,6 +164,28 @@ export function useGenerateCreditsFromOverlays() {
         };
       });
 
+      if (teamAssignments.length) {
+        const teamCreditMap: Array<{
+          headingMatch: string;
+          teamName: string;
+          format: "role-name" | "name-only";
+        }> = [
+          { headingMatch: "band", teamName: "Band", format: "role-name" },
+          { headingMatch: "worship coordinators", teamName: "Coordinators", format: "name-only" },
+          { headingMatch: "praise team", teamName: "Praise Team", format: "role-name" },
+        ];
+
+        updatedList = updatedList.map((credit) => {
+          const match = teamCreditMap.find(
+            (m) => credit.heading.toLowerCase() === m.headingMatch,
+          );
+          if (!match) return credit;
+          const text = buildTeamCreditsText(teamAssignments, match.teamName, match.format);
+          if (text === null) return credit;
+          return { ...credit, text };
+        });
+      }
+
       dispatch(updateList(updatedList));
 
       await flushCreditsHistoryFromLatestList(
@@ -160,6 +218,7 @@ export function useGenerateCreditsFromOverlays() {
     scheduleName,
     db,
     outlineIdForCredits,
+    teamAssignments,
   ]);
 
   return {

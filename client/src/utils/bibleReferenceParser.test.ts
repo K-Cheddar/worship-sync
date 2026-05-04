@@ -1,4 +1,7 @@
-import { extractBibleReferencesFromText } from "./bibleReferenceParser";
+import {
+  extractBibleReferencesFromText,
+  parseBibleSearchReference,
+} from "./bibleReferenceParser";
 
 describe("extractBibleReferencesFromText", () => {
   it("extracts numbered references with a final global version", () => {
@@ -109,6 +112,41 @@ Daniel 3 : 25 NKJV (Friend in the furnace)`,
         verseRange: "38-48",
         status: "duplicate",
       },
+    ]);
+  });
+
+  it("accepts v and verse separators in shared parsing", () => {
+    expect(parseBibleSearchReference("Psalms 119 v 23")).toEqual({
+      book: "Psalms",
+      chapter: "119",
+      startVerse: "23",
+      endVerse: "",
+      version: "",
+    });
+
+    expect(parseBibleSearchReference("John 3 verse 16-17 NKJV")).toEqual({
+      book: "John",
+      chapter: "3",
+      startVerse: "16",
+      endVerse: "17",
+      version: "nkjv",
+    });
+  });
+
+  it("extracts bulk import references that use v-style separators", () => {
+    const rows = extractBibleReferencesFromText(
+      "Psalms 119 v 23\nJohn 3 verse 16-17 NKJV",
+      "kjv",
+    );
+
+    expect(rows.map(({ book, chapter, verseRange, version }) => ({
+      book,
+      chapter,
+      verseRange,
+      version,
+    }))).toEqual([
+      { book: "Psalms", chapter: "119", verseRange: "23", version: "nkjv" },
+      { book: "John", chapter: "3", verseRange: "16-17", version: "nkjv" },
     ]);
   });
 });

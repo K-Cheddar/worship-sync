@@ -698,7 +698,11 @@ const CreateItem = () => {
             )}
 
             <Button
-              disabled={!itemName || !!existingItem || justCreated}
+              disabled={
+                !itemName ||
+                (selectedType !== "song" && !!existingItem) ||
+                justCreated
+              }
               variant="cta"
               className="mt-4 w-full shrink-0 justify-center text-base"
               onClick={createItem}

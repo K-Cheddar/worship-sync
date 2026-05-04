@@ -135,6 +135,35 @@ function settleFirebaseWrite<T>(value: T | PromiseLike<T>): Promise<void> {
     .catch(() => { });
 }
 
+function getPresenceSurface(pathname: string): "controller" | "display" | null {
+  if (
+    pathname.startsWith("/controller") ||
+    pathname.startsWith("/overlay-controller") ||
+    pathname.startsWith("/board-controller") ||
+    pathname.startsWith("/credits-editor") ||
+    pathname.startsWith("/boards/controller") ||
+    pathname === "/home" ||
+    pathname.startsWith("/account")
+  ) {
+    return "controller";
+  }
+
+  if (
+    pathname === "/projector" ||
+    pathname === "/projector-full" ||
+    pathname === "/monitor" ||
+    pathname === "/stream" ||
+    pathname === "/stream-info" ||
+    pathname === "/credits" ||
+    pathname === "/boards/display" ||
+    pathname.startsWith("/boards/present/")
+  ) {
+    return "display";
+  }
+
+  return null;
+}
+
 const CHURCH_BRANDING_PERMISSION_LISTEN_RETRY_MAX = 12;
 const CHURCH_BRANDING_SHARED_TOKEN_REMINT_MAX = 2;
 
@@ -484,12 +513,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const churchIntegrationsPermissionRetryRef = useRef(0);
   const churchIntegrationsRemintAttemptsRef = useRef(0);
   const location = useLocation();
-  const isOnHumanPath = useMemo(() => {
-    const path = location.pathname;
-    return (
-      path.startsWith("/controller") || path.startsWith("/overlay-controller") || path.startsWith("/board-controller") || path.startsWith("/credits-editor") || path.startsWith("/boards/controller") || path === ("/home") || path.startsWith("/account")
-    );
-  }, [location.pathname]);
+  const presenceSurface = useMemo(
+    () => getPresenceSurface(location.pathname),
+    [location.pathname]
+  );
+  const isOnHumanPath = presenceSurface === "controller";
 
   const hostId = useMemo(() => globalHostId, []);
 
@@ -1400,7 +1428,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         });
         const _activeInstances = Object.values(data).filter(
           (instance: any): instance is Instance =>
-            instance.isOnController &&
+            (instance.isOnController ||
+              instance.presenceSurface === "display" ||
+              instance.sessionKind === "display") &&
             now - new Date(instance.lastActive).getTime() <= 60 * 60 * 1000
         );
         setActiveInstances(_activeInstances);
@@ -1428,6 +1458,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             isOnController: isOnHumanPath,
             sessionKind,
             deviceLabel: device?.label || null,
+            presenceSurface,
+            presenceRoute: location.pathname,
           })
         );
       }
@@ -1464,6 +1496,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     hostId,
     isSharedDataScopeReady,
     isOnHumanPath,
+    location.pathname,
+    presenceSurface,
     sessionKind,
   ]);
 
@@ -1494,6 +1528,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               isOnController: isOnHumanPath,
               sessionKind,
               deviceLabel: device?.label || null,
+              presenceSurface,
+              presenceRoute: location.pathname,
             })
           );
         }
@@ -1511,6 +1547,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     hostId,
     isOnHumanPath,
     isSharedDataScopeReady,
+    location.pathname,
+    presenceSurface,
     sessionKind,
   ]);
 

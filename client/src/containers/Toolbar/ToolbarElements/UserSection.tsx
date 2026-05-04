@@ -6,6 +6,9 @@ import {
   Save,
   LogOut,
   Loader2,
+  ChevronDown,
+  ChevronRight,
+  MonitorSmartphone,
 } from "lucide-react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
@@ -26,6 +29,25 @@ import { useSelector } from "../../../hooks";
 import { selectAnyAutosavePending } from "../../../store/autosaveIndicatorSlice";
 
 const ACCOUNT_TRIGGER_MAX_W = "max-w-[10rem]";
+
+const getInstanceLabel = (instance: Instance) =>
+  instance.name?.trim() ||
+  instance.user?.trim() ||
+  instance.deviceLabel?.trim() ||
+  "Operator";
+
+const getPresenceRouteLabel = (presenceRoute?: string | null) => {
+  if (!presenceRoute) return "Display";
+  if (presenceRoute === "/projector") return "Projector";
+  if (presenceRoute === "/projector-full") return "Projector Full";
+  if (presenceRoute === "/monitor") return "Monitor";
+  if (presenceRoute === "/stream") return "Stream";
+  if (presenceRoute === "/stream-info") return "Stream Info";
+  if (presenceRoute === "/credits") return "Credits";
+  if (presenceRoute === "/boards/display") return "Board Display";
+  if (presenceRoute.startsWith("/boards/present/")) return "Board Present";
+  return "Display";
+};
 
 const UserSection = () => {
   const {
@@ -48,6 +70,7 @@ const UserSection = () => {
   const [firebaseDisplayName, setFirebaseDisplayName] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [isSavingName, setIsSavingName] = useState(false);
+  const [displaysExpanded, setDisplaysExpanded] = useState(false);
   const anyAutosavePending = useSelector(selectAnyAutosavePending);
 
   useEffect(() => {
@@ -95,30 +118,52 @@ const UserSection = () => {
   }, [activeInstances?.length]);
 
   const activeCount = activeInstances?.length || 0;
-  const activeInstanceRows = useMemo(() => {
+  const { operatorRows, displayRows } = useMemo(() => {
     const instances = activeInstances || [];
-    const getInstanceLabel = (instance: Instance) =>
-      instance.name?.trim() ||
-      instance.user?.trim() ||
-      instance.deviceLabel?.trim() ||
-      "Operator";
-
-    return [...instances]
+    const sortedInstances = [...instances]
       .sort((a, b) => {
         if (a.hostId === hostId) return -1;
         if (b.hostId === hostId) return 1;
         return getInstanceLabel(a).localeCompare(getInstanceLabel(b));
-      })
-      .map((instance) => ({
-        key: instance.hostId,
-        label: getInstanceLabel(instance),
-        isCurrentHost: instance.hostId === hostId,
-        detail:
-          instance.sessionKind === "workstation"
-            ? "Shared workstation"
-            : null,
-      }));
+      });
+
+    const mappedInstances = sortedInstances.map((instance) => ({
+      instance,
+      key: instance.hostId,
+      label: getInstanceLabel(instance),
+      routeLabel: getPresenceRouteLabel(instance.presenceRoute),
+      isDisplay:
+        instance.presenceSurface === "display" ||
+        instance.sessionKind === "display",
+      isCurrentHost: instance.hostId === hostId,
+      detail:
+        instance.sessionKind === "workstation"
+          ? "Shared workstation"
+          : null,
+    }));
+
+    return {
+      operatorRows: mappedInstances.filter((instance) => !instance.isDisplay),
+      displayRows: mappedInstances.filter((instance) => instance.isDisplay),
+    };
   }, [activeInstances, hostId]);
+
+  useEffect(() => {
+    if (displayRows.length === 0) {
+      setDisplaysExpanded(false);
+    }
+  }, [displayRows.length]);
+
+  const activeInstanceRows = useMemo(
+    () =>
+      operatorRows.map((instance) => ({
+        key: instance.key,
+        label: instance.label,
+        isCurrentHost: instance.isCurrentHost,
+        detail: instance.detail,
+      })),
+    [operatorRows]
+  );
 
   const accountAriaLabel = (() => {
     let label = "";
@@ -275,7 +320,7 @@ const UserSection = () => {
             </span>
           </div>
         </div>
-        {activeInstanceRows.length > 0 ? (
+        {activeInstanceRows.length > 0 || displayRows.length > 0 ? (
           <div className="border-t border-gray-600 pt-3">
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
               Active right now
@@ -305,6 +350,61 @@ const UserSection = () => {
                   ) : null}
                 </li>
               ))}
+              {displayRows.length > 0 ? (
+                <li className="rounded-md border border-gray-700/80 bg-black/15">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 px-2 py-2 text-left"
+                    onClick={() => setDisplaysExpanded((current) => !current)}
+                    aria-expanded={displaysExpanded}
+                    aria-controls="active-display-list"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <MonitorSmartphone className="size-4 shrink-0 text-cyan-300" />
+                      <span className="text-sm text-white">
+                        {displayRows.length} {displayRows.length === 1 ? "display" : "displays"}
+                      </span>
+                    </span>
+                    {displaysExpanded ? (
+                      <ChevronDown className="size-4 shrink-0 text-gray-400" />
+                    ) : (
+                      <ChevronRight className="size-4 shrink-0 text-gray-400" />
+                    )}
+                  </button>
+                  {displaysExpanded ? (
+                    <ul
+                      id="active-display-list"
+                      className="border-t border-gray-700/80 px-2 py-2"
+                      aria-label="Active displays"
+                    >
+                      {displayRows.map((instance) => (
+                        <li
+                          key={instance.key}
+                          className={
+                            instance.isCurrentHost
+                              ? "flex flex-col gap-1 rounded-md border border-cyan-500/35 bg-cyan-950/40 px-2 py-2"
+                              : "flex flex-col gap-1 px-2 py-1"
+                          }
+                        >
+                          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                            <span className="wrap-break-word text-sm text-white">
+                              {instance.label}
+                            </span>
+                            {instance.isCurrentHost ? (
+                              <span className="shrink-0 rounded border border-cyan-400/60 bg-cyan-950/60 px-1.5 py-px text-xs font-semibold uppercase tracking-wide text-cyan-200">
+                                You
+                              </span>
+                            ) : null}
+                          </div>
+                          <span className="text-xs text-gray-400">
+                            {instance.routeLabel}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              ) : null}
             </ul>
           </div>
         ) : null}

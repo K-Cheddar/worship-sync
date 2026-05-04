@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Folder } from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
@@ -300,6 +301,30 @@ export function useMediaLibraryController({
 
   const isMediaGridFullyLoaded = filteredList.length <= numShownMediaItems;
 
+  // Drip-load remaining batches in idle time so the full list is mounted
+  // before the user scrolls or needs a specific item.
+  useEffect(() => {
+    if (isMediaGridFullyLoaded) return;
+
+    let handle: number;
+    const scheduleNext = () => {
+      handle = (window.requestIdleCallback ?? ((cb) => window.setTimeout(cb, 16)))(() => {
+        setNumShownMediaItems((prev) => {
+          const next = Math.min(prev + MEDIA_GRID_PROGRESSIVE_BATCH, filteredList.length);
+          if (next < filteredList.length) scheduleNext();
+          return next;
+        });
+      });
+    };
+    scheduleNext();
+
+    return () => {
+      (window.cancelIdleCallback ?? window.clearTimeout)(handle);
+    };
+  // mediaGridProgressKey resets numShownMediaItems, which re-evaluates isMediaGridFullyLoaded
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMediaGridFullyLoaded, filteredList.length]);
+
   useLoadMoreOnScroll({
     scrollRef: mediaListRef,
     enabled:
@@ -372,8 +397,9 @@ export function useMediaLibraryController({
     const idx = filteredList.findIndex((m) => m.id === pendingId);
     if (idx < 0) return;
 
-    // Ensure the tile is mounted (progressive load).
-    setNumShownMediaItems((prev) => Math.max(prev, idx + 1));
+    // Ensure the tile is mounted before scrolling (flushSync forces the render
+    // to complete synchronously so the DOM element exists when rAF fires).
+    flushSync(() => setNumShownMediaItems((prev) => Math.max(prev, idx + 1)));
 
     requestAnimationFrame(() => {
       mediaListRef.current

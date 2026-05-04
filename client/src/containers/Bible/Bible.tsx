@@ -914,67 +914,69 @@ const Bible = () => {
             hideLabel
             options={bibleVersions}
           />
-          <Input
-            svg={search ? X : undefined}
-            svgAction={() => handleSearch("")}
-            svgActionAriaLabel="Clear search"
-            value={search}
-            onChange={(val) => handleSearch(val as string)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                (e.target as HTMLElement).blur();
-              }
-            }}
-            label="Search"
-            className="max-lg:w-full flex justify-center gap-2 items-center"
-            placeholder="Gen 3:15"
-            svgPadding="max-lg:p-1 lg:p-0"
-          />
-          <Popover open={bulkImportOpen} onOpenChange={setBulkImportOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="secondary"
-                svg={FileInput}
-                disabled={isOfflineGuest}
-              >
-                Import
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              className="w-[min(28rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 text-white"
-            >
-              <div className="flex flex-col gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold">Import Bible texts</h3>
-                  <p className="mt-1 text-xs text-gray-400">
-                    Paste a list of references to review before adding.
-                  </p>
-                </div>
-                <TextArea
-                  label="Bible references"
-                  hideLabel
-                  value={bulkImportText}
-                  onChange={setBulkImportText}
-                  placeholder="John 14:16-18&#10;Acts 1:4-8&#10;All NKJV"
-                  className="min-h-40"
-                  textareaClassName="min-h-40 rounded-md border border-gray-700 bg-gray-950 p-2 text-sm text-white placeholder:text-gray-500"
-                />
+          <div className="flex gap-2 items-center">
+            <Input
+              svg={search ? X : undefined}
+              svgAction={() => handleSearch("")}
+              svgActionAriaLabel="Clear search"
+              value={search}
+              onChange={(val) => handleSearch(val as string)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  (e.target as HTMLElement).blur();
+                }
+              }}
+              label="Search"
+              className="max-lg:w-full flex justify-center gap-2 items-center"
+              placeholder="Gen 3:15"
+              svgPadding="max-lg:p-1 lg:p-0"
+            />
+            <Popover open={bulkImportOpen} onOpenChange={setBulkImportOpen}>
+              <PopoverTrigger asChild>
                 <Button
                   type="button"
-                  variant="cta"
+                  variant="secondary"
                   svg={FileInput}
-                  isLoading={isBulkImporting}
-                  disabled={isBulkImporting || !bulkImportText.trim()}
-                  onClick={() => void handleBulkImport()}
+                  disabled={isOfflineGuest}
                 >
-                  Import multiple
+                  Import
                 </Button>
-              </div>
-            </PopoverContent>
-          </Popover>
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                className="w-[min(28rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 text-white"
+              >
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold">Import Bible texts</h3>
+                    <p className="mt-1 text-xs text-gray-400">
+                      Paste a list of references to review before adding.
+                    </p>
+                  </div>
+                  <TextArea
+                    label="Bible references"
+                    hideLabel
+                    value={bulkImportText}
+                    onChange={setBulkImportText}
+                    placeholder="John 14:16-18&#10;Acts 1:4-8&#10;All NKJV"
+                    className="min-h-40"
+                    textareaClassName="min-h-40 rounded-md border border-gray-700 bg-gray-950 p-2 text-sm text-white placeholder:text-gray-500"
+                  />
+                  <Button
+                    type="button"
+                    variant="cta"
+                    svg={FileInput}
+                    isLoading={isBulkImporting}
+                    disabled={isBulkImporting || !bulkImportText.trim()}
+                    onClick={() => void handleBulkImport()}
+                  >
+                    Import multiple
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
           <ButtonGroup className="w-full lg:hidden my-4">
             <ButtonGroupItem
               onClick={() => setShowVersesDisplaySection(false)}
@@ -1000,48 +1002,48 @@ const Bible = () => {
           bulkReviewSection
         ) : (
           <>
-        {isMobile && showVersesDisplaySection && versesDisplaySection}
-        {!!books.length && (
-          <div
-            className={cn(
-              "flex flex-1 w-full gap-2 max-lg:justify-center min-h-0",
-              isMobile && showVersesDisplaySection && "hidden"
+            {isMobile && showVersesDisplaySection && versesDisplaySection}
+            {!!books.length && (
+              <div
+                className={cn(
+                  "flex flex-1 w-full gap-2 max-lg:justify-center min-h-0",
+                  isMobile && showVersesDisplaySection && "hidden"
+                )}
+              >
+                <BibleSection
+                  initialList={books as bookType[]}
+                  setValue={(val) => dispatch(setBook(val))}
+                  searchValue={searchValues.book}
+                  value={book}
+                  type="book"
+                />
+                <BibleSection
+                  initialList={chapters as chapterType[]}
+                  setValue={(val) => dispatch(setChapter(val))}
+                  searchValue={searchValues.chapter}
+                  value={chapter}
+                  type="chapter"
+                />
+                <BibleSection
+                  initialList={verses as verseType[]}
+                  setValue={(val) => dispatch(setStartVerse(val))}
+                  searchValue={searchValues.startVerse}
+                  value={startVerse}
+                  type="verse"
+                  label="Start"
+                />
+                <BibleSection
+                  initialList={verses as verseType[]}
+                  setValue={(val) => dispatch(setEndVerse(val))}
+                  searchValue={searchValues.endVerse}
+                  value={endVerse}
+                  type="verse"
+                  min={startVerse}
+                  label="End"
+                />
+                {!isMobile && versesDisplaySection}
+              </div>
             )}
-          >
-            <BibleSection
-              initialList={books as bookType[]}
-              setValue={(val) => dispatch(setBook(val))}
-              searchValue={searchValues.book}
-              value={book}
-              type="book"
-            />
-            <BibleSection
-              initialList={chapters as chapterType[]}
-              setValue={(val) => dispatch(setChapter(val))}
-              searchValue={searchValues.chapter}
-              value={chapter}
-              type="chapter"
-            />
-            <BibleSection
-              initialList={verses as verseType[]}
-              setValue={(val) => dispatch(setStartVerse(val))}
-              searchValue={searchValues.startVerse}
-              value={startVerse}
-              type="verse"
-              label="Start"
-            />
-            <BibleSection
-              initialList={verses as verseType[]}
-              setValue={(val) => dispatch(setEndVerse(val))}
-              searchValue={searchValues.endVerse}
-              value={endVerse}
-              type="verse"
-              min={startVerse}
-              label="End"
-            />
-            {!isMobile && versesDisplaySection}
-          </div>
-        )}
           </>
         )}
       </div>

@@ -298,6 +298,7 @@ Let Your fire fall`;
       expect(item.arrangements[0].songOrder.map((s) => s.name)).toEqual(
         item.arrangements[0].formattedLyrics.map((f) => f.name),
       );
+      expect(item._id).toBe("song-fixed-id");
     });
 
     it("persists song metadata on new songs when provided", async () => {
@@ -331,6 +332,25 @@ Let Your fire fall`;
           artistName: "Artist",
         }),
       );
+    });
+
+    it("allows duplicate song names by separating the generated id from the display title", async () => {
+      const { formattedLyrics, songOrder } = createSections({
+        unformattedLyrics: "Verse 1",
+      });
+
+      const item = await createNewSong({
+        name: "My Song",
+        formattedLyrics,
+        songOrder,
+        list: [{ _id: "existing-song", name: "My Song", type: "song" } as ServiceItem],
+        db: undefined,
+        background: "#000",
+        brightness: 100,
+      });
+
+      expect(item.name).toBe("My Song");
+      expect(item._id).toBe("song-fixed-id");
     });
   });
 

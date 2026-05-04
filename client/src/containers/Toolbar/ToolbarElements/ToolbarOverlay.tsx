@@ -3,6 +3,7 @@ import {
   RectangleEllipsis,
   Layers,
   MessageSquare,
+  PanelsTopLeft,
   ScrollText,
   Clock,
   Check,
@@ -16,6 +17,7 @@ import {
   setOverlayControllerPanel,
   setOverlayCreditsSettingsDrawerOpen,
 } from "../../../store/preferencesSlice";
+import { setServicePlanningFloatingWindowDismissed } from "../../../store/servicePlanningImportSlice";
 import ToolbarButton from "./ToolbarButton";
 import Outlines from "./Outlines";
 import { useGenerateCreditsFromOverlays } from "../../../hooks/useGenerateCreditsFromOverlays";
@@ -44,6 +46,10 @@ const ToolbarOverlay = ({
 
   const generateCredits = useGenerateCreditsFromOverlays();
 
+  const serviceOutline = useSelector(
+    (state) => state.servicePlanningImport?.serviceOutline,
+  );
+
   const overlayPanelTabRefs = useRef<{
     overlays: HTMLButtonElement | HTMLAnchorElement | null;
     boardPosts: HTMLButtonElement | HTMLAnchorElement | null;
@@ -67,6 +73,16 @@ const ToolbarOverlay = ({
       <div className="scrollbar-variable flex min-h-9 min-w-0 w-full overflow-x-auto px-1">
         <div className="flex w-max flex-nowrap items-center gap-1 *:shrink-0">
           <Outlines matchToolbarTabs className="shrink-0" />
+          <ToolbarButton
+            svg={PanelsTopLeft}
+            disabled={!serviceOutline}
+            onClick={() =>
+              dispatch(setServicePlanningFloatingWindowDismissed(false))
+            }
+            aria-label="Open service plan"
+          >
+            Open Service Plan
+          </ToolbarButton>
           {access === "full" && overlayControllerPanel === "overlays" && (
             <ToolbarButton
               svg={RectangleEllipsis}

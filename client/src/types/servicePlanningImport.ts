@@ -5,6 +5,7 @@ import type { ServiceItem } from "../types";
 export type OutlineItemCandidate = {
   sectionName: string;
   headingName: string | null;
+  sourceRowIndex: number;
   elementType: string;
   title: string;
   outlineItemType: "song" | "bible" | "none";
@@ -15,8 +16,25 @@ export type OutlineItemCandidate = {
   outlineAlreadyPresent: boolean;
 };
 
+export type ServicePlanningLineItem = {
+  sectionName: string;
+  headingName: string | null;
+  sourceRowIndex: number;
+  elementType: string;
+  title: string;
+  cleanedTitle: string;
+  ledBy: string;
+  selectedForOutline: boolean;
+  outlineItemType: "song" | "bible" | "none";
+  overlayReady: boolean;
+  outlineAlreadyPresent: boolean;
+  matchedLibraryItem: ServiceItem | null;
+  parsedRef: ParsedBibleRef | null;
+};
+
 export type OverlaySyncPlanItem = {
   sectionName: string;
+  sourceRowIndex: number;
   elementType: string;
   title: string;
   ledBy: string;
@@ -34,8 +52,16 @@ export type OverlaySyncPlanItem = {
   reason?: string;
 };
 
+export type ServicePlanningTeamAssignment = {
+  teamName: string;
+  role: string;
+  name: string;
+};
+
 export type ServicePlanningPreview = {
   overlayCandidates: ServicePlanningMappedRow[];
   overlayPlan: OverlaySyncPlanItem[];
   outlineCandidates: OutlineItemCandidate[];
+  lineItems: ServicePlanningLineItem[];
+  teamAssignments: ServicePlanningTeamAssignment[];
 };

@@ -73,6 +73,7 @@ import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemL
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
 import { CONTROLLER_PAGE_READY, RootState } from "../../store/store";
+import { setServicePlanningServiceOutline } from "../../store/servicePlanningImportSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useToast } from "../../context/toastContext";
 
@@ -122,6 +123,7 @@ export const useControllerPageLifecycle = () => {
             const update = _update as DBItemListDetails;
             const itemList = update.items;
             const overlaysIds = update.overlays || [];
+            dispatch(setServicePlanningServiceOutline(update.serviceOutline ?? null));
             if (cloud) {
               dispatch(
                 updateItemListFromRemote(formatItemList(itemList, cloud)),
@@ -377,6 +379,7 @@ export const useControllerPageLifecycle = () => {
         );
         const itemList = response?.items || [];
         const overlayIds = response?.overlays || [];
+        dispatch(setServicePlanningServiceOutline(response?.serviceOutline ?? null));
         if (cloud) {
           dispatch(initiateItemList(formatItemList(itemList, cloud)));
         }
@@ -386,6 +389,7 @@ export const useControllerPageLifecycle = () => {
         dispatch(mergeOverlayHistoryFromDb(overlayHistory));
       } catch (e) {
         console.error(e);
+        dispatch(setServicePlanningServiceOutline(null));
       }
       dispatch(setItemListIsLoading(false));
     };
