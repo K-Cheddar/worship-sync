@@ -474,17 +474,6 @@ const ServicePlanningImportPanel = () => {
         >
           {isLoading ? "Loading…" : "Load"}
         </Button>
-        <Button
-          variant="primary"
-          color="#22d3ee"
-          svg={PanelsTopLeft}
-          disabled={!serviceOutline}
-          onClick={() =>
-            dispatch(setServicePlanningFloatingWindowDismissed(false))
-          }
-        >
-          Open Service Plan
-        </Button>
       </div>
 
       {isLoading && (
@@ -648,6 +637,17 @@ const ServicePlanningImportPanel = () => {
               onClick={() => void handleSync(true, true)}
             >
               Sync Both
+            </Button>
+            <Button
+              variant="primary"
+              color="#22d3ee"
+              svg={PanelsTopLeft}
+              disabled={!serviceOutline}
+              onClick={() =>
+                dispatch(setServicePlanningFloatingWindowDismissed(false))
+              }
+            >
+              Open Service Plan
             </Button>
           </div>
         </>

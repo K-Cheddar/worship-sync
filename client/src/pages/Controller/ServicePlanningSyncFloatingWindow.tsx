@@ -19,7 +19,7 @@ import Input from "../../components/Input/Input";
 import { useToast } from "../../context/toastContext";
 import type { RootState } from "../../store/store";
 import Button from "../../components/Button/Button";
-import FloatingWindow from "../../components/FloatingWindow/FloatingWindow";
+import FloatingWindow, { type FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import Spinner from "../../components/Spinner/Spinner";
 import {
   Tabs,
@@ -217,6 +217,17 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
   );
   const autoCloseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeItemRef = useRef<HTMLLIElement | null>(null);
+  const floatingWindowRef = useRef<FloatingWindowHandle>(null);
+  const floatingWindowRestoreId = useSelector(
+    (s: RootState) => s.servicePlanningImport.floatingWindowRestoreId,
+  );
+  const prevRestoreIdRef = useRef(floatingWindowRestoreId);
+  useEffect(() => {
+    if (floatingWindowRestoreId !== prevRestoreIdRef.current) {
+      prevRestoreIdRef.current = floatingWindowRestoreId;
+      floatingWindowRef.current?.restore();
+    }
+  }, [floatingWindowRestoreId]);
 
   const handleImport = async () => {
     const trimmed = importUrl.trim();
@@ -341,6 +352,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
 
   return (
     <FloatingWindow
+      ref={floatingWindowRef}
       title={titleNode}
       onClose={handleClose}
       defaultPosition={positionRef.current}

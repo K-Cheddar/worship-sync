@@ -81,13 +81,12 @@ const SlideBoxes = ({
               onClick={() => {
                 dispatch(setRequestOpenMediaPanel(true));
                 dispatch(setIsMediaExpanded(true));
-                if (activeBox.mediaInfo?.id) {
-                  dispatch(setFocusMediaId(activeBox.mediaInfo!.id));
-                } else if (activeBox.background) {
-                  const mediaId = mediaList.find((m) => m.background === activeBox.background)?.id;
-                  if (mediaId) {
-                    dispatch(setFocusMediaId(mediaId));
-                  }
+                console.log("activeBox", activeBox);
+                const mediaId =
+                  (activeBox.mediaInfo?.id && mediaList.find((m) => m.id === activeBox.mediaInfo!.id)?.id) ||
+                  (activeBox.background && mediaList.find((m) => m.background === activeBox.background)?.id);
+                if (mediaId) {
+                  dispatch(setFocusMediaId(mediaId));
                 }
               }}
             >

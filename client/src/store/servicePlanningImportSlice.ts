@@ -64,6 +64,7 @@ export type ServicePlanningImportState = {
   serviceOutline: ServiceOutline | null;
   preview: ServicePlanningPreview | null;
   floatingWindowDismissed: boolean;
+  floatingWindowRestoreId: number;
   /** Service Planning Import page: overlay sync summary list expanded. */
   overlaySummaryExpanded: boolean;
   /** Service Planning Import page: outline preview list expanded. */
@@ -96,6 +97,7 @@ export const initialServicePlanningImportState: ServicePlanningImportState = {
   serviceOutline: null,
   preview: null,
   floatingWindowDismissed: true,
+  floatingWindowRestoreId: 0,
   overlaySummaryExpanded: false,
   outlinePreviewExpanded: false,
   sync: initialServicePlanningSyncSummary,
@@ -128,6 +130,9 @@ export const servicePlanningImportSlice = createSlice({
       action: PayloadAction<boolean>,
     ) => {
       state.floatingWindowDismissed = action.payload;
+      if (!action.payload) {
+        state.floatingWindowRestoreId += 1;
+      }
     },
     setServicePlanningImportOverlaySummaryExpanded: (
       state,
