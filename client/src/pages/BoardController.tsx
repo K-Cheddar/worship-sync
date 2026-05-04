@@ -61,6 +61,11 @@ import {
   sortBoardPostsAscending,
 } from "../boards/boardUtils";
 import {
+  BOARD_PANEL_BODY,
+  BOARD_PANEL_CARD,
+  BOARD_PANEL_HEADER,
+} from "../boards/boardPanelTheme";
+import {
   deleteBoardAlias,
   hardResetBoardAlias,
   softResetBoardAlias,
@@ -68,11 +73,6 @@ import {
   updateBoardPostHidden,
   updateBoardPostHighlighted,
 } from "../boards/api";
-import {
-  BOARD_PANEL_BODY,
-  BOARD_PANEL_CARD,
-  BOARD_PANEL_HEADER,
-} from "../boards/boardPanelTheme";
 import {
   DBBoard,
   DBBoardAlias,
@@ -345,6 +345,7 @@ type BoardToolsPanelBodyProps = {
   archiveOptions: string[];
   isViewingCurrent: boolean;
   presentationFontScale: number;
+  onFontScaleChange: (scale: number) => void;
   runAction: (action: () => Promise<void>) => Promise<void>;
   isActing: boolean;
   showToast: (message: string, variant: "success" | "error") => void;
@@ -364,6 +365,7 @@ const BoardToolsPanelBody = ({
   archiveOptions,
   isViewingCurrent,
   presentationFontScale,
+  onFontScaleChange,
   runAction,
   isActing,
   showToast,
@@ -462,19 +464,11 @@ const BoardToolsPanelBody = ({
             padding="p-2"
             className="min-h-0!"
             onClick={() =>
-              runAction(async () => {
-                await updateBoardPresentationFontScale(
-                  selectedAlias.aliasId,
-                  presentationFontScale -
-                  BOARD_PRESENTATION_FONT_SCALE_STEP,
-                );
-                showToast("Presentation text made smaller.", "success");
-              })
+              onFontScaleChange(
+                presentationFontScale - BOARD_PRESENTATION_FONT_SCALE_STEP,
+              )
             }
-            disabled={
-              isActing ||
-              presentationFontScale <= MIN_BOARD_PRESENTATION_FONT_SCALE
-            }
+            disabled={presentationFontScale <= MIN_BOARD_PRESENTATION_FONT_SCALE}
           />
           <span className="min-w-14 text-center text-sm font-semibold text-white">
             {Math.round(presentationFontScale * 100)}%
@@ -485,18 +479,11 @@ const BoardToolsPanelBody = ({
             className="min-h-0!"
             aria-label="Reset presentation text size"
             onClick={() =>
-              runAction(async () => {
-                await updateBoardPresentationFontScale(
-                  selectedAlias.aliasId,
-                  DEFAULT_BOARD_PRESENTATION_FONT_SCALE,
-                );
-                showToast("Presentation text reset.", "success");
-              })
+              onFontScaleChange(
+                DEFAULT_BOARD_PRESENTATION_FONT_SCALE,
+              )
             }
-            disabled={
-              isActing ||
-              presentationFontScale === DEFAULT_BOARD_PRESENTATION_FONT_SCALE
-            }
+            disabled={presentationFontScale === DEFAULT_BOARD_PRESENTATION_FONT_SCALE}
           >
             Reset
           </Button>
@@ -506,19 +493,11 @@ const BoardToolsPanelBody = ({
             padding="p-2"
             className="min-h-0!"
             onClick={() =>
-              runAction(async () => {
-                await updateBoardPresentationFontScale(
-                  selectedAlias.aliasId,
-                  presentationFontScale +
-                  BOARD_PRESENTATION_FONT_SCALE_STEP,
-                );
-                showToast("Presentation text made larger.", "success");
-              })
+              onFontScaleChange(
+                presentationFontScale + BOARD_PRESENTATION_FONT_SCALE_STEP,
+              )
             }
-            disabled={
-              isActing ||
-              presentationFontScale >= MAX_BOARD_PRESENTATION_FONT_SCALE
-            }
+            disabled={presentationFontScale >= MAX_BOARD_PRESENTATION_FONT_SCALE}
           />
         </div>
       </div>
@@ -605,12 +584,16 @@ export const BoardControllerContent = () => {
   const [posts, setPosts] = useState<DBBoardPost[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isActing, setIsActing] = useState(false);
+  const [actingPostIds, setActingPostIds] = useState<Set<string>>(new Set());
   const [renameAliasId, setRenameAliasId] = useState("");
   const [deleteAlias, setDeleteAlias] = useState<DBBoardAlias | null>(null);
   const [mobileBoardPanel, setMobileBoardPanel] = useState<"manage" | "live">(
     "manage",
   );
   const loadRequestIdRef = useRef(0);
+  const boardIdToViewRef = useRef("");
+  const selectedBoardIdRef = useRef("");
+  const selectedAliasIdRef = useRef("");
 
   const isLgUp = useMediaQuery("(min-width: 1024px)");
   const isMobileStack = !isLgUp;
@@ -672,16 +655,85 @@ export const BoardControllerContent = () => {
   }, [db, selectedAliasId, selectedBoardId]);
 
   useEffect(() => {
+    selectedBoardIdRef.current = selectedBoardId;
+  }, [selectedBoardId]);
+
+  useEffect(() => {
+    selectedAliasIdRef.current = selectedAliasId;
+  }, [selectedAliasId]);
+
+  useEffect(() => {
     void loadAliases();
   }, [loadAliases]);
 
   useEffect(() => {
     if (!db) return;
     const changes = db
-      .changes({ since: "now", live: true })
-      .on("change", () => {
-        void loadAliases();
-        void loadSelectedAlias();
+      .changes({ since: "now", live: true, include_docs: true })
+      .on("change", (change) => {
+        if (!change || typeof change.id !== "string") {
+          void loadAliases();
+          void loadSelectedAlias();
+          return;
+        }
+        const boardId = boardIdToViewRef.current;
+        if (boardId && change.id.startsWith(`post:${boardId}:`)) {
+          if (change.deleted) {
+            setPosts((prev) => prev.filter((p) => p._id !== change.id));
+          } else {
+            const updated = change.doc as unknown as DBBoardPost;
+            setPosts((prev) => {
+              const idx = prev.findIndex((p) => p._id === updated._id);
+              if (idx !== -1) {
+                const next = [...prev];
+                next[idx] = updated;
+                return next;
+              }
+              return sortBoardPostsAscending([...prev, updated]);
+            });
+          }
+        } else if (!change.deleted && change.doc && change.id.startsWith("alias:")) {
+          const updatedAlias = change.doc as unknown as DBBoardAlias;
+          setAliases((prev) => {
+            const idx = prev.findIndex((a) => a.aliasId === updatedAlias.aliasId);
+            if (idx !== -1) {
+              const next = [...prev];
+              next[idx] = updatedAlias;
+              return next;
+            }
+            return [...prev, updatedAlias].sort((a, b) => a.title.localeCompare(b.title));
+          });
+          if (selectedAliasIdRef.current === updatedAlias.aliasId) {
+            const boardIds = Array.from(
+              new Set([updatedAlias.currentBoardId, ...updatedAlias.history]),
+            );
+            const selectedBoardId = selectedBoardIdRef.current;
+            const boardIdToView =
+              selectedBoardId && boardIds.includes(selectedBoardId)
+                ? selectedBoardId
+                : updatedAlias.currentBoardId;
+
+            setSelectedAlias(updatedAlias);
+            setSelectedBoardId(
+              boardIdToView === updatedAlias.currentBoardId ? "" : boardIdToView,
+            );
+
+            void (async () => {
+              try {
+                const nextBoards = await getBoardDocsById(db, boardIds);
+                const nextPosts = await getBoardPosts(db, boardIdToView);
+                if (selectedAliasIdRef.current !== updatedAlias.aliasId) return;
+                setBoardsById(nextBoards);
+                setPosts(nextPosts);
+              } catch (error) {
+                console.warn("Board link is not ready in local sync yet:", error);
+              }
+            })();
+          }
+        } else {
+          void loadAliases();
+          void loadSelectedAlias();
+        }
       });
 
     return () => {
@@ -707,6 +759,7 @@ export const BoardControllerContent = () => {
     ? boardsById[selectedAlias.currentBoardId]
     : undefined;
   const boardIdToView = selectedBoardId || selectedAlias?.currentBoardId || "";
+  boardIdToViewRef.current = boardIdToView;
   const isViewingCurrent = !selectedBoardId || isCurrentBoardView(selectedAlias, selectedBoardId);
   const publicBoardUrl = selectedAlias
     ? buildBoardPublicUrl(selectedAlias.aliasId, "board")
@@ -760,6 +813,44 @@ export const BoardControllerContent = () => {
       }
     },
     [pullFromRemote, showToast],
+  );
+
+  const runPostAction = useCallback(
+    async (
+      postId: string,
+      action: () => Promise<unknown>,
+      optimisticFn: (post: DBBoardPost) => DBBoardPost,
+    ) => {
+      setActingPostIds((prev) => new Set([...prev, postId]));
+      setPosts((prev) => prev.map((p) => (p._id === postId ? optimisticFn(p) : p)));
+      try {
+        await action();
+      } catch (error) {
+        void loadSelectedAlias();
+        const message = error instanceof Error ? error.message : "Could not complete that action.";
+        showToast(message, "error");
+      } finally {
+        setActingPostIds((prev) => {
+          const next = new Set(prev);
+          next.delete(postId);
+          return next;
+        });
+      }
+    },
+    [showToast, loadSelectedAlias],
+  );
+
+  const runFontScaleAction = useCallback(
+    (newScale: number) => {
+      if (!selectedAlias) return;
+      const prevScale = selectedAlias.presentationFontScale;
+      setSelectedAlias((prev) => prev ? { ...prev, presentationFontScale: newScale } : prev);
+      void updateBoardPresentationFontScale(selectedAlias.aliasId, newScale)
+        .catch(() => {
+          setSelectedAlias((prev) => prev ? { ...prev, presentationFontScale: prevScale } : prev);
+        });
+    },
+    [selectedAlias],
   );
 
   const handleBoardCreated = useCallback(
@@ -1085,6 +1176,7 @@ export const BoardControllerContent = () => {
                               archiveOptions={archiveOptions}
                               isViewingCurrent={isViewingCurrent}
                               presentationFontScale={presentationFontScale}
+                              onFontScaleChange={runFontScaleAction}
                               runAction={runAction}
                               isActing={isActing}
                               showToast={showToast}
@@ -1199,12 +1291,14 @@ export const BoardControllerContent = () => {
                               <Button
                                 variant="tertiary"
                                 svg={post.hidden ? Eye : EyeOff}
-                                onClick={() =>
-                                  runAction(async () => {
-                                    await updateBoardPostHidden(post._id, !post.hidden);
-                                  })
-                                }
-                                disabled={isActing || post.deleted}
+                                onClick={() => {
+                                  void runPostAction(
+                                    post._id,
+                                    () => updateBoardPostHidden(post._id, !post.hidden),
+                                    (p) => ({ ...p, hidden: !p.hidden }),
+                                  );
+                                }}
+                                disabled={actingPostIds.has(post._id) || post.deleted}
                               >
                                 {post.hidden ? "Unhide" : "Hide"}
                               </Button>
@@ -1212,14 +1306,13 @@ export const BoardControllerContent = () => {
                                 variant="tertiary"
                                 svg={post.highlighted ? StarOff : Sparkles}
                                 onClick={() =>
-                                  runAction(async () => {
-                                    await updateBoardPostHighlighted(
-                                      post._id,
-                                      !post.highlighted,
-                                    );
-                                  })
+                                  void runPostAction(
+                                    post._id,
+                                    () => updateBoardPostHighlighted(post._id, !post.highlighted),
+                                    (p) => ({ ...p, highlighted: !p.highlighted }),
+                                  )
                                 }
-                                disabled={isActing || post.hidden || post.deleted}
+                                disabled={actingPostIds.has(post._id) || post.hidden || post.deleted}
                               >
                                 {post.highlighted ? "Unhighlight" : "Highlight"}
                               </Button>
@@ -1277,6 +1370,7 @@ export const BoardControllerContent = () => {
                   archiveOptions={archiveOptions}
                   isViewingCurrent={isViewingCurrent}
                   presentationFontScale={presentationFontScale}
+                  onFontScaleChange={runFontScaleAction}
                   runAction={runAction}
                   isActing={isActing}
                   showToast={showToast}

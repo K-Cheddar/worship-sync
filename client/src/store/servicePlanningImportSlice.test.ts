@@ -6,15 +6,16 @@ import servicePlanningImportReducer, {
   failServicePlanningSync,
   recordServicePlanningSyncResult,
   resetServicePlanningImportPreview,
+  setServicePlanningServiceOutline,
+  setServicePlanningImportOutlinePreviewExpanded,
+  setServicePlanningImportOverlaySummaryExpanded,
+  setServicePlanningImportUrl,
   setServicePlanningSyncActiveStep,
   setServicePlanningSyncPlanInfo,
   setServicePlanningSyncPhase,
-  setServicePlanningImportOutlinePreviewExpanded,
-  setServicePlanningImportOverlaySummaryExpanded,
-  setServicePlanningImportPreview,
-  setServicePlanningImportUrl,
   startServicePlanningSync,
 } from "./servicePlanningImportSlice";
+import type { ServiceOutline } from "../types/importedPlan";
 import type { ServicePlanningPreview } from "../types/servicePlanningImport";
 
 type ServicePlanningImportState = ReturnType<
@@ -30,6 +31,15 @@ const previewFixture: ServicePlanningPreview = {
   overlayCandidates: [],
   overlayPlan: [],
   outlineCandidates: [],
+  lineItems: [],
+};
+
+const serviceOutlineFixture: ServiceOutline = {
+  source: "servicePlanning",
+  loadedAt: "2026-05-03T12:00:00.000Z",
+  sourceUrl: "https://example.com/plan",
+  planLabel: "May 2, 2026 - 10 AM",
+  preview: previewFixture,
 };
 
 describe("servicePlanningImportSlice", () => {
@@ -37,25 +47,27 @@ describe("servicePlanningImportSlice", () => {
     const store = createStore();
 
     store.dispatch(setServicePlanningImportUrl("https://example.com/plan"));
-    store.dispatch(setServicePlanningImportPreview(previewFixture));
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
 
     const state = store.getState()
       .servicePlanningImport as ServicePlanningImportState;
     expect(state.url).toBe("https://example.com/plan");
     expect(state.preview).toEqual(previewFixture);
+    expect(state.serviceOutline).toEqual(serviceOutlineFixture);
   });
 
   it("clears only the preview after sync so the last url stays available", () => {
     const store = createStore();
 
     store.dispatch(setServicePlanningImportUrl("https://example.com/plan"));
-    store.dispatch(setServicePlanningImportPreview(previewFixture));
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
     store.dispatch(resetServicePlanningImportPreview());
 
     const state = store.getState()
       .servicePlanningImport as ServicePlanningImportState;
     expect(state.url).toBe("https://example.com/plan");
     expect(state.preview).toBeNull();
+    expect(state.serviceOutline).toBeNull();
   });
 
   it("preserves expand/collapse flags when preview is cleared", () => {
@@ -63,7 +75,7 @@ describe("servicePlanningImportSlice", () => {
 
     store.dispatch(setServicePlanningImportOverlaySummaryExpanded(true));
     store.dispatch(setServicePlanningImportOutlinePreviewExpanded(true));
-    store.dispatch(setServicePlanningImportPreview(previewFixture));
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
     store.dispatch(resetServicePlanningImportPreview());
 
     const state = store.getState()
@@ -123,7 +135,7 @@ describe("servicePlanningImportSlice", () => {
   it("can fail and then clear staged sync state without losing the preview", () => {
     const store = createStore();
 
-    store.dispatch(setServicePlanningImportPreview(previewFixture));
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
     store.dispatch(startServicePlanningSync({ mode: "outline" }));
     store.dispatch(failServicePlanningSync("Sync failed. Try again."));
     store.dispatch(clearServicePlanningSyncState());
@@ -131,6 +143,7 @@ describe("servicePlanningImportSlice", () => {
     const state = store.getState()
       .servicePlanningImport as ServicePlanningImportState;
     expect(state.preview).toEqual(previewFixture);
+    expect(state.serviceOutline).toEqual(serviceOutlineFixture);
     expect(state.sync.status).toBe("idle");
     expect(state.sync.mode).toBeNull();
     expect(state.sync.error).toBeNull();

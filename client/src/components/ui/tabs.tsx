@@ -24,7 +24,7 @@ function Tabs({
 }
 
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex w-fit items-center justify-center rounded-2xl p-[3px] text-muted-foreground shadow-xs transition-colors group-data-[orientation=horizontal]/tabs:h-9 group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col data-[variant=line]:p-0 data-[variant=line]:shadow-none",
+  "group/tabs-list inline-flex w-fit items-center justify-center rounded-2xl p-[3px] text-muted-foreground shadow-xs transition-colors group-data-[orientation=vertical]/tabs:flex-col data-[variant=line]:p-0 data-[variant=line]:shadow-none",
   {
     variants: {
       variant: {
@@ -33,9 +33,15 @@ const tabsListVariants = cva(
         line:
           "flex w-full min-w-0 justify-start gap-0 rounded-xl border border-gray-700 bg-gray-900",
       },
+      size: {
+        default:
+          "group-data-[orientation=horizontal]/tabs:h-9 group-data-[orientation=vertical]/tabs:h-fit",
+        sm: "group-data-[orientation=horizontal]/tabs:h-8 group-data-[orientation=vertical]/tabs:h-fit",
+      },
     },
     defaultVariants: {
       variant: "default",
+      size: "default",
     },
   }
 )
@@ -55,9 +61,16 @@ export const lineTabsTriggerClassName = cn(
   "focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900",
 )
 
+/** Compact line-tab trigger sizing for dense spaces (e.g. floating windows). */
+export const lineTabsTriggerSmClassName = cn(
+  lineTabsTriggerClassName,
+  "px-2.5! py-1! text-xs! first:before:left-3.5! last:before:right-3.5!"
+)
+
 function TabsList({
   className,
   variant = "default",
+  size = "default",
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.List> &
   VariantProps<typeof tabsListVariants>) {
@@ -65,7 +78,8 @@ function TabsList({
     <TabsPrimitive.List
       data-slot="tabs-list"
       data-variant={variant}
-      className={cn(tabsListVariants({ variant }), className)}
+      data-size={size}
+      className={cn(tabsListVariants({ variant, size }), className)}
       {...props}
     />
   )
@@ -102,4 +116,10 @@ function TabsContent({
   )
 }
 
-export { Tabs, TabsList, TabsTrigger, TabsContent, tabsListVariants }
+export {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+  tabsListVariants,
+}

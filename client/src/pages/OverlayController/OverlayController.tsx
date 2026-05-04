@@ -16,6 +16,7 @@ import ControllerPageShell from "../../components/ControllerPageShell/Controller
 import CreditsEditor from "../CreditsEditor/CreditsEditor";
 import ServiceTimes from "../../containers/ServiceTimes/ServiceTimes";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
+import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSyncFloatingWindow";
 
 const OverlayController = () => {
   const dispatch = useDispatch();
@@ -176,6 +177,7 @@ const OverlayController = () => {
           />
         </div>
       )}
+      <ServicePlanningSyncFloatingWindow hideOutlineActions />
     </ControllerPageShell>
   );
 };

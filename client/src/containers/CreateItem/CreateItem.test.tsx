@@ -424,6 +424,43 @@ describe("CreateItem", () => {
     expect(store.getState().createItem.text).toBe("Verse 1");
   });
 
+  it("still allows creating a song when another song with the same name exists", async () => {
+    mockedCreateNewSong.mockResolvedValue(
+      createMockItem({
+        name: "Amazing Grace",
+        _id: "song-2",
+        type: "song",
+      }),
+    );
+
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        name: "Amazing Grace",
+        text: "Verse 1",
+      },
+      allItemsList: [
+        {
+          _id: "existing-song",
+          listId: "list-1",
+          name: "Amazing Grace",
+          type: "song",
+        },
+      ],
+    });
+
+    renderCreateItem({ store });
+
+    const createButton = screen.getByRole("button", { name: "Create Song" });
+    expect(createButton).toBeEnabled();
+
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(mockedCreateNewSong).toHaveBeenCalled();
+    });
+  });
+
   it("keeps the draft when navigating to Bible and back without creating", async () => {
     const store = createTestStore();
     const view = renderCreateItem({ store });

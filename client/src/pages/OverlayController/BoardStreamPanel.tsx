@@ -151,12 +151,14 @@ const BoardStreamPanel = () => {
 
   const aliasId = getStoredBoardDisplayAliasId();
 
-  const { posts, hasLoadedOnce, connectionStatus, loadPosts } =
+  const { posts, hasLoadedOnce, connectionStatus, loadBoard, loadPosts } =
     useBoardData(aliasId);
 
   useBoardEventStream(aliasId, (event) => {
     if (event.type === "connected") return;
-    if (
+    if (event.type === "board-hard-reset") {
+      void loadBoard();
+    } else if (
       event.type === "post-created" ||
       event.type === "post-updated" ||
       event.type === "board-soft-reset"

@@ -2,7 +2,7 @@ import { useCallback, useContext } from "react";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../hooks";
 import {
-  getSectionsFromUrl,
+  getServicePlanningImportDataFromUrl,
   type EventData,
 } from "../containers/Overlays/eventParser";
 import {
@@ -43,8 +43,10 @@ import type { RootState } from "../store/store";
 import type {
   OutlineItemCandidate,
   OverlaySyncPlanItem,
+  ServicePlanningLineItem,
   ServicePlanningPreview,
 } from "../types/servicePlanningImport";
+import type { ServiceOutline } from "../types/importedPlan";
 import {
   executeServicePlanningOutlineSyncStep as executeOutlineSyncUtilityStep,
   insertServicePlanningOutlineCandidates,
@@ -56,6 +58,11 @@ import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
 import { getBibleImportDisplayName } from "../utils/servicePlanningBibleImport";
 import type { ServicePlanningSyncItem } from "../store/servicePlanningImportSlice";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
+import {
+  getOutlineCandidateLineItemKey,
+  getOverlayPlanLineItemKey,
+} from "../utils/servicePlanningSyncKeys";
+import { persistItemListServiceOutline } from "../utils/itemListImports";
 
 export type ServicePlanningImportOptions = {
   overlays: boolean;
@@ -156,6 +163,11 @@ export const useServicePlanningImport = () => {
   const { churchIntegrations, churchIntegrationsStatus } =
     useContext(GlobalInfoContext) || {};
   const allItems = useSelector((s: RootState) => s.allItems.list);
+  const selectedItemList = useSelector(
+    (s: RootState) =>
+      s.undoable.present.itemLists.selectedList ??
+      s.undoable.present.itemLists.activeList,
+  );
   const {
     defaultBibleBackground,
     defaultBibleBackgroundBrightness,
@@ -172,7 +184,7 @@ export const useServicePlanningImport = () => {
         : SERVICE_PLANNING_DISABLED_MESSAGE;
 
   const loadPreview = useCallback(
-    async (url: string): Promise<ServicePlanningPreview> => {
+    async (url: string): Promise<ServiceOutline> => {
       if (churchIntegrationsStatus !== "ready" || !churchIntegrations) {
         throw new Error(SERVICE_PLANNING_LOADING_MESSAGE);
       }
@@ -181,11 +193,14 @@ export const useServicePlanningImport = () => {
         throw new Error(SERVICE_PLANNING_DISABLED_MESSAGE);
       }
 
-      const sections = await getSectionsFromUrl(url);
+      const importData = await getServicePlanningImportDataFromUrl(url);
+      const sections = importData.sections;
       const sectionNameByRow = new WeakMap<EventData, string>();
+      const sectionRowIndexByRow = new WeakMap<EventData, number>();
       sections.forEach((section) => {
-        section.rows.forEach((row) => {
+        section.rows.forEach((row, index) => {
           sectionNameByRow.set(row, section.sectionName);
+          sectionRowIndexByRow.set(row, index);
         });
       });
       const allRows = sections.flatMap((s) => s.rows);
@@ -198,6 +213,7 @@ export const useServicePlanningImport = () => {
       for (const block of overlayCandidates) {
         let allCandidatesResolvable = true;
         const sectionName = sectionNameByRow.get(block.source) ?? "";
+        const sourceRowIndex = sectionRowIndexByRow.get(block.source) ?? -1;
         for (const candidate of block.candidates) {
           const target = findOverlayForServicePlanningCandidate(
             block.source.elementType,
@@ -214,6 +230,7 @@ export const useServicePlanningImport = () => {
             if (Object.keys(changedPatch).length === 0) {
               overlayPlan.push({
                 sectionName,
+                sourceRowIndex,
                 elementType: block.source.elementType,
                 title: block.source.title,
                 ledBy: block.source.ledBy,
@@ -230,6 +247,7 @@ export const useServicePlanningImport = () => {
             }
             overlayPlan.push({
               sectionName,
+              sourceRowIndex,
               elementType: block.source.elementType,
               title: block.source.title,
               ledBy: block.source.ledBy,
@@ -251,6 +269,7 @@ export const useServicePlanningImport = () => {
           if (template) {
             overlayPlan.push({
               sectionName,
+              sourceRowIndex,
               elementType: block.source.elementType,
               title: block.source.title,
               ledBy: block.source.ledBy,
@@ -267,6 +286,7 @@ export const useServicePlanningImport = () => {
 
           overlayPlan.push({
             sectionName,
+            sourceRowIndex,
             elementType: block.source.elementType,
             title: block.source.title,
             ledBy: block.source.ledBy,
@@ -283,6 +303,7 @@ export const useServicePlanningImport = () => {
 
       const songs = allItems.filter((item) => item.type === "song");
       const outlineCandidates: OutlineItemCandidate[] = [];
+      const lineItems: ServicePlanningLineItem[] = [];
 
       for (const section of sections) {
         const sectionRule = sp.sectionRules.find((r) =>
@@ -294,7 +315,7 @@ export const useServicePlanningImport = () => {
         );
         const headingName = sectionRule?.headingName ?? null;
 
-        for (const row of section.rows) {
+        for (const [sourceRowIndex, row] of section.rows.entries()) {
           const elementRule = findBestMatchingElementRule(
             row.elementType,
             sp.elementRules,
@@ -302,13 +323,8 @@ export const useServicePlanningImport = () => {
               filter: (rule) => rule.outlineSync?.enabled ?? false,
             },
           );
-          if (
-            !elementRule?.outlineSync ||
-            elementRule.outlineSync.itemType === "none"
-          )
-            continue;
-
-          const outlineItemType = elementRule.outlineSync.itemType;
+          const outlineItemType =
+            elementRule?.outlineSync?.itemType ?? "none";
           let matchedLibraryItem: ServiceItem | null = null;
           let parsedRef: ParsedBibleRef | null = null;
           const cleanedTitle = cleanPlanningTitle(row.title || row.elementType);
@@ -322,17 +338,37 @@ export const useServicePlanningImport = () => {
             parsedRef = parseBibleReference(row.title);
           }
 
-          outlineCandidates.push({
+          const baseCandidate = {
             sectionName: section.sectionName,
             headingName,
+            sourceRowIndex,
             elementType: row.elementType,
             title: row.title,
-            outlineItemType,
             cleanedTitle,
+            ledBy: row.ledBy,
+            outlineItemType,
             matchedLibraryItem,
             parsedRef,
             overlayReady: overlayReadyByRow.get(row) ?? false,
             outlineAlreadyPresent: false,
+          };
+
+          lineItems.push({
+            ...baseCandidate,
+            selectedForOutline:
+              Boolean(elementRule?.outlineSync) && outlineItemType !== "none",
+          });
+
+          if (
+            !elementRule?.outlineSync ||
+            elementRule.outlineSync.itemType === "none"
+          ) {
+            continue;
+          }
+
+          outlineCandidates.push({
+            ...baseCandidate,
+            cleanedTitle,
           });
         }
       }
@@ -351,13 +387,63 @@ export const useServicePlanningImport = () => {
           : false,
       }));
 
-      return {
+      const preview: ServicePlanningPreview = {
         overlayCandidates,
         overlayPlan,
         outlineCandidates: dedupedOutlineCandidates,
+        lineItems: lineItems.map((item) => {
+          if (!item.selectedForOutline || !item.headingName) {
+            return item;
+          }
+
+          const matchingOutlineCandidate = dedupedOutlineCandidates.find(
+            (candidate) =>
+              candidate.sectionName === item.sectionName &&
+              candidate.headingName === item.headingName &&
+              candidate.elementType === item.elementType &&
+              candidate.title === item.title &&
+              candidate.outlineItemType === item.outlineItemType,
+          );
+
+          return matchingOutlineCandidate
+            ? {
+                ...item,
+                outlineAlreadyPresent:
+                  matchingOutlineCandidate.outlineAlreadyPresent,
+              }
+            : item;
+        }),
+        teamAssignments: importData.teamAssignments,
       };
+
+      const serviceOutline: ServiceOutline = {
+        source: "servicePlanning",
+        loadedAt: new Date().toISOString(),
+        sourceUrl: url,
+        planLabel: importData.planLabel.trim() || "Imported plan",
+        preview,
+      };
+
+      try {
+        await persistItemListServiceOutline(
+          db,
+          selectedItemList?._id,
+          serviceOutline,
+        );
+      } catch (error) {
+        console.error("Failed to persist service outline:", error);
+      }
+
+      return serviceOutline;
     },
-    [churchIntegrations, churchIntegrationsStatus, allItems, store],
+    [
+      allItems,
+      churchIntegrations,
+      churchIntegrationsStatus,
+      db,
+      selectedItemList?._id,
+      store,
+    ],
   );
 
   const applyPersistedOverlayUpdate = useCallback(
@@ -623,6 +709,7 @@ export const useServicePlanningImport = () => {
             sublabel: candidate.headingName || undefined,
             phase: "outline",
             status: alreadyPresent ? "already-present" : "pending",
+            sourceLineItemKey: getOutlineCandidateLineItemKey(candidate),
           });
         }
       }
@@ -638,6 +725,7 @@ export const useServicePlanningImport = () => {
             sublabel: name ? event : undefined,
             phase: "overlays",
             status: item.action === "skip" ? "already-present" : "pending",
+            sourceLineItemKey: getOverlayPlanLineItemKey(item),
           });
         }
       }

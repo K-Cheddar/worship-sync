@@ -9,6 +9,10 @@ export const sectionTypes = [
   "Interlude",
   "Pre-Bridge",
   "Refrain",
+  "Tag",
+  "Hook",
+  "Vamp",
+  "Instrumental",
 ];
 
 export const itemSectionBgColorMap: Map<string, string> = new Map([

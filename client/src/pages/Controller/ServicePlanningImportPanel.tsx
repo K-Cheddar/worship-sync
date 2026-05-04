@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ExternalLink, BookOpen, Plus, RefreshCcw, Check } from "lucide-react";
+import { ExternalLink, BookOpen, Plus, RefreshCcw, Check, PanelsTopLeft } from "lucide-react";
 import Button from "../../components/Button/Button";
 import ExpandCollapseChevronButton from "../../components/ExpandCollapseChevronButton/ExpandCollapseChevronButton";
 import Input from "../../components/Input/Input";
@@ -13,9 +13,10 @@ import {
 } from "../../integrations/servicePlanning/parseBibleReference";
 import {
   startServicePlanningSync,
+  setServicePlanningFloatingWindowDismissed,
   setServicePlanningImportOutlinePreviewExpanded,
   setServicePlanningImportOverlaySummaryExpanded,
-  setServicePlanningImportPreview,
+  setServicePlanningServiceOutline,
   setServicePlanningImportUrl,
 } from "../../store/servicePlanningImportSlice";
 import type {
@@ -296,6 +297,9 @@ const ServicePlanningImportPanel = () => {
 
   const url = useSelector((s) => s.servicePlanningImport.url);
   const preview = useSelector((s) => s.servicePlanningImport.preview);
+  const serviceOutline = useSelector(
+    (s) => s.servicePlanningImport.serviceOutline,
+  );
   const overlaySummaryExpanded = useSelector(
     (s) => s.servicePlanningImport.overlaySummaryExpanded,
   );
@@ -341,13 +345,13 @@ const ServicePlanningImportPanel = () => {
       return;
     }
     setIsLoading(true);
-    dispatch(setServicePlanningImportPreview(null));
     try {
       const result = await loadPreview(trimmed);
-      dispatch(setServicePlanningImportPreview(result));
+      dispatch(setServicePlanningServiceOutline(result));
+      dispatch(setServicePlanningFloatingWindowDismissed(false));
       if (
-        result.outlineCandidates.length === 0 &&
-        result.overlayCandidates.length === 0
+        result.preview.outlineCandidates.length === 0 &&
+        result.preview.overlayCandidates.length === 0
       ) {
         showToast("No rows matched the current integration rules.", "info");
       }
@@ -388,6 +392,7 @@ const ServicePlanningImportPanel = () => {
       return;
     }
     const mode = overlays && outline ? "both" : overlays ? "overlays" : "outline";
+    dispatch(setServicePlanningFloatingWindowDismissed(false));
     dispatch(startServicePlanningSync({ mode }));
   };
 
@@ -468,6 +473,17 @@ const ServicePlanningImportPanel = () => {
           onClick={() => void handleLoad()}
         >
           {isLoading ? "Loading…" : "Load"}
+        </Button>
+        <Button
+          variant="primary"
+          color="#22d3ee"
+          svg={PanelsTopLeft}
+          disabled={!serviceOutline}
+          onClick={() =>
+            dispatch(setServicePlanningFloatingWindowDismissed(false))
+          }
+        >
+          Open Service Plan
         </Button>
       </div>
 

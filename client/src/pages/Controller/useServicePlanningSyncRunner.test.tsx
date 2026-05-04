@@ -4,7 +4,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import servicePlanningImportReducer, {
-  setServicePlanningImportPreview,
+  setServicePlanningServiceOutline,
   startServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
 import { useServicePlanningSyncRunner } from "./useServicePlanningSyncRunner";
@@ -48,6 +48,15 @@ const previewFixture = {
   overlayCandidates: [],
   overlayPlan: [],
   outlineCandidates: [],
+  lineItems: [],
+};
+
+const serviceOutlineFixture = {
+  source: "servicePlanning" as const,
+  loadedAt: "2026-05-03T12:00:00.000Z",
+  sourceUrl: "https://example.com/plan",
+  planLabel: "May 2, 2026 - 10 AM",
+  preview: previewFixture,
 };
 
 describe("useServicePlanningSyncRunner", () => {
@@ -115,7 +124,7 @@ describe("useServicePlanningSyncRunner", () => {
       reasons: [],
     });
 
-    store.dispatch(setServicePlanningImportPreview(previewFixture as any));
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture as any));
 
     render(
       <Provider store={store}>
@@ -163,6 +172,6 @@ describe("useServicePlanningSyncRunner", () => {
     });
 
     const state = store.getState().servicePlanningImport;
-    expect(state.preview).toBeNull();
+    expect(state.preview).toEqual(previewFixture);
   });
 });

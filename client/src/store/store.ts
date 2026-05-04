@@ -79,7 +79,10 @@ import {
 import serviceTimesSliceReducer, {
   serviceTimesSlice,
 } from "./serviceTimesSlice";
-import { servicePlanningImportSlice } from "./servicePlanningImportSlice";
+import {
+  servicePlanningImportSlice,
+  refreshPreviewSongMatches,
+} from "./servicePlanningImportSlice";
 import { mergeTimers } from "../utils/timerUtils";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
@@ -2457,6 +2460,17 @@ const store = configureStore({
     getDefaultMiddleware({
       serializableCheck: false,
     }).prepend(listenerMiddleware.middleware),
+});
+
+// When a song is created, re-scan the service plan preview for unmatched songs
+listenerMiddleware.startListening({
+  actionCreator: allItemsSlice.actions.addItemToAllItemsList,
+  effect: (action, listenerApi) => {
+    if (action.payload.type !== "song") return;
+    const state = listenerApi.getState() as RootState;
+    if (!state.servicePlanningImport.preview) return;
+    listenerApi.dispatch(refreshPreviewSongMatches(state.allItems.list));
+  },
 });
 
 export default store;
