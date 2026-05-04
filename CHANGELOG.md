@@ -1,3 +1,15 @@
+# [2.6.0](https://github.com/K-Cheddar/worship-sync/compare/v2.5.3...v2.6.0) (2026-05-04)
+
+
+### Bug Fixes
+
+* Improve Board Controller on tablets ([201e6da](https://github.com/K-Cheddar/worship-sync/commit/201e6dabb1b4751e179c4c18589dcdd380759719))
+
+
+### Features
+
+* Import and save the service plan ([cea5ac5](https://github.com/K-Cheddar/worship-sync/commit/cea5ac5b57a1ab886a35690902d65f413ddd4328))
+
 ## [2.5.3](https://github.com/K-Cheddar/worship-sync/compare/v2.5.2...v2.5.3) (2026-05-01)
 
 
