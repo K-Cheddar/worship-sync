@@ -327,6 +327,27 @@ const MediaModal = ({
   const isModalMediaGridFullyLoaded =
     filteredList.length <= numShownModalItems;
 
+  useEffect(() => {
+    if (!isOpen || isModalMediaGridFullyLoaded) return;
+
+    let handle: number;
+    const scheduleNext = () => {
+      handle = (window.requestIdleCallback ?? ((cb) => window.setTimeout(cb, 16)))(() => {
+        setNumShownModalItems((prev) => {
+          const next = Math.min(prev + MEDIA_GRID_PROGRESSIVE_BATCH, filteredList.length);
+          if (next < filteredList.length) scheduleNext();
+          return next;
+        });
+      });
+    };
+    scheduleNext();
+
+    return () => {
+      (window.cancelIdleCallback ?? window.clearTimeout)(handle);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isModalMediaGridFullyLoaded, filteredList.length]);
+
   useLoadMoreOnScroll({
     scrollRef: modalGridRef,
     enabled:

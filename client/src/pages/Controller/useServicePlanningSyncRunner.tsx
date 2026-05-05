@@ -36,19 +36,23 @@ const getOutlineStepLabel = (step: ServicePlanningOutlineSyncStep): StepLabel =>
   if (step.kind === "ensureHeading") return { label: "" };
 
   const { candidate } = step;
+  const headingName = step.kind === "insertSongAtEnd" ? null : step.headingName;
 
   if (candidate.outlineItemType === "bible" && candidate.parsedRef) {
     const ref = getBibleImportDisplayName(candidate.parsedRef, candidate.parsedRef.version);
-    return { label: ref, sublabel: step.headingName || undefined };
+    return { label: ref, sublabel: headingName || undefined };
   }
 
   if (candidate.outlineItemType === "song") {
     const itemTitle =
       candidate.matchedLibraryItem?.name || candidate.cleanedTitle || candidate.title;
-    return { label: itemTitle || step.headingName || "", sublabel: step.headingName && itemTitle ? step.headingName : undefined };
+    return {
+      label: itemTitle || headingName || "",
+      sublabel: headingName && itemTitle ? headingName : undefined,
+    };
   }
 
-  return { label: candidate.title || candidate.cleanedTitle || step.headingName || "" };
+  return { label: candidate.title || candidate.cleanedTitle || headingName || "" };
 };
 
 const getOverlayStepLabel = (step: ExecutableOverlaySyncPlanItem): StepLabel => {

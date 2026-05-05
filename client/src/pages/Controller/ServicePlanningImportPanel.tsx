@@ -25,6 +25,16 @@ import type {
 } from "../../types/servicePlanningImport";
 import cn from "classnames";
 
+const isSyncableOutlineCandidate = (candidate: OutlineItemCandidate): boolean =>
+  !candidate.outlineAlreadyPresent &&
+  (
+    (candidate.outlineItemType === "song" &&
+      Boolean(candidate.matchedLibraryItem)) ||
+    (candidate.outlineItemType === "bible" &&
+      Boolean(candidate.headingName) &&
+      Boolean(candidate.parsedRef))
+  );
+
 const OverlayStatusBadge = ({ matched }: { matched: boolean }) =>
   matched ? (
     <span className="rounded-full bg-green-900/50 px-2 py-0.5 text-xs font-medium text-green-300">
@@ -374,15 +384,7 @@ const ServicePlanningImportPanel = () => {
       (item) => item.action !== "skip",
     );
     const hasSyncableOutline = preview.outlineCandidates.some(
-      (candidate) =>
-        !candidate.outlineAlreadyPresent &&
-        Boolean(candidate.headingName) &&
-        (
-          (candidate.outlineItemType === "song" &&
-            Boolean(candidate.matchedLibraryItem)) ||
-          (candidate.outlineItemType === "bible" &&
-            Boolean(candidate.parsedRef))
-        ),
+      isSyncableOutlineCandidate,
     );
     if (
       (overlays && !outline && !hasSyncableOverlays) ||
@@ -423,17 +425,7 @@ const ServicePlanningImportPanel = () => {
   }
 
   const hasSyncableOutlineItems = Boolean(
-    preview?.outlineCandidates.some(
-      (candidate) =>
-        !candidate.outlineAlreadyPresent &&
-        Boolean(candidate.headingName) &&
-        (
-          (candidate.outlineItemType === "song" &&
-            Boolean(candidate.matchedLibraryItem)) ||
-          (candidate.outlineItemType === "bible" &&
-            Boolean(candidate.parsedRef))
-        ),
-    ),
+    preview?.outlineCandidates.some(isSyncableOutlineCandidate),
   );
   const hasOverlayPlan = Boolean(preview?.overlayPlan.length);
   const hasSyncableOverlayItems = Boolean(
@@ -485,6 +477,20 @@ const ServicePlanningImportPanel = () => {
 
       {preview && !isLoading && (
         <>
+          <section className="rounded-lg border border-gray-700 bg-gray-900/40 px-4 py-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-semibold text-white">
+                  {serviceOutline?.planLabel?.trim() || "Service Planning"}
+                </h3>
+                {serviceOutline?.loadedAt ? (
+                  <p className="mt-1 text-xs text-gray-400">
+                    Imported {new Date(serviceOutline.loadedAt).toLocaleString()}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </section>
           {hasOverlayPlan ? (
             <OverlaySummaryPanel
               items={preview.overlayPlan}

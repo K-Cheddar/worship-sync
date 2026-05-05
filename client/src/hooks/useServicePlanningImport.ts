@@ -156,6 +156,16 @@ export const dedupeOutlineCandidatesForPreview = (
   });
 };
 
+const isSyncableOutlineCandidate = (candidate: OutlineItemCandidate): boolean =>
+  !candidate.outlineAlreadyPresent &&
+  (
+    (candidate.outlineItemType === "song" &&
+      Boolean(candidate.matchedLibraryItem)) ||
+    (candidate.outlineItemType === "bible" &&
+      Boolean(candidate.headingName) &&
+      Boolean(candidate.parsedRef))
+  );
+
 export const useServicePlanningImport = () => {
   const dispatch = useDispatch();
   const store = useStore<RootState>();
@@ -687,14 +697,17 @@ export const useServicePlanningImport = () => {
 
       if (mode !== "overlays") {
         for (const candidate of preview.outlineCandidates) {
-          if (!candidate.headingName) continue;
-          if (candidate.outlineItemType !== "song" && candidate.outlineItemType !== "bible") continue;
+          if (!isSyncableOutlineCandidate(candidate)) continue;
 
-          const alreadyPresent = isOutlineCandidatePresentInList(
-            currentList,
-            candidate.headingName,
-            candidate,
-          );
+          const alreadyPresent =
+            candidate.headingName &&
+            candidate.outlineItemType === "bible"
+              ? isOutlineCandidatePresentInList(
+                  currentList,
+                  candidate.headingName,
+                  candidate,
+                )
+              : Boolean(candidate.outlineAlreadyPresent);
 
           let label = "";
           if (candidate.outlineItemType === "bible" && candidate.parsedRef) {
@@ -771,7 +784,7 @@ export const useServicePlanningImport = () => {
           ? step.headingName
           : step.candidate.title ||
             step.candidate.cleanedTitle ||
-            step.headingName;
+            (step.kind === "insertSongAtEnd" ? "" : step.headingName);
 
       return {
         inserted: result.inserted,

@@ -50,6 +50,10 @@ export type ServicePlanningOutlineSyncStep =
       kind: "insertBible";
       headingName: string;
       candidate: OutlineItemCandidate;
+    }
+  | {
+      kind: "insertSongAtEnd";
+      candidate: OutlineItemCandidate;
     };
 
 type ExecuteServicePlanningOutlineStepArgs = Omit<
@@ -64,9 +68,13 @@ type HeadingGroup = {
   candidates: OutlineItemCandidate[];
 };
 
+type GroupedOutlineCandidates = {
+  headingGroups: HeadingGroup[];
+  tailSongs: OutlineItemCandidate[];
+};
+
 const isInsertableSongCandidate = (candidate: OutlineItemCandidate) =>
   candidate.outlineItemType === "song" &&
-  Boolean(candidate.headingName) &&
   Boolean(candidate.matchedLibraryItem);
 
 const isInsertableBibleCandidate = (candidate: OutlineItemCandidate) =>
@@ -76,9 +84,10 @@ const isInsertableBibleCandidate = (candidate: OutlineItemCandidate) =>
 
 const buildHeadingGroups = (
   outlineCandidates: OutlineItemCandidate[],
-): HeadingGroup[] => {
+): GroupedOutlineCandidates => {
   const groups: HeadingGroup[] = [];
   const seenHeadings = new Set<string>();
+  const tailSongs: OutlineItemCandidate[] = [];
 
   for (const candidate of outlineCandidates) {
     if (
@@ -87,7 +96,14 @@ const buildHeadingGroups = (
     ) {
       continue;
     }
-    const headingName = candidate.headingName!;
+    if (!candidate.headingName) {
+      if (candidate.outlineItemType === "song") {
+        tailSongs.push(candidate);
+      }
+      continue;
+    }
+
+    const headingName = candidate.headingName;
     if (!seenHeadings.has(headingName)) {
       seenHeadings.add(headingName);
       groups.push({ headingName, candidates: [] });
@@ -97,7 +113,7 @@ const buildHeadingGroups = (
       .candidates.push(candidate);
   }
 
-  return groups;
+  return { headingGroups: groups, tailSongs };
 };
 
 const normalizeOutlineItemName = (name: string): string =>
@@ -162,11 +178,11 @@ export const planServicePlanningOutlineSyncSteps = (
   outlineCandidates: OutlineItemCandidate[],
   currentList: ServiceItem[] = [],
 ): ServicePlanningOutlineSyncStep[] => {
-  const groups = buildHeadingGroups(outlineCandidates);
+  const { headingGroups, tailSongs } = buildHeadingGroups(outlineCandidates);
   const steps: ServicePlanningOutlineSyncStep[] = [];
   let plannedList = [...currentList];
 
-  for (const group of groups) {
+  for (const group of headingGroups) {
     const headingExists = findHeadingIndex(plannedList, group.headingName) !== -1;
     const itemSteps: ServicePlanningOutlineSyncStep[] = [];
     let groupList = plannedList;
@@ -219,6 +235,25 @@ export const planServicePlanningOutlineSyncSteps = (
     }
     steps.push(...itemSteps);
     plannedList = groupList;
+  }
+
+  for (const candidate of tailSongs) {
+    const candidateName = getOutlineCandidateItemName(candidate);
+    if (!candidateName) continue;
+
+    steps.push({
+      kind: "insertSongAtEnd",
+      candidate,
+    });
+    plannedList = [
+      ...plannedList,
+      {
+        _id: `planned-tail-song-${candidateName}`,
+        name: candidateName,
+        type: candidate.outlineItemType,
+        listId: `planned-tail-song-${candidateName}`,
+      },
+    ];
   }
 
   return steps;
@@ -275,11 +310,19 @@ export const executeServicePlanningOutlineSyncStep = async ({
   defaultBibleBackgroundBrightness,
   defaultBibleFontMode,
 }: ExecuteServicePlanningOutlineStepArgs): Promise<ExecuteServicePlanningOutlineStepResult> => {
-  const ensured = await ensureHeadingInList({
-    headingName: step.headingName,
-    currentList,
-    db,
-  });
+  const ensured =
+    step.kind === "insertSongAtEnd"
+      ? {
+          newList: currentList,
+          headingIndex: -1,
+          createdHeadingListId: undefined as string | undefined,
+          listChanged: false,
+        }
+      : await ensureHeadingInList({
+          headingName: step.headingName,
+          currentList,
+          db,
+        });
 
   if (step.kind === "ensureHeading") {
     return {
@@ -296,6 +339,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
   const currentAllItems = [...allItems];
 
   if (
+    step.kind !== "insertSongAtEnd" &&
     isOutlineCandidatePresentInList(
       ensured.newList,
       step.headingName,
@@ -311,7 +355,10 @@ export const executeServicePlanningOutlineSyncStep = async ({
     };
   }
 
-  if (step.kind === "insertSong" && step.candidate.matchedLibraryItem) {
+  if (
+    (step.kind === "insertSong" || step.kind === "insertSongAtEnd") &&
+    step.candidate.matchedLibraryItem
+  ) {
     sourceItem = step.candidate.matchedLibraryItem;
   } else if (step.kind === "insertBible" && step.candidate.parsedRef) {
     const createdBible = await createBibleItemFromParsedReference({
@@ -355,11 +402,14 @@ export const executeServicePlanningOutlineSyncStep = async ({
     ...sourceItem,
     listId: generateRandomId(),
   };
-  const newList = [
-    ...ensured.newList.slice(0, insertAfter + 1),
-    outlineItem,
-    ...ensured.newList.slice(insertAfter + 1),
-  ];
+  const newList =
+    step.kind === "insertSongAtEnd"
+      ? [...ensured.newList, outlineItem]
+      : [
+          ...ensured.newList.slice(0, insertAfter + 1),
+          outlineItem,
+          ...ensured.newList.slice(insertAfter + 1),
+        ];
 
   return {
     newList,
