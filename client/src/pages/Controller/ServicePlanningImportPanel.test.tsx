@@ -214,6 +214,77 @@ describe("ServicePlanningImportPanel", () => {
     expect(screen.getByRole("button", { name: "Sync Outline" })).toBeDisabled();
   });
 
+  it("shows plan metadata and allows outline sync for matched songs without a section heading", async () => {
+    const user = userEvent.setup();
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+      },
+    });
+
+    store.dispatch(
+      setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [],
+        outlineCandidates: [
+          {
+            sectionName: "Special Music",
+            headingName: null,
+            elementType: "Special Music",
+            title: "Goodness of God",
+            outlineItemType: "song",
+            cleanedTitle: "Goodness of God",
+            matchedLibraryItem: {
+              _id: "song-2",
+              name: "Goodness of God",
+              type: "song",
+            },
+            parsedRef: null,
+            overlayReady: false,
+            outlineAlreadyPresent: false,
+          },
+        ],
+        lineItems: [
+          {
+            sectionName: "Special Music",
+            headingName: null,
+            elementType: "Special Music",
+            title: "Goodness of God",
+            ledBy: "Worship Team",
+            selectedForOutline: true,
+            outlineItemType: "song",
+            matchedLibraryItem: {
+              _id: "song-2",
+              name: "Goodness of God",
+              type: "song",
+            },
+            parsedRef: null,
+            overlayReady: false,
+            outlineAlreadyPresent: false,
+          },
+        ],
+      }) as any),
+    );
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter>
+          <ServicePlanningImportPanel />
+        </MemoryRouter>
+      </Provider>,
+    );
+
+    expect(screen.getByText("May 2, 2026 - 10 AM")).toBeInTheDocument();
+    expect(screen.getByText(/Imported .*2026/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync Outline" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Sync Both" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Sync Outline" }));
+
+    expect(store.getState().servicePlanningImport.sync.status).toBe("running");
+    expect(store.getState().servicePlanningImport.sync.mode).toBe("outline");
+  });
+
   it("renders the open service plan button when a service outline preview is loaded", () => {
     const emptyStore = configureStore({
       reducer: {

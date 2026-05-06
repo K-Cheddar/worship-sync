@@ -132,6 +132,37 @@ describe("insertServicePlanningOutlineCandidates", () => {
     ]);
   });
 
+  it("plans matched songs without a heading to insert at the end", () => {
+    const steps = planServicePlanningOutlineSyncSteps([
+      {
+        sectionName: "Special",
+        headingName: null,
+        elementType: "Special Music",
+        title: "Goodness of God",
+        outlineItemType: "song",
+        cleanedTitle: "Goodness of God",
+        matchedLibraryItem: {
+          _id: "song-goodness-of-god",
+          name: "Goodness of God",
+          type: "song",
+        } as any,
+        parsedRef: null,
+        overlayReady: false,
+        outlineAlreadyPresent: false,
+      },
+    ]);
+
+    expect(steps).toEqual([
+      {
+        kind: "insertSongAtEnd",
+        candidate: expect.objectContaining({
+          title: "Goodness of God",
+          headingName: null,
+        }),
+      },
+    ]);
+  });
+
   it("does not plan steps for items already present under the matched heading", () => {
     const candidate = {
       sectionName: "Worship",
@@ -224,6 +255,57 @@ describe("insertServicePlanningOutlineCandidates", () => {
 
     expect(second.inserted).toBe(0);
     expect(second.newList).toHaveLength(first.newList.length);
+  });
+
+  it("appends matched songs to the end when there is no matched heading", async () => {
+    const result = await executeServicePlanningOutlineSyncStep({
+      step: {
+        kind: "insertSongAtEnd",
+        candidate: {
+          sectionName: "Special",
+          headingName: null,
+          elementType: "Special Music",
+          title: "Goodness of God",
+          outlineItemType: "song",
+          cleanedTitle: "Goodness of God",
+          matchedLibraryItem: {
+            _id: "song-goodness-of-god",
+            name: "Goodness of God",
+            type: "song",
+          } as any,
+          parsedRef: null,
+          overlayReady: false,
+          outlineAlreadyPresent: false,
+        },
+      },
+      currentList: [
+        {
+          _id: "heading-welcome",
+          name: "Welcome",
+          type: "heading",
+          listId: "list-heading-welcome",
+        },
+        {
+          _id: "song-welcome",
+          name: "Welcome Song",
+          type: "song",
+          listId: "list-song-welcome",
+        },
+      ],
+      allItems: [],
+      db: undefined,
+      bibleDb: undefined,
+      defaultBibleBackground: "#000",
+      defaultBibleBackgroundBrightness: 60,
+      defaultBibleFontMode: "separate",
+    });
+
+    expect(result.inserted).toBe(1);
+    expect(result.newList).toEqual([
+      expect.objectContaining({ name: "Welcome", type: "heading" }),
+      expect.objectContaining({ name: "Welcome Song", type: "song" }),
+      expect.objectContaining({ name: "Goodness of God", type: "song" }),
+    ]);
   });
 
   it("skips an existing Bible item before creating a new Bible item", async () => {
