@@ -1,3 +1,10 @@
+## [2.6.1](https://github.com/K-Cheddar/worship-sync/compare/v2.6.0...v2.6.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* Allow importing songs without a fixed heading ([526f951](https://github.com/K-Cheddar/worship-sync/commit/526f95199c27a24238c5ae52b065c7b3ad3d09e6))
+
 # [2.6.0](https://github.com/K-Cheddar/worship-sync/compare/v2.5.3...v2.6.0) (2026-05-04)
 
 
