@@ -690,7 +690,6 @@ export const useServicePlanningImport = () => {
       preview: ServicePlanningPreview,
       mode: "outline" | "overlays" | "both",
     ): ServicePlanningSyncItem[] => {
-      const currentList = store.getState().undoable.present.itemList.list;
       const items: ServicePlanningSyncItem[] = [];
 
       if (mode !== "overlays") {

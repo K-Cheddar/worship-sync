@@ -216,7 +216,7 @@ const ServiceItems = () => {
     dispatch(updateItemList(updatedServiceItems));
   };
 
-  const handleAddHeading = async () => {
+  const handleAddHeading = useCallback(async () => {
     if (!db) return;
     setIsAddingHeading(true);
     try {
@@ -236,7 +236,7 @@ const ServiceItems = () => {
     } finally {
       setIsAddingHeading(false);
     }
-  };
+  }, [db, serviceItems, dispatch]);
 
   const findNextNonHeadingIndex = (fromIndex: number) => {
     for (let i = fromIndex + 1; i < serviceItems.length; i++) {
@@ -483,7 +483,7 @@ const ServiceItems = () => {
     setAnchorListId(null);
   }, []);
 
-  const handleDeleteSelected = () => {
+  const handleDeleteSelected = useCallback(() => {
     if (selectedListIds.size === 0) return;
     if (access === "music") {
       const allowedIds = Array.from(selectedListIds).filter((id) => {
@@ -501,7 +501,7 @@ const ServiceItems = () => {
     setSelectedListIds(new Set());
     setAnchorListId(null);
     setMultiSelectMode(false);
-  };
+  }, [selectedListIds, access, serviceItems, dispatch]);
 
   const showBulkDeleteMenu =
     access === "full" &&
