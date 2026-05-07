@@ -36,7 +36,10 @@ const getOutlineStepLabel = (step: ServicePlanningOutlineSyncStep): StepLabel =>
   if (step.kind === "ensureHeading") return { label: "" };
 
   const { candidate } = step;
-  const headingName = step.kind === "insertSongAtEnd" ? null : step.headingName;
+  const headingName =
+    step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd"
+      ? null
+      : step.headingName;
 
   if (candidate.outlineItemType === "bible" && candidate.parsedRef) {
     const ref = getBibleImportDisplayName(candidate.parsedRef, candidate.parsedRef.version);

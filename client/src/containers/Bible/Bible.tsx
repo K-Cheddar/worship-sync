@@ -951,7 +951,7 @@ const Bible = () => {
                   <div>
                     <h3 className="text-sm font-semibold">Import Bible texts</h3>
                     <p className="mt-1 text-xs text-gray-400">
-                      Paste a list of references to review before adding.
+                      Paste text that includes Bible references. We extract them so you can review before importing.
                     </p>
                   </div>
                   <TextArea

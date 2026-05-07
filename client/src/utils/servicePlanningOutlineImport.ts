@@ -54,6 +54,10 @@ export type ServicePlanningOutlineSyncStep =
   | {
       kind: "insertSongAtEnd";
       candidate: OutlineItemCandidate;
+    }
+  | {
+      kind: "insertBibleAtEnd";
+      candidate: OutlineItemCandidate;
     };
 
 type ExecuteServicePlanningOutlineStepArgs = Omit<
@@ -71,6 +75,7 @@ type HeadingGroup = {
 type GroupedOutlineCandidates = {
   headingGroups: HeadingGroup[];
   tailSongs: OutlineItemCandidate[];
+  tailBibles: OutlineItemCandidate[];
 };
 
 const isInsertableSongCandidate = (candidate: OutlineItemCandidate) =>
@@ -78,9 +83,7 @@ const isInsertableSongCandidate = (candidate: OutlineItemCandidate) =>
   Boolean(candidate.matchedLibraryItem);
 
 const isInsertableBibleCandidate = (candidate: OutlineItemCandidate) =>
-  candidate.outlineItemType === "bible" &&
-  Boolean(candidate.headingName) &&
-  Boolean(candidate.parsedRef);
+  candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef);
 
 const buildHeadingGroups = (
   outlineCandidates: OutlineItemCandidate[],
@@ -88,6 +91,7 @@ const buildHeadingGroups = (
   const groups: HeadingGroup[] = [];
   const seenHeadings = new Set<string>();
   const tailSongs: OutlineItemCandidate[] = [];
+  const tailBibles: OutlineItemCandidate[] = [];
 
   for (const candidate of outlineCandidates) {
     if (
@@ -99,6 +103,8 @@ const buildHeadingGroups = (
     if (!candidate.headingName) {
       if (candidate.outlineItemType === "song") {
         tailSongs.push(candidate);
+      } else if (candidate.outlineItemType === "bible") {
+        tailBibles.push(candidate);
       }
       continue;
     }
@@ -113,7 +119,7 @@ const buildHeadingGroups = (
       .candidates.push(candidate);
   }
 
-  return { headingGroups: groups, tailSongs };
+  return { headingGroups: groups, tailSongs, tailBibles };
 };
 
 const normalizeOutlineItemName = (name: string): string =>
@@ -178,7 +184,7 @@ export const planServicePlanningOutlineSyncSteps = (
   outlineCandidates: OutlineItemCandidate[],
   currentList: ServiceItem[] = [],
 ): ServicePlanningOutlineSyncStep[] => {
-  const { headingGroups, tailSongs } = buildHeadingGroups(outlineCandidates);
+  const { headingGroups, tailSongs, tailBibles } = buildHeadingGroups(outlineCandidates);
   const steps: ServicePlanningOutlineSyncStep[] = [];
   let plannedList = [...currentList];
 
@@ -256,6 +262,25 @@ export const planServicePlanningOutlineSyncSteps = (
     ];
   }
 
+  for (const candidate of tailBibles) {
+    const candidateName = getOutlineCandidateItemName(candidate);
+    if (!candidateName) continue;
+
+    steps.push({
+      kind: "insertBibleAtEnd",
+      candidate,
+    });
+    plannedList = [
+      ...plannedList,
+      {
+        _id: `planned-tail-bible-${candidateName}`,
+        name: candidateName,
+        type: candidate.outlineItemType,
+        listId: `planned-tail-bible-${candidateName}`,
+      },
+    ];
+  }
+
   return steps;
 };
 
@@ -311,7 +336,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
   defaultBibleFontMode,
 }: ExecuteServicePlanningOutlineStepArgs): Promise<ExecuteServicePlanningOutlineStepResult> => {
   const ensured =
-    step.kind === "insertSongAtEnd"
+    step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd"
       ? {
           newList: currentList,
           headingIndex: -1,
@@ -340,6 +365,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
 
   if (
     step.kind !== "insertSongAtEnd" &&
+    step.kind !== "insertBibleAtEnd" &&
     isOutlineCandidatePresentInList(
       ensured.newList,
       step.headingName,
@@ -360,7 +386,10 @@ export const executeServicePlanningOutlineSyncStep = async ({
     step.candidate.matchedLibraryItem
   ) {
     sourceItem = step.candidate.matchedLibraryItem;
-  } else if (step.kind === "insertBible" && step.candidate.parsedRef) {
+  } else if (
+    (step.kind === "insertBible" || step.kind === "insertBibleAtEnd") &&
+    step.candidate.parsedRef
+  ) {
     const createdBible = await createBibleItemFromParsedReference({
       parsedRef: step.candidate.parsedRef as ParsedBibleRef,
       name: step.candidate.title,
@@ -403,7 +432,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
     listId: generateRandomId(),
   };
   const newList =
-    step.kind === "insertSongAtEnd"
+    step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd"
       ? [...ensured.newList, outlineItem]
       : [
           ...ensured.newList.slice(0, insertAfter + 1),

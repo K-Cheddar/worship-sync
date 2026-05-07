@@ -161,9 +161,7 @@ const isSyncableOutlineCandidate = (candidate: OutlineItemCandidate): boolean =>
   (
     (candidate.outlineItemType === "song" &&
       Boolean(candidate.matchedLibraryItem)) ||
-    (candidate.outlineItemType === "bible" &&
-      Boolean(candidate.headingName) &&
-      Boolean(candidate.parsedRef))
+    (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef))
   );
 
 export const useServicePlanningImport = () => {
@@ -699,15 +697,7 @@ export const useServicePlanningImport = () => {
         for (const candidate of preview.outlineCandidates) {
           if (!isSyncableOutlineCandidate(candidate)) continue;
 
-          const alreadyPresent =
-            candidate.headingName &&
-            candidate.outlineItemType === "bible"
-              ? isOutlineCandidatePresentInList(
-                  currentList,
-                  candidate.headingName,
-                  candidate,
-                )
-              : Boolean(candidate.outlineAlreadyPresent);
+          const alreadyPresent = Boolean(candidate.outlineAlreadyPresent);
 
           let label = "";
           if (candidate.outlineItemType === "bible" && candidate.parsedRef) {
@@ -784,7 +774,7 @@ export const useServicePlanningImport = () => {
           ? step.headingName
           : step.candidate.title ||
             step.candidate.cleanedTitle ||
-            (step.kind === "insertSongAtEnd" ? "" : step.headingName);
+            (step.kind === "insertSongAtEnd" || step.kind === "insertBibleAtEnd" ? "" : step.headingName);
 
       return {
         inserted: result.inserted,

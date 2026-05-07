@@ -30,9 +30,7 @@ const isSyncableOutlineCandidate = (candidate: OutlineItemCandidate): boolean =>
   (
     (candidate.outlineItemType === "song" &&
       Boolean(candidate.matchedLibraryItem)) ||
-    (candidate.outlineItemType === "bible" &&
-      Boolean(candidate.headingName) &&
-      Boolean(candidate.parsedRef))
+    (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef))
   );
 
 const OverlayStatusBadge = ({ matched }: { matched: boolean }) =>
@@ -448,6 +446,7 @@ const ServicePlanningImportPanel = () => {
           value={url}
           onChange={(v) => dispatch(setServicePlanningImportUrl(String(v || "")))}
           disabled={isSyncing}
+          onFocus={(e) => e.currentTarget.select()}
           onKeyDown={(e) => {
             if (e.key === "Enter") void handleLoad();
           }}
@@ -477,14 +476,14 @@ const ServicePlanningImportPanel = () => {
 
       {preview && !isLoading && (
         <>
-          <section className="rounded-lg border border-gray-700 bg-gray-900/40 px-4 py-3">
+          <section className="px-4 py-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 className="truncate text-sm font-semibold text-white">
+                <h3 className="truncate text-base font-semibold text-white">
                   {serviceOutline?.planLabel?.trim() || "Service Planning"}
                 </h3>
                 {serviceOutline?.loadedAt ? (
-                  <p className="mt-1 text-xs text-gray-400">
+                  <p className="mt-1 text-sm text-gray-400">
                     Imported {new Date(serviceOutline.loadedAt).toLocaleString()}
                   </p>
                 ) : null}
@@ -642,7 +641,7 @@ const ServicePlanningImportPanel = () => {
               }
               onClick={() => void handleSync(true, true)}
             >
-              Sync Both
+              Sync All
             </Button>
             <Button
               variant="primary"

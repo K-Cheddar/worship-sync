@@ -8,8 +8,8 @@ import {
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MoreHorizontal, PanelsTopLeft, Pencil, Plus, Trash2 } from "lucide-react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { PanelsTopLeft, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { useSensors } from "../../utils/dndUtils";
 import {
@@ -29,18 +29,12 @@ import HeadingItem from "./HeadingItem";
 import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
 import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../../components/ui/DropdownMenu";
 import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import cn from "classnames";
+import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
 import { setServicePlanningFloatingWindowDismissed } from "../../store/servicePlanningImportSlice";
 import {
   MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-  MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS,
   MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
 } from "../Media/mediaLibraryMediaActionUi";
 
@@ -96,10 +90,6 @@ const ServiceItems = () => {
   const [anchorListId, setAnchorListId] = useState<string | null>(null);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const skipNextServiceItemClickRef = useRef(false);
-  const actionBarRowRef = useRef<HTMLDivElement>(null);
-  const actionBarMeasureRef = useRef<HTMLDivElement>(null);
-  const [actionBarInlineCount, setActionBarInlineCount] = useState(99);
-  const [actionBarMenuOpen, setActionBarMenuOpen] = useState(false);
   const [headingRenameOpen, setHeadingRenameOpen] = useState(false);
   const headingRenameWindowRef = useRef<FloatingWindowHandle>(null);
   const [headingRenameDraft, setHeadingRenameDraft] = useState("");
@@ -577,87 +567,67 @@ const ServiceItems = () => {
     return items;
   }, [selectedList, access, selectedHeading, showBulkDeleteMenu, selectedListIds.size, isAddingHeading, multiSelectMode, serviceOutline]);
 
-  const recalcActionBarLayout = useCallback(() => {
-    const row = actionBarRowRef.current;
-    const measure = actionBarMeasureRef.current;
-    const total = actionBarItems.length;
-    if (!row || !measure || total === 0) {
-      setActionBarInlineCount(total);
-      return;
-    }
-    const btns = [...measure.querySelectorAll<HTMLElement>("[data-measure-si-action]")];
-    const widths = btns.map((b) => b.offsetWidth);
-    const W = row.clientWidth;
-    if (W < 24) {
-      setActionBarInlineCount(total);
-      return;
-    }
-    const GAP = 4;
-    const TRIGGER = 44;
-    let used = 0;
-    let inline = 0;
-    for (let i = 0; i < widths.length; i++) {
-      const gap = inline > 0 ? GAP : 0;
-      const end = used + gap + widths[i];
-      const isLast = i === widths.length - 1;
-      if (isLast ? end <= W : end + GAP + TRIGGER <= W) {
-        inline++;
-        used = end;
-      } else {
-        break;
-      }
-    }
-    setActionBarInlineCount(inline);
-  }, [actionBarItems]);
+  const handleDeleteHeading = useCallback(() => {
+    if (!selectedHeading) return;
+    dispatch(removeItemsFromList([selectedHeading.listId]));
+  }, [dispatch, selectedHeading]);
 
-  useLayoutEffect(() => {
-    recalcActionBarLayout();
-  }, [recalcActionBarLayout]);
-
-  useLayoutEffect(() => {
-    const row = actionBarRowRef.current;
-    if (!row) return;
-    const ro = new ResizeObserver(() => recalcActionBarLayout());
-    ro.observe(row);
-    return () => ro.disconnect();
-  }, [recalcActionBarLayout]);
-
-  useLayoutEffect(() => {
-    if (actionBarItems.length === 0) setActionBarMenuOpen(false);
-  }, [actionBarItems.length]);
-
-  const inlineActionItems = actionBarItems.slice(0, actionBarInlineCount);
-  const overflowActionItems = actionBarItems.slice(actionBarInlineCount);
-
-  const getActionIcon = (id: ActionBarItem["id"]) => {
+  const getActionIcon = useCallback((id: ActionBarItem["id"]) => {
     if (id === "add-heading") return <Plus className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
     if (id === "edit-heading") return <Pencil className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
     if (id === "delete-selected") return <Trash2 className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} aria-hidden />;
     if (id === "delete-heading") return <Trash2 className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} aria-hidden />;
     if (id === "open-service-plan") return <PanelsTopLeft className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
     return null;
-  };
+  }, []);
 
-  const handleDeleteHeading = () => {
-    if (!selectedHeading) return;
-    dispatch(removeItemsFromList([selectedHeading.listId]));
-  };
-
-  const getActionHandler = (id: ActionBarItem["id"]) => {
+  const getActionHandler = useCallback((id: ActionBarItem["id"]) => {
     if (id === "add-heading") return handleAddHeading;
     if (id === "edit-heading") return openHeadingRenameWindow;
     if (id === "delete-selected") return handleDeleteSelected;
     if (id === "delete-heading") return handleDeleteHeading;
     if (id === "open-service-plan") return () => dispatch(setServicePlanningFloatingWindowDismissed(false));
     return handleMultiSelectDone;
-  };
+  }, [dispatch, handleAddHeading, handleDeleteHeading, handleDeleteSelected, handleMultiSelectDone, openHeadingRenameWindow]);
 
-  const handleActionBarMenuOpenChange = useCallback(
-    (open: boolean) => {
-      setActionBarMenuOpen(open);
-    },
-    [],
-  );
+  const actionBarItemDefs = useMemo((): ActionBarItemDef[] =>
+    actionBarItems.map((item) => ({
+      id: item.id,
+      label: item.label,
+      disabled: item.disabled,
+      overflowMenuItemClassName: item.destructive ? "[&_svg]:text-red-400!" : undefined,
+      renderButton: (isMeasure) => (
+        <Button
+          variant="tertiary"
+          className={cn(
+            "shrink-0",
+            MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+            item.destructive && "text-white [&_svg]:text-red-400!",
+          )}
+          onClick={isMeasure ? undefined : getActionHandler(item.id)}
+          disabled={item.disabled}
+          isLoading={item.isLoading}
+          title={item.label}
+          tabIndex={isMeasure ? -1 : undefined}
+        >
+          <span className="flex items-center gap-1">
+            {getActionIcon(item.id)}
+            {item.label}
+          </span>
+        </Button>
+      ),
+      onOverflowSelect: () => {
+        if (item.id === "edit-heading") { openHeadingRenameWindow(); return; }
+        getActionHandler(item.id)();
+      },
+      renderOverflowItem: () => (
+        <span className="flex items-center gap-1.5">
+          {getActionIcon(item.id)}
+          {item.label}
+        </span>
+      ),
+    })),
+  [actionBarItems, getActionHandler, getActionIcon, openHeadingRenameWindow]);
 
   useEffect(() => {
     const itemElement = document.getElementById(
@@ -697,112 +667,9 @@ const ServiceItems = () => {
         <div className="min-h-0 border-b-2 border-white/25 bg-black/55 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
           <Outlines servicePanel className="w-full min-w-0" />
         </div>
-        {actionBarItems.length > 0 && (
-          <div
-            ref={actionBarRowRef}
-            className="flex flex-nowrap items-center gap-1 border-b border-white/10 px-2 py-1 min-w-0"
-          >
-            {/* Hidden measure row for overflow calculation */}
-            <div
-              ref={actionBarMeasureRef}
-              className="pointer-events-none fixed left-[-9999px] top-0 z-[-1] flex flex-nowrap items-center gap-1 opacity-0"
-              aria-hidden
-            >
-              {actionBarItems.map((item) => (
-                <Button
-                  key={item.id}
-                  data-measure-si-action
-                  variant="tertiary"
-                  color="red"
-                  className={cn(
-                    "shrink-0",
-                    MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-                    item.destructive && "text-white [&_svg]:text-red-400!",
-                  )}
-                  tabIndex={-1}
-                >
-                  <span className="flex items-center gap-1">
-                    {getActionIcon(item.id)}
-                    {item.label}
-                  </span>
-                </Button>
-              ))}
-            </div>
-
-            {/* Inline buttons */}
-            {inlineActionItems.map((item) => {
-              const button = (
-                <Button
-                  key={item.id}
-                  variant="tertiary"
-                  className={cn(
-                    "shrink-0",
-                    MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-                    item.destructive && "text-white [&_svg]:text-red-400!",
-                  )}
-                  onClick={getActionHandler(item.id)}
-                  disabled={item.disabled}
-                  isLoading={item.isLoading}
-                  title={item.label}
-                >
-                  <span className="flex items-center gap-1">
-                    {getActionIcon(item.id)}
-                    {item.label}
-                  </span>
-                </Button>
-              );
-              return button;
-            })}
-
-            {/* Overflow menu */}
-            {overflowActionItems.length > 0 && (
-              <DropdownMenu
-                open={actionBarMenuOpen}
-                onOpenChange={handleActionBarMenuOpenChange}
-              >
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="tertiary"
-                    className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
-                    title="More actions"
-                    aria-label="More actions"
-                  >
-                    <MoreHorizontal
-                      className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE)}
-                      aria-hidden
-                    />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="end"
-                  className="min-w-48 text-xs"
-                >
-                  {overflowActionItems.map((item) => (
-                    <DropdownMenuItem
-                      key={item.id}
-                      variant="default"
-                      className={cn(
-                        MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS,
-                        item.destructive && "[&_svg]:text-red-400!",
-                      )}
-                      disabled={item.disabled}
-                      onSelect={() => {
-                        if (item.id === "edit-heading") {
-                          openHeadingRenameWindow();
-                          return;
-                        }
-                        getActionHandler(item.id)();
-                      }}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        {getActionIcon(item.id)}
-                        {item.label}
-                      </span>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+        {actionBarItemDefs.length > 0 && (
+          <div className="border-b border-white/10 px-2 py-1 min-w-0">
+            <ActionBar items={actionBarItemDefs} overflowMenuClassName="min-w-48" />
           </div>
         )}
         {selectedHeading && headingRenameOpen ? (
