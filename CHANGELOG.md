@@ -1,3 +1,11 @@
+## [2.6.2](https://github.com/K-Cheddar/worship-sync/compare/v2.6.1...v2.6.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* Improve service item drag and drop ([eae63d6](https://github.com/K-Cheddar/worship-sync/commit/eae63d61c099b3e5169c4364a22462edfd47c1a7))
+* Minor adjustments to service planning import ui ([84a6b6f](https://github.com/K-Cheddar/worship-sync/commit/84a6b6fc6a1d733e8be015319359ccbd862af023))
+
 ## [2.6.1](https://github.com/K-Cheddar/worship-sync/compare/v2.6.0...v2.6.1) (2026-05-06)
 
 
