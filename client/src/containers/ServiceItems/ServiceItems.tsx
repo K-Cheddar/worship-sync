@@ -7,7 +7,7 @@ import {
 } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { useNavigate } from "react-router-dom";
-import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
+import { DndContext, useDroppable, DragEndEvent, DragStartEvent, DragOverlay } from "@dnd-kit/core";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { PanelsTopLeft, Pencil, Plus, Trash2 } from "lucide-react";
 
@@ -26,6 +26,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { createNewHeading, updateHeadingName } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
 import HeadingItem from "./HeadingItem";
+import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
 import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
@@ -54,6 +55,7 @@ const ServiceItems = () => {
     selectedItemListId,
     insertPointIndex,
   } = useSelector((state) => state.undoable.present.itemList);
+  const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const isServicePlanningOutlineSyncRunning = useSelector(
     (state) =>
       state.servicePlanningImport.sync.status === "running" &&
@@ -97,6 +99,7 @@ const ServiceItems = () => {
     x: Math.max(window.innerWidth - 340, 0),
     y: 80,
   });
+  const [activeId, setActiveId] = useState<string | null>(null);
 
   const selectedHeading = useMemo(
     () =>
@@ -140,21 +143,49 @@ const ServiceItems = () => {
     return hidden;
   }, [serviceItems, collapsedHeadingListIds]);
 
+  const arrangementSubtitlesByItemId = useMemo(() => {
+    const subtitles = new Map<string, string>();
+
+    for (const doc of allSongDocs) {
+      const arrangement = doc.arrangements?.[doc.selectedArrangement];
+      const name = arrangement?.name?.trim();
+      if (!name || name.toLowerCase() === "master") continue;
+      subtitles.set(doc._id, name);
+    }
+
+    return subtitles;
+  }, [allSongDocs]);
+
+  const serviceItemsByListId = useMemo(() => {
+    const itemsByListId = new Map<string, ServiceItemType>();
+
+    for (const item of serviceItems) {
+      itemsByListId.set(item.listId, item);
+    }
+
+    return itemsByListId;
+  }, [serviceItems]);
+
   const timers = useSelector((state) => state.timers.timers);
   const timerIdsInList = useMemo(
     () => new Set(serviceItems.map((item) => item._id)),
     [serviceItems]
   );
-  const activeTimers = useMemo(
-    () =>
-      timers.filter(
-        (timer) =>
-          timerIdsInList.has(timer.id) &&
-          timer.status !== "stopped" &&
-          timer.remainingTime > 0
-      ),
-    [timers, timerIdsInList]
-  );
+  const activeTimersByItemId = useMemo(() => {
+    const activeTimers = new Map<string, (typeof timers)[number]>();
+
+    for (const timer of timers) {
+      if (
+        timerIdsInList.has(timer.id) &&
+        timer.status !== "stopped" &&
+        timer.remainingTime > 0
+      ) {
+        activeTimers.set(timer.id, timer);
+      }
+    }
+
+    return activeTimers;
+  }, [timers, timerIdsInList]);
 
   const { setNodeRef } = useDroppable({
     id: "service-items-list",
@@ -162,7 +193,12 @@ const ServiceItems = () => {
 
   const sensors = useSensors();
 
+  const onDragStart = (event: DragStartEvent) => {
+    setActiveId(event.active.id as string);
+  };
+
   const onDragEnd = (event: DragEndEvent) => {
+    setActiveId(null);
     if (access === "view") return;
     const { over, active } = event;
     if (!over || !active) return;
@@ -170,13 +206,13 @@ const ServiceItems = () => {
     const overId = over.id as string;
     const activeId = active.id as string;
     if (access === "music") {
-      const activeItem = serviceItems.find((i) => i.listId === activeId);
+      const activeItem = serviceItemsByListId.get(activeId);
       if (!activeItem || !musicCanOutlineMutateItem(activeItem)) return;
       const idsToMove = selectedListIds.has(activeId)
         ? selectedListIds
         : new Set([activeId]);
       for (const id of idsToMove) {
-        const row = serviceItems.find((i) => i.listId === id);
+        const row = serviceItemsByListId.get(id);
         if (!row || !musicCanOutlineMutateItem(row)) return;
       }
     }
@@ -385,7 +421,7 @@ const ServiceItems = () => {
       return;
     }
 
-    const row = serviceItems.find((item) => item.listId === listId);
+    const row = serviceItemsByListId.get(listId);
     const canMultiSelectRow = row != null && canMultiSelectItem(row);
 
     if (access === "view" || !canMultiSelectRow) {
@@ -449,7 +485,7 @@ const ServiceItems = () => {
   const handleEnterMultiSelectMode = useCallback(
     (listId: string, options?: { skipNextClick?: boolean }) => {
       const currentRow = selectedItemListId
-        ? serviceItems.find((item) => item.listId === selectedItemListId)
+        ? serviceItemsByListId.get(selectedItemListId)
         : undefined;
       const currentSelectionCanJoin =
         currentRow != null && canMultiSelectItem(currentRow);
@@ -473,7 +509,7 @@ const ServiceItems = () => {
       dispatch,
       selectedItemListId,
       selectedListIds.size,
-      serviceItems,
+      serviceItemsByListId,
     ],
   );
 
@@ -487,7 +523,7 @@ const ServiceItems = () => {
     if (selectedListIds.size === 0) return;
     if (access === "music") {
       const allowedIds = Array.from(selectedListIds).filter((id) => {
-        const row = serviceItems.find((i) => i.listId === id);
+        const row = serviceItemsByListId.get(id);
         return row && musicCanOutlineMutateItem(row);
       });
       if (allowedIds.length === 0) return;
@@ -501,20 +537,20 @@ const ServiceItems = () => {
     setSelectedListIds(new Set());
     setAnchorListId(null);
     setMultiSelectMode(false);
-  }, [selectedListIds, access, serviceItems, dispatch]);
+  }, [selectedListIds, access, dispatch, serviceItemsByListId]);
 
   const showBulkDeleteMenu =
     access === "full" &&
       selectedListIds.size > 0 &&
       [...selectedListIds].every((id) => {
-        const row = serviceItems.find((i) => i.listId === id);
+        const row = serviceItemsByListId.get(id);
         return Boolean(row && canMultiSelectItem(row));
       })
       ? true
       : access === "music" &&
       selectedListIds.size > 0 &&
       [...selectedListIds].every((id) => {
-        const row = serviceItems.find((i) => i.listId === id);
+        const row = serviceItemsByListId.get(id);
         return Boolean(row && canMultiSelectItem(row));
       });
 
@@ -663,7 +699,12 @@ const ServiceItems = () => {
 
   return (
     <ErrorBoundary>
-      <DndContext onDragEnd={onDragEnd} sensors={sensors}>
+      <DndContext
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragCancel={() => setActiveId(null)}
+        sensors={sensors}
+      >
         <div className="min-h-0 border-b-2 border-white/25 bg-black/55 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
           <Outlines servicePanel className="w-full min-w-0" />
         </div>
@@ -754,21 +795,19 @@ const ServiceItems = () => {
                         }
                         onItemClick={handleItemClick}
                         canMutateOutline={canMutateHeadingRow}
+                        dragActiveId={activeId}
                       />
                     );
                   }
                   if (hiddenListIds.has(item.listId)) return null;
+                  const activeTimer = activeTimersByItemId.get(item._id);
                   return (
                     <ServiceItem
-                      isActive={activeTimers.some(
-                        (timer) => timer.id === item._id
-                      )}
-                      timerValue={
-                        activeTimers.find((timer) => timer.id === item._id)
-                          ?.remainingTime
-                      }
+                      isActive={activeTimer != null}
+                      timerValue={activeTimer?.remainingTime}
                       key={item.listId}
                       item={item}
+                      subtitle={arrangementSubtitlesByItemId.get(item._id)}
                       index={index}
                       selectedItemListId={selectedItemListId}
                       insertPointIndex={insertPointIndex}
@@ -778,6 +817,7 @@ const ServiceItems = () => {
                       canMutateOutline={canMutateServiceItemRow(item)}
                       multiSelectMode={canMutateServiceItemRow(item) ? multiSelectMode : undefined}
                       onEnterMultiSelectMode={canMutateServiceItemRow(item) ? handleEnterMultiSelectMode : undefined}
+                      dragActiveId={activeId}
                     />
                   );
                 })}
@@ -785,6 +825,56 @@ const ServiceItems = () => {
             </ul>
           </div>
         )}
+        <DragOverlay dropAnimation={null}>
+          {activeId ? (() => {
+            const item = serviceItems.find((i) => i.listId === activeId);
+            if (!item) return null;
+            const isMulti = selectedListIds.has(activeId) && selectedListIds.size > 1;
+            const stackCount = Math.min(selectedListIds.size - 1, 2);
+
+            const itemGhost = item.type === "heading" ? (
+              <li className="flex items-center gap-1 border-b-2 border-white/20 overflow-hidden pr-6 bg-black/40 shadow-lg cursor-grabbing">
+                <p className="line-clamp-3 min-w-0 flex-1 wrap-break-word px-2 py-2 text-center text-[11px] font-semibold text-white">
+                  {item.name}
+                </p>
+              </li>
+            ) : (
+              <LeftPanelButton
+                isSelected={false}
+                to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(encodeURI(item.listId))}`}
+                title={item.name}
+                subtitle={arrangementSubtitlesByItemId.get(item._id)}
+                type={item.type}
+                id={item.listId}
+                image={item.background}
+                className="border-b-2 border-transparent overflow-hidden cursor-grabbing"
+              />
+            );
+
+            if (!isMulti) return itemGhost;
+
+            return (
+              <div className="relative cursor-grabbing">
+                {Array.from({ length: stackCount }, (_, i) => (
+                  <div
+                    key={i}
+                    className="absolute inset-0 rounded-sm bg-white/10 border border-white/15"
+                    style={{
+                      transform: `translate(${(i + 1) * 3}px, ${(i + 1) * 3}px)`,
+                      zIndex: -(i + 1),
+                    }}
+                  />
+                ))}
+                <div className="relative z-0 shadow-lg">
+                  {itemGhost}
+                </div>
+                <span className="absolute -top-2 -right-2 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-cyan-500 px-1 text-[10px] font-bold text-white shadow">
+                  {selectedListIds.size}
+                </span>
+              </div>
+            );
+          })() : null}
+        </DragOverlay>
       </DndContext>
     </ErrorBoundary>
   );

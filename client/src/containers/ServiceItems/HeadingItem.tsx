@@ -20,6 +20,8 @@ type HeadingItemProps = {
   onItemClick: (listId: string, e: React.MouseEvent) => void;
   /** When false, heading cannot be reordered, renamed, or deleted (view-only access). */
   canMutateOutline?: boolean;
+  /** The listId of the item currently being dragged, if any. */
+  dragActiveId?: string | null;
 };
 
 const HeadingItem = ({
@@ -32,16 +34,23 @@ const HeadingItem = ({
   onToggleCollapse,
   onItemClick,
   canMutateOutline = true,
+  dragActiveId,
 }: HeadingItemProps) => {
-  const { attributes, listeners, setNodeRef, transform, transition } =
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({
       id: item.listId,
       disabled: !canMutateOutline,
     });
 
+  const isCollapsedByMultiDrag = dragActiveId != null && selectedListIds.has(item.listId) && dragActiveId !== item.listId;
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+    opacity: isDragging || isCollapsedByMultiDrag ? 0 : undefined,
+    height: isCollapsedByMultiDrag ? 0 : undefined,
+    minHeight: isCollapsedByMultiDrag ? 0 : undefined,
+    overflow: isCollapsedByMultiDrag ? "hidden" : undefined,
+    borderWidth: isCollapsedByMultiDrag ? 0 : undefined,
   };
 
   const { isSelected, isInsertPoint } = getOutlineRowSelectionState(

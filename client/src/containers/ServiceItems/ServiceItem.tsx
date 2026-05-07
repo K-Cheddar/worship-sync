@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import generateRandomId from "../../utils/generateRandomId";
-import { useDispatch, useSelector } from "../../hooks";
+import { useDispatch } from "../../hooks";
 import {
   addToInitialItems,
   removeItemFromList,
@@ -26,6 +26,7 @@ type ServiceItemsProps = {
   insertPointIndex: number;
   selectedListIds: Set<string>;
   item: ServiceItemType;
+  subtitle?: string;
   initialItems: string[];
   onItemClick: (listId: string, e: React.MouseEvent) => void;
   /** When false, outline cannot be reordered or removed (view-only access). */
@@ -37,12 +38,15 @@ type ServiceItemsProps = {
     listId: string,
     options?: { skipNextClick?: boolean },
   ) => void;
+  /** The listId of the item currently being dragged, if any. */
+  dragActiveId?: string | null;
 };
 
 const ServiceItem = ({
   isActive,
   timerValue,
   item,
+  subtitle,
   index,
   selectedItemListId,
   insertPointIndex,
@@ -52,20 +56,11 @@ const ServiceItem = ({
   canMutateOutline = true,
   multiSelectMode,
   onEnterMultiSelectMode,
+  dragActiveId,
 }: ServiceItemsProps) => {
   const dispatch = useDispatch();
-  const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
-
-  const arrangementSubtitle = useMemo(() => {
-    if (item.type !== "song") return undefined;
-    const doc = allSongDocs.find((d) => d._id === item._id);
-    if (!doc) return undefined;
-    const arr = doc.arrangements[doc.selectedArrangement];
-    if (!arr || arr.name.toLowerCase() === "master") return undefined;
-    return arr.name;
-  }, [item._id, item.type, allSongDocs]);
   const serviceItemRef = useRef<HTMLElement | null>(null);
-  const { attributes, listeners, setNodeRef, transform, transition } =
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({
       id: item.listId,
       disabled: !canMutateOutline,
@@ -81,9 +76,15 @@ const ServiceItem = ({
     insertPointIndex
   );
 
+  const isCollapsedByMultiDrag = dragActiveId != null && selectedListIds.has(item.listId) && dragActiveId !== item.listId;
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+    opacity: isDragging || isCollapsedByMultiDrag ? 0 : undefined,
+    height: isCollapsedByMultiDrag ? 0 : undefined,
+    minHeight: isCollapsedByMultiDrag ? 0 : undefined,
+    overflow: isCollapsedByMultiDrag ? "hidden" : undefined,
+    borderWidth: isCollapsedByMultiDrag ? 0 : undefined,
   };
 
   const actions = useMemo(() => {
@@ -236,7 +237,7 @@ const ServiceItem = ({
       }}
       data-list-id={item.listId}
       title={item.name}
-      subtitle={arrangementSubtitle}
+      subtitle={subtitle}
       className={cn(
         "border-b-2 overflow-hidden",
         isSelected ? "border-l-cyan-500" : "border-transparent",
