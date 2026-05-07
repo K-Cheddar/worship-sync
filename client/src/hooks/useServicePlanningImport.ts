@@ -734,7 +734,7 @@ export const useServicePlanningImport = () => {
 
       return items;
     },
-    [store],
+    [],
   );
 
   const executeOutlineSyncStep = useCallback(
