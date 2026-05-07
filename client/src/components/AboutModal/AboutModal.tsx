@@ -217,19 +217,19 @@ const AboutModal = ({
     setReloadMessage("");
     try {
       if (navigator.serviceWorker?.controller) {
-        await serviceWorkerRegistration.checkForUpdate();
-        // If an update was found, main.tsx onUpdate will reload the page.
-        // If still here after a short delay, no update was found.
-        setTimeout(() => {
-          setIsGettingLatestVersion(false);
+        const result = await serviceWorkerRegistration.checkForUpdate();
+        if (result === "upToDate") {
           setReloadMessage("You're on the latest version.");
-        }, 3000);
+        } else if (result === "unavailable") {
+          setReloadMessage("Could not check for update.");
+        }
       } else {
         window.location.reload();
       }
     } catch {
-      setIsGettingLatestVersion(false);
       setReloadMessage("Could not check for update.");
+    } finally {
+      setIsGettingLatestVersion(false);
     }
   }, []);
 

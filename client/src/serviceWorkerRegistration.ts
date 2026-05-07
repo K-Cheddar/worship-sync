@@ -31,6 +31,12 @@ type Config = {
   onUpdate?: (registration: ServiceWorkerRegistration) => void;
 };
 
+export type UpdateCheckResult = "updated" | "upToDate" | "unavailable";
+
+export function reloadPage() {
+  window.location.reload();
+}
+
 export function register(config?: Config) {
   // Don't register service worker in Electron
   if (isElectron()) {
@@ -187,10 +193,147 @@ function checkValidServiceWorker(swUrl: string, config?: Config) {
  * onUpdate callback in main.tsx will reload the page. Call this when the user
  * explicitly asks to get the latest version (e.g. "Get latest version" button).
  */
-export async function checkForUpdate(): Promise<void> {
-  if (!("serviceWorker" in navigator)) return;
+const UPDATE_ACTIVATION_TIMEOUT_MS = 8000;
+
+function waitForControllerChange(
+  timeoutMs: number,
+  onActivated?: () => void,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      navigator.serviceWorker.removeEventListener(
+        "controllerchange",
+        handleControllerChange,
+      );
+    };
+
+    const settle = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const handleControllerChange = () => {
+      onActivated?.();
+      settle(true);
+    };
+
+    const timeoutId = window.setTimeout(() => settle(false), timeoutMs);
+
+    navigator.serviceWorker.addEventListener(
+      "controllerchange",
+      handleControllerChange,
+    );
+  });
+}
+
+function promptWaitingWorker(
+  registration: ServiceWorkerRegistration,
+): boolean {
+  if (!registration.waiting) {
+    return false;
+  }
+
+  registration.waiting.postMessage({ type: "SKIP_WAITING" });
+  return true;
+}
+
+/**
+ * Trigger an immediate service worker update check (instead of waiting for the
+ * periodic interval). If a new version is found, the SW installs and activates
+ * right away, then the app reloads once the updated worker takes control.
+ */
+export async function checkForUpdate(): Promise<UpdateCheckResult> {
+  if (!("serviceWorker" in navigator)) return "unavailable";
   const registration = await navigator.serviceWorker.getRegistration();
-  if (registration) await registration.update();
+  if (!registration) return "unavailable";
+
+  const activationPromise = waitForControllerChange(
+    UPDATE_ACTIVATION_TIMEOUT_MS,
+    () => {
+      reloadPage();
+    },
+  );
+
+  if (promptWaitingWorker(registration)) {
+    return (await activationPromise) ? "updated" : "upToDate";
+  }
+
+  let sawUpdateCandidate = Boolean(registration.installing);
+  let installResolved = false;
+
+  const installPromise = new Promise<boolean>((resolve) => {
+    let updateFoundHandler: (() => void) | null = null;
+
+    const finish = (result: boolean) => {
+      if (installResolved) {
+        return;
+      }
+      installResolved = true;
+      if (updateFoundHandler) {
+        registration.removeEventListener("updatefound", updateFoundHandler);
+      }
+      resolve(result);
+    };
+
+    const watchInstallingWorker = (worker: ServiceWorker | null) => {
+      if (!worker || installResolved) {
+        return;
+      }
+
+      sawUpdateCandidate = true;
+
+      const handleStateChange = () => {
+        if (
+          worker.state === "installed" ||
+          worker.state === "activating" ||
+          worker.state === "activated"
+        ) {
+          promptWaitingWorker(registration);
+          worker.removeEventListener("statechange", handleStateChange);
+          finish(true);
+          return;
+        }
+
+        if (worker.state === "redundant") {
+          worker.removeEventListener("statechange", handleStateChange);
+          finish(false);
+        }
+      };
+
+      worker.addEventListener("statechange", handleStateChange);
+      handleStateChange();
+    };
+
+    const handleUpdateFound = () => {
+      watchInstallingWorker(registration.installing);
+    };
+
+    updateFoundHandler = handleUpdateFound;
+    registration.addEventListener("updatefound", handleUpdateFound);
+    watchInstallingWorker(registration.installing);
+
+    window.setTimeout(() => {
+      finish(false);
+    }, 1500);
+  });
+
+  await registration.update();
+
+  if (promptWaitingWorker(registration)) {
+    return (await activationPromise) ? "updated" : "upToDate";
+  }
+
+  const installDetected = await installPromise;
+  if (!sawUpdateCandidate && !installDetected) {
+    return "upToDate";
+  }
+
+  return (await activationPromise) ? "updated" : "upToDate";
 }
 
 export function unregister() {

@@ -97,6 +97,12 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       positionRef.current = position;
     }, [position]);
 
+    const [minimizedY, setMinimizedY] = useState(() => window.innerHeight - TITLE_BAR_HEIGHT);
+    const minimizedYRef = useRef(minimizedY);
+    useEffect(() => {
+      minimizedYRef.current = minimizedY;
+    }, [minimizedY]);
+
     const autoHeightRef = useRef(autoHeight);
     const bringToFront = useFloatingWindowBringToFront();
     const [activeZ, setActiveZ] = useState(zIndex);
@@ -137,6 +143,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           });
         });
       } else {
+        setMinimizedY(window.innerHeight - TITLE_BAR_HEIGHT);
         setPhase("minimizing");
         animTimerRef.current = setTimeout(() => setPhase("minimized"), ANIM_MS);
       }
@@ -216,7 +223,12 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     const handleDragMouseUp = useCallback(() => {
       dragState.current.isDragging = false;
       setGestureTransition(false);
-      setPosition({ ...positionRef.current });
+      if (isMinimizedRef.current) {
+        setPosition((prev) => ({ ...prev, x: positionRef.current.x }));
+        setMinimizedY(positionRef.current.y);
+      } else {
+        setPosition({ ...positionRef.current });
+      }
       document.removeEventListener("mousemove", handleDragMouseMove);
       document.removeEventListener("mouseup", handleDragMouseUp);
     }, [handleDragMouseMove, setGestureTransition]);
@@ -229,14 +241,14 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           isDragging: true,
           startX: e.clientX,
           startY: e.clientY,
-          originX: position.x,
-          originY: position.y,
+          originX: positionRef.current.x,
+          originY: isMinimizedRef.current ? minimizedYRef.current : positionRef.current.y,
         };
         setGestureTransition(true);
         document.addEventListener("mousemove", handleDragMouseMove);
         document.addEventListener("mouseup", handleDragMouseUp);
       },
-      [position, handleDragMouseMove, handleDragMouseUp, setGestureTransition],
+      [handleDragMouseMove, handleDragMouseUp, setGestureTransition],
     );
 
     const handleDragTouchMove = useCallback(
@@ -252,7 +264,12 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     const handleDragTouchEnd = useCallback(() => {
       dragState.current.isDragging = false;
       setGestureTransition(false);
-      setPosition({ ...positionRef.current });
+      if (isMinimizedRef.current) {
+        setPosition((prev) => ({ ...prev, x: positionRef.current.x }));
+        setMinimizedY(positionRef.current.y);
+      } else {
+        setPosition({ ...positionRef.current });
+      }
       document.removeEventListener("touchmove", handleDragTouchMove);
       document.removeEventListener("touchend", handleDragTouchEnd);
     }, [handleDragTouchMove, setGestureTransition]);
@@ -265,14 +282,14 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           isDragging: true,
           startX: touch.clientX,
           startY: touch.clientY,
-          originX: position.x,
-          originY: position.y,
+          originX: positionRef.current.x,
+          originY: isMinimizedRef.current ? minimizedYRef.current : positionRef.current.y,
         };
         setGestureTransition(true);
         document.addEventListener("touchmove", handleDragTouchMove, { passive: false });
         document.addEventListener("touchend", handleDragTouchEnd);
       },
-      [position, handleDragTouchMove, handleDragTouchEnd, setGestureTransition],
+      [handleDragTouchMove, handleDragTouchEnd, setGestureTransition],
     );
 
     // ── Resize ───────────────────────────────────────────────────────────────
@@ -446,8 +463,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       phase === "minimizing" || phase === "restoring" || phase === "minimized";
 
     // Always use `top` so position, height, and content scale all transition together.
-    const minimizedTop = window.innerHeight - TITLE_BAR_HEIGHT;
-    const resolvedTop = isTransitioningMinimize ? minimizedTop : position.y;
+    const resolvedTop = isTransitioningMinimize ? minimizedY : position.y;
     const resolvedHeight = isTransitioningMinimize
       ? TITLE_BAR_HEIGHT
       : autoHeight && !userResized
@@ -540,15 +556,15 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         {!isMinimized && (
           <>
             {/* Edges */}
-            <div data-resize-dir="n" className="absolute top-0 left-3 right-3 h-1 cursor-ns-resize" {...resizeHandleProps} />
-            <div data-resize-dir="s" className="absolute bottom-0 left-3 right-3 h-1 cursor-ns-resize" {...resizeHandleProps} />
-            <div data-resize-dir="w" className="absolute left-0 top-3 bottom-3 w-1 cursor-ew-resize" {...resizeHandleProps} />
-            <div data-resize-dir="e" className="absolute right-0 top-3 bottom-3 w-1 cursor-ew-resize" {...resizeHandleProps} />
+            <div data-resize-dir="n" className="absolute top-0 left-4 right-4 h-1 cursor-ns-resize coarse:h-4" {...resizeHandleProps} />
+            <div data-resize-dir="s" className="absolute bottom-0 left-4 right-4 h-1 cursor-ns-resize coarse:h-4" {...resizeHandleProps} />
+            <div data-resize-dir="w" className="absolute left-0 top-4 bottom-4 w-1 cursor-ew-resize coarse:w-4" {...resizeHandleProps} />
+            <div data-resize-dir="e" className="absolute right-0 top-4 bottom-4 w-1 cursor-ew-resize coarse:w-4" {...resizeHandleProps} />
             {/* Corners */}
-            <div data-resize-dir="nw" className="absolute top-0 left-0 h-3 w-3 cursor-nwse-resize" {...resizeHandleProps} />
-            <div data-resize-dir="ne" className="absolute top-0 right-0 h-3 w-3 cursor-nesw-resize" {...resizeHandleProps} />
-            <div data-resize-dir="sw" className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize" {...resizeHandleProps} />
-            <div data-resize-dir="se" className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize" {...resizeHandleProps} />
+            <div data-resize-dir="nw" className="absolute top-0 left-0 h-4 w-4 cursor-nwse-resize coarse:h-10 coarse:w-10" {...resizeHandleProps} />
+            <div data-resize-dir="ne" className="absolute top-0 right-0 h-4 w-4 cursor-nesw-resize coarse:h-10 coarse:w-10" {...resizeHandleProps} />
+            <div data-resize-dir="sw" className="absolute bottom-0 left-0 h-4 w-4 cursor-nesw-resize coarse:h-10 coarse:w-10" {...resizeHandleProps} />
+            <div data-resize-dir="se" className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize coarse:h-10 coarse:w-10" {...resizeHandleProps} />
           </>
         )}
       </div>

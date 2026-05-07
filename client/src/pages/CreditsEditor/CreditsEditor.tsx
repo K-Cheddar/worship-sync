@@ -2,7 +2,7 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
+
   useMemo,
   useRef,
   useState,
@@ -18,7 +18,7 @@ import {
   Home,
   Layers,
   Menu as MenuIcon,
-  MoreHorizontal,
+
   PanelsTopLeft,
   Presentation,
   RefreshCcw,
@@ -77,17 +77,7 @@ import {
   lineTabsTriggerClassName,
 } from "@/components/ui/tabs";
 import cn from "classnames";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/DropdownMenu";
-import {
-  MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-  MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS,
-  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
-} from "../../containers/Media/mediaLibraryMediaActionUi";
+import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
 import { onValue, ref, set } from "firebase/database";
 import Menu from "../../components/Menu/Menu";
 import Outlines from "../../containers/Toolbar/ToolbarElements/Outlines";
@@ -180,159 +170,120 @@ const CreditsEditor = ({
   const [isSettingsDrawerOpen, setIsSettingsDrawerOpen] = useState(false);
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
 
-  const actionBarRowRef = useRef<HTMLDivElement>(null);
-  const actionBarMeasureRef = useRef<HTMLDivElement>(null);
-  const [actionBarInlineCount, setActionBarInlineCount] = useState(99);
-  const [actionBarMenuOpen, setActionBarMenuOpen] = useState(false);
 
-  const mobileActionBarRowRef = useRef<HTMLDivElement>(null);
-  const mobileActionBarMeasureRef = useRef<HTMLDivElement>(null);
-  const [mobileActionBarInlineCount, setMobileActionBarInlineCount] = useState(99);
-  const [mobileActionBarMenuOpen, setMobileActionBarMenuOpen] = useState(false);
-
-  type ActionBarItem = {
-    id: "generate-credits" | "open-service-plan";
-    label: string;
-    disabled?: boolean;
-    isLoading?: boolean;
-  };
-
-  const actionBarItems = useMemo((): ActionBarItem[] => {
-    const items: ActionBarItem[] = [];
+  const actionBarItemDefs = useMemo((): ActionBarItemDef[] => {
+    const items: ActionBarItemDef[] = [];
     if (canEditCredits) {
       items.push({
         id: "generate-credits",
         label: isGenerating ? "Generating..." : justGenerated ? "Generated." : "Generate Credits",
         disabled: !hasOverlays || isGenerating,
-        isLoading: isGenerating,
+        renderButton: (isMeasure) => (
+          <Button
+            data-testid={isMeasure ? undefined : "generate-credits-button"}
+            disabled={!hasOverlays || isGenerating}
+            isLoading={isGenerating}
+            tabIndex={isMeasure ? -1 : undefined}
+            onClick={isMeasure ? undefined : () => generateFromOverlays()}
+            color={justGenerated ? "#84cc16" : "#22d3ee"}
+            svg={justGenerated ? Check : RefreshCcw}
+          >
+            {isGenerating ? "Generating..." : justGenerated ? "Generated." : "Generate Credits"}
+          </Button>
+        ),
+        onOverflowSelect: () => generateFromOverlays(),
+        renderOverflowItem: () => (
+          <span className="flex items-center gap-1.5">
+            {justGenerated
+              ? <Check className="size-3.5 shrink-0 text-[#84cc16]" aria-hidden />
+              : <RefreshCcw className="size-3.5 shrink-0 text-cyan-400" aria-hidden />}
+            {isGenerating ? "Generating..." : justGenerated ? "Generated." : "Generate Credits"}
+          </span>
+        ),
       });
     }
     items.push({
       id: "open-service-plan",
       label: "Open Service Plan",
       disabled: !serviceOutline,
+      renderButton: (isMeasure) => (
+        <Button
+          variant="primary"
+          color="#22d3ee"
+          svg={PanelsTopLeft}
+          disabled={!serviceOutline}
+          tabIndex={isMeasure ? -1 : undefined}
+          onClick={isMeasure ? undefined : () => dispatch(setServicePlanningFloatingWindowDismissed(false))}
+        >
+          Open Service Plan
+        </Button>
+      ),
+      onOverflowSelect: () => dispatch(setServicePlanningFloatingWindowDismissed(false)),
+      renderOverflowItem: () => (
+        <span className="flex items-center gap-1.5">
+          <PanelsTopLeft className="size-3.5 shrink-0 text-cyan-400" aria-hidden />
+          Open Service Plan
+        </span>
+      ),
     });
     return items;
-  }, [canEditCredits, hasOverlays, isGenerating, justGenerated, serviceOutline]);
+  }, [canEditCredits, dispatch, generateFromOverlays, hasOverlays, isGenerating, justGenerated, serviceOutline]);
 
-  const recalcActionBarLayout = useCallback(() => {
-    const row = actionBarRowRef.current;
-    const measure = actionBarMeasureRef.current;
-    const total = actionBarItems.length;
-    if (!row || !measure || total === 0) {
-      setActionBarInlineCount(total);
-      return;
+  const mobileActionBarItemDefs = useMemo((): ActionBarItemDef[] => {
+    const items: ActionBarItemDef[] = [];
+    if (canEditCredits) {
+      items.push({
+        id: "generate-credits",
+        label: isGenerating ? "Generating..." : justGenerated ? "Generated." : "Generate Credits",
+        disabled: !hasOverlays || isGenerating,
+        renderButton: (isMeasure) => (
+          <Button
+            disabled={!hasOverlays || isGenerating}
+            isLoading={isGenerating}
+            tabIndex={isMeasure ? -1 : undefined}
+            onClick={isMeasure ? undefined : () => generateFromOverlays()}
+            color={justGenerated ? "#84cc16" : "#22d3ee"}
+            svg={justGenerated ? Check : RefreshCcw}
+          >
+            {isGenerating ? "Generating..." : justGenerated ? "Generated." : "Generate Credits"}
+          </Button>
+        ),
+        onOverflowSelect: () => generateFromOverlays(),
+        renderOverflowItem: () => (
+          <span className="flex items-center gap-1.5">
+            {justGenerated
+              ? <Check className="size-3.5 shrink-0 text-[#84cc16]" aria-hidden />
+              : <RefreshCcw className="size-3.5 shrink-0 text-cyan-400" aria-hidden />}
+            {isGenerating ? "Generating..." : justGenerated ? "Generated." : "Generate Credits"}
+          </span>
+        ),
+      });
     }
-    const btns = [...measure.querySelectorAll<HTMLElement>("[data-measure-ce-action]")];
-    const widths = btns.map((b) => b.offsetWidth);
-    const W = row.clientWidth;
-    if (W < 24) {
-      setActionBarInlineCount(total);
-      return;
-    }
-    const GAP = 4;
-    const TRIGGER = 44;
-    let used = 0;
-    let inline = 0;
-    for (let i = 0; i < widths.length; i++) {
-      const gap = inline > 0 ? GAP : 0;
-      const end = used + gap + widths[i];
-      const isLast = i === widths.length - 1;
-      if (isLast ? end <= W : end + GAP + TRIGGER <= W) {
-        inline++;
-        used = end;
-      } else {
-        break;
-      }
-    }
-    setActionBarInlineCount(inline);
-  }, [actionBarItems]);
-
-  useLayoutEffect(() => {
-    recalcActionBarLayout();
-  }, [recalcActionBarLayout]);
-
-  useLayoutEffect(() => {
-    const row = actionBarRowRef.current;
-    if (!row) return;
-    const ro = new ResizeObserver(() => recalcActionBarLayout());
-    ro.observe(row);
-    return () => ro.disconnect();
-  }, [recalcActionBarLayout]);
-
-  useLayoutEffect(() => {
-    if (actionBarItems.length === 0) setActionBarMenuOpen(false);
-  }, [actionBarItems.length]);
-
-  const inlineActionItems = actionBarItems.slice(0, actionBarInlineCount);
-  const overflowActionItems = actionBarItems.slice(actionBarInlineCount);
-
-  const recalcMobileActionBarLayout = useCallback(() => {
-    const row = mobileActionBarRowRef.current;
-    const measure = mobileActionBarMeasureRef.current;
-    const total = actionBarItems.length;
-    if (!row || !measure || total === 0) {
-      setMobileActionBarInlineCount(total);
-      return;
-    }
-    const btns = [...measure.querySelectorAll<HTMLElement>("[data-measure-ce-mobile-action]")];
-    const widths = btns.map((b) => b.offsetWidth);
-    const W = row.clientWidth;
-    if (W < 24) {
-      setMobileActionBarInlineCount(total);
-      return;
-    }
-    const GAP = 4;
-    const TRIGGER = 44;
-    let used = 0;
-    let inline = 0;
-    for (let i = 0; i < widths.length; i++) {
-      const gap = inline > 0 ? GAP : 0;
-      const end = used + gap + widths[i];
-      const isLast = i === widths.length - 1;
-      if (isLast ? end <= W : end + GAP + TRIGGER <= W) {
-        inline++;
-        used = end;
-      } else {
-        break;
-      }
-    }
-    setMobileActionBarInlineCount(inline);
-  }, [actionBarItems]);
-
-  useLayoutEffect(() => {
-    recalcMobileActionBarLayout();
-  }, [recalcMobileActionBarLayout]);
-
-  useLayoutEffect(() => {
-    const row = mobileActionBarRowRef.current;
-    if (!row) return;
-    const ro = new ResizeObserver(() => recalcMobileActionBarLayout());
-    ro.observe(row);
-    return () => ro.disconnect();
-  }, [recalcMobileActionBarLayout]);
-
-  useLayoutEffect(() => {
-    if (actionBarItems.length === 0) setMobileActionBarMenuOpen(false);
-  }, [actionBarItems.length]);
-
-  const mobileInlineActionItems = actionBarItems.slice(0, mobileActionBarInlineCount);
-  const mobileOverflowActionItems = actionBarItems.slice(mobileActionBarInlineCount);
-
-  const getActionIcon = useCallback((id: ActionBarItem["id"]) => {
-    if (id === "generate-credits") {
-      const Svg = justGenerated ? Check : RefreshCcw;
-      return <Svg className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, justGenerated ? "text-[#84cc16]" : "text-cyan-400")} aria-hidden />;
-    }
-    if (id === "open-service-plan") return <PanelsTopLeft className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
-    return null;
-  }, [justGenerated]);
-
-  const getActionHandler = useCallback((id: ActionBarItem["id"]) => {
-    if (id === "generate-credits") return () => generateFromOverlays();
-    if (id === "open-service-plan") return () => dispatch(setServicePlanningFloatingWindowDismissed(false));
-    return () => { };
-  }, [dispatch, generateFromOverlays]);
+    items.push({
+      id: "open-service-plan",
+      label: "Open Service Plan",
+      disabled: !serviceOutline,
+      renderButton: (isMeasure) => (
+        <Button
+          variant="secondary"
+          svg={PanelsTopLeft}
+          disabled={!serviceOutline}
+          tabIndex={isMeasure ? -1 : undefined}
+          onClick={isMeasure ? undefined : () => dispatch(setServicePlanningFloatingWindowDismissed(false))}
+        >
+          Open Service Plan
+        </Button>
+      ),
+      onOverflowSelect: () => dispatch(setServicePlanningFloatingWindowDismissed(false)),
+      renderOverflowItem: () => (
+        <span className="flex items-center gap-1.5">
+          <PanelsTopLeft className="size-3.5 shrink-0 text-cyan-400" aria-hidden />
+          Open Service Plan
+        </span>
+      ),
+    });
+    return items;
+  }, [canEditCredits, dispatch, generateFromOverlays, hasOverlays, isGenerating, justGenerated, serviceOutline]);
 
   const creditsSettingsDrawerOpen = embeddedInOverlayController
     ? overlayCreditsSettingsDrawerOpen
@@ -788,99 +739,7 @@ const CreditsEditor = ({
             <div className="hidden min-w-0 flex-1 items-center gap-2 border-l-2 border-gray-400 pl-4 md:flex">
               <Outlines className="min-w-0 shrink" />
               {/* Action bar with overflow */}
-              <div
-                ref={actionBarRowRef}
-                className="flex min-w-0 flex-1 flex-nowrap items-center gap-2"
-              >
-                {/* Hidden measure row — must match actual button styles for accurate widths */}
-                <div
-                  ref={actionBarMeasureRef}
-                  className="pointer-events-none fixed left-[-9999px] top-0 z-[-1] flex flex-nowrap items-center gap-2 opacity-0"
-                  aria-hidden
-                >
-                  {actionBarItems.map((item) =>
-                    item.id === "generate-credits" ? (
-                      <Button
-                        key={item.id}
-                        data-measure-ce-action
-                        color={justGenerated ? "#84cc16" : "#22d3ee"}
-                        svg={justGenerated ? Check : RefreshCcw}
-                        tabIndex={-1}
-                      >
-                        {item.label}
-                      </Button>
-                    ) : (
-                      <Button
-                        key={item.id}
-                        data-measure-ce-action
-                        variant="primary"
-                        color="#22d3ee"
-                        svg={PanelsTopLeft}
-                        tabIndex={-1}
-                      >
-                        {item.label}
-                      </Button>
-                    )
-                  )}
-                </div>
-                {/* Inline buttons */}
-                {inlineActionItems.map((item) =>
-                  item.id === "generate-credits" ? (
-                    <Button
-                      key={item.id}
-                      data-testid="generate-credits-button"
-                      disabled={item.disabled}
-                      isLoading={item.isLoading}
-                      onClick={getActionHandler(item.id)}
-                      color={justGenerated ? "#84cc16" : "#22d3ee"}
-                      svg={justGenerated ? Check : RefreshCcw}
-                    >
-                      {item.label}
-                    </Button>
-                  ) : (
-                    <Button
-                      key={item.id}
-                      variant="primary"
-                      color="#22d3ee"
-                      svg={PanelsTopLeft}
-                      disabled={item.disabled}
-                      onClick={getActionHandler(item.id)}
-                    >
-                      {item.label}
-                    </Button>
-                  )
-                )}
-                {/* Overflow menu */}
-                {overflowActionItems.length > 0 && (
-                  <DropdownMenu open={actionBarMenuOpen} onOpenChange={setActionBarMenuOpen}>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="tertiary"
-                        className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
-                        title="More actions"
-                        aria-label="More actions"
-                      >
-                        <MoreHorizontal className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE)} aria-hidden />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="min-w-48 text-xs">
-                      {overflowActionItems.map((item) => (
-                        <DropdownMenuItem
-                          key={item.id}
-                          className={cn(MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS)}
-                          disabled={item.disabled}
-                          onSelect={() => getActionHandler(item.id)()}
-                        >
-                          <span className="flex items-center gap-1.5">
-                            {getActionIcon(item.id)}
-                            {item.label}
-                          </span>
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </div>
+              <ActionBar items={actionBarItemDefs} className="min-w-0 flex-1" gap={8} overflowMenuClassName="min-w-48" />
             </div>
             <div className="ml-auto shrink-0">
               <UserSection />
@@ -889,96 +748,7 @@ const CreditsEditor = ({
             {/* Mobile-only row: Outlines + buttons with overflow */}
             <div className="flex w-full min-w-0 items-center gap-2 border-t border-gray-600 pt-2 md:hidden">
               <Outlines className="min-w-0 shrink" />
-              <div
-                ref={mobileActionBarRowRef}
-                className="flex min-w-0 flex-1 flex-nowrap items-center gap-2"
-              >
-                {/* Hidden measure row */}
-                <div
-                  ref={mobileActionBarMeasureRef}
-                  className="pointer-events-none fixed left-[-9999px] top-0 z-[-1] flex flex-nowrap items-center gap-2 opacity-0"
-                  aria-hidden
-                >
-                  {actionBarItems.map((item) =>
-                    item.id === "generate-credits" ? (
-                      <Button
-                        key={item.id}
-                        data-measure-ce-mobile-action
-                        color={justGenerated ? "#84cc16" : "#22d3ee"}
-                        svg={justGenerated ? Check : RefreshCcw}
-                        tabIndex={-1}
-                      >
-                        {item.label}
-                      </Button>
-                    ) : (
-                      <Button
-                        key={item.id}
-                        data-measure-ce-mobile-action
-                        variant="secondary"
-                        svg={PanelsTopLeft}
-                        tabIndex={-1}
-                      >
-                        {item.label}
-                      </Button>
-                    )
-                  )}
-                </div>
-                {/* Inline buttons */}
-                {mobileInlineActionItems.map((item) =>
-                  item.id === "generate-credits" ? (
-                    <Button
-                      key={item.id}
-                      disabled={item.disabled}
-                      isLoading={item.isLoading}
-                      onClick={getActionHandler(item.id)}
-                      color={justGenerated ? "#84cc16" : "#22d3ee"}
-                      svg={justGenerated ? Check : RefreshCcw}
-                    >
-                      {item.label}
-                    </Button>
-                  ) : (
-                    <Button
-                      key={item.id}
-                      variant="secondary"
-                      svg={PanelsTopLeft}
-                      disabled={item.disabled}
-                      onClick={getActionHandler(item.id)}
-                    >
-                      {item.label}
-                    </Button>
-                  )
-                )}
-                {/* Overflow menu */}
-                {mobileOverflowActionItems.length > 0 && (
-                  <DropdownMenu open={mobileActionBarMenuOpen} onOpenChange={setMobileActionBarMenuOpen}>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="tertiary"
-                        className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
-                        title="More actions"
-                        aria-label="More actions"
-                      >
-                        <MoreHorizontal className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE)} aria-hidden />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="min-w-48 text-xs">
-                      {mobileOverflowActionItems.map((item) => (
-                        <DropdownMenuItem
-                          key={item.id}
-                          className={cn(MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS)}
-                          disabled={item.disabled}
-                          onSelect={() => getActionHandler(item.id)()}
-                        >
-                          <span className="flex items-center gap-1.5">
-                            {getActionIcon(item.id)}
-                            {item.label}
-                          </span>
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </div>
+              <ActionBar items={mobileActionBarItemDefs} className="min-w-0 flex-1" gap={8} overflowMenuClassName="min-w-48" />
             </div>
           </div>
           <div className="mt-2 px-4 md:hidden">{mobileEditorPreviewTabs}</div>

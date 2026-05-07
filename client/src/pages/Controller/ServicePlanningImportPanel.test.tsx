@@ -113,11 +113,11 @@ describe("ServicePlanningImportPanel", () => {
       </Provider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Sync Both" }));
+    await user.click(screen.getByRole("button", { name: "Sync All" }));
 
     expect(store.getState().servicePlanningImport.sync.status).toBe("running");
     expect(store.getState().servicePlanningImport.sync.mode).toBe("both");
-    expect(screen.getByRole("button", { name: "Sync Both" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync All" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Sync Overlays" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Sync Outline" })).toBeDisabled();
     expect(screen.queryByText(/syncing outline/i)).not.toBeInTheDocument();
@@ -209,7 +209,7 @@ describe("ServicePlanningImportPanel", () => {
     );
 
     expect(screen.getByText("1 already present")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sync Both" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync All" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Sync Overlays" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Sync Outline" })).toBeDisabled();
   });
@@ -277,7 +277,7 @@ describe("ServicePlanningImportPanel", () => {
     expect(screen.getByText("May 2, 2026 - 10 AM")).toBeInTheDocument();
     expect(screen.getByText(/Imported .*2026/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sync Outline" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Sync Both" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Sync All" })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "Sync Outline" }));
 

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, Plus, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BookOpen, Check, Download, Plus, RefreshCw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -7,12 +7,13 @@ import {
   setServicePlanningFloatingWindowDismissed,
   setServicePlanningImportUrl,
   setServicePlanningServiceOutline,
+  startServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
 import {
   Popover,
+  PopoverAnchor,
   PopoverContent,
-  PopoverTrigger,
   PopoverClose,
 } from "../../components/ui/Popover";
 import Input from "../../components/Input/Input";
@@ -36,7 +37,12 @@ import type {
 import type { ServicePlanningSyncItem } from "../../store/servicePlanningImportSlice";
 import { getServicePlanningLineItemKey } from "../../utils/servicePlanningSyncKeys";
 import { cleanPlanningTitle } from "../../integrations/servicePlanning/cleanPlanningTitle";
+import { getBibleImportDisplayName } from "../../utils/servicePlanningBibleImport";
+import { bibleRefToSearchString } from "../../integrations/servicePlanning/parseBibleReference";
 import { cn } from "../../utils/cnHelper";
+
+import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
+import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
 
 const MARGIN = 16;
 
@@ -156,6 +162,22 @@ const pluralizeBadgeLabel = (label: string, count: number): string => {
   return `${count} ${phaseP} ${rest.join(" ")}`;
 };
 
+const hasSyncableOutlineItems = (preview: ServicePlanningPreview | null): boolean =>
+  Boolean(
+    preview?.outlineCandidates.some(
+      (candidate) =>
+        !candidate.outlineAlreadyPresent &&
+        (
+          (candidate.outlineItemType === "song" &&
+            Boolean(candidate.matchedLibraryItem)) ||
+          (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef))
+        ),
+    ),
+  );
+
+const hasSyncableOverlayItems = (preview: ServicePlanningPreview | null): boolean =>
+  Boolean(preview?.overlayPlan.some((item) => item.action !== "skip"));
+
 const getPreviewLineItems = (preview: ServicePlanningPreview | null) => {
   const maybeItems = (preview as Partial<ServicePlanningPreview> | null)?.lineItems;
   return Array.isArray(maybeItems) ? maybeItems : [];
@@ -206,6 +228,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
   const [importUrl, setImportUrl] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
+
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
   const sync = useSelector((s: RootState) => s.servicePlanningImport.sync);
   const url = useSelector((s: RootState) => s.servicePlanningImport.url);
@@ -229,7 +252,7 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     }
   }, [floatingWindowRestoreId]);
 
-  const handleImport = async () => {
+  const handleImport = useCallback(async () => {
     const trimmed = importUrl.trim();
     if (!trimmed) return;
     if (!trimmed.toLowerCase().startsWith("https://")) {
@@ -255,10 +278,9 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     } finally {
       setIsImporting(false);
     }
-  };
+  }, [dispatch, importUrl, loadPreview, setImportUrl, showToast]);
 
-  const handleRefresh = async () => {
-    console.log("handleRefresh", { url, isRefreshing, status: sync.status });
+  const handleRefresh = useCallback(async () => {
     if (!url || isRefreshing || sync.status === "running") return;
     setIsRefreshing(true);
     try {
@@ -270,7 +292,118 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
     } finally {
       setIsRefreshing(false);
     }
+  }, [dispatch, isRefreshing, loadPreview, showToast, sync.status, url]);
+
+  const handleSync = useCallback((mode: "overlays" | "outline" | "both") => {
+    if (!preview) return;
+    const canSyncOverlays = hasSyncableOverlayItems(preview);
+    const canSyncOutline = hasSyncableOutlineItems(preview);
+    if (
+      (mode === "overlays" && !canSyncOverlays) ||
+      (mode === "outline" && !canSyncOutline) ||
+      (mode === "both" && !canSyncOverlays && !canSyncOutline)
+    ) {
+      return;
+    }
+    dispatch(setServicePlanningFloatingWindowDismissed(false));
+    dispatch(startServicePlanningSync({ mode }));
+  }, [dispatch, preview]);
+
+  const handleCreateClick = (title: string) => {
+    navigate(
+      `/controller/create?type=song&name=${encodeURIComponent(title)}`,
+    );
   };
+
+  const handleBibleClick = (item: ServicePlanningLineItem) => {
+    if (!item.parsedRef) return;
+    const params = new URLSearchParams();
+    params.set("search", bibleRefToSearchString(item.parsedRef));
+    if (item.parsedRef.version) {
+      params.set("version", item.parsedRef.version);
+    }
+    navigate(`/controller/bible?${params.toString()}`);
+  };
+
+  const canSyncOverlays = hasSyncableOverlayItems(preview);
+  const canSyncOutline = hasSyncableOutlineItems(preview);
+  const canSyncAny = canSyncOverlays || canSyncOutline;
+
+  const actionBarItemDefs = useMemo((): ActionBarItemDef[] => [
+    {
+      id: "sync-all",
+      label: "Sync All",
+      disabled: sync.status === "running" || !canSyncAny,
+      renderButton: (isMeasure) => (
+        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={sync.status === "running" || !canSyncAny} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("both")}>Sync All</Button>
+      ),
+      onOverflowSelect: () => handleSync("both"),
+      renderOverflowItem: () => <><Check className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync All</>,
+    },
+    {
+      id: "import",
+      label: "Import",
+      disabled: sync.status === "running",
+      renderButton: (isMeasure) => isMeasure ? (
+        <Button variant="tertiary" svg={Download} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} tabIndex={-1}>Import</Button>
+      ) : (
+        <Button
+          variant="tertiary"
+          svg={Download}
+          className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+          disabled={sync.status === "running"}
+          onClick={() => setIsImportOpen(true)}
+        >
+          Import
+        </Button>
+      ),
+      onOverflowSelect: () => setIsImportOpen(true),
+      renderOverflowItem: () => <><Download className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Import</>,
+    },
+    {
+      id: "refresh",
+      label: isRefreshing ? "Refreshing…" : "Refresh",
+      disabled: isRefreshing || sync.status === "running",
+      renderButton: (isMeasure) => (
+        <Button
+          variant="tertiary"
+          svg={RefreshCw}
+          iconSize="sm"
+          color={isRefreshing ? "#22d3ee" : undefined}
+          className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, isRefreshing && "[&_svg]:animate-spin")}
+          disabled={isRefreshing || sync.status === "running"}
+          tabIndex={isMeasure ? -1 : undefined}
+          onClick={isMeasure ? undefined : () => void handleRefresh()}
+        >
+          {isRefreshing ? "Refreshing…" : "Refresh"}
+        </Button>
+      ),
+      onOverflowSelect: () => void handleRefresh(),
+      renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />{isRefreshing ? "Refreshing…" : "Refresh"}</>,
+    },
+    {
+      id: "sync-overlays",
+      label: "Sync overlays",
+      disabled: sync.status === "running" || !canSyncOverlays,
+      renderButton: (isMeasure) => (
+        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={sync.status === "running" || !canSyncOverlays} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("overlays")}>Sync overlays</Button>
+      ),
+      onOverflowSelect: () => handleSync("overlays"),
+      renderOverflowItem: () => <><Check className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync overlays</>,
+    },
+    {
+      id: "sync-outline",
+      label: "Sync outline",
+      disabled: sync.status === "running" || !canSyncOutline,
+      renderButton: (isMeasure) => (
+        <Button variant="tertiary" svg={Check} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={sync.status === "running" || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>Sync outline</Button>
+      ),
+      onOverflowSelect: () => handleSync("outline"),
+      renderOverflowItem: () => <><Check className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync outline</>,
+    },
+  ], [canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleSync, isRefreshing, sync.status]);
+
+
 
   const isVisible =
     !floatingWindowDismissed && (sync.status !== "idle" || Boolean(preview));
@@ -404,69 +537,47 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                   )}
                 </TabsList>
               </Tabs>
-            </div>
 
-            <div className="flex items-center justify-between gap-2">
               {serviceOutline?.loadedAt ? (
-                <div className="text-xs text-zinc-300">
+                <div className="mt-2 text-xs text-zinc-400">
                   Imported {new Date(serviceOutline.loadedAt).toLocaleString()}
                 </div>
-              ) : <div />}
-              <div className="flex items-center gap-1">
-                <Popover open={isImportOpen} onOpenChange={setIsImportOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="tertiary"
-                      svg={Download}
-                      iconSize="sm"
-                      className="text-sm"
-                      disabled={sync.status === "running"}
-                    >
-                      Import
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent portal={false} align="end" className="w-80 bg-gray-800 border-gray-700 text-white">
-                    <div className="flex flex-col gap-3">
-                      <p className="text-sm font-semibold">Load Service Plan</p>
-                      <Input
-                        label="Planning URL"
-                        value={importUrl}
-                        onChange={(v) => setImportUrl(String(v))}
-                        placeholder="https://..."
-                        disabled={isImporting}
-                        onKeyDown={(e) => { if (e.key === "Enter") void handleImport(); }}
-                      />
-                      <div className="flex justify-end gap-2">
-                        <PopoverClose asChild>
-                          <Button variant="tertiary" className="text-sm" disabled={isImporting}>
-                            Cancel
-                          </Button>
-                        </PopoverClose>
-                        <Button
-                          variant="cta"
-                          className="text-sm"
-                          isLoading={isImporting}
-                          disabled={isImporting || !importUrl.trim()}
-                          onClick={() => void handleImport()}
-                        >
-                          {isImporting ? "Loading…" : "Load"}
-                        </Button>
-                      </div>
+              ) : null}
+
+              <Popover open={isImportOpen} onOpenChange={setIsImportOpen}>
+                <PopoverAnchor asChild>
+                  <div>
+                    <ActionBar items={actionBarItemDefs} className="mt-2" disablePortal />
+                  </div>
+                </PopoverAnchor>
+                <PopoverContent portal={false} align="end" className="w-80 bg-gray-800 border-gray-700 text-white">
+                  <div className="flex flex-col gap-3">
+                    <p className="text-sm font-semibold">Load Service Plan</p>
+                    <Input
+                      label="Planning URL"
+                      value={importUrl}
+                      onChange={(v) => setImportUrl(String(v))}
+                      placeholder="https://..."
+                      disabled={isImporting}
+                      onKeyDown={(e) => { if (e.key === "Enter") void handleImport(); }}
+                    />
+                    <div className="flex justify-end gap-2">
+                      <PopoverClose asChild>
+                        <Button variant="tertiary" className="text-sm" disabled={isImporting}>Cancel</Button>
+                      </PopoverClose>
+                      <Button
+                        variant="cta"
+                        className="text-sm"
+                        isLoading={isImporting}
+                        disabled={isImporting || !importUrl.trim()}
+                        onClick={() => void handleImport()}
+                      >
+                        {isImporting ? "Loading…" : "Load"}
+                      </Button>
                     </div>
-                  </PopoverContent>
-                </Popover>
-                <Button
-                  variant="tertiary"
-                  svg={RefreshCw}
-                  iconSize="sm"
-                  color={isRefreshing ? "#22d3ee" : undefined}
-                  className={cn(isRefreshing && "[&_svg]:animate-spin", "text-sm")}
-                  disabled={isRefreshing || sync.status === "running"}
-                  onClick={() => void handleRefresh()}
-                >
-                  {isRefreshing ? "Refreshing…" : "Refresh"}
-                </Button>
-              </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
 
             {activeTab === "plan" ? (
@@ -578,24 +689,45 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                               </div>
 
                               {(item.title || item.ledBy) && (
-                                <div className="flex gap-2">
+                                <div className="flex gap-2 flex-wrap">
                                   {item.title && (
                                     <div className="wrap-break-word text-xs text-zinc-300">
-                                      {item.title}
+                                      {item.outlineItemType === "bible" && item.parsedRef
+                                        ? getBibleImportDisplayName(item.parsedRef, item.parsedRef.version)
+                                        : item.title}
                                     </div>
                                   )}
-                                  {item.ledBy && item.title && (
-                                    <div className="text-xs text-white">
-                                      |
-                                    </div>
-                                  )}
-                                  {item.ledBy && (
-                                    <div className="wrap-break-word text-xs text-zinc-400">
-                                      {item.ledBy}
-                                    </div>
-                                  )}
+                                  <div className="flex gap-2">
+
+                                    {item.ledBy && item.title && (
+                                      <div className="text-xs font-light text-zinc-400">
+                                        Led by:
+                                      </div>
+                                    )}
+                                    {item.ledBy && (
+                                      <div className="wrap-break-word text-xs text-zinc-300">
+                                        {item.ledBy}
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               )}
+
+                              {!hideOutlineActions &&
+                                item.outlineItemType === "bible" &&
+                                item.parsedRef ? (
+                                <Button
+                                  variant="primary"
+                                  color="#22d3ee"
+                                  svg={BookOpen}
+                                  iconSize="sm"
+                                  className="self-start text-xs"
+                                  aria-label={`Open ${item.title} in Bible`}
+                                  onClick={() => handleBibleClick(item)}
+                                >
+                                  Open
+                                </Button>
+                              ) : null}
 
                               {isSongNotFound && !hideOutlineActions ? (
                                 <Button
@@ -604,13 +736,14 @@ const ServicePlanningSyncFloatingWindow = ({ hideOutlineActions = false }: { hid
                                   color="#22d3ee"
                                   iconSize="sm"
                                   className="self-start text-xs"
+                                  aria-label={`Add ${item.cleanedTitle || cleanPlanningTitle(item.title)} to list`}
                                   onClick={() =>
-                                    navigate(
-                                      `/controller/create?type=song&name=${encodeURIComponent(cleanPlanningTitle(item.title))}`,
+                                    handleCreateClick(
+                                      item.cleanedTitle || cleanPlanningTitle(item.title),
                                     )
                                   }
                                 >
-                                  Create song
+                                  Add to list
                                 </Button>
                               ) : null}
                             </div>

@@ -7,9 +7,9 @@ import {
 } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { useNavigate } from "react-router-dom";
-import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MoreHorizontal, PanelsTopLeft, Pencil, Plus, Trash2 } from "lucide-react";
+import { DndContext, useDroppable, DragEndEvent, DragStartEvent, DragOverlay } from "@dnd-kit/core";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { PanelsTopLeft, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { useSensors } from "../../utils/dndUtils";
 import {
@@ -26,21 +26,16 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { createNewHeading, updateHeadingName } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
 import HeadingItem from "./HeadingItem";
+import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
 import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../../components/ui/DropdownMenu";
 import FloatingWindow, { FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import cn from "classnames";
+import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
 import { setServicePlanningFloatingWindowDismissed } from "../../store/servicePlanningImportSlice";
 import {
   MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-  MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS,
   MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
 } from "../Media/mediaLibraryMediaActionUi";
 
@@ -60,6 +55,7 @@ const ServiceItems = () => {
     selectedItemListId,
     insertPointIndex,
   } = useSelector((state) => state.undoable.present.itemList);
+  const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const isServicePlanningOutlineSyncRunning = useSelector(
     (state) =>
       state.servicePlanningImport.sync.status === "running" &&
@@ -96,10 +92,6 @@ const ServiceItems = () => {
   const [anchorListId, setAnchorListId] = useState<string | null>(null);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const skipNextServiceItemClickRef = useRef(false);
-  const actionBarRowRef = useRef<HTMLDivElement>(null);
-  const actionBarMeasureRef = useRef<HTMLDivElement>(null);
-  const [actionBarInlineCount, setActionBarInlineCount] = useState(99);
-  const [actionBarMenuOpen, setActionBarMenuOpen] = useState(false);
   const [headingRenameOpen, setHeadingRenameOpen] = useState(false);
   const headingRenameWindowRef = useRef<FloatingWindowHandle>(null);
   const [headingRenameDraft, setHeadingRenameDraft] = useState("");
@@ -107,6 +99,7 @@ const ServiceItems = () => {
     x: Math.max(window.innerWidth - 340, 0),
     y: 80,
   });
+  const [activeId, setActiveId] = useState<string | null>(null);
 
   const selectedHeading = useMemo(
     () =>
@@ -150,21 +143,49 @@ const ServiceItems = () => {
     return hidden;
   }, [serviceItems, collapsedHeadingListIds]);
 
+  const arrangementSubtitlesByItemId = useMemo(() => {
+    const subtitles = new Map<string, string>();
+
+    for (const doc of allSongDocs) {
+      const arrangement = doc.arrangements?.[doc.selectedArrangement];
+      const name = arrangement?.name?.trim();
+      if (!name || name.toLowerCase() === "master") continue;
+      subtitles.set(doc._id, name);
+    }
+
+    return subtitles;
+  }, [allSongDocs]);
+
+  const serviceItemsByListId = useMemo(() => {
+    const itemsByListId = new Map<string, ServiceItemType>();
+
+    for (const item of serviceItems) {
+      itemsByListId.set(item.listId, item);
+    }
+
+    return itemsByListId;
+  }, [serviceItems]);
+
   const timers = useSelector((state) => state.timers.timers);
   const timerIdsInList = useMemo(
     () => new Set(serviceItems.map((item) => item._id)),
     [serviceItems]
   );
-  const activeTimers = useMemo(
-    () =>
-      timers.filter(
-        (timer) =>
-          timerIdsInList.has(timer.id) &&
-          timer.status !== "stopped" &&
-          timer.remainingTime > 0
-      ),
-    [timers, timerIdsInList]
-  );
+  const activeTimersByItemId = useMemo(() => {
+    const activeTimers = new Map<string, (typeof timers)[number]>();
+
+    for (const timer of timers) {
+      if (
+        timerIdsInList.has(timer.id) &&
+        timer.status !== "stopped" &&
+        timer.remainingTime > 0
+      ) {
+        activeTimers.set(timer.id, timer);
+      }
+    }
+
+    return activeTimers;
+  }, [timers, timerIdsInList]);
 
   const { setNodeRef } = useDroppable({
     id: "service-items-list",
@@ -172,7 +193,12 @@ const ServiceItems = () => {
 
   const sensors = useSensors();
 
+  const onDragStart = (event: DragStartEvent) => {
+    setActiveId(event.active.id as string);
+  };
+
   const onDragEnd = (event: DragEndEvent) => {
+    setActiveId(null);
     if (access === "view") return;
     const { over, active } = event;
     if (!over || !active) return;
@@ -180,13 +206,13 @@ const ServiceItems = () => {
     const overId = over.id as string;
     const activeId = active.id as string;
     if (access === "music") {
-      const activeItem = serviceItems.find((i) => i.listId === activeId);
+      const activeItem = serviceItemsByListId.get(activeId);
       if (!activeItem || !musicCanOutlineMutateItem(activeItem)) return;
       const idsToMove = selectedListIds.has(activeId)
         ? selectedListIds
         : new Set([activeId]);
       for (const id of idsToMove) {
-        const row = serviceItems.find((i) => i.listId === id);
+        const row = serviceItemsByListId.get(id);
         if (!row || !musicCanOutlineMutateItem(row)) return;
       }
     }
@@ -226,7 +252,7 @@ const ServiceItems = () => {
     dispatch(updateItemList(updatedServiceItems));
   };
 
-  const handleAddHeading = async () => {
+  const handleAddHeading = useCallback(async () => {
     if (!db) return;
     setIsAddingHeading(true);
     try {
@@ -246,7 +272,7 @@ const ServiceItems = () => {
     } finally {
       setIsAddingHeading(false);
     }
-  };
+  }, [db, serviceItems, dispatch]);
 
   const findNextNonHeadingIndex = (fromIndex: number) => {
     for (let i = fromIndex + 1; i < serviceItems.length; i++) {
@@ -395,7 +421,7 @@ const ServiceItems = () => {
       return;
     }
 
-    const row = serviceItems.find((item) => item.listId === listId);
+    const row = serviceItemsByListId.get(listId);
     const canMultiSelectRow = row != null && canMultiSelectItem(row);
 
     if (access === "view" || !canMultiSelectRow) {
@@ -459,7 +485,7 @@ const ServiceItems = () => {
   const handleEnterMultiSelectMode = useCallback(
     (listId: string, options?: { skipNextClick?: boolean }) => {
       const currentRow = selectedItemListId
-        ? serviceItems.find((item) => item.listId === selectedItemListId)
+        ? serviceItemsByListId.get(selectedItemListId)
         : undefined;
       const currentSelectionCanJoin =
         currentRow != null && canMultiSelectItem(currentRow);
@@ -483,7 +509,7 @@ const ServiceItems = () => {
       dispatch,
       selectedItemListId,
       selectedListIds.size,
-      serviceItems,
+      serviceItemsByListId,
     ],
   );
 
@@ -493,11 +519,11 @@ const ServiceItems = () => {
     setAnchorListId(null);
   }, []);
 
-  const handleDeleteSelected = () => {
+  const handleDeleteSelected = useCallback(() => {
     if (selectedListIds.size === 0) return;
     if (access === "music") {
       const allowedIds = Array.from(selectedListIds).filter((id) => {
-        const row = serviceItems.find((i) => i.listId === id);
+        const row = serviceItemsByListId.get(id);
         return row && musicCanOutlineMutateItem(row);
       });
       if (allowedIds.length === 0) return;
@@ -511,20 +537,20 @@ const ServiceItems = () => {
     setSelectedListIds(new Set());
     setAnchorListId(null);
     setMultiSelectMode(false);
-  };
+  }, [selectedListIds, access, dispatch, serviceItemsByListId]);
 
   const showBulkDeleteMenu =
     access === "full" &&
       selectedListIds.size > 0 &&
       [...selectedListIds].every((id) => {
-        const row = serviceItems.find((i) => i.listId === id);
+        const row = serviceItemsByListId.get(id);
         return Boolean(row && canMultiSelectItem(row));
       })
       ? true
       : access === "music" &&
       selectedListIds.size > 0 &&
       [...selectedListIds].every((id) => {
-        const row = serviceItems.find((i) => i.listId === id);
+        const row = serviceItemsByListId.get(id);
         return Boolean(row && canMultiSelectItem(row));
       });
 
@@ -577,87 +603,67 @@ const ServiceItems = () => {
     return items;
   }, [selectedList, access, selectedHeading, showBulkDeleteMenu, selectedListIds.size, isAddingHeading, multiSelectMode, serviceOutline]);
 
-  const recalcActionBarLayout = useCallback(() => {
-    const row = actionBarRowRef.current;
-    const measure = actionBarMeasureRef.current;
-    const total = actionBarItems.length;
-    if (!row || !measure || total === 0) {
-      setActionBarInlineCount(total);
-      return;
-    }
-    const btns = [...measure.querySelectorAll<HTMLElement>("[data-measure-si-action]")];
-    const widths = btns.map((b) => b.offsetWidth);
-    const W = row.clientWidth;
-    if (W < 24) {
-      setActionBarInlineCount(total);
-      return;
-    }
-    const GAP = 4;
-    const TRIGGER = 44;
-    let used = 0;
-    let inline = 0;
-    for (let i = 0; i < widths.length; i++) {
-      const gap = inline > 0 ? GAP : 0;
-      const end = used + gap + widths[i];
-      const isLast = i === widths.length - 1;
-      if (isLast ? end <= W : end + GAP + TRIGGER <= W) {
-        inline++;
-        used = end;
-      } else {
-        break;
-      }
-    }
-    setActionBarInlineCount(inline);
-  }, [actionBarItems]);
+  const handleDeleteHeading = useCallback(() => {
+    if (!selectedHeading) return;
+    dispatch(removeItemsFromList([selectedHeading.listId]));
+  }, [dispatch, selectedHeading]);
 
-  useLayoutEffect(() => {
-    recalcActionBarLayout();
-  }, [recalcActionBarLayout]);
-
-  useLayoutEffect(() => {
-    const row = actionBarRowRef.current;
-    if (!row) return;
-    const ro = new ResizeObserver(() => recalcActionBarLayout());
-    ro.observe(row);
-    return () => ro.disconnect();
-  }, [recalcActionBarLayout]);
-
-  useLayoutEffect(() => {
-    if (actionBarItems.length === 0) setActionBarMenuOpen(false);
-  }, [actionBarItems.length]);
-
-  const inlineActionItems = actionBarItems.slice(0, actionBarInlineCount);
-  const overflowActionItems = actionBarItems.slice(actionBarInlineCount);
-
-  const getActionIcon = (id: ActionBarItem["id"]) => {
+  const getActionIcon = useCallback((id: ActionBarItem["id"]) => {
     if (id === "add-heading") return <Plus className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
     if (id === "edit-heading") return <Pencil className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
     if (id === "delete-selected") return <Trash2 className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} aria-hidden />;
     if (id === "delete-heading") return <Trash2 className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} aria-hidden />;
     if (id === "open-service-plan") return <PanelsTopLeft className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} aria-hidden />;
     return null;
-  };
+  }, []);
 
-  const handleDeleteHeading = () => {
-    if (!selectedHeading) return;
-    dispatch(removeItemsFromList([selectedHeading.listId]));
-  };
-
-  const getActionHandler = (id: ActionBarItem["id"]) => {
+  const getActionHandler = useCallback((id: ActionBarItem["id"]) => {
     if (id === "add-heading") return handleAddHeading;
     if (id === "edit-heading") return openHeadingRenameWindow;
     if (id === "delete-selected") return handleDeleteSelected;
     if (id === "delete-heading") return handleDeleteHeading;
     if (id === "open-service-plan") return () => dispatch(setServicePlanningFloatingWindowDismissed(false));
     return handleMultiSelectDone;
-  };
+  }, [dispatch, handleAddHeading, handleDeleteHeading, handleDeleteSelected, handleMultiSelectDone, openHeadingRenameWindow]);
 
-  const handleActionBarMenuOpenChange = useCallback(
-    (open: boolean) => {
-      setActionBarMenuOpen(open);
-    },
-    [],
-  );
+  const actionBarItemDefs = useMemo((): ActionBarItemDef[] =>
+    actionBarItems.map((item) => ({
+      id: item.id,
+      label: item.label,
+      disabled: item.disabled,
+      overflowMenuItemClassName: item.destructive ? "[&_svg]:text-red-400!" : undefined,
+      renderButton: (isMeasure) => (
+        <Button
+          variant="tertiary"
+          className={cn(
+            "shrink-0",
+            MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+            item.destructive && "text-white [&_svg]:text-red-400!",
+          )}
+          onClick={isMeasure ? undefined : getActionHandler(item.id)}
+          disabled={item.disabled}
+          isLoading={item.isLoading}
+          title={item.label}
+          tabIndex={isMeasure ? -1 : undefined}
+        >
+          <span className="flex items-center gap-1">
+            {getActionIcon(item.id)}
+            {item.label}
+          </span>
+        </Button>
+      ),
+      onOverflowSelect: () => {
+        if (item.id === "edit-heading") { openHeadingRenameWindow(); return; }
+        getActionHandler(item.id)();
+      },
+      renderOverflowItem: () => (
+        <span className="flex items-center gap-1.5">
+          {getActionIcon(item.id)}
+          {item.label}
+        </span>
+      ),
+    })),
+  [actionBarItems, getActionHandler, getActionIcon, openHeadingRenameWindow]);
 
   useEffect(() => {
     const itemElement = document.getElementById(
@@ -693,116 +699,18 @@ const ServiceItems = () => {
 
   return (
     <ErrorBoundary>
-      <DndContext onDragEnd={onDragEnd} sensors={sensors}>
+      <DndContext
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragCancel={() => setActiveId(null)}
+        sensors={sensors}
+      >
         <div className="min-h-0 border-b-2 border-white/25 bg-black/55 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
           <Outlines servicePanel className="w-full min-w-0" />
         </div>
-        {actionBarItems.length > 0 && (
-          <div
-            ref={actionBarRowRef}
-            className="flex flex-nowrap items-center gap-1 border-b border-white/10 px-2 py-1 min-w-0"
-          >
-            {/* Hidden measure row for overflow calculation */}
-            <div
-              ref={actionBarMeasureRef}
-              className="pointer-events-none fixed left-[-9999px] top-0 z-[-1] flex flex-nowrap items-center gap-1 opacity-0"
-              aria-hidden
-            >
-              {actionBarItems.map((item) => (
-                <Button
-                  key={item.id}
-                  data-measure-si-action
-                  variant="tertiary"
-                  color="red"
-                  className={cn(
-                    "shrink-0",
-                    MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-                    item.destructive && "text-white [&_svg]:text-red-400!",
-                  )}
-                  tabIndex={-1}
-                >
-                  <span className="flex items-center gap-1">
-                    {getActionIcon(item.id)}
-                    {item.label}
-                  </span>
-                </Button>
-              ))}
-            </div>
-
-            {/* Inline buttons */}
-            {inlineActionItems.map((item) => {
-              const button = (
-                <Button
-                  key={item.id}
-                  variant="tertiary"
-                  className={cn(
-                    "shrink-0",
-                    MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
-                    item.destructive && "text-white [&_svg]:text-red-400!",
-                  )}
-                  onClick={getActionHandler(item.id)}
-                  disabled={item.disabled}
-                  isLoading={item.isLoading}
-                  title={item.label}
-                >
-                  <span className="flex items-center gap-1">
-                    {getActionIcon(item.id)}
-                    {item.label}
-                  </span>
-                </Button>
-              );
-              return button;
-            })}
-
-            {/* Overflow menu */}
-            {overflowActionItems.length > 0 && (
-              <DropdownMenu
-                open={actionBarMenuOpen}
-                onOpenChange={handleActionBarMenuOpenChange}
-              >
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="tertiary"
-                    className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
-                    title="More actions"
-                    aria-label="More actions"
-                  >
-                    <MoreHorizontal
-                      className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE)}
-                      aria-hidden
-                    />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="end"
-                  className="min-w-48 text-xs"
-                >
-                  {overflowActionItems.map((item) => (
-                    <DropdownMenuItem
-                      key={item.id}
-                      variant="default"
-                      className={cn(
-                        MEDIA_LIBRARY_ACTION_MENU_ITEM_CLASS,
-                        item.destructive && "[&_svg]:text-red-400!",
-                      )}
-                      disabled={item.disabled}
-                      onSelect={() => {
-                        if (item.id === "edit-heading") {
-                          openHeadingRenameWindow();
-                          return;
-                        }
-                        getActionHandler(item.id)();
-                      }}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        {getActionIcon(item.id)}
-                        {item.label}
-                      </span>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+        {actionBarItemDefs.length > 0 && (
+          <div className="border-b border-white/10 px-2 py-1 min-w-0">
+            <ActionBar items={actionBarItemDefs} overflowMenuClassName="min-w-48" />
           </div>
         )}
         {selectedHeading && headingRenameOpen ? (
@@ -887,21 +795,19 @@ const ServiceItems = () => {
                         }
                         onItemClick={handleItemClick}
                         canMutateOutline={canMutateHeadingRow}
+                        dragActiveId={activeId}
                       />
                     );
                   }
                   if (hiddenListIds.has(item.listId)) return null;
+                  const activeTimer = activeTimersByItemId.get(item._id);
                   return (
                     <ServiceItem
-                      isActive={activeTimers.some(
-                        (timer) => timer.id === item._id
-                      )}
-                      timerValue={
-                        activeTimers.find((timer) => timer.id === item._id)
-                          ?.remainingTime
-                      }
+                      isActive={activeTimer != null}
+                      timerValue={activeTimer?.remainingTime}
                       key={item.listId}
                       item={item}
+                      subtitle={arrangementSubtitlesByItemId.get(item._id)}
                       index={index}
                       selectedItemListId={selectedItemListId}
                       insertPointIndex={insertPointIndex}
@@ -911,6 +817,7 @@ const ServiceItems = () => {
                       canMutateOutline={canMutateServiceItemRow(item)}
                       multiSelectMode={canMutateServiceItemRow(item) ? multiSelectMode : undefined}
                       onEnterMultiSelectMode={canMutateServiceItemRow(item) ? handleEnterMultiSelectMode : undefined}
+                      dragActiveId={activeId}
                     />
                   );
                 })}
@@ -918,6 +825,56 @@ const ServiceItems = () => {
             </ul>
           </div>
         )}
+        <DragOverlay dropAnimation={null}>
+          {activeId ? (() => {
+            const item = serviceItems.find((i) => i.listId === activeId);
+            if (!item) return null;
+            const isMulti = selectedListIds.has(activeId) && selectedListIds.size > 1;
+            const stackCount = Math.min(selectedListIds.size - 1, 2);
+
+            const itemGhost = item.type === "heading" ? (
+              <li className="flex items-center gap-1 border-b-2 border-white/20 overflow-hidden pr-6 bg-black/40 shadow-lg cursor-grabbing">
+                <p className="line-clamp-3 min-w-0 flex-1 wrap-break-word px-2 py-2 text-center text-[11px] font-semibold text-white">
+                  {item.name}
+                </p>
+              </li>
+            ) : (
+              <LeftPanelButton
+                isSelected={false}
+                to={`item/${window.btoa(encodeURI(item._id))}/${window.btoa(encodeURI(item.listId))}`}
+                title={item.name}
+                subtitle={arrangementSubtitlesByItemId.get(item._id)}
+                type={item.type}
+                id={item.listId}
+                image={item.background}
+                className="border-b-2 border-transparent overflow-hidden cursor-grabbing"
+              />
+            );
+
+            if (!isMulti) return itemGhost;
+
+            return (
+              <div className="relative cursor-grabbing">
+                {Array.from({ length: stackCount }, (_, i) => (
+                  <div
+                    key={i}
+                    className="absolute inset-0 rounded-sm bg-white/10 border border-white/15"
+                    style={{
+                      transform: `translate(${(i + 1) * 3}px, ${(i + 1) * 3}px)`,
+                      zIndex: -(i + 1),
+                    }}
+                  />
+                ))}
+                <div className="relative z-0 shadow-lg">
+                  {itemGhost}
+                </div>
+                <span className="absolute -top-2 -right-2 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-cyan-500 px-1 text-[10px] font-bold text-white shadow">
+                  {selectedListIds.size}
+                </span>
+              </div>
+            );
+          })() : null}
+        </DragOverlay>
       </DndContext>
     </ErrorBoundary>
   );
