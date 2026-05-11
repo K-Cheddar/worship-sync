@@ -1,3 +1,16 @@
+# [2.7.0](https://github.com/K-Cheddar/worship-sync/compare/v2.6.2...v2.7.0) (2026-05-11)
+
+
+### Bug Fixes
+
+* Improve media modal/panel performance ([1105456](https://github.com/K-Cheddar/worship-sync/commit/11054561c647e5ee080613f046507e46425ef913))
+* Improve service planning updates and undo/redo for overlays ([77e7050](https://github.com/K-Cheddar/worship-sync/commit/77e7050a172841aaab4dfa8770389cc53cf31c9b))
+
+
+### Features
+
+* Add ability to change what displays an item sends to ([05562a8](https://github.com/K-Cheddar/worship-sync/commit/05562a862da16ae0cc5c312b2a944008a4aa6f76))
+
 ## [2.6.2](https://github.com/K-Cheddar/worship-sync/compare/v2.6.1...v2.6.2) (2026-05-07)
 
 
