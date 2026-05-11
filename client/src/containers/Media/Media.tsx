@@ -50,9 +50,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const c = useMediaLibraryController({ variant, pageMode });
   const { showAll, navigateToFolder } = c;
 
-  console.log("c", c);
-
-
   const selectedCount = c.selectedMediaIds.size;
   const mediaRenameWindowRef = useRef<FloatingWindowHandle>(null);
   const [mediaRenamePosition, setMediaRenamePosition] = useState({
@@ -286,9 +283,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           isMediaLoading={c.isMediaLoading}
           mediaItemsPerRow={c.mediaItemsPerRow}
           mediaListRef={c.mediaListRef}
+          mediaGridRef={c.mediaGridRef}
           filteredList={c.filteredList}
-          visibleMediaItems={c.visibleFilteredList}
-          isMediaGridFullyLoaded={c.isMediaGridFullyLoaded}
           showAll={c.showAll}
           showNamesInPanelGrid={c.showNamesInPanelGrid}
           searchTerm={c.searchTerm}

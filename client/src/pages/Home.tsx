@@ -1,19 +1,37 @@
 import {
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
-import { Download, Smartphone } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import {
+  Building2,
+  Info,
+  Layers,
+  LayoutDashboard,
+  MessagesSquare,
+  Monitor,
+  Presentation,
+  Projector,
+  Radio,
+  ScrollText,
+  ScreenShare,
+  Smartphone,
+} from "lucide-react";
 import WorshipSyncImage from "../assets/WorshipSyncImage.png";
 import Button from "../components/Button/Button";
+import Icon from "../components/Icon/Icon";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "../components/ui/Popover";
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
+import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { usePwaInstallPrompt } from "../hooks/usePwaInstallPrompt";
 import {
@@ -28,11 +46,13 @@ import {
   fetchLatestWindowsInstallerUrl,
   getLatestReleaseUrl,
 } from "../utils/githubRelease";
+import type { MenuItemType } from "../types";
 
 type CardLink = {
   title: string;
   description: string;
   to: string;
+  icon: LucideIcon;
 };
 
 const primaryControllers: CardLink[] = [
@@ -41,11 +61,13 @@ const primaryControllers: CardLink[] = [
     description:
       "Build and run the main presentation. Arrange service items, edit slides, and send output to projector, monitor, and stream.",
     to: "/controller",
+    icon: Presentation,
   },
   {
     title: "Overlay Controller",
     description: "Manage overlays, service timers, credits, and lower thirds for the stream.",
     to: "/overlay-controller",
+    icon: Layers,
   },
 ];
 
@@ -55,12 +77,14 @@ const secondaryControllers: CardLink[] = [
     description:
       "Take attendee questions, moderate posts, and send highlights to the presentation screen.",
     to: "/boards/controller",
+    icon: MessagesSquare,
   },
   {
     title: "Credits Editor",
     description:
       "Build the credits roll and choose which OBS scene to transition to when credits finish.",
     to: "/credits-editor",
+    icon: ScrollText,
   },
 ];
 
@@ -70,6 +94,7 @@ const adminLinks: CardLink[] = [
     description:
       "Invite teammates, manage access, pair workstations and displays, recovery and trusted devices, and branding for this church.",
     to: "/account",
+    icon: Building2,
   },
 ];
 
@@ -78,11 +103,13 @@ const standaloneDisplays: CardLink[] = [
     title: "Monitor",
     description: "Open the monitor view, move to the desired display, then enter fullscreen when you are ready to show it.",
     to: "/monitor",
+    icon: Monitor,
   },
   {
     title: "Projector",
     description: "Open the projector view, move to the desired display, then enter fullscreen when you are ready to show it.",
     to: "/projector",
+    icon: Projector,
   },
 ];
 
@@ -91,26 +118,30 @@ const obsDisplays: CardLink[] = [
     title: "Stream",
     description: "Main program output for a browser source in your streaming software.",
     to: "/stream",
+    icon: Radio,
   },
   {
     title: "Stream Info",
     description: "Information pages for a browser source in your streaming software.",
     to: "/stream-info",
+    icon: Info,
   },
   {
     title: "Projector",
     description: "Projector-sized output for a browser source in your streaming software.",
     to: "/projector-full",
+    icon: Projector,
   },
   {
     title: "Credits",
     description:
       "Credits roll for a browser source. In Credits Editor, choose which scene to switch to after the roll. In OBS, set this Browser Source's page permissions to Advanced access so the page can change scenes when credits finish.",
     to: "/credits",
+    icon: ScrollText,
   },
 ];
 
-const HomeLinkCard = ({ title, description, to }: CardLink) => {
+const HomeLinkCard = ({ title, description, to, icon }: CardLink) => {
   return (
     <Button
       variant="none"
@@ -119,7 +150,17 @@ const HomeLinkCard = ({ title, description, to }: CardLink) => {
       className="h-full w-full flex-col items-start gap-3 rounded-2xl border border-gray-600 border-l-4 border-l-orange-400 bg-gray-900 p-5 text-left hover:border-gray-500 hover:border-l-orange-300 hover:bg-gray-800"
       wrap
     >
-      <span className="text-xl font-semibold">{title}</span>
+      <span className="flex w-full items-start gap-3">
+        <span aria-hidden className="shrink-0 text-orange-400">
+          <Icon
+            svg={icon}
+            size="lg"
+            className="text-orange-400"
+            svgClassName="text-orange-400"
+          />
+        </span>
+        <span className="min-w-0 flex-1 text-xl font-semibold">{title}</span>
+      </span>
       <span className="text-sm font-normal text-gray-200">{description}</span>
     </Button>
   );
@@ -154,24 +195,8 @@ type DesktopOs = "windows" | "mac" | "linux";
 type DesktopDownloadHelpProps = {
   os: DesktopOs;
   onTryAgain: () => void;
-};
-
-type DesktopInstallPopoverView = "menu" | "downloadHelp";
-
-const getDesktopInstallMenuBody = (os: DesktopOs, canInstall: boolean) => {
-  if (os === "windows") {
-    return canInstall
-      ? "Install as an app in this browser for quick access, or download the Windows installer for the desktop app."
-      : "Download the Windows installer for the desktop app.";
-  }
-  if (os === "mac") {
-    return canInstall
-      ? "Install as an app in this browser for quick access, or download the Mac disk image (DMG) for the desktop app."
-      : "Download the Mac disk image (DMG) for the desktop app.";
-  }
-  return canInstall
-    ? "Install as an app in this browser for quick access, or download the Linux desktop app (AppImage or Debian package)."
-    : "Download the Linux desktop app (AppImage or Debian package).";
+  /** When false, omit the inline heading (e.g. when DialogTitle is used). */
+  showHeading?: boolean;
 };
 
 const getDesktopDownloadButtonLabel = (os: DesktopOs) => {
@@ -202,7 +227,11 @@ const isIosBrowser = (): boolean => {
   return /iphone|ipad|ipod/i.test(navigator.userAgent);
 };
 
-const DesktopDownloadHelp = ({ os, onTryAgain }: DesktopDownloadHelpProps) => {
+const DesktopDownloadHelp = ({
+  os,
+  onTryAgain,
+  showHeading = true,
+}: DesktopDownloadHelpProps) => {
   const releaseLink = (
     <a
       href={getLatestReleaseUrl()}
@@ -245,10 +274,12 @@ const DesktopDownloadHelp = ({ os, onTryAgain }: DesktopDownloadHelpProps) => {
 
   return (
     <>
-      <p className="text-sm font-semibold text-white">
-        {getDesktopDownloadHelpTitle(os)}
-      </p>
-      <p className="mt-2 text-sm">{body}</p>
+      {showHeading ? (
+        <p className="text-sm font-semibold text-white">
+          {getDesktopDownloadHelpTitle(os)}
+        </p>
+      ) : null}
+      <p className={showHeading ? "mt-2 text-sm" : "text-sm"}>{body}</p>
 
       <div className="mt-3 flex flex-col gap-2">
         <Button
@@ -295,10 +326,10 @@ const Welcome = () => {
   const [installerHref, setInstallerHref] = useState(() =>
     isElectron() ? "" : getLatestReleaseUrl(),
   );
-  const [desktopAppMenuOpen, setDesktopAppMenuOpen] = useState(false);
-  const [desktopInstallPopoverView, setDesktopInstallPopoverView] =
-    useState<DesktopInstallPopoverView>("menu");
-  const [mobileInstallHelpOpen, setMobileInstallHelpOpen] = useState(false);
+  const [desktopInstallHelpDialogOpen, setDesktopInstallHelpDialogOpen] =
+    useState(false);
+  const [mobileInstallHelpDialogOpen, setMobileInstallHelpDialogOpen] =
+    useState(false);
   const isMobileWeb = useMemo(() => isWeb && isMobileBrowser(), [isWeb]);
   const isiOSWeb = useMemo(() => isWeb && isIosBrowser(), [isWeb]);
 
@@ -323,177 +354,81 @@ const Welcome = () => {
     };
   }, [desktopOs]);
 
-  const openInstallerDownload = () => {
+  const openInstallerDownload = useCallback(() => {
     window.open(installerHref, "_blank", "noopener,noreferrer");
-  };
+  }, [installerHref]);
 
   const handleDownloadInstallerClick = () => {
     openInstallerDownload();
-  };
-
-  const handleDesktopInstallPopoverOpenChange = (open: boolean) => {
-    setDesktopAppMenuOpen(open);
-    if (!open) setDesktopInstallPopoverView("menu");
-  };
-
-  const handleInstallAppClick = () => {
-    handleDesktopInstallPopoverOpenChange(false);
-    void installPwa();
-  };
-
-  const handleDownloadDesktopFromMenu = () => {
-    openInstallerDownload();
-    setDesktopInstallPopoverView("downloadHelp");
   };
 
   /** One desktop web entry point avoids a toolbar flash when `beforeinstallprompt` arrives after first paint. */
   const showDesktopAppMenu = desktopOs !== null && !isStandalone;
   const showMobileInstallButton = isMobileWeb && !desktopOs && !isStandalone;
 
-  const popoverSurfaceClass =
-    "w-80 max-w-[min(100vw-2rem,20rem)] border border-gray-500 bg-gray-800 p-4 text-gray-100 shadow-xl";
+  const installMenuItems = useMemo((): MenuItemType[] => {
+    const items: MenuItemType[] = [];
+    if (showDesktopAppMenu && desktopOs) {
+      items.push({
+        element: (
+          <div className="flex items-center gap-2 max-md:min-h-12">
+            <Icon svg={Smartphone} color="#d1d5dc" />
+            Install
+          </div>
+        ),
+        subItems: [
+          ...(canShowInstall
+            ? [
+              {
+                text: "Install app",
+                onClick: () => {
+                  void installPwa();
+                },
+              },
+            ]
+            : []),
+          {
+            text: getDesktopDownloadButtonLabel(desktopOs),
+            onClick: () => {
+              openInstallerDownload();
+              setDesktopInstallHelpDialogOpen(true);
+            },
+          },
+        ],
+      });
+    } else if (showMobileInstallButton) {
+      items.push({
+        element: (
+          <div className="flex items-center gap-2 max-md:min-h-12">
+            <Icon svg={Smartphone} color="#d1d5dc" />
+            Install
+          </div>
+        ),
+        onClick: () => {
+          if (canShowInstall) {
+            void installPwa();
+          } else {
+            setMobileInstallHelpDialogOpen(true);
+          }
+        },
+      });
+    }
+    return items;
+  }, [
+    canShowInstall,
+    desktopOs,
+    installPwa,
+    openInstallerDownload,
+    showDesktopAppMenu,
+    showMobileInstallButton,
+  ]);
 
   return (
     <main className="h-dvh overflow-y-auto bg-homepage-canvas text-white">
       <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col gap-4 px-4 pb-8">
         <div className="flex w-full items-center justify-between gap-4 border-b border-gray-700 py-3 text-lg">
           <div className="flex flex-wrap items-center gap-2">
-            {showDesktopAppMenu && desktopOs && (
-              <div className="relative inline-flex">
-                <Popover
-                  open={desktopAppMenuOpen}
-                  onOpenChange={handleDesktopInstallPopoverOpenChange}
-                  modal={false}
-                >
-                  <PopoverTrigger asChild>
-                    <Button
-                      component="button"
-                      variant="tertiary"
-                      className="flex items-center gap-2"
-                      svg={Smartphone}
-                      iconSize="md"
-                    >
-                      Install
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="start"
-                    side="bottom"
-                    sideOffset={8}
-                    className={popoverSurfaceClass}
-                    aria-label={
-                      desktopInstallPopoverView === "downloadHelp"
-                        ? getDesktopDownloadHelpAriaLabel(desktopOs)
-                        : undefined
-                    }
-                  >
-                    {desktopInstallPopoverView === "menu" ? (
-                      <>
-                        <p className="text-sm font-semibold text-white">
-                          Choose how to run WorshipSync
-                        </p>
-                        <p className="mt-1.5 text-sm text-gray-200">
-                          {getDesktopInstallMenuBody(desktopOs, canShowInstall)}
-                        </p>
-                        <div className="mt-3 flex flex-col gap-2">
-                          {canShowInstall && (
-                            <Button
-                              component="button"
-                              variant="tertiary"
-                              className="flex w-full items-center justify-center gap-2"
-                              svg={Smartphone}
-                              iconSize="md"
-                              onClick={handleInstallAppClick}
-                            >
-                              Install app
-                            </Button>
-                          )}
-                          <Button
-                            component="button"
-                            variant="tertiary"
-                            className="flex w-full items-center justify-center gap-2"
-                            svg={Download}
-                            iconSize="md"
-                            onClick={handleDownloadDesktopFromMenu}
-                          >
-                            {getDesktopDownloadButtonLabel(desktopOs)}
-                          </Button>
-                        </div>
-                      </>
-                    ) : (
-                      <DesktopDownloadHelp
-                        os={desktopOs}
-                        onTryAgain={handleDownloadInstallerClick}
-                      />
-                    )}
-                  </PopoverContent>
-                </Popover>
-              </div>
-            )}
-            {showMobileInstallButton && (
-              canShowInstall ? (
-                <Button
-                  component="button"
-                  variant="tertiary"
-                  className="flex items-center gap-2"
-                  svg={Smartphone}
-                  iconSize="md"
-                  onClick={() => {
-                    void installPwa();
-                  }}
-                >
-                  Install
-                </Button>
-              ) : (
-                <Popover
-                  open={mobileInstallHelpOpen}
-                  onOpenChange={setMobileInstallHelpOpen}
-                  modal={false}
-                >
-                  <PopoverTrigger asChild>
-                    <Button
-                      component="button"
-                      variant="tertiary"
-                      className="flex items-center gap-2"
-                      svg={Smartphone}
-                      iconSize="md"
-                    >
-                      Install
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="start"
-                    side="bottom"
-                    sideOffset={8}
-                    className={popoverSurfaceClass}
-                    aria-label="Mobile install instructions"
-                  >
-                    <p className="text-sm font-semibold text-white">
-                      Install WorshipSync
-                    </p>
-                    {isiOSWeb ? (
-                      <p className="mt-1.5 text-sm text-gray-200">
-                        On iPhone and iPad, open Safari&apos;s Share menu, then choose
-                        {" "}
-                        <span className="font-semibold text-white">Add to Home Screen</span>
-                        .
-                      </p>
-                    ) : (
-                      <p className="mt-1.5 text-sm text-gray-200">
-                        Open your browser menu and choose
-                        {" "}
-                        <span className="font-semibold text-white">Install app</span>
-                        {" "}
-                        or
-                        {" "}
-                        <span className="font-semibold text-white">Add to Home screen</span>
-                        .
-                      </p>
-                    )}
-                  </PopoverContent>
-                </Popover>
-              )
-            )}
+            <HomeToolbarMenu extraMenuItems={installMenuItems} />
           </div>
           <div className="flex flex-1 justify-end gap-4">
             {!isLoggedIn ? (
@@ -534,7 +469,17 @@ const Welcome = () => {
         {isAdmin && (
           <section className="mx-auto w-full max-w-5xl space-y-3 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
             <div className="space-y-2 text-center">
-              <h2 className="text-2xl font-semibold">Church administration</h2>
+              <h2 className="flex items-center justify-center gap-2 text-2xl font-semibold">
+                <span aria-hidden className="text-orange-400">
+                  <Icon
+                    svg={Building2}
+                    size="lg"
+                    className="text-orange-400"
+                    svgClassName="text-orange-400"
+                  />
+                </span>
+                Church administration
+              </h2>
               <p className="text-sm text-gray-200">
                 People, devices, pairing, recovery, trust, and branding for
                 this church.
@@ -551,7 +496,17 @@ const Welcome = () => {
 
         <section className="mx-auto w-full max-w-5xl space-y-4 rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
           <div className="space-y-2 text-center">
-            <h2 className="text-2xl font-semibold">Controllers</h2>
+            <h2 className="flex items-center justify-center gap-2 text-2xl font-semibold">
+              <span aria-hidden className="text-orange-400">
+                <Icon
+                  svg={LayoutDashboard}
+                  size="lg"
+                  className="text-orange-400"
+                  svgClassName="text-orange-400"
+                />
+              </span>
+              Controllers
+            </h2>
             <p className="text-sm text-gray-200">
               These are the pages most teams use during the service.
             </p>
@@ -582,7 +537,17 @@ const Welcome = () => {
             <summary className="cursor-pointer list-none">
               <div className="flex flex-col gap-2 text-left md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h2 className="text-2xl font-semibold">Display outputs</h2>
+                  <h2 className="flex flex-wrap items-center gap-2 text-2xl font-semibold">
+                    <span aria-hidden className="text-orange-400">
+                      <Icon
+                        svg={ScreenShare}
+                        size="lg"
+                        className="text-orange-400"
+                        svgClassName="text-orange-400"
+                      />
+                    </span>
+                    Display outputs
+                  </h2>
                   <p className="text-sm text-gray-200">
                     URLs for room screens or browser sources in streaming software.
                   </p>
@@ -613,7 +578,18 @@ const Welcome = () => {
             className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5"
             aria-labelledby="display-outputs-heading"
           >
-            <h2 id="display-outputs-heading" className="text-2xl font-semibold">
+            <h2
+              id="display-outputs-heading"
+              className="flex flex-wrap items-center gap-2 text-2xl font-semibold"
+            >
+              <span aria-hidden className="text-orange-400">
+                <Icon
+                  svg={ScreenShare}
+                  size="lg"
+                  className="text-orange-400"
+                  svgClassName="text-orange-400"
+                />
+              </span>
               Display outputs
             </h2>
             <p className="mt-1.5 text-sm text-gray-200">
@@ -627,6 +603,64 @@ const Welcome = () => {
           </section>
         ) : null}
       </div>
+
+      {desktopOs ? (
+        <Dialog
+          open={desktopInstallHelpDialogOpen}
+          onOpenChange={setDesktopInstallHelpDialogOpen}
+        >
+          <DialogContent
+            className="border-gray-600 bg-gray-800 text-gray-100"
+            aria-describedby={undefined}
+            aria-label={getDesktopDownloadHelpAriaLabel(desktopOs)}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-white">
+                {getDesktopDownloadHelpTitle(desktopOs)}
+              </DialogTitle>
+            </DialogHeader>
+            <DesktopDownloadHelp
+              os={desktopOs}
+              onTryAgain={handleDownloadInstallerClick}
+              showHeading={false}
+            />
+          </DialogContent>
+        </Dialog>
+      ) : null}
+
+      <Dialog
+        open={mobileInstallHelpDialogOpen}
+        onOpenChange={setMobileInstallHelpDialogOpen}
+      >
+        <DialogContent
+          className="border-gray-600 bg-gray-800 text-gray-100"
+          aria-describedby={undefined}
+          aria-label="Mobile install instructions"
+        >
+          <DialogHeader>
+            <DialogTitle className="text-white">Install WorshipSync</DialogTitle>
+          </DialogHeader>
+          {isiOSWeb ? (
+            <p className="text-sm text-gray-200">
+              On iPhone and iPad, open Safari&apos;s Share menu, then choose
+              {" "}
+              <span className="font-semibold text-white">Add to Home Screen</span>
+              .
+            </p>
+          ) : (
+            <p className="text-sm text-gray-200">
+              Open your browser menu and choose
+              {" "}
+              <span className="font-semibold text-white">Install app</span>
+              {" "}
+              or
+              {" "}
+              <span className="font-semibold text-white">Add to Home screen</span>
+              .
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
     </main>
   );
 };

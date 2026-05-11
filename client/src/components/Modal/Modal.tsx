@@ -79,6 +79,7 @@ const Modal = ({
         <DialogPrimitive.Content
           className={cn(
             "fixed left-1/2 top-1/2 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden border-0 bg-transparent p-0 shadow-none outline-none",
+            "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 duration-200",
             zIndexClass,
             sizeClasses[size],
             size === "full" &&

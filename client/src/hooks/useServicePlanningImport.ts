@@ -156,6 +156,22 @@ export const dedupeOutlineCandidatesForPreview = (
   });
 };
 
+export const getRepeatedOverlayDedupeKey = (
+  block: Pick<ServicePlanningMappedRow, "rule">,
+  candidate: Pick<OverlaySyncPlanItem, "patch">,
+): string | null => {
+  if (!block.rule.dedupeRepeatedOverlays) {
+    return null;
+  }
+
+  return [
+    block.rule.id,
+    candidate.patch.name ?? "",
+    candidate.patch.title ?? "",
+    candidate.patch.event ?? "",
+  ].join("::");
+};
+
 const isSyncableOutlineCandidate = (candidate: OutlineItemCandidate): boolean =>
   !candidate.outlineAlreadyPresent &&
   (
@@ -215,6 +231,7 @@ export const useServicePlanningImport = () => {
       const overlayCandidates = mapServicePlanningRows(allRows, sp);
       const previewOverlays = store.getState().undoable.present.overlays.list;
       const previewUsedOverlayIds = new Set<string>();
+      const repeatedOverlayKeys = new Set<string>();
       const overlayReadyByRow = new WeakMap<EventData, boolean>();
       const overlayPlan: OverlaySyncPlanItem[] = [];
 
@@ -223,6 +240,23 @@ export const useServicePlanningImport = () => {
         const sectionName = sectionNameByRow.get(block.source) ?? "";
         const sourceRowIndex = sectionRowIndexByRow.get(block.source) ?? -1;
         for (const candidate of block.candidates) {
+          const repeatedOverlayKey = getRepeatedOverlayDedupeKey(block, candidate);
+          if (repeatedOverlayKey && repeatedOverlayKeys.has(repeatedOverlayKey)) {
+            overlayPlan.push({
+              sectionName,
+              sourceRowIndex,
+              elementType: block.source.elementType,
+              title: block.source.title,
+              ledBy: block.source.ledBy,
+              personIndex: candidate.personIndex,
+              rawNameToken: candidate.rawNameToken,
+              action: "skip",
+              patch: { ...candidate.patch },
+              reason: "An identical overlay for this rule is already planned earlier in the service.",
+            });
+            continue;
+          }
+
           const target = findOverlayForServicePlanningCandidate(
             block.source.elementType,
             candidate.patch.event,
@@ -251,6 +285,9 @@ export const useServicePlanningImport = () => {
                 patch: { ...candidate.patch },
                 reason: `Overlay for "${candidate.patch.event || block.source.elementType}" is already up to date.`,
               });
+              if (repeatedOverlayKey) {
+                repeatedOverlayKeys.add(repeatedOverlayKey);
+              }
               continue;
             }
             overlayPlan.push({
@@ -267,6 +304,9 @@ export const useServicePlanningImport = () => {
               targetOverlayEvent: target.event || undefined,
               patch: changedPatch,
             });
+            if (repeatedOverlayKey) {
+              repeatedOverlayKeys.add(repeatedOverlayKey);
+            }
             continue;
           }
 
@@ -289,6 +329,9 @@ export const useServicePlanningImport = () => {
               targetOverlayEvent: template.event || undefined,
               patch: { ...candidate.patch },
             });
+            if (repeatedOverlayKey) {
+              repeatedOverlayKeys.add(repeatedOverlayKey);
+            }
             continue;
           }
 
@@ -304,6 +347,9 @@ export const useServicePlanningImport = () => {
             patch: { ...candidate.patch },
             reason: `Create overlay for "${candidate.patch.event || block.source.elementType}"`,
           });
+          if (repeatedOverlayKey) {
+            repeatedOverlayKeys.add(repeatedOverlayKey);
+          }
         }
 
         overlayReadyByRow.set(block.source, allCandidatesResolvable);

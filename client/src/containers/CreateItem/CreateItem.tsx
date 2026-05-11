@@ -25,10 +25,11 @@ import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
 import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { upsertItemInAllDocs } from "../../store/allDocsSlice";
-import { ItemState, ItemType, ServiceItem } from "../../types";
+import { ItemState, ItemType, ServiceItem, ShouldSendTo } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { addTimer } from "../../store/timersSlice";
 import { AccessType, GlobalInfoContext } from "../../context/globalInfo";
+import Toggle from "../../components/Toggle/Toggle";
 import { RootState } from "../../store/store";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import {
@@ -114,6 +115,11 @@ const CreateItem = () => {
   const [isImportingLyrics, setIsImportingLyrics] = useState(false);
   const [mobileSongTab, setMobileSongTab] =
     useState<MobileSongTab>("create");
+  const [shouldSendTo, setShouldSendTo] = useState<ShouldSendTo>({
+    projector: true,
+    monitor: true,
+    stream: true,
+  });
 
   const { db } = useContext(ControllerInfoContext) || {};
 
@@ -320,6 +326,7 @@ const CreateItem = () => {
         mediaInfo: defaultSongBackground.mediaInfo,
         brightness: defaultSongBackgroundBrightness,
         songMetadata,
+        shouldSendTo,
       });
 
       setJustCreated(true);
@@ -338,6 +345,7 @@ const CreateItem = () => {
         brightness: defaultFreeFormBackgroundBrightness,
         text,
         overflow: defaultFreeFormFontMode,
+        shouldSendTo,
       });
 
       setJustCreated(true);
@@ -365,6 +373,7 @@ const CreateItem = () => {
         background: defaultTimerBackground.background,
         mediaInfo: defaultTimerBackground.mediaInfo,
         brightness: defaultTimerBackgroundBrightness,
+        shouldSendTo,
       });
 
       setJustCreated(true);
@@ -697,6 +706,30 @@ const CreateItem = () => {
               </div>
             )}
 
+            <div className="mt-4 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2">
+              <p className="font-semibold text-nowrap text-sm">Sends to:</p>
+              <Toggle
+                label="Projector"
+                value={shouldSendTo.projector}
+                onChange={(val) =>
+                  setShouldSendTo((prev) => ({ ...prev, projector: val }))
+                }
+              />
+              <Toggle
+                label="Monitor"
+                value={shouldSendTo.monitor}
+                onChange={(val) =>
+                  setShouldSendTo((prev) => ({ ...prev, monitor: val }))
+                }
+              />
+              <Toggle
+                label="Stream"
+                value={shouldSendTo.stream}
+                onChange={(val) =>
+                  setShouldSendTo((prev) => ({ ...prev, stream: val }))
+                }
+              />
+            </div>
             <Button
               disabled={
                 !itemName ||
@@ -704,7 +737,7 @@ const CreateItem = () => {
                 justCreated
               }
               variant="cta"
-              className="mt-4 w-full shrink-0 justify-center text-base"
+              className="mt-3 w-full shrink-0 justify-center text-base"
               onClick={createItem}
               svg={justCreated ? Check : Plus}
               color={justCreated ? "#84cc16" : undefined}

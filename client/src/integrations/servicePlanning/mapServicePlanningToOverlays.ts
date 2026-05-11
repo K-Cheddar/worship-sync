@@ -6,6 +6,7 @@ import type {
   ServicePlanningMatchMode,
   ServicePlanningPerson,
 } from "../../types/integrations";
+import { cleanPlanningTitle } from "./cleanPlanningTitle";
 import { normalizeElementTypeForMatch } from "./normalizeElementForMatch";
 
 export type ServicePlanningFieldPatch = {
@@ -146,6 +147,20 @@ const chunkMergedText = (merged: string): string[] =>
     .map((s) => s.replace(/^co-host-/i, "").trim())
     .filter(Boolean);
 
+const stripLeadingRoleLabel = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  const rolePrefixMatch = trimmed.match(
+    /^([^;,&]+?)\s*[-:]\s+(.+(?:;|,|&|\sand\s).+)$/i,
+  );
+  if (!rolePrefixMatch) {
+    return trimmed;
+  }
+
+  return rolePrefixMatch[2].trim();
+};
+
 /**
  * Split each enabled column’s text into name tokens, then concatenate in column order.
  * Joining columns with a space before splitting (old `mergeColumns` + chunk) merged the last
@@ -225,9 +240,10 @@ const splitTokensForMulti = (
   merged: string,
   separators?: string[],
 ): string[] => {
-  if (!merged.trim()) return [];
+  const normalized = stripLeadingRoleLabel(merged);
+  if (!normalized.trim()) return [];
   const extra = separators?.length ? separators : [",", "&"];
-  let parts: string[] = [merged];
+  let parts: string[] = [normalized];
   for (const sep of extra) {
     parts = parts.flatMap((p) => p.split(sep));
   }
@@ -248,6 +264,7 @@ export const mapServicePlanningRows = (
     );
     if (!rule || !ruleAppliesToOverlaySync(rule)) continue;
 
+    const cleanedTitle = cleanPlanningTitle(row.title || row.elementType);
     const merged = mergeColumns(row, rule.nameSources);
     const personMatchChunks = tokensPerColumnThenFlatten(
       row,
@@ -277,6 +294,7 @@ export const mapServicePlanningRows = (
         names: namesJoined || merged,
         name: matchedPeople[0]?.displayName || namesJoined || merged,
         title: titlesJoined,
+        cleanedTitle,
         rawTitle: row.title,
         rawLedBy: row.ledBy,
         rawElementType: row.elementType,
@@ -328,6 +346,7 @@ export const mapServicePlanningRows = (
         names: person?.displayName || token,
         name: person?.displayName || token,
         title: person?.title || "",
+        cleanedTitle,
         rawTitle: row.title,
         rawLedBy: row.ledBy,
         rawElementType: row.elementType,

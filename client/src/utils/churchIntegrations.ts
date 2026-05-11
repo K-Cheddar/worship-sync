@@ -70,6 +70,8 @@ export const normalizeChurchIntegrations = (
                 : "contains",
               overlaySyncEnabled:
                 r.overlaySyncEnabled === false ? false : true,
+              dedupeRepeatedOverlays:
+                r.dedupeRepeatedOverlays === true ? true : false,
               displayName: String(r.displayName ?? ""),
               nameSources:
                 Array.isArray(r.nameSources) && r.nameSources.length > 0

@@ -487,6 +487,76 @@ describe("mapServicePlanningRows", () => {
     expect(mapped[0].candidates[2].patch.name).toMatch(/Gillian/i);
   });
 
+  it("split: strips a leading role label before semicolon-separated names", () => {
+    const row: EventData = {
+      elementType: "Sabbath School Lesson Study",
+      title: "Co-Host - Desmond Dunkley; Mya Watson; Bertie Hall",
+      ledBy: "",
+    };
+    const config: ChurchIntegrations["servicePlanning"] = {
+      enabled: true,
+      elementRules: [
+        {
+          id: "ss",
+          matchElementType: "Sabbath School Lesson Study",
+          matchMode: "contains",
+          displayName: "Sabbath School",
+          nameSources: ["title"],
+          multiOverlay: {
+            mode: "split",
+            splitSeparators: [";", ","],
+          },
+        },
+      ],
+      people: [
+        { id: "d", names: ["Desmond Dunkley"], displayName: "Desmond Dunkley" },
+        { id: "m", names: ["Mya Watson"], displayName: "Mya Watson" },
+        { id: "b", names: ["Bertie Hall"], displayName: "Bertie Hall" },
+      ],
+    };
+
+    const mapped = mapServicePlanningRows([row], config);
+
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].candidates).toHaveLength(3);
+    expect(mapped[0].candidates[0].patch.name).toBe("Desmond Dunkley");
+    expect(mapped[0].candidates[1].patch.name).toBe("Mya Watson");
+    expect(mapped[0].candidates[2].patch.name).toBe("Bertie Hall");
+  });
+
+  it("single mode: exposes cleanedTitle for templates", () => {
+    const row: EventData = {
+      elementType: "Song of Praise",
+      title: "Praise God (G)",
+      ledBy: "Desmond Dunkley",
+    };
+    const config: ChurchIntegrations["servicePlanning"] = {
+      enabled: true,
+      elementRules: [
+        {
+          id: "song",
+          matchElementType: "Song of Praise",
+          matchMode: "contains",
+          displayName: "Song",
+          nameSources: ["ledBy"],
+          multiOverlay: { mode: "single" },
+          fieldTemplates: {
+            name: "{{rawLedBy}}",
+            title: "{{cleanedTitle}}",
+          },
+        },
+      ],
+      people: [],
+    };
+
+    const mapped = mapServicePlanningRows([row], config);
+
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].candidates).toHaveLength(1);
+    expect(mapped[0].candidates[0].patch.name).toBe("Desmond Dunkley");
+    expect(mapped[0].candidates[0].patch.title).toBe("Praise God");
+  });
+
   it("split: blank display name uses match element type in event base and overflow", () => {
     const threeNameRow: EventData = {
       elementType: "Panel",

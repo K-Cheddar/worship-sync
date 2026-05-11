@@ -1,4 +1,7 @@
-import { ComponentPropsWithoutRef, ReactElement } from "react";
+import type {
+  ComponentPropsWithoutRef,
+  ReactElement,
+} from "react";
 import { Link } from "react-router-dom";
 import {
   DropdownMenu,
@@ -51,11 +54,17 @@ const Menu = ({
           ) => {
             const content = element || text;
 
-            const handleSelect = preventClose
-              ? (e: Event) => {
+            let handleItemSelect: ((e: Event) => void) | undefined;
+
+            if (preventClose) {
+              handleItemSelect = (e: Event) => {
                 e.preventDefault();
-              }
-              : undefined;
+              };
+            } else if (!to && onClick) {
+              handleItemSelect = () => {
+                onClick();
+              };
+            }
 
             if (subItems?.length) {
               return (
@@ -70,7 +79,9 @@ const Menu = ({
                     {subItems.map((sub, subIndex) => (
                       <DropdownMenuItem
                         key={subIndex}
-                        onClick={sub.onClick}
+                        onSelect={() => {
+                          sub.onClick?.();
+                        }}
                       >
                         {sub.text}
                       </DropdownMenuItem>
@@ -84,8 +95,7 @@ const Menu = ({
               <DropdownMenuItem
                 key={index}
                 className={className}
-                onClick={!to ? onClick : undefined}
-                onSelect={handleSelect}
+                onSelect={handleItemSelect}
                 asChild={to ? true : undefined}
                 variant={variant}
                 disabled={disabled}

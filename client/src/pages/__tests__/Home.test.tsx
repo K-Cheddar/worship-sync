@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Home from "../Home";
@@ -45,6 +45,16 @@ const mockIsMacBrowser = jest.mocked(isMacBrowser);
 const mockIsLinuxBrowser = jest.mocked(isLinuxBrowser);
 const originalUserAgent = window.navigator.userAgent;
 
+const openHomeHubMenu = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole("button", { name: /open menu/i }));
+};
+
+/** Radix submenu clicks are unreliable with user-event in JSDOM; use native click events. */
+const fireClickInstallSubmenuItem = (label: RegExp) => {
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Install$/i }));
+  fireEvent.click(screen.getByRole("menuitem", { name: label }));
+};
+
 const setUserAgent = (userAgent: string) => {
   Object.defineProperty(window.navigator, "userAgent", {
     configurable: true,
@@ -69,7 +79,7 @@ describe("Home", () => {
     const user = userEvent.setup();
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
           <ControllerInfoContext.Provider
             value={createMockControllerContext() as any}
@@ -115,10 +125,8 @@ describe("Home", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Advanced access/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /^Install$/i }));
-    await user.click(
-      screen.getByRole("button", { name: /Download Windows app/i }),
-    );
+    await openHomeHubMenu(user);
+    fireClickInstallSubmenuItem(/Download Windows app/i);
     expect(openSpy).toHaveBeenCalledWith(
       "https://github.com/K-Cheddar/worship-sync/releases/latest",
       "_blank",
@@ -140,7 +148,7 @@ describe("Home", () => {
     openSpy.mockRestore();
   });
 
-  it("uses one popover with install and download when both are available", async () => {
+  it("offers install app and desktop download from the menu when both are available", async () => {
     const user = userEvent.setup();
     const installPwa = jest.fn().mockResolvedValue(undefined);
     mockUsePwaInstallPrompt.mockReturnValue({
@@ -150,7 +158,7 @@ describe("Home", () => {
     });
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
           <ControllerInfoContext.Provider
             value={createMockControllerContext() as any}
@@ -161,18 +169,14 @@ describe("Home", () => {
       </MemoryRouter>,
     );
 
+    await openHomeHubMenu(user);
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Install$/i }));
     expect(
-      screen.queryByRole("button", { name: /Download Windows App/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Install$/i })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /^Install$/i }));
-    expect(
-      await screen.findByText(/Choose how to run WorshipSync/),
+      screen.getByRole("menuitem", { name: /^Install app$/i }),
     ).toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: /Download Windows app/i }),
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: /Download Windows app/i }),
     );
     expect(openSpy).toHaveBeenCalledWith(
       "https://github.com/K-Cheddar/worship-sync/releases/latest",
@@ -180,12 +184,13 @@ describe("Home", () => {
       "noopener,noreferrer",
     );
     expect(
-      screen.getByRole("dialog", { name: /windows download help/i }),
+      screen.getByRole("dialog", { name: /Download for Windows/i }),
     ).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button", { name: /^Install$/i }));
-    await user.click(screen.getByRole("button", { name: /^Install app$/i }));
+    await openHomeHubMenu(user);
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Install$/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Install app$/i }));
     expect(installPwa).toHaveBeenCalled();
 
     openSpy.mockRestore();
@@ -193,7 +198,7 @@ describe("Home", () => {
 
   it("hides board moderation when the user is not logged in", () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider
           value={createMockGlobalContext({ loginState: "guest" }) as any}
         >
@@ -216,7 +221,7 @@ describe("Home", () => {
 
   it("hides board moderation and display outputs for view access", () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider
           value={
             createMockGlobalContext({
@@ -251,7 +256,7 @@ describe("Home", () => {
 
   it("shows only presentation controller for music access", () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider
           value={
             createMockGlobalContext({
@@ -293,7 +298,7 @@ describe("Home", () => {
 
   it("hides display output links when the user is not logged in and explains why", () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider
           value={createMockGlobalContext({ loginState: "guest" }) as any}
         >
@@ -326,7 +331,7 @@ describe("Home", () => {
     const user = userEvent.setup();
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
           <ControllerInfoContext.Provider
             value={createMockControllerContext() as any}
@@ -337,10 +342,8 @@ describe("Home", () => {
       </MemoryRouter>,
     );
 
-    await user.click(screen.getByRole("button", { name: /^Install$/i }));
-    await user.click(
-      screen.getByRole("button", { name: /Download Mac app/i }),
-    );
+    await openHomeHubMenu(user);
+    fireClickInstallSubmenuItem(/Download Mac app/i);
     expect(openSpy).toHaveBeenCalledWith(
       "https://github.com/K-Cheddar/worship-sync/releases/latest",
       "_blank",
@@ -360,7 +363,7 @@ describe("Home", () => {
     const user = userEvent.setup();
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
           <ControllerInfoContext.Provider
             value={createMockControllerContext() as any}
@@ -371,10 +374,8 @@ describe("Home", () => {
       </MemoryRouter>,
     );
 
-    await user.click(screen.getByRole("button", { name: /^Install$/i }));
-    await user.click(
-      screen.getByRole("button", { name: /Download Linux app/i }),
-    );
+    await openHomeHubMenu(user);
+    fireClickInstallSubmenuItem(/Download Linux app/i);
     expect(openSpy).toHaveBeenCalledWith(
       "https://github.com/K-Cheddar/worship-sync/releases/latest",
       "_blank",
@@ -389,10 +390,11 @@ describe("Home", () => {
     setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile Safari/604.1");
     mockIsWindowsBrowser.mockReturnValue(false);
     mockIsMacBrowser.mockReturnValue(false);
+    mockIsLinuxBrowser.mockReturnValue(false);
     const user = userEvent.setup();
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
           <ControllerInfoContext.Provider
             value={createMockControllerContext() as any}
@@ -403,9 +405,10 @@ describe("Home", () => {
       </MemoryRouter>,
     );
 
-    await user.click(screen.getByRole("button", { name: /^Install$/i }));
+    await openHomeHubMenu(user);
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Install$/i }));
     expect(
-      await screen.findByRole("dialog", { name: /mobile install instructions/i }),
+      await screen.findByRole("dialog", { name: /Install WorshipSync/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/On iPhone and iPad, open Safari's Share menu/i),
@@ -429,7 +432,7 @@ describe("Home", () => {
     const user = userEvent.setup();
 
     const { rerender } = render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
           <ControllerInfoContext.Provider
             value={createMockControllerContext() as any}
@@ -440,10 +443,11 @@ describe("Home", () => {
       </MemoryRouter>,
     );
 
-    await user.click(screen.getByRole("button", { name: /^Install$/i }));
+    await openHomeHubMenu(user);
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Install$/i }));
     expect(installPwa).toHaveBeenCalled();
     rerender(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
           <ControllerInfoContext.Provider
             value={createMockControllerContext() as any}
@@ -454,11 +458,11 @@ describe("Home", () => {
       </MemoryRouter>,
     );
     expect(
-      screen.queryByRole("dialog", { name: /mobile install instructions/i }),
+      screen.queryByRole("dialog", { name: /Install WorshipSync/i }),
     ).not.toBeInTheDocument();
   });
 
-  it("hides install controls when already running as the installed PWA", () => {
+  it("hides install controls when already running as the installed PWA", async () => {
     mockUsePwaInstallPrompt.mockReturnValue({
       canShowInstall: false,
       installPwa: jest.fn(),
@@ -466,7 +470,7 @@ describe("Home", () => {
     });
 
     const providerTree = (
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
           <ControllerInfoContext.Provider
             value={createMockControllerContext() as any}
@@ -477,8 +481,12 @@ describe("Home", () => {
       </MemoryRouter>
     );
 
+    const user = userEvent.setup();
     const { unmount } = render(providerTree);
-    expect(screen.queryByRole("button", { name: /^Install$/i })).not.toBeInTheDocument();
+    await openHomeHubMenu(user);
+    expect(
+      screen.queryByRole("menuitem", { name: /^Install$/i }),
+    ).not.toBeInTheDocument();
     unmount();
 
     setUserAgent(
@@ -487,6 +495,9 @@ describe("Home", () => {
     mockIsWindowsBrowser.mockReturnValue(false);
     mockIsMacBrowser.mockReturnValue(false);
     render(providerTree);
-    expect(screen.queryByRole("button", { name: /^Install$/i })).not.toBeInTheDocument();
+    await openHomeHubMenu(user);
+    expect(
+      screen.queryByRole("menuitem", { name: /^Install$/i }),
+    ).not.toBeInTheDocument();
   });
 });

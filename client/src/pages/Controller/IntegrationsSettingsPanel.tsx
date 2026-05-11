@@ -252,6 +252,19 @@ const IntegrationsElementRuleCard = memo(function IntegrationsElementRuleCard({
                   })
                 }
               />
+              <Toggle
+                label="Skip repeated overlays"
+                value={Boolean(rule.dedupeRepeatedOverlays)}
+                onChange={(v) =>
+                  updateRule(rule.id, {
+                    dedupeRepeatedOverlays: v,
+                  })
+                }
+              />
+              <p className="text-xs text-gray-400">
+                When on, later rows that resolve to the same overlay name, title,
+                and event for this rule are skipped;
+              </p>
               {rule.multiOverlay.mode === "split" ? (
                 <div className="space-y-3">
                   <CommaSeparatedPillsInput
@@ -301,7 +314,7 @@ const IntegrationsElementRuleCard = memo(function IntegrationsElementRuleCard({
                     Placeholders:{" "}
                     <span className="font-mono text-gray-300">
                       {"{{name}}"}, {"{{names}}"}, {"{{title}}"},{" "}
-                      {"{{displayName}}"}, {"{{rawTitle}}"}, {"{{rawLedBy}}"}
+                      {"{{displayName}}"}, {"{{cleanedTitle}}"}, {"{{rawTitle}}"}, {"{{rawLedBy}}"}
                     </span>
                     . In split overlay mode,{" "}
                     <span className="font-mono text-gray-300">{"{{event}}"}</span>{" "}
@@ -715,6 +728,7 @@ export const IntegrationsSettingsPanel = ({
       matchElementType: "",
       matchMode: "contains",
       overlaySyncEnabled: true,
+      dedupeRepeatedOverlays: false,
       displayName: "",
       nameSources: [...DEFAULT_SERVICE_PLANNING_NAME_SOURCES],
       multiOverlay: { mode: "single" },

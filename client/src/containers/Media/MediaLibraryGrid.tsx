@@ -1,29 +1,16 @@
 import type { RefObject } from "react";
-import MediaLibraryFolderGridItems from "./MediaLibraryFolderGridItems";
-import MediaLibraryGridMediaTile from "./MediaLibraryGridMediaTile";
-import Spinner from "../../components/Spinner/Spinner";
+import { VirtualMediaGrid, type VirtualMediaGridHandle } from "./VirtualMediaGrid";
 import cn from "classnames";
 import type { MediaFolder, MediaType } from "../../types";
-
-const sizeMap: Map<number, string> = new Map([
-  [7, "grid-cols-7"],
-  [6, "grid-cols-6"],
-  [5, "grid-cols-5"],
-  [4, "grid-cols-4"],
-  [3, "grid-cols-3"],
-  [2, "grid-cols-2"],
-]);
 
 export type MediaLibraryGridProps = {
   isPanelVariant: boolean;
   isMediaExpanded: boolean;
   isMediaLoading: boolean;
   mediaItemsPerRow: number;
-  mediaListRef: RefObject<HTMLUListElement | null>;
+  mediaListRef: RefObject<HTMLElement | null>;
+  mediaGridRef: RefObject<VirtualMediaGridHandle | null>;
   filteredList: MediaType[];
-  /** Subset of `filteredList` mounted in the grid; grows while scrolling (see `useLoadMoreOnScroll`). */
-  visibleMediaItems: MediaType[];
-  isMediaGridFullyLoaded: boolean;
   showAll: boolean;
   showNamesInPanelGrid: boolean;
   searchTerm: string;
@@ -49,9 +36,8 @@ export default function MediaLibraryGrid({
   isMediaLoading,
   mediaItemsPerRow,
   mediaListRef,
+  mediaGridRef,
   filteredList,
-  visibleMediaItems,
-  isMediaGridFullyLoaded,
   showAll,
   showNamesInPanelGrid,
   searchTerm,
@@ -78,99 +64,59 @@ export default function MediaLibraryGrid({
           Loading media...
         </h3>
       )}
-      {!isMediaLoading &&
-        isMediaExpanded &&
-        (filteredList.length > 0 || !showAll) && (
-          <ul
-            ref={mediaListRef}
-            className={cn(
-              "scrollbar-variable grid content-start items-start overflow-y-auto p-4 bg-black/30 mx-2 gap-x-2 gap-y-1 z-10 rounded-b-md min-h-0",
-              isPanelVariant && "flex-1",
-              sizeMap.get(mediaItemsPerRow),
-            )}
-            style={{
-              gridAutoRows: "auto",
-            }}
-          >
-            <MediaLibraryFolderGridItems
-              active={!showAll}
-              childFolders={childFolders}
-              canGoUp={canGoUp}
-              currentFolderName={currentFolderName}
-              onGoUp={onGoUp}
-              onOpenFolder={onOpenFolder}
-            />
-            {visibleMediaItems.map((mediaItem, index) => {
-              const { id } = mediaItem;
-              const isSelected = id === selectedMedia.id;
-              const isMultiSelected = selectedMediaIds.has(id);
-
-              return (
-                <li key={id} data-media-id={id}>
-                  <MediaLibraryGridMediaTile
-                    mediaItem={mediaItem}
-                    index={index}
-                    isSelected={isSelected}
-                    isMultiSelected={isMultiSelected}
-                    mediaMultiSelectMode={mediaMultiSelectMode}
-                    onMediaTileClick={onMediaTileClick}
-                    onEnterMediaMultiSelectMode={onEnterMediaMultiSelectMode}
-                    showBottomName={
-                      Boolean(isMediaExpanded && mediaItem.name && showNamesInPanelGrid)
-                    }
-                  />
-                </li>
-              );
-            })}
-            {!isMediaGridFullyLoaded && filteredList.length > 0 && (
-              <li
-                className="col-span-full flex w-full items-center justify-center border-t border-white/10 bg-black/20 py-3"
-                role="status"
-                aria-live="polite"
-                aria-label="Loading more media"
-              >
-                <Spinner width="26px" borderWidth="3px" className="opacity-75" />
-              </li>
-            )}
-            {!showAll && searchTerm && filteredList.length === 0 && (
-              <li className="col-span-full py-1">
-                <p className="text-sm text-gray-400">
-                  No media found matching &quot;{searchTerm}&quot;
-                </p>
-              </li>
-            )}
-          </ul>
-        )}
-      {!isMediaLoading &&
-        isMediaExpanded &&
-        showAll &&
-        !searchTerm &&
-        filteredList.length === 0 && (
-          <div
-            className={cn(
-              "text-center py-8 bg-black/30 mx-2 px-2 rounded-b-md",
-              isPanelVariant && "flex-1 min-h-0",
-            )}
-          >
-            <p className="text-gray-400">No media in this view</p>
-          </div>
-        )}
-      {!isMediaLoading &&
-        isMediaExpanded &&
-        showAll &&
-        searchTerm &&
-        filteredList.length === 0 && (
-          <div
-            className={cn(
-              "text-center py-8 bg-black/30 mx-2 px-2",
-              isPanelVariant && "flex-1 min-h-0",
-            )}
-          >
-            <p className="text-gray-400">
-              No media found matching "{searchTerm}"
+      {!isMediaLoading && isMediaExpanded && (filteredList.length > 0 || !showAll) && (
+        <div
+          ref={mediaListRef as RefObject<HTMLDivElement>}
+          className={cn(
+            "scrollbar-variable overflow-y-auto bg-black/30 mx-2 z-10 rounded-b-md min-h-0",
+            isPanelVariant && "flex-1",
+          )}
+        >
+          <VirtualMediaGrid
+            ref={mediaGridRef}
+            scrollRef={mediaListRef}
+            mediaItems={filteredList}
+            cols={mediaItemsPerRow}
+            showFolders={!showAll}
+            childFolders={childFolders}
+            canGoUp={canGoUp}
+            currentFolderName={currentFolderName}
+            onGoUp={onGoUp}
+            onOpenFolder={onOpenFolder}
+            selectedMedia={selectedMedia}
+            selectedMediaIds={selectedMediaIds}
+            mediaMultiSelectMode={mediaMultiSelectMode}
+            onMediaTileClick={onMediaTileClick}
+            onEnterMediaMultiSelectMode={onEnterMediaMultiSelectMode}
+            showBottomName={isMediaExpanded && showNamesInPanelGrid}
+          />
+          {!showAll && searchTerm && filteredList.length === 0 && (
+            <p className="px-4 py-1 text-sm text-gray-400">
+              No media found matching &quot;{searchTerm}&quot;
             </p>
-          </div>
-        )}
+          )}
+        </div>
+      )}
+      {!isMediaLoading && isMediaExpanded && showAll && !searchTerm && filteredList.length === 0 && (
+        <div
+          className={cn(
+            "text-center py-8 bg-black/30 mx-2 px-2 rounded-b-md",
+            isPanelVariant && "flex-1 min-h-0",
+          )}
+        >
+          <p className="text-gray-400">No media in this view</p>
+        </div>
+      )}
+      {!isMediaLoading && isMediaExpanded && showAll && searchTerm && filteredList.length === 0 && (
+        <div
+          className={cn(
+            "text-center py-8 bg-black/30 mx-2 px-2",
+            isPanelVariant && "flex-1 min-h-0",
+          )}
+        >
+          <p className="text-gray-400">No media found matching &quot;{searchTerm}&quot;</p>
+        </div>
+      )}
     </>
   );
 }

@@ -25,7 +25,6 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
-import { useLoadMoreOnScroll } from "../../hooks/useLoadMoreOnScroll";
 import type { MediaFolder, MediaRouteKey, MediaType } from "../../types";
 import cn from "classnames";
 import { RootState } from "../../store/store";
@@ -45,8 +44,7 @@ import {
 } from "../../utils/mediaLibraryFolderOptions";
 import MediaLibraryToolbar from "./MediaLibraryToolbar";
 import { Slider } from "../../components/ui/Slider";
-import MediaLibraryFolderGridItems from "./MediaLibraryFolderGridItems";
-import MediaLibraryGridMediaTile from "./MediaLibraryGridMediaTile";
+import { VirtualMediaGrid } from "./VirtualMediaGrid";
 import MediaLibraryActionBar from "./MediaLibraryActionBar";
 import {
   MediaLibraryFolderModals,
@@ -63,21 +61,6 @@ import {
   MEDIA_LIBRARY_ORANGE_FOLDER_CLASS,
   MEDIA_LIBRARY_ORANGE_FOLDER_LUCIDE,
 } from "./mediaLibraryOrangeFolderIcon";
-import {
-  MEDIA_GRID_LOAD_THRESHOLD_PX,
-  MEDIA_GRID_PROGRESSIVE_BATCH,
-  MEDIA_GRID_PROGRESSIVE_INITIAL,
-} from "./mediaGridProgressiveLoad";
-import Spinner from "../../components/Spinner/Spinner";
-
-const sizeMap: Map<number, string> = new Map([
-  [7, "grid-cols-7"],
-  [6, "grid-cols-6"],
-  [5, "grid-cols-5"],
-  [4, "grid-cols-4"],
-  [3, "grid-cols-3"],
-  [2, "grid-cols-2"],
-]);
 
 type MediaModalGridZoomSliderProps = {
   modalZoomLevel: number;
@@ -288,7 +271,7 @@ const MediaModal = ({
 
   const [modalZoomLevel, setModalZoomLevel] = useState(0);
   const [modalLayoutBaseCols, setModalLayoutBaseCols] = useState(8);
-  const modalGridRef = useRef<HTMLUListElement>(null);
+  const modalGridRef = useRef<HTMLElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
   const calculatedGridCols = useMemo(() => {
@@ -300,67 +283,6 @@ const MediaModal = ({
   const modalZoomSliderMax = Math.max(0, modalLayoutBaseCols - 2);
 
   const filteredList = mediaList;
-
-  const modalGridProgressKey = `${String(selectedLibraryFilter)}|${searchTerm}|${typeFilter}`;
-  const [numShownModalItems, setNumShownModalItems] = useState(
-    MEDIA_GRID_PROGRESSIVE_INITIAL,
-  );
-
-  const modalFilteredLengthRef = useRef(filteredList.length);
-  modalFilteredLengthRef.current = filteredList.length;
-
-  useEffect(() => {
-    if (!isOpen) return;
-    setNumShownModalItems(
-      Math.min(
-        MEDIA_GRID_PROGRESSIVE_INITIAL,
-        modalFilteredLengthRef.current,
-      ),
-    );
-  }, [isOpen, modalGridProgressKey]);
-
-  const visibleModalMediaItems = useMemo(
-    () => filteredList.slice(0, numShownModalItems),
-    [filteredList, numShownModalItems],
-  );
-
-  const isModalMediaGridFullyLoaded =
-    filteredList.length <= numShownModalItems;
-
-  useEffect(() => {
-    if (!isOpen || isModalMediaGridFullyLoaded) return;
-
-    let handle: number;
-    const scheduleNext = () => {
-      handle = (window.requestIdleCallback ?? ((cb) => window.setTimeout(cb, 16)))(() => {
-        setNumShownModalItems((prev) => {
-          const next = Math.min(prev + MEDIA_GRID_PROGRESSIVE_BATCH, filteredList.length);
-          if (next < filteredList.length) scheduleNext();
-          return next;
-        });
-      });
-    };
-    scheduleNext();
-
-    return () => {
-      (window.cancelIdleCallback ?? window.clearTimeout)(handle);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, isModalMediaGridFullyLoaded, filteredList.length]);
-
-  useLoadMoreOnScroll({
-    scrollRef: modalGridRef,
-    enabled:
-      isOpen &&
-      !isModalMediaGridFullyLoaded &&
-      filteredList.length > 0,
-    totalAvailable: filteredList.length,
-    batchSize: MEDIA_GRID_PROGRESSIVE_BATCH,
-    setShownCount: setNumShownModalItems,
-    shownCount: numShownModalItems,
-    rescheduleKey: modalGridProgressKey,
-    thresholdPx: MEDIA_GRID_LOAD_THRESHOLD_PX,
-  });
 
   // Use shared selection hook for modal - independent from Media component
   const {
@@ -1149,68 +1071,36 @@ const MediaModal = ({
             onFolderDeleteOpenChange={setFolderDeleteOpen}
           />
 
-          {/* Media grid (folder tiles share the same scrollable grid) */}
+          {/* Media grid */}
           {filteredList.length !== 0 || !showAll ? (
-            <ul
-              ref={modalGridRef}
-              className={cn(
-                "scrollbar-variable grid min-h-0 flex-1 content-start items-start overflow-y-auto bg-black/30 p-4 gap-x-2 gap-y-1",
-                sizeMap.get(calculatedGridCols) || `grid-cols-${calculatedGridCols}`
-              )}
-              style={{
-                gridTemplateColumns: `repeat(${calculatedGridCols}, minmax(0, 1fr))`,
-                gridAutoRows: "auto",
-              }}
+            <div
+              ref={modalGridRef as React.RefObject<HTMLDivElement>}
+              className="scrollbar-variable overflow-y-auto min-h-0 flex-1 bg-black/30"
             >
-              <MediaLibraryFolderGridItems
-                active={!showAll}
+              <VirtualMediaGrid
+                scrollRef={modalGridRef}
+                mediaItems={filteredList}
+                cols={calculatedGridCols}
+                showFolders={!showAll}
                 childFolders={childFolders}
                 canGoUp={canGoUp}
                 currentFolderName={selectedRealFolder?.name}
                 onGoUp={handleGoUp}
-                onOpenFolder={(id) => navigateToFolder(id)}
+                onOpenFolder={navigateToFolder}
+                selectedMedia={modalSelectedMedia}
+                selectedMediaIds={modalSelectedMediaIds}
+                mediaMultiSelectMode={modalMediaMultiSelectMode}
+                onMediaTileClick={handleModalMediaClick}
+                onEnterMediaMultiSelectMode={enterModalMediaMultiSelectMode}
+                showBottomName={showName}
+                bottomNameClassName="text-sm font-medium text-gray-300"
               />
-              {visibleModalMediaItems.map((mediaItem, index) => {
-                const { id, name } = mediaItem;
-                const isSelected = id === modalSelectedMedia.id;
-                const isMultiSelected = modalSelectedMediaIds.has(id);
-
-                return (
-                  <li key={id}>
-                    <MediaLibraryGridMediaTile
-                      mediaItem={mediaItem}
-                      index={index}
-                      isSelected={isSelected}
-                      isMultiSelected={isMultiSelected}
-                      mediaMultiSelectMode={modalMediaMultiSelectMode}
-                      onMediaTileClick={handleModalMediaClick}
-                      onEnterMediaMultiSelectMode={enterModalMediaMultiSelectMode}
-                      showBottomName={Boolean(name && showName)}
-                      bottomNameClassName="text-sm font-medium text-gray-300"
-                    />
-                  </li>
-                );
-              })}
-              {!isModalMediaGridFullyLoaded && filteredList.length > 0 && (
-                <li
-                  className="col-span-full flex w-full items-center justify-center border-t border-white/10 bg-black/20 py-3"
-                  role="status"
-                  aria-live="polite"
-                  aria-label="Loading more media"
-                >
-                  <Spinner width="26px" borderWidth="3px" className="opacity-75" />
-                </li>
+              {!showAll && searchTerm && filteredList.length === 0 && (
+                <p className="px-4 py-1 text-sm text-gray-400">
+                  No media found matching &quot;{searchTerm}&quot;
+                </p>
               )}
-              {!showAll &&
-                searchTerm &&
-                filteredList.length === 0 && (
-                  <li className="col-span-full py-1">
-                    <p className="text-sm text-gray-400">
-                      No media found matching &quot;{searchTerm}&quot;
-                    </p>
-                  </li>
-                )}
-            </ul>
+            </div>
           ) : (
             <div className="flex flex-1 items-center justify-center bg-black/30 px-2 py-8 text-center">
               <p className="text-gray-400">

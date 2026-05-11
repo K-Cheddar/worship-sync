@@ -173,4 +173,46 @@ describe("createBibleItemFromParsedReference", () => {
       }),
     );
   });
+
+  it("uses the selected verse span for full-chapter names when no verse range is parsed", async () => {
+    mockedGetVersesApi.mockResolvedValue({
+      name: "91",
+      index: 90,
+      verses: [
+        { name: "1", index: 0, text: "Verse 1" },
+        { name: "13", index: 12, text: "Verse 13" },
+      ],
+    });
+    mockedCreateNewBible.mockResolvedValue({
+      _id: "psalms-91",
+      name: "Psalms 91:1 - 13 NIV",
+      type: "bible",
+      background: "#000",
+    } as any);
+
+    await createBibleItemFromParsedReference({
+      parsedRef: {
+        book: "Psalms",
+        chapter: "91",
+        verseRange: "",
+        version: "NIV",
+      },
+      db: undefined,
+      bibleDb: undefined,
+      allItems: [],
+      background: "#000",
+      brightness: 60,
+      fontMode: "separate",
+    });
+
+    expect(mockedCreateNewBible).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Psalms 91:1 - 13 NIV",
+        verses: [
+          { name: "1", index: 0, text: "Verse 1" },
+          { name: "13", index: 12, text: "Verse 13" },
+        ],
+      }),
+    );
+  });
 });

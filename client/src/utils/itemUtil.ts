@@ -19,6 +19,7 @@ import {
   ItemListDetails,
   DBOverlay,
   SongMetadata,
+  ShouldSendTo,
 } from "../types";
 import generateRandomId from "./generateRandomId";
 import { applyPouchAudit } from "./pouchAudit";
@@ -183,6 +184,7 @@ type CreateNewSongType = {
   mediaInfo?: MediaType;
   brightness: number;
   songMetadata?: SongMetadata | null;
+  shouldSendTo?: ShouldSendTo;
 };
 
 export const createNewSong = async ({
@@ -195,6 +197,7 @@ export const createNewSong = async ({
   mediaInfo,
   brightness,
   songMetadata,
+  shouldSendTo,
 }: CreateNewSongType): Promise<ItemState> => {
   const arrangements: Arrangment[] = [
     {
@@ -239,11 +242,7 @@ export const createNewSong = async ({
     slides: [],
     shouldSkipTitle: false,
     arrangements,
-    shouldSendTo: {
-      projector: true,
-      monitor: true,
-      stream: true,
-    },
+    shouldSendTo: shouldSendTo ?? { projector: true, monitor: true, stream: true },
     songMetadata: songMetadata || undefined,
   };
 
@@ -564,6 +563,7 @@ type CreateNewFreeFormType = {
   overflow?: OverflowMode;
   /** When true, first slide body stays empty (no `text || name` fallback). */
   emptyBodyText?: boolean;
+  shouldSendTo?: ShouldSendTo;
 };
 
 export const createNewFreeForm = async ({
@@ -576,6 +576,7 @@ export const createNewFreeForm = async ({
   brightness,
   overflow = "fit",
   emptyBodyText = false,
+  shouldSendTo,
 }: CreateNewFreeFormType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
   const bodyWords: [string, string] = emptyBodyText
@@ -603,11 +604,7 @@ export const createNewFreeForm = async ({
       }),
     ],
     arrangements: [],
-    shouldSendTo: {
-      projector: true,
-      monitor: true,
-      stream: true,
-    },
+    shouldSendTo: shouldSendTo ?? { projector: true, monitor: true, stream: true },
   };
 
   const formattedItem = formatFree(newItem);
@@ -628,6 +625,7 @@ type CreateNewTimerType = {
   background: string;
   mediaInfo?: MediaType;
   brightness: number;
+  shouldSendTo?: ShouldSendTo;
 };
 
 export const createNewTimer = async ({
@@ -641,6 +639,7 @@ export const createNewTimer = async ({
   background,
   mediaInfo,
   brightness,
+  shouldSendTo,
 }: CreateNewTimerType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
 
@@ -700,11 +699,7 @@ export const createNewTimer = async ({
       showMinutesOnly: false,
       color: defaultTimerColor,
     },
-    shouldSendTo: {
-      projector: false,
-      monitor: true,
-      stream: false,
-    },
+    shouldSendTo: shouldSendTo ?? { projector: false, monitor: true, stream: false },
   };
 
   const item = await createNewItemInDb({ item: newItem, db });

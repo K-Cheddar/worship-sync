@@ -10,7 +10,7 @@ import type {
   verseType,
 } from "../types";
 import { bibleStructure } from "./bibleStructure";
-import { createNewBible } from "./itemUtil";
+import { createNewBible, getBibleItemName } from "./itemUtil";
 
 type PouchLike = Pick<PouchDB.Database, "get" | "put">;
 
@@ -207,7 +207,9 @@ export const createBibleItemFromParsedReference = async ({
   }
 
   return createNewBible({
-    name: name?.trim() || getBibleImportDisplayName(parsedRef, version),
+    name:
+      name?.trim() ||
+      getBibleItemName(canonicalBook, parsedRef.chapter, verses, version),
     book: canonicalBook,
     chapter: parsedRef.chapter,
     version,

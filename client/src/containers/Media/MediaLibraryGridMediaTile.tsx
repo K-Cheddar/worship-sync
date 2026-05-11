@@ -45,9 +45,7 @@ export default function MediaLibraryGridMediaTile({
     ? name.split("/").slice(1).join("/")
     : name;
 
-  const longPressTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(
-    null,
-  );
+  const longPressTimerRef = useRef<number | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
 
   const clearLongPressTimer = () => {

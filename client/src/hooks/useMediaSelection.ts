@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { MediaType } from "../types";
 
 const emptyMedia: MediaType = {
@@ -77,19 +77,25 @@ export const useMediaSelection = ({
     null,
   );
 
+  const mediaListById = useMemo(() => {
+    const map = new Map<string, MediaType>();
+    for (const item of mediaList) map.set(item.id, item);
+    return map;
+  }, [mediaList]);
+
   // Replace stale object references when the library updates (e.g. rename in Redux).
   useEffect(() => {
     setSelectedMedia((prev) => {
       if (!prev.id || !selectedMediaIds.has(prev.id)) return prev;
-      const fresh = mediaList.find((item) => item.id === prev.id);
+      const fresh = mediaListById.get(prev.id);
       return fresh && fresh !== prev ? fresh : prev;
     });
     setPreviewMedia((prev) => {
       if (!prev || !selectedMediaIds.has(prev.id)) return prev;
-      const fresh = mediaList.find((item) => item.id === prev.id);
+      const fresh = mediaListById.get(prev.id);
       return fresh && fresh !== prev ? fresh : prev;
     });
-  }, [mediaList, selectedMediaIds]);
+  }, [mediaListById, selectedMediaIds]);
 
   const enterMediaMultiSelectMode = useCallback(
     (
