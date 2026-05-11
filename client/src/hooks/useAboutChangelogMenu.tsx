@@ -6,11 +6,11 @@ import AboutModal from "../components/AboutModal/AboutModal";
 import type { MenuItemType } from "../types";
 import { useElectronWindows } from "./useElectronWindows";
 
-export function useAboutChangelogMenu(): {
+export const useAboutChangelogMenu = (): {
   aboutChangelogMenuItems: MenuItemType[];
   aboutChangelogModals: ReactNode;
   updateReadyVersion: string;
-} {
+} => {
   const { isElectron } = useElectronWindows();
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
@@ -98,4 +98,4 @@ export function useAboutChangelogMenu(): {
     aboutChangelogModals,
     updateReadyVersion,
   };
-}
+};

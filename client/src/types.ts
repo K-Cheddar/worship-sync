@@ -31,7 +31,7 @@ export type MenuSubItemType = {
 
 export type MenuItemType = {
   text?: string;
-  onClick?: React.MouseEventHandler;
+  onClick?: () => void;
   to?: string;
   element?: React.ReactNode;
   className?: string;

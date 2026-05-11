@@ -1,6 +1,5 @@
 import type {
   ComponentPropsWithoutRef,
-  MouseEvent,
   ReactElement,
 } from "react";
 import { Link } from "react-router-dom";
@@ -55,16 +54,17 @@ const Menu = ({
           ) => {
             const content = element || text;
 
-            const handleItemSelect =
-              preventClose
-                ? (e: Event) => {
-                  e.preventDefault();
-                }
-                : !to && onClick
-                  ? () => {
-                    onClick({} as MouseEvent<HTMLDivElement>);
-                  }
-                  : undefined;
+            let handleItemSelect: ((e: Event) => void) | undefined;
+
+            if (preventClose) {
+              handleItemSelect = (e: Event) => {
+                e.preventDefault();
+              };
+            } else if (!to && onClick) {
+              handleItemSelect = () => {
+                onClick();
+              };
+            }
 
             if (subItems?.length) {
               return (

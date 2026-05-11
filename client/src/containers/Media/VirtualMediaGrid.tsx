@@ -56,7 +56,7 @@ export type VirtualMediaGridProps = {
 };
 
 export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaGridProps>(
-  function VirtualMediaGrid(
+  (
     {
       scrollRef,
       mediaItems,
@@ -77,7 +77,7 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
       imageContainerClassName,
     },
     ref,
-  ) {
+  ) => {
     // Start with a fallback height. The first time a tile row renders and is
     // measured, we update this to the real height and call virtualizer.measure()
     // to flush the stale estimates. This avoids relying on a ResizeObserver to
@@ -160,7 +160,7 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     );
 
     return (
-      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+      <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const row = rows[virtualRow.index];
           if (!row) return null;
@@ -182,11 +182,8 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
                   }
                 }
               }}
+              className="absolute left-0 top-0 w-full"
               style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
@@ -257,3 +254,5 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
     );
   },
 );
+
+VirtualMediaGrid.displayName = "VirtualMediaGrid";
