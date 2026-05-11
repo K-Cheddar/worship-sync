@@ -301,7 +301,7 @@ const IntegrationsElementRuleCard = memo(function IntegrationsElementRuleCard({
                     Placeholders:{" "}
                     <span className="font-mono text-gray-300">
                       {"{{name}}"}, {"{{names}}"}, {"{{title}}"},{" "}
-                      {"{{displayName}}"}, {"{{rawTitle}}"}, {"{{rawLedBy}}"}
+                      {"{{displayName}}"}, {"{{cleanedTitle}}"}, {"{{rawTitle}}"}, {"{{rawLedBy}}"}
                     </span>
                     . In split overlay mode,{" "}
                     <span className="font-mono text-gray-300">{"{{event}}"}</span>{" "}

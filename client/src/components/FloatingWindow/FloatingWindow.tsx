@@ -556,15 +556,15 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
         {!isMinimized && (
           <>
             {/* Edges */}
-            <div data-resize-dir="n" className="absolute top-0 left-4 right-4 h-1 cursor-ns-resize coarse:h-4" {...resizeHandleProps} />
-            <div data-resize-dir="s" className="absolute bottom-0 left-4 right-4 h-1 cursor-ns-resize coarse:h-4" {...resizeHandleProps} />
-            <div data-resize-dir="w" className="absolute left-0 top-4 bottom-4 w-1 cursor-ew-resize coarse:w-4" {...resizeHandleProps} />
-            <div data-resize-dir="e" className="absolute right-0 top-4 bottom-4 w-1 cursor-ew-resize coarse:w-4" {...resizeHandleProps} />
+            <div data-resize-dir="n" className="absolute top-0 left-12 right-12 h-1 cursor-ns-resize pointer-coarse:h-6" {...resizeHandleProps} />
+            <div data-resize-dir="s" className="absolute bottom-0 left-12 right-12 h-1 cursor-ns-resize pointer-coarse:h-6" {...resizeHandleProps} />
+            <div data-resize-dir="w" className="absolute left-0 top-12 bottom-12 w-1 cursor-ew-resize pointer-coarse:w-6" {...resizeHandleProps} />
+            <div data-resize-dir="e" className="absolute right-0 top-12 bottom-12 w-1 cursor-ew-resize pointer-coarse:w-6" {...resizeHandleProps} />
             {/* Corners */}
-            <div data-resize-dir="nw" className="absolute top-0 left-0 h-4 w-4 cursor-nwse-resize coarse:h-10 coarse:w-10" {...resizeHandleProps} />
-            <div data-resize-dir="ne" className="absolute top-0 right-0 h-4 w-4 cursor-nesw-resize coarse:h-10 coarse:w-10" {...resizeHandleProps} />
-            <div data-resize-dir="sw" className="absolute bottom-0 left-0 h-4 w-4 cursor-nesw-resize coarse:h-10 coarse:w-10" {...resizeHandleProps} />
-            <div data-resize-dir="se" className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize coarse:h-10 coarse:w-10" {...resizeHandleProps} />
+            <div data-resize-dir="nw" className="absolute top-0 left-0 h-3 w-3 cursor-nwse-resize pointer-coarse:h-12 pointer-coarse:w-12" {...resizeHandleProps} />
+            <div data-resize-dir="ne" className="absolute top-0 right-0 h-3 w-3 cursor-nesw-resize pointer-coarse:h-12 pointer-coarse:w-12" {...resizeHandleProps} />
+            <div data-resize-dir="sw" className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize pointer-coarse:h-12 pointer-coarse:w-12" {...resizeHandleProps} />
+            <div data-resize-dir="se" className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize pointer-coarse:h-12 pointer-coarse:w-12" {...resizeHandleProps} />
           </>
         )}
       </div>

@@ -5,21 +5,18 @@ import {
   ArrowLeft,
   CircleAlert,
   Home,
-  Info,
   Menu as MenuIcon,
   Monitor,
   SquarePen,
   Presentation,
-  ScrollText,
   RotateCcw,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import Icon from "../../../components/Icon/Icon";
 import { MenuItemType } from "../../../types";
-import ChangelogModal from "../../../components/ChangelogModal/ChangelogModal";
-import AboutModal from "../../../components/AboutModal/AboutModal";
 import { useState, useEffect, useContext } from "react";
+import { useAboutChangelogMenu } from "../../../hooks/useAboutChangelogMenu";
 import { useElectronWindows } from "../../../hooks/useElectronWindows";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { getDisplayLabel } from "../../../utils/displayUtils";
@@ -34,9 +31,11 @@ const ToolbarMenu = ({
 }) => {
   const { access, loginState, exitGuestMode } = useContext(GlobalInfoContext) || {};
   const isGuest = loginState === "guest";
-  const [isChangelogOpen, setIsChangelogOpen] = useState(false);
-  const [isAboutOpen, setIsAboutOpen] = useState(false);
-  const [updateReadyVersion, setUpdateReadyVersion] = useState("");
+  const {
+    aboutChangelogMenuItems,
+    aboutChangelogModals,
+    updateReadyVersion,
+  } = useAboutChangelogMenu();
   const [zoomLevel, setZoomLevel] = useState(100);
   const zoomStep = 10;
   const zoomMin = 50;
@@ -79,39 +78,6 @@ const ToolbarMenu = ({
       document.documentElement.style.fontSize = `${baseFontSize}%`;
     };
   }, [zoomLevel]);
-
-  useEffect(() => {
-    if (!isElectron || !window.electronAPI?.onUpdateDownloaded) {
-      return;
-    }
-
-    let cancelled = false;
-    let unsubscribe: (() => void) | undefined;
-
-    void window.electronAPI
-      .getDesktopUpdateCapabilities?.()
-      .then((caps) => {
-        if (cancelled || !caps?.autoUpdate) {
-          return;
-        }
-        unsubscribe = window.electronAPI?.onUpdateDownloaded?.((info) => {
-          setUpdateReadyVersion(info.version);
-        });
-      })
-      .catch(() => {
-        if (cancelled) {
-          return;
-        }
-        unsubscribe = window.electronAPI?.onUpdateDownloaded?.((info) => {
-          setUpdateReadyVersion(info.version);
-        });
-      });
-
-    return () => {
-      cancelled = true;
-      unsubscribe?.();
-    };
-  }, [isElectron]);
 
   const setZoomWithinBounds = (nextZoom: number) => {
     setZoomLevel(Math.min(zoomMax, Math.max(zoomMin, nextZoom)));
@@ -272,27 +238,7 @@ const ToolbarMenu = ({
         },
       ]),
 
-    {
-      element: (
-        <div className="flex items-center gap-2 max-md:min-h-12">
-          <Icon svg={ScrollText} color="#d1d5dc" />
-          Changelog
-        </div>
-      ),
-      onClick: () => setIsChangelogOpen(true),
-    },
-    {
-      element: (
-        <div className="flex items-center gap-2 max-md:min-h-12">
-          <Icon svg={Info} color="#d1d5dc" />
-          About
-          {updateReadyVersion ? (
-            <Icon svg={CircleAlert} color="#f59e0b" size="sm" />
-          ) : null}
-        </div>
-      ),
-      onClick: () => setIsAboutOpen(true),
-    },
+    ...aboutChangelogMenuItems,
     {
       element: (
         <div className="flex flex-col gap-2 w-full py-1.5 px-2 min-w-52">
@@ -371,15 +317,7 @@ const ToolbarMenu = ({
           </Button>
         }
       />
-      <ChangelogModal
-        isOpen={isChangelogOpen}
-        onClose={() => setIsChangelogOpen(false)}
-      />
-      <AboutModal
-        isOpen={isAboutOpen}
-        onClose={() => setIsAboutOpen(false)}
-        updateReadyVersion={updateReadyVersion}
-      />
+      {aboutChangelogModals}
     </>
   );
 };

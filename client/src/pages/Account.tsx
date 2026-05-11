@@ -1,7 +1,8 @@
 import type { CSSProperties } from "react";
 import { useContext, useMemo } from "react";
-import { House, LogIn } from "lucide-react";
+import { LogIn } from "lucide-react";
 import Button from "../components/Button/Button";
+import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
@@ -35,15 +36,7 @@ const AccountPage = () => {
       <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col px-4 pb-6">
         <div className="grid w-full shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-gray-700 py-3 text-lg">
           <div className="flex flex-wrap items-center gap-2 justify-self-start">
-            <Button
-              component="link"
-              variant="tertiary"
-              svg={House}
-              iconSize="sm"
-              to="/"
-            >
-              Home
-            </Button>
+            <HomeToolbarMenu />
           </div>
           <div className="flex max-w-[min(22rem,calc(100vw-6rem))] justify-center justify-self-center px-1 sm:max-w-[min(26rem,calc(100vw-10rem))]">
             {toolbarLogoUrl ? (

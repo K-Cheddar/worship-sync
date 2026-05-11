@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import cn from "classnames";
 import {
+  CircleAlert,
   Copy,
   Home,
   Eye,
@@ -21,6 +22,7 @@ import {
 } from "lucide-react";
 import PouchDB from "pouchdb-browser";
 import Button from "../components/Button/Button";
+import Icon from "../components/Icon/Icon";
 import Select from "../components/Select/Select";
 import Menu from "../components/Menu/Menu";
 import DeleteModal from "../components/Modal/DeleteModal";
@@ -83,6 +85,7 @@ import {
 import type { WindowType } from "../types/electron";
 import { getDisplayLabel } from "../utils/displayUtils";
 import { isElectronDisplayWindowOpen } from "../utils/isElectronDisplayWindowOpen";
+import { useAboutChangelogMenu } from "../hooks/useAboutChangelogMenu";
 
 const BOARD_COPY_LINK_ICON_COLOR = "#22d3ee";
 
@@ -292,6 +295,11 @@ const BoardControllerMenu = ({
   prepareBoardDisplay: () => void;
 }) => {
   const {
+    aboutChangelogMenuItems,
+    aboutChangelogModals,
+    updateReadyVersion,
+  } = useAboutChangelogMenu();
+  const {
     isElectron,
     displays,
     windowStates,
@@ -406,24 +414,31 @@ const BoardControllerMenu = ({
         ),
         disabled: true,
       },
+    ...aboutChangelogMenuItems,
   ];
 
   return (
-    <Menu
-      menuItems={menuItems}
-      align="start"
-      TriggeringButton={
-        <Button
-          variant="tertiary"
-          className="w-fit"
-          aria-label="Open menu"
-          svg={MenuIcon}
-          gap="gap-1.5"
-        >
-          Menu
-        </Button>
-      }
-    />
+    <>
+      <Menu
+        menuItems={menuItems}
+        align="start"
+        TriggeringButton={
+          <Button
+            variant="tertiary"
+            className="w-fit"
+            aria-label="Open menu"
+            svg={MenuIcon}
+            gap="gap-1.5"
+          >
+            Menu
+            {updateReadyVersion ? (
+              <Icon svg={CircleAlert} color="#f59e0b" size="sm" />
+            ) : null}
+          </Button>
+        }
+      />
+      {aboutChangelogModals}
+    </>
   );
 };
 

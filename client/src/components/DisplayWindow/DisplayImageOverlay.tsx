@@ -68,7 +68,7 @@ const DisplayImageOverlay = forwardRef<
         probe.onload = null;
         probe.onerror = null;
       };
-    }, [imageOverlayInfo.imageUrl]);
+    }, [imageOverlayInfo.imageUrl, imageOverlayInfo.id, imageOverlayInfo.time]);
 
     useGSAP(
       () => {

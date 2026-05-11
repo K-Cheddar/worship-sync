@@ -14,6 +14,7 @@ import { default as CreditsEditorContainer } from "../../containers/Credits/Cred
 import {
   ArrowLeft,
   Check,
+  CircleAlert,
   History,
   Home,
   Layers,
@@ -96,6 +97,7 @@ import { useGenerateCreditsFromOverlays } from "../../hooks/useGenerateCreditsFr
 import { setOverlayCreditsSettingsDrawerOpen } from "../../store/preferencesSlice";
 import { setServicePlanningFloatingWindowDismissed, setServicePlanningServiceOutline } from "../../store/servicePlanningImportSlice";
 import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSyncFloatingWindow";
+import { useAboutChangelogMenu } from "../../hooks/useAboutChangelogMenu";
 
 const cleanForRtdb = (obj: object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
@@ -109,6 +111,11 @@ const CreditsEditor = ({
   embeddedInOverlayController = false,
 }: CreditsEditorProps) => {
   const navigate = useNavigate();
+  const {
+    aboutChangelogMenuItems,
+    aboutChangelogModals,
+    updateReadyVersion,
+  } = useAboutChangelogMenu();
   const { list, isInitialized: creditsInitialized, isLoading: creditsLoading } =
     useSelector((state) => state.undoable.present.credits);
   /** Which outline's credits we edit (Outlines dropdown updates `selectedList`). */
@@ -659,6 +666,7 @@ const CreditsEditor = ({
         ),
         to: "/overlay-controller",
       },
+      ...aboutChangelogMenuItems,
       ...(canEditCredits
         ? [
           {
@@ -682,7 +690,7 @@ const CreditsEditor = ({
         ]
         : []),
     ],
-    [handleBack, navigate, canEditCredits]
+    [aboutChangelogMenuItems, handleBack, navigate, canEditCredits]
   );
 
   const mobileEditorPreviewTabs = (
@@ -716,34 +724,37 @@ const CreditsEditor = ({
         <div className="min-h-0">
           <div className="flex w-full flex-col gap-2 bg-gray-800 px-4 py-2 md:flex-row md:items-center md:gap-2 md:py-1">
             <div className="flex w-full min-w-0 items-center gap-2">
-            <Menu
-              menuItems={creditsMenuItems}
-              align="start"
-              TriggeringButton={
-                <Button
-                  variant="tertiary"
-                  className="w-fit"
-                  aria-label="Open menu"
-                  svg={MenuIcon}
-                  gap="gap-1.5"
-                >
-                  Menu
-                </Button>
-              }
-            />
-            {canEditCredits && (
-              <div className="border-l-2 border-gray-400 pl-4">
-                <Undo />
+              <Menu
+                menuItems={creditsMenuItems}
+                align="start"
+                TriggeringButton={
+                  <Button
+                    variant="tertiary"
+                    className="w-fit"
+                    aria-label="Open menu"
+                    svg={MenuIcon}
+                    gap="gap-1.5"
+                  >
+                    Menu
+                    {updateReadyVersion ? (
+                      <Icon svg={CircleAlert} color="#f59e0b" size="sm" />
+                    ) : null}
+                  </Button>
+                }
+              />
+              {canEditCredits && (
+                <div className="border-l-2 border-gray-400 pl-4">
+                  <Undo />
+                </div>
+              )}
+              <div className="hidden min-w-0 flex-1 items-center gap-2 border-l-2 border-gray-400 pl-4 md:flex">
+                <Outlines className="min-w-0 shrink" />
+                {/* Action bar with overflow */}
+                <ActionBar items={actionBarItemDefs} className="min-w-0 flex-1" gap={8} overflowMenuClassName="min-w-48" />
               </div>
-            )}
-            <div className="hidden min-w-0 flex-1 items-center gap-2 border-l-2 border-gray-400 pl-4 md:flex">
-              <Outlines className="min-w-0 shrink" />
-              {/* Action bar with overflow */}
-              <ActionBar items={actionBarItemDefs} className="min-w-0 flex-1" gap={8} overflowMenuClassName="min-w-48" />
-            </div>
-            <div className="ml-auto shrink-0">
-              <UserSection />
-            </div>
+              <div className="ml-auto shrink-0">
+                <UserSection />
+              </div>
             </div>
             {/* Mobile-only row: Outlines + buttons with overflow */}
             <div className="flex w-full min-w-0 items-center gap-2 border-t border-gray-600 pt-2 md:hidden">
@@ -838,6 +849,7 @@ const CreditsEditor = ({
       {!embeddedInOverlayController && hasServicePlanningImportSlice && (
         <ServicePlanningSyncFloatingWindow hideOutlineActions />
       )}
+      {!embeddedInOverlayController && aboutChangelogModals}
     </div>
   );
 };

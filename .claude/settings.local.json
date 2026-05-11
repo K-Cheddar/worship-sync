@@ -9,7 +9,10 @@
       "Bash(npx eslint *)",
       "Bash(grep -E \"\\\\.\\(tsx|ts\\)$\")",
       "Bash(npm test *)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\KPC\\\\Desktop\\\\github\\\\worship-sync\\\\client\\\\src\" -Recurse -Filter \"*.tsx\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(npm install *)"
     ]
   }
 }

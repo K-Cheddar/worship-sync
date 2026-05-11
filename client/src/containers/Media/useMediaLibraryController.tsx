@@ -1,5 +1,4 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { Folder } from "lucide-react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
@@ -68,15 +67,10 @@ import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
 import { alertMediaLibraryFlushFailed } from "./mediaLibraryFlushAlerts";
 import { fill } from "@cloudinary/url-gen/actions/resize";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
-import { useLoadMoreOnScroll } from "../../hooks/useLoadMoreOnScroll";
 import { ActionCreators } from "redux-undo";
 import { useToast } from "../../context/toastContext";
 import type { ToastVariant } from "../../components/Toast/Toast";
-import {
-  MEDIA_GRID_LOAD_THRESHOLD_PX,
-  MEDIA_GRID_PROGRESSIVE_BATCH,
-  MEDIA_GRID_PROGRESSIVE_INITIAL,
-} from "./mediaGridProgressiveLoad";
+import { type VirtualMediaGridHandle } from "./VirtualMediaGrid";
 
 export type MediaLibraryPageMode = "default" | "overlayController";
 export type MediaLibraryVariant = "default" | "panel";
@@ -207,7 +201,8 @@ export function useMediaLibraryController({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ isUploading: boolean; progress: number }>({ isUploading: false, progress: 0 });
   const mediaUploadInputRef = useRef<MediaUploadInputRef>(null);
-  const mediaListRef = useRef<HTMLUListElement>(null);
+  const mediaListRef = useRef<HTMLElement>(null);
+  const mediaGridRef = useRef<VirtualMediaGridHandle>(null);
   const uploadPollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastBrowseFolderIdRef = useRef<string>(MEDIA_LIBRARY_ROOT_VIEW);
   const [folderRenameOpen, setFolderRenameOpen] = useState(false);
@@ -269,76 +264,8 @@ export function useMediaLibraryController({
     });
   }, [list, searchTerm, typeFilter, selectedLibraryFilter]);
 
-  const mediaGridProgressKey = `${routeKey}|${String(selectedLibraryFilter)}|${searchTerm}|${typeFilter}`;
-  const [numShownMediaItems, setNumShownMediaItems] = useState(
-    MEDIA_GRID_PROGRESSIVE_INITIAL,
-  );
-
-  const filteredListLengthRef = useRef(filteredList.length);
-  filteredListLengthRef.current = filteredList.length;
-
   // Tracks a pending "show in media" focus request across the folder-navigation render cycle.
   const focusPendingIdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (focusPendingIdRef.current) {
-      // Show all items so the focused one is reachable.
-      setNumShownMediaItems(filteredListLengthRef.current);
-    } else {
-      setNumShownMediaItems(
-        Math.min(
-          MEDIA_GRID_PROGRESSIVE_INITIAL,
-          filteredListLengthRef.current,
-        ),
-      );
-    }
-  }, [mediaGridProgressKey]);
-
-  const visibleFilteredList = useMemo(
-    () => filteredList.slice(0, numShownMediaItems),
-    [filteredList, numShownMediaItems],
-  );
-
-  const isMediaGridFullyLoaded = filteredList.length <= numShownMediaItems;
-
-  // Drip-load remaining batches in idle time so the full list is mounted
-  // before the user scrolls or needs a specific item.
-  useEffect(() => {
-    if (isMediaGridFullyLoaded) return;
-
-    let handle: number;
-    const scheduleNext = () => {
-      handle = (window.requestIdleCallback ?? ((cb) => window.setTimeout(cb, 16)))(() => {
-        setNumShownMediaItems((prev) => {
-          const next = Math.min(prev + MEDIA_GRID_PROGRESSIVE_BATCH, filteredList.length);
-          if (next < filteredList.length) scheduleNext();
-          return next;
-        });
-      });
-    };
-    scheduleNext();
-
-    return () => {
-      (window.cancelIdleCallback ?? window.clearTimeout)(handle);
-    };
-  // mediaGridProgressKey resets numShownMediaItems, which re-evaluates isMediaGridFullyLoaded
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMediaGridFullyLoaded, filteredList.length]);
-
-  useLoadMoreOnScroll({
-    scrollRef: mediaListRef,
-    enabled:
-      isMediaExpanded &&
-      !isMediaLoading &&
-      !isMediaGridFullyLoaded &&
-      filteredList.length > 0,
-    totalAvailable: filteredList.length,
-    batchSize: MEDIA_GRID_PROGRESSIVE_BATCH,
-    setShownCount: setNumShownMediaItems,
-    shownCount: numShownMediaItems,
-    rescheduleKey: mediaGridProgressKey,
-    thresholdPx: MEDIA_GRID_LOAD_THRESHOLD_PX,
-  });
 
   // Use shared selection hook
   const {
@@ -396,17 +323,8 @@ export function useMediaLibraryController({
     if (!pendingId) return;
     const idx = filteredList.findIndex((m) => m.id === pendingId);
     if (idx < 0) return;
-
-    // Ensure the tile is mounted before scrolling (flushSync forces the render
-    // to complete synchronously so the DOM element exists when rAF fires).
-    flushSync(() => setNumShownMediaItems((prev) => Math.max(prev, idx + 1)));
-
-    requestAnimationFrame(() => {
-      mediaListRef.current
-        ?.querySelector(`[data-media-id="${pendingId}"]`)
-        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      focusPendingIdRef.current = null;
-    });
+    focusPendingIdRef.current = null;
+    mediaGridRef.current?.scrollToMediaId(pendingId);
   }, [filteredList]);
 
   const handleRenamePopoverOpenChange = useCallback(
@@ -1310,8 +1228,6 @@ export function useMediaLibraryController({
     handleDeleteFolderKeepContents,
     folderDeleteOpen,
     filteredList,
-    visibleFilteredList,
-    isMediaGridFullyLoaded,
     showNamesInPanelGrid,
     childFolders,
     canGoUp,
@@ -1350,5 +1266,6 @@ export function useMediaLibraryController({
     openMultiDeleteModal,
     mediaItemsPerRow,
     mediaListRef,
+    mediaGridRef,
   };
 }
