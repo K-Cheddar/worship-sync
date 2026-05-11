@@ -392,7 +392,6 @@ export const executeServicePlanningOutlineSyncStep = async ({
   ) {
     const createdBible = await createBibleItemFromParsedReference({
       parsedRef: step.candidate.parsedRef as ParsedBibleRef,
-      name: step.candidate.title,
       db,
       bibleDb,
       allItems: currentAllItems,

@@ -1,6 +1,7 @@
 import {
   dedupeOutlineCandidatesForPreview,
   getChangedOverlayPatch,
+  getRepeatedOverlayDedupeKey,
 } from "./useServicePlanningImport";
 import type { OutlineItemCandidate } from "../types/servicePlanningImport";
 import type { OverlayInfo } from "../types";
@@ -70,5 +71,47 @@ describe("getChangedOverlayPatch", () => {
         event: "Welcome",
       }),
     ).toEqual({ title: "Speaker" });
+  });
+});
+
+describe("getRepeatedOverlayDedupeKey", () => {
+  it("returns a stable key when the rule opts into repeated-overlay dedupe", () => {
+    expect(
+      getRepeatedOverlayDedupeKey(
+        {
+          rule: {
+            id: "song-rule",
+            dedupeRepeatedOverlays: true,
+          },
+        } as any,
+        {
+          patch: {
+            name: "Desmond Dunkley",
+            title: "Praise God",
+            event: "Song of Praise",
+          },
+        },
+      ),
+    ).toBe("song-rule::Desmond Dunkley::Praise God::Song of Praise");
+  });
+
+  it("returns null when repeated-overlay dedupe is off", () => {
+    expect(
+      getRepeatedOverlayDedupeKey(
+        {
+          rule: {
+            id: "song-rule",
+            dedupeRepeatedOverlays: false,
+          },
+        } as any,
+        {
+          patch: {
+            name: "Desmond Dunkley",
+            title: "Praise God",
+            event: "Song of Praise",
+          },
+        },
+      ),
+    ).toBeNull();
   });
 });

@@ -15,6 +15,8 @@ export type ServicePlanningElementRule = {
   matchMode: ServicePlanningMatchMode;
   /** When false, this rule is ignored by overlay preview/sync but may still drive outline actions. */
   overlaySyncEnabled?: boolean;
+  /** When true, repeated rows that resolve to the same overlay fields only sync once per plan preview. */
+  dedupeRepeatedOverlays?: boolean;
   /**
    * Optional custom default event string for overlay `event` (and template `{{displayName}}` when not overridden).
    * When blank or whitespace-only, mapping uses `matchElementType` instead.

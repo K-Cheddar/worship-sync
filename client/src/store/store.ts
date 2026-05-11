@@ -139,6 +139,48 @@ const sanitizeTransientItemState = (
   };
 };
 
+const normalizeOverlayForPersistenceCompare = (overlay: OverlayInfo) => {
+  const normalized = normalizeOverlayForSync(overlay);
+  const {
+    createdAt: _createdAt,
+    updatedAt: _updatedAt,
+    createdBy: _createdBy,
+    updatedBy: _updatedBy,
+    ...persistableFields
+  } = normalized;
+  return persistableFields;
+};
+
+const getChangedOverlayDocsForUndoRedo = (
+  currentList: OverlayInfo[],
+  previousList: OverlayInfo[],
+  selectedOverlayId?: string,
+): OverlayInfo[] => {
+  const previousById = new Map(previousList.map((overlay) => [overlay.id, overlay]));
+
+  return currentList.filter((overlay) => {
+    if (!overlay.id || overlay.id === selectedOverlayId) {
+      return false;
+    }
+
+    const previousOverlay = previousById.get(overlay.id);
+    if (!previousOverlay) {
+      return false;
+    }
+
+    return !_.isEqual(
+      normalizeOverlayForPersistenceCompare(overlay),
+      normalizeOverlayForPersistenceCompare(previousOverlay),
+    );
+  });
+};
+
+const hasBibleDisplayData = (info?: BibleDisplayInfo) =>
+  Boolean(info?.title?.trim() || info?.text?.trim());
+
+const hasParticipantOverlayData = (info?: OverlayInfo) =>
+  Boolean(info?.name || info?.title || info?.event);
+
 /** Editor selection kept across undo/redo (not part of undo snapshots). */
 const getItemSelectionForUndoRedo = (
   item: RootState["undoable"]["present"]["item"],
@@ -2023,16 +2065,16 @@ listenerMiddleware.startListening({
 // handle updating from remote bible info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    if (action.type !== "debouncedUpdateBibleDisplayInfo") return false;
     const state = (previousState as RootState).presentation;
     const info = action.payload as BibleDisplayInfo;
-    return (
-      action.type === "debouncedUpdateBibleDisplayInfo" &&
-      !!(
-        (info.time &&
-          state.streamInfo.bibleDisplayInfo?.time &&
-          info.time > state.streamInfo.bibleDisplayInfo.time) ||
-        (info.time && !state.streamInfo.bibleDisplayInfo?.time)
-      )
+    const currentBible = state.streamInfo.bibleDisplayInfo;
+    return !!(
+      (info.time &&
+        hasBibleDisplayData(info) &&
+        !hasBibleDisplayData(currentBible)) ||
+      (info.time && currentBible?.time && info.time > currentBible.time) ||
+      (info.time && !currentBible?.time)
     );
   },
 
@@ -2049,16 +2091,18 @@ listenerMiddleware.startListening({
 // handle updating from remote participant overlay info
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    if (action.type !== "debouncedUpdateParticipantOverlayInfo") return false;
     const state = (previousState as RootState).presentation;
     const info = action.payload as OverlayInfo;
-    return (
-      action.type === "debouncedUpdateParticipantOverlayInfo" &&
-      !!(
-        (info.time &&
-          state.streamInfo.participantOverlayInfo?.time &&
-          info.time > state.streamInfo.participantOverlayInfo.time) ||
-        (info.time && !state.streamInfo.participantOverlayInfo?.time)
-      )
+    const currentParticipant = state.streamInfo.participantOverlayInfo;
+    return !!(
+      (info.time &&
+        hasParticipantOverlayData(info) &&
+        !hasParticipantOverlayData(currentParticipant)) ||
+      (info.time &&
+        currentParticipant?.time &&
+        info.time > currentParticipant.time) ||
+      (info.time && !currentParticipant?.time)
     );
   },
 
@@ -2251,9 +2295,16 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     const currentState = listenerApi.getState() as RootState;
     const previousState = listenerApi.getOriginalState() as RootState;
+    const currentSelectedOverlayId =
+      currentState.undoable.present.overlay.selectedOverlay?.id;
     const reconciledOverlaySelection = getOverlaySelectionForUndoRedo(
       currentState,
       previousState,
+    );
+    const changedOverlayDocs = getChangedOverlayDocsForUndoRedo(
+      currentState.undoable.present.overlays.list,
+      previousState.undoable.present.overlays.list,
+      currentSelectedOverlayId,
     );
 
     listenerApi.dispatch(itemSlice.actions.clearTransientState());
@@ -2354,6 +2405,21 @@ listenerMiddleware.startListening({
       )
     ) {
       listenerApi.dispatch(overlayTemplatesSlice.actions.forceUpdate());
+    }
+
+    if (db && changedOverlayDocs.length > 0) {
+      for (const overlay of changedOverlayDocs) {
+        try {
+          await listenerApi.pause(
+            persistExistingOverlayDoc(db, overlay),
+          );
+        } catch (e) {
+          if (isListenerCancelledTaskError(e)) {
+            return;
+          }
+          console.error("undo/redo overlay persist failed", overlay.id, e);
+        }
+      }
     }
   },
 });

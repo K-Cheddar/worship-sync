@@ -823,6 +823,116 @@ describe("store module", () => {
     ).not.toBe("#123456");
   });
 
+  it("persists non-selected overlay docs when undo reverts a multi-overlay change", async () => {
+    jest.useFakeTimers();
+
+    let storeModule: any;
+    let overlaySliceModule: any;
+    let overlaysSliceModule: any;
+    const getMock = jest.fn((id: string) => {
+      if (id === "overlay-overlay-a") {
+        return Promise.resolve({
+          _id: id,
+          _rev: "1-a",
+          docType: "overlay",
+          ...createOverlay("overlay-a", "Alpha"),
+        });
+      }
+      if (id === "overlay-overlay-b") {
+        return Promise.resolve({
+          _id: id,
+          _rev: "1-b",
+          docType: "overlay",
+          ...createOverlay("overlay-b", "Beta"),
+        });
+      }
+      return Promise.reject(new Error(`Unexpected get ${id}`));
+    });
+    const putMock = jest.fn((doc: any) =>
+      Promise.resolve({ rev: `${doc._rev || "1"}-next` }),
+    );
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        globalDb: {
+          get: getMock,
+          put: putMock,
+        },
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({
+        globalFireDbInfo: undefined,
+        globalHostId: "host-123",
+      }));
+      jest.doMock("firebase/database", () => ({
+        ref: jest.fn(),
+        set: jest.fn(),
+        get: jest.fn(),
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      overlaySliceModule = require("./overlaySlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      overlaysSliceModule = require("./overlaysSlice");
+    });
+
+    const store = storeModule.default;
+    const { overlaySlice } = overlaySliceModule;
+    const { overlaysSlice } = overlaysSliceModule;
+
+    const overlayA = createOverlay("overlay-a", "Alpha");
+    const overlayB = createOverlay("overlay-b", "Beta");
+
+    store.dispatch({ type: storeModule.CREDITS_EDITOR_PAGE_READY });
+    jest.runAllTimers();
+
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([overlayA, overlayB]),
+    );
+    store.dispatch({ type: "@@redux-undo/CLEAR_HISTORY" });
+    store.dispatch(overlaySlice.actions.selectOverlay(overlayB));
+
+    const selectedBeforeUpdate =
+      store.getState().undoable.present.overlay.selectedOverlay;
+    const updatedFormatting = {
+      ...selectedBeforeUpdate.formatting,
+      backgroundColor: "#123456",
+    };
+
+    store.dispatch(
+      overlaySlice.actions.updateOverlay({
+        ...selectedBeforeUpdate,
+        formatting: updatedFormatting,
+      }),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayInList({
+        id: "overlay-a",
+        formatting: updatedFormatting,
+      }),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayInList({
+        id: "overlay-b",
+        formatting: updatedFormatting,
+      }),
+    );
+
+    store.dispatch({ type: "@@redux-undo/UNDO" });
+    jest.runAllTimers();
+    await flushListenerEffects();
+
+    expect(getMock).toHaveBeenCalledWith("overlay-overlay-a");
+    expect(putMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "overlay-overlay-a",
+        id: "overlay-a",
+      }),
+    );
+  });
+
   it("buffers remote item docs instead of applying them while the active item is being edited", async () => {
     let storeModule: any;
     let itemSliceModule: any;
@@ -1589,5 +1699,43 @@ describe("store module", () => {
     });
     await waitForListenerDelay();
     expect(store.getState().presentation.streamInfo.name).toBe("New Stream");
+  });
+
+  it("applies remote bible info when local bible slot is still empty at the same timestamp", async () => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+
+    store.dispatch(
+      presentationSlice.actions.updateFormattedTextDisplayInfoFromRemote({
+        text: "",
+        time: 1000,
+      }),
+    );
+
+    store.dispatch({
+      type: "debouncedUpdateBibleDisplayInfo",
+      payload: { title: "John 3:16", text: "For God so loved", time: 1000 },
+    });
+    await waitForListenerDelay();
+
+    const bible = store.getState().presentation.streamInfo.bibleDisplayInfo;
+    expect(bible?.title).toBe("John 3:16");
+    expect(bible?.text).toBe("For God so loved");
+    expect(store.getState().presentation.streamInfo.type).toBe("bible");
+  });
+
+  it("applies a live remote participant overlay when the local slot only has a newer empty placeholder", async () => {
+    const { store } = loadStoreWithPresentationSync();
+
+    store.dispatch({
+      type: "debouncedUpdateParticipantOverlayInfo",
+      payload: { id: "p1", name: "Alex", title: "Host", time: 1000 },
+    });
+    await waitForListenerDelay();
+
+    const participant = store.getState().presentation.streamInfo.participantOverlayInfo;
+    expect(participant?.id).toBe("p1");
+    expect(participant?.name).toBe("Alex");
+    expect(participant?.title).toBe("Host");
+    expect(participant?.time).toBe(1000);
   });
 });
