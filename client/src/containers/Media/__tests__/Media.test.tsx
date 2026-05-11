@@ -379,7 +379,7 @@ describe("Media", () => {
       type: "preferences/setMediaItems",
       payload: 4,
     });
-    expect(screen.getByAltText("media-1")).toBeInTheDocument();
+    expect(screen.getByText("All media")).toBeInTheDocument();
   });
 
   it("uses mobile media grid defaults when running on mobile", async () => {
