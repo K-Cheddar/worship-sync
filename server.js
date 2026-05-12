@@ -15,6 +15,8 @@ import Mux from "@mux/mux-node";
 import https from "https";
 import {
   authHandlers,
+  getServerFirestore,
+  getServerRealtimeDatabase,
   authSessionConfig,
   readChurchPublicBoardHeaderLogoUrl,
   resolveRequestBootstrap,
@@ -40,6 +42,11 @@ import {
   validateBoardPostInput,
   validateBoardPostTextUpdate,
 } from "./server/boardService.js";
+import { getChurchIntegrationsPath } from "./server/churchIntegrations.js";
+import {
+  createRestreamService,
+  normalizeRestreamPostedAtMs,
+} from "./server/restreamService.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -127,6 +134,7 @@ const requireAppSession = async (req, res, next) => {
       bootstrap.database
     ) {
       req.appSession = {
+        userId: bootstrap.user?.uid || "",
         username:
           bootstrap.user?.displayName ||
           bootstrap.device?.operatorName ||
@@ -134,6 +142,7 @@ const requireAppSession = async (req, res, next) => {
           "Operator",
         database: bootstrap.database,
         access: bootstrap.appAccess || "view",
+        churchId: bootstrap.churchId || "",
       };
       return next();
     }
@@ -325,6 +334,29 @@ const bulkDeleteBoardDocs = async (docs) => {
   });
 };
 
+const emitBoardEventForDatabase = async (database, type, payload = {}) => {
+  if (!database) return;
+  const rows = await getBoardDocsByRange({
+    startkey: "alias:",
+    endkey: "alias:\ufff0",
+  });
+  rows
+    .flatMap((row) => (row.doc ? [row.doc] : []))
+    .filter((doc) => doc.database === database)
+    .forEach((aliasDoc) => {
+      emitBoardEvent(aliasDoc.aliasId, type, payload);
+    });
+};
+
+const restreamService = createRestreamService({
+  getFirestore: getServerFirestore,
+  getRealtimeDatabase: getServerRealtimeDatabase,
+  getIntegrationsPath: getChurchIntegrationsPath,
+  onBoardDisplayUpdate: (database) =>
+    void emitBoardEventForDatabase(database, "restream-session-updated"),
+  redirectBaseUrl: frontEndHost,
+});
+
 const serializeBoardAlias = (aliasDoc) => ({
   _id: aliasDoc._id,
   _rev: aliasDoc._rev,
@@ -377,6 +409,43 @@ const serializeBoardPost = (postDoc) => ({
   ...(typeof postDoc.deletedAt === "number"
     ? { deletedAt: postDoc.deletedAt }
     : {}),
+});
+
+const serializeRestreamMessage = (messageDoc) => ({
+  id: messageDoc.id,
+  churchId: messageDoc.churchId,
+  database: messageDoc.database,
+  sessionId: messageDoc.sessionId,
+  platform: messageDoc.platform || "Restream",
+  connectionIdentifier: messageDoc.connectionIdentifier || "",
+  author: messageDoc.author || "Unknown author",
+  authorAvatarUrl: messageDoc.authorAvatarUrl || "",
+  text: messageDoc.text || "",
+  postedAt:
+    normalizeRestreamPostedAtMs(messageDoc.postedAt) ?? messageDoc.postedAt,
+  receivedAt: messageDoc.receivedAt,
+  rawEventType: messageDoc.rawEventType || "",
+  kind:
+    messageDoc.kind === "moderator_reply"
+      ? "moderator_reply"
+      : "viewer_message",
+  isHighlighted: Boolean(messageDoc.isHighlighted),
+  hidden: Boolean(messageDoc.hidden),
+  ...(typeof messageDoc.highlightedAt === "number"
+    ? { highlightedAt: messageDoc.highlightedAt }
+    : {}),
+  ...(typeof messageDoc.hiddenAt === "number"
+    ? { hiddenAt: messageDoc.hiddenAt }
+    : {}),
+});
+
+const serializeBoardDisplayItem = (item) => ({
+  id: item.id,
+  source: item.source,
+  sourceLabel: item.sourceLabel,
+  author: item.author,
+  text: item.text,
+  timestamp: item.timestamp,
 });
 
 const serializeBoardPostForViewer = (postDoc, viewerAuthorId) => {
@@ -546,6 +615,318 @@ app.post(
   "/api/churches/:churchId/display-devices/:deviceId/revoke",
   authHandlers.revokeDisplayDevice,
 );
+app.get("/api/restream/oauth/callback", async (req, res) => {
+  try {
+    const result = await restreamService.completeConnect({
+      state: req.query.state,
+      code: req.query.code,
+      denied: !req.query.code,
+    });
+    const redirectParams = new URLSearchParams({
+      status: "success",
+      returnTo: result.returnTo || "/account?tab=integrations",
+    });
+    if (result.accountLabel) {
+      redirectParams.set("accountLabel", result.accountLabel);
+    }
+    res.redirect(
+      `${frontEndHost.replace(/\/$/, "")}/#/restream/connect-complete?${redirectParams.toString()}`,
+    );
+  } catch (error) {
+    console.error("Error completing Restream connection:", error);
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Could not finish the Restream connection.";
+    const redirectParams = new URLSearchParams({
+      status: "error",
+      message,
+      returnTo: "/account?tab=integrations",
+    });
+    res.redirect(
+      `${frontEndHost.replace(/\/$/, "")}/#/restream/connect-complete?${redirectParams.toString()}`,
+    );
+  }
+});
+app.use(
+  "/api/churches/:churchId/restream",
+  requireAppSession,
+  requireFullAppAccess,
+);
+
+app.get("/api/churches/:churchId/restream/connect", async (req, res) => {
+  try {
+    if (req.appSession.churchId !== req.params.churchId) {
+      return res.status(403).json({ error: "That church is not available." });
+    }
+
+    const { authorizeUrl } = await restreamService.startConnect({
+      churchId: req.params.churchId,
+      database: req.appSession.database,
+      userId: req.appSession.userId,
+      returnTo: req.query.returnTo,
+    });
+    res.redirect(authorizeUrl);
+  } catch (error) {
+    console.error("Error starting Restream connection:", error);
+    res.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not start the Restream connection.",
+    });
+  }
+});
+
+app.get("/api/churches/:churchId/restream/connect-url", async (req, res) => {
+  try {
+    if (req.appSession.churchId !== req.params.churchId) {
+      return res.status(403).json({ error: "That church is not available." });
+    }
+
+    const result = await restreamService.startConnect({
+      churchId: req.params.churchId,
+      database: req.appSession.database,
+      userId: req.appSession.userId,
+      returnTo: req.query.returnTo,
+    });
+    res.json(result);
+  } catch (error) {
+    console.error("Error starting Restream connection URL request:", error);
+    res.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not start the Restream connection.",
+    });
+  }
+});
+
+app.post(
+  "/api/churches/:churchId/restream/connect-status",
+  async (req, res) => {
+    try {
+      if (req.appSession.churchId !== req.params.churchId) {
+        return res.status(403).json({ error: "That church is not available." });
+      }
+
+      const result = await restreamService.getConnectStatus({
+        connectRequestId: req.body?.connectRequestId,
+        connectRequestSecret: req.body?.connectRequestSecret,
+      });
+      res.json(result);
+    } catch (error) {
+      console.error("Error loading Restream connect status:", error);
+      res.status(500).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not load Restream connection status.",
+      });
+    }
+  },
+);
+
+app.post("/api/churches/:churchId/restream/disconnect", async (req, res) => {
+  try {
+    if (req.appSession.churchId !== req.params.churchId) {
+      return res.status(403).json({ error: "That church is not available." });
+    }
+
+    await restreamService.disconnect({
+      churchId: req.params.churchId,
+      database: req.appSession.database,
+    });
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error disconnecting Restream:", error);
+    res.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not disconnect Restream.",
+    });
+  }
+});
+
+app.get("/api/churches/:churchId/restream/session", async (req, res) => {
+  try {
+    if (req.appSession.churchId !== req.params.churchId) {
+      return res.status(403).json({ error: "That church is not available." });
+    }
+
+    const status = await restreamService.getStatusForChurch({
+      churchId: req.params.churchId,
+      database: req.appSession.database,
+    });
+    if (status.session.enabled) {
+      void restreamService.ensureReceiver(req.params.churchId);
+    }
+    res.json(status);
+  } catch (error) {
+    console.error("Error loading Restream session status:", error);
+    res.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not load the Restream session.",
+    });
+  }
+});
+
+app.get("/api/churches/:churchId/restream/messages", async (req, res) => {
+  try {
+    if (req.appSession.churchId !== req.params.churchId) {
+      return res.status(403).json({ error: "That church is not available." });
+    }
+
+    const messages = await restreamService.listCurrentSessionMessages({
+      churchId: req.params.churchId,
+      database: req.appSession.database,
+    });
+    res.json({
+      messages: messages.map(serializeRestreamMessage),
+    });
+  } catch (error) {
+    console.error("Error loading Restream session messages:", error);
+    res.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not load Restream messages.",
+    });
+  }
+});
+
+app.get("/api/churches/:churchId/restream/stream", async (req, res) => {
+  if (req.appSession.churchId !== req.params.churchId) {
+    return res.status(403).json({ error: "That church is not available." });
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+  res.write(
+    `data: ${JSON.stringify({
+      type: "connected",
+      churchId: req.params.churchId,
+    })}\n\n`,
+  );
+
+  restreamService.addSseClient(req.params.churchId, res);
+
+  const heartbeat = setInterval(() => {
+    res.write(": keep-alive\n\n");
+  }, 25000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    restreamService.removeSseClient(req.params.churchId, res);
+    res.end();
+  });
+});
+
+app.post(
+  "/api/churches/:churchId/restream/messages/:messageId/hidden",
+  async (req, res) => {
+    try {
+      if (req.appSession.churchId !== req.params.churchId) {
+        return res.status(403).json({ error: "That church is not available." });
+      }
+
+      await restreamService.setMessageHidden({
+        churchId: req.params.churchId,
+        database: req.appSession.database,
+        messageId: req.params.messageId,
+        hidden: typeof req.body?.value === "boolean" ? req.body.value : true,
+        actorName: req.appSession.username,
+        actorId: req.appSession.userId,
+      });
+
+      const messages = await restreamService.listCurrentSessionMessages({
+        churchId: req.params.churchId,
+        database: req.appSession.database,
+      });
+      const updated = messages.find(
+        (message) => message.id === req.params.messageId,
+      );
+      res.json({ message: updated ? serializeRestreamMessage(updated) : null });
+    } catch (error) {
+      console.error("Error updating Restream hidden state:", error);
+      res.status(500).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not update the Restream message.",
+      });
+    }
+  },
+);
+
+app.post(
+  "/api/churches/:churchId/restream/messages/:messageId/highlighted",
+  async (req, res) => {
+    try {
+      if (req.appSession.churchId !== req.params.churchId) {
+        return res.status(403).json({ error: "That church is not available." });
+      }
+
+      await restreamService.setMessageHighlighted({
+        churchId: req.params.churchId,
+        database: req.appSession.database,
+        messageId: req.params.messageId,
+        highlighted:
+          typeof req.body?.value === "boolean" ? req.body.value : true,
+        actorName: req.appSession.username,
+        actorId: req.appSession.userId,
+      });
+
+      const messages = await restreamService.listCurrentSessionMessages({
+        churchId: req.params.churchId,
+        database: req.appSession.database,
+      });
+      const updated = messages.find(
+        (message) => message.id === req.params.messageId,
+      );
+      res.json({ message: updated ? serializeRestreamMessage(updated) : null });
+    } catch (error) {
+      console.error("Error updating Restream highlight state:", error);
+      res.status(500).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not update the Restream message.",
+      });
+    }
+  },
+);
+
+app.post("/api/churches/:churchId/restream/session/reset", async (req, res) => {
+  try {
+    if (req.appSession.churchId !== req.params.churchId) {
+      return res.status(403).json({ error: "That church is not available." });
+    }
+
+    await restreamService.resetSession({
+      churchId: req.params.churchId,
+      database: req.appSession.database,
+    });
+    const status = await restreamService.getStatusForChurch({
+      churchId: req.params.churchId,
+      database: req.appSession.database,
+    });
+    res.json(status);
+  } catch (error) {
+    console.error("Error resetting Restream session:", error);
+    res.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not start a new Restream session.",
+    });
+  }
+});
 app.use("/api/boards/admin", requireAppSession, requireFullAppAccess);
 
 app.get("/api/boards/stream/:aliasId", (req, res) => {
@@ -907,6 +1288,65 @@ app.get("/api/boards/:aliasId/posts", async (req, res) => {
   } catch (error) {
     console.error("Error loading board posts:", error);
     res.status(500).json({ error: "Could not load posts." });
+  }
+});
+
+app.get("/api/boards/:aliasId/display-items", async (req, res) => {
+  try {
+    const aliasId = normalizeAliasId(req.params.aliasId || "");
+    const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
+    if (!aliasDoc) {
+      return res.status(404).json({ error: "Discussion board not found." });
+    }
+
+    const boardRows = await getBoardDocsByRange(
+      getBoardPostRange(aliasDoc.currentBoardId),
+    );
+    const boardPosts = boardRows
+      .flatMap((row) => (row.doc ? [row.doc] : []))
+      .filter(
+        (postDoc) =>
+          !postDoc.hidden && !postDoc.deleted && Boolean(postDoc.highlighted),
+      )
+      .map((postDoc) =>
+        serializeBoardDisplayItem({
+          id: postDoc._id,
+          source: "board",
+          sourceLabel: "Board",
+          author: postDoc.author,
+          text: postDoc.text,
+          timestamp: postDoc.timestamp,
+        }),
+      );
+
+    const restreamMessages = (
+      await restreamService.listHighlightedMessagesForDatabase(
+        aliasDoc.database,
+      )
+    ).map((messageDoc) =>
+      serializeBoardDisplayItem({
+        id: messageDoc.id,
+        source: "restream",
+        sourceLabel: messageDoc.platform || "Restream",
+        author: messageDoc.author,
+        text: messageDoc.text,
+        timestamp:
+          normalizeRestreamPostedAtMs(messageDoc.postedAt) ??
+          messageDoc.postedAt,
+      }),
+    );
+
+    const items = [...boardPosts, ...restreamMessages].sort((a, b) => {
+      if (a.timestamp !== b.timestamp) {
+        return a.timestamp - b.timestamp;
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+    res.json({ aliasId, items });
+  } catch (error) {
+    console.error("Error loading board display items:", error);
+    res.status(500).json({ error: "Could not load presentation." });
   }
 });
 
@@ -1618,6 +2058,8 @@ app.get("/{*path}", (req, res) => {
   // Otherwise serve SPA index
   res.sendFile(path.join(dist, "index.html"));
 });
+
+void restreamService.initializeConnections();
 
 if (isDevelopment) {
   const options = {

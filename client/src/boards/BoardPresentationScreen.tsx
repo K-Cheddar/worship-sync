@@ -2,10 +2,9 @@ import { useEffect, useMemo, useRef } from "react";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import { cn } from "@/utils/cnHelper";
-import { useBoardData } from "./useBoardData";
+import { useBoardPresentationData } from "./useBoardPresentationData";
 import { useBoardEventStream } from "./useBoardEventStream";
 import {
-  filterHighlightedBoardPosts,
   formatBoardTimestamp,
   getBoardAuthorNameColorClass,
   normalizeBoardPresentationFontScale,
@@ -25,15 +24,15 @@ const BoardPresentationScreen = ({
   const {
     alias,
     churchLogoUrl,
-    posts,
+    items,
     hasLoadedOnce,
     error,
     connectionStatus,
     loadBoard,
-    loadPosts,
+    loadItems,
     retryNow,
     updateAlias,
-  } = useBoardData(aliasId);
+  } = useBoardPresentationData(aliasId);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useBoardEventStream(aliasId, (event) => {
@@ -57,26 +56,24 @@ const BoardPresentationScreen = ({
     if (
       event.type === "post-created" ||
       event.type === "post-updated" ||
-      event.type === "board-soft-reset"
+      event.type === "board-soft-reset" ||
+      event.type === "restream-session-updated"
     ) {
-      void loadPosts();
+      void loadItems();
       return;
     }
 
     void loadBoard();
   });
 
-  const highlightedPosts = useMemo(
-    () => filterHighlightedBoardPosts(posts),
-    [posts],
-  );
+  const highlightedItems = useMemo(() => items, [items]);
   const presentationFontScale = normalizeBoardPresentationFontScale(
     alias?.presentationFontScale,
   );
 
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
-  }, [highlightedPosts]);
+  }, [highlightedItems]);
 
   return (
     <main className="h-dvh overflow-hidden bg-[linear-gradient(160deg,#111827_0%,#0f172a_45%,#020617_100%)] text-white">
@@ -135,24 +132,24 @@ const BoardPresentationScreen = ({
               </Button>
             </div>
           </div>
-        ) : highlightedPosts.length === 0 ? (
+        ) : highlightedItems.length === 0 ? (
           <div className="flex flex-1 items-center justify-center">
             <div className="max-w-3xl rounded-4xl border border-slate-700/70 bg-slate-900/60 px-10 py-12 text-center shadow-2xl">
               <p className="text-3xl font-semibold md:text-4xl">
-                No highlighted posts yet.
+                No highlighted messages yet.
               </p>
               <p className="mt-4 text-lg leading-relaxed text-slate-300 md:text-xl">
-                When a moderator highlights a post from the discussion board controls, it appears here.
+                When a moderator highlights a board post or Restream message, it appears here.
               </p>
             </div>
           </div>
         ) : (
           <div className="mt-8 flex-1 overflow-y-auto pr-2">
             <div className="space-y-6 pb-12">
-              {highlightedPosts.map((post, index) => (
+              {highlightedItems.map((item, index) => (
                 <article
-                  key={post._id}
-                  className={`rounded-4xl border border-cyan-300/20 bg-white/8 px-8 py-7 shadow-2xl backdrop-blur-sm ${index === highlightedPosts.length - 1 ? "ring-2 ring-cyan-300/40" : ""}`}
+                  key={item.id}
+                  className={`rounded-4xl border border-cyan-300/20 bg-white/8 px-8 py-7 shadow-2xl backdrop-blur-sm ${index === highlightedItems.length - 1 ? "ring-2 ring-cyan-300/40" : ""}`}
                 >
                   <div
                     className="flex flex-wrap items-center gap-3 text-cyan-100/80"
@@ -163,12 +160,15 @@ const BoardPresentationScreen = ({
                     <span
                       className={cn(
                         "font-semibold",
-                        getBoardAuthorNameColorClass(post),
+                        getBoardAuthorNameColorClass(item),
                       )}
                     >
-                      {post.author}
+                      {item.author}
                     </span>
-                    <span>{formatBoardTimestamp(post.timestamp)}</span>
+                    <span>{formatBoardTimestamp(item.timestamp)}</span>
+                    <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-cyan-100">
+                      {item.sourceLabel}
+                    </span>
                   </div>
                   <p
                     className="mt-5 whitespace-pre-wrap font-medium leading-tight text-white"
@@ -176,7 +176,7 @@ const BoardPresentationScreen = ({
                       fontSize: `clamp(${2.25 * presentationFontScale}rem, ${3 * presentationFontScale}vw, ${5 * presentationFontScale}rem)`,
                     }}
                   >
-                    {post.text}
+                    {item.text}
                   </p>
                 </article>
               ))}

@@ -1,12 +1,12 @@
 import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import BoardPresent from "./BoardPresent";
-import { getBoardAlias, getBoardPosts } from "../boards/api";
+import { getBoardAlias, getBoardDisplayItems } from "../boards/api";
 import { useBoardEventStream } from "../boards/useBoardEventStream";
 
 jest.mock("../boards/api", () => ({
   getBoardAlias: jest.fn(),
-  getBoardPosts: jest.fn(),
+  getBoardDisplayItems: jest.fn(),
 }));
 
 jest.mock("../boards/useBoardEventStream", () => ({
@@ -14,7 +14,7 @@ jest.mock("../boards/useBoardEventStream", () => ({
 }));
 
 const mockGetBoardAlias = jest.mocked(getBoardAlias);
-const mockGetBoardPosts = jest.mocked(getBoardPosts);
+const mockGetBoardDisplayItems = jest.mocked(getBoardDisplayItems);
 const mockUseBoardEventStream = jest.mocked(useBoardEventStream);
 
 describe("BoardPresent", () => {
@@ -62,52 +62,28 @@ describe("BoardPresent", () => {
       refreshCallback = onMessage;
     });
 
-    mockGetBoardPosts
+    mockGetBoardDisplayItems
       .mockResolvedValueOnce({
         aliasId: "sunday",
-        boardId: "board-a",
-        posts: [
-          {
-            _id: "post:board-a:1",
-            type: "post",
-            docType: "board-post",
-            id: "1",
-            aliasId: "sunday",
-            boardId: "board-a",
-            database: "demo",
-            author: "Alex",
-            text: "Not highlighted",
-            timestamp: 1,
-            hidden: false,
-            highlighted: false,
-          },
-        ],
+        items: [],
       })
       .mockResolvedValueOnce({
         aliasId: "sunday",
-        boardId: "board-a",
-        posts: [
+        items: [
           {
-            _id: "post:board-a:2",
-            type: "post",
-            docType: "board-post",
-            id: "2",
-            aliasId: "sunday",
-            boardId: "board-a",
-            database: "demo",
-            author: "Jamie",
+            id: "board-1",
+            source: "board",
+            sourceLabel: "Board",
+            author: "Alex",
             text: "Highlighted now",
             timestamp: 2,
-            hidden: false,
-            highlighted: true,
           },
         ],
       });
 
     renderPage();
 
-    expect(await screen.findByText(/No highlighted posts yet/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Not highlighted/i)).not.toBeInTheDocument();
+    expect(await screen.findByText(/No highlighted messages yet/i)).toBeInTheDocument();
 
     await act(async () => {
       refreshCallback?.({ type: "post-created" });
@@ -115,32 +91,48 @@ describe("BoardPresent", () => {
 
     expect(await screen.findByText(/Highlighted now/i)).toBeInTheDocument();
     expect(mockGetBoardAlias).toHaveBeenCalledTimes(1);
-    expect(mockGetBoardPosts).toHaveBeenCalledTimes(2);
+    expect(mockGetBoardDisplayItems).toHaveBeenCalledTimes(2);
   });
 
-  it("updates presentation font scale from stream events without refetching posts", async () => {
-    let refreshCallback: ((event: { type: string; presentationFontScale?: number }) => void) | undefined;
+  it("shows restream source labels in the mixed presentation feed", async () => {
+    mockGetBoardDisplayItems.mockResolvedValue({
+      aliasId: "sunday",
+      items: [
+        {
+          id: "restream-1",
+          source: "restream",
+          sourceLabel: "YouTube",
+          author: "Jamie",
+          text: "Stream comment",
+          timestamp: 2,
+        },
+      ],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText(/Stream comment/i)).toBeInTheDocument();
+    expect(screen.getByText("YouTube")).toBeInTheDocument();
+  });
+
+  it("updates presentation font scale from stream events without refetching items", async () => {
+    let refreshCallback:
+      | ((event: { type: string; presentationFontScale?: number }) => void)
+      | undefined;
     mockUseBoardEventStream.mockImplementation((_aliasId, onMessage) => {
       refreshCallback = onMessage;
     });
 
-    mockGetBoardPosts.mockResolvedValue({
+    mockGetBoardDisplayItems.mockResolvedValue({
       aliasId: "sunday",
-      boardId: "board-a",
-      posts: [
+      items: [
         {
-          _id: "post:board-a:2",
-          type: "post",
-          docType: "board-post",
-          id: "2",
-          aliasId: "sunday",
-          boardId: "board-a",
-          database: "demo",
+          id: "board-2",
+          source: "board",
+          sourceLabel: "Board",
           author: "Jamie",
           text: "Highlighted now",
           timestamp: 2,
-          hidden: false,
-          highlighted: true,
         },
       ],
     });
@@ -148,7 +140,7 @@ describe("BoardPresent", () => {
     renderPage();
 
     const postText = await screen.findByText(/Highlighted now/i);
-    const initialCalls = mockGetBoardPosts.mock.calls.length;
+    const initialCalls = mockGetBoardDisplayItems.mock.calls.length;
 
     await act(async () => {
       refreshCallback?.({
@@ -160,6 +152,6 @@ describe("BoardPresent", () => {
     expect(postText).toHaveStyle({
       fontSize: "clamp(3.375rem, 4.5vw, 7.5rem)",
     });
-    expect(mockGetBoardPosts).toHaveBeenCalledTimes(initialCalls);
+    expect(mockGetBoardDisplayItems).toHaveBeenCalledTimes(initialCalls);
   });
 });

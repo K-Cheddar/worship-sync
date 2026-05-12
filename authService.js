@@ -5171,3 +5171,7 @@ export const authHandlers = {
     }
   },
 };
+
+export const getServerFirestore = () => requireFirestore();
+
+export const getServerRealtimeDatabase = () => requireRealtimeDatabase();

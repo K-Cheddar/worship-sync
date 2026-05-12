@@ -14,6 +14,7 @@ import { Provider } from "react-redux";
 import store from "./store/store";
 import Login from "./pages/Login";
 import DesktopSsoComplete from "./pages/DesktopSsoComplete";
+import RestreamConnectComplete from "./pages/RestreamConnectComplete";
 import ControllerContextWrapper from "./ControllerContextWrapper";
 import GlobalInfoProvider from "./context/globalInfo";
 import { ToastProvider } from "./context/toastContext";
@@ -163,6 +164,10 @@ const AppRoutes = () => {
           <Route
             path="/login/desktop-sso-complete"
             element={<DesktopSsoComplete />}
+          />
+          <Route
+            path="/restream/connect-complete"
+            element={<RestreamConnectComplete />}
           />
           <Route path="/invite" element={<InviteAccept />} />
           <Route path="/auth/reset" element={<PasswordReset />} />

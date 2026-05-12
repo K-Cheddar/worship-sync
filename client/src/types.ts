@@ -316,6 +316,63 @@ export type BoardPostStreamInfo = {
   time?: number;
 };
 
+export type RestreamConnectionState =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected";
+
+export type RestreamSession = {
+  churchId: string;
+  database: string;
+  sessionId: string;
+  startedAt: number;
+  lastEventAt?: number;
+  lastMessageAt?: number;
+  messageCount: number;
+  enabled: boolean;
+  connected: boolean;
+  connectionState: RestreamConnectionState;
+  accountLabel: string;
+  streamTitle?: string;
+  lastError: string;
+  connectionIssues?: string[];
+  activeConnectionCount?: number;
+  totalConnectionCount?: number;
+  platformSummary: string[];
+};
+
+export type RestreamMessageKind = "viewer_message" | "moderator_reply";
+
+export type RestreamMessage = {
+  id: string;
+  churchId: string;
+  database: string;
+  sessionId: string;
+  platform: string;
+  connectionIdentifier: string;
+  author: string;
+  authorAvatarUrl?: string;
+  text: string;
+  postedAt: number;
+  receivedAt: number;
+  rawEventType: string;
+  kind: RestreamMessageKind;
+  isHighlighted: boolean;
+  hidden: boolean;
+  highlightedAt?: number;
+  hiddenAt?: number;
+};
+
+export type BoardDisplayItem = {
+  id: string;
+  source: "board" | "restream";
+  sourceLabel: string;
+  author: string;
+  text: string;
+  timestamp: number;
+};
+
 export type FormattedTextDisplayInfo = {
   backgroundColor?: string;
   textColor?: string;

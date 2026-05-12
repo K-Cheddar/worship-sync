@@ -20,6 +20,9 @@ test("normalizeChurchIntegrationsForStorage applies defaults", () => {
   assert.ok(Array.isArray(out.servicePlanning.people));
   assert.equal(out.catalog.servicePlanning.status, "available");
   assert.equal(out.catalog.songSelect.status, "coming_soon");
+  assert.equal(out.restream.enabled, false);
+  assert.equal(out.restream.connected, false);
+  assert.deepEqual(out.restream.platformSummary, []);
 });
 
 test("normalizeChurchIntegrationsForStorage normalizes a full service planning config", () => {
@@ -131,4 +134,26 @@ test("normalizeChurchIntegrationsForStorage preserves overlaySyncEnabled=false",
     },
   });
   assert.equal(out.servicePlanning.elementRules[0].overlaySyncEnabled, false);
+});
+
+test("normalizeChurchIntegrationsForStorage normalizes restream status", () => {
+  const out = normalizeChurchIntegrationsForStorage({
+    restream: {
+      enabled: true,
+      connected: true,
+      accountLabel: "Main Restream",
+      lastError: "Temporary issue",
+      lastEventAt: 123,
+      sessionStartedAt: 100,
+      platformSummary: ["YouTube", "Facebook"],
+    },
+  });
+
+  assert.equal(out.restream.enabled, true);
+  assert.equal(out.restream.connected, true);
+  assert.equal(out.restream.accountLabel, "Main Restream");
+  assert.equal(out.restream.lastError, "Temporary issue");
+  assert.equal(out.restream.lastEventAt, 123);
+  assert.equal(out.restream.sessionStartedAt, 100);
+  assert.deepEqual(out.restream.platformSummary, ["YouTube", "Facebook"]);
 });

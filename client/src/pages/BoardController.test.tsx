@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { BoardControllerContent } from "./BoardController";
@@ -8,6 +8,8 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { ToastProvider } from "../context/toastContext";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { createMockGlobalContext } from "../test/mocks";
+import { useRestreamSession } from "../boards/useRestreamSession";
+import { useAboutChangelogMenu } from "../hooks/useAboutChangelogMenu";
 
 jest.mock("../containers/Toolbar/ToolbarElements/UserSection", () => () => (
   <div>User</div>
@@ -27,15 +29,27 @@ jest.mock("../boards/BoardSyncContext", () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+jest.mock("../boards/useRestreamSession", () => ({
+  useRestreamSession: jest.fn(),
+}));
+
+jest.mock("../hooks/useAboutChangelogMenu", () => ({
+  useAboutChangelogMenu: jest.fn(),
+}));
+
 jest.mock("../boards/api", () => ({
   createBoardAlias: jest.fn(),
+  disconnectRestream: jest.fn(),
   deleteBoardAlias: jest.fn(),
   hardResetBoardAlias: jest.fn(),
+  resetRestreamSession: jest.fn(),
   softResetBoardAlias: jest.fn(),
   updateBoardAliasTitle: jest.fn(),
   updateBoardPresentationFontScale: jest.fn(),
   updateBoardPostHidden: jest.fn(),
   updateBoardPostHighlighted: jest.fn(),
+  updateRestreamMessageHidden: jest.fn(),
+  updateRestreamMessageHighlighted: jest.fn(),
 }));
 
 const mockedBoardApi = jest.requireMock("../boards/api") as {
@@ -58,6 +72,8 @@ const mockUpdateBoardPresentationFontScale =
 const mockUpdateBoardPostHidden = mockedBoardApi.updateBoardPostHidden;
 const mockUpdateBoardPostHighlighted = mockedBoardApi.updateBoardPostHighlighted;
 const mockUseBoardSync = jest.mocked(useBoardSync);
+const mockUseRestreamSession = jest.mocked(useRestreamSession);
+const mockUseAboutChangelogMenu = jest.mocked(useAboutChangelogMenu);
 const mockUseElectronWindows = jest.mocked(useElectronWindows);
 const mockUseMediaQuery = jest.mocked(useMediaQuery);
 let mockBoardDb: any;
@@ -182,7 +198,11 @@ const createMockBoardDb = () => {
 
   const db = {
     allDocs: jest.fn(async (options: any) => {
-      if (options.startkey === "alias:" && options.endkey === "alias:\uffff") {
+      if (
+        options.startkey === "alias:" &&
+        typeof options.endkey === "string" &&
+        options.endkey.startsWith("alias:")
+      ) {
         return { rows: [{ doc: aliasDoc }] };
       }
       if (Array.isArray(options.keys)) {
@@ -244,6 +264,10 @@ const createMockBoardDb = () => {
 };
 
 describe("BoardControllerContent", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockUseMediaQuery.mockImplementation(() => true);
@@ -259,11 +283,37 @@ describe("BoardControllerContent", () => {
       moveWindowToDisplay: jest.fn(),
       setDisplayPreference: jest.fn(),
     } as any);
+    mockUseAboutChangelogMenu.mockReturnValue({
+      aboutChangelogMenuItems: [],
+      aboutChangelogModals: null,
+      updateReadyVersion: "",
+    });
     mockUseBoardSync.mockReturnValue({
       db: mockBoardDb,
       status: "connected",
       pullFromRemote: jest.fn(),
     } as any);
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-1",
+        startedAt: 100,
+        messageCount: 0,
+        enabled: false,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      reload: jest.fn(() => Promise.resolve()),
+    });
     mockCreateBoardAlias.mockResolvedValue({
       alias: {
         aliasId: "new-board",
@@ -554,6 +604,7 @@ describe("BoardControllerContent", () => {
     const user = userEvent.setup();
     renderPage();
 
+    await screen.findByRole("heading", { name: "Sunday Board" });
     expect(await screen.findAllByRole("button", { name: /^Hide$/i })).toHaveLength(3);
 
     await openBoardToolsSheetIfMobile(user);
@@ -565,5 +616,71 @@ describe("BoardControllerContent", () => {
     expect(await screen.findByText(/Archived session question/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Hide$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Highlight$/i })).not.toBeInTheDocument();
+  });
+
+  it("renders the Restream tab with connection guidance", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    await user.click(await screen.findByRole("tab", { name: /Restream/i }));
+
+    expect(
+      await screen.findByText(/Restream is not connected/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Ask a church admin to connect Restream/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the Restream stream name when it is available", async () => {
+    const user = userEvent.setup();
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-1",
+        startedAt: 100,
+        messageCount: 1,
+        enabled: true,
+        connected: true,
+        connectionState: "connected",
+        accountLabel: "Main channel",
+        streamTitle: "Sabbath School Weekly",
+        lastError: "",
+        platformSummary: ["YouTube: Main channel"],
+      },
+      messages: [
+        {
+          id: "restream-1",
+          churchId: "church-1",
+          database: "test",
+          sessionId: "restream-session-1",
+          platform: "YouTube",
+          connectionIdentifier: "conn-1",
+          author: "Evan",
+          authorAvatarUrl: "",
+          text: "Hello from chat",
+          postedAt: 100,
+          receivedAt: 100,
+          rawEventType: "5",
+          isHighlighted: false,
+          hidden: false,
+        },
+      ],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    await user.click(await screen.findByRole("tab", { name: /Restream/i }));
+
+    expect(await screen.findByText(/Stream name:/i)).toBeInTheDocument();
+    expect(screen.getByText("Sabbath School Weekly")).toBeInTheDocument();
   });
 });

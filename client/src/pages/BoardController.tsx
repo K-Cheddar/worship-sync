@@ -32,6 +32,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "../components/ui/sheet";
+import { SectionTabs } from "../components/SectionTabs/SectionTabs";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { useToast } from "../context/toastContext";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -70,10 +71,12 @@ import {
 import {
   deleteBoardAlias,
   hardResetBoardAlias,
+  resetRestreamSession,
   softResetBoardAlias,
   updateBoardPresentationFontScale,
   updateBoardPostHidden,
   updateBoardPostHighlighted,
+  updateRestreamMessageHighlighted,
 } from "../boards/api";
 import {
   DBBoard,
@@ -81,11 +84,16 @@ import {
   DBBoardPost,
   MenuItemType,
   Option,
+  RestreamMessage,
 } from "../types";
 import type { WindowType } from "../types/electron";
 import { getDisplayLabel } from "../utils/displayUtils";
 import { isElectronDisplayWindowOpen } from "../utils/isElectronDisplayWindowOpen";
 import { useAboutChangelogMenu } from "../hooks/useAboutChangelogMenu";
+import {
+  useRestreamSession,
+  type UseRestreamSessionResult,
+} from "../boards/useRestreamSession";
 
 const BOARD_COPY_LINK_ICON_COLOR = "#22d3ee";
 
@@ -144,6 +152,25 @@ type AllDocsResult<T> = {
   rows: Array<{ doc?: T }>;
 };
 
+const getAliasRangeEndKey = () => `alias:${String.fromCharCode(0xffff)}`;
+
+const getSafeAliasDocs = async (
+  db: PouchDB.Database,
+  database: string,
+): Promise<DBBoardAlias[]> => {
+  const result = (await db.allDocs({
+    include_docs: true,
+    startkey: "alias:",
+    endkey: getAliasRangeEndKey(),
+  })) as AllDocsResult<DBBoardAlias>;
+
+  return result.rows
+    .flatMap((row) => (row.doc ? [row.doc] : []))
+    .filter((doc) => doc.database === database)
+    .sort((a, b) => a.title.localeCompare(b.title));
+};
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const getAliasDocs = async (
   db: PouchDB.Database,
   database: string,
@@ -444,6 +471,8 @@ const BoardControllerMenu = ({
 
 type BoardToolsPanelBodyProps = {
   isMobileStack: boolean;
+  churchId: string;
+  restreamSession: UseRestreamSessionResult;
   handleCopy: (value: string, label: string) => Promise<void>;
   onOpenAttendeeLink: () => void;
   onOpenViewBoardLink: () => void;
@@ -464,6 +493,8 @@ type BoardToolsPanelBodyProps = {
 
 const BoardToolsPanelBody = ({
   isMobileStack,
+  churchId,
+  restreamSession,
   handleCopy,
   onOpenAttendeeLink,
   onOpenViewBoardLink,
@@ -481,6 +512,27 @@ const BoardToolsPanelBody = ({
   isActing,
   showToast,
 }: BoardToolsPanelBodyProps) => {
+  const [restreamResetOpen, setRestreamResetOpen] = useState(false);
+  const { session: restreamSessionState, reload: reloadRestream } =
+    restreamSession;
+
+  const handleRestreamResetConfirm = useCallback(async () => {
+    if (!churchId) return;
+    try {
+      await resetRestreamSession(churchId);
+      await reloadRestream();
+      setRestreamResetOpen(false);
+      showToast("Started a new Restream session.", "success");
+    } catch (nextError) {
+      showToast(
+        nextError instanceof Error
+          ? nextError.message
+          : "Could not start a new Restream session.",
+        "error",
+      );
+    }
+  }, [churchId, reloadRestream, showToast]);
+
   const historyOptions: Option[] = useMemo(
     () =>
       archiveOptions.map((boardId) => ({
@@ -492,6 +544,20 @@ const BoardToolsPanelBody = ({
 
   return (
     <>
+      {restreamResetOpen ? (
+        <DeleteModal
+          isOpen
+          onClose={() => setRestreamResetOpen(false)}
+          onConfirm={() => void handleRestreamResetConfirm()}
+          itemName="Restream session history"
+          title="Start a new Restream session"
+          message="Are you sure you want to clear"
+          warningMessage="This only clears the current Restream session history. Discussion board posts stay the same."
+          confirmText="Start new session"
+          isConfirming={false}
+        />
+      ) : null}
+
       <div className="xl:hidden">
         <p className="text-sm font-semibold text-gray-100" id="board-tools-share-label">
           Share links
@@ -678,14 +744,277 @@ const BoardToolsPanelBody = ({
           </p>
         )}
       </div>
+
+      <div className="mt-6 border-t border-gray-600 pt-6">
+        <p
+          className="text-sm font-semibold text-gray-100"
+          id="board-tools-restream-label"
+        >
+          Restream
+        </p>
+        <p className="mt-1 text-xs text-gray-400">
+          Clears Restream chat history for moderation. Discussion board posts stay the same.
+        </p>
+        <div
+          className="mt-3 flex flex-col gap-1"
+          role="group"
+          aria-labelledby="board-tools-restream-label"
+        >
+          <Button
+            variant="tertiary"
+            className="w-full justify-center"
+            svg={RotateCcw}
+            aria-describedby="board-tools-restream-hint"
+            onClick={() => setRestreamResetOpen(true)}
+            disabled={!churchId || !restreamSessionState?.enabled}
+          >
+            New Restream session
+          </Button>
+        </div>
+      </div>
     </>
+  );
+};
+
+/** Legacy rows from earlier Restream reply lifecycle handling; no longer stored server-side. */
+const isLegacyModeratorPipelineRow = (message: RestreamMessage) => {
+  if (message.kind !== "moderator_reply") return false;
+  const t = message.text.trim();
+  return (
+    t === "Reply accepted for delivery." ||
+    t === "Reply delivered." ||
+    /^reply failed:/i.test(t)
+  );
+};
+
+const filterRestreamMessagesForDisplay = (messages: RestreamMessage[]) =>
+  messages.filter((message) => !isLegacyModeratorPipelineRow(message));
+
+type RestreamTabContentProps = {
+  churchId: string;
+  showToast: (message: string, variant: "success" | "error") => void;
+  restreamSession: UseRestreamSessionResult;
+};
+
+const RestreamTabContent = ({
+  churchId,
+  showToast,
+  restreamSession,
+}: RestreamTabContentProps) => {
+  const {
+    session,
+    messages,
+    isLoading,
+    error,
+    oauthConfigured,
+    reload,
+  } = restreamSession;
+  const [localMessages, setLocalMessages] = useState<RestreamMessage[]>([]);
+  const [actingIds, setActingIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setLocalMessages(filterRestreamMessagesForDisplay(messages));
+  }, [messages]);
+
+  const runMessageAction = useCallback(
+    async (
+      messageId: string,
+      optimisticFn: (message: RestreamMessage) => RestreamMessage,
+      request: () => Promise<unknown>,
+    ) => {
+      setActingIds((prev) => new Set(prev).add(messageId));
+      setLocalMessages((prev) =>
+        prev.map((message) =>
+          message.id === messageId ? optimisticFn(message) : message,
+        ),
+      );
+      try {
+        await request();
+      } catch (nextError) {
+        await reload();
+        showToast(
+          nextError instanceof Error
+            ? nextError.message
+            : "Could not update the Restream message.",
+          "error",
+        );
+      } finally {
+        setActingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(messageId);
+          return next;
+        });
+      }
+    },
+    [reload, showToast],
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        {session?.streamTitle ? (
+          <p className="text-sm text-gray-200">
+            Stream name:{" "}
+            <span className="font-semibold text-white">{session.streamTitle}</span>
+          </p>
+        ) : null}
+        {session?.enabled &&
+          !session.connected &&
+          session?.totalConnectionCount === 0 &&
+          !session?.messageCount ? (
+          <p className="text-xs text-amber-100/90">
+            Restream is connected, but no live chat sources are attached yet.
+          </p>
+        ) : null}
+        {!oauthConfigured ? (
+          <p className="text-xs text-amber-100/90">
+            Restream OAuth is not configured on this server yet.
+          </p>
+        ) : null}
+        {session?.connectionIssues?.length ? (
+          <div className="rounded-lg border border-amber-300/20 bg-amber-950/20 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-100/90">
+              Connection issues
+            </p>
+            <div className="mt-2 space-y-1 text-xs text-amber-100/90">
+              {session.connectionIssues.map((issue) => (
+                <p key={issue}>{issue}</p>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {session?.lastError ? (
+          <p className="text-xs text-amber-100/90">{session.lastError}</p>
+        ) : null}
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-gray-300">
+          <LoaderCircle className="animate-spin" size={18} />
+          Loading Restream messages…
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-300/25 bg-red-950/20 p-4 text-sm text-red-100">
+          {error}
+        </div>
+      ) : !session?.enabled ? (
+        <div className="rounded-xl border border-dashed border-gray-500 bg-gray-800/50 p-6 text-center">
+          <p className="text-lg font-semibold">Restream is not connected.</p>
+          <p className="mt-2 text-sm text-gray-300">
+            Ask a church admin to connect Restream in Church administration under Integrations.
+          </p>
+        </div>
+      ) : localMessages.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-gray-500 bg-gray-800/50 p-6 text-center">
+          <p className="text-lg font-semibold">No Restream messages yet.</p>
+          <p className="mt-2 text-sm text-gray-300">
+            New live comments will appear here as this server receives them.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {localMessages.map((message) => {
+            const isModeratorReply = message.kind === "moderator_reply";
+            return (
+              <article
+                key={message.id}
+                className={cn(
+                  "rounded-xl border p-4",
+                  message.hidden &&
+                  "border-gray-600 bg-gray-800/60 opacity-75",
+                  !message.hidden && !isModeratorReply &&
+                  "border-gray-500 bg-gray-800/90",
+                  isModeratorReply && "border-amber-500/20 bg-gray-800/90",
+                )}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span
+                      className={cn(
+                        "font-semibold",
+                        message.hidden
+                          ? "text-gray-400"
+                          : getBoardAuthorNameColorClass(message),
+                      )}
+                    >
+                      {message.author}
+                    </span>
+                    {isModeratorReply ? (
+                      <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-semibold text-amber-50">
+                        Moderator reply
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-cyan-500/15 px-2 py-0.5 text-xs font-semibold text-cyan-100">
+                        Restream · {message.platform}
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-300">
+                      {formatBoardTimestamp(message.postedAt)}
+                    </span>
+                    {message.isHighlighted ? (
+                      <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-semibold text-amber-200">
+                        Highlighted
+                      </span>
+                    ) : null}
+                    {message.hidden ? (
+                      <span className="rounded-full bg-gray-600 px-2 py-0.5 text-xs font-semibold text-gray-100">
+                        Hidden
+                      </span>
+                    ) : null}
+                  </div>
+                  {!isModeratorReply ? (
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        variant="tertiary"
+                        svg={message.isHighlighted ? StarOff : Sparkles}
+                        onClick={() =>
+                          void runMessageAction(
+                            message.id,
+                            (current) => ({
+                              ...current,
+                              isHighlighted: !current.isHighlighted,
+                            }),
+                            () =>
+                              updateRestreamMessageHighlighted(
+                                churchId,
+                                message.id,
+                                !message.isHighlighted,
+                              ),
+                          )
+                        }
+                        disabled={actingIds.has(message.id) || message.hidden}
+                      >
+                        {message.isHighlighted ? "Unhighlight" : "Highlight"}
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="mt-3 min-w-0">
+                  <BoardPostMessage
+                    text={message.text}
+                    isMine={false}
+                    tone="moderator"
+                  />
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 };
 
 export const BoardControllerContent = () => {
   const { db, status, pullFromRemote } = useBoardSync() || {};
-  const { database, loginState } = useContext(GlobalInfoContext) || {};
+  const { database, loginState, churchId } = useContext(GlobalInfoContext) || {};
   const { showToast } = useToast();
+  const restreamSession = useRestreamSession(churchId || "");
+  const visibleRestreamMessageCount = useMemo(
+    () =>
+      filterRestreamMessagesForDisplay(restreamSession.messages).length,
+    [restreamSession.messages],
+  );
 
   const [aliases, setAliases] = useState<DBBoardAlias[]>([]);
   const [selectedAliasId, setSelectedAliasId] = useState<string>("");
@@ -698,6 +1027,9 @@ export const BoardControllerContent = () => {
   const [actingPostIds, setActingPostIds] = useState<Set<string>>(new Set());
   const [renameAliasId, setRenameAliasId] = useState("");
   const [deleteAlias, setDeleteAlias] = useState<DBBoardAlias | null>(null);
+  const [activeTab, setActiveTab] = useState<"boardPosts" | "restream">(
+    "boardPosts",
+  );
   const [manageBoardsOpen, setManageBoardsOpen] = useState(false);
   const [boardToolsOpen, setBoardToolsOpen] = useState(false);
   const loadRequestIdRef = useRef(0);
@@ -710,7 +1042,7 @@ export const BoardControllerContent = () => {
 
   const loadAliases = useCallback(async () => {
     if (!db || !database) return;
-    const nextAliases = await getAliasDocs(db, database);
+    const nextAliases = await getSafeAliasDocs(db, database);
     setAliases(nextAliases);
     setSelectedAliasId((currentAliasId) => {
       if (currentAliasId && nextAliases.some((alias) => alias.aliasId === currentAliasId)) {
@@ -1011,6 +1343,127 @@ export const BoardControllerContent = () => {
     resetKey: stickToBottomResetKey,
   });
   const renameAlias = aliases.find((alias) => alias.aliasId === renameAliasId) ?? null;
+  const boardPostsTabContent = (
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="min-h-0 flex-1 overflow-y-auto p-4"
+    >
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-gray-300">
+          <LoaderCircle className="animate-spin" size={18} />
+          Loading posts…
+        </div>
+      ) : posts.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-gray-500 bg-gray-800/50 p-6 text-center">
+          <p className="text-lg font-semibold">No posts yet.</p>
+          <p className="mt-2 text-sm text-gray-300">
+            Share the board link to start receiving questions.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {posts.map((post) => (
+            <article
+              key={post._id}
+              className={cn(
+                "rounded-xl border p-4",
+                post.deleted &&
+                "border-rose-900/50 bg-rose-950/25 ring-1 ring-rose-500/15",
+                !post.deleted &&
+                post.hidden &&
+                "border-gray-600 bg-gray-800/60 opacity-70",
+                !post.deleted &&
+                !post.hidden &&
+                "border-gray-500 bg-gray-800/90",
+              )}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span
+                    className={cn(
+                      "font-semibold",
+                      (post.hidden || post.deleted) && "text-gray-400",
+                      !post.hidden &&
+                      !post.deleted &&
+                      getBoardAuthorNameColorClass(post),
+                    )}
+                  >
+                    {post.author}
+                  </span>
+                  <span className="text-xs text-gray-300">
+                    {formatBoardTimestamp(post.timestamp)}
+                  </span>
+                  {post.deleted && (
+                    <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-xs font-semibold text-rose-100">
+                      Deleted by author
+                    </span>
+                  )}
+                  {post.highlighted && !post.deleted && (
+                    <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-semibold text-amber-200">
+                      Highlighted
+                    </span>
+                  )}
+                  {post.hidden && (
+                    <span className="rounded-full bg-gray-600 px-2 py-0.5 text-xs font-semibold text-gray-100">
+                      Hidden
+                    </span>
+                  )}
+                </div>
+                {isViewingCurrent && (
+                  <div className="flex shrink-0 gap-2">
+                    <Button
+                      variant="tertiary"
+                      svg={post.hidden ? Eye : EyeOff}
+                      onClick={() => {
+                        void runPostAction(
+                          post._id,
+                          () => updateBoardPostHidden(post._id, !post.hidden),
+                          (p) => ({ ...p, hidden: !p.hidden }),
+                        );
+                      }}
+                      disabled={actingPostIds.has(post._id) || post.deleted}
+                    >
+                      {post.hidden ? "Unhide" : "Hide"}
+                    </Button>
+                    <Button
+                      variant="tertiary"
+                      svg={post.highlighted ? StarOff : Sparkles}
+                      onClick={() =>
+                        void runPostAction(
+                          post._id,
+                          () =>
+                            updateBoardPostHighlighted(
+                              post._id,
+                              !post.highlighted,
+                            ),
+                          (p) => ({ ...p, highlighted: !p.highlighted }),
+                        )
+                      }
+                      disabled={
+                        actingPostIds.has(post._id) || post.hidden || post.deleted
+                      }
+                    >
+                      {post.highlighted ? "Unhighlight" : "Highlight"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+              <div
+                className={cn(
+                  "mt-3 min-w-0",
+                  post.deleted && "opacity-80",
+                )}
+              >
+                <BoardPostMessage text={post.text} isMine={false} tone="moderator" />
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+      <div ref={endRef} className="h-px shrink-0" aria-hidden />
+    </div>
+  );
 
   const manageBoardsContent = (
     <ManageBoardsPanelBody
@@ -1107,6 +1560,8 @@ export const BoardControllerContent = () => {
             >
               <BoardToolsPanelBody
                 isMobileStack={true}
+                churchId={churchId || ""}
+                restreamSession={restreamSession}
                 handleCopy={handleCopy}
                 onOpenAttendeeLink={handleOpenAttendeeLink}
                 onOpenViewBoardLink={handleOpenViewBoardLink}
@@ -1291,122 +1746,39 @@ export const BoardControllerContent = () => {
                 </div>
               </div>
 
-              <div
-                ref={scrollRef}
-                onScroll={onScroll}
-                className="min-h-0 flex-1 overflow-y-auto p-4"
-              >
-                {isLoading ? (
-                  <div className="flex items-center gap-2 text-gray-300">
-                    <LoaderCircle className="animate-spin" size={18} />
-                    Loading posts…
-                  </div>
-                ) : posts.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-gray-500 bg-gray-800/50 p-6 text-center">
-                    <p className="text-lg font-semibold">No posts yet.</p>
-                    <p className="mt-2 text-sm text-gray-300">
-                      Share the board link to start receiving questions.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {posts.map((post) => (
-                      <article
-                        key={post._id}
-                        className={cn(
-                          "rounded-xl border p-4",
-                          post.deleted &&
-                          "border-rose-900/50 bg-rose-950/25 ring-1 ring-rose-500/15",
-                          !post.deleted &&
-                          post.hidden &&
-                          "border-gray-600 bg-gray-800/60 opacity-70",
-                          !post.deleted &&
-                          !post.hidden &&
-                          "border-gray-500 bg-gray-800/90",
-                        )}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
-                          <div className="flex min-w-0 flex-wrap items-center gap-2">
-                            <span
-                              className={cn(
-                                "font-semibold",
-                                (post.hidden || post.deleted) && "text-gray-400",
-                                !post.hidden &&
-                                !post.deleted &&
-                                getBoardAuthorNameColorClass(post),
-                              )}
-                            >
-                              {post.author}
-                            </span>
-                            <span className="text-xs text-gray-300">
-                              {formatBoardTimestamp(post.timestamp)}
-                            </span>
-                            {post.deleted && (
-                              <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-xs font-semibold text-rose-100">
-                                Deleted by author
-                              </span>
-                            )}
-                            {post.highlighted && !post.deleted && (
-                              <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-semibold text-amber-200">
-                                Highlighted
-                              </span>
-                            )}
-                            {post.hidden && (
-                              <span className="rounded-full bg-gray-600 px-2 py-0.5 text-xs font-semibold text-gray-100">
-                                Hidden
-                              </span>
-                            )}
-                          </div>
-                          {isViewingCurrent && (
-                            <div className="flex shrink-0 gap-2">
-                              <Button
-                                variant="tertiary"
-                                svg={post.hidden ? Eye : EyeOff}
-                                onClick={() => {
-                                  void runPostAction(
-                                    post._id,
-                                    () => updateBoardPostHidden(post._id, !post.hidden),
-                                    (p) => ({ ...p, hidden: !p.hidden }),
-                                  );
-                                }}
-                                disabled={actingPostIds.has(post._id) || post.deleted}
-                              >
-                                {post.hidden ? "Unhide" : "Hide"}
-                              </Button>
-                              <Button
-                                variant="tertiary"
-                                svg={post.highlighted ? StarOff : Sparkles}
-                                onClick={() =>
-                                  void runPostAction(
-                                    post._id,
-                                    () => updateBoardPostHighlighted(post._id, !post.highlighted),
-                                    (p) => ({ ...p, highlighted: !p.highlighted }),
-                                  )
-                                }
-                                disabled={actingPostIds.has(post._id) || post.hidden || post.deleted}
-                              >
-                                {post.highlighted ? "Unhighlight" : "Highlight"}
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                        <div
-                          className={cn(
-                            "mt-3 min-w-0",
-                            post.deleted && "opacity-80",
-                          )}
-                        >
-                          <BoardPostMessage
-                            text={post.text}
-                            isMine={false}
-                            tone="moderator"
-                          />
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                )}
-                <div ref={endRef} className="h-px shrink-0" aria-hidden />
+              <div className="min-h-0 flex-1 overflow-hidden p-4">
+                <SectionTabs
+                  value={activeTab}
+                  onValueChange={setActiveTab}
+                  tabsContentClassName="mt-4 min-h-0 flex-1"
+                  items={[
+                    {
+                      value: "boardPosts",
+                      label: `Board Posts (${posts.length})`,
+                      description:
+                        "Moderate attendee posts for the current discussion board session.",
+                      content: boardPostsTabContent,
+                      contentClassName: "min-h-0 flex-1",
+                    },
+                    {
+                      value: "restream",
+                      label: `Restream (${visibleRestreamMessageCount})`,
+                      description:
+                        "Watch incoming Restream chat for this church, then hide or highlight messages for the board display.",
+                      content: (
+                        <RestreamTabContent
+                          churchId={churchId || ""}
+                          showToast={showToast}
+                          restreamSession={restreamSession}
+                        />
+                      ),
+                      contentClassName: "space-y-4",
+                    },
+                  ]}
+                  className="flex h-full min-h-0 flex-col"
+                  tabBarClassName="mx-0 rounded-lg bg-transparent"
+                  tabsListClassName="border-0 bg-gray-900"
+                />
               </div>
             </>
           )}
@@ -1430,6 +1802,8 @@ export const BoardControllerContent = () => {
               >
                 <BoardToolsPanelBody
                   isMobileStack={false}
+                  churchId={churchId || ""}
+                  restreamSession={restreamSession}
                   handleCopy={handleCopy}
                   onOpenAttendeeLink={handleOpenAttendeeLink}
                   onOpenViewBoardLink={handleOpenViewBoardLink}

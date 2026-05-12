@@ -6,6 +6,7 @@ const DEFAULT_ALLOWED_HOSTS = [
   "www.worshipsync.net",
   "worshipsync.net",
   "local.worshipsync.net",
+  "api.restream.io",
 ];
 
 const parseAllowedHosts = (): Set<string> => {

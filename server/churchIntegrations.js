@@ -18,6 +18,7 @@ const ALLOWED_MATCH_MODES = new Set(["exact", "contains", "normalize"]);
 const ALLOWED_NAME_KEYS = new Set(["elementType", "title", "ledBy"]);
 const ALLOWED_MULTI_MODES = new Set(["single", "split"]);
 const ALLOWED_OUTLINE_ITEM_TYPES = new Set(["song", "bible", "none"]);
+const INTEGRATIONS_MAX_PLATFORM_SUMMARY = 12;
 
 const defaultCatalog = () => ({
   servicePlanning: { status: "available", label: "Service Planning" },
@@ -253,6 +254,43 @@ const normalizeCatalog = (raw) => {
   return out;
 };
 
+const normalizeRestream = (raw) => {
+  const safe = isRecord(raw) ? raw : {};
+  const platformSummary = Array.isArray(safe.platformSummary)
+    ? safe.platformSummary
+        .slice(0, INTEGRATIONS_MAX_PLATFORM_SUMMARY)
+        .map((item, index) =>
+          clampString(
+            item,
+            INTEGRATIONS_MAX_LABEL,
+            `Restream platform ${index + 1}`,
+          ),
+        )
+        .filter(Boolean)
+    : [];
+
+  const lastEventAt = Number(safe.lastEventAt);
+  const sessionStartedAt = Number(safe.sessionStartedAt);
+
+  return {
+    enabled: Boolean(safe.enabled),
+    connected: Boolean(safe.connected),
+    accountLabel: clampString(
+      safe.accountLabel,
+      INTEGRATIONS_MAX_LABEL,
+      "Restream account label",
+    ),
+    lastError: clampString(
+      safe.lastError,
+      INTEGRATIONS_MAX_STRING,
+      "Restream error",
+    ),
+    ...(Number.isFinite(lastEventAt) ? { lastEventAt } : {}),
+    ...(Number.isFinite(sessionStartedAt) ? { sessionStartedAt } : {}),
+    platformSummary,
+  };
+};
+
 /**
  * Validates and normalizes church integrations for RTDB storage (admin POST body).
  */
@@ -296,6 +334,7 @@ export const normalizeChurchIntegrationsForStorage = (input) => {
     );
   }
   const people = peopleRaw.map((p, i) => normalizePerson(p, i));
+  const restream = normalizeRestream(safe.restream);
 
   return {
     version: Number.isFinite(version) && version > 0 ? Math.floor(version) : 1,
@@ -306,6 +345,7 @@ export const normalizeChurchIntegrationsForStorage = (input) => {
       sectionRules,
       people,
     },
+    restream,
   };
 };
 

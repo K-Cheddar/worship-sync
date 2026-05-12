@@ -11,6 +11,11 @@ import {
   AuthApiError,
 } from "../../api/auth";
 import {
+  disconnectRestream,
+  getRestreamConnectStatus,
+  getRestreamConnectAuthorizeUrl,
+} from "../../boards/api";
+import {
   DEFAULT_SERVICE_PLANNING_NAME_SOURCES,
   type ChurchIntegrations,
   type ServicePlanningElementRule,
@@ -23,11 +28,20 @@ import { CommaSeparatedPillsInput } from "../../components/CommaSeparatedPillsIn
 import ExpandCollapseAllToolbar from "../../components/ExpandCollapseAllToolbar/ExpandCollapseAllToolbar";
 import IntegrationsCollapsibleCardHeader from "../../components/IntegrationsCollapsibleCardHeader/IntegrationsCollapsibleCardHeader";
 import cn from "classnames";
+import { isElectron } from "../../utils/environment";
 
 type IntegrationsSettingsPanelProps = {
   churchId: string;
   integrations: ChurchIntegrations;
   integrationsStatus: "loading" | "ready";
+};
+
+type PendingRestreamConnect = {
+  connectRequestId: string;
+  connectRequestSecret: string;
+  authorizeUrl: string;
+  expiresAt: number;
+  pollIntervalMs: number;
 };
 
 const NAME_COLUMNS: { value: NameColumnKey; label: string }[] = [
@@ -556,6 +570,9 @@ export const IntegrationsSettingsPanel = ({
   const [integrationsFormRemountTick, setIntegrationsFormRemountTick] =
     useState(0);
   const [isSaving, setIsSaving] = useState(false);
+  const [isRestreamActing, setIsRestreamActing] = useState(false);
+  const [pendingRestreamConnect, setPendingRestreamConnect] =
+    useState<PendingRestreamConnect | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Avoid JSON.stringify(draft) per keystroke — that dominated input latency. */
   const [isDraftDirty, setIsDraftDirty] = useState(false);
@@ -637,6 +654,136 @@ export const IntegrationsSettingsPanel = ({
   }, [integrations]);
 
   const sp = draft.servicePlanning;
+  const restream = integrations.restream;
+
+  const handleConnectRestream = useCallback(async () => {
+    setIsRestreamActing(true);
+    try {
+      const response = await getRestreamConnectAuthorizeUrl(
+        churchId,
+        "/account?tab=integrations",
+      );
+      const nextPending = {
+        connectRequestId: response.connectRequestId,
+        connectRequestSecret: response.connectRequestSecret,
+        authorizeUrl: response.authorizeUrl,
+        expiresAt: response.expiresAt,
+        pollIntervalMs: response.pollIntervalMs,
+      };
+      setPendingRestreamConnect(nextPending);
+
+      if (isElectron() && window.electronAPI?.openExternalUrl) {
+        await window.electronAPI.openExternalUrl(response.authorizeUrl);
+      } else {
+        const opened = window.open(
+          response.authorizeUrl,
+          "_blank",
+          "noopener,noreferrer",
+        );
+        if (!opened) {
+          window.location.assign(response.authorizeUrl);
+        }
+      }
+      showToast(
+        "Restream opened in your browser. Finish the connection there.",
+        "success",
+      );
+    } catch (nextError) {
+      setPendingRestreamConnect(null);
+      showToast(
+        nextError instanceof Error
+          ? nextError.message
+          : "Could not start the Restream connection. Try again.",
+        "error",
+      );
+    } finally {
+      setIsRestreamActing(false);
+    }
+  }, [churchId, showToast]);
+
+  const handleDisconnectRestream = useCallback(async () => {
+    setIsRestreamActing(true);
+    try {
+      await disconnectRestream(churchId);
+      setPendingRestreamConnect(null);
+      showToast("Restream disconnected.", "success");
+    } catch (nextError) {
+      showToast(
+        nextError instanceof Error
+          ? nextError.message
+          : "Could not disconnect Restream. Try again.",
+        "error",
+      );
+    } finally {
+      setIsRestreamActing(false);
+    }
+  }, [churchId, showToast]);
+
+  useEffect(() => {
+    if (!pendingRestreamConnect) {
+      return;
+    }
+
+    if (pendingRestreamConnect.expiresAt <= Date.now()) {
+      setPendingRestreamConnect(null);
+      showToast(
+        "This Restream connection attempt expired. Start again to continue.",
+        "error",
+      );
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollStatus = async () => {
+      try {
+        const result = await getRestreamConnectStatus(churchId, {
+          connectRequestId: pendingRestreamConnect.connectRequestId,
+          connectRequestSecret: pendingRestreamConnect.connectRequestSecret,
+        });
+        if (cancelled) return;
+        if (result.status === "pending") {
+          return;
+        }
+        setPendingRestreamConnect(null);
+        if (result.status === "completed") {
+          showToast(
+            result.accountLabel
+              ? `Restream connected to ${result.accountLabel}.`
+              : "Restream connected.",
+            "success",
+          );
+          return;
+        }
+        showToast(
+          result.errorMessage ||
+            (result.status === "expired"
+              ? "This Restream connection attempt expired. Start again to continue."
+              : "Could not finish the Restream connection. Try again."),
+          "error",
+        );
+      } catch (nextError) {
+        if (cancelled) return;
+        setPendingRestreamConnect(null);
+        showToast(
+          nextError instanceof Error
+            ? nextError.message
+            : "Could not check the Restream connection yet. Try again.",
+          "error",
+        );
+      }
+    };
+
+    void pollStatus();
+    const timerId = window.setInterval(
+      () => void pollStatus(),
+      Math.max(1000, pendingRestreamConnect.pollIntervalMs || 1500),
+    );
+    return () => {
+      cancelled = true;
+      window.clearInterval(timerId);
+    };
+  }, [churchId, pendingRestreamConnect, showToast]);
 
   const setServicePlanningEnabled = useCallback((enabled: boolean) => {
     setIsDraftDirty(true);
@@ -927,6 +1074,132 @@ export const IntegrationsSettingsPanel = ({
             </div>
           </li>
         </ul>
+      </section>
+
+      <section className="rounded-xl border border-gray-700 bg-gray-950/50 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">Restream</h3>
+            <p className="mt-1 max-w-2xl text-sm text-gray-400">
+              Connect one Restream account for this church. Moderators can then
+              review live comments from the board moderation page.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {restream.enabled ? (
+              <Button
+                type="button"
+                variant="tertiary"
+                disabled={isRestreamActing}
+                isLoading={isRestreamActing}
+                onClick={() => void handleDisconnectRestream()}
+              >
+                Disconnect Restream
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="cta"
+                disabled={isRestreamActing}
+                isLoading={isRestreamActing}
+                onClick={() => void handleConnectRestream()}
+              >
+                Connect Restream
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="rounded-lg border border-gray-600 bg-gray-900/60 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Connection
+            </p>
+            <p className="mt-1 text-sm font-medium text-gray-100">
+              {restream.connected
+                ? "Connected"
+                : restream.enabled
+                  ? "Disconnected"
+                  : "Not connected"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-gray-600 bg-gray-900/60 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Account
+            </p>
+            <p className="mt-1 text-sm text-gray-100">
+              {restream.accountLabel || "No Restream account connected"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-gray-600 bg-gray-900/60 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Last event
+            </p>
+            <p className="mt-1 text-sm text-gray-100">
+              {restream.lastEventAt
+                ? new Date(restream.lastEventAt).toLocaleString()
+                : "No messages received yet"}
+            </p>
+          </div>
+        </div>
+
+        {restream.platformSummary.length ? (
+          <p className="mt-3 text-sm text-gray-300">
+            Live sources: {restream.platformSummary.join(" | ")}
+          </p>
+        ) : null}
+        {pendingRestreamConnect ? (
+          <div className="mt-3 rounded-lg border border-cyan-800/70 bg-cyan-950/30 p-3">
+            <p className="text-sm font-medium text-cyan-100">
+              Finish the Restream connection in your browser.
+            </p>
+            <p className="mt-1 text-xs text-cyan-100/80">
+              This request stays open until it finishes or expires.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  if (isElectron() && window.electronAPI?.openExternalUrl) {
+                    void window.electronAPI.openExternalUrl(
+                      pendingRestreamConnect.authorizeUrl,
+                    );
+                    return;
+                  }
+                  const opened = window.open(
+                    pendingRestreamConnect.authorizeUrl,
+                    "_blank",
+                    "noopener,noreferrer",
+                  );
+                  if (!opened) {
+                    window.location.assign(
+                      pendingRestreamConnect.authorizeUrl,
+                    );
+                  }
+                }}
+              >
+                Reopen browser
+              </Button>
+              <Button
+                type="button"
+                variant="tertiary"
+                onClick={() => setPendingRestreamConnect(null)}
+              >
+                Stop waiting
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {restream.sessionStartedAt ? (
+          <p className="mt-2 text-xs text-gray-400">
+            Current Restream session started{" "}
+            {new Date(restream.sessionStartedAt).toLocaleString()}.
+          </p>
+        ) : null}
+        {restream.lastError ? (
+          <p className="mt-3 text-sm text-amber-100/90">{restream.lastError}</p>
+        ) : null}
       </section>
 
       <section className="rounded-xl border border-gray-700 bg-gray-950/50 p-4">
