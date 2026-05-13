@@ -437,6 +437,32 @@ const serializeRestreamMessage = (messageDoc) => ({
   ...(typeof messageDoc.hiddenAt === "number"
     ? { hiddenAt: messageDoc.hiddenAt }
     : {}),
+  ...(typeof messageDoc.clientReplyUuid === "string" &&
+  messageDoc.clientReplyUuid.trim()
+    ? { clientReplyUuid: messageDoc.clientReplyUuid.trim() }
+    : {}),
+  ...(typeof messageDoc.replyUuid === "string" && messageDoc.replyUuid.trim()
+    ? { replyUuid: messageDoc.replyUuid.trim() }
+    : {}),
+  ...(typeof messageDoc.replyDeliveryStatus === "string" &&
+  messageDoc.replyDeliveryStatus.trim()
+    ? {
+        replyDeliveryStatus: messageDoc.replyDeliveryStatus.trim(),
+      }
+    : {}),
+  ...(typeof messageDoc.replyFailureReason === "string" &&
+  messageDoc.replyFailureReason.trim()
+    ? {
+        replyFailureReason: messageDoc.replyFailureReason.trim(),
+      }
+    : {}),
+  ...(typeof messageDoc.failedConnectionIdentifier === "string" &&
+  messageDoc.failedConnectionIdentifier.trim()
+    ? {
+        failedConnectionIdentifier:
+          messageDoc.failedConnectionIdentifier.trim(),
+      }
+    : {}),
 });
 
 const serializeBoardDisplayItem = (item) => ({

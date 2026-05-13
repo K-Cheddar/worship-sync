@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Plus, RotateCcw } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, RotateCcw, Unplug } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "../../context/toastContext";
 import Button from "../../components/Button/Button";
@@ -757,9 +757,9 @@ export const IntegrationsSettingsPanel = ({
         }
         showToast(
           result.errorMessage ||
-            (result.status === "expired"
-              ? "This Restream connection attempt expired. Start again to continue."
-              : "Could not finish the Restream connection. Try again."),
+          (result.status === "expired"
+            ? "This Restream connection attempt expired. Start again to continue."
+            : "Could not finish the Restream connection. Try again."),
           "error",
         );
       } catch (nextError) {
@@ -1089,7 +1089,9 @@ export const IntegrationsSettingsPanel = ({
             {restream.enabled ? (
               <Button
                 type="button"
-                variant="tertiary"
+                variant="destructive"
+                svg={Unplug}
+                iconSize="sm"
                 disabled={isRestreamActing}
                 isLoading={isRestreamActing}
                 onClick={() => void handleDisconnectRestream()}

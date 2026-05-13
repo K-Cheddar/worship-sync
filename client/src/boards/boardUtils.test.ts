@@ -1,5 +1,6 @@
 import {
   buildBoardPublicUrl,
+  buildWorshipSyncModeratorBoardPostAuthorId,
   filterHighlightedBoardPosts,
   filterVisibleBoardPosts,
   generateAnonymousDisplayName,
@@ -10,6 +11,7 @@ import {
   getBoardPostsForAttendeeView,
   isBoardAuthorInUse,
   isBoardPostOwnedByParticipant,
+  isWorshipSyncModeratorBoardPost,
   normalizeAliasId,
   sortBoardPostsAscending,
 } from "./boardUtils";
@@ -54,6 +56,21 @@ describe("boardUtils", () => {
       startkey: "post:board-a:",
       endkey: "post:board-a:\ufff0",
     });
+  });
+
+  it("detects WorshipSync moderator posts by author id prefix", () => {
+    expect(isWorshipSyncModeratorBoardPost({ authorId: "worshipsync:abc" })).toBe(
+      true,
+    );
+    expect(
+      isWorshipSyncModeratorBoardPost({ authorId: " worshipsync:abc " }),
+    ).toBe(true);
+    expect(isWorshipSyncModeratorBoardPost({ authorId: "device-1" })).toBe(false);
+    expect(isWorshipSyncModeratorBoardPost({})).toBe(false);
+  });
+
+  it("builds WorshipSync moderator author ids", () => {
+    expect(buildWorshipSyncModeratorBoardPostAuthorId(" u1 ")).toBe("worshipsync:u1");
   });
 
   it("generates anonymous church-themed display names within author limits", () => {

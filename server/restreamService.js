@@ -1098,6 +1098,100 @@ export const createRestreamService = ({
     return messages.some((message) => message.fingerprint === fingerprint);
   };
 
+  const ensureReceiverOutboundMaps = (receiver) => {
+    if (!receiver.pendingOutboundByClientUuid) {
+      receiver.pendingOutboundByClientUuid = new Map();
+    }
+    if (!receiver.pendingReplyUuidToMessageId) {
+      receiver.pendingReplyUuidToMessageId = new Map();
+    }
+    if (!receiver.suppressReplyCreatedClientUuids) {
+      receiver.suppressReplyCreatedClientUuids = new Set();
+    }
+  };
+
+  const mergeOutboundReplyCreated = async (receiver, action) => {
+    const payload =
+      action?.payload && typeof action.payload === "object"
+        ? action.payload
+        : {};
+    const clientReplyUuid = String(payload.clientReplyUuid || "").trim();
+    if (!clientReplyUuid) return false;
+    const messageId = receiver.pendingOutboundByClientUuid.get(clientReplyUuid);
+    if (!messageId) return false;
+
+    const ids = Array.isArray(payload.connectionIdentifiers)
+      ? payload.connectionIdentifiers
+      : [];
+    const connectionIdentifier = String(ids[0] || "").trim();
+    const connectionInfo = receiver.connections.get(
+      getConnectionMapKey({
+        connectionIdentifier,
+        connectionUuid: "",
+      }),
+    );
+    const platform = connectionInfo
+      ? readConnectionPlatform(
+          connectionInfo,
+          payload?.eventTypeId ?? action?.eventTypeId,
+        )
+      : "Restream";
+    const replyUuid = String(payload.replyUuid || "").trim();
+    const postedAt = actionTimestampToPostedAt(action);
+
+    await setDoc(
+      RESTREAM_MESSAGE_COLLECTION,
+      messageId,
+      {
+        replyDeliveryStatus: "sent",
+        postedAt,
+        platform,
+        connectionIdentifier,
+        rawEventType: "reply_created",
+        ...(replyUuid ? { replyUuid } : {}),
+      },
+      { merge: true },
+    );
+
+    receiver.pendingOutboundByClientUuid.delete(clientReplyUuid);
+    if (replyUuid) {
+      receiver.pendingReplyUuidToMessageId.set(replyUuid, messageId);
+    }
+    emitSse(receiver.churchId, "message-updated", { messageId });
+    onBoardDisplayUpdate?.(receiver.database);
+    return true;
+  };
+
+  const handleReplyFailedAction = async (receiver, action) => {
+    const payload =
+      action?.payload && typeof action.payload === "object"
+        ? action.payload
+        : {};
+    const replyUuid = String(payload.replyUuid || "").trim();
+    if (!replyUuid) return;
+    const messageId = receiver.pendingReplyUuidToMessageId.get(replyUuid);
+    if (!messageId) return;
+
+    receiver.pendingReplyUuidToMessageId.delete(replyUuid);
+    const reason = String(payload.reason || "").trim() || "internal";
+    const failedConnectionIdentifier = String(
+      payload.connectionIdentifier || "",
+    ).trim();
+
+    await setDoc(
+      RESTREAM_MESSAGE_COLLECTION,
+      messageId,
+      {
+        replyDeliveryStatus: "failed",
+        replyFailureReason: reason,
+        ...(failedConnectionIdentifier ? { failedConnectionIdentifier } : {}),
+      },
+      { merge: true },
+    );
+    emitSse(receiver.churchId, "message-updated", { messageId });
+    onBoardDisplayUpdate?.(receiver.database);
+  };
+
   const handleSocketAction = async (receiver, rawData) => {
     let action;
     try {
@@ -1144,6 +1238,22 @@ export const createRestreamService = ({
     const actionName = String(action?.action || "").trim();
 
     if (actionName === "reply_created") {
+      const payload =
+        action?.payload && typeof action.payload === "object"
+          ? action.payload
+          : {};
+      const clientReplyUuid = String(payload.clientReplyUuid || "").trim();
+      ensureReceiverOutboundMaps(receiver);
+      if (
+        clientReplyUuid &&
+        receiver.suppressReplyCreatedClientUuids.has(clientReplyUuid)
+      ) {
+        receiver.suppressReplyCreatedClientUuids.delete(clientReplyUuid);
+        return;
+      }
+      if (await mergeOutboundReplyCreated(receiver, action)) {
+        return;
+      }
       const currentSession = await getCurrentSession({
         churchId: receiver.churchId,
         database: receiver.database,
@@ -1167,6 +1277,12 @@ export const createRestreamService = ({
         sessionId: currentSession.sessionId,
         message: modMessage,
       });
+      return;
+    }
+
+    if (actionName === "reply_failed") {
+      ensureReceiverOutboundMaps(receiver);
+      await handleReplyFailedAction(receiver, action);
       return;
     }
 
@@ -1213,6 +1329,7 @@ export const createRestreamService = ({
       existing?.ws &&
       (existing.state === "connecting" || existing.state === "connected")
     ) {
+      ensureReceiverOutboundMaps(existing);
       return existing;
     }
 
@@ -1236,6 +1353,12 @@ export const createRestreamService = ({
           database: tokenDoc.database,
         })
       ).startedAt,
+      pendingOutboundByClientUuid:
+        existing?.pendingOutboundByClientUuid || new Map(),
+      pendingReplyUuidToMessageId:
+        existing?.pendingReplyUuidToMessageId || new Map(),
+      suppressReplyCreatedClientUuids:
+        existing?.suppressReplyCreatedClientUuids || new Set(),
     };
 
     receivers.set(churchId, receiver);

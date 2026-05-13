@@ -16,6 +16,7 @@ import TextArea from "../components/TextArea/TextArea";
 import { createBoardPost, deleteOwnBoardPost, updateOwnBoardPost } from "../boards/api";
 import { useBoardData } from "../boards/useBoardData";
 import { useBoardEventStream } from "../boards/useBoardEventStream";
+import { BoardModeratorReplyBadge } from "../boards/BoardModeratorReplyBadge";
 import { BoardPostMessage } from "../boards/BoardPostMessage";
 import type { DBBoardPost } from "../types";
 import {
@@ -29,6 +30,7 @@ import {
   getOrCreateBoardParticipantId,
   isBoardAuthorInUse,
   isBoardPostOwnedByParticipant,
+  isWorshipSyncModeratorBoardPost,
 } from "../boards/boardUtils";
 import { useStickToBottomScroll } from "../hooks/useStickToBottomScroll";
 
@@ -612,6 +614,7 @@ const BoardPage = () => {
               <div className="space-y-4 pb-2">
                 {attendeePosts.map((post) => {
                   const isMine = isMyPost(post);
+                  const isModeratorToolPost = isWorshipSyncModeratorBoardPost(post);
                   const isHiddenFromOthers =
                     post.hidden && isBoardPostOwnedByParticipant(post, {
                       authorId: participantId,
@@ -636,6 +639,11 @@ const BoardPage = () => {
                         "border-amber-500/45 bg-amber-950/30 ring-1 ring-amber-500/25",
                         !isHiddenFromOthers &&
                         !showAsMine &&
+                        isModeratorToolPost &&
+                        "border-amber-500/35 bg-stone-900/85 ring-1 ring-amber-500/20",
+                        !isHiddenFromOthers &&
+                        !showAsMine &&
+                        !isModeratorToolPost &&
                         "border-stone-700 bg-stone-900/85",
                       )}
                     >
@@ -655,6 +663,9 @@ const BoardPage = () => {
                           >
                             {post.author}
                           </span>
+                          {isModeratorToolPost ? (
+                            <BoardModeratorReplyBadge className="text-amber-100" />
+                          ) : null}
                           {isMine && (
                             <span className="rounded-full bg-amber-500/25 px-2 py-0.5 text-xs font-semibold text-amber-200">
                               You

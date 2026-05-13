@@ -37,6 +37,24 @@ export const normalizeBoardParticipantId = (
   value: string | undefined,
 ): string => (typeof value === "string" ? value.trim() : "").slice(0, 120);
 
+/** Board posts created from WorshipSync (board controller) use this `authorId` prefix. */
+export const WORSHIPSYNC_BOARD_POST_AUTHOR_ID_PREFIX = "worshipsync:";
+
+export const buildWorshipSyncModeratorBoardPostAuthorId = (
+  userId: string,
+): string =>
+  `${WORSHIPSYNC_BOARD_POST_AUTHOR_ID_PREFIX}${normalizeBoardParticipantId(userId)}`.slice(
+    0,
+    120,
+  );
+
+export const isWorshipSyncModeratorBoardPost = (post: {
+  authorId?: string;
+}): boolean =>
+  normalizeBoardParticipantId(post.authorId).startsWith(
+    WORSHIPSYNC_BOARD_POST_AUTHOR_ID_PREFIX,
+  );
+
 export const normalizeBoardPresentationFontScale = (value?: number): number => {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return DEFAULT_BOARD_PRESENTATION_FONT_SCALE;

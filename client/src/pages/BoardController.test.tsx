@@ -10,6 +10,25 @@ import { GlobalInfoContext } from "../context/globalInfo";
 import { createMockGlobalContext } from "../test/mocks";
 import { useRestreamSession } from "../boards/useRestreamSession";
 import { useAboutChangelogMenu } from "../hooks/useAboutChangelogMenu";
+import type { RootState } from "../store/store";
+
+jest.mock("../hooks", () => {
+  const actual = jest.requireActual("../hooks") as typeof import("../hooks");
+  const boardControllerTestState = {
+    undoable: {
+      past: [],
+      present: {
+        preferences: { scrollbarWidth: "thin" as const },
+      },
+      future: [],
+    },
+  } as unknown as RootState;
+  return {
+    ...actual,
+    useSelector: (selector: (state: RootState) => unknown) =>
+      selector(boardControllerTestState),
+  };
+});
 
 jest.mock("../containers/Toolbar/ToolbarElements/UserSection", () => () => (
   <div>User</div>
@@ -39,6 +58,7 @@ jest.mock("../hooks/useAboutChangelogMenu", () => ({
 
 jest.mock("../boards/api", () => ({
   createBoardAlias: jest.fn(),
+  createBoardPost: jest.fn(),
   disconnectRestream: jest.fn(),
   deleteBoardAlias: jest.fn(),
   hardResetBoardAlias: jest.fn(),
@@ -682,5 +702,84 @@ describe("BoardControllerContent", () => {
 
     expect(await screen.findByText(/Stream name:/i)).toBeInTheDocument();
     expect(screen.getByText("Sabbath School Weekly")).toBeInTheDocument();
+  });
+
+  it("does not show a discussion-board post composer on the Restream tab", async () => {
+    const user = userEvent.setup();
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-1",
+        startedAt: 100,
+        messageCount: 0,
+        enabled: true,
+        connected: true,
+        connectionState: "connected",
+        accountLabel: "Main channel",
+        streamTitle: "",
+        lastError: "",
+        platformSummary: ["YouTube: Main channel"],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    await user.click(await screen.findByRole("tab", { name: /Restream/i }));
+
+    expect(
+      screen.queryByRole("textbox", {
+        name: /Add to discussion board/i,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("posts to the discussion board from the Board Posts tab", async () => {
+    const user = userEvent.setup();
+    const api = jest.requireMock("../boards/api") as {
+      createBoardPost: jest.Mock;
+    };
+    api.createBoardPost.mockResolvedValue({
+      post: {
+        _id: "post:new-1",
+        type: "board-post",
+        docType: "board-post",
+        aliasId: "sunday",
+        boardId: "board-current",
+        database: "test",
+        author: "test-user",
+        authorId: "worshipsync:test-user-id",
+        text: "Announcement for everyone",
+        timestamp: Date.now(),
+        hidden: false,
+        highlighted: false,
+        deleted: false,
+      },
+    });
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Sunday Board" });
+
+    const field = await screen.findByRole("textbox", {
+      name: /Add to discussion board/i,
+    });
+    await user.type(field, "Announcement for everyone");
+    await user.click(screen.getByRole("button", { name: /^Send$/i }));
+
+    await waitFor(() => {
+      expect(api.createBoardPost).toHaveBeenCalledWith("sunday", {
+        author: "Moderator",
+        authorId: "worshipsync:test-user-id",
+        text: "Announcement for everyone",
+      });
+    });
   });
 });

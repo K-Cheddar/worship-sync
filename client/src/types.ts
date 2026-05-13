@@ -362,6 +362,11 @@ export type RestreamMessage = {
   hidden: boolean;
   highlightedAt?: number;
   hiddenAt?: number;
+  clientReplyUuid?: string;
+  replyUuid?: string;
+  replyDeliveryStatus?: "sending" | "sent" | "failed";
+  replyFailureReason?: string;
+  failedConnectionIdentifier?: string;
 };
 
 export type BoardDisplayItem = {
