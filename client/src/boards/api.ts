@@ -2,7 +2,14 @@ import {
   getApiBasePath,
   isPackagedElectronRenderer,
 } from "../utils/environment";
-import { DBBoard, DBBoardAlias, DBBoardPost } from "../types";
+import {
+  BoardDisplayItem,
+  DBBoard,
+  DBBoardAlias,
+  DBBoardPost,
+  RestreamMessage,
+  RestreamSession,
+} from "../types";
 import { getHumanApiToken, getWorkstationToken } from "../utils/authStorage";
 
 type JsonRequestInit = Omit<RequestInit, "body"> & {
@@ -36,6 +43,45 @@ export type BoardPostsResponse = {
   boardId: string;
   posts: DBBoardPost[];
 };
+
+export type BoardDisplayItemsResponse = {
+  aliasId: string;
+  items: BoardDisplayItem[];
+};
+
+export type RestreamSessionStatusResponse = {
+  oauthConfigured: boolean;
+  bestEffortOnly: boolean;
+  session: RestreamSession;
+};
+
+export type RestreamMessagesResponse = {
+  messages: RestreamMessage[];
+};
+
+export type RestreamConnectUrlResponse = {
+  authorizeUrl: string;
+  connectRequestId: string;
+  connectRequestSecret: string;
+  expiresAt: number;
+  pollIntervalMs: number;
+};
+
+export type RestreamConnectStatusResponse = {
+  status: "pending" | "completed" | "failed" | "expired";
+  errorMessage: string;
+  completedAt?: number;
+  expiresAt?: number;
+  accountLabel?: string;
+};
+
+export const buildRestreamConnectUrl = (
+  churchId: string,
+  returnTo = "/boards/controller",
+): string =>
+  `${getApiBasePath()}api/churches/${encodeURIComponent(
+    churchId,
+  )}/restream/connect?returnTo=${encodeURIComponent(returnTo)}`;
 
 const fetchJson = async <T>(
   path: string,
@@ -113,6 +159,11 @@ export const getBoardPosts = (
     `api/boards/${encodeURIComponent(aliasId)}/posts${suffix ? `?${suffix}` : ""}`,
   );
 };
+
+export const getBoardDisplayItems = (aliasId: string) =>
+  fetchJson<BoardDisplayItemsResponse>(
+    `api/boards/${encodeURIComponent(aliasId)}/display-items`,
+  );
 
 export const createBoardPost = (
   aliasId: string,
@@ -221,3 +272,77 @@ export const updateBoardPostHidden = (postId: string, value?: boolean) =>
 
 export const updateBoardPostHighlighted = (postId: string, value?: boolean) =>
   updateBoardPostFlag(postId, "highlighted", value);
+
+export const getRestreamSessionStatus = (churchId: string) =>
+  fetchJson<RestreamSessionStatusResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/restream/session`,
+  );
+
+export const getRestreamConnectAuthorizeUrl = (
+  churchId: string,
+  returnTo = "/boards/controller",
+) =>
+  fetchJson<RestreamConnectUrlResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/restream/connect-url?returnTo=${encodeURIComponent(returnTo)}`,
+  );
+
+export const getRestreamConnectStatus = (
+  churchId: string,
+  payload: { connectRequestId: string; connectRequestSecret: string },
+) =>
+  fetchJson<RestreamConnectStatusResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/restream/connect-status`,
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+
+export const getRestreamMessages = (churchId: string) =>
+  fetchJson<RestreamMessagesResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/restream/messages`,
+  );
+
+const updateRestreamMessageFlag = (
+  churchId: string,
+  messageId: string,
+  field: "hidden" | "highlighted",
+  value?: boolean,
+) =>
+  fetchJson<{ message: RestreamMessage | null }>(
+    `api/churches/${encodeURIComponent(churchId)}/restream/messages/${encodeURIComponent(messageId)}/${field}`,
+    {
+      method: "POST",
+      body: value === undefined ? {} : { value },
+    },
+  );
+
+export const updateRestreamMessageHidden = (
+  churchId: string,
+  messageId: string,
+  value?: boolean,
+) => updateRestreamMessageFlag(churchId, messageId, "hidden", value);
+
+export const updateRestreamMessageHighlighted = (
+  churchId: string,
+  messageId: string,
+  value?: boolean,
+) => updateRestreamMessageFlag(churchId, messageId, "highlighted", value);
+
+export const resetRestreamSession = (churchId: string) =>
+  fetchJson<RestreamSessionStatusResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/restream/session/reset`,
+    {
+      method: "POST",
+      body: {},
+    },
+  );
+
+export const disconnectRestream = (churchId: string) =>
+  fetchJson<{ success: boolean }>(
+    `api/churches/${encodeURIComponent(churchId)}/restream/disconnect`,
+    {
+      method: "POST",
+      body: {},
+    },
+  );

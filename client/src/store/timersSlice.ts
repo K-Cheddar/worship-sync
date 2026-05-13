@@ -1,6 +1,7 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { TimerInfo } from "../types";
 import { calculateRemainingTime, calculateEndTime } from "../utils/timerUtils";
+import { serverNow } from "../utils/serverTime";
 
 interface TimersState {
   timers: TimerInfo[];
@@ -285,7 +286,7 @@ export const timersSlice = createSlice({
       state.timers.forEach((timer) => {
         if (timer.isActive && timer.status === "running" && timer.endTime) {
           const endTime = new Date(timer.endTime).getTime();
-          const now = Date.now();
+          const now = serverNow();
           const remainingSeconds = Math.floor((endTime - now) / 1000);
           timer.remainingTime = Math.max(0, remainingSeconds);
 

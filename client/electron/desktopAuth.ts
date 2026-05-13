@@ -6,6 +6,10 @@ export type DesktopAuthCallbackPayload = {
   desktopAuthId: string;
 };
 
+export type DesktopRouteCallbackPayload = {
+  route: string;
+};
+
 const isDesktopAuthCallbackPathname = (target: URL): boolean => {
   if (target.pathname === DESKTOP_AUTH_CALLBACK_PATH) {
     return true;
@@ -32,6 +36,27 @@ export const parseDesktopAuthCallbackUrl = (
       return null;
     }
     return { desktopAuthId };
+  } catch {
+    return null;
+  }
+};
+
+export const parseDesktopRouteCallbackUrl = (
+  value: string,
+): DesktopRouteCallbackPayload | null => {
+  try {
+    const target = new URL(value);
+    if (`${target.protocol}//` !== `${WORSHIPSYNC_PROTOCOL_SCHEME}://`) {
+      return null;
+    }
+    if (!isDesktopAuthCallbackPathname(target)) {
+      return null;
+    }
+    const route = String(target.searchParams.get("route") || "").trim();
+    if (!route.startsWith("/")) {
+      return null;
+    }
+    return { route };
   } catch {
     return null;
   }

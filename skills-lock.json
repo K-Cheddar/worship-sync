@@ -50,6 +50,18 @@
       "source": "firebase/agent-skills",
       "sourceType": "github",
       "computedHash": "0688a8ad6cb72149924352cc47e6cc8bf815e944b636a67b9da225cc9b025afc"
+    },
+    "qodo-get-rules": {
+      "source": "qodo-ai/qodo-skills",
+      "sourceType": "github",
+      "skillPath": "skills/qodo-get-rules/SKILL.md",
+      "computedHash": "f6257be994770ea7f78a57ee3d416f182bee7fd2521c9a059e7eea6f186bbd39"
+    },
+    "qodo-pr-resolver": {
+      "source": "qodo-ai/qodo-skills",
+      "sourceType": "github",
+      "skillPath": "skills/qodo-pr-resolver/SKILL.md",
+      "computedHash": "c841e822f9683a07ed748d878f83261e8359b63bbff6ad08f008f90dc1420830"
     }
   }
 }

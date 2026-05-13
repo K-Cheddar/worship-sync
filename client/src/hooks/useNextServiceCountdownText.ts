@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatTime } from "../components/DisplayWindow/TimerDisplay";
+import { serverNow } from "../utils/serverTime";
 
 const COUNTDOWN_TICK_MS = 16;
 
 const getRemainingSeconds = (targetIso: string) =>
-  Math.max(0, Math.floor((new Date(targetIso).getTime() - Date.now()) / 1000));
+  Math.max(0, Math.floor((new Date(targetIso).getTime() - serverNow()) / 1000));
 
 /**
  * Derived local countdown text for next-service surfaces.

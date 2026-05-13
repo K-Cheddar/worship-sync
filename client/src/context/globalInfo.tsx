@@ -122,6 +122,7 @@ import {
 import type { ChurchIntegrations } from "../types/integrations";
 import { createDefaultChurchIntegrations } from "../types/integrations";
 import { normalizeChurchIntegrations } from "../utils/churchIntegrations";
+import { setServerTimeOffset } from "../utils/serverTime";
 // import { useRealtimeDatabaseHealthCheck } from "@/hooks/useRealtimeDatabaseHealthCheck";
 
 /** Firebase client calls are Promise-like in production but may return void in tests. */
@@ -1536,8 +1537,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }
     });
 
+    const offsetRef = ref(firebaseDb, ".info/serverTimeOffset");
+    const unsubscribeOffset = onValue(offsetRef, (snap) => {
+      setServerTimeOffset(snap.val() ?? 0);
+    });
+
     return () => {
       unsubscribe();
+      unsubscribeOffset();
     };
   }, [
     activeInstanceName,

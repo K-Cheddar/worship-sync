@@ -1,4 +1,5 @@
 import { TimerInfo } from "../types";
+import { serverNow } from "./serverTime";
 
 /**
  * Merges local and remote timers, prioritizing timers from the specified host
@@ -41,7 +42,7 @@ export const calculateEndTime = (
   if (isStarting) {
     if (timerInfo.timerType === "timer" && timerInfo.duration) {
       // For regular timers, set endTime based on duration
-      return new Date(Date.now() + timerInfo.duration * 1000).toISOString();
+      return new Date(serverNow() + timerInfo.duration * 1000).toISOString();
     } else if (timerInfo.timerType === "countdown") {
       // For countdown timers, set endTime based on target time
       const [hours, minutes] = (timerInfo.countdownTime || "00:00")
@@ -57,7 +58,7 @@ export const calculateEndTime = (
   } else if (isResuming && existingTimer?.remainingTime) {
     // For resuming timers, set endTime based on remaining time
     return new Date(
-      Date.now() + existingTimer.remainingTime * 1000,
+      serverNow() + existingTimer.remainingTime * 1000,
     ).toISOString();
   } else if (existingTimer?.endTime && existingTimer.status === "running") {
     // Preserve existing endTime for running timers
@@ -67,7 +68,7 @@ export const calculateEndTime = (
 };
 
 export const getTimeDifference = (timeString: string) => {
-  const now = new Date();
+  const now = new Date(serverNow());
   const [hours, minutes] = timeString.split(":").map(Number);
 
   // Create a new Date object for today with the specified time
@@ -116,7 +117,7 @@ export const calculateRemainingTime = ({
     // If timer is running and has an end time, calculate remaining time
     if (timerInfo.status === "running" && timerInfo.endTime) {
       const endTime = new Date(timerInfo.endTime);
-      const now = new Date();
+      const now = new Date(serverNow());
       const remainingSeconds = Math.floor(
         (endTime.getTime() - now.getTime()) / 1000,
       );

@@ -78,10 +78,21 @@ export type ChurchIntegrationsCatalog = {
   planningCenter: { status: IntegrationCatalogStatus; label: string };
 };
 
+export type RestreamIntegrationConfig = {
+  enabled: boolean;
+  connected: boolean;
+  accountLabel: string;
+  lastError: string;
+  lastEventAt?: number;
+  sessionStartedAt?: number;
+  platformSummary: string[];
+};
+
 export type ChurchIntegrations = {
   version: number;
   catalog: ChurchIntegrationsCatalog;
   servicePlanning: ServicePlanningConfig;
+  restream: RestreamIntegrationConfig;
 };
 
 export const createDefaultChurchIntegrations = (): ChurchIntegrations => ({
@@ -96,5 +107,12 @@ export const createDefaultChurchIntegrations = (): ChurchIntegrations => ({
     elementRules: [],
     sectionRules: [],
     people: [],
+  },
+  restream: {
+    enabled: false,
+    connected: false,
+    accountLabel: "",
+    lastError: "",
+    platformSummary: [],
   },
 });

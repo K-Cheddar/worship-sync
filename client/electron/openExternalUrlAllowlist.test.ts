@@ -27,6 +27,14 @@ describe("assertAllowedOpenExternalUrl", () => {
     ).not.toThrow();
   });
 
+  it("allows Restream OAuth authorize URLs", () => {
+    expect(() =>
+      assertAllowedOpenExternalUrl("https://api.restream.io/login?response_type=code", {
+        isDev: false,
+      }),
+    ).not.toThrow();
+  });
+
   it("allows http localhost only when isDev", () => {
     expect(() =>
       assertAllowedOpenExternalUrl("http://localhost:3000/", { isDev: true }),

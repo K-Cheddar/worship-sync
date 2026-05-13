@@ -43,6 +43,7 @@ import {
   WORSHIPSYNC_PROTOCOL_SCHEME,
   findDesktopAuthProtocolArg,
   parseDesktopAuthCallbackUrl,
+  parseDesktopRouteCallbackUrl,
   type DesktopAuthCallbackPayload,
 } from "./desktopAuth";
 import { assertAllowedOpenExternalUrl } from "./openExternalUrlAllowlist";
@@ -223,7 +224,36 @@ const focusMainWindow = (): void => {
   mainWindow.focus();
 };
 
+const buildMainWindowRouteUrl = (route: string): string => {
+  const normalizedRoute = route.startsWith("/") ? route : `/${route}`;
+  const hashRoute = `#${normalizedRoute}`;
+  if (isDev) {
+    return `https://local.worshipsync.net:3000/${hashRoute}`;
+  }
+  const indexPath = join(__dirname, "../renderer/index.html");
+  return `${pathToFileURL(indexPath).toString()}${hashRoute}`;
+};
+
+const navigateMainWindowToRoute = (route: string): void => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  const targetUrl = buildMainWindowRouteUrl(route);
+  void mainWindow.loadURL(targetUrl).catch((error) => {
+    console.error("Could not navigate main window to route:", error);
+  });
+  focusMainWindow();
+};
+
 const handleDesktopAuthProtocolUrl = (targetUrl: string): void => {
+  const routePayload = parseDesktopRouteCallbackUrl(targetUrl);
+  if (routePayload) {
+    navigateMainWindowToRoute(routePayload.route);
+    return;
+  }
   const payload = parseDesktopAuthCallbackUrl(targetUrl);
   if (!payload) {
     return;
@@ -518,9 +548,7 @@ const createWindow = () => {
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
-  if (app.isPackaged) {
-    registerWorshipSyncProtocolClient();
-  }
+  registerWorshipSyncProtocolClient();
   const initialProtocolUrl = findDesktopAuthProtocolArg(process.argv);
   if (initialProtocolUrl) {
     handleDesktopAuthProtocolUrl(initialProtocolUrl);

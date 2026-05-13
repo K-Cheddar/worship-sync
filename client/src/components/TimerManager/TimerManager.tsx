@@ -6,6 +6,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { tickTimers, setShouldUpdateTimers } from "../../store/timersSlice";
 import { useSyncRemoteTimers } from "../../hooks";
 import { getChurchDataPath } from "../../utils/firebasePaths";
+import { serverNow } from "../../utils/serverTime";
 
 const TimerManager = () => {
   const dispatch = useDispatch();
@@ -47,7 +48,7 @@ const TimerManager = () => {
 
     if (hasRunningTimers) {
       const currentInterval = setInterval(() => {
-        const now = Date.now();
+        const now = serverNow();
         const runningTimers = timers.filter(
           (timer) =>
             timer.isActive && timer.status === "running" && timer.endTime

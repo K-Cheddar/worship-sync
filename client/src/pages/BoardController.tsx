@@ -1,64 +1,49 @@
+import type { CSSProperties } from "react";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import cn from "classnames";
 import {
-  CircleAlert,
-  Copy,
-  Home,
   Eye,
   EyeOff,
   LayoutList,
   LoaderCircle,
   Menu as MenuIcon,
-  MessageSquarePlus,
-  Minus,
-  Pencil,
-  Plus,
-  Presentation,
-  RotateCcw,
   SlidersHorizontal,
   Sparkles,
   StarOff,
-  Trash2,
 } from "lucide-react";
 import PouchDB from "pouchdb-browser";
 import Button from "../components/Button/Button";
-import Icon from "../components/Icon/Icon";
-import Select from "../components/Select/Select";
-import Menu from "../components/Menu/Menu";
 import DeleteModal from "../components/Modal/DeleteModal";
+import Menu from "../components/Menu/Menu";
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
 } from "../components/ui/sheet";
+import { SectionTabs } from "../components/SectionTabs/SectionTabs";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import { useToast } from "../context/toastContext";
 import { GlobalInfoContext } from "../context/globalInfo";
-import { useElectronWindows } from "../hooks/useElectronWindows";
+import { useSelector } from "../hooks";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import type { RootState } from "../store/store";
 import { useStickToBottomScroll } from "../hooks/useStickToBottomScroll";
 import BoardSyncProvider, { useBoardSync } from "../boards/BoardSyncContext";
-import { BoardCreateDiscussionForm } from "../boards/BoardCreateDiscussionForm";
 import { BoardRenameModal } from "../boards/BoardRenameModal";
 import { BoardPostMessage } from "../boards/BoardPostMessage";
 import {
-  BOARD_PRESENTATION_FONT_SCALE_STEP,
-  buildBoardDisplayRoute,
-  buildBoardDisplayUrl,
   buildBoardPublicUrl,
-  DEFAULT_BOARD_PRESENTATION_FONT_SCALE,
   filterVisibleBoardPosts,
   formatBoardTimestamp,
   getAliasDocId,
   getBoardAuthorNameColorClass,
   getBoardDocId,
   getBoardLabel,
-  MAX_BOARD_PRESENTATION_FONT_SCALE,
-  MIN_BOARD_PRESENTATION_FONT_SCALE,
   normalizeBoardPresentationFontScale,
   getBoardPostRange,
   isCurrentBoardView,
+  isWorshipSyncModeratorBoardPost,
   setStoredBoardDisplayAliasId,
   sortBoardPostsAscending,
 } from "../boards/boardUtils";
@@ -69,8 +54,6 @@ import {
 } from "../boards/boardPanelTheme";
 import {
   deleteBoardAlias,
-  hardResetBoardAlias,
-  softResetBoardAlias,
   updateBoardPresentationFontScale,
   updateBoardPostHidden,
   updateBoardPostHighlighted,
@@ -79,71 +62,44 @@ import {
   DBBoard,
   DBBoardAlias,
   DBBoardPost,
-  MenuItemType,
-  Option,
 } from "../types";
-import type { WindowType } from "../types/electron";
-import { getDisplayLabel } from "../utils/displayUtils";
-import { isElectronDisplayWindowOpen } from "../utils/isElectronDisplayWindowOpen";
-import { useAboutChangelogMenu } from "../hooks/useAboutChangelogMenu";
-
-const BOARD_COPY_LINK_ICON_COLOR = "#22d3ee";
-
-type BoardShareLinkGroupProps = {
-  heading: string;
-  onCopy: () => void | Promise<void>;
-  onView: () => void;
-  disabled: boolean;
-  className?: string;
-};
-
-const BoardShareLinkGroup = ({
-  heading,
-  onCopy,
-  onView,
-  disabled,
-  className,
-}: BoardShareLinkGroupProps) => (
-  <div
-    className={cn(
-      "w-fit max-w-full shrink-0 rounded-lg border border-gray-600 bg-gray-900/50 p-3",
-      className,
-    )}
-  >
-    <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-      {heading}
-    </p>
-    <div className="mt-2 flex flex-row flex-wrap gap-2">
-      <Button
-        type="button"
-        variant="primary"
-        svg={Copy}
-        color={BOARD_COPY_LINK_ICON_COLOR}
-        onClick={() => void onCopy()}
-        disabled={disabled}
-        className="w-fit shrink-0 justify-center px-3"
-      >
-        Copy
-      </Button>
-      <Button
-        type="button"
-        variant="secondary"
-        svg={Eye}
-        color={BOARD_COPY_LINK_ICON_COLOR}
-        onClick={onView}
-        disabled={disabled}
-        className="w-fit shrink-0 justify-center px-3"
-      >
-        View
-      </Button>
-    </div>
-  </div>
-);
+import { BoardControllerMenu } from "../boards/BoardControllerMenu";
+import { BoardToolsPanelBody } from "../boards/BoardControllerToolsPanel";
+import { BoardDiscussionPostComposer } from "../boards/BoardDiscussionPostComposer";
+import { BoardModeratorReplyBadge } from "../boards/BoardModeratorReplyBadge";
+import { ManageBoardsPanelBody } from "../boards/BoardControllerManageBoardsPanel";
+import { BoardShareLinkGroup } from "../boards/BoardShareLinkGroup";
+import {
+  filterRestreamMessagesForDisplay,
+  RestreamTabContent,
+} from "../boards/BoardRestreamTabContent";
+import {
+  useRestreamSession,
+} from "../boards/useRestreamSession";
 
 type AllDocsResult<T> = {
   rows: Array<{ doc?: T }>;
 };
 
+const getAliasRangeEndKey = () => `alias:${String.fromCharCode(0xffff)}`;
+
+const getSafeAliasDocs = async (
+  db: PouchDB.Database,
+  database: string,
+): Promise<DBBoardAlias[]> => {
+  const result = (await db.allDocs({
+    include_docs: true,
+    startkey: "alias:",
+    endkey: getAliasRangeEndKey(),
+  })) as AllDocsResult<DBBoardAlias>;
+
+  return result.rows
+    .flatMap((row) => (row.doc ? [row.doc] : []))
+    .filter((doc) => doc.database === database)
+    .sort((a, b) => a.title.localeCompare(b.title));
+};
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const getAliasDocs = async (
   db: PouchDB.Database,
   database: string,
@@ -191,501 +147,20 @@ const getBoardPosts = async (
   );
 };
 
-type ManageBoardsPanelBodyProps = {
-  database: string | undefined;
-  isActing: boolean;
-  runAction: (action: () => Promise<void>) => Promise<void>;
-  onCreated: (aliasId: string) => void;
-  aliases: DBBoardAlias[];
-  selectedAliasId: string;
-  onSelectAlias: (aliasId: string) => void;
-  onRenameAlias: (aliasId: string) => void;
-  onDeleteAlias: (alias: DBBoardAlias) => void;
-};
-
-const ManageBoardsPanelBody = ({
-  database,
-  isActing,
-  runAction,
-  onCreated,
-  aliases,
-  selectedAliasId,
-  onSelectAlias,
-  onRenameAlias,
-  onDeleteAlias,
-}: ManageBoardsPanelBodyProps) => (
-  <>
-    <BoardCreateDiscussionForm
-      database={database}
-      isActing={isActing}
-      runAction={runAction}
-      onCreated={onCreated}
-    />
-    <div className={cn("mt-4", BOARD_PANEL_CARD)}>
-      <div className={BOARD_PANEL_HEADER}>
-        <h2 className="text-base font-semibold">Discussion Boards</h2>
-      </div>
-      <div
-        className={cn(
-          "max-h-[55dvh] overflow-x-hidden overflow-y-auto overscroll-contain xl:max-h-[40dvh]",
-          BOARD_PANEL_BODY,
-        )}
-      >
-        {aliases.length === 0 && (
-          <p className="px-4 py-4 text-sm text-gray-300">
-            No discussion boards yet.
-          </p>
-        )}
-        {aliases.map((alias) => (
-          <div
-            key={alias.aliasId}
-            className={cn(
-              "flex cursor-pointer items-start gap-2 border-b border-gray-600 border-l-4 px-4 py-3 transition-colors last:border-b-0",
-              selectedAliasId === alias.aliasId
-                ? "border-l-cyan-500 bg-gray-900/55 hover:bg-gray-900/70"
-                : "border-l-transparent bg-gray-700/35 hover:bg-gray-700/50",
-            )}
-          >
-            <button
-              type="button"
-              aria-current={selectedAliasId === alias.aliasId ? "true" : undefined}
-              className="min-w-0 flex-1 cursor-pointer overflow-hidden text-left transition-colors hover:text-white"
-              title={`${alias.title} (${alias.aliasId})`}
-              onClick={() => onSelectAlias(alias.aliasId)}
-            >
-              <span className="block truncate font-semibold leading-snug">
-                {alias.title}
-              </span>
-              <span className="block truncate font-mono text-xs text-gray-400">
-                {alias.aliasId}
-              </span>
-            </button>
-            <div className="flex shrink-0 items-center gap-1">
-              <Button
-                variant="tertiary"
-                svg={Pencil}
-                padding="p-2"
-                className="min-h-0!"
-                aria-label={`Rename ${alias.title}`}
-                onClick={() => onRenameAlias(alias.aliasId)}
-                disabled={isActing}
-              />
-              <Button
-                variant="destructive"
-                svg={Trash2}
-                padding="p-2"
-                className="min-h-0!"
-                aria-label={`Delete ${alias.title}`}
-                onClick={() => onDeleteAlias(alias)}
-                disabled={isActing}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  </>
-);
-
-const BoardControllerMenu = ({
-  canOpenBoard,
-  prepareBoardDisplay,
-}: {
-  canOpenBoard: boolean;
-  prepareBoardDisplay: () => void;
-}) => {
-  const {
-    aboutChangelogMenuItems,
-    aboutChangelogModals,
-    updateReadyVersion,
-  } = useAboutChangelogMenu();
-  const {
-    isElectron,
-    displays,
-    windowStates,
-    openWindow,
-    closeWindow,
-    focusWindow,
-    moveWindowToDisplay,
-    setDisplayPreference,
-  } = useElectronWindows();
-
-  const boardWindowOpen = isElectronDisplayWindowOpen(
-    isElectron,
-    windowStates,
-    "board",
-  );
-
-  const openWindowOnLastUsedDisplay = async (windowType: WindowType) => {
-    prepareBoardDisplay();
-    try {
-      if (isElectron) {
-        await openWindow(windowType);
-      } else {
-        const webRoute =
-          windowType === "board" ? buildBoardDisplayRoute() : "/projector";
-        const webTarget = windowType === "board" ? "_board" : "_projector";
-        const webUrl =
-          windowType === "board" ? buildBoardDisplayUrl() : `#${webRoute}`;
-        window.open(webUrl, webTarget, "width=1280,height=720");
-      }
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const openWindowOnDisplay = async (
-    windowType: WindowType,
-    displayId: number,
-  ) => {
-    prepareBoardDisplay();
-    try {
-      if (!isElectron) {
-        await openWindowOnLastUsedDisplay(windowType);
-        return;
-      }
-
-      const moved = await moveWindowToDisplay(windowType, displayId);
-      if (moved) {
-        await focusWindow(windowType);
-        return;
-      }
-
-      await setDisplayPreference(windowType, displayId);
-      await openWindow(windowType);
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const buildDisplaySubItems = (windowType: WindowType) => [
-    {
-      text: "Last Used Display",
-      onClick: () => openWindowOnLastUsedDisplay(windowType),
-    },
-    ...displays.map((display, index) => ({
-      text: getDisplayLabel(display, index),
-      onClick: () => openWindowOnDisplay(windowType, display.id),
-    })),
-  ];
-
-  const menuItems: MenuItemType[] = [
-    {
-      element: (
-        <div className="flex items-center gap-2">
-          <Home className="size-4 text-gray-300" />
-          Home
-        </div>
-      ),
-      to: "/",
-    },
-    canOpenBoard || boardWindowOpen
-      ? {
-        text: boardWindowOpen ? "Close Board" : "Open Board",
-        element: (
-          <div className="flex items-center gap-2">
-            <Presentation className="size-4 text-gray-300" />
-            {boardWindowOpen ? "Close Board" : "Open Board"}
-          </div>
-        ),
-        ...(boardWindowOpen
-          ? {
-            onClick: async () => {
-              await closeWindow("board");
-            },
-          }
-          : isElectron && displays.length > 0
-            ? {
-              subItems: buildDisplaySubItems("board"),
-            }
-            : {
-              onClick: async () => {
-                await openWindowOnLastUsedDisplay("board");
-              },
-            }),
-      }
-      : {
-        text: "Open Board",
-        element: (
-          <div className="flex items-center gap-2 opacity-60">
-            <Presentation className="size-4 text-gray-300" />
-            Open Board
-          </div>
-        ),
-        disabled: true,
-      },
-    ...aboutChangelogMenuItems,
-  ];
-
-  return (
-    <>
-      <Menu
-        menuItems={menuItems}
-        align="start"
-        TriggeringButton={
-          <Button
-            variant="tertiary"
-            className="w-fit"
-            aria-label="Open menu"
-            svg={MenuIcon}
-            gap="gap-1.5"
-          >
-            Menu
-            {updateReadyVersion ? (
-              <Icon svg={CircleAlert} color="#f59e0b" size="sm" />
-            ) : null}
-          </Button>
-        }
-      />
-      {aboutChangelogModals}
-    </>
-  );
-};
-
-type BoardToolsPanelBodyProps = {
-  isMobileStack: boolean;
-  handleCopy: (value: string, label: string) => Promise<void>;
-  onOpenAttendeeLink: () => void;
-  onOpenViewBoardLink: () => void;
-  publicBoardUrl: string;
-  publicPresentUrl: string;
-  boardIdToView: string;
-  setSelectedBoardId: (value: string) => void;
-  selectedAlias: DBBoardAlias;
-  boardsById: Record<string, DBBoard>;
-  archiveOptions: string[];
-  isViewingCurrent: boolean;
-  presentationFontScale: number;
-  onFontScaleChange: (scale: number) => void;
-  runAction: (action: () => Promise<void>) => Promise<void>;
-  isActing: boolean;
-  showToast: (message: string, variant: "success" | "error") => void;
-};
-
-const BoardToolsPanelBody = ({
-  isMobileStack,
-  handleCopy,
-  onOpenAttendeeLink,
-  onOpenViewBoardLink,
-  publicBoardUrl,
-  publicPresentUrl,
-  boardIdToView,
-  setSelectedBoardId,
-  selectedAlias,
-  boardsById,
-  archiveOptions,
-  isViewingCurrent,
-  presentationFontScale,
-  onFontScaleChange,
-  runAction,
-  isActing,
-  showToast,
-}: BoardToolsPanelBodyProps) => {
-  const historyOptions: Option[] = useMemo(
-    () =>
-      archiveOptions.map((boardId) => ({
-        value: boardId,
-        label: `${boardId === selectedAlias.currentBoardId ? "Current session" : "Earlier session"}: ${getBoardLabel(boardsById[boardId])}`,
-      })),
-    [archiveOptions, boardsById, selectedAlias.currentBoardId],
-  );
-
-  return (
-    <>
-      <div className="xl:hidden">
-        <p className="text-sm font-semibold text-gray-100" id="board-tools-share-label">
-          Share links
-        </p>
-        <p className="mt-1 text-xs text-gray-400">
-          Copy or open the attendee page and the presentation screen. Links stay the same when you start a new session.
-        </p>
-        <div
-          className="mt-3 flex flex-col items-start gap-3"
-          role="group"
-          aria-labelledby="board-tools-share-label"
-        >
-          <BoardShareLinkGroup
-            heading="Attendee link"
-            onCopy={() => handleCopy(publicBoardUrl, "Attendee link")}
-            onView={onOpenAttendeeLink}
-            disabled={!publicBoardUrl}
-          />
-          <BoardShareLinkGroup
-            heading="Board link"
-            onCopy={() => handleCopy(publicPresentUrl, "Board link")}
-            onView={onOpenViewBoardLink}
-            disabled={!publicPresentUrl}
-          />
-        </div>
-      </div>
-
-      <div
-        className={cn(
-          isMobileStack && "mt-6 border-t border-gray-600 pt-6",
-        )}
-      >
-        <label
-          className="text-sm font-semibold text-gray-100"
-          htmlFor="board-history-select"
-          id="board-tools-history-label"
-        >
-          Show posts from
-        </label>
-        <p className="mt-1 text-xs text-gray-400">
-          Choose which session appears in the list of posts.
-        </p>
-        <Select
-          className="mt-2 w-full"
-          id="board-history-select"
-          options={historyOptions}
-          value={boardIdToView}
-          onChange={(value) =>
-            setSelectedBoardId(
-              value === selectedAlias.currentBoardId ? "" : value,
-            )
-          }
-          selectClassName="w-full max-xl:min-h-14"
-        />
-        {!isViewingCurrent && (
-          <Button
-            className="mt-3 w-full justify-center"
-            variant="tertiary"
-            onClick={() => setSelectedBoardId("")}
-          >
-            Return to current session
-          </Button>
-        )}
-      </div>
-
-      <div className="mt-6 border-t border-gray-600 pt-6">
-        <p className="text-sm font-semibold text-gray-100" id="board-tools-presentation-label">
-          Presentation text
-        </p>
-        <p className="mt-1 text-xs text-gray-400">
-          Size on the presentation screen when posts are highlighted.
-        </p>
-        <div
-          className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-gray-600 bg-gray-900/60 px-3 py-2"
-          role="group"
-          aria-labelledby="board-tools-presentation-label"
-        >
-          <Button
-            variant="tertiary"
-            svg={Minus}
-            padding="p-2"
-            className="min-h-0!"
-            onClick={() =>
-              onFontScaleChange(
-                presentationFontScale - BOARD_PRESENTATION_FONT_SCALE_STEP,
-              )
-            }
-            disabled={presentationFontScale <= MIN_BOARD_PRESENTATION_FONT_SCALE}
-          />
-          <span className="min-w-14 text-center text-sm font-semibold text-white">
-            {Math.round(presentationFontScale * 100)}%
-          </span>
-          <Button
-            variant="tertiary"
-            padding="px-3 py-2"
-            className="min-h-0!"
-            aria-label="Reset presentation text size"
-            onClick={() =>
-              onFontScaleChange(
-                DEFAULT_BOARD_PRESENTATION_FONT_SCALE,
-              )
-            }
-            disabled={presentationFontScale === DEFAULT_BOARD_PRESENTATION_FONT_SCALE}
-          >
-            Reset
-          </Button>
-          <Button
-            variant="tertiary"
-            svg={Plus}
-            padding="p-2"
-            className="min-h-0!"
-            onClick={() =>
-              onFontScaleChange(
-                presentationFontScale + BOARD_PRESENTATION_FONT_SCALE_STEP,
-              )
-            }
-            disabled={presentationFontScale >= MAX_BOARD_PRESENTATION_FONT_SCALE}
-          />
-        </div>
-      </div>
-
-      <div className="mt-6 border-t border-gray-600 pt-6">
-        <p className="text-sm font-semibold text-gray-100" id="board-tools-session-label">
-          Session actions
-        </p>
-        <p className="mt-1 text-xs text-gray-400">
-          Share links stay the same.
-        </p>
-        <div
-          className="mt-3 flex flex-col gap-4"
-          role="group"
-          aria-labelledby="board-tools-session-label"
-        >
-          <div className="flex flex-col gap-1">
-            <Button
-              className="w-full justify-center"
-              svg={RotateCcw}
-              aria-describedby="board-session-clear-hint"
-              onClick={() =>
-                runAction(async () => {
-                  await softResetBoardAlias(selectedAlias.aliasId);
-                  showToast("All posts removed.", "success");
-                })
-              }
-              disabled={isActing || !isViewingCurrent}
-            >
-              Clear all posts
-            </Button>
-            <p
-              id="board-session-clear-hint"
-              className="text-xs leading-snug text-gray-400"
-            >
-              Remove every post from this session. Share links stay the same.
-            </p>
-          </div>
-          <div className="flex flex-col gap-1">
-            <Button
-              variant="cta"
-              className="w-full justify-center"
-              svg={MessageSquarePlus}
-              aria-describedby="board-session-new-hint"
-              onClick={() =>
-                runAction(async () => {
-                  await hardResetBoardAlias(selectedAlias.aliasId);
-                  setSelectedBoardId("");
-                  showToast("New session started.", "success");
-                })
-              }
-              disabled={isActing || !isViewingCurrent}
-            >
-              Start new session
-            </Button>
-            <p
-              id="board-session-new-hint"
-              className="text-xs leading-snug text-gray-400"
-            >
-              Start a new empty session with the same link. Earlier sessions and posts stay in the list above.
-            </p>
-          </div>
-        </div>
-        {!isViewingCurrent && (
-          <p className="mt-3 text-xs text-amber-100/90">
-            Switch to the current session to clear posts or start a new session.
-          </p>
-        )}
-      </div>
-    </>
-  );
-};
-
 export const BoardControllerContent = () => {
   const { db, status, pullFromRemote } = useBoardSync() || {};
-  const { database, loginState } = useContext(GlobalInfoContext) || {};
+  const { database, loginState, churchId, userId } =
+    useContext(GlobalInfoContext) || {};
   const { showToast } = useToast();
+  const scrollbarWidth = useSelector(
+    (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
+  );
+  const restreamSession = useRestreamSession(churchId || "");
+  const visibleRestreamMessageCount = useMemo(
+    () =>
+      filterRestreamMessagesForDisplay(restreamSession.messages).length,
+    [restreamSession.messages],
+  );
 
   const [aliases, setAliases] = useState<DBBoardAlias[]>([]);
   const [selectedAliasId, setSelectedAliasId] = useState<string>("");
@@ -698,6 +173,9 @@ export const BoardControllerContent = () => {
   const [actingPostIds, setActingPostIds] = useState<Set<string>>(new Set());
   const [renameAliasId, setRenameAliasId] = useState("");
   const [deleteAlias, setDeleteAlias] = useState<DBBoardAlias | null>(null);
+  const [activeTab, setActiveTab] = useState<"boardPosts" | "restream">(
+    "boardPosts",
+  );
   const [manageBoardsOpen, setManageBoardsOpen] = useState(false);
   const [boardToolsOpen, setBoardToolsOpen] = useState(false);
   const loadRequestIdRef = useRef(0);
@@ -710,7 +188,7 @@ export const BoardControllerContent = () => {
 
   const loadAliases = useCallback(async () => {
     if (!db || !database) return;
-    const nextAliases = await getAliasDocs(db, database);
+    const nextAliases = await getSafeAliasDocs(db, database);
     setAliases(nextAliases);
     setSelectedAliasId((currentAliasId) => {
       if (currentAliasId && nextAliases.some((alias) => alias.aliasId === currentAliasId)) {
@@ -1011,6 +489,152 @@ export const BoardControllerContent = () => {
     resetKey: stickToBottomResetKey,
   });
   const renameAlias = aliases.find((alias) => alias.aliasId === renameAliasId) ?? null;
+  const showBoardDiscussionComposer =
+    Boolean(selectedAliasId) &&
+    isViewingCurrent &&
+    loginState === "success" &&
+    Boolean(String(userId || "").trim());
+
+  const boardPostsTabContent = (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-4"
+      >
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-gray-300">
+            <LoaderCircle className="animate-spin" size={18} />
+            Loading posts…
+          </div>
+        ) : posts.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-gray-500 bg-gray-800/50 p-6 text-center">
+            <p className="text-lg font-semibold">No posts yet.</p>
+            <p className="mt-2 text-sm text-gray-300">
+              Share the board link to start receiving questions.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {posts.map((post) => {
+              const isModeratorPost = isWorshipSyncModeratorBoardPost(post);
+              return (
+                <article
+                  key={post._id}
+                  className={cn(
+                    "rounded-xl border p-4",
+                    post.deleted &&
+                    "border-rose-900/50 bg-rose-950/25 ring-1 ring-rose-500/15",
+                    !post.deleted &&
+                    post.hidden &&
+                    "border-gray-600 bg-gray-800/60 opacity-70",
+                    !post.deleted &&
+                    !post.hidden &&
+                    !isModeratorPost &&
+                    "border-gray-500 bg-gray-800/90",
+                    !post.deleted &&
+                    !post.hidden &&
+                    isModeratorPost &&
+                    "border-amber-500/20 bg-gray-800/90",
+                  )}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span
+                      className={cn(
+                        "font-semibold",
+                        (post.hidden || post.deleted) && "text-gray-400",
+                        !post.hidden &&
+                        !post.deleted &&
+                        getBoardAuthorNameColorClass(post),
+                      )}
+                    >
+                      {post.author}
+                    </span>
+                    {isModeratorPost ? <BoardModeratorReplyBadge /> : null}
+                    <span className="text-xs text-gray-300">
+                      {formatBoardTimestamp(post.timestamp)}
+                    </span>
+                    {post.deleted && (
+                      <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-xs font-semibold text-rose-100">
+                        Deleted by author
+                      </span>
+                    )}
+                    {post.highlighted && !post.deleted && (
+                      <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-semibold text-amber-200">
+                        Highlighted
+                      </span>
+                    )}
+                    {post.hidden && (
+                      <span className="rounded-full bg-gray-600 px-2 py-0.5 text-xs font-semibold text-gray-100">
+                        Hidden
+                      </span>
+                    )}
+                  </div>
+                  {isViewingCurrent && (
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        variant="tertiary"
+                        svg={post.hidden ? Eye : EyeOff}
+                        onClick={() => {
+                          void runPostAction(
+                            post._id,
+                            () => updateBoardPostHidden(post._id, !post.hidden),
+                            (p) => ({ ...p, hidden: !p.hidden }),
+                          );
+                        }}
+                        disabled={actingPostIds.has(post._id) || post.deleted}
+                      >
+                        {post.hidden ? "Unhide" : "Hide"}
+                      </Button>
+                      <Button
+                        variant="tertiary"
+                        svg={post.highlighted ? StarOff : Sparkles}
+                        onClick={() =>
+                          void runPostAction(
+                            post._id,
+                            () =>
+                              updateBoardPostHighlighted(
+                                post._id,
+                                !post.highlighted,
+                              ),
+                            (p) => ({ ...p, highlighted: !p.highlighted }),
+                          )
+                        }
+                        disabled={
+                          actingPostIds.has(post._id) || post.hidden || post.deleted
+                        }
+                      >
+                        {post.highlighted ? "Unhighlight" : "Highlight"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <div
+                  className={cn(
+                    "mt-3 min-w-0",
+                    post.deleted && "opacity-80",
+                  )}
+                >
+                  <BoardPostMessage text={post.text} isMine={false} tone="moderator" />
+                </div>
+              </article>
+              );
+            })}
+          </div>
+        )}
+        <div ref={endRef} className="h-px shrink-0" aria-hidden />
+      </div>
+      {showBoardDiscussionComposer ? (
+        <BoardDiscussionPostComposer
+          aliasId={selectedAliasId}
+          showToast={showToast}
+          userId={String(userId || "").trim()}
+          pullFromRemote={pullFromRemote}
+        />
+      ) : null}
+    </div>
+  );
 
   const manageBoardsContent = (
     <ManageBoardsPanelBody
@@ -1030,6 +654,11 @@ export const BoardControllerContent = () => {
     <main
       id="controller-main"
       className="flex h-dvh flex-col bg-homepage-canvas text-white"
+      style={
+        {
+          "--scrollbar-width": scrollbarWidth,
+        } as CSSProperties
+      }
     >
       <BoardRenameModal
         alias={renameAlias}
@@ -1082,7 +711,14 @@ export const BoardControllerContent = () => {
           <SheetHeader>
             <SheetTitle>Manage boards</SheetTitle>
           </SheetHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
+          <div
+            className="scrollbar-portal min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4"
+            style={
+              {
+                "--scrollbar-width": scrollbarWidth,
+              } as CSSProperties
+            }
+          >
             {manageBoardsContent}
           </div>
         </SheetContent>
@@ -1101,12 +737,19 @@ export const BoardControllerContent = () => {
             </SheetHeader>
             <div
               className={cn(
-                "min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4",
+                "scrollbar-portal min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4",
                 BOARD_PANEL_BODY,
               )}
+              style={
+                {
+                  "--scrollbar-width": scrollbarWidth,
+                } as CSSProperties
+              }
             >
               <BoardToolsPanelBody
                 isMobileStack={true}
+                churchId={churchId || ""}
+                restreamSession={restreamSession}
                 handleCopy={handleCopy}
                 onOpenAttendeeLink={handleOpenAttendeeLink}
                 onOpenViewBoardLink={handleOpenViewBoardLink}
@@ -1291,122 +934,40 @@ export const BoardControllerContent = () => {
                 </div>
               </div>
 
-              <div
-                ref={scrollRef}
-                onScroll={onScroll}
-                className="min-h-0 flex-1 overflow-y-auto p-4"
-              >
-                {isLoading ? (
-                  <div className="flex items-center gap-2 text-gray-300">
-                    <LoaderCircle className="animate-spin" size={18} />
-                    Loading posts…
-                  </div>
-                ) : posts.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-gray-500 bg-gray-800/50 p-6 text-center">
-                    <p className="text-lg font-semibold">No posts yet.</p>
-                    <p className="mt-2 text-sm text-gray-300">
-                      Share the board link to start receiving questions.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {posts.map((post) => (
-                      <article
-                        key={post._id}
-                        className={cn(
-                          "rounded-xl border p-4",
-                          post.deleted &&
-                          "border-rose-900/50 bg-rose-950/25 ring-1 ring-rose-500/15",
-                          !post.deleted &&
-                          post.hidden &&
-                          "border-gray-600 bg-gray-800/60 opacity-70",
-                          !post.deleted &&
-                          !post.hidden &&
-                          "border-gray-500 bg-gray-800/90",
-                        )}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
-                          <div className="flex min-w-0 flex-wrap items-center gap-2">
-                            <span
-                              className={cn(
-                                "font-semibold",
-                                (post.hidden || post.deleted) && "text-gray-400",
-                                !post.hidden &&
-                                !post.deleted &&
-                                getBoardAuthorNameColorClass(post),
-                              )}
-                            >
-                              {post.author}
-                            </span>
-                            <span className="text-xs text-gray-300">
-                              {formatBoardTimestamp(post.timestamp)}
-                            </span>
-                            {post.deleted && (
-                              <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-xs font-semibold text-rose-100">
-                                Deleted by author
-                              </span>
-                            )}
-                            {post.highlighted && !post.deleted && (
-                              <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-semibold text-amber-200">
-                                Highlighted
-                              </span>
-                            )}
-                            {post.hidden && (
-                              <span className="rounded-full bg-gray-600 px-2 py-0.5 text-xs font-semibold text-gray-100">
-                                Hidden
-                              </span>
-                            )}
-                          </div>
-                          {isViewingCurrent && (
-                            <div className="flex shrink-0 gap-2">
-                              <Button
-                                variant="tertiary"
-                                svg={post.hidden ? Eye : EyeOff}
-                                onClick={() => {
-                                  void runPostAction(
-                                    post._id,
-                                    () => updateBoardPostHidden(post._id, !post.hidden),
-                                    (p) => ({ ...p, hidden: !p.hidden }),
-                                  );
-                                }}
-                                disabled={actingPostIds.has(post._id) || post.deleted}
-                              >
-                                {post.hidden ? "Unhide" : "Hide"}
-                              </Button>
-                              <Button
-                                variant="tertiary"
-                                svg={post.highlighted ? StarOff : Sparkles}
-                                onClick={() =>
-                                  void runPostAction(
-                                    post._id,
-                                    () => updateBoardPostHighlighted(post._id, !post.highlighted),
-                                    (p) => ({ ...p, highlighted: !p.highlighted }),
-                                  )
-                                }
-                                disabled={actingPostIds.has(post._id) || post.hidden || post.deleted}
-                              >
-                                {post.highlighted ? "Unhighlight" : "Highlight"}
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                        <div
-                          className={cn(
-                            "mt-3 min-w-0",
-                            post.deleted && "opacity-80",
-                          )}
-                        >
-                          <BoardPostMessage
-                            text={post.text}
-                            isMine={false}
-                            tone="moderator"
-                          />
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                )}
-                <div ref={endRef} className="h-px shrink-0" aria-hidden />
+              <div className="min-h-0 flex-1 overflow-hidden p-4">
+                <SectionTabs
+                  value={activeTab}
+                  onValueChange={setActiveTab}
+                  tabsContentClassName="mt-4 flex min-h-0 flex-1 flex-col space-y-0 overflow-hidden"
+                  items={[
+                    {
+                      value: "boardPosts",
+                      label: `Board Posts (${posts.length})`,
+                      description:
+                        "Moderate attendee posts for the current discussion board session.",
+                      content: boardPostsTabContent,
+                      contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+                    },
+                    {
+                      value: "restream",
+                      label: `Restream (${visibleRestreamMessageCount})`,
+                      description:
+                        "Watch incoming Restream chat for this church, then hide or highlight messages for the board display.",
+                      content: (
+                        <RestreamTabContent
+                          churchId={churchId || ""}
+                          showToast={showToast}
+                          restreamSession={restreamSession}
+                        />
+                      ),
+                      contentClassName:
+                        "flex min-h-0 flex-1 flex-col overflow-hidden",
+                    },
+                  ]}
+                  className="flex h-full min-h-0 flex-col"
+                  tabBarClassName="mx-0 rounded-lg bg-transparent"
+                  tabsListClassName="border-0 bg-gray-900"
+                />
               </div>
             </>
           )}
@@ -1424,12 +985,14 @@ export const BoardControllerContent = () => {
               </div>
               <div
                 className={cn(
-                  "min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4",
+                  "scrollbar-variable min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4",
                   BOARD_PANEL_BODY,
                 )}
               >
                 <BoardToolsPanelBody
                   isMobileStack={false}
+                  churchId={churchId || ""}
+                  restreamSession={restreamSession}
                   handleCopy={handleCopy}
                   onOpenAttendeeLink={handleOpenAttendeeLink}
                   onOpenViewBoardLink={handleOpenViewBoardLink}

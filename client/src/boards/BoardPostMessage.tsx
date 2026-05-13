@@ -1,12 +1,13 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import cn from "classnames";
+import Button from "../components/Button/Button";
 
 const COLLAPSED_MAX_CLASS = "max-h-48";
-/** Bottom fade height; matches previous overlay so “Show more” lines up. */
+/** Bottom fade height; lines up with “Show more” under clipped collapsed text. */
 const COLLAPSED_FADE_HEIGHT = "3.5rem";
-/** Caps expanded body height so long posts scroll inside this region. */
+/** Caps expanded body height so long posts scroll inside this region (scrollbar only when expanded). */
 const EXPANDED_BODY_CLASS =
-  "max-h-[100vh] min-h-0 overflow-y-auto overflow-x-hidden pr-0.5 touch-pan-y";
+  "scrollbar-variable max-h-[100vh] min-h-0 overflow-y-auto overflow-x-hidden pr-0.5 touch-pan-y";
 
 const collapsedBottomFadeMaskStyle = {
   WebkitMaskImage: `linear-gradient(to bottom, black 0%, black calc(100% - ${COLLAPSED_FADE_HEIGHT}), transparent 100%)`,
@@ -55,11 +56,9 @@ export const BoardPostMessage = ({
   const textClass = isModeratorTone
     ? "whitespace-pre-wrap text-base leading-relaxed text-gray-100"
     : cn(
-        "whitespace-pre-wrap text-base leading-relaxed sm:text-lg",
-        isMine ? "text-amber-50/95" : "text-stone-100",
-      );
-
-  const showCollapsedFade = !expanded && showToggle;
+      "whitespace-pre-wrap text-base leading-relaxed sm:text-lg",
+      isMine ? "text-amber-50/95" : "text-stone-100",
+    );
 
   let showMoreButtonClass = "text-amber-400/95";
   if (isModeratorTone) {
@@ -67,6 +66,8 @@ export const BoardPostMessage = ({
   } else if (isMine) {
     showMoreButtonClass = "text-amber-200/95";
   }
+
+  const showCollapsedFade = !expanded && showToggle;
 
   return (
     <div className="mt-3">
@@ -76,7 +77,7 @@ export const BoardPostMessage = ({
           textClass,
           expanded
             ? EXPANDED_BODY_CLASS
-            : `${COLLAPSED_MAX_CLASS} overflow-hidden`,
+            : cn(COLLAPSED_MAX_CLASS, "overflow-hidden"),
         )}
         style={{
           ...(expanded
@@ -88,17 +89,19 @@ export const BoardPostMessage = ({
         {text}
       </div>
       {showToggle && (
-        <button
+        <Button
           type="button"
+          variant="none"
+          padding="py-0.5 px-0"
           className={cn(
-            "mt-2 rounded-sm text-sm font-semibold underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-amber-500/50",
+            "mt-2 max-md:min-h-0 rounded-sm text-sm underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-amber-500/50",
             showMoreButtonClass,
           )}
           aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}
         >
           {expanded ? "Show less" : "Show more"}
-        </button>
+        </Button>
       )}
     </div>
   );

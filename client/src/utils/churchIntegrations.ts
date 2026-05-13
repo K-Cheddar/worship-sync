@@ -24,6 +24,7 @@ export const normalizeChurchIntegrations = (
   const version = Number(value.version);
   const catalog = isRecord(value.catalog) ? value.catalog : {};
   const sp = isRecord(value.servicePlanning) ? value.servicePlanning : {};
+  const restream = isRecord(value.restream) ? value.restream : {};
 
   return {
     version: Number.isFinite(version) && version > 0 ? Math.floor(version) : 1,
@@ -126,6 +127,21 @@ export const normalizeChurchIntegrations = (
                 : {}),
             }),
           )
+        : [],
+    },
+    restream: {
+      enabled: Boolean(restream.enabled),
+      connected: Boolean(restream.connected),
+      accountLabel: String(restream.accountLabel ?? "").trim(),
+      lastError: String(restream.lastError ?? "").trim(),
+      ...(Number.isFinite(Number(restream.lastEventAt))
+        ? { lastEventAt: Number(restream.lastEventAt) }
+        : {}),
+      ...(Number.isFinite(Number(restream.sessionStartedAt))
+        ? { sessionStartedAt: Number(restream.sessionStartedAt) }
+        : {}),
+      platformSummary: Array.isArray(restream.platformSummary)
+        ? restream.platformSummary.map(String).map((item) => item.trim()).filter(Boolean)
         : [],
     },
   };

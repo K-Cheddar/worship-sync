@@ -1,10 +1,10 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch } from "../../hooks";
-import { useLoadMoreOnScroll } from "../../hooks/useLoadMoreOnScroll";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { FilePlus, WholeWord } from "lucide-react";
 
 import Button from "../Button/Button";
-import SongListScrollArea from "../SongList/SongListScrollArea";
+import Spinner from "../Spinner/Spinner";
 import SongSearchInput from "../SongList/SongSearchInput";
 import DeleteModal from "../Modal/DeleteModal";
 import {
@@ -57,7 +57,7 @@ const FilteredItems = ({
   setSearchValue,
 }: FilteredItemsProps) => {
   const dispatch = useDispatch();
-  const listScrollRef = useRef<HTMLUListElement | null>(null);
+  const listScrollRef = useRef<HTMLDivElement | null>(null);
 
   const listOfType = useMemo(() => {
     return list.filter((item) => item.type === type);
@@ -79,7 +79,6 @@ const FilteredItems = ({
 
   const [filteredList, setFilteredList] =
     useState<filteredItemsListType[]>(listOfType);
-  const [numShownItems, setNumShownItems] = useState(20);
   const [debouncedSearchValue, setDebouncedSearchValue] = useState("");
   const [itemToBeDeleted, setItemToBeDeleted] = useState<ServiceItem | null>(
     null
@@ -91,6 +90,13 @@ const FilteredItems = ({
     null,
   );
 
+  const virtualizer = useVirtualizer({
+    count: filteredList.length,
+    getScrollElement: () => listScrollRef.current,
+    estimateSize: () => 60,
+    overscan: 5,
+  });
+
   const viewSongDoc = useMemo(() => {
     if (!viewSectionsSongId || type !== "song") return null;
     const doc = allDocs.find(
@@ -98,8 +104,6 @@ const FilteredItems = ({
     );
     return doc ?? null;
   }, [viewSectionsSongId, allDocs, type]);
-
-  const isFullListLoaded = filteredList.length <= numShownItems;
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
@@ -204,24 +208,14 @@ const FilteredItems = ({
     const performSearch = async () => {
       const results = await searchItems(debouncedSearchValue);
       setFilteredList(results);
-      setNumShownItems(30);
       setIsSearchLoading(false);
+      virtualizer.measure();
+      listScrollRef.current?.scrollTo({ top: 0 });
     };
 
     performSearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearchValue, searchItems]);
-
-  useLoadMoreOnScroll({
-    scrollRef: listScrollRef,
-    enabled: !isFullListLoaded && filteredList.length > 0,
-    totalAvailable: filteredList.length,
-    batchSize: 20,
-    setShownCount: setNumShownItems,
-    shownCount: numShownItems,
-    rescheduleKey: debouncedSearchValue,
-    /** Load the next batch before the footer enters view (reduces visible “load” strip when scrolling fast). */
-    thresholdPx: 200,
-  });
 
   const deleteItem = async (item: ServiceItem) => {
     setItemToBeDeleted(null);
@@ -355,35 +349,55 @@ const FilteredItems = ({
           </Button>
         </section>
       )}
-      <SongListScrollArea
-        scrollRef={listScrollRef}
-        isSearchLoading={isSearchLoading}
-        isFullyLoaded={isFullListLoaded}
-        layout="embedded"
-        ulClassName="w-full px-1 sm:px-2"
-      >
-        {filteredList.slice(0, numShownItems).map((item, index) => {
-          return (
-            <FilteredItem
-              key={item._id}
-              item={item}
-              index={index}
-              showWords={item.showWords ?? showWords}
-              updateShowWords={updateShowWords}
-              addItemToList={(_item) => dispatch(addItemToItemList(_item))}
-              setItemToBeDeleted={setItemToBeDeleted}
-              searchValue={searchValue}
-              artistName={songArtistById.get(item._id)}
-              canMutateLibrary={canMutateLibrary}
-              onViewSongSections={
-                type === "song"
-                  ? () => setViewSectionsSongId(item._id)
-                  : undefined
-              }
-            />
-          );
-        })}
-      </SongListScrollArea>
+      <div className="relative min-h-0 flex-1">
+        {isSearchLoading && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-gray-800/35">
+            <Spinner />
+          </div>
+        )}
+        <div
+          ref={listScrollRef}
+          className="scrollbar-variable h-full w-full overflow-y-auto px-1 sm:px-2"
+          role="list"
+        >
+          <div
+            className="relative"
+            style={{ height: virtualizer.getTotalSize() }}
+          >
+            {virtualizer.getVirtualItems().map((virtualItem) => {
+              const item = filteredList[virtualItem.index];
+              return (
+                <div
+                  key={virtualItem.key}
+                  data-index={virtualItem.index}
+                  ref={virtualizer.measureElement}
+                  className="absolute left-0 top-0 w-full pb-2"
+                  style={{
+                    transform: `translateY(${virtualItem.start}px)`,
+                  }}
+                >
+                  <FilteredItem
+                    item={item}
+                    index={virtualItem.index}
+                    showWords={item.showWords ?? showWords}
+                    updateShowWords={updateShowWords}
+                    addItemToList={(_item) => dispatch(addItemToItemList(_item))}
+                    setItemToBeDeleted={setItemToBeDeleted}
+                    searchValue={searchValue}
+                    artistName={songArtistById.get(item._id)}
+                    canMutateLibrary={canMutateLibrary}
+                    onViewSongSections={
+                      type === "song"
+                        ? () => setViewSectionsSongId(item._id)
+                        : undefined
+                    }
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

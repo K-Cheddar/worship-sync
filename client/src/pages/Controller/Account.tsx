@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Ban, Eye, EyeOff, Save, ShieldPlus } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
@@ -257,6 +258,8 @@ const toMemberAccessOption = (value?: string): MemberAccessOption => {
 };
 
 const AccountPage = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const { showApiError } = useApiErrorToast();
@@ -273,6 +276,12 @@ const AccountPage = () => {
   const [invites, setInvites] = useState<InviteRecord[]>([]);
   const [trustedDevices, setTrustedDevices] = useState<HumanDevice[]>([]);
   const [showRevokedDevices, setShowRevokedDevices] = useState(false);
+  const accountTabParam = useMemo(() => {
+    const nextValue = new URLSearchParams(location.search).get("tab");
+    return ACCOUNT_TABS.some((tab) => tab.id === nextValue)
+      ? (nextValue as AccountTabId)
+      : "people";
+  }, [location.search]);
   const [showRevokedWorkstations, setShowRevokedWorkstations] = useState(false);
   const [showRevokedDisplays, setShowRevokedDisplays] = useState(false);
   const [workstations, setWorkstations] = useState<WorkstationDevice[]>([]);
@@ -641,7 +650,22 @@ const AccountPage = () => {
       </div>
 
       <SectionTabs
-        defaultValue="people"
+        value={accountTabParam}
+        onValueChange={(nextValue) => {
+          const params = new URLSearchParams(location.search);
+          if (nextValue === "people") {
+            params.delete("tab");
+          } else {
+            params.set("tab", nextValue);
+          }
+          navigate(
+            {
+              pathname: location.pathname,
+              search: params.toString() ? `?${params.toString()}` : "",
+            },
+            { replace: true },
+          );
+        }}
         className="pb-2"
         items={[
           {

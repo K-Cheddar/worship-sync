@@ -65,8 +65,8 @@ const FilteredItem = ({
   const showWordsSection = showWords && matchedWords;
 
   return (
-    <li
-      key={item._id}
+    <div
+      role="listitem"
       className={cn(
         "flex flex-col overflow-hidden rounded-lg border border-white/5 transition-colors",
         alternatingAdminListRowBg(index),
@@ -157,7 +157,7 @@ const FilteredItem = ({
           )}
         />
       </div>
-    </li>
+    </div>
   );
 };
 

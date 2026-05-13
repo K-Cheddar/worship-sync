@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import {
   findDesktopAuthProtocolArg,
   parseDesktopAuthCallbackUrl,
+  parseDesktopRouteCallbackUrl,
 } from "./desktopAuth";
 
 describe("desktopAuth protocol helpers", () => {
@@ -27,6 +28,18 @@ describe("desktopAuth protocol helpers", () => {
 
   it("parseDesktopAuthCallbackUrl rejects missing desktopAuthId", () => {
     expect(parseDesktopAuthCallbackUrl("worshipsync://auth/callback")).toBeNull();
+  });
+
+  it("parseDesktopRouteCallbackUrl accepts worshipsync callback with route", () => {
+    expect(
+      parseDesktopRouteCallbackUrl(
+        "worshipsync://auth/callback?route=%2Faccount%3Ftab%3Dintegrations",
+      ),
+    ).toEqual({ route: "/account?tab=integrations" });
+  });
+
+  it("parseDesktopRouteCallbackUrl rejects missing route", () => {
+    expect(parseDesktopRouteCallbackUrl("worshipsync://auth/callback")).toBeNull();
   });
 
   it("findDesktopAuthProtocolArg returns first matching argv entry", () => {
