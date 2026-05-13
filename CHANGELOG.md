@@ -1,3 +1,17 @@
+# [2.8.0](https://github.com/K-Cheddar/worship-sync/compare/v2.7.0...v2.8.0) (2026-05-13)
+
+
+### Bug Fixes
+
+* Improve timers between devices ([6a9f282](https://github.com/K-Cheddar/worship-sync/commit/6a9f28259e00cd79d49db54cdef72bc0e2dfc732))
+* resolve Qodo PR [#303](https://github.com/K-Cheddar/worship-sync/issues/303) review items ([9dc3491](https://github.com/K-Cheddar/worship-sync/commit/9dc349128374eda6baee21241c49e99723728ba0))
+
+
+### Features
+
+* add ability to send to discussion board ([b87bd1b](https://github.com/K-Cheddar/worship-sync/commit/b87bd1ba28946e89f79fdd43c9057742106c89b6))
+* read restream chat in discussion boards ([441c9e6](https://github.com/K-Cheddar/worship-sync/commit/441c9e6031aac535463ddf45bebb5923af54e858))
+
 # [2.7.0](https://github.com/K-Cheddar/worship-sync/compare/v2.6.2...v2.7.0) (2026-05-11)
 
 
