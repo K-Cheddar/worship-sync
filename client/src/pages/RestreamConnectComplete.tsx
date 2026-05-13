@@ -15,11 +15,10 @@ const RestreamConnectComplete = () => {
   const message = String(params.get("message") || "").trim();
 
   const wasSuccessful = status === "success";
-  const title = wasSuccessful
-    ? accountLabel
-      ? `Connected to ${accountLabel}`
-      : "Restream connected"
-    : "Restream connection problem";
+  let title = "Restream connection problem";
+  if (wasSuccessful) {
+    title = accountLabel ? `Connected to ${accountLabel}` : "Restream connected";
+  }
   const detail = wasSuccessful
     ? "Return to WorshipSync. You can close this browser tab."
     : message || "The Restream connection did not finish. Return to WorshipSync and try again.";

@@ -334,18 +334,94 @@ const bulkDeleteBoardDocs = async (docs) => {
   });
 };
 
-const emitBoardEventForDatabase = async (database, type, payload = {}) => {
-  if (!database) return;
+const RESTREAM_CLIENT_ERROR_MESSAGE =
+  "Something went wrong. Try again in a moment.";
+
+const restreamParseReturnTo = (raw) => {
+  if (raw === undefined || raw === null) {
+    return "/account?tab=integrations";
+  }
+  const s = String(raw).trim();
+  if (!s.startsWith("/") || s.length > 512) {
+    return "/account?tab=integrations";
+  }
+  if (/^https?:\/\//i.test(s) || s.startsWith("//")) {
+    return "/account?tab=integrations";
+  }
+  return s;
+};
+
+const readRestreamConnectStatusBody = (body) => {
+  const connectRequestId = body?.connectRequestId;
+  const connectRequestSecret = body?.connectRequestSecret;
+  if (typeof connectRequestId !== "string" || !connectRequestId.trim()) {
+    const err = new Error("INVALID_REQUEST");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (
+    typeof connectRequestSecret !== "string" ||
+    !connectRequestSecret.trim()
+  ) {
+    const err = new Error("INVALID_REQUEST");
+    err.statusCode = 400;
+    throw err;
+  }
+  return {
+    connectRequestId: connectRequestId.trim(),
+    connectRequestSecret: connectRequestSecret.trim(),
+  };
+};
+
+const isRestreamValidationError = (error) =>
+  Boolean(error && error.statusCode === 400);
+
+const respondRestreamJsonError = (res, logLabel, error) => {
+  console.error(logLabel, error);
+  if (isRestreamValidationError(error)) {
+    res.status(400).json({ error: "Invalid request." });
+    return;
+  }
+  res.status(500).json({ error: RESTREAM_CLIENT_ERROR_MESSAGE });
+};
+
+const boardAliasIdsByDatabase = new Map();
+let boardAliasCacheBuilt = false;
+
+const rebuildBoardAliasIdsByDatabaseCache = async () => {
+  boardAliasIdsByDatabase.clear();
   const rows = await getBoardDocsByRange({
     startkey: "alias:",
     endkey: "alias:\ufff0",
   });
-  rows
-    .flatMap((row) => (row.doc ? [row.doc] : []))
-    .filter((doc) => doc.database === database)
-    .forEach((aliasDoc) => {
-      emitBoardEvent(aliasDoc.aliasId, type, payload);
-    });
+  for (const row of rows) {
+    const doc = row.doc;
+    if (!doc?.database || !doc?.aliasId) continue;
+    let set = boardAliasIdsByDatabase.get(doc.database);
+    if (!set) {
+      set = new Set();
+      boardAliasIdsByDatabase.set(doc.database, set);
+    }
+    set.add(doc.aliasId);
+  }
+  boardAliasCacheBuilt = true;
+};
+
+const invalidateBoardAliasIdsByDatabaseCache = () => {
+  boardAliasCacheBuilt = false;
+  boardAliasIdsByDatabase.clear();
+};
+
+const emitBoardEventForDatabase = async (database, type, payload = {}) => {
+  if (!database) return;
+  if (!boardAliasCacheBuilt) {
+    await rebuildBoardAliasIdsByDatabaseCache();
+  }
+  const aliasIds = boardAliasIdsByDatabase.get(database);
+  if (!aliasIds?.size) return;
+  for (const aliasId of aliasIds) {
+    emitBoardEvent(aliasId, type, payload);
+  }
 };
 
 const restreamService = createRestreamService({
@@ -353,7 +429,7 @@ const restreamService = createRestreamService({
   getRealtimeDatabase: getServerRealtimeDatabase,
   getIntegrationsPath: getChurchIntegrationsPath,
   onBoardDisplayUpdate: (database) =>
-    void emitBoardEventForDatabase(database, "restream-session-updated"),
+    emitBoardEventForDatabase(database, "restream-session-updated"),
   redirectBaseUrl: frontEndHost,
 });
 
@@ -660,13 +736,10 @@ app.get("/api/restream/oauth/callback", async (req, res) => {
     );
   } catch (error) {
     console.error("Error completing Restream connection:", error);
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Could not finish the Restream connection.";
     const redirectParams = new URLSearchParams({
       status: "error",
-      message,
+      message:
+        "The Restream connection did not finish. Return to WorshipSync and try again.",
       returnTo: "/account?tab=integrations",
     });
     res.redirect(
@@ -690,17 +763,15 @@ app.get("/api/churches/:churchId/restream/connect", async (req, res) => {
       churchId: req.params.churchId,
       database: req.appSession.database,
       userId: req.appSession.userId,
-      returnTo: req.query.returnTo,
+      returnTo: restreamParseReturnTo(req.query.returnTo),
     });
     res.redirect(authorizeUrl);
   } catch (error) {
-    console.error("Error starting Restream connection:", error);
-    res.status(500).json({
-      error:
-        error instanceof Error
-          ? error.message
-          : "Could not start the Restream connection.",
-    });
+    respondRestreamJsonError(
+      res,
+      "Error starting Restream connection:",
+      error,
+    );
   }
 });
 
@@ -714,17 +785,15 @@ app.get("/api/churches/:churchId/restream/connect-url", async (req, res) => {
       churchId: req.params.churchId,
       database: req.appSession.database,
       userId: req.appSession.userId,
-      returnTo: req.query.returnTo,
+      returnTo: restreamParseReturnTo(req.query.returnTo),
     });
     res.json(result);
   } catch (error) {
-    console.error("Error starting Restream connection URL request:", error);
-    res.status(500).json({
-      error:
-        error instanceof Error
-          ? error.message
-          : "Could not start the Restream connection.",
-    });
+    respondRestreamJsonError(
+      res,
+      "Error starting Restream connection URL request:",
+      error,
+    );
   }
 });
 
@@ -736,19 +805,19 @@ app.post(
         return res.status(403).json({ error: "That church is not available." });
       }
 
+      const { connectRequestId, connectRequestSecret } =
+        readRestreamConnectStatusBody(req.body);
       const result = await restreamService.getConnectStatus({
-        connectRequestId: req.body?.connectRequestId,
-        connectRequestSecret: req.body?.connectRequestSecret,
+        connectRequestId,
+        connectRequestSecret,
       });
       res.json(result);
     } catch (error) {
-      console.error("Error loading Restream connect status:", error);
-      res.status(500).json({
-        error:
-          error instanceof Error
-            ? error.message
-            : "Could not load Restream connection status.",
-      });
+      respondRestreamJsonError(
+        res,
+        "Error loading Restream connect status:",
+        error,
+      );
     }
   },
 );
@@ -765,13 +834,7 @@ app.post("/api/churches/:churchId/restream/disconnect", async (req, res) => {
     });
     res.json({ success: true });
   } catch (error) {
-    console.error("Error disconnecting Restream:", error);
-    res.status(500).json({
-      error:
-        error instanceof Error
-          ? error.message
-          : "Could not disconnect Restream.",
-    });
+    respondRestreamJsonError(res, "Error disconnecting Restream:", error);
   }
 });
 
@@ -790,13 +853,11 @@ app.get("/api/churches/:churchId/restream/session", async (req, res) => {
     }
     res.json(status);
   } catch (error) {
-    console.error("Error loading Restream session status:", error);
-    res.status(500).json({
-      error:
-        error instanceof Error
-          ? error.message
-          : "Could not load the Restream session.",
-    });
+    respondRestreamJsonError(
+      res,
+      "Error loading Restream session status:",
+      error,
+    );
   }
 });
 
@@ -814,13 +875,11 @@ app.get("/api/churches/:churchId/restream/messages", async (req, res) => {
       messages: messages.map(serializeRestreamMessage),
     });
   } catch (error) {
-    console.error("Error loading Restream session messages:", error);
-    res.status(500).json({
-      error:
-        error instanceof Error
-          ? error.message
-          : "Could not load Restream messages.",
-    });
+    respondRestreamJsonError(
+      res,
+      "Error loading Restream session messages:",
+      error,
+    );
   }
 });
 
@@ -879,13 +938,11 @@ app.post(
       );
       res.json({ message: updated ? serializeRestreamMessage(updated) : null });
     } catch (error) {
-      console.error("Error updating Restream hidden state:", error);
-      res.status(500).json({
-        error:
-          error instanceof Error
-            ? error.message
-            : "Could not update the Restream message.",
-      });
+      respondRestreamJsonError(
+        res,
+        "Error updating Restream hidden state:",
+        error,
+      );
     }
   },
 );
@@ -917,13 +974,11 @@ app.post(
       );
       res.json({ message: updated ? serializeRestreamMessage(updated) : null });
     } catch (error) {
-      console.error("Error updating Restream highlight state:", error);
-      res.status(500).json({
-        error:
-          error instanceof Error
-            ? error.message
-            : "Could not update the Restream message.",
-      });
+      respondRestreamJsonError(
+        res,
+        "Error updating Restream highlight state:",
+        error,
+      );
     }
   },
 );
@@ -944,13 +999,7 @@ app.post("/api/churches/:churchId/restream/session/reset", async (req, res) => {
     });
     res.json(status);
   } catch (error) {
-    console.error("Error resetting Restream session:", error);
-    res.status(500).json({
-      error:
-        error instanceof Error
-          ? error.message
-          : "Could not start a new Restream session.",
-    });
+    respondRestreamJsonError(res, "Error resetting Restream session:", error);
   }
 });
 app.use("/api/boards/admin", requireAppSession, requireFullAppAccess);
@@ -1020,6 +1069,7 @@ app.post("/api/boards/admin/aliases", async (req, res) => {
     await putBoardDoc(aliasDoc);
 
     emitBoardEvent(aliasId, "alias-created");
+    invalidateBoardAliasIdsByDatabaseCache();
 
     res.status(201).json({
       alias: serializeBoardAlias(aliasDoc),
@@ -1154,6 +1204,7 @@ app.delete("/api/boards/admin/aliases/:aliasId", async (req, res) => {
 
     await bulkDeleteBoardDocs([...postDocs, ...boardDocs, aliasDoc]);
     emitBoardEvent(aliasId, "alias-deleted");
+    invalidateBoardAliasIdsByDatabaseCache();
     closeBoardSseClients(aliasId);
 
     res.json({ deletedAliasId: aliasId });

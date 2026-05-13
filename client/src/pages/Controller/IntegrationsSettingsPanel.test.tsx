@@ -2,6 +2,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IntegrationsSettingsPanel } from "./IntegrationsSettingsPanel";
 import { createDefaultChurchIntegrations } from "../../types/integrations";
+import type { ElectronAPI } from "../../types/electron";
+
+type WindowWithTestElectron = Window & {
+  electronAPI?: Pick<ElectronAPI, "openExternalUrl">;
+};
 
 const mockShowToast = jest.fn();
 const mockUpdateChurchIntegrations = jest.fn();
@@ -53,7 +58,7 @@ describe("IntegrationsSettingsPanel", () => {
       isElectron: jest.Mock;
     };
     isElectron.mockReturnValue(false);
-    window.electronAPI = undefined as any;
+    delete (window as WindowWithTestElectron).electronAPI;
   });
 
   it("saves overlaySyncEnabled=false when the rule is turned off and saved right away", async () => {
@@ -158,10 +163,9 @@ describe("IntegrationsSettingsPanel", () => {
     };
     isElectron.mockReturnValue(true);
     const openExternalUrl = jest.fn().mockResolvedValue(true);
-    window.electronAPI = {
-      ...window.electronAPI,
+    (window as WindowWithTestElectron).electronAPI = {
       openExternalUrl,
-    } as any;
+    };
 
     render(
       <IntegrationsSettingsPanel

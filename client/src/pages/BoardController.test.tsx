@@ -332,6 +332,8 @@ describe("BoardControllerContent", () => {
       error: "",
       bestEffortOnly: true,
       oauthConfigured: true,
+      isOffline: false,
+      feedState: "pending",
       reload: jest.fn(() => Promise.resolve()),
     });
     mockCreateBoardAlias.mockResolvedValue({
@@ -692,6 +694,8 @@ describe("BoardControllerContent", () => {
       error: "",
       bestEffortOnly: true,
       oauthConfigured: true,
+      isOffline: false,
+      feedState: "has_messages",
       reload: jest.fn(() => Promise.resolve()),
     });
 
@@ -726,6 +730,8 @@ describe("BoardControllerContent", () => {
       error: "",
       bestEffortOnly: true,
       oauthConfigured: true,
+      isOffline: false,
+      feedState: "empty",
       reload: jest.fn(() => Promise.resolve()),
     });
 

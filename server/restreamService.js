@@ -263,6 +263,12 @@ export const createRestreamService = ({
   const receivers = new Map();
   const sseClients = new Map();
 
+  const scheduleBoardDisplayUpdate = (database) => {
+    Promise.resolve(onBoardDisplayUpdate?.(database)).catch((err) => {
+      console.error("onBoardDisplayUpdate failed:", err);
+    });
+  };
+
   const isOauthConfigured = () =>
     Boolean(
       String(process.env.RESTREAM_CLIENT_ID || "").trim() &&
@@ -1158,7 +1164,7 @@ export const createRestreamService = ({
       receiver.pendingReplyUuidToMessageId.set(replyUuid, messageId);
     }
     emitSse(receiver.churchId, "message-updated", { messageId });
-    onBoardDisplayUpdate?.(receiver.database);
+    scheduleBoardDisplayUpdate(receiver.database);
     return true;
   };
 
@@ -1189,7 +1195,7 @@ export const createRestreamService = ({
       { merge: true },
     );
     emitSse(receiver.churchId, "message-updated", { messageId });
-    onBoardDisplayUpdate?.(receiver.database);
+    scheduleBoardDisplayUpdate(receiver.database);
   };
 
   const handleSocketAction = async (receiver, rawData) => {
@@ -1626,7 +1632,7 @@ export const createRestreamService = ({
     };
     await setDoc(RESTREAM_MESSAGE_COLLECTION, messageId, next, { merge: true });
     emitSse(churchId, "message-updated", { messageId });
-    onBoardDisplayUpdate?.(database);
+    scheduleBoardDisplayUpdate(database);
   };
 
   const setMessageHighlighted = async ({
@@ -1660,7 +1666,7 @@ export const createRestreamService = ({
       { merge: true },
     );
     emitSse(churchId, "message-updated", { messageId });
-    onBoardDisplayUpdate?.(database);
+    scheduleBoardDisplayUpdate(database);
   };
 
   const resetSession = async ({ churchId, database }) => {
@@ -1704,7 +1710,7 @@ export const createRestreamService = ({
       ...(nextStartedAt ? { sessionStartedAt: nextStartedAt } : {}),
     });
     emitSse(churchId, "session-reset", {});
-    onBoardDisplayUpdate?.(database);
+    scheduleBoardDisplayUpdate(database);
   };
 
   const initializeConnections = async () => {

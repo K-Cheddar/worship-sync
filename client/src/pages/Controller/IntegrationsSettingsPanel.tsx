@@ -656,6 +656,13 @@ export const IntegrationsSettingsPanel = ({
   const sp = draft.servicePlanning;
   const restream = integrations.restream;
 
+  let restreamConnectionLabel = "Not connected";
+  if (restream.connected) {
+    restreamConnectionLabel = "Connected";
+  } else if (restream.enabled) {
+    restreamConnectionLabel = "Disconnected";
+  }
+
   const handleConnectRestream = useCallback(async () => {
     setIsRestreamActing(true);
     try {
@@ -1118,11 +1125,7 @@ export const IntegrationsSettingsPanel = ({
               Connection
             </p>
             <p className="mt-1 text-sm font-medium text-gray-100">
-              {restream.connected
-                ? "Connected"
-                : restream.enabled
-                  ? "Disconnected"
-                  : "Not connected"}
+              {restreamConnectionLabel}
             </p>
           </div>
           <div className="rounded-lg border border-gray-600 bg-gray-900/60 p-3">
