@@ -34,7 +34,7 @@ jest.mock("../../boards/api", () => ({
 
 jest.mock("../../api/auth", () => ({
   __esModule: true,
-  AuthApiError: class AuthApiError extends Error {},
+  AuthApiError: class AuthApiError extends Error { },
   updateChurchIntegrations: (...args: unknown[]) =>
     mockUpdateChurchIntegrations(...args),
 }));

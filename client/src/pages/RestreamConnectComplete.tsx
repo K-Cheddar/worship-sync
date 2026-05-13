@@ -29,9 +29,8 @@ const RestreamConnectComplete = () => {
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6 text-center">
         <h1 className="text-2xl font-semibold">{title}</h1>
         <p
-          className={`mt-3 text-sm leading-relaxed ${
-            wasSuccessful ? "text-gray-200" : "text-amber-200"
-          }`}
+          className={`mt-3 text-sm leading-relaxed ${wasSuccessful ? "text-gray-200" : "text-amber-200"
+            }`}
         >
           {detail}
         </p>

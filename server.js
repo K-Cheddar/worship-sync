@@ -767,11 +767,7 @@ app.get("/api/churches/:churchId/restream/connect", async (req, res) => {
     });
     res.redirect(authorizeUrl);
   } catch (error) {
-    respondRestreamJsonError(
-      res,
-      "Error starting Restream connection:",
-      error,
-    );
+    respondRestreamJsonError(res, "Error starting Restream connection:", error);
   }
 });
 

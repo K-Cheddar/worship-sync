@@ -214,7 +214,7 @@ const FilteredItems = ({
     };
 
     performSearch();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearchValue, searchItems]);
 
   const deleteItem = async (item: ServiceItem) => {
