@@ -112,6 +112,31 @@ describe("QuickLink", () => {
     });
   });
 
+  it("clears the monitor timer when clicking a service-time quick link", () => {
+    const presentationInfo = {
+      type: "service-time",
+      name: "Upcoming Service",
+      timerId: undefined,
+      slide: null,
+      displayType: "monitor",
+    } as any;
+
+    render(
+      <QuickLink
+        {...quickLinkBase}
+        label="Service Time Link"
+        displayType="monitor"
+        presentationInfo={presentationInfo}
+        timers={[]}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(mockUpdateMonitor).toHaveBeenCalledWith(presentationInfo);
+    expect(mockSetMonitorTimerId).toHaveBeenCalledWith(null);
+  });
+
   it("returns null when there is no presentationInfo and no action", () => {
     const { container } = render(
       <QuickLink {...quickLinkBase} label="Empty" displayType="stream" timers={[]} />

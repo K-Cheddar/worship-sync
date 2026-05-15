@@ -90,4 +90,42 @@ describe("QuickLinkSelection", () => {
       })
     );
   });
+
+  it("preserves service-time when saving a slide quick link", () => {
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      _id: "service-time-countdown",
+      type: "service-time",
+      selectedSlide: 0,
+      name: "Upcoming Service",
+      slides: [
+        {
+          id: "slide-1",
+          name: "Upcoming Service",
+          type: "Timer",
+          boxes: [],
+        },
+      ],
+    };
+
+    render(
+      <QuickLinkSelection
+        linkType="slide"
+        quickLinkId="ql-1"
+        toastId="toast-1"
+        displayType="monitor"
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Select Slide" }));
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          type: "service-time",
+          itemId: "service-time-countdown",
+        }),
+      }),
+    );
+  });
 });

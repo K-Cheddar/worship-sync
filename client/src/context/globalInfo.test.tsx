@@ -554,6 +554,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     expect(
       onValueCallbacks.has("churches/church-1/data/presentation/stream_itemContentBlocked")
     ).toBe(true);
+    expect(onValueCallbacks.has("churches/church-1/data/services")).toBe(true);
 
     mockDispatch.mockClear();
 
@@ -569,6 +570,9 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     onValueCallbacks
       .get("churches/church-1/data/presentation/stream_itemContentBlocked")
       ?.(snapshotFor(true));
+    onValueCallbacks
+      .get("churches/church-1/data/services")
+      ?.(snapshotFor([{ id: "service-1", name: "Remote Service" }]));
 
     await waitFor(() =>
       expect(mockDispatch.mock.calls).toEqual(
@@ -595,6 +599,12 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
             {
               type: "debouncedUpdateStreamItemContentBlocked",
               payload: true,
+            },
+          ],
+          [
+            {
+              type: "debouncedUpdateServiceTimes",
+              payload: [{ id: "service-1", name: "Remote Service" }],
             },
           ],
         ])

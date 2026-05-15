@@ -161,10 +161,11 @@ const ItemSlides = () => {
   ]);
 
   const _size = isMobile ? slidesPerRowMobile : slidesPerRow;
-  const size = type === "timer" ? Math.min(_size, 3) : _size;
+  const isTimerLike = type === "timer" || type === "service-time";
+  const size = isTimerLike ? Math.min(_size, 3) : _size;
 
   const slidesGridColsMin = 1;
-  const slidesGridColsMax = type === "timer" ? 3 : 7;
+  const slidesGridColsMax = isTimerLike ? 3 : 7;
   /** Slider is inverted so moving right = zoom in (fewer columns, larger thumbnails). */
   const slideZoomSliderValue =
     slidesGridColsMax + slidesGridColsMin - size;
@@ -354,6 +355,8 @@ const ItemSlides = () => {
 
       if (type === "timer") {
         dispatch(setMonitorTimerId(timerInfo?.id || null));
+      } else if (type === "service-time") {
+        dispatch(setMonitorTimerId(null));
       }
 
       if (shouldSendTo.monitor) {

@@ -34,6 +34,7 @@ const createScreenPresentation = (
 const loadStoreWithPresentationSync = () => {
   let storeModule: any;
   let presentationSliceModule: any;
+  let serviceTimesSliceModule: any;
   const setMock = jest.fn();
   const refMock = jest.fn((_db: unknown, path: string) => path);
 
@@ -60,6 +61,8 @@ const loadStoreWithPresentationSync = () => {
     storeModule = require("./store");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     presentationSliceModule = require("./presentationSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    serviceTimesSliceModule = require("./serviceTimesSlice");
   });
 
   return {
@@ -67,6 +70,7 @@ const loadStoreWithPresentationSync = () => {
     writePresentationSnapshotToFirebase:
       storeModule.writePresentationSnapshotToFirebase,
     presentationSlice: presentationSliceModule.presentationSlice,
+    serviceTimesSlice: serviceTimesSliceModule.serviceTimesSlice,
     setMock,
     refMock,
   };
@@ -1699,6 +1703,44 @@ describe("store module", () => {
     });
     await waitForListenerDelay();
     expect(store.getState().presentation.streamInfo.name).toBe("New Stream");
+  });
+
+  it("applies remote service-time updates to shared redux state", async () => {
+    const { store, serviceTimesSlice } = loadStoreWithPresentationSync();
+
+    store.dispatch(
+      serviceTimesSlice.actions.initiateServices([
+        {
+          id: "service-1",
+          name: "Existing Service",
+          timerType: "countdown",
+          reccurence: "one_time",
+          dateTimeISO: "2026-04-05T12:00:00.000Z",
+        },
+      ]),
+    );
+
+    store.dispatch({
+      type: "debouncedUpdateServiceTimes",
+      payload: [
+        {
+          id: "service-2",
+          name: "Remote Service",
+          timerType: "countdown",
+          reccurence: "one_time",
+          dateTimeISO: "2026-04-05T12:30:00.000Z",
+        },
+      ],
+    });
+    await waitForListenerDelay();
+
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual([
+      expect.objectContaining({
+        id: "service-2",
+        name: "Remote Service",
+      }),
+    ]);
+    expect(store.getState().undoable.present.serviceTimes.isInitialized).toBe(true);
   });
 
   it("applies remote bible info when local bible slot is still empty at the same timestamp", async () => {

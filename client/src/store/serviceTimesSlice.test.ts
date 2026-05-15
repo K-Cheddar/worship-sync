@@ -4,6 +4,7 @@ import serviceTimesReducer, {
   updateService,
   removeService,
   initiateServices,
+  syncServicesFromRemote,
   updateServicesFromRemote,
 } from "./serviceTimesSlice";
 import { createServiceTime } from "../test/fixtures";
@@ -69,6 +70,14 @@ describe("serviceTimesSlice", () => {
       ];
       store.dispatch(initiateServices(list));
       expect(store.getState().serviceTimes.list).toHaveLength(2);
+    });
+
+    it("syncServicesFromRemote replaces list and marks initialized", () => {
+      const store = createStore();
+      const list = [createServiceTime({ id: "remote", name: "Remote Service" })];
+      store.dispatch(syncServicesFromRemote(list));
+      expect(store.getState().serviceTimes.list).toEqual(list);
+      expect(store.getState().serviceTimes.isInitialized).toBe(true);
     });
 
     it("updateServicesFromRemote updates when payload has list", () => {

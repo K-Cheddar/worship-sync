@@ -76,7 +76,7 @@ const ServiceItem = ({
     insertPointIndex
   );
 
-  const isCollapsedByMultiDrag = dragActiveId != null && selectedListIds.has(item.listId) && dragActiveId !== item.listId;
+  const isCollapsedByMultiDrag = dragActiveId != null && selectedListIds.has(dragActiveId) && selectedListIds.has(item.listId) && dragActiveId !== item.listId;
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,

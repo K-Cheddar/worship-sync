@@ -61,6 +61,8 @@ const QuickLink = ({
           resolvedPresentation.type === "timer"
         ) {
           dispatch(setMonitorTimerId(resolvedPresentation.timerId || null));
+        } else if (resolvedPresentation.type === "service-time") {
+          dispatch(setMonitorTimerId(null));
         }
       } else if (displayType === "stream") {
         if (resolvedPresentation.slide) {

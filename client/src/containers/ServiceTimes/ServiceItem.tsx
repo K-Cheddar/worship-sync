@@ -1,6 +1,6 @@
 import Button from "../../components/Button/Button";
 import { MonthWeekOrdinal, ServiceTime, Weekday } from "../../types";
-import { formatOneTime, formatMonthly, formatWeekly } from "./utils";
+import { formatOneTime, formatMonthly, formatMultiWeekly, formatWeekly } from "./utils";
 import { SquarePen, Trash2 } from "lucide-react";
 
 type Props = {
@@ -30,6 +30,8 @@ const ServiceItem = ({ service, onEdit, onDelete }: Props) => {
                 service.weekday as Weekday,
                 service.time
               )}
+            {service.reccurence === "multi_weekly" &&
+              formatMultiWeekly(service.daysOfWeek, service.endDateISO)}
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">

@@ -239,4 +239,29 @@ describe("ItemSlides", () => {
       baseSlides[1].boxes,
     );
   });
+
+  it("clears the monitor timer when sending a service-time item", () => {
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      type: "service-time",
+      name: "Upcoming Service",
+    };
+
+    render(
+      <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+        <ControllerInfoContext.Provider value={{ isMobile: false } as any}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Section 1" }));
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "preferences/setMonitorTimerId",
+        payload: null,
+      }),
+    );
+  });
 });

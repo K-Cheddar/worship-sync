@@ -61,6 +61,7 @@ import {
   getCreditsDocId,
   OverlayInfo,
   Presentation,
+  ServiceTime,
   TimerInfo,
 } from "../types";
 import { allDocsSlice, upsertItemInAllDocs } from "./allDocsSlice";
@@ -78,6 +79,7 @@ import {
 } from "./autosaveIndicatorSlice";
 import serviceTimesSliceReducer, {
   serviceTimesSlice,
+  syncServicesFromRemote,
 } from "./serviceTimesSlice";
 import {
   servicePlanningImportSlice,
@@ -1788,6 +1790,7 @@ listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const excluded = isAnyOf(
       serviceTimesSlice.actions.initiateServices,
+      serviceTimesSlice.actions.syncServicesFromRemote,
       serviceTimesSlice.actions.updateServicesFromRemote,
       serviceTimesSlice.actions.setIsInitialized,
     );
@@ -1812,6 +1815,8 @@ listenerMiddleware.startListening({
       // update service times
       const { list } = (listenerApi.getState() as RootState).undoable.present
         .serviceTimes;
+
+      localStorage.setItem("serviceTimes", JSON.stringify(list));
 
       // Prevent syncing empty arrays to Firebase if we have no services
       // This prevents clearing Firebase when Redux is empty but PouchDB has services
@@ -2257,6 +2262,23 @@ listenerMiddleware.startListening({
     listenerApi.dispatch(
       setStreamItemContentBlockedFromRemote(action.payload as boolean),
     );
+  },
+});
+
+// handle updating service times from remote display/controller listeners
+listenerMiddleware.startListening({
+  predicate: (action, currentState) => {
+    if (action.type !== "debouncedUpdateServiceTimes") return false;
+    const list = action.payload as ServiceTime[] | undefined;
+    if (!Array.isArray(list)) return false;
+    const currentList = (currentState as RootState).undoable.present.serviceTimes.list;
+    return !_.isEqual(list, currentList);
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+    listenerApi.dispatch(syncServicesFromRemote(action.payload as ServiceTime[]));
   },
 });
 

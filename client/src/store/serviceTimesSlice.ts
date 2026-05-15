@@ -36,6 +36,10 @@ export const serviceTimesSlice = createSlice({
       state.list = action.payload;
       state.isInitialized = true;
     },
+    syncServicesFromRemote: (state, action: PayloadAction<ServiceTime[]>) => {
+      state.list = action.payload;
+      state.isInitialized = true;
+    },
     updateServicesFromRemote: (state, action: PayloadAction<DBServices>) => {
       // Prevent overwriting with empty array if we already have services
       // Only update if the incoming list has services, or if our current list is empty
@@ -54,6 +58,7 @@ export const {
   updateService,
   removeService,
   initiateServices,
+  syncServicesFromRemote,
   setIsInitialized,
   updateServicesFromRemote,
 } = serviceTimesSlice.actions;

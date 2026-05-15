@@ -31,7 +31,7 @@ const ServiceTimesList = ({
         <>
           {upcomingService && (
             <div className="flex min-w-0 shrink-0 flex-col gap-2 rounded-md border border-cyan-400/45 bg-white/5 p-3">
-              <p>Next service</p>
+              <p>Upcoming service</p>
               <ServiceItem
                 service={upcomingService.service}
                 onEdit={onEdit}

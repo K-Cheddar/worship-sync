@@ -33,11 +33,12 @@ import {
   set,
   onDisconnect,
 } from "firebase/database";
-import { Instance, TimerInfo } from "../types";
+import { Instance, ServiceTime, TimerInfo } from "../types";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import generateRandomId from "../utils/generateRandomId";
 import { syncTimers } from "../store/timersSlice";
+import { syncServicesFromRemote } from "../store/serviceTimesSlice";
 import {
   AuthBootstrap,
   AuthApiError,
@@ -505,6 +506,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const hasRehydratedTimersRef = useRef(false);
+  const hasRehydratedServiceTimesRef = useRef(false);
   const sharedDataAuthRequestIdRef = useRef(0);
   const sharedDataAuthChainRef = useRef<Promise<void>>(Promise.resolve());
   const churchBrandingGateKeyRef = useRef("");
@@ -601,6 +603,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_boardPostStreamInfo: Unsubscribe | undefined;
     stream_itemContentBlocked: Unsubscribe | undefined;
     timerInfo: Unsubscribe | undefined;
+    serviceTimes: Unsubscribe | undefined;
   }>({
     projectorInfo: undefined,
     monitorInfo: undefined,
@@ -614,6 +617,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     stream_boardPostStreamInfo: undefined,
     stream_itemContentBlocked: undefined,
     timerInfo: undefined,
+    serviceTimes: undefined,
   });
 
   const storageListenerCleanupRef = useRef<(() => void) | undefined>(undefined);
@@ -998,7 +1002,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const updateFromRemote = useCallback(
     (data: any) => {
       type updateInfoChildType = {
-        info: PresentationType | BibleDisplayInfo | OverlayInfo | TimerInfo;
+        info:
+          | PresentationType
+          | BibleDisplayInfo
+          | OverlayInfo
+          | TimerInfo
+          | ServiceTime[]
+          | boolean;
         updateAction: string;
       };
 
@@ -1051,6 +1061,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           info: data.timerInfo,
           updateAction: "debouncedUpdateTimerInfo",
         },
+        serviceTimes: {
+          info: data.serviceTimes,
+          updateAction: "debouncedUpdateServiceTimes",
+        },
       };
 
       const keys = Object.keys(updateInfo);
@@ -1096,6 +1110,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const enterGuestMode = useCallback(
     (nextPath = "/controller") => {
       hasRehydratedTimersRef.current = false;
+      hasRehydratedServiceTimesRef.current = false;
       setPendingEmailVerificationId(null);
       setLoginState("guest");
       setSessionKind(null);
@@ -1132,6 +1147,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   const exitGuestMode = useCallback(
     (nextPath = "/") => {
       hasRehydratedTimersRef.current = false;
+      hasRehydratedServiceTimesRef.current = false;
       dispatch({ type: "RESET" });
       dispatch(ActionCreators.clearHistory());
       setPendingEmailVerificationId(null);
@@ -1304,6 +1320,24 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
           dispatch(syncTimers(parsed));
+        }
+      }
+    } catch {
+      // ignore invalid stored data
+    }
+  }, [loginState, dispatch]);
+
+  // Rehydrate service times from localStorage for guest mode so local monitor/projector/stream
+  // windows follow service changes without needing shared realtime auth.
+  useEffect(() => {
+    if (loginState !== "guest" || hasRehydratedServiceTimesRef.current) return;
+    hasRehydratedServiceTimesRef.current = true;
+    try {
+      const raw = localStorage.getItem("serviceTimes");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          dispatch(syncServicesFromRemote(parsed));
         }
       }
     } catch {
@@ -1573,10 +1607,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         // unsubscribe from any previous listeners
         onValueRef.current[_key]?.();
 
-        const updateRef = ref(
-          firebaseDb,
-          getChurchDataPath(churchId, "presentation", key)
-        );
+        const updatePath =
+          key === "serviceTimes"
+            ? getChurchDataPath(churchId, "services")
+            : getChurchDataPath(churchId, "presentation", key);
+        const updateRef = ref(firebaseDb, updatePath);
 
         onValueRef.current[_key] = onValue(updateRef, (snapshot) => {
           if (!snapshot.exists()) return;

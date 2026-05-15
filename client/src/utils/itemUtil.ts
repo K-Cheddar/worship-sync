@@ -1,4 +1,5 @@
 import { DEFAULT_FONT_PX, DEFAULT_TITLE_FONT_PX } from "../constants";
+import { SERVICE_TIME_COUNTDOWN_ID } from "../constants/nextServiceTimer";
 import {
   Arrangment,
   FormattedLyrics,
@@ -242,7 +243,11 @@ export const createNewSong = async ({
     slides: [],
     shouldSkipTitle: false,
     arrangements,
-    shouldSendTo: shouldSendTo ?? { projector: true, monitor: true, stream: true },
+    shouldSendTo: shouldSendTo ?? {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
     songMetadata: songMetadata || undefined,
   };
 
@@ -604,7 +609,11 @@ export const createNewFreeForm = async ({
       }),
     ],
     arrangements: [],
-    shouldSendTo: shouldSendTo ?? { projector: true, monitor: true, stream: true },
+    shouldSendTo: shouldSendTo ?? {
+      projector: true,
+      monitor: true,
+      stream: true,
+    },
   };
 
   const formattedItem = formatFree(newItem);
@@ -699,7 +708,11 @@ export const createNewTimer = async ({
       showMinutesOnly: false,
       color: defaultTimerColor,
     },
-    shouldSendTo: shouldSendTo ?? { projector: false, monitor: true, stream: false },
+    shouldSendTo: shouldSendTo ?? {
+      projector: false,
+      monitor: true,
+      stream: false,
+    },
   };
 
   const item = await createNewItemInDb({ item: newItem, db });
@@ -945,3 +958,48 @@ export const createItemListFromExisting = async ({
     return null;
   }
 };
+
+export const buildServiceTimeItem = (): DBItem => ({
+  _id: SERVICE_TIME_COUNTDOWN_ID,
+  name: "Upcoming Service",
+  type: "service-time",
+  selectedArrangement: 0,
+  arrangements: [],
+  slides: [
+    {
+      id: "service-time-slide",
+      type: "Timer",
+      name: "Upcoming Service",
+      boxes: [
+        {
+          id: "service-time-bg",
+          width: 100,
+          height: 100,
+          x: 0,
+          y: 0,
+          brightness: 100,
+          transparent: false,
+        },
+        {
+          id: "service-time-text",
+          words: "{{service-time}}",
+          width: 100,
+          height: 100,
+          x: 0,
+          y: 0,
+          topMargin: 3,
+          sideMargin: 4,
+          fontSize: 180,
+          align: "center",
+          fontColor: "rgba(255, 255, 255, 1)",
+          brightness: 100,
+          transparent: true,
+          excludeFromOverflow: false,
+          isBold: false,
+          isItalic: false,
+        },
+      ],
+    },
+  ],
+  shouldSendTo: { projector: false, monitor: true, stream: false },
+});
