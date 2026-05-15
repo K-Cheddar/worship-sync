@@ -124,6 +124,14 @@ const baseSlides = [
   },
 ];
 
+const mockGlobalInfoValue = {
+  access: "full",
+} as unknown as React.ContextType<typeof GlobalInfoContext>;
+
+const mockControllerInfoValue = {
+  isMobile: false,
+} as unknown as React.ContextType<typeof ControllerInfoContext>;
+
 describe("ItemSlides", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -211,8 +219,8 @@ describe("ItemSlides", () => {
 
   it("sends monitor-band next boxes for free items when next-slide view is enabled", () => {
     render(
-      <GlobalInfoContext.Provider value={{ access: "full" } as any}>
-        <ControllerInfoContext.Provider value={{ isMobile: false } as any}>
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
           <ItemSlides />
         </ControllerInfoContext.Provider>
       </GlobalInfoContext.Provider>,
@@ -237,6 +245,31 @@ describe("ItemSlides", () => {
     ]);
     expect(updateMonitorAction.payload.nextSlide.boxes).not.toEqual(
       baseSlides[1].boxes,
+    );
+  });
+
+  it("clears the monitor timer when sending a service-time item", () => {
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      type: "service-time",
+      name: "Upcoming Service",
+    };
+
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlides />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Section 1" }));
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "preferences/setMonitorTimerId",
+        payload: null,
+      }),
     );
   });
 });

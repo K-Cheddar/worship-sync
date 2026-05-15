@@ -137,8 +137,8 @@ const DisplayEditorComponent = ({
       const nextCursorPosition = typeof options?.cursorPosition === "number"
         ? Math.min(options.cursorPosition, nextWords.length)
         : options?.preserveCursor
-        ? resolveFormattedCursorPosition(previousValue, nextWords, previousSelection)
-        : Math.min(previousSelection, nextWords.length);
+          ? resolveFormattedCursorPosition(previousValue, nextWords, previousSelection)
+          : Math.min(previousSelection, nextWords.length);
 
       if (textAreaRef.current.value !== nextWords) {
         textAreaRef.current.value = nextWords;
@@ -193,61 +193,96 @@ const DisplayEditorComponent = ({
     }
   }, [anchorScrollToTop, draftWords, isTextAreaFocused]);
 
-  const checkTimerAtCursor = useCallback(() => {
+  const checkTimerAtCursor = useCallback((): "timer" | "service-time" | false => {
     const textArea = textAreaRef.current;
-    if (!textArea || !textArea.value.includes("{{timer}}")) {
-      return false;
-    }
+    if (!textArea) return false;
+    const hasPlaceholder =
+      textArea.value.includes("{{timer}}") ||
+      textArea.value.includes("{{service-time}}");
+    if (!hasPlaceholder) return false;
 
     const start = textArea.selectionStart;
     const end = textArea.selectionEnd;
     const text = textArea.value;
-    const timerPattern = /\{\{timer\}\}/g;
+    const placeholderPattern = /\{\{timer\}\}|\{\{service-time\}\}/g;
     let match;
 
-    while ((match = timerPattern.exec(text)) !== null) {
-      const timerStart = match.index + 1;
-      const timerEnd = timerStart + match[0].length - 2;
+    while ((match = placeholderPattern.exec(text)) !== null) {
+      const matchStart = match.index + 1;
+      const matchEnd = matchStart + match[0].length - 2;
 
       if (
-        (start >= timerStart && start <= timerEnd) ||
-        (end >= timerStart && end <= timerEnd) ||
-        (start <= timerStart && end >= timerEnd)
+        (start >= matchStart && start <= matchEnd) ||
+        (end >= matchStart && end <= matchEnd) ||
+        (start <= matchStart && end >= matchEnd)
       ) {
-        return true;
+        return match[0] === "{{service-time}}" ? "service-time" : "timer";
       }
     }
 
     return false;
   }, []);
 
-  const handleTimerInteraction = useCallback(() => {
-    const now = Date.now();
-    if (now - lastToastTimeRef.current < TOAST_DEBOUNCE_MS) {
-      return;
-    }
+  const handleTimerInteraction = useCallback(
+    (kind: "timer" | "service-time") => {
+      const now = Date.now();
+      if (now - lastToastTimeRef.current < TOAST_DEBOUNCE_MS) {
+        return;
+      }
 
-    lastToastTimeRef.current = now;
+      lastToastTimeRef.current = now;
 
-    if (textAreaRef.current) {
-      textAreaRef.current.blur();
-    }
+      if (textAreaRef.current) {
+        textAreaRef.current.blur();
+      }
 
-    showToast(
-      isMobile
-        ? "To edit the timer use the controls in the panel above"
-        : "To edit the timer use the controls in the panel to the left",
-      "info"
-    );
-  }, [showToast, isMobile]);
+      let message = "To edit the timer use the controls in the panel to the left";
+      if (kind === "service-time") {
+        message = "This countdown updates automatically from your service times.";
+      } else if (isMobile) {
+        message = "To edit the timer use the controls in the panel above";
+      }
+
+      showToast(message, "info");
+    },
+    [showToast, isMobile],
+  );
 
   const checkAndHandleTimer = useCallback(() => {
     requestAnimationFrame(() => {
-      if (checkTimerAtCursor()) {
-        handleTimerInteraction();
+      const kind = checkTimerAtCursor();
+      if (kind) {
+        handleTimerInteraction(kind);
       }
     });
   }, [checkTimerAtCursor, handleTimerInteraction]);
+
+  /**
+   * Returns the placeholder kind if the pending edit would touch it, false otherwise.
+   * Covers Backspace/Delete from the cursor and any key/cut that replaces a selection.
+   */
+  const wouldDestroyPlaceholder = useCallback(
+    (deleteStart: number, deleteEnd: number): "timer" | "service-time" | false => {
+      const textArea = textAreaRef.current;
+      if (!textArea || deleteStart === deleteEnd) return false;
+      const hasPlaceholder =
+        textArea.value.includes("{{timer}}") ||
+        textArea.value.includes("{{service-time}}");
+      if (!hasPlaceholder) return false;
+
+      const placeholderPattern = /\{\{timer\}\}|\{\{service-time\}\}/g;
+      let match;
+      while ((match = placeholderPattern.exec(textArea.value)) !== null) {
+        const matchStart = match.index;
+        const matchEnd = match.index + match[0].length;
+        if (deleteStart < matchEnd && deleteEnd > matchStart) {
+          return match[0] === "{{service-time}}" ? "service-time" : "timer";
+        }
+      }
+      return false;
+    },
+    [],
+  );
 
   const updateBoxSize = useCallback(() => {
     const adjustedWidth = (referenceWidth * box.width) / 100;
@@ -429,7 +464,7 @@ const DisplayEditorComponent = ({
       size={{ width: boxWidth, height: boxHeight }}
       className={cn(
         (!isBoxLocked || isSelected) &&
-          "outline-1 outline-gray-300 -outline-offset-2",
+        "outline-1 outline-gray-300 -outline-offset-2",
         isSelected && !box.background && "z-10"
       )}
       position={{ x, y }}
@@ -516,6 +551,37 @@ const DisplayEditorComponent = ({
             }}
             onKeyDown={(e) => {
               lastKeyPressedRef.current = e.key;
+              const textArea = textAreaRef.current;
+              if (!textArea) return;
+              const start = textArea.selectionStart;
+              const end = textArea.selectionEnd;
+              const hasSelection = start !== end;
+              const isDestructive =
+                e.key === "Backspace" ||
+                e.key === "Delete" ||
+                (hasSelection && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey);
+              if (!isDestructive) return;
+              const deleteStart =
+                !hasSelection && e.key === "Backspace" ? Math.max(0, start - 1) : start;
+              const deleteEnd =
+                !hasSelection && e.key === "Delete" ? start + 1 : end;
+              const kind = wouldDestroyPlaceholder(deleteStart, deleteEnd);
+              if (kind) {
+                e.preventDefault();
+                handleTimerInteraction(kind);
+              }
+            }}
+            onCut={(e) => {
+              const textArea = textAreaRef.current;
+              if (!textArea) return;
+              const kind = wouldDestroyPlaceholder(
+                textArea.selectionStart,
+                textArea.selectionEnd,
+              );
+              if (kind) {
+                e.preventDefault();
+                handleTimerInteraction(kind);
+              }
             }}
             onKeyUp={(e) => {
               if (

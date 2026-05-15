@@ -70,6 +70,10 @@ import { normalizeMediaDoc } from "../../utils/mediaDocUtils";
 import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
 import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemListsSlice";
+import { initiateServices } from "../../store/serviceTimesSlice";
+import { ServiceTime } from "../../types";
+import { onValue, ref } from "firebase/database";
+import { getChurchDataPath } from "../../utils/firebasePaths";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { useSyncOnReconnect } from "../../hooks";
 import { CONTROLLER_PAGE_READY, RootState } from "../../store/store";
@@ -87,7 +91,7 @@ export const useControllerPageLifecycle = () => {
   const { showToast } = useToast();
   const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
-  const { access, refreshPresentationListeners } =
+  const { access, refreshPresentationListeners, churchId, firebaseDb, loginState } =
     useContext(GlobalInfoContext) || {};
 
   const selectedList = useSelector(
@@ -196,6 +200,7 @@ export const useControllerPageLifecycle = () => {
   );
 
   useGlobalBroadcast(updatePreferencesFromExternal);
+
   useSyncOnReconnect(pullFromRemote);
 
   const layoutRef = useCallback(
@@ -233,6 +238,31 @@ export const useControllerPageLifecycle = () => {
       refreshPresentationListeners?.();
     };
   }, [dispatch, refreshPresentationListeners]);
+
+  // Firebase gives real-time service time updates (same mechanism as StreamInfo.tsx).
+  // Falls back to a one-time DB load for guest / offline sessions.
+  useEffect(() => {
+    if (!firebaseDb || loginState === "guest" || !churchId) return;
+    const servicesRef = ref(firebaseDb, getChurchDataPath(churchId, "services"));
+    const unsubscribe = onValue(servicesRef, (snapshot) => {
+      const data = snapshot.val() as ServiceTime[] | null;
+      dispatch(initiateServices(data ?? []));
+    });
+    return unsubscribe;
+  }, [firebaseDb, loginState, churchId, dispatch]);
+
+  useEffect(() => {
+    if (!db || loginState !== "guest") return;
+    const load = async () => {
+      try {
+        const doc: { list?: ServiceTime[] } | undefined = await db.get("services");
+        dispatch(initiateServices(doc?.list ?? []));
+      } catch {
+        dispatch(initiateServices([]));
+      }
+    };
+    load();
+  }, [db, loginState, dispatch]);
 
   useEffect(() => {
     const getAllItems = async () => {

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import QuickLink from "../QuickLink";
+import type { Presentation } from "../../../types";
 
 const mockDispatch = jest.fn();
 const mockClearMonitor = jest.fn(() => ({ type: "presentation/clearMonitor" }));
@@ -84,13 +85,13 @@ describe("QuickLink", () => {
   });
 
   it("sets monitor timerId when clicking a timer quick link", () => {
-    const presentationInfo = {
+    const presentationInfo: Presentation = {
       type: "slide",
       name: "Main Timer",
       timerId: "timer-1",
       slide: null,
       displayType: "monitor",
-    } as any;
+    };
 
     render(
       <QuickLink
@@ -110,6 +111,31 @@ describe("QuickLink", () => {
       type: "preferences/setMonitorTimerId",
       payload: "timer-1",
     });
+  });
+
+  it("clears the monitor timer when clicking a service-time quick link", () => {
+    const presentationInfo: Presentation = {
+      type: "service-time",
+      name: "Upcoming Service",
+      timerId: undefined,
+      slide: null,
+      displayType: "monitor",
+    };
+
+    render(
+      <QuickLink
+        {...quickLinkBase}
+        label="Service Time Link"
+        displayType="monitor"
+        presentationInfo={presentationInfo}
+        timers={[]}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(mockUpdateMonitor).toHaveBeenCalledWith(presentationInfo);
+    expect(mockSetMonitorTimerId).toHaveBeenCalledWith(null);
   });
 
   it("returns null when there is no presentationInfo and no action", () => {

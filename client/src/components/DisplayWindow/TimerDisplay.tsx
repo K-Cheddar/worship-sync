@@ -1,7 +1,11 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useSelector } from "react-redux";
 import { TimerInfo } from "../../types";
-import { RootState } from "../../store/store";
+import type { RootState } from "../../store/store";
+import useNextServiceCountdownText from "../../hooks/useNextServiceCountdownText";
+import useDisplayedUpcomingService from "../../hooks/useDisplayedUpcomingService";
+import useAvailableServiceTimes from "../../hooks/useAvailableServiceTimes";
+import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS } from "../../constants/nextServiceTimer";
 
 interface TimerDisplayProps {
   timerInfo?: TimerInfo;
@@ -73,6 +77,35 @@ const TimerDisplay = ({ timerInfo, words }: TimerDisplayProps) => {
   const timer = useSelector((state: RootState) =>
     state.timers.timers.find((t) => t.id === timerInfo?.id)
   );
+  const { services: availableServices } = useAvailableServiceTimes();
+  const upcomingService = useDisplayedUpcomingService(
+    availableServices,
+    NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS,
+    { keepRecentlyElapsedDuringGrace: true },
+  );
+  const targetIso = useMemo(() => {
+    return upcomingService?.nextAt.toISOString() ?? null;
+  }, [upcomingService]);
+  const serviceTimeCountdownText = useNextServiceCountdownText(targetIso);
+
+  // Handle {{service-time}} placeholder — renders upcoming service countdown from Redux.
+  if (words.includes("{{service-time}}")) {
+    const parts = words.split("{{service-time}}");
+    return (
+      <>
+        {parts.map((part, index) => (
+          <span key={index}>
+            {part}
+            {index < parts.length - 1 && (
+              <span className="inline-flex flex-wrap whitespace-nowrap tabular-nums">
+                {serviceTimeCountdownText ?? "--:--"}
+              </span>
+            )}
+          </span>
+        ))}
+      </>
+    );
+  }
 
   if (!timerInfo) return <>{words.replace("{{timer}}", "")}</>;
   const resolvedTimer = timer || timerInfo;

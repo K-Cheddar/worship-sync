@@ -11,6 +11,9 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { setActiveItemInList } from "../../store/itemListSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
+import { SERVICE_TIME_COUNTDOWN_ID } from "../../constants/nextServiceTimer";
+import { buildServiceTimeItem } from "../../utils/itemUtil";
+import { applyPouchAudit } from "../../utils/pouchAudit";
 
 const Item = () => {
   const { itemId, listId } = useParams();
@@ -48,12 +51,36 @@ const Item = () => {
       try {
         dispatch(setItemIsLoading(true));
         const response: DBItem | undefined = await db?.get(decodedItemId);
-        const item = response;
-        if (!item) return setStatus("error");
-        dispatch(setActiveItem({ ...item, listId: decodedListId }));
+        if (!response) return setStatus("error");
+        dispatch(setActiveItem({ ...response, listId: decodedListId }));
         dispatch(setActiveItemInList(decodedListId));
         setStatus("success");
-      } catch (e) {
+      } catch (e: unknown) {
+        // First access of the service-time item: no DB record yet — create it.
+        // Matches the pattern in createNewItemInDb: catch any error, fire-and-forget
+        // the put, and immediately use the in-memory item. No await, no status check.
+        if (decodedItemId === SERVICE_TIME_COUNTDOWN_ID) {
+          const newItem = buildServiceTimeItem();
+          const now = new Date().toISOString();
+          const doc = applyPouchAudit(
+            null,
+            { ...newItem, createdAt: now, updatedAt: now },
+            { isNew: true },
+          );
+          try {
+            await db.put(doc);
+          } catch (putErr: unknown) {
+            // 409 = another window already created it; the document exists, carry on.
+            if ((putErr as { status?: number })?.status !== 409) {
+              console.error(putErr);
+            }
+          }
+          dispatch(setActiveItem({ ...newItem, listId: decodedListId }));
+          dispatch(setActiveItemInList(decodedListId));
+          setStatus("success");
+          return;
+        }
+
         console.error(e);
         setStatus("error");
       } finally {

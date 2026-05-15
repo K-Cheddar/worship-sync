@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch } from "../../hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { FilePlus, WholeWord } from "lucide-react";
@@ -38,6 +38,8 @@ type FilteredItemsProps = {
   allDocs: DBItem[];
   searchValue: string;
   setSearchValue: (value: string) => void;
+  /** Rendered above the scrollable list — use for pinned virtual items (e.g. Upcoming Service). */
+  pinnedTopContent?: React.ReactNode;
 };
 
 export type filteredItemsListType = ServiceItem & {
@@ -55,6 +57,7 @@ const FilteredItems = ({
   allDocs,
   searchValue,
   setSearchValue,
+  pinnedTopContent,
 }: FilteredItemsProps) => {
   const dispatch = useDispatch();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
@@ -348,6 +351,9 @@ const FilteredItems = ({
             Create a new {label}
           </Button>
         </section>
+      )}
+      {pinnedTopContent && (
+        <div className="mb-2 px-1 sm:px-2">{pinnedTopContent}</div>
       )}
       <div className="relative min-h-0 flex-1">
         {isSearchLoading && (

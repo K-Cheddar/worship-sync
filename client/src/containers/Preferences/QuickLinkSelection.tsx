@@ -120,6 +120,7 @@ const QuickLinkSelection = ({
 
     let title = "";
     let text = "";
+    let presentationType: "timer" | "service-time" | "slide" = "slide";
 
     if (type === "bible") {
       title =
@@ -129,12 +130,17 @@ const QuickLinkSelection = ({
       text =
         selectedSlide > 0 ? slides[selectedSlide].boxes[1]?.words || "" : "";
     }
+    if (type === "timer") {
+      presentationType = "timer";
+    } else if (type === "service-time") {
+      presentationType = "service-time";
+    }
 
     dispatch(
       setSelectedQuickLinkPresentation({
         name,
         slide: slides[selectedSlide],
-        type: type === "timer" ? "timer" : "slide",
+        type: presentationType,
         timerId: timerInfo?.id,
         itemId: _id,
         bibleDisplayInfo: {

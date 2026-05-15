@@ -61,6 +61,7 @@ import {
   getCreditsDocId,
   OverlayInfo,
   Presentation,
+  ServiceTime,
   TimerInfo,
 } from "../types";
 import { allDocsSlice, upsertItemInAllDocs } from "./allDocsSlice";
@@ -78,6 +79,7 @@ import {
 } from "./autosaveIndicatorSlice";
 import serviceTimesSliceReducer, {
   serviceTimesSlice,
+  syncServicesFromRemote,
 } from "./serviceTimesSlice";
 import {
   servicePlanningImportSlice,
@@ -156,7 +158,9 @@ const getChangedOverlayDocsForUndoRedo = (
   previousList: OverlayInfo[],
   selectedOverlayId?: string,
 ): OverlayInfo[] => {
-  const previousById = new Map(previousList.map((overlay) => [overlay.id, overlay]));
+  const previousById = new Map(
+    previousList.map((overlay) => [overlay.id, overlay]),
+  );
 
   return currentList.filter((overlay) => {
     if (!overlay.id || overlay.id === selectedOverlayId) {
@@ -1788,6 +1792,7 @@ listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const excluded = isAnyOf(
       serviceTimesSlice.actions.initiateServices,
+      serviceTimesSlice.actions.syncServicesFromRemote,
       serviceTimesSlice.actions.updateServicesFromRemote,
       serviceTimesSlice.actions.setIsInitialized,
     );
@@ -1810,26 +1815,13 @@ listenerMiddleware.startListening({
       await listenerApi.delay(1500);
 
       // update service times
-      const { list } = (listenerApi.getState() as RootState).undoable.present
-        .serviceTimes;
+      const { list, isInitialized } = (listenerApi.getState() as RootState)
+        .undoable.present.serviceTimes;
 
-      // Prevent syncing empty arrays to Firebase if we have no services
-      // This prevents clearing Firebase when Redux is empty but PouchDB has services
-      if (list.length === 0) {
-        // Still update PouchDB if it exists, but don't clear Firebase
-        if (db) {
-          try {
-            const db_services: DBServices = await db.get("services");
-            // Only update PouchDB if it already has services (don't create empty)
-            if (db_services?.list && db_services.list.length > 0) {
-              db_services.list = list;
-              db_services.updatedAt = new Date().toISOString();
-              db.put(db_services);
-            }
-          } catch (error) {
-            // Don't create empty services document
-          }
-        }
+      localStorage.setItem("serviceTimes", JSON.stringify(list));
+
+      // Keep initial boot protection only before services are initialized.
+      if (!isInitialized && list.length === 0) {
         return;
       }
 
@@ -1847,7 +1839,7 @@ listenerMiddleware.startListening({
               hostId: globalHostId,
             },
           });
-        } catch (error) {
+        } catch {
           // if the services are not found, create a new one
           const db_services = {
             _id: "services",
@@ -1856,16 +1848,13 @@ listenerMiddleware.startListening({
             updatedAt: new Date().toISOString(),
           };
           db.put(db_services);
-          // Only broadcast if list is not empty
-          if (list.length > 0) {
-            safePostMessage({
-              type: "update",
-              data: {
-                docs: db_services,
-                hostId: globalHostId,
-              },
-            });
-          }
+          safePostMessage({
+            type: "update",
+            data: {
+              docs: db_services,
+              hostId: globalHostId,
+            },
+          });
         }
       }
       if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
@@ -1896,12 +1885,10 @@ listenerMiddleware.startListening({
     await listenerApi.delay(1500);
 
     // update service times
-    const { list } = (listenerApi.getState() as RootState).undoable.present
-      .serviceTimes;
+    const { list, isInitialized } = (listenerApi.getState() as RootState)
+      .undoable.present.serviceTimes;
 
-    // Prevent syncing empty arrays to Firebase on load
-    // Only sync if we actually have services
-    if (list.length === 0) {
+    if (!isInitialized) {
       return;
     }
 
@@ -2232,17 +2219,18 @@ listenerMiddleware.startListening({
     const current = state.streamInfo.boardPostStreamInfo;
     // Always apply when incoming has content but local is empty (stream page opened after post was sent)
     if (info.text?.trim() && !current?.text?.trim()) return true;
-    return !!(
-      (current?.time && info.time > current.time) ||
-      !current?.time
-    );
+    return !!((current?.time && info.time > current.time) || !current?.time);
   },
 
   effect: async (action, listenerApi) => {
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
     listenerApi.dispatch(
-      updateBoardPostStreamInfoFromRemote(action.payload as Parameters<typeof updateBoardPostStreamInfoFromRemote>[0]),
+      updateBoardPostStreamInfoFromRemote(
+        action.payload as Parameters<
+          typeof updateBoardPostStreamInfoFromRemote
+        >[0],
+      ),
     );
   },
 });
@@ -2257,6 +2245,33 @@ listenerMiddleware.startListening({
     listenerApi.dispatch(
       setStreamItemContentBlockedFromRemote(action.payload as boolean),
     );
+  },
+});
+
+// handle updating service times from remote display/controller listeners
+listenerMiddleware.startListening({
+  predicate: (action, currentState) => {
+    if (action.type !== "debouncedUpdateServiceTimes") return false;
+    const list = action.payload as ServiceTime[] | undefined;
+    if (!Array.isArray(list)) return false;
+    const currentList = (currentState as RootState).undoable.present
+      .serviceTimes.list;
+    return !_.isEqual(list, currentList);
+  },
+
+  effect: async (action, listenerApi) => {
+    listenerApi.cancelActiveListeners();
+    await listenerApi.delay(10);
+    const services = action.payload as ServiceTime[];
+
+    // Mirror shared-data updates into localStorage so guest monitor/projector/stream
+    // windows on this machine receive the same service-time refresh via the storage listener.
+    // Guard on shared-data auth state so guest windows do not bounce storage events back and forth.
+    if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
+      localStorage.setItem("serviceTimes", JSON.stringify(services));
+    }
+
+    listenerApi.dispatch(syncServicesFromRemote(services));
   },
 });
 
@@ -2410,9 +2425,7 @@ listenerMiddleware.startListening({
     if (db && changedOverlayDocs.length > 0) {
       for (const overlay of changedOverlayDocs) {
         try {
-          await listenerApi.pause(
-            persistExistingOverlayDoc(db, overlay),
-          );
+          await listenerApi.pause(persistExistingOverlayDoc(db, overlay));
         } catch (e) {
           if (isListenerCancelledTaskError(e)) {
             return;

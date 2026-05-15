@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import { Video } from "lucide-react";
 import { Book } from "lucide-react";
 import { Timer } from "lucide-react";
+import { CalendarClock } from "lucide-react";
 import { Image } from "lucide-react";
 import { Megaphone } from "lucide-react";
 import { Users } from "lucide-react";
@@ -13,6 +14,7 @@ export const svgMap: Map<string, LucideIcon> = new Map<string, LucideIcon>([
   ["image", Image],
   ["bible", Book],
   ["timer", Timer],
+  ["service-time", CalendarClock],
   ["announcement", Megaphone],
   ["overlays", Users],
   ["create", Plus],
@@ -25,6 +27,7 @@ export const borderColorMap: Map<string, string> = new Map([
   ["image", "border-violet-500"],
   ["bible", "border-yellow-500"],
   ["timer", "border-pink-500"],
+  ["service-time", "border-violet-500"],
   ["announcement", "border-yellow-500"],
   ["create", "border-lime-400"],
   ["overlays", "border-red-500"],
@@ -37,6 +40,7 @@ export const iconColorMap: Map<string, string> = new Map([
   ["image", "#f97316"],
   ["bible", "#eab308"],
   ["timer", "#ec4899"],
+  ["service-time", "#8b5cf6"],
   ["announcement", "#eab308"],
   ["create", "#a3e635"],
   ["overlays", "#ef4444"],
@@ -49,6 +53,7 @@ export const itemTypeLabelMap: Map<string, string> = new Map([
   ["image", "image"],
   ["bible", "Bible item"],
   ["timer", "timer"],
+  ["service-time", "service time"],
   ["announcement", "announcement"],
   ["create", "item"],
   ["overlays", "overlay"],

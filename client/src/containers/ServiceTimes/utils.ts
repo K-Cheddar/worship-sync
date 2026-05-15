@@ -1,4 +1,6 @@
-import { MonthWeekOrdinal, Weekday } from "../../types";
+import { MonthWeekOrdinal, MultiWeeklyDay, Weekday } from "../../types";
+
+const DAY_ABBRS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 export const weekdays: { label: string; value: Weekday }[] = [
   { label: "Sunday", value: 0 },
@@ -45,9 +47,56 @@ export const to12Hour = (hhmm?: string) => {
   return `${h}:${mm} ${ampm}`;
 };
 
+export const parseDateOnlyAsLocalDate = (dateStr?: string) => {
+  if (!dateStr) return null;
+  const [year, month, day] = dateStr
+    .split("-")
+    .map((part) => parseInt(part, 10));
+  if (
+    Number.isNaN(year) ||
+    Number.isNaN(month) ||
+    Number.isNaN(day)
+  ) {
+    return null;
+  }
+  return new Date(year, month - 1, day);
+};
+
 export const formatWeekly = (dow?: Weekday, hhmm?: string) => {
   const day = weekdays.find((w) => w.value === dow)?.label || "";
   return `${day}${day ? "s" : ""} @ ${to12Hour(hhmm)}`;
+};
+
+export const formatMultiWeekly = (
+  days?: MultiWeeklyDay[],
+  endDateISO?: string,
+) => {
+  if (!days?.length) return "";
+
+  // Sort by day so groups are in week order
+  const sorted = [...days].sort((a, b) => a.day - b.day);
+
+  // Group days that share a time; Map preserves insertion (= earliest-day) order
+  const byTime = new Map<string, Weekday[]>();
+  for (const { day, time } of sorted) {
+    const group = byTime.get(time);
+    if (group) group.push(day);
+    else byTime.set(time, [day]);
+  }
+
+  // Sort groups by the earliest day each contains
+  const groups = [...byTime.entries()].sort(([, a], [, b]) => a[0] - b[0]);
+
+  const endDate = parseDateOnlyAsLocalDate(endDateISO);
+  const endStr = endDate
+    ? ` until ${endDate.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`
+    : "";
+
+  return (
+    groups
+      .map(([t, groupDays]) => `${groupDays.map((d) => DAY_ABBRS[d]).join(", ")} @ ${to12Hour(t)}`)
+      .join(", ") + endStr
+  );
 };
 
 export const formatMonthly = (

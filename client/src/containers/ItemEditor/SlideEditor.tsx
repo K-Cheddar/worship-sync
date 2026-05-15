@@ -386,7 +386,7 @@ const SlideEditor = ({ access }: { access?: AccessType }) => {
         : b
     );
 
-    if (type === "timer") {
+    if (type === "timer" || type === "service-time") {
       dispatch(updateBoxes({ boxes: newBoxes }));
     }
 

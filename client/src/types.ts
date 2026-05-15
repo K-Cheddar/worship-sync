@@ -18,6 +18,7 @@ export type ServiceItem = {
     | "image"
     | "bible"
     | "timer"
+    | "service-time"
     | "announcement"
     | "free"
     | "heading"
@@ -178,6 +179,7 @@ export type ItemType =
   | "free"
   | "bible"
   | "timer"
+  | "service-time"
   | "image"
   | "heading"
   | "";
@@ -398,7 +400,13 @@ export type BibleDisplayInfo = {
 };
 
 // Timer scheduling for management UI
-export type RecurrenceType = "one_time" | "weekly" | "monthly";
+export type RecurrenceType = "one_time" | "weekly" | "monthly" | "multi_weekly";
+
+/** One entry in a multi-day weekly schedule: which day and what time (HH:mm). */
+export type MultiWeeklyDay = {
+  day: Weekday;
+  time: string;
+};
 export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6; // Sunday=0
 export type MonthWeekOrdinal = 1 | 2 | 3 | 4 | 5; // 5 = last if exists
 export type ServiceTimePosition =
@@ -423,6 +431,10 @@ export type ServiceTime = {
   overrideDateTimeISO?: string;
   // weekly
   dayOfWeek?: Weekday;
+  // multi_weekly
+  daysOfWeek?: MultiWeeklyDay[];
+  // optional end date for multi_weekly (ISO date string, e.g. "2026-05-30")
+  endDateISO?: string;
   // monthly nth weekday
   ordinal?: MonthWeekOrdinal;
   weekday?: Weekday;

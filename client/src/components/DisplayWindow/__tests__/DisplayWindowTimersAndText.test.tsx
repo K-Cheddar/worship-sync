@@ -111,6 +111,47 @@ describe("DisplayWindow timer and text helpers", () => {
 
       expect(screen.getByText("1:05 PM")).toBeInTheDocument();
     });
+
+    it("uses redux service times for service-time placeholders when available", async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-01-10T09:00:00.000Z"));
+      const serviceTimes = [
+        {
+          id: "service-1",
+          name: "First Service",
+          timerType: "countdown",
+          reccurence: "one_time",
+          dateTimeISO: "2026-01-10T09:01:00.000Z",
+        },
+      ];
+      hooksState = {
+        ...hooksState,
+        undoable: {
+          present: {
+            ...hooksState.undoable?.present,
+            serviceTimes: {
+              list: serviceTimes,
+              isInitialized: true,
+            },
+          },
+        },
+      };
+      reactReduxState = {
+        timers: { timers: [] },
+        undoable: {
+          present: {
+            serviceTimes: {
+              list: serviceTimes,
+              isInitialized: true,
+            },
+          },
+        },
+      };
+
+      render(<TimerDisplay words={"Starts in {{service-time}}"} />);
+
+      expect(await screen.findByText("1:00", { selector: "span" })).toBeInTheDocument();
+    });
   });
 
   describe("DisplayTimer", () => {

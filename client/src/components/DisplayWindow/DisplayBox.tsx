@@ -16,7 +16,11 @@ import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 const DISPLAY_IMAGE_CACHE_SWAP_DEFER_MS = 650;
 
 const hasDynamicDisplayText = (words?: string) =>
-  Boolean(words?.includes("{{timer}}") || words?.includes("\u200C"));
+  Boolean(
+    words?.includes("{{timer}}") ||
+    words?.includes("{{service-time}}") ||
+    words?.includes("\u200C"),
+  );
 
 type DisplayBoxProps = {
   prevBox?: Box;
@@ -212,7 +216,7 @@ const DisplayBox = ({
   };
 
   const renderContent = () => {
-    if (words.includes("{{timer}}")) {
+    if (words.includes("{{timer}}") || words.includes("{{service-time}}")) {
       return <TimerDisplay timerInfo={timerInfo} words={words} />;
     }
     if (words.includes("\u200B")) return <VerseDisplay words={words} />;

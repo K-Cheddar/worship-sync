@@ -14,7 +14,7 @@ export type ServiceTimeCountdownFontSpec =
   /** Same ratios as `streamFullscreen`, but `cqw` so embedded previews scale with their box. */
   | "previewFrame"
   /**
-   * Service Times “Next service” inline block: same cqw ratios as `previewFrame`, but
+   * Service Times “Upcoming service” inline block: same cqw ratios as `previewFrame`, but
    * `clamp()` floors keep copy legible when the panel is narrow.
    */
   | "nextServicePanel";
@@ -135,7 +135,7 @@ export const serviceTimeEditPreviewFaceLayoutProps: Pick<
   timeClassName: "leading-none tabular-nums",
 };
 
-/** Next service live pill in Service Times list (narrow panel–safe type scale). */
+/** Upcoming service live pill in Service Times list (narrow panel–safe type scale). */
 export const serviceTimeNextServicePanelFaceLayoutProps: Pick<
   ServiceTimeCountdownFaceProps,
   | "fontSpec"
@@ -153,7 +153,7 @@ export const serviceTimeNextServicePanelFaceLayoutProps: Pick<
 
 /**
  * Shared “pill” for next-service countdown: `/stream-info`, Service Times edit preview, and
- * “Next service” live block. Callers own outer layout (fullscreen fixed, aspect frame, panel).
+ * “Upcoming service” live block. Callers own outer layout (fullscreen fixed, aspect frame, panel).
  */
 const ServiceTimeCountdownFace = ({
   service,
@@ -188,7 +188,7 @@ const ServiceTimeCountdownFace = ({
   const shouldShowName = service.shouldShowName !== false;
   const showLivePulse =
     timeDisplay === "livePulseAtZero" && timeText === "0";
-  /** Stream-info + Next service: centered time, min width ≈ four tabular digits (5ch — `ch` runs slightly narrow vs tabular glyphs). */
+  /** Stream-info + Upcoming service: centered time, min width ≈ four tabular digits (5ch — `ch` runs slightly narrow vs tabular glyphs). */
   const streamStyleTimeRow =
     paddingSpec === "streamInfo" || paddingSpec === "nextServicePanel";
 
