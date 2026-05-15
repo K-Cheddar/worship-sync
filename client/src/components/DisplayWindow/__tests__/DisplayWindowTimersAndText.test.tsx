@@ -115,20 +115,34 @@ describe("DisplayWindow timer and text helpers", () => {
     it("uses redux service times for service-time placeholders when available", async () => {
       jest.useFakeTimers();
       jest.setSystemTime(new Date("2026-01-10T09:00:00.000Z"));
+      const serviceTimes = [
+        {
+          id: "service-1",
+          name: "First Service",
+          timerType: "countdown",
+          reccurence: "one_time",
+          dateTimeISO: "2026-01-10T09:01:00.000Z",
+        },
+      ];
+      hooksState = {
+        ...hooksState,
+        undoable: {
+          present: {
+            ...hooksState.undoable?.present,
+            serviceTimes: {
+              list: serviceTimes,
+              isInitialized: true,
+            },
+          },
+        },
+      };
       reactReduxState = {
         timers: { timers: [] },
         undoable: {
           present: {
             serviceTimes: {
-              list: [
-                {
-                  id: "service-1",
-                  name: "First Service",
-                  timerType: "countdown",
-                  reccurence: "one_time",
-                  dateTimeISO: "2026-01-10T09:01:00.000Z",
-                },
-              ],
+              list: serviceTimes,
+              isInitialized: true,
             },
           },
         },

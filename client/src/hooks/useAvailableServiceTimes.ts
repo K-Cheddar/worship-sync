@@ -13,19 +13,47 @@ import type { DBServices, ServiceTime } from "../types";
  */
 export const useAvailableServiceTimes = () => {
   const reduxServices = useSelector(
-    (state: RootState) => state.undoable.present.serviceTimes.list,
+    (
+      state:
+        | RootState
+        | {
+            undoable?: {
+              present?: {
+                serviceTimes?: {
+                  list?: ServiceTime[];
+                  isInitialized?: boolean;
+                };
+              };
+            };
+          },
+    ) => state.undoable?.present?.serviceTimes?.list ?? [],
   );
   const isReduxInitialized = useSelector(
-    (state: RootState) => state.undoable.present.serviceTimes.isInitialized,
+    (
+      state:
+        | RootState
+        | {
+            undoable?: {
+              present?: {
+                serviceTimes?: {
+                  list?: ServiceTime[];
+                  isInitialized?: boolean;
+                };
+              };
+            };
+          },
+    ) => state.undoable?.present?.serviceTimes?.isInitialized ?? false,
   );
-  const { firebaseDb, churchId, loginState } = useContext(GlobalInfoContext) || {};
+  const { firebaseDb, churchId, loginState } =
+    useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
-  const [fallbackServices, setFallbackServices] = useState<ServiceTime[] | null>(
-    null,
-  );
+  const [fallbackServices, setFallbackServices] = useState<
+    ServiceTime[] | null
+  >(null);
+  const shouldUseReduxServices = isReduxInitialized || reduxServices.length > 0;
 
   useEffect(() => {
-    if (isReduxInitialized) {
+    if (shouldUseReduxServices) {
       setFallbackServices(null);
       return;
     }
@@ -33,7 +61,10 @@ export const useAvailableServiceTimes = () => {
     let cancelled = false;
 
     if (firebaseDb && loginState !== "guest" && churchId) {
-      const servicesRef = ref(firebaseDb, getChurchDataPath(churchId, "services"));
+      const servicesRef = ref(
+        firebaseDb,
+        getChurchDataPath(churchId, "services"),
+      );
       const unsubscribe = onValue(servicesRef, (snapshot) => {
         if (cancelled) return;
         const data = snapshot.val() as ServiceTime[] | null;
@@ -66,11 +97,11 @@ export const useAvailableServiceTimes = () => {
     return () => {
       cancelled = true;
     };
-  }, [churchId, db, firebaseDb, isReduxInitialized, loginState]);
+  }, [churchId, db, firebaseDb, loginState, shouldUseReduxServices]);
 
   return {
-    services: isReduxInitialized ? reduxServices : fallbackServices ?? [],
-    isReady: isReduxInitialized || fallbackServices !== null,
+    services: shouldUseReduxServices ? reduxServices : (fallbackServices ?? []),
+    isReady: shouldUseReduxServices || fallbackServices !== null,
   };
 };
 
